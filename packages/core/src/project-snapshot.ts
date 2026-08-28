@@ -34,6 +34,7 @@ import type {
   ConventionEntry,
   DependencyEdge,
   EntryPoint,
+  ImportShard,
   OwnershipRule,
   ProjectSnapshotManifest,
   ReferenceOccurrence,
@@ -47,6 +48,7 @@ import type {
   WorkspaceScope,
 } from "@rennet/protocol";
 import { canonicalize, PROJECT_SNAPSHOT_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
+import { importSpecifiers, stripBlockComments } from "./import-specifiers";
 
 /** Content-address any value: its canonical bytes and their sha256. */
 export function contentAddress(value: unknown): BuiltShard {
@@ -157,6 +159,22 @@ export function referenceShardBytes(shard: ReferenceShard): BuiltShard {
   });
 }
 
+/**
+ * Content-address a per-file IMPORT shard. Like {@link symbolShardBytes}, the bytes
+ * are a PURE FUNCTION OF BLOB CONTENT (blobOid + extractor + raw specifiers) and
+ * carry NO path — which is exactly why the shard stores RAW specifiers rather than
+ * resolved targets: resolving `./sibling` needs the importing file's path, and
+ * baking a path in would break the rename/copy reuse contract. Resolution to
+ * file→file edges happens at read time against the inventory (`queryImportGraph`).
+ */
+export function importShardBytes(shard: ImportShard): BuiltShard {
+  return contentAddress({
+    blobOid: shard.blobOid,
+    extractor: shard.extractor,
+    imports: shard.imports,
+  });
+}
+
 // ── The fingerprint ──────────────────────────────────────────────────────────
 
 /**
@@ -177,20 +195,22 @@ export interface FingerprintPin {
 /**
  * The freshness/integrity fingerprint: a digest over the pin (`schemaVersion`,
  * `repoKey`, `baseRef`, `baseRefResolution`, `baseOid`) plus every shard digest
- * (structural, symbol, AND reference). It covers all canonical manifest content
- * (#4), so the fingerprint alone identifies the snapshot's content. Deterministic
- * and clock-free, so two builds of the same tree on the same repo share a
- * fingerprint; two snapshots are the same content iff their fingerprints match.
+ * (structural, symbol, reference, AND import). It covers all canonical manifest
+ * content (#4), so the fingerprint alone identifies the snapshot's content.
+ * Deterministic and clock-free, so two builds of the same tree on the same repo
+ * share a fingerprint; two snapshots are the same content iff their fingerprints
+ * match.
  *
- * `references` is required so a caller cannot silently omit the reference dimension
- * and compute a fingerprint that agrees with a reference-less build — pass `[]` for
- * a snapshot with no reference index.
+ * `references` and `imports` are required so a caller cannot silently omit a shard
+ * dimension and compute a fingerprint that agrees with a build that lacks it — pass
+ * `[]` for a snapshot with no reference/import index.
  */
 export function computeFingerprint(
   pin: FingerprintPin,
   shards: Readonly<Record<StructuralShardSlot, ShardRef>>,
   symbols: readonly (readonly [string, string])[],
   references: readonly (readonly [string, string])[],
+  imports: readonly (readonly [string, string])[],
 ): string {
   const structural: Record<string, string> = {};
   for (const slot of Object.keys(shards).sort() as StructuralShardSlot[]) {
@@ -212,6 +232,7 @@ export function computeFingerprint(
       structural,
       symbols: sortByBlob(symbols),
       references: sortByBlob(references),
+      imports: sortByBlob(imports),
     }),
   );
 }
@@ -232,6 +253,7 @@ export function buildSnapshot(
   inputs: SnapshotStructuralInputs,
   symbolShards: readonly SymbolShard[],
   referenceShards: readonly ReferenceShard[] = [],
+  importShards: readonly ImportShard[] = [],
 ): BuiltSnapshot {
   const shardBytes = new Map<string, string>();
 
@@ -260,34 +282,12 @@ export function buildSnapshot(
     shardBytes.set(built.digest, built.bytes);
   }
 
-  // Symbol shards, de-duplicated by blobOid (the same content anywhere yields
-  // the same shard) and sorted by blobOid for a stable manifest.
-  const byBlob = new Map<string, SymbolShard>();
-  for (const shard of symbolShards) {
-    if (!byBlob.has(shard.blobOid)) byBlob.set(shard.blobOid, shard);
-  }
-  const symbols: (readonly [string, string])[] = [];
-  for (const blobOid of [...byBlob.keys()].sort(byString)) {
-    const shard = byBlob.get(blobOid);
-    if (!shard) continue;
-    const built = symbolShardBytes(shard);
-    symbols.push([blobOid, built.digest] as const);
-    shardBytes.set(built.digest, built.bytes);
-  }
-
-  // Reference shards, de-duplicated by blobOid and sorted, exactly like symbols.
-  const refsByBlob = new Map<string, ReferenceShard>();
-  for (const shard of referenceShards) {
-    if (!refsByBlob.has(shard.blobOid)) refsByBlob.set(shard.blobOid, shard);
-  }
-  const references: (readonly [string, string])[] = [];
-  for (const blobOid of [...refsByBlob.keys()].sort(byString)) {
-    const shard = refsByBlob.get(blobOid);
-    if (!shard) continue;
-    const built = referenceShardBytes(shard);
-    references.push([blobOid, built.digest] as const);
-    shardBytes.set(built.digest, built.bytes);
-  }
+  // The three per-blob shard families (symbols, references, imports), each
+  // de-duplicated by blobOid (the same content anywhere yields the same shard) and
+  // sorted by blobOid for a stable manifest.
+  const symbols = perBlobPointers(symbolShards, symbolShardBytes, shardBytes);
+  const references = perBlobPointers(referenceShards, referenceShardBytes, shardBytes);
+  const imports = perBlobPointers(importShards, importShardBytes, shardBytes);
 
   const fingerprint = computeFingerprint(
     {
@@ -299,6 +299,7 @@ export function buildSnapshot(
     shards,
     symbols,
     references,
+    imports,
   );
 
   const manifest: ProjectSnapshotManifest = {
@@ -311,9 +312,34 @@ export function buildSnapshot(
     shards,
     symbols,
     references,
+    imports,
   };
 
   return { manifest, shards: shardBytes };
+}
+
+/**
+ * De-duplicate a per-blob shard family by `blobOid`, content-address each shard,
+ * record its bytes in `sink`, and return the manifest's `[blobOid, digest]` pointer
+ * array sorted by blobOid. Shared by all three families so their manifest shape and
+ * dedup semantics cannot drift.
+ */
+function perBlobPointers<S extends { readonly blobOid: string }>(
+  shards: readonly S[],
+  bytesOf: (shard: S) => BuiltShard,
+  sink: Map<string, string>,
+): (readonly [string, string])[] {
+  const byBlob = new Map<string, S>();
+  for (const shard of shards) if (!byBlob.has(shard.blobOid)) byBlob.set(shard.blobOid, shard);
+  const pointers: (readonly [string, string])[] = [];
+  for (const blobOid of [...byBlob.keys()].sort(byString)) {
+    const shard = byBlob.get(blobOid);
+    if (!shard) continue;
+    const built = bytesOf(shard);
+    pointers.push([blobOid, built.digest] as const);
+    sink.set(built.digest, built.bytes);
+  }
+  return pointers;
 }
 
 /** The canonical bytes of a manifest, for byte-comparison and durable writes. */
@@ -368,8 +394,11 @@ export function verifySnapshotIntegrity(
   }
   for (const [, digest] of manifest.symbols) digests.add(digest);
   // A tolerant read for a defensively-parsed manifest: `references` is required in
-  // v2, but coerce an absent value to `[]` so this never throws on a malformed input.
+  // v2 and `imports` in v3, but coerce an absent value to `[]` so this never throws
+  // on a malformed input. (An absent family still fails the fingerprint check below
+  // against a manifest that declared one — the gate stays closed either way.)
   for (const [, digest] of manifest.references ?? []) digests.add(digest);
+  for (const [, digest] of manifest.imports ?? []) digests.add(digest);
 
   for (const digest of digests) {
     const bytes = load(digest);
@@ -391,6 +420,7 @@ export function verifySnapshotIntegrity(
       manifest.shards,
       manifest.symbols,
       manifest.references ?? [],
+      manifest.imports ?? [],
     ) === manifest.fingerprint;
 
   return {
@@ -421,47 +451,67 @@ export function eligibleSymbolFiles(files: readonly SnapshotFileEntry[]): Snapsh
   return files.filter((file) => SYMBOL_EXTENSIONS.has(extensionOf(file.path)));
 }
 
-export interface SymbolPlan {
+/** A per-blob shard family's incremental plan: what to carry, what to re-extract. */
+export interface ShardPlan<S> {
   /** Shards carried verbatim from the previous snapshot (blob unchanged). */
-  readonly reuse: readonly SymbolShard[];
-  /** Files whose symbols must be freshly extracted (blob new or previously absent). */
+  readonly reuse: readonly S[];
+  /** Files whose shard must be freshly extracted (blob new or previously absent). */
   readonly toExtract: readonly SnapshotFileEntry[];
 }
 
+/** A per-blob shard: addressed by blob content, stamped with its extractor's identity. */
+interface BlobShard {
+  readonly blobOid: string;
+  readonly extractor: string;
+}
+
 /**
- * Plan an incremental symbol extraction. A file whose `blobOid` already has a
- * shard in `previousByBlob` (from the same extractor) is reused; otherwise it is
- * queued for extraction. The result is independent of iteration order.
+ * Plan an incremental extraction for one per-blob shard family. A file whose
+ * `blobOid` already has a shard in `previousByBlob` (from the same extractor) is
+ * reused verbatim — its bytes are a pure function of blob content (no path), so it
+ * is byte-identical to what a clean build would extract at this file's path, and
+ * reuse is free and path-independent. Everything else is queued for extraction.
+ * The result is independent of iteration order.
  */
-export function planIncrementalSymbols(
+function planIncremental<S extends BlobShard>(
   eligible: readonly SnapshotFileEntry[],
-  previousByBlob: ReadonlyMap<string, SymbolShard>,
+  previousByBlob: ReadonlyMap<string, S>,
   extractorId: string,
-): SymbolPlan {
-  const reuse: SymbolShard[] = [];
+): ShardPlan<S> {
+  const reuse: S[] = [];
   const toExtract: SnapshotFileEntry[] = [];
   const seen = new Set<string>();
   for (const file of eligible) {
     if (seen.has(file.blobOid)) continue;
     seen.add(file.blobOid);
     const prior = previousByBlob.get(file.blobOid);
-    if (prior && prior.extractor === extractorId) {
-      // Reuse the prior shard verbatim. Its bytes are a pure function of blob
-      // content (no path), so it is byte-identical to what a clean build would
-      // extract at this file's path — reuse is free and path-independent.
-      reuse.push(prior);
-    } else {
-      toExtract.push(file);
-    }
+    if (prior && prior.extractor === extractorId) reuse.push(prior);
+    else toExtract.push(file);
   }
   return { reuse, toExtract };
 }
 
-/** Index a previous snapshot's symbol shards by blobOid, for reuse planning. */
-export function indexSymbolShards(shards: readonly SymbolShard[]): Map<string, SymbolShard> {
-  const index = new Map<string, SymbolShard>();
+/** Index a previous snapshot's per-blob shards by blobOid, for reuse planning. */
+function indexByBlob<S extends BlobShard>(shards: readonly S[]): Map<string, S> {
+  const index = new Map<string, S>();
   for (const shard of shards) if (!index.has(shard.blobOid)) index.set(shard.blobOid, shard);
   return index;
+}
+
+export type SymbolPlan = ShardPlan<SymbolShard>;
+
+/** Plan an incremental SYMBOL extraction — see {@link planIncremental}. */
+export function planIncrementalSymbols(
+  eligible: readonly SnapshotFileEntry[],
+  previousByBlob: ReadonlyMap<string, SymbolShard>,
+  extractorId: string,
+): SymbolPlan {
+  return planIncremental(eligible, previousByBlob, extractorId);
+}
+
+/** Index a previous snapshot's symbol shards by blobOid, for reuse planning. */
+export function indexSymbolShards(shards: readonly SymbolShard[]): Map<string, SymbolShard> {
+  return indexByBlob(shards);
 }
 
 // ── The default deterministic symbol extractor (structural-ts-v1) ─────────────
@@ -694,33 +744,11 @@ export const structuralReferenceExtractor: SnapshotReferenceExtractor = (path, t
   const ext = extensionOf(path);
   if (!SYMBOL_EXTENSIONS.has(ext)) return [];
   const linesByName = new Map<string, Set<number>>();
-  const lines = text.split("\n");
-  let inBlockComment = false;
+  const stripped = stripBlockComments(text.split("\n"));
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index] ?? "";
+  for (let index = 0; index < stripped.length; index += 1) {
+    const scan = stripped[index] ?? "";
     const lineNumber = index + 1;
-    let scan = raw;
-
-    if (inBlockComment) {
-      const close = raw.indexOf("*/");
-      if (close === -1) continue;
-      inBlockComment = false;
-      scan = raw.slice(close + 2);
-    }
-    // Strip any block comment that opens on this line; if it never closes, index the
-    // prefix before it and enter block-comment mode for the following lines.
-    for (;;) {
-      const open = scan.indexOf("/*");
-      if (open === -1) break;
-      const close = scan.indexOf("*/", open + 2);
-      if (close === -1) {
-        scan = scan.slice(0, open);
-        inBlockComment = true;
-        break;
-      }
-      scan = `${scan.slice(0, open)} ${scan.slice(close + 2)}`;
-    }
 
     for (const match of scan.matchAll(IDENTIFIER_TOKEN)) {
       const name = match[0];
@@ -754,12 +782,7 @@ export function extractReferenceShard(
   };
 }
 
-export interface ReferencePlan {
-  /** Reference shards carried verbatim from the previous snapshot (blob unchanged). */
-  readonly reuse: readonly ReferenceShard[];
-  /** Files whose references must be freshly extracted (blob new or previously absent). */
-  readonly toExtract: readonly SnapshotFileEntry[];
-}
+export type ReferencePlan = ShardPlan<ReferenceShard>;
 
 /**
  * Plan an incremental reference extraction — the exact analogue of
@@ -771,24 +794,82 @@ export function planIncrementalReferences(
   previousByBlob: ReadonlyMap<string, ReferenceShard>,
   extractorId: string,
 ): ReferencePlan {
-  const reuse: ReferenceShard[] = [];
-  const toExtract: SnapshotFileEntry[] = [];
-  const seen = new Set<string>();
-  for (const file of eligible) {
-    if (seen.has(file.blobOid)) continue;
-    seen.add(file.blobOid);
-    const prior = previousByBlob.get(file.blobOid);
-    if (prior && prior.extractor === extractorId) reuse.push(prior);
-    else toExtract.push(file);
-  }
-  return { reuse, toExtract };
+  return planIncremental(eligible, previousByBlob, extractorId);
 }
 
 /** Index a previous snapshot's reference shards by blobOid, for reuse planning. */
 export function indexReferenceShards(
   shards: readonly ReferenceShard[],
 ): Map<string, ReferenceShard> {
-  const index = new Map<string, ReferenceShard>();
-  for (const shard of shards) if (!index.has(shard.blobOid)) index.set(shard.blobOid, shard);
-  return index;
+  return indexByBlob(shards);
+}
+
+// ── The default deterministic IMPORT extractor (structural-imports-v1) ─────────
+//
+// The third per-blob family, and the one the context map's module batching is built
+// on: the repo-wide file-to-file import graph. Like its two siblings it is
+// deliberately SHALLOW and TEXTUAL — it matches the four import forms with the
+// shared regexes in `./import-specifiers` after stripping block comments, and does
+// NOT parse. That is what keeps it a pure, byte-reproducible function of the blob,
+// so an unchanged blob reuses its shard for free.
+//
+// The shard holds RAW specifiers, never resolved paths: relative resolution depends
+// on the IMPORTING FILE'S path, and a path in the shard bytes would break the
+// rename/copy reuse contract the other two families rely on. Resolution to real
+// file→file edges is a separate, equally deterministic step over the shard plus the
+// `files` inventory and the `scopes` table (`queryImportGraph`, project-context.ts).
+// Its honest, documented limits:
+//   - TEXTUAL: a specifier in a template literal or a line comment is recorded (an
+//     accepted false positive; block comments ARE stripped).
+//   - A COMPUTED specifier (`import(pathVariable)`) is invisible — no string, no match.
+//   - Type-only imports are indistinguishable from value imports.
+
+export const DEFAULT_IMPORT_EXTRACTOR_ID = "structural-imports-v1";
+
+/** Extract a source file's raw import specifiers. Same bytes ⇒ same specifiers, always. */
+export type SnapshotImportExtractor = (path: string, text: string) => string[];
+
+/**
+ * The default import extractor. Strips block comments, matches the four import
+ * forms, and returns the DISTINCT specifiers sorted in code-unit order — a
+ * deterministic pure function of the bytes.
+ */
+export const structuralImportExtractor: SnapshotImportExtractor = (path, text) => {
+  if (!SYMBOL_EXTENSIONS.has(extensionOf(path))) return [];
+  const specifiers = new Set(importSpecifiers(stripBlockComments(text.split("\n"))));
+  return [...specifiers].sort(byString);
+};
+
+/** Build an import shard for a file from its content and an extractor. */
+export function extractImportShard(
+  file: SnapshotFileEntry,
+  text: string,
+  extract: SnapshotImportExtractor = structuralImportExtractor,
+  extractorId: string = DEFAULT_IMPORT_EXTRACTOR_ID,
+): ImportShard {
+  return {
+    blobOid: file.blobOid,
+    extractor: extractorId,
+    imports: extract(file.path, text),
+  };
+}
+
+export type ImportPlan = ShardPlan<ImportShard>;
+
+/**
+ * Plan an incremental import extraction — the exact analogue of
+ * {@link planIncrementalSymbols}. A file whose `blobOid` already has an import
+ * shard from the same extractor is reused; otherwise it is queued for extraction.
+ */
+export function planIncrementalImports(
+  eligible: readonly SnapshotFileEntry[],
+  previousByBlob: ReadonlyMap<string, ImportShard>,
+  extractorId: string,
+): ImportPlan {
+  return planIncremental(eligible, previousByBlob, extractorId);
+}
+
+/** Index a previous snapshot's import shards by blobOid, for reuse planning. */
+export function indexImportShards(shards: readonly ImportShard[]): Map<string, ImportShard> {
+  return indexByBlob(shards);
 }

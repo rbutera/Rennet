@@ -32,6 +32,7 @@ import {
   type PatchFile,
   type Patchset,
 } from "@rennet/protocol";
+import { INDEX_EXTS, importSpecifiers, RESOLVE_EXTS, resolveRelative } from "./import-specifiers";
 
 /** The SmartBear/Cisco 400-LOC review ceiling (Architecture Plan D7 step 3). */
 export const DEFAULT_MAX_CHUNK_LOC = 400;
@@ -527,47 +528,10 @@ function layerOf(path: string): number {
 }
 
 // ── Import-derived dependency edges ──────────────────────────────────────────
-
-const IMPORT_PATTERNS: readonly RegExp[] = [
-  /\b(?:import|export)\b[^'"\n]*?\bfrom\s*['"]([^'"]+)['"]/g,
-  /\bimport\s*['"]([^'"]+)['"]/g,
-  /\brequire\(\s*['"]([^'"]+)['"]\s*\)/g,
-  /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g,
-];
-
-const RESOLVE_EXTS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
-const INDEX_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-
-/** POSIX-style resolution of a relative specifier against an importing file. */
-function resolveRelative(importerPath: string, spec: string): string {
-  const importerDir = importerPath.split("/").slice(0, -1);
-  const parts = [...importerDir, ...spec.split("/")];
-  const out: string[] = [];
-  for (const part of parts) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      out.pop();
-      continue;
-    }
-    out.push(part);
-  }
-  return out.join("/");
-}
-
-function importSpecifiers(lines: readonly string[]): string[] {
-  const specs: string[] = [];
-  for (const line of lines) {
-    for (const pattern of IMPORT_PATTERNS) {
-      pattern.lastIndex = 0;
-      let match = pattern.exec(line);
-      while (match !== null) {
-        if (match[1] !== undefined) specs.push(match[1]);
-        match = pattern.exec(line);
-      }
-    }
-  }
-  return specs;
-}
+//
+// The regexes and the resolution semantics live in `./import-specifiers`, shared
+// with the snapshot-wide import extractor so the changeset view and the repo-wide
+// import graph can never drift apart.
 
 function resolveToChangedFile(
   importerPath: string,

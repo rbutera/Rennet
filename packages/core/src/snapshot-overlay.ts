@@ -82,6 +82,10 @@ export function composeOverlay(
     base.references ?? [],
     target.references ?? [],
   );
+  const { upserts: importUpserts, tombstones: importTombstones } = shardDelta(
+    base.imports ?? [],
+    target.imports ?? [],
+  );
 
   return {
     schemaVersion: SNAPSHOT_OVERLAY_SCHEMA_VERSION,
@@ -98,6 +102,8 @@ export function composeOverlay(
     symbolTombstones,
     referenceUpserts,
     referenceTombstones,
+    importUpserts,
+    importTombstones,
   };
 }
 
@@ -144,6 +150,11 @@ export function mergeOverlay(
     overlay.referenceTombstones,
     overlay.referenceUpserts,
   );
+  const imports = applyShardDelta(
+    base.imports ?? [],
+    overlay.importTombstones,
+    overlay.importUpserts,
+  );
 
   return {
     schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
@@ -155,6 +166,7 @@ export function mergeOverlay(
     shards,
     symbols,
     references,
+    imports,
   };
 }
 
