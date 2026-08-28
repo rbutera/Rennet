@@ -72,12 +72,19 @@ way. The extraction is textual, the same limit the other two families carry: a
 specifier in a template literal or a line comment is recorded, and a computed
 `import(variable)` is invisible.
 
-Fan-in — how many other files depend on a changed file — reads this graph when the
-snapshot has one, and falls back to the identifier-reference index when it does not.
-The two answers are not interchangeable and the code does not let them be confused:
-an edge-backed count says files *import* the changed file, a textual count says
-files *reference its symbols*, and the fan-in index is a discriminated union so the
-weaker method cannot be handed to a consumer in the stronger one's shape.
+Fan-in — how many other files depend on a changed file — has two possible sources,
+and the code refuses to confuse them: an edge-backed count says files *import* the
+changed file, a textual count says files *reference its symbols*, and the fan-in
+index is a discriminated union, so the weaker method cannot be handed to a consumer
+in the stronger one's shape. `fanInIndexFromSnapshot` builds that index from a
+materialized snapshot, preferring the import graph and falling back to the
+identifier-reference index when the snapshot has no import shards.
+
+**Nothing consumes it yet.** The Delta packet builds its blast radius without a
+fan-in index, so the fan-in signal in a review today is marked *not assessed* — not
+zero, and not a textual count wearing an edge-backed label. Wiring the index into
+the packet is a later wave; until then the capability exists and the review does not
+use it.
 
 ## Confidence
 

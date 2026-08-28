@@ -1914,7 +1914,7 @@ export interface BuiltShard {
 /** The full result of a snapshot build: the manifest plus every shard's bytes by digest. */
 export interface BuiltSnapshot {
   readonly manifest: ProjectSnapshotManifest;
-  /** digest → canonical bytes, for every structural, symbol, and reference shard the manifest references. */
+  /** digest → canonical bytes, for every structural, symbol, reference, and import shard the manifest references. */
   readonly shards: ReadonlyMap<string, string>;
 }
 
@@ -2097,6 +2097,13 @@ export interface ContextSendRecord {
  * `referenceTombstones`), mirroring the symbol delta, so a merged non-default-base
  * view reconstructs the target's reference index byte-identically. A v1 overlay is
  * stale under v2 and re-derives.
+ *
+ * v3 adds the IMPORT-shard delta (`importUpserts` / `importTombstones`), the third
+ * per-blob family, on exactly the same terms: the merged view reconstructs the
+ * target's import index byte-identically, so a non-default-base review reads the
+ * same repo-wide import graph a clean build at that OID would produce. A v2 overlay
+ * is stale under v3 and re-derives — it must, because merging it would leave the
+ * import family empty, which reads as "no import edges" rather than "not indexed".
  */
 export const SNAPSHOT_OVERLAY_SCHEMA_VERSION = 3;
 
