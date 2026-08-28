@@ -19,6 +19,7 @@ import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
 import { TargetIcon } from "../shell/sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
+import { hideClaimedRows, targetOfRow, useClaimedTargets, useNewChatMint } from "./new-chat-mint";
 import {
   buildSmartRows,
   filterSmartRows,
@@ -45,16 +46,12 @@ const STATE_LABEL: Record<SessionTargetState, string> = {
 // composer carries the review target as a chip (X resets to the current checkout)
 // and its Send is inert while empty.
 //
-// The smart list (the review-target picker) is cluster 6.2; live session minting
-// from a row is the GATED cluster 7 (B9) behind `new-chat-mint.ts`. Cluster 6 builds
-// every surface it can against the projection seam — selection, not minting.
+// The smart list (the review-target picker) is cluster 6.2. A row click STARTS the
+// session (R26) — it is not a selection: it mints a durable session, claims the row's
+// target, and lands on the session, all through `new-chat-mint.ts` (C21). Cluster 6
+// shipped the picker while `session.*` was gated on B9 and a click did nothing; the
+// gate cleared, and this is the act it was waiting for.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** The chosen review target: the whole-project current checkout (default), or a row
- *  from the smart list. */
-export type NewChatTarget =
-  | { readonly kind: "checkout" }
-  | { readonly kind: "row"; readonly row: SmartRow };
 
 /** The tab vocabulary → smart-list filter. One list, no zones — the tabs are a filter. */
 const TABS: readonly { readonly filter: SmartFilter; readonly label: string }[] = [
@@ -90,13 +87,6 @@ function targetOf(row: SmartRow): { kind: SessionTarget; state?: SessionTargetSt
   return { kind: "teammate-pr", state: row.needsYou ? "needs-you" : undefined };
 }
 
-/** The composer chip's label for the current target. */
-function targetChipLabel(target: NewChatTarget, branch: string): string {
-  if (target.kind === "checkout") return `Current Checkout · ${branch}`;
-  const row = target.row;
-  return row.kind === "pr" ? `#${row.pr?.number} · ${row.branch}` : row.branch;
-}
-
 export function NewChatView({ projectId }: { readonly projectId: string }) {
   const [, navigate] = useLocation();
   const search = useSearch();
@@ -104,23 +94,28 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const projects = projectsData?.projects ?? [];
   const project = projects.find((candidate) => candidate.id === projectId);
 
-  const [target, setTarget] = useState<NewChatTarget>({ kind: "checkout" });
   // Seed the composer from an `?ask=` handoff (the context map's "discuss" lands here with
   // the statement prefilled) — read once on mount; the reviewer edits or sends from there.
   const [message, setMessage] = useState(() => new URLSearchParams(search).get("ask") ?? "");
   const [tab, setTab] = useState<SmartFilter>("all");
   const [filter, setFilter] = useState("");
 
+  // A row click STARTS the session (R26) — mint + claim + land, in one act.
+  const mint = useNewChatMint(projectId);
+  const claimed = useClaimedTargets(projectId);
+
   const { data: detail } = useCommand("project.detail", { projectId });
   const rows = useMemo(
     () => (detail ? sortSmartRows(buildSmartRows(detail), "hot") : []),
     [detail],
   );
-  const counts = useMemo(() => smartListCounts(rows), [rows]);
+  // Claim-dedup on resolve (#466 res. 11): a target a live session already claims is not
+  // offered again. Archive is the only release, so archiving that session puts the row back.
+  const unclaimed = useMemo(() => hideClaimedRows(rows, claimed), [rows, claimed]);
+  const counts = useMemo(() => smartListCounts(unclaimed), [unclaimed]);
   const needle = filter.trim().toLowerCase();
-  const visible = filterSmartRows(rows, tab).filter((row) => matchesText(row, needle));
-  const showRepo = new Set(rows.map(repoOf)).size > 1;
-  const selectedRowId = target.kind === "row" ? target.row.id : null;
+  const visible = filterSmartRows(unclaimed, tab).filter((row) => matchesText(row, needle));
+  const showRepo = new Set(unclaimed.map(repoOf)).size > 1;
 
   const close = () => navigate(newChatPath());
 
@@ -133,14 +128,6 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [navigate]);
-
-  // Switching project rewrites the URL; reset the target back to the checkout. projectId
-  // is the intended run trigger — the effect fires ON a project change to drop a stale
-  // row selection (6.2), it does not read projectId in its body.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: projectId is a run trigger, not a body reference.
-  useEffect(() => {
-    setTarget({ kind: "checkout" });
-  }, [projectId]);
 
   const branch = project?.primaryBranch ?? "main";
 
@@ -242,33 +229,43 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
           >
             <CheckoutRow
               branch={branch}
-              selected={target.kind === "checkout"}
-              onSelect={() => setTarget({ kind: "checkout" })}
+              pending={mint.pending}
+              onStart={() => mint.start(undefined, message)}
             />
             {visible.map((row) => (
               <ItemRow
                 key={row.id}
                 row={row}
                 showRepo={showRepo}
-                selected={selectedRowId === row.id}
-                onSelect={() => setTarget({ kind: "row", row })}
+                pending={mint.pending}
+                onStart={() => mint.start(targetOfRow(row), message)}
               />
             ))}
             {visible.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-ink-faint">
-                {rows.length === 0 ? "No open branches or pull requests yet." : "Nothing matches."}
+                {unclaimed.length === 0
+                  ? "No open branches or pull requests yet."
+                  : "Nothing matches."}
               </div>
             ) : null}
           </div>
+
+          {/* A failed mint says so, in the reason the host gave. Nothing is claimed to
+              have started, and the picker stays where it is so the click can be retried. */}
+          {mint.error ? (
+            <p role="alert" className="mt-3 text-center text-xs text-danger">
+              Could not start a session: {String((mint.error as Error)?.message ?? mint.error)}
+            </p>
+          ) : null}
         </div>
       </div>
 
       <Composer
-        target={target}
         branch={branch}
         message={message}
         onMessage={setMessage}
-        onResetTarget={() => setTarget({ kind: "checkout" })}
+        pending={mint.pending}
+        onSend={() => mint.start(undefined, message)}
       />
     </section>
   );
@@ -322,18 +319,21 @@ function ProjectPicker({
   );
 }
 
+/** The composer sends against the whole project — the "no target" chat the Current
+ *  Checkout row describes. A specific branch or pull request is started by clicking its
+ *  row, which is what claims it. */
 function Composer({
-  target,
   branch,
   message,
   onMessage,
-  onResetTarget,
+  pending,
+  onSend,
 }: {
-  readonly target: NewChatTarget;
   readonly branch: string;
   readonly message: string;
   readonly onMessage: (value: string) => void;
-  readonly onResetTarget: () => void;
+  readonly pending: boolean;
+  readonly onSend: () => void;
 }) {
   return (
     <div className="shrink-0 px-8 pt-2 pb-5">
@@ -348,31 +348,17 @@ function Composer({
         />
         <div className="flex items-center gap-2 px-3 pt-1 pb-2.5">
           <span className="flex items-center gap-1.5 rounded-chip border border-line bg-raised px-2 py-1 text-xs text-ink-soft">
-            <Icon
-              icon={target.kind === "row" && target.row.kind === "pr" ? GitPullRequest : GitBranch}
-              className="size-3 text-ink-faint"
-            />
-            {targetChipLabel(target, branch)}
-            {target.kind !== "checkout" ? (
-              <button
-                type="button"
-                onClick={onResetTarget}
-                aria-label="Reset target to current checkout"
-                className="flex size-3.5 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
-              >
-                ×
-              </button>
-            ) : null}
+            <Icon icon={GitBranch} className="size-3 text-ink-faint" />
+            Current Checkout · {branch}
           </span>
           <button
             type="button"
-            disabled={!message.trim()}
+            disabled={!message.trim() || pending}
+            onClick={onSend}
             aria-label="Send"
-            // Live minting is the GATED cluster 7 (B9) — the surface stops at the
-            // typed ask + target here; no fake session is started.
             className={cn(
               "ml-auto flex size-8 shrink-0 items-center justify-center rounded-control transition-colors disabled:cursor-not-allowed",
-              message.trim()
+              message.trim() && !pending
                 ? "bg-accent-fill text-accent-ink hover:opacity-90"
                 : "bg-raised text-ink-faint",
             )}
@@ -382,18 +368,6 @@ function Composer({
         </div>
       </div>
     </div>
-  );
-}
-
-function SelectionMark({ selected }: { readonly selected: boolean }) {
-  return (
-    <Icon
-      icon={Check}
-      className={cn(
-        "size-4 shrink-0 text-accent transition-opacity",
-        selected ? "opacity-100" : "opacity-0",
-      )}
-    />
   );
 }
 
@@ -409,57 +383,56 @@ function StateChip({ row }: { readonly row: SmartRow }) {
   );
 }
 
-/** The pinned "Current Checkout" row — the default target (whole project, no row). */
+/** The pinned "Current Checkout" row — starts a session with NO claimed target, the
+ *  whole-project chat. Claiming nothing, it never leaves the list. */
 function CheckoutRow({
   branch,
-  selected,
-  onSelect,
+  pending,
+  onStart,
 }: {
   readonly branch: string;
-  readonly selected: boolean;
-  readonly onSelect: () => void;
+  readonly pending: boolean;
+  readonly onStart: () => void;
 }) {
   return (
     <button
       type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={cn(
-        "flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors",
-        selected ? "bg-raised" : "hover:bg-raised/60",
-      )}
+      data-row="target"
+      onClick={onStart}
+      disabled={pending}
+      className="flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-60"
     >
       <Icon icon={GitBranch} className="size-3.5 shrink-0 text-ink-faint" />
       <span className="text-sm font-medium text-ink">Current Checkout</span>
       <span className="font-mono text-xs text-ink-soft">{branch}</span>
       <span className="ml-auto text-2xs text-ink-faint">no target — talk about the project</span>
-      <SelectionMark selected={selected} />
     </button>
   );
 }
 
+/** A review-target row. Clicking it STARTS the session (R26): mint + claim + land. */
 function ItemRow({
   row,
   showRepo,
-  selected,
-  onSelect,
+  pending,
+  onStart,
 }: {
   readonly row: SmartRow;
   readonly showRepo: boolean;
-  readonly selected: boolean;
-  readonly onSelect: () => void;
+  readonly pending: boolean;
+  readonly onStart: () => void;
 }) {
   const merged = row.state === "merged";
   return (
     <button
       type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
+      data-row="target"
+      onClick={onStart}
+      disabled={pending}
       className={cn(
-        "flex flex-col gap-1 px-3.5 py-2.5 text-left transition-colors",
-        selected ? "bg-raised" : "hover:bg-raised/60",
-        // Merged rows dim, and lift on hover/selection.
-        merged && !selected && "opacity-50 hover:opacity-80",
+        "flex flex-col gap-1 px-3.5 py-2.5 text-left transition-colors hover:bg-raised/60 disabled:cursor-not-allowed",
+        // Merged rows dim, and lift on hover.
+        merged && "opacity-50 hover:opacity-80",
       )}
     >
       {row.kind === "local" ? (
@@ -484,7 +457,6 @@ function ItemRow({
           ) : null}
           <span className="ml-auto flex shrink-0 items-center gap-2">
             <StateChip row={row} />
-            <SelectionMark selected={selected} />
           </span>
         </span>
       ) : (
@@ -498,7 +470,6 @@ function ItemRow({
             <span className="ml-auto flex shrink-0 items-center gap-2">
               <CiDot ci={row.pr?.ci} />
               <StateChip row={row} />
-              <SelectionMark selected={selected} />
             </span>
           </span>
           <span className="flex w-full items-center gap-2.5 pl-[22px] text-2xs text-ink-soft">

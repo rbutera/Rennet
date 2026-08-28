@@ -16,7 +16,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bindTarget, type MintSessionDeps, mintSession } from "@rennet/core";
-import type { Claim, Review, SessionModel } from "@rennet/protocol";
+import { type Claim, claimMatchesTarget, type Review, type SessionModel } from "@rennet/protocol";
+
+// The claim-match rule moved to `@rennet/protocol` (C21) so the client's New-Chat row-hide
+// decides with the SAME predicate this reattach does; re-exported here for its callers.
+export { claimMatchesTarget };
 
 /** A target a New-chat row resolves to: a branch and, when known, its PR number.
  *  The `Claim` the session binds is this same pair (branch + optional PR). */
@@ -37,16 +41,6 @@ export interface EntryStore {
 export interface EntryResult {
   readonly session: SessionModel;
   readonly reattached: boolean;
-}
-
-/**
- * A branch and its PR are ONE claimed thing (#466 res. 11): a target matches a
- * claim when the branch matches OR the PR number matches. So a row resolving to
- * the PR disappears behind a session that claimed the branch, and vice versa.
- */
-export function claimMatchesTarget(claim: Claim, target: Target): boolean {
-  if (claim.branch === target.branch) return true;
-  return claim.prNumber !== undefined && claim.prNumber === target.prNumber;
 }
 
 /**

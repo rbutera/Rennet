@@ -3,10 +3,15 @@
 // The New Chat view (C12 §10.8) over a MemoryBridge: the smart list is built from
 // `project.detail` through the reused `smart-list.ts`, the tabs filter with live
 // counts, the text filter matches the documented fields, Escape is two-stage (clear
-// the filter, then close), the headline project picker rewrites the URL and resets
-// the target, selecting a row ticks it, and the empty / filtered-empty copy is honest.
-// Live minting is the GATED cluster 7 (B9) — not exercised here.
-import type { Project, ProjectDetail } from "@rennet/protocol";
+// the filter, then close), the headline project picker rewrites the URL, and the empty /
+// filtered-empty copy is honest.
+//
+// C21 binds the mint (C12 cluster 7, gated on B9 and never returned to): a row click
+// STARTS the session — `session.mint` mints it and claims the target, the client lands on
+// `/s/<sessionId>` carrying the typed ask, and the claimed row LEAVES the list until its
+// session is archived. Those legs are driven here over a MemoryBridge holding a real
+// session list, with the row-vanish positive control both ways.
+import type { Project, ProjectDetail, SidebarSession } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router, useSearch } from "wouter";
 import { BridgeProvider } from "../data";
@@ -108,13 +113,60 @@ const EMPTY_DETAIL: ProjectDetail = {
   prs: [],
 };
 
+/**
+ * A MemoryBridge session store: `session.mint` really mints and claims (mint-or-reattach
+ * on the branch, as the host does), `session.list` really serves what was minted. So the
+ * row-vanish this suite proves is driven by a claim the click actually created.
+ */
+function sessionStore(seeded: SidebarSession[] = []) {
+  const sessions = [...seeded];
+  return {
+    sessions,
+    handlers: {
+      "session.list": () => ({ sessions: [...sessions] }),
+      "session.mint": (input: { projectId: string; branch?: string; prNumber?: number }) => {
+        const claimed =
+          input.branch === undefined
+            ? undefined
+            : sessions.find(
+                (s) => s.projectId === input.projectId && s.claim?.branch === input.branch,
+              );
+        if (claimed) return { session: claimed, reattached: true };
+        const session: SidebarSession = {
+          id: `sess-${sessions.length + 1}`,
+          projectId: input.projectId,
+          title: input.branch ?? "New review",
+          target: input.prNumber === undefined ? "your-branch" : "your-pr",
+          createdAt: 1,
+          ...(input.branch === undefined
+            ? {}
+            : {
+                claim: {
+                  branch: input.branch,
+                  ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
+                },
+              }),
+        };
+        sessions.push(session);
+        return { session, reattached: false };
+      },
+    },
+  };
+}
+
 /** Mount the view at /new-chat?project=<id>, resolving projectId from the URL exactly
  *  as the real `NewChatScreen` route does, so a picker navigation re-renders the view. */
-function renderView(id: string, details: Record<string, ProjectDetail>, ask?: string) {
+function renderView(
+  id: string,
+  details: Record<string, ProjectDetail>,
+  ask?: string,
+  store = sessionStore(),
+) {
   const history = memoryHistory(newChatPath(id, ask));
   const bridge = new MemoryBridge({
     "projects.list": () => ({ projects: [project("p1", "rennet"), project("p2", "whiteboard")] }),
     "project.detail": (input) => details[input.projectId] ?? EMPTY_DETAIL,
+    ...store.handlers,
   } satisfies MemoryBridgeHandlers);
 
   function Harness() {
@@ -129,15 +181,15 @@ function renderView(id: string, details: Record<string, ProjectDetail>, ask?: st
       </Router>
     </BridgeProvider>,
   );
-  return { ...view, history };
+  return { ...view, history, store };
 }
 
-/** The list row (a picker button with aria-pressed) carrying `name` — scoped to the
- *  rows so the composer's own "Current Checkout" chip text is never a false match. */
+/** The list row (`data-row="target"`) carrying `name` — scoped to the rows so the
+ *  composer's own "Current Checkout" chip text is never a false match. */
 function rowButton(name: RegExp): HTMLButtonElement {
   const match = screen
     .getAllByText(name)
-    .map((node) => node.closest("button[aria-pressed]"))
+    .map((node) => node.closest('button[data-row="target"]'))
     .find((button): button is HTMLButtonElement => button !== null);
   if (!match) throw new Error(`no row button for ${name}`);
   return match;
@@ -207,38 +259,14 @@ describe("NewChatView", () => {
     await waitFor(() => expect(history.history.at(-1)).toBe(newChatPath()));
   });
 
-  it("selecting a row ticks it and sets the composer target; the checkout is the default", async () => {
-    renderView("p1", { p1: detailP1() });
-    await screen.findByText("My open change");
-    const checkout = rowButton(/Current Checkout/);
-    expect(checkout.getAttribute("aria-pressed")).toBe("true");
-
-    const row = rowButton(/My open change/);
-    fireEvent.click(row);
-    expect(row.getAttribute("aria-pressed")).toBe("true");
-    expect(checkout.getAttribute("aria-pressed")).toBe("false");
-    // The composer chip now names the selected PR.
-    expect(screen.getByLabelText("Reset target to current checkout")).toBeTruthy();
-  });
-
-  it("the headline picker rewrites the URL and resets the target", async () => {
+  it("the headline picker rewrites the URL", async () => {
     const { history, user } = renderView("p1", { p1: detailP1(), p2: EMPTY_DETAIL });
     await screen.findByText("My open change");
 
-    // Select a row so there is a non-default target to reset.
-    fireEvent.click(rowButton(/My open change/));
-    expect(screen.getByLabelText("Reset target to current checkout")).toBeTruthy();
-
-    // Change the project via the headline picker.
     await user.click(screen.getByRole("button", { name: /^Project:/ }));
     await user.click(await screen.findByText("whiteboard"));
 
-    // URL rewritten to p2, and the target is back to the checkout (reset chip gone).
     await waitFor(() => expect(history.history.at(-1)).toBe(newChatPath("p2")));
-    await waitFor(() =>
-      expect(rowButton(/Current Checkout/).getAttribute("aria-pressed")).toBe("true"),
-    );
-    expect(screen.queryByLabelText("Reset target to current checkout")).toBeNull();
   });
 
   it("merged rows dim (read-only lift), single-repo drops the repo column", async () => {
@@ -269,5 +297,108 @@ describe("NewChatView", () => {
     expect(within(rowButton(/Old merged work/)).getByText("Merged")).toBeTruthy();
     // A mine open PR has no derived state → it reads by its kind, "Your PR".
     expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
+  });
+});
+
+describe("NewChatView — a row click starts the session (C21, R26)", () => {
+  it("mints a session, claims the PR target, and lands on it carrying the typed ask", async () => {
+    const { history, store } = renderView("p1", { p1: detailP1() });
+    await screen.findByText("My open change");
+
+    const composer = screen.getByLabelText("Message the orchestrator") as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "  Why is this diff so large?  " } });
+    fireEvent.click(rowButton(/My open change/));
+
+    // The mint really happened on the host: one session, claiming the row's branch AND
+    // its PR number (the two halves of one claimed thing).
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    expect(store.sessions[0]?.claim).toEqual({ branch: "feat/mine", prNumber: 201 });
+    // …and the client landed on THAT session's route, carrying the trimmed ask.
+    await waitFor(() =>
+      expect(history.history.at(-1)).toBe("/s/sess-1?ask=Why+is+this+diff+so+large%3F"),
+    );
+  });
+
+  it("the Current Checkout row starts a NO-TARGET session — it claims nothing", async () => {
+    const { history, store } = renderView("p1", { p1: detailP1() });
+    await screen.findByText("My open change");
+
+    fireEvent.click(rowButton(/Current Checkout/));
+
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    expect(store.sessions[0]?.claim).toBeUndefined();
+    // No ask typed ⇒ no `?ask=` on the route; nothing is invented.
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-1"));
+  });
+
+  it("POSITIVE CONTROL: a claimed row leaves the list, and comes back on archive", async () => {
+    // A live session already claiming `feat/mine` — exactly what the click above creates.
+    const claimed: SidebarSession = {
+      id: "sess-old",
+      projectId: "p1",
+      title: "feat/mine",
+      target: "your-pr",
+      createdAt: 1,
+      claim: { branch: "feat/mine" },
+    };
+    const withClaim = renderView("p1", { p1: detailP1() }, undefined, sessionStore([claimed]));
+    await screen.findByText("Teammate span fix");
+    // GONE — and the tab counts fall with it, so the list never advertises a row it hides.
+    expect(screen.queryByText("My open change")).toBeNull();
+    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("3");
+    withClaim.unmount();
+    cleanup();
+
+    // The SAME substrate with that session ARCHIVED (the only release): the row is back.
+    // If the filter keyed on anything but a live claim, this control would not flip.
+    renderView("p1", { p1: detailP1() }, undefined, sessionStore([{ ...claimed, archived: true }]));
+    expect(await screen.findByText("My open change")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("4");
+  });
+
+  it("the row a click just claimed is gone when New Chat is reopened", async () => {
+    const { history, store } = renderView("p1", { p1: detailP1() });
+    await screen.findByText("feat/local-x");
+    fireEvent.click(rowButton(/feat\/local-x/));
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-1"));
+    cleanup();
+
+    // Reopen New Chat against the SAME store the click wrote into: the target it claimed
+    // is not offered a second time (the host would reattach, not mint again).
+    renderView("p1", { p1: detailP1() }, undefined, store);
+    await screen.findByText("My open change");
+    expect(screen.queryByText("feat/local-x")).toBeNull();
+    expect(store.sessions).toHaveLength(1);
+  });
+
+  it("a failed mint says so and stays put — nothing is claimed to have started", async () => {
+    const history = memoryHistory(newChatPath("p1"));
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("p1", "rennet")] }),
+      "project.detail": () => detailP1(),
+      "session.list": () => ({ sessions: [] }),
+      "session.mint": () => {
+        throw new Error("session store unavailable");
+      },
+    } satisfies MemoryBridgeHandlers);
+
+    function Harness() {
+      const id = new URLSearchParams(useSearch()).get("project") ?? "";
+      return <NewChatView projectId={id} />;
+    }
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <Harness />
+        </Router>
+      </BridgeProvider>,
+    );
+
+    await screen.findByText("My open change");
+    fireEvent.click(rowButton(/My open change/));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("session store unavailable");
+    // Still on New Chat: a failed mint never navigates into a session that does not exist.
+    expect(history.history.at(-1)).toBe(newChatPath("p1"));
   });
 });
