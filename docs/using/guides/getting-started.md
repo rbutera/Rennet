@@ -88,8 +88,13 @@ guessing a percentage. If GitHub is unreachable, local work stays available.
 
 Clicking a row starts the session — it is not a selection you then confirm.
 Rennet mints the session and claims that target in one act, and takes you into
-it. Anything already typed in the composer travels with you as the opening ask.
-A claimed target leaves the list, so two sessions can never fight over one
+it. Anything already typed in the composer travels with you as the opening ask,
+waiting in the chat box rather than being sent for you.
+
+A new session opens with no review captured yet, so there is no change to show
+and nothing yet to ask the orchestrator about; the session says so, and the chat
+box waits rather than accepting a question it cannot answer. Capturing a review
+is what fills it. A claimed target leaves the list, so two sessions can never fight over one
 branch; clicking the same target again returns you to the session that owns it
 rather than starting a second. The pinned **Current Checkout** row is the
 exception: it starts a session about the project as a whole, claims nothing, and
