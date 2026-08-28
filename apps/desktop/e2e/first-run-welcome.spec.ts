@@ -13,8 +13,9 @@ import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./ha
 // the skip is paid for here: the wizard is driven, and the skip's own honesty is the last
 // assertion in the file.
 //
-// Model-free like the rest of the suite (`RENNET_DISABLE_HARNESS=1`), which decides how far a
-// deterministic drive can go — see the Review setup step.
+// Model-free like the rest of the suite (`RENNET_DISABLE_HARNESS=1`), so NO harness is detected
+// here. That used to be what stopped the drive at Review setup; it is now the interesting case —
+// the empty machine is precisely the one that was locked out, so this spec drives it through.
 // ─────────────────────────────────────────────────────────────────────────────
 
 test("the first-run welcome is what a first run gets, and completing it is what dismisses it", async () => {
@@ -64,18 +65,26 @@ test("the first-run welcome is what a first run gets, and completing it is what 
     await expect(page.getByText("Choose how Rennet reviews.")).toBeVisible();
     await expect(page.getByText("Rennet couldn’t detect Claude Code or Codex.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Check again" })).toBeVisible();
-    // ⚠️ AND THIS IS THE WALL. With nothing detected the step offers no Continue at all, so a
-    // first run on a machine without Claude Code or Codex cannot finish the welcome, cannot add
-    // a project, and cannot reach the app — by hand or from a test. It is why the rest of the
-    // suite settles the welcome through `settings.completeWelcome` instead of driving it: the
-    // steps beyond this one are unreachable in a deterministic, model-free run.
+    // ── THE WALL IS GONE, and this is where that is proved in the real app ──
+    // This block used to assert `toHaveCount(0)` on Continue: with nothing detected the step
+    // offered no Continue at all, so a first run on a machine without Claude Code or Codex
+    // could not finish the welcome, could not add a project, and could not reach the app —
+    // by hand or from a test. That was ruled a Rule Zero violation and a release blocker.
     //
-    // PINNED AS A FACT, NOT ENDORSED — ruled a Rule Zero violation and a release blocker, and
-    // being fixed in its own lane. When that lands, this assertion INVERTS: a Continue appears
-    // and the wizard becomes drivable to completion, so grep this marker and rewrite the block
-    // rather than deleting it. (`first-run-welcome.dom.test.tsx` asserts the same absence at
-    // unit level, under a title that reads as a feature — which is why it shipped.)
-    await expect(page.getByRole("button", { name: /^Continue$/ })).toHaveCount(0);
+    // Rennet now DISCLOSES the missing harness and lets the reviewer through. The consequence
+    // sentence is asserted because it is what REPLACED the wall: drop it silently and someone
+    // lands in the app with no idea why review turns never run, which is worse than the wall
+    // was — the wall at least explained itself.
+    await expect(page.getByText(/can’t run review turns until one is installed/)).toBeVisible();
+    const proceed = page.getByRole("button", { name: /^Continue$/ });
+    await expect(proceed).toBeEnabled();
+
+    // And it is a real exit, not merely a rendered button. This environment detects no harness
+    // — the exact machine that was trapped — and the wizard still advances. A button existing
+    // is not a button working, and only driving it proves which; `first-run-welcome.dom.test.tsx`
+    // carries the same drive at unit level, all the way to New Chat.
+    await proceed.click();
+    await expect(page.getByText("Add the code you’re responsible for.")).toBeVisible();
 
     // The step chips are real navigation, not decoration: a completed step is revisitable and
     // the appearance chosen above survived the round trip.
