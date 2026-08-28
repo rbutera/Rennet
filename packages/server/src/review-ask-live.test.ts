@@ -151,12 +151,12 @@ describe("buildOrchestratorAskPrompt", () => {
   });
 
   it("byte-bounds the diff at the declared ceiling", () => {
-    const huge = review();
+    const base = review();
+    const [first] = base.patchsets;
+    if (!first) throw new Error("the fixture review has no patchset");
     const fat: Review = {
-      ...huge,
-      patchsets: [
-        { ...huge.patchsets[0]!, rawDiff: "x".repeat(ORCHESTRATOR_ASK_DIFF_CEILING * 3) },
-      ],
+      ...base,
+      patchsets: [{ ...first, rawDiff: "x".repeat(ORCHESTRATOR_ASK_DIFF_CEILING * 3) }],
     };
     const prompt = buildOrchestratorAskPrompt(fat, "q");
     const diffRun = prompt.match(/x+/)?.[0] ?? "";
