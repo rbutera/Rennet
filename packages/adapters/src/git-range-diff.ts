@@ -274,6 +274,14 @@ export interface RangeCaptureInput {
   headOid: string;
   /** The base branch name, carried into provenance (e.g. `"main"`). */
   baseRef: string;
+  /**
+   * The head's branch ref, when the head IS a local branch (#587's New-Chat branch
+   * review). Carried into provenance so the round path's read-only session lookup
+   * (`resolveRoundSessionId`, which keys on `repository.headRef`) resolves a branch
+   * review onto the session that claimed that branch. A PR range leaves it absent —
+   * the head is a pinned OID from a remote, not a ref in this clone.
+   */
+  headRef?: string;
   /** How the content was sourced. Defaults to `"github-local"`. */
   source?: PatchsetSource;
   visibleByteLimit?: number;
@@ -340,6 +348,7 @@ export async function captureRangePatchset(
     baseRef,
     baseOid,
     headOid,
+    ...(input.headRef === undefined ? {} : { headRef: input.headRef }),
   };
   const id = createHash("sha256")
     .update(

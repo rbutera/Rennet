@@ -2050,6 +2050,13 @@ export const sidebarSessionSchema = z.object({
   claim: z
     .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
     .optional(),
+  /**
+   * The review this session holds (`SessionModel.reviewId`, 1:0..1 — referenced, never
+   * absorbed). New Chat's row click captures the target's change and attaches it here, so
+   * `/s/<sessionId>` resolves to the review workspace rather than the chat-only surface.
+   * Absent for a session nothing has been captured for yet — honestly, there is no diff.
+   */
+  reviewId: z.string().min(1).optional(),
   /** When the session was minted (epoch ms) — the client renders the relative line. */
   createdAt: z.number(),
 });

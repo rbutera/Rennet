@@ -19,7 +19,7 @@ import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
 import { TargetIcon } from "../shell/sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
-import { hideClaimedRows, targetOfRow, useClaimedTargets, useNewChatMint } from "./new-chat-mint";
+import { hideClaimedRows, useClaimedTargets, useNewChatMint } from "./new-chat-mint";
 import {
   buildSmartRows,
   filterSmartRows,
@@ -47,10 +47,10 @@ const STATE_LABEL: Record<SessionTargetState, string> = {
 // and its Send is inert while empty.
 //
 // The smart list (the review-target picker) is cluster 6.2. A row click STARTS the
-// session (R26) — it is not a selection: it mints a durable session, claims the row's
-// target, and lands on the session, all through `new-chat-mint.ts` (C21). Cluster 6
-// shipped the picker while `session.*` was gated on B9 and a click did nothing; the
-// gate cleared, and this is the act it was waiting for.
+// session AND its review (R26, #587) — it is not a selection: it mints a durable session,
+// claims the row's target, captures that target's change, and lands on the session, all
+// through `new-chat-mint.ts`. Cluster 6 shipped the picker while `session.*` was gated on
+// B9 and a click did nothing; the gate cleared, and this is the act it was waiting for.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The tab vocabulary → smart-list filter. One list, no zones — the tabs are a filter. */
@@ -238,7 +238,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                 row={row}
                 showRepo={showRepo}
                 pending={mint.pending}
-                onStart={() => mint.start(targetOfRow(row), message)}
+                onStart={() => mint.start(row, message)}
               />
             ))}
             {visible.length === 0 ? (

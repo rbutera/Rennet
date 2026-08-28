@@ -36,10 +36,31 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const name = "review.capture" as const;
       const input = parseCommandInput(name, rawInput);
       assertAllowedRepository(input.repoPath);
+      // Two sources, one command (#587). `branch` present ⇒ a pinned `base...head` range
+      // capture of a branch the reviewer clicked in New Chat — nothing is checked out and
+      // the working tree is untouched, so (like a PR review) it is a snapshot and is NOT
+      // wired into the freshness watcher. Absent ⇒ today's working-tree capture, unchanged.
+      if (input.branch !== undefined) {
+        if (!deps.captureBranch) {
+          throw new Error("This host cannot review a branch: no branch-capture engine is wired.");
+        }
+        const review = await deps.captureBranch(
+          input.commandId,
+          input.repoPath,
+          input.branch.head,
+          input.branch.base,
+        );
+        allowedRoots.add(review.repositoryRoot);
+        if (input.sessionId) deps.sessions?.attachReview(input.sessionId, review.id);
+        raiseReviewFinished(review);
+        deps.onReviewOpened?.(review);
+        return parseCommandOutput(name, { review });
+      }
       const review = await service.capture(input.commandId, input.repoPath, input.reviewId);
       allowedRoots.add(review.repositoryRoot);
       deps.setRepositoryDirty(false);
       deps.startWatching(review.repositoryRoot);
+      if (input.sessionId) deps.sessions?.attachReview(input.sessionId, review.id);
       raiseReviewFinished(review);
       deps.onReviewOpened?.(review);
       return parseCommandOutput(name, { review });
@@ -62,6 +83,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
         input.retrospective ?? false,
       );
       allowedRoots.add(review.repositoryRoot);
+      if (input.sessionId) deps.sessions?.attachReview(input.sessionId, review.id);
       raiseReviewFinished(review);
       deps.onReviewOpened?.(review);
       return parseCommandOutput(name, { review });

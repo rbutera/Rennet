@@ -22,6 +22,7 @@ import {
   AskLogStore,
   applyVisibilitySwitch,
   BoardMetaStore,
+  captureRangePatchset,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -1159,6 +1160,45 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
+   * Review a local BRANCH (#587) — the New Chat row click's engine. The reviewer clicks
+   * `feat/x`; we resolve its head OID and `git merge-base <base> <head>`, then take the
+   * `base...head` range through the SAME `captureRangePatchset` the PR source uses, with
+   * `source: "local"`.
+   *
+   * Nothing is checked out and the working tree is never touched, so — exactly like a PR
+   * review — this is a snapshot and stays off the freshness watcher. `headRef` is carried
+   * into provenance, so the round path's read-only session lookup resolves this review
+   * onto the session that claimed the branch.
+   *
+   * A branch with no unique commits (already merged, or identical to base) has
+   * `merge-base == head`, so the range is empty and the review is honestly empty — never
+   * a failed click.
+   */
+  async function captureBranch(
+    commandId: string,
+    repoPath: string,
+    head: string,
+    base: string,
+  ): Promise<Review> {
+    const git = gitForRepo(repoPath);
+    const root = (await git(repoPath, ["rev-parse", "--show-toplevel"])).trim();
+    const headOid = (await git(root, ["rev-parse", "--verify", `${head}^{commit}`])).trim();
+    // The merge-base, not the base tip: a branch behind its base must show ITS commits,
+    // not the base's arriving backwards as deletions.
+    const baseOid = (await git(root, ["merge-base", base, headOid])).trim();
+    const patchset = await captureRangePatchset(git, {
+      root,
+      baseOid,
+      headOid,
+      baseRef: base,
+      headRef: head,
+      source: "local",
+      projectSnapshotId: await ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
+    });
+    return service.createReviewFromPatchset(commandId, patchset);
+  }
+
+  /**
    * Source the per-project convention / anti-pattern catalogue (#180) for a review
    * from `<repositoryRoot>/.rennet/conventions.json`. Honest degradation: an absent,
    * unreadable, empty, or all-malformed file yields `undefined` and every lens runs
@@ -1966,6 +2006,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           : sessionStore.restore(sessionId);
         return session && sidebarSessionOf(session);
       },
+      // The captured review's binding (#587): New Chat's row click captures the clicked
+      // target's change and attaches it here, so `/s/<sessionId>` resolves to the review
+      // workspace rather than the chat-only surface.
+      attachReview: (sessionId, reviewId) => {
+        const session = sessionStore.attachReview(sessionId, reviewId);
+        return session && sidebarSessionOf(session);
+      },
     },
     // The lens-board read for `board.read` (C05 cluster 8, C18): the board this review's
     // session drafted for `(generation, lens)`, rebuilt from its two durable halves — the
@@ -2219,6 +2266,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }),
     chooseRepository,
     openPullRequest,
+    captureBranch,
     startWatching: (root: string) =>
       watcher.start(
         root,

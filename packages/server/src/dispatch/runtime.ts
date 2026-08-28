@@ -152,6 +152,20 @@ export interface DispatchDeps {
     retrospective: boolean,
   ): Promise<Review>;
   /**
+   * Capture a review of a BRANCH (#587) — the New Chat row click's engine. Resolves
+   * `head` and `git merge-base base head`, then takes the `base...head` range through the
+   * SAME `captureRangePatchset` the PR source uses, with `source: "local"`. No checkout
+   * switch; the working tree is never touched, so the review is a snapshot like a PR's.
+   * A branch with no unique commits yields an EMPTY patchset — an honestly empty review,
+   * never a failed click. Absent ⇒ `review.capture` with a `branch` is refused honestly.
+   */
+  captureBranch?(
+    commandId: string,
+    repoPath: string,
+    head: string,
+    base: string,
+  ): Promise<Review>;
+  /**
    * The reviewed PR's worktree + setup status (historical-PR review), `null` when
    * the review has none (a working-tree capture, or checkout failed). Read-only.
    */
@@ -591,6 +605,13 @@ export interface DispatchDeps {
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;
+    /**
+     * Attach a captured review to a session (#587) — the 1:0..1 reference the session
+     * model already declares. A session that already holds a review KEEPS it (a session
+     * attaches at most one review, `core/session/state.ts`), so this never rewrites
+     * history; the front door only captures for a session with none.
+     */
+    attachReview(sessionId: string, reviewId: string): SidebarSession | undefined;
   };
   /**
    * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board

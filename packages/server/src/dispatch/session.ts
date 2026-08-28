@@ -82,6 +82,10 @@ export function sidebarSessionOf(session: SessionModel): SidebarSession {
     // either half of it while the claim holds. A no-target session carries none, so it hides
     // nothing; archive is still the only release, read off `archived`.
     ...(session.claim === undefined ? {} : { claim: session.claim }),
+    // The attached review (#587): the front door captures the clicked target's change and
+    // binds it here, so `/s/<sessionId>` resolves to the review workspace. Absent means
+    // nothing has been captured for this session — honestly, there is no diff.
+    ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
     createdAt: session.createdAt,
   };
 }
