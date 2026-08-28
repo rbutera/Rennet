@@ -213,6 +213,11 @@ export function reattachToRows(result: ReattachResult): TurnRow[] {
 
 const EMPTY_REATTACH: ReattachResult = { threads: [], inFlight: [] };
 
+/** How much of the question is carried as the anchor's label. The anchor exists to key
+ *  persistence, not to duplicate the message, so a long question is clipped rather than
+ *  stored twice — the full text is the turn body. */
+const ANCHOR_LABEL_CEILING = 120;
+
 /**
  * Fold one ask-stream event into the `review.reattach` read (reconciliation 3). The
  * reducer honours the monotonic `seq` on the one event that APPENDS (`ask-delta`) —
@@ -506,6 +511,16 @@ export function useChatDock(): ChatDockModel {
         threadId,
         turnId,
         turnBody: text,
+        // Dispatch persists a turn ONLY when the ask carries an anchor
+        // (`dispatch/review.ts`), so without this the answer is lost on reload and
+        // `review.reattach` — this hook's own read — comes back empty. A chat turn
+        // hangs on the message, not on code, which is exactly what the wire schema's
+        // `fragment` kind is for: no `path`, keyed by the thread. No protocol change.
+        anchor: {
+          kind: "fragment",
+          label: text.slice(0, ANCHOR_LABEL_CEILING),
+          key: threadId,
+        },
       });
     },
     [ask, foldEcho, reviewId],

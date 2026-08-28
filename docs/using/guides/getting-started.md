@@ -169,9 +169,12 @@ comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
 **Say it in chat.** The chat column beside the surface is one continuous
-conversation with the orchestrator that travels with you across every board.
-Ask it something, tell it what you have concluded, and it stages the result and
-narrates the receipt in the transcript.
+conversation with the orchestrator that travels with you across every board. Ask
+it about the change and it runs a real turn on your own `claude` — grounded in
+this review's diff, able to read the repository — and streams the answer back as
+it arrives. The exchange persists, so it is still there after a reload. Chat
+answers; it does not yet stage asks for you. Stage those from the board, a line,
+or a highlighted span.
 
 ## Stage asks
 

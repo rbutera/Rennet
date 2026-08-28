@@ -174,13 +174,16 @@ flowchart LR
   registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
   registry -->|exposure.commandMenu| menu["⌘K command menu\napp-ui/shell/command-menu"]
   map --> handler["Family handler runs"]
-  tools -.->|exposure.agent (bridge exported, not yet wired)| turn["Orchestrator turn\n(rebuilt in B9/B11)"]
+  tools -.->|exposure.agent (bridge exported, not yet wired)| turn["Orchestrator turn\nserver/review-ask-live.ts"]
 ```
 
-The dashed edge is deliberate: the `app_*` projection is built and exported, but
-no production turn consumes it yet — the orchestrator turn that would invoke these
-tools was torn down in the Board rebuild (B2) and is re-seated by B9/B11. Today the
-bridge is a tested pure projection with no live caller.
+The dashed edge is deliberate. The orchestrator turn is live: a chat ask runs one
+capable `claude` turn through `claudeHandoffRunPort` and answers from the review's
+diff and the repository itself. What that turn does *not* yet carry is the `app_*`
+projection — binding it needs the SDK's in-process MCP server threaded through
+core and adapters, which is a build rather than wiring. So chat **answers**; it
+cannot yet **act** on the app. The bridge remains a tested pure projection with no
+live caller, and no surface claims otherwise.
 
 **Dispatch map.** `packages/server/src/dispatch/` binds a
 `Map<commandId, handler>` from the registry, one module per command family

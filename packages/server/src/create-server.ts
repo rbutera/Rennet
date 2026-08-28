@@ -2373,11 +2373,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // question reaches. The core `askReview` router (invoked in dispatch) still owns
     // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are
     // now the REAL invocation behind that law (replacing `reviewAskFixturePorts()`):
-    //   • askOrchestrator drives the live `claude` turn over the in-process
-    //     canvasOps@2 MCP server (`orchestratorTurn`) — the orchestrator reads the
-    //     review through context.map/file/novelty and answers. The pipeline it turns
-    //     over is a DETERMINISTIC-FLOOR build (no lens/model turns): the ask's model
-    //     spend is the one orchestrator turn, not a fresh lens review.
+    //   • askOrchestrator runs ONE capable `claude` turn at the review's repository
+    //     root, grounded in the active patchset's diff and free to read the repo.
+    //     The ask's model spend is that single turn, not a fresh lens review.
     //   • askCodex shells one `codex exec` over the diff + question (gated on the
     //     honestly-probed `codex` availability; an absent binary yields a legible
     //     "unavailable" answer, never a crash, so a "both" ask still returns the

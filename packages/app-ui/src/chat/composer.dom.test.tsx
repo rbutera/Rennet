@@ -129,5 +129,14 @@ describe("send fires review.ask through the seam (task 4.3, reconciliation 8)", 
     expect(asks[0]?.question).toBe("any public routes affected?");
     // Its RAW turn body is persisted so a re-attach shows what was asked (#251).
     expect(asks[0]?.turnBody).toBe("any public routes affected?");
+    // The ask carries a `fragment` anchor (F1, #570). Dispatch persists a turn ONLY
+    // when the ask is anchored, so WITHOUT this the answer is lost on reload and
+    // `review.reattach` — the dock's own read — comes back empty. A chat turn hangs
+    // on the message, not on code, so it carries no `path`.
+    expect(asks[0]?.anchor).toEqual({
+      kind: "fragment",
+      label: "any public routes affected?",
+      key: asks[0]?.threadId,
+    });
   });
 });

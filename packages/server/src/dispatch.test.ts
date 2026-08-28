@@ -14,6 +14,7 @@ import {
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
+  type HandoffRunPort,
   type PatchsetCapturePort,
   type ReviewCommentInput,
   type ReviewEvent,
@@ -46,6 +47,12 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import { InFlightReviews } from "./in-flight-reviews";
+import { LiveTurnRegistry } from "./live-turn-registry";
+import {
+  createLiveOrchestratorAsk,
+  createLiveReviewAskPorts,
+  NO_HARNESS_ANSWER,
+} from "./review-ask-live";
 
 const REPO = "/repo";
 
@@ -166,6 +173,9 @@ function harness(
     raiseAttention?: DispatchDeps["raiseAttention"];
     inFlightReviews?: DispatchDeps["inFlightReviews"];
     threadPersistence?: DispatchDeps["threadPersistence"];
+    /** Swap the recording spies for REAL ports (F1's E2E runs the live orchestrator
+     *  ask over a fake harness turn port through this seam). */
+    reviewAsk?: DispatchDeps["reviewAsk"];
     reattachThreads?: DispatchDeps["reattachThreads"];
     projectContextMap?: DispatchDeps["projectContextMap"];
     projectContextAsk?: DispatchDeps["projectContextAsk"];
@@ -359,7 +369,7 @@ function harness(
     // runner does) via `extra.flaggedReview`.
     flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
-    reviewAsk,
+    reviewAsk: extra.reviewAsk ?? reviewAsk,
     threadPersistence: extra.threadPersistence ?? threadPersistence,
     ...(extra.reattachThreads ? { reattachThreads: extra.reattachThreads } : {}),
     refineComment: refineCommentSpy,
@@ -4672,5 +4682,224 @@ describe("createDispatch — onReviewOpened (#461, B7)", () => {
     const captured = await capturedReview(dispatch);
     await dispatch("review.load", { commandId: randomUUID(), reviewId: captured.id });
     expect(opened).toEqual([captured.id]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F1 E2E (#570) — the REAL `review.ask` dispatch path over the REAL live ports
+// (`createLiveReviewAskPorts` + `createLiveOrchestratorAsk`) and the REAL durable
+// thread store, with only the harness TURN faked. Every layer between the chat
+// dock's mutation and the `claude` process is the shipped one, so this is what
+// actually broke: the canned answer, the missing stream source, and the anchor
+// that decides whether a turn is persisted at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A fake `HandoffRunPort`: replays `deltas` through `onDelta`, then completes. */
+function fakeTurnPort(finalText: string, deltas: readonly string[]): HandoffRunPort {
+  return (input) => {
+    for (const delta of deltas) input.onDelta?.(delta);
+    return Promise.resolve({ status: "completed", finalText });
+  };
+}
+
+/** The harness wired to the live ask ports and a real on-disk thread store. */
+function liveAskHarness(runPort: HandoffRunPort | null): {
+  h: ReturnType<typeof harness>;
+  raised: { family: string }[];
+  acknowledged: { attentionId?: string; reviewId?: string }[];
+} {
+  const store = new FileThreadStore(mkdtempSync(join(tmpdir(), "f1-threads-")));
+  const raised: { family: string }[] = [];
+  const acknowledged: { attentionId?: string; reviewId?: string }[] = [];
+  const h = harness(
+    undefined,
+    {},
+    {
+      // The REAL live-turn registry, so `review.interrupt` reaches the live turn.
+      liveTurns: new LiveTurnRegistry(),
+      reviewAsk: createLiveReviewAskPorts({
+        askOrchestrator: createLiveOrchestratorAsk({
+          resolveRunPort: () => Promise.resolve(runPort),
+        }),
+      }),
+      threadPersistence: {
+        upsertThread: (input) => store.upsertThread(input.reviewId, input),
+        putMessage: (input) => store.putMessage(input.reviewId, input.threadId, input.message),
+      },
+      reattachThreads: ({ reviewId }) =>
+        Promise.resolve({ threads: store.loadThreads(reviewId), inFlight: [] }),
+      raiseAttention: (event) => {
+        raised.push({ family: event.family });
+        return `${event.family}:${event.reviewId ?? "-"}`;
+      },
+      acknowledgeAttention: (selector) => {
+        acknowledged.push(selector);
+        return 1;
+      },
+    },
+  );
+  return { h, raised, acknowledged };
+}
+
+const CHAT_ANCHOR = { kind: "fragment" as const, label: "does b get used?", key: "th-1" };
+
+describe("F1 E2E — review.ask over the LIVE orchestrator port (#570)", () => {
+  it("streams the turn's real deltas, settles with its real answer, and survives a reload", async () => {
+    const { h, raised, acknowledged } = liveAskHarness(
+      fakeTurnPort("b is exported but never imported.", [
+        "b is ",
+        "exported but ",
+        "never imported.",
+      ]),
+    );
+    const review = await capturedReview(h.dispatch);
+    raised.length = 0;
+    const events: ReviewAskStreamEvent[] = [];
+    await h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "does b get used?",
+        threadId: "th-1",
+        turnId: "tn-1",
+        turnBody: "does b get used?",
+        anchor: CHAT_ANCHOR,
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+
+    // The deltas the FAKE TURN emitted reached the wire, in order — the streaming
+    // source cluster 1 lit. Before F1 the SDK emitted no partial frames at all, so
+    // this list was empty and the dock sat silent for the whole turn.
+    const deltas = events.filter((e) => e.kind === "ask-delta");
+    expect(deltas.map((e) => (e.kind === "ask-delta" ? e.delta : ""))).toEqual([
+      "b is ",
+      "exported but ",
+      "never imported.",
+    ]);
+    // Exactly one terminal, carrying the TURN's text — not a canned constant.
+    const terminals = events.filter(
+      (e) => e.kind === "ask-complete" || e.kind === "ask-interrupted",
+    );
+    expect(terminals).toHaveLength(1);
+    const complete = terminals[0];
+    const answer = complete?.kind === "ask-complete" ? complete.finalBody : "";
+    expect(answer).toBe("b is exported but never imported.");
+    expect(answer).not.toMatch(/Board rebuild/i);
+    // Every wire frame is schema-valid (no shape drift through the live port). `seq`
+    // is stamped by the ws-listener downstream, so supply one to check the rest.
+    for (const event of events) {
+      expect(() => reviewAskStreamEventSchema.parse({ seq: 1, ...event })).not.toThrow();
+    }
+    // The badge lifecycle still holds under a live port: raised, then cleared.
+    expect(raised.some((r) => r.family === "ask-pending")).toBe(true);
+    expect(raised.some((r) => r.family === "turn-failed")).toBe(false);
+    expect(acknowledged.some((a) => a.attentionId === `ask-pending:${review.id}`)).toBe(true);
+
+    // RELOAD: `review.reattach` is the dock's own read. The exchange is on disk.
+    const reattached = (await h.dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { threads: { messages: { author: string; body: string }[] }[] };
+    const bodies = reattached.threads.flatMap((t) => t.messages.map((m) => m.body));
+    expect(bodies).toContain("does b get used?");
+    expect(bodies).toContain("b is exported but never imported.");
+  });
+
+  it("POSITIVE CONTROL: without the anchor the answer is never persisted (reload loses it)", async () => {
+    // Dispatch persists a turn ONLY when the ask carries an anchor. This is exactly the
+    // state `main` shipped — the dock sent none — so a real answer vanished on reload and
+    // the dock's own reattach read came back empty. Drop the anchor from `send()` and this
+    // is what the reviewer gets.
+    const { h } = liveAskHarness(fakeTurnPort("b is exported but never imported.", ["b"]));
+    const review = await capturedReview(h.dispatch);
+    await h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "does b get used?",
+        threadId: "th-1",
+        turnId: "tn-1",
+        turnBody: "does b get used?",
+      },
+      { emitAskStream: () => undefined },
+    );
+    const reattached = (await h.dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { threads: unknown[] };
+    expect(reattached.threads).toEqual([]);
+  });
+
+  it("with NO harness installed it answers honestly, naming claude — never a plausible stand-in", async () => {
+    const { h } = liveAskHarness(null);
+    const review = await capturedReview(h.dispatch);
+    const events: ReviewAskStreamEvent[] = [];
+    await h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "does b get used?",
+        threadId: "th-1",
+        turnId: "tn-1",
+        turnBody: "does b get used?",
+        anchor: CHAT_ANCHOR,
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+    const complete = events.find((e) => e.kind === "ask-complete");
+    const answer = complete?.kind === "ask-complete" ? complete.finalBody : "";
+    // It settles (no silent hang) and it names the missing binary.
+    expect(answer).toBe(NO_HARNESS_ANSWER);
+    expect(answer).toMatch(/claude/);
+    expect(answer).not.toMatch(/Board rebuild/i);
+  });
+
+  it("review.interrupt mid-turn still yields EXACTLY ONE terminal under the live port", async () => {
+    let entered!: () => void;
+    const enteredP = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    // A turn that blocks until its abort fires, then swallows it and completes — the
+    // path that would flash a completed answer before the interrupted one.
+    const blockingPort: HandoffRunPort = async (input) => {
+      entered();
+      await new Promise<void>((resolve) => {
+        if (input.signal?.aborted) resolve();
+        else input.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { status: "completed", finalText: "too late" };
+    };
+    const { h } = liveAskHarness(blockingPort);
+    const review = await capturedReview(h.dispatch);
+    const events: ReviewAskStreamEvent[] = [];
+    const askPromise = h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "q",
+        threadId: "th-1",
+        turnId: "tn-1",
+        turnBody: "q",
+        anchor: CHAT_ANCHOR,
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+    await enteredP;
+    const interrupt = (await h.dispatch("review.interrupt", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { interrupted: number };
+    expect(interrupt).toEqual({ interrupted: 1 });
+    await askPromise;
+    const terminals = events.filter(
+      (e) => e.kind === "ask-complete" || e.kind === "ask-interrupted",
+    );
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.kind).toBe("ask-interrupted");
   });
 });
