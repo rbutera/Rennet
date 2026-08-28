@@ -375,11 +375,13 @@ describe("runCodexTurn", () => {
     // (app-server ThreadStartParams: "should not be materialized on disk").
     const withFlag = scriptedConnection(happyHandler());
     await drive(withFlag.conn, { ...PARAMS, ephemeral: true });
-    expect((withFlag.sent[2].params as Record<string, unknown>).ephemeral).toBe(true);
+    const started = withFlag.sent[2]?.params as Record<string, unknown>;
+    expect(started.ephemeral).toBe(true);
     // The agentic transport passes nothing, so the user's own thread still persists.
     const without = scriptedConnection(happyHandler());
     await drive(without.conn, PARAMS);
-    expect("ephemeral" in (without.sent[2].params as Record<string, unknown>)).toBe(false);
+    const persisted = without.sent[2]?.params as Record<string, unknown>;
+    expect("ephemeral" in persisted).toBe(false);
   });
 
   it("answers a server approval request with the method's schema-valid decision", async () => {
