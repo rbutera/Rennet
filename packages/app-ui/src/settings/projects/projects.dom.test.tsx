@@ -8,7 +8,7 @@
 // local copy; "Runs on" is a displayed detected fact with no control; the tracker's
 // REST fields carry only the env-var NAME; the guidance editor's Escape closes the
 // editor without bubbling to the takeover.
-import type { Project, SettingsProject } from "@rennet/protocol";
+import type { Project, SettingsProject, SettingsProjectValueKey } from "@rennet/protocol";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
@@ -482,7 +482,12 @@ function mountServedPrefs(): {
   guidanceWrites: { repoPath: string; rules: { rule: string; severity: string }[] }[];
   view: ReturnType<typeof mount>;
 } {
-  const writes: { key: string; value: string | null; repoPath: string }[] = [];
+  const writes: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsProjectValueKey;
+    value: string | null;
+  }[] = [];
   const guidanceWrites: { repoPath: string; rules: { rule: string; severity: string }[] }[] = [];
   const served = new MemoryBridge(
     {
@@ -497,8 +502,9 @@ function mountServedPrefs(): {
         projects: [{ ...P1_ROW, prefs: P1_PREFS }],
       }),
       "settings.setProjectValue": (input) => {
-        writes.push(input as (typeof writes)[number]);
-        return { status: "applied", key: (input as { key: string }).key, project: null };
+        const write = input as (typeof writes)[number];
+        writes.push(write);
+        return { status: "applied" as const, key: write.key, project: null };
       },
       "settings.setGuidance": (input) => {
         guidanceWrites.push(input as (typeof guidanceWrites)[number]);
