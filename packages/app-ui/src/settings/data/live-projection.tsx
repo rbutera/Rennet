@@ -1,5 +1,5 @@
 import { councilPickSchema, type ReviewRoleCell, type ReviewRoleMapping } from "@rennet/protocol";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useCommand, useMutation } from "../../data";
 import type { AgentToolId } from "../assets/agent-marks";
 import {
@@ -96,6 +96,17 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   });
   const [adopted, setAdopted] = useState<readonly ReviewRole[] | null>(null);
 
+  // The adoption covers exactly one gap — between a write's response and the read it
+  // invalidated coming back — and must not outlive it. `settings` is a cache snapshot,
+  // so its identity changes only when a fetch RESOLVES; that is disk answering, and the
+  // adoption is spent. Without this, `adopted ?? served` pins the surface to one write's
+  // answer forever and every later change from any other writer is invisible.
+  useEffect(() => {
+    // Guarding on the read itself is what makes `settings` a genuine dependency rather
+    // than a bare re-run trigger: only a LANDED read retires the adoption.
+    if (settings !== undefined) setAdopted(null);
+  }, [settings]);
+
   const projection = useMemo<SettingsProjection>(() => {
     const localAgents: readonly DetectedTool[] = (data?.detected ?? []).map(
       (harness): DetectedTool => ({
@@ -111,10 +122,13 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     );
     const agentsByHost: Record<string, readonly DetectedTool[]> =
       localAgents.length > 0 ? { [LOCAL_HOST_ID]: localAgents } : {};
-    // The freshest truth wins. A write's response is the resolver's answer AFTER the
-    // write, so it outranks the `settings.get` read it just invalidated — the cell
-    // settles at once instead of blinking back to the pre-write value. The refetch
-    // then agrees; nothing here recomputes a value the daemon did not return.
+    // The freshest truth wins, but only until disk answers. A write's response is the
+    // resolver's answer AFTER the write, so it outranks the `settings.get` read it just
+    // invalidated — the cell settles at once instead of blinking back to the pre-write
+    // value. `adopted` is then DROPPED the moment the invalidated read lands (the effect
+    // below), so the surface goes back to rendering served bytes and a later change from
+    // any other writer is not masked by a stale adoption. Nothing here recomputes a value
+    // the daemon did not return.
     const served = settings?.reviewRoles?.map(toReviewRole);
     return {
       ...EMPTY_SETTINGS_PROJECTION,
