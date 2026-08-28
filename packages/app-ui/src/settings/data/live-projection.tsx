@@ -86,8 +86,10 @@ import {
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
-//   – nameByProject / glyphByProject / worktreeByProject / trackerByProject: no served
-//     write command (the composition's `setTrackerValue` / `worktreeBaseDir` are unwired).
+//   – glyphByProject / worktreeByProject / trackerByProject: no served write command (the
+//     composition's `setTrackerValue` / `worktreeBaseDir` are unwired). The project NAME is
+//     the exception — it writes through `project.rename` (C18) and reads back off
+//     `projects.list`, so `nameEditsPersist` is true while `projectEditsPersist` is not.
 //   – guidanceByProject: `settings.guidance` is a READ only; no guidance-WRITE command.
 //
 // This provider wraps the live Settings takeover. Tests that mount a page directly
@@ -214,6 +216,13 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const { mutate: writeRole } = useMutation("settings.setRoleAssignment", {
     invalidates: ["settings.get"],
   });
+  // The project NAME write (C18): `project.rename` persists to the projects store, and the
+  // read is `projects.list` itself — the renamed `project.name` IS what the Identity field
+  // shows, so no second read-model is needed. An emptied name restores the org/repo
+  // identity host-side (R67).
+  const { mutate: renameProject } = useMutation("project.rename", {
+    invalidates: ["projects.list"],
+  });
   const [adopted, setAdopted] = useState<readonly ReviewRole[] | null>(null);
 
   // The adoption covers exactly one gap — between a write's response and the read it
@@ -304,6 +313,14 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
 
     return {
       ...EMPTY_SETTINGS_PROJECTION,
+      // The name has a served write; the glyph / worktree / tracker / guidance editors
+      // still do not, so `projectEditsPersist` stays false and they stay disabled.
+      nameEditsPersist: true,
+      setProjectName: (projectId, name) => {
+        // A refused write leaves the field where it was — the invalidated `projects.list`
+        // is the honest answer, never a fabricated rename.
+        void renameProject({ projectId, name }).catch(() => undefined);
+      },
       hosts,
       sourceControlByHost,
       agentsByHost,
@@ -383,6 +400,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     update,
     adopted,
     writeRole,
+    renameProject,
   ]);
 
   return <SettingsProjectionProvider value={projection}>{children}</SettingsProjectionProvider>;

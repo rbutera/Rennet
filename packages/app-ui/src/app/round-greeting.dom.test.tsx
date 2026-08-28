@@ -13,7 +13,6 @@
 import type { Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
-import { BoardSourceProvider } from "../board/board-data";
 import { BridgeProvider } from "../data";
 import { RoundGreeting } from "../rounds/round-greeting";
 import type { RoundState } from "../rounds/round-machine";
@@ -22,7 +21,7 @@ import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, mount } from "../test/dom";
-import { fixtureBoardSource } from "../test/fixtures/boards";
+import { fixtureBoardRead } from "../test/fixtures/boards";
 import {
   createTimelineRoundsSource,
   FIXTURE_ROUND_COMPLETE_TICK,
@@ -53,13 +52,11 @@ function renderWorkspace(opts: { startTick: number; armed: boolean }) {
   const timeline = createTimelineRoundsSource({ startTick: opts.startTick });
   const history = memoryHistory("/s/s-1");
   const r = mount(
-    <BridgeProvider bridge={new MemoryBridge({})}>
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <BoardSourceProvider value={fixtureBoardSource}>
-          <RoundsSourceProvider value={timeline.source}>
-            <ReviewWorkspace review={review} />
-          </RoundsSourceProvider>
-        </BoardSourceProvider>
+        <RoundsSourceProvider value={timeline.source}>
+          <ReviewWorkspace review={review} />
+        </RoundsSourceProvider>
       </Router>
     </BridgeProvider>,
   );
@@ -126,13 +123,11 @@ function renderComposedWithReport(reportBoard: () => unknown) {
   };
   const history = memoryHistory("/s/s-1");
   return mount(
-    <BridgeProvider bridge={new MemoryBridge({})}>
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <BoardSourceProvider value={fixtureBoardSource}>
-          <RoundsSourceProvider value={source}>
-            <ReviewWorkspace review={review} />
-          </RoundsSourceProvider>
-        </BoardSourceProvider>
+        <RoundsSourceProvider value={source}>
+          <ReviewWorkspace review={review} />
+        </RoundsSourceProvider>
       </Router>
     </BridgeProvider>,
   );

@@ -26,7 +26,6 @@ import { join } from "node:path";
 import type { ProcessedRepoSummary, Project, ProjectDetail, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
-import { BoardSourceProvider } from "../board/board-data";
 import { LensBoardView } from "../board/board-view";
 import { BridgeProvider } from "../data";
 import { ExitFab } from "../handoff/fab";
@@ -38,8 +37,8 @@ import { memoryHistory } from "../routes/history";
 import { projectIndexingPath } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, cleanup, mount, waitFor } from "../test/dom";
-import { fixtureBoardSource } from "../test/fixtures/boards";
-import { SettingsStore, settingsBridge } from "../test/fixtures/settings";
+import { fixtureBoardRead } from "../test/fixtures/boards";
+import { SettingsStore } from "../test/fixtures/settings";
 import { MemoryBridge } from "../test/memory-bridge";
 import { MARKS, type MarkId } from "./marks";
 import { CoachDataProvider } from "./provider";
@@ -82,7 +81,7 @@ function AnchorReadout({ id }: { id: MarkId }) {
 
 function mountSurface(surface: React.ReactNode, probes: MarkId[]) {
   return mount(
-    <BridgeProvider bridge={settingsBridge()}>
+    <BridgeProvider bridge={bridgeWith({})}>
       <CoachDataProvider>
         {surface}
         {probes.map((id) => (
@@ -139,7 +138,11 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 
 /** Merge the settings handlers (for CoachDataProvider) with a surface's own commands. */
 function bridgeWith(handlers: ConstructorParameters<typeof MemoryBridge>[0]): MemoryBridge {
-  return new MemoryBridge({ ...new SettingsStore().handlers(), ...handlers });
+  return new MemoryBridge({
+    "board.read": fixtureBoardRead,
+    ...new SettingsStore().handlers(),
+    ...handlers,
+  });
 }
 
 describe("every coach anchor resolves (C13 Cluster 5)", () => {
@@ -157,9 +160,7 @@ describe("every coach anchor resolves (C13 Cluster 5)", () => {
   it("board surface — lenses and highlight each resolve to a live element", async () => {
     useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } });
     const { getByTestId } = mountSurface(
-      <BoardSourceProvider value={fixtureBoardSource}>
-        <LensBoardView generation="gen1" generations={["gen0", "gen1", "gen2"]} />
-      </BoardSourceProvider>,
+      <LensBoardView reviewId="rev-1" generation="gen1" generations={["gen0", "gen1", "gen2"]} />,
       ["lenses", "highlight"],
     );
     await waitFor(() => expect(getByTestId("el-lenses").textContent).not.toBe("none"));

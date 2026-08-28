@@ -8,18 +8,13 @@
 // recent (fuzzy-time parse) / project / title; a row opens its session; Unarchive calls
 // `restoreSession`, un-archiving the row (release is archive-only, never a delete).
 import type { Project } from "@rennet/protocol";
-import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { newChatPath, sessionPath } from "../routes/url";
-import {
-  type SidebarSession,
-  type SidebarSessionProjection,
-  SidebarSessionProjectionProvider,
-} from "../shell/sidebar-data";
 import { cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
+import { type SessionSeed, sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge } from "../test/memory-bridge";
 import { ArchivedView } from "./archived-view";
 
@@ -40,25 +35,38 @@ function project(id: string, name: string, path: string): Project {
   };
 }
 
-function session(over: Partial<SidebarSession> = {}): SidebarSession {
+/** The compact age tokens these fixtures use, as an age in ms (the row's `time` line is
+ *  derived from `createdAt` by the sidebar seam, so the seed carries the timestamp). */
+const AGE_MS: Record<string, number> = {
+  now: 0,
+  "2d": 2 * 86_400_000,
+  "3w": 21 * 86_400_000,
+};
+
+function session(over: Partial<SessionSeed> & { time?: string } = {}): SessionSeed {
+  const { time, ...rest } = over;
   return {
     id: "s1",
-    slug: "s1",
+    projectId: "p1",
     title: "Review the auth refactor",
-    time: "2d",
     target: "your-branch",
     archived: true,
-    ...over,
+    createdAt: Date.now() - (AGE_MS[time ?? "2d"] ?? 0),
+    ...rest,
   };
 }
 
 /**
- * Mounts ArchivedView with a stateful projection so Unarchive genuinely mutates it, over
- * two projects (rennet / webapp) so project-name search + project sort have something to
- * discriminate. `sessionsByProject` keys the projection; `projects.list` supplies the tree.
+ * Mounts ArchivedView over the stateful `session.*` fixture, so Unarchive genuinely
+ * writes and the re-read returns the restored row — the same served path the live client
+ * takes. Two projects (rennet / webapp) so project-name search + project sort have
+ * something to discriminate; `projects.list` supplies the tree.
  */
-function renderArchived(byProject: Record<string, SidebarSession[]>) {
+function renderArchived(byProject: Record<string, SessionSeed[]>) {
   const history = memoryHistory("/archived");
+  const seeds = Object.entries(byProject).flatMap(([projectId, rows]) =>
+    rows.map((row) => ({ ...row, projectId })),
+  );
   const bridge = new MemoryBridge({
     "projects.list": () => ({
       projects: [
@@ -66,36 +74,13 @@ function renderArchived(byProject: Record<string, SidebarSession[]>) {
         project("p2", "webapp", "/home/rai/webapp"),
       ],
     }),
+    ...sessionHandlers(seeds),
   });
-  function Harness() {
-    const [rows, setRows] = useState(byProject);
-    const projection: SidebarSessionProjection = {
-      sessionsByProject: rows,
-      renameSession: () => undefined,
-      setSessionPinned: () => undefined,
-      archiveSession: () => undefined,
-      restoreSession: (id) =>
-        setRows((prev) =>
-          Object.fromEntries(
-            Object.entries(prev).map(([pid, list]) => [
-              pid,
-              list.map((s) => (s.id === id ? { ...s, archived: false } : s)),
-            ]),
-          ),
-        ),
-      renameProject: () => undefined,
-    };
-    return (
-      <SidebarSessionProjectionProvider value={projection}>
-        <ArchivedView />
-      </SidebarSessionProjectionProvider>
-    );
-  }
   return {
     ...mount(
       <BridgeProvider bridge={bridge}>
         <Router hook={history.hook} searchHook={history.searchHook}>
-          <Harness />
+          <ArchivedView />
         </Router>
       </BridgeProvider>,
     ),
@@ -206,7 +191,7 @@ describe("ArchivedView — C10 §9 enrichment", () => {
   });
 
   it("opens the session when its row is selected", async () => {
-    const { history } = renderArchived({ p1: [session({ slug: "auth-refactor" })] });
+    const { history } = renderArchived({ p1: [session({ id: "auth-refactor" })] });
     const title = await waitFor(() => screen.getByText("Review the auth refactor"));
     fireEvent.click(title);
     expect(history.history.at(-1)).toBe(sessionPath("auth-refactor"));

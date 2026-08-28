@@ -14,12 +14,8 @@ import { memoryHistory } from "../routes/history";
 import { cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { fixtureCompletedRoundsSource } from "../test/fixtures/rounds";
+import { type SessionSeed, sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge } from "../test/memory-bridge";
-import {
-  type SidebarSession,
-  type SidebarSessionProjection,
-  SidebarSessionProjectionProvider,
-} from "./sidebar-data";
 import { TopBar } from "./top-bar";
 
 afterEach(cleanup);
@@ -39,35 +35,18 @@ function project(id: string, name: string): Project {
   };
 }
 
-const SESSIONS: Record<string, readonly SidebarSession[]> = {
-  p1: [
-    {
-      id: "s2",
-      slug: "s2",
-      title: "Beta",
-      time: "1d",
-      target: "your-pr",
-      targetState: "needs-you",
-    },
-  ],
-};
+const SESSIONS: readonly SessionSeed[] = [
+  { id: "s1", projectId: "p1", title: "Alpha", target: "your-branch" },
+  { id: "s2", projectId: "p1", title: "Beta", target: "your-pr", targetState: "needs-you" },
+];
 
 function mountTopBar(path: string, rounds?: RoundsSource) {
   const history = memoryHistory(path);
-  const bridge = new MemoryBridge(frontDoorHandlers([project("p1", "atlas")]));
-  const projection: SidebarSessionProjection = {
-    sessionsByProject: SESSIONS,
-    renameSession: () => undefined,
-    setSessionPinned: () => undefined,
-    archiveSession: () => undefined,
-    restoreSession: () => undefined,
-    renameProject: () => undefined,
-  };
-  const inner = (
-    <SidebarSessionProjectionProvider value={projection}>
-      <TopBar />
-    </SidebarSessionProjectionProvider>
-  );
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers([project("p1", "atlas")]),
+    ...sessionHandlers(SESSIONS),
+  });
+  const inner = <TopBar />;
   const utils = mount(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>

@@ -24,7 +24,13 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // per-host mirror of harness.hosts, so a WSL card shows ITS own `gh` instead of a section
 // it is structurally incapable of filling) and daemon.update (C17 cluster 6 — the real
 // per-host daemon update behind the Update Daemon button, honest when there is no
-// mechanism for that host). A
+// mechanism for that host), plus board.read (C18 — the lens-board read B3 froze the shape
+// for and left to "B4/B10's business": the persisted board for one (reviewId, generation,
+// lens), honest-null when that lens drafted no board that generation), plus project.rename
+// (C18 — the C12 cluster-7 write both the sidebar row and the Settings identity field call,
+// where an emptied name restores the org/repo fallback) and the four session commands the
+// sidebar honest-empty projection was waiting on (session.list plus rename/setPinned/
+// archive, each persisted so it survives reload). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row.
 const ABSORBED_IDS = [
@@ -42,6 +48,7 @@ const ABSORBED_IDS = [
   "ask.stage",
   "ask.unstage",
   "attention.acknowledge",
+  "board.read",
   "daemon.reconnect",
   "daemon.status",
   "daemon.update",
@@ -76,6 +83,7 @@ const ABSORBED_IDS = [
   "project.discover",
   "project.knowledgeDisposition",
   "project.process",
+  "project.rename",
   "projects.add",
   "projects.list",
   "projects.remove",
@@ -104,7 +112,11 @@ const ABSORBED_IDS = [
   "review.symbolLookup",
   "review.uiEvidence",
   "round.dispatch",
+  "session.archive",
+  "session.list",
+  "session.rename",
   "session.rounds",
+  "session.setPinned",
   "session.transcript",
   "settings.get",
   "settings.guidance",
@@ -142,7 +154,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(87);
+    expect(ABSORBED_IDS).toHaveLength(93);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

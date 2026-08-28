@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 //
-// The sidebar (C03 §2–3) over a MemoryBridge: the projects half is real
-// (`projects.list` / `projects.remove`), the sessions half rides the B9 projection
-// context (reconciliation 2) so rename / pin / archive / highlight are provable
-// today. Zero props — every read and write resolves through `sidebar-data`, folds
-// through the `ui` slice, highlight from the route.
+// The sidebar (C03 §2–3) over a MemoryBridge: BOTH halves are real commands now
+// (`projects.list` / `projects.remove`, and the C18 `session.*` family). The session
+// fixture is a stateful store behind the bridge, so rename / pin / archive are proven
+// through the same served-write-then-re-read path the live client takes. Zero props —
+// every read and write resolves through `sidebar-data`, folds through the `ui` slice,
+// highlight from the route.
 import type { Project } from "@rennet/protocol";
-import { type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { useUpdateReady } from "../../components/update-ready";
@@ -15,13 +15,9 @@ import { memoryHistory } from "../../routes/history";
 import { useRennetStore } from "../../store";
 import { cleanup, fireEvent, mount, waitFor } from "../../test/dom";
 import { frontDoorHandlers } from "../../test/fixtures/front-door";
+import { type SessionSeed, sessionHandlers } from "../../test/fixtures/sessions";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../../test/memory-bridge";
 import { SIDEBAR_PANEL_WIDTH } from "../constants";
-import {
-  type SidebarSession,
-  type SidebarSessionProjection,
-  SidebarSessionProjectionProvider,
-} from "../sidebar-data";
 import { Sidebar } from "./sidebar";
 
 afterEach(() => {
@@ -54,50 +50,9 @@ function project(id: string, name: string, source = "local"): Project {
   };
 }
 
-type SessionMap = Record<string, readonly SidebarSession[]>;
-
-/** A state-backed projection so a mutation re-renders the tree (the row appears /
- *  disappears / renames), exactly as B9's real projection will once it lands. */
-function Harness({
-  bridge,
-  history,
-  seed,
-}: {
-  readonly bridge: MemoryBridge;
-  readonly history: ReturnType<typeof memoryHistory>;
-  readonly seed: SessionMap;
-}): ReactNode {
-  const [sessions, setSessions] = useState<SessionMap>(seed);
-  const map = (id: string, patch: (s: SidebarSession) => SidebarSession): void =>
-    setSessions((prev) => {
-      const next: SessionMap = {};
-      for (const [pid, rows] of Object.entries(prev)) {
-        next[pid] = rows.map((s) => (s.id === id ? patch(s) : s));
-      }
-      return next;
-    });
-  const projection: SidebarSessionProjection = {
-    sessionsByProject: sessions,
-    renameSession: (id, title) => map(id, (s) => ({ ...s, title })),
-    setSessionPinned: (id, pinned) => map(id, (s) => ({ ...s, pinned })),
-    archiveSession: (id) => map(id, (s) => ({ ...s, archived: true })),
-    restoreSession: (id) => map(id, (s) => ({ ...s, archived: false })),
-    renameProject: () => undefined,
-  };
-  return (
-    <BridgeProvider bridge={bridge}>
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <SidebarSessionProjectionProvider value={projection}>
-          <Sidebar />
-        </SidebarSessionProjectionProvider>
-      </Router>
-    </BridgeProvider>
-  );
-}
-
 function mountSidebar(opts: {
   projects?: readonly Project[];
-  sessions?: SessionMap;
+  sessions?: readonly SessionSeed[];
   path?: string;
   extraHandlers?: MemoryBridgeHandlers;
   platform?: string;
@@ -106,28 +61,32 @@ function mountSidebar(opts: {
   const bridge = new MemoryBridge(
     {
       ...frontDoorHandlers(opts.projects ?? []),
+      ...sessionHandlers(opts.sessions ?? []),
       ...opts.extraHandlers,
     },
     { platform: opts.platform },
   );
-  const utils = mount(<Harness bridge={bridge} history={history} seed={opts.sessions ?? {}} />);
+  const utils = mount(
+    <BridgeProvider bridge={bridge}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <Sidebar />
+      </Router>
+    </BridgeProvider>,
+  );
   return { ...utils, history, bridge };
 }
 
-const SESSIONS: SessionMap = {
-  p1: [
-    { id: "s1", slug: "s1", title: "Alpha", time: "2h", target: "your-branch" },
-    {
-      id: "s2",
-      slug: "s2",
-      title: "Beta",
-      time: "1d",
-      target: "your-pr",
-      targetState: "needs-you",
-      unread: true,
-    },
-  ],
-};
+const SESSIONS: readonly SessionSeed[] = [
+  { id: "s1", projectId: "p1", title: "Alpha", target: "your-branch" },
+  {
+    id: "s2",
+    projectId: "p1",
+    title: "Beta",
+    target: "your-pr",
+    targetState: "needs-you",
+    unread: true,
+  },
+];
 
 describe("sidebar structure (C03 §2)", () => {
   it("collapses the panel to the rail, writing ui.sidebarOpen both ways", async () => {
@@ -197,11 +156,7 @@ describe("sidebar structure (C03 §2)", () => {
     cleanup();
     const some = mountSidebar({
       projects: [project("p1", "atlas")],
-      sessions: {
-        p1: [
-          { id: "s9", slug: "s9", title: "Old", time: "3d", target: "your-branch", archived: true },
-        ],
-      },
+      sessions: [{ id: "s9", projectId: "p1", title: "Old", archived: true }],
     });
     expect(await some.findByText("Archived")).toBeTruthy();
   });
@@ -227,18 +182,9 @@ describe("sidebar tree (C03 §3)", () => {
   it("shows a reviewed session's green tick beside the title (R36), not a recolored icon", async () => {
     const { findByLabelText } = mountSidebar({
       projects: [project("p1", "atlas")],
-      sessions: {
-        p1: [
-          {
-            id: "s1",
-            slug: "s1",
-            title: "Done",
-            time: "2h",
-            target: "your-pr",
-            targetState: "reviewed",
-          },
-        ],
-      },
+      sessions: [
+        { id: "s1", projectId: "p1", title: "Done", target: "your-pr", targetState: "reviewed" },
+      ],
     });
     // The separate tick carries the "Reviewed" name; the leading target icon stays "Your PR".
     expect(await findByLabelText("Reviewed")).toBeTruthy();

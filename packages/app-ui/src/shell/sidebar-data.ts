@@ -1,5 +1,5 @@
-import type { Project } from "@rennet/protocol";
-import { createContext, useContext, useMemo } from "react";
+import type { Project, SidebarSession as WireSidebarSession } from "@rennet/protocol";
+import { useMemo } from "react";
 import { useRoute } from "wouter";
 import { useCommand, useMutation } from "../data";
 import { ROUTES } from "../routes/url";
@@ -15,14 +15,12 @@ import { selectProcessingProjectIds, useRennetStore } from "../store";
 //    forgets a project (both live protocol commands). Bound through the data seam
 //    (`useCommand` / `useMutation`), so invalidation is uniform.
 //
-//  • SESSIONS + their mutations (rename / pin / archive) and `project.rename` —
-//    B9/B10's projection, which does NOT exist on main yet (protocol carries no
-//    `session.*` and no `project.rename`; inventory-verified). Until it lands the
-//    LIVE client shows an honest EMPTY session state (no fake rows, no invented
-//    commands), and tests drive session rows + mutations through the projection
-//    CONTEXT below. When B9 lands, the two `useSessionProjection`-backed reads
-//    become `useCommand("session.list")` / `useMutation("session.*")` and the
-//    context is deleted — THIS is the only file that changes.
+//  • SESSIONS + their mutations (rename / pin / archive / restore) and
+//    `project.rename` — real since C18. `session.list` serves the persisted session
+//    store's rows; each mutation is a served write that invalidates the list, so a
+//    rename, a pin, an archive, and a restore all survive reload. The rows carry only
+//    FACTS of the stored session: a target the claim proves, and no invented
+//    unread/needs-you state.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The unified review-target vocabulary (R36 icon language). Location (the host) is
@@ -69,12 +67,13 @@ export interface SidebarHost {
   readonly projects: readonly SidebarProject[];
 }
 
-// ── The B9 session projection (stub context — reconciliation 2) ───────────────
+// ── The session projection (live over `session.*`, C18) ──────────────────────
 
 export interface SidebarSessionProjection {
-  /** Sessions keyed by projectId. Empty in the live client until B9's projection. */
+  /** Sessions keyed by projectId, from the persisted session store. */
   readonly sessionsByProject: Readonly<Record<string, readonly SidebarSession[]>>;
-  /** Projects still processing (spinner + "indexing"); empty until the flow wires it. */
+  /** Projects still processing (spinner + "indexing"); the live client reads this off
+   *  the `ui` slice instead, so the served projection leaves it absent. */
   readonly indexingProjectIds?: readonly string[];
   renameSession(id: string, title: string): void;
   setSessionPinned(id: string, pinned: boolean): void;
@@ -84,22 +83,74 @@ export interface SidebarSessionProjection {
   renameProject(id: string, name: string): void;
 }
 
-/** The live client's projection: no sessions, no session mutations (honest empty).
- *  The mutations are genuine no-ops until B9 — there are no rows to mutate. */
-const EMPTY_PROJECTION: SidebarSessionProjection = {
-  sessionsByProject: {},
-  renameSession: () => undefined,
-  setSessionPinned: () => undefined,
-  archiveSession: () => undefined,
-  restoreSession: () => undefined,
-  renameProject: () => undefined,
-};
+/** The compact age line a session row shows (`now` / `5m` / `2h` / `1d` / `3w`) — the
+ *  vocabulary the archived view's sort already parses. Derived from the stored
+ *  `createdAt`, so the wire carries a timestamp and the surface owns the wording. */
+export function compactAge(createdAt: number, now: number = Date.now()): string {
+  const minutes = Math.max(0, Math.floor((now - createdAt) / 60_000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
 
-const SessionProjectionContext = createContext<SidebarSessionProjection>(EMPTY_PROJECTION);
-/** Wraps a mount to supply session rows + mutations (tests until B9; deleted when B9 lands). */
-export const SidebarSessionProjectionProvider = SessionProjectionContext.Provider;
+/** One served row → the sidebar's row. `slug` is the session id (id-as-slug until #466
+ *  durable identity, per slug.ts); `time` is derived here, never sent over the wire. */
+function toSidebarSession(row: WireSidebarSession): SidebarSession {
+  return {
+    id: row.id,
+    slug: row.id,
+    title: row.title,
+    time: compactAge(row.createdAt),
+    target: row.target,
+    ...(row.targetState ? { targetState: row.targetState } : {}),
+    ...(row.unread ? { unread: true } : {}),
+    ...(row.pinned ? { pinned: true } : {}),
+    ...(row.archived ? { archived: true } : {}),
+  };
+}
+
+/**
+ * The sidebar's sessions and their writes, live over `session.*` (C18). Every mutation
+ * invalidates `session.list`, so the row re-reads what was actually STORED rather than an
+ * optimistic guess — a refused write leaves the row where it was. `renameProject` is the
+ * same shape over `project.rename`, invalidating `projects.list`.
+ */
 export function useSidebarSessionProjection(): SidebarSessionProjection {
-  return useContext(SessionProjectionContext);
+  const { data } = useCommand("session.list", {});
+  const { mutate: rename } = useMutation("session.rename", { invalidates: ["session.list"] });
+  const { mutate: setPinned } = useMutation("session.setPinned", {
+    invalidates: ["session.list"],
+  });
+  const { mutate: setArchived } = useMutation("session.archive", {
+    invalidates: ["session.list"],
+  });
+  const { mutate: renameProjectCommand } = useMutation("project.rename", {
+    invalidates: ["projects.list"],
+  });
+  return useMemo(() => {
+    const sessionsByProject: Record<string, SidebarSession[]> = {};
+    for (const row of data?.sessions ?? []) {
+      const rows = sessionsByProject[row.projectId] ?? [];
+      rows.push(toSidebarSession(row));
+      sessionsByProject[row.projectId] = rows;
+    }
+    // A rejected write leaves the sidebar as it was — the invalidated read is the honest
+    // answer, and nothing here paints a success the store did not record.
+    const swallow = () => undefined;
+    return {
+      sessionsByProject,
+      renameSession: (id, title) => void rename({ sessionId: id, title }).catch(swallow),
+      setSessionPinned: (id, pinned) => void setPinned({ sessionId: id, pinned }).catch(swallow),
+      archiveSession: (id) => void setArchived({ sessionId: id, archived: true }).catch(swallow),
+      restoreSession: (id) => void setArchived({ sessionId: id, archived: false }).catch(swallow),
+      renameProject: (id, name) =>
+        void renameProjectCommand({ projectId: id, name }).catch(swallow),
+    };
+  }, [data, rename, setPinned, setArchived, renameProjectCommand]);
 }
 
 // ── Projects tree (real: projects.list) ──────────────────────────────────────

@@ -24,6 +24,8 @@ import type {
   DispositionType,
   FlaggedReview,
   HandoffBundle,
+  LensBoard,
+  LensKind,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
@@ -33,6 +35,7 @@ import type {
   Review,
   RoundRecord,
   SessionTranscriptRow,
+  SidebarSession,
   SuccessorAccount,
   SymbolInspection,
 } from "@rennet/protocol";
@@ -219,6 +222,12 @@ export interface DispatchDeps {
   readonly projects: {
     list(): Project[];
     remove(input: { projectId: string }): { projects: Project[] };
+    /** Rename a project's display name (C12 cluster 7, bound in C18). An emptied name
+     *  restores the `org/repo` fallback (R67); `null` means the id is not stored. */
+    rename(input: { projectId: string; name: string }): {
+      project: Project | null;
+      projects: Project[];
+    };
     add(input: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }): {
       project: Project;
       projects: Project[];
@@ -552,6 +561,30 @@ export interface DispatchDeps {
    * CLI stays the canonical conversation owner; this is an additive display read-model.
    */
   readonly transcriptRowsForReview?: (reviewId: string) => readonly SessionTranscriptRow[];
+  /**
+   * The sidebar's sessions (C03 cluster 2, bound in C18) — the durable session store's
+   * rows and their persisted writes. Absent ⇒ no session store wired, so `session.list`
+   * answers an honest empty sidebar and each write reports that it found no session
+   * (`null`), never a fabricated row or a silently swallowed edit.
+   */
+  readonly sessions?: {
+    list(): readonly SidebarSession[];
+    rename(sessionId: string, title: string): SidebarSession | undefined;
+    setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
+    setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;
+  };
+  /**
+   * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board
+   * for one `(review, generation, lens)` triple, projected from the whiteboard event log the
+   * lens pipeline wrote plus its board-meta record. `undefined` is the honest MISSING answer —
+   * that lens drafted no board that generation. Absent seam ⇒ no boards runtime wired, so every
+   * pair reads missing; a board is never fabricated to fill the gap.
+   */
+  readonly lensBoardForReview?: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => Promise<LensBoard | undefined>;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

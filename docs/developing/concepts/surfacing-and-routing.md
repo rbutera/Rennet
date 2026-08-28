@@ -182,9 +182,10 @@ bridge is a tested pure projection with no live caller.
 
 **Dispatch map.** `packages/server/src/dispatch/` binds a
 `Map<commandId, handler>` from the registry, one module per command family
-(`app`, `attention`, `device`, `flagged`, `fs`, `github`, `harness`, `noise`,
-`openspec`, `pairing`, `patchset`, `project`, `projects`, `publish`, `repository`,
-`review`, `settings`). The map is the only router; it replaced a single
+(`app`, `ask`, `attention`, `board`, `daemon`, `device`, `flagged`, `forge`, `fs`,
+`github`, `harness`, `noise`, `openspec`, `pairing`, `patchset`, `project`,
+`projects`, `publish`, `repository`, `review`, `rework`, `round`, `session`,
+`settings`). The map is the only router; it replaced a single
 2,357-line `switch (name)`. A compile-time exhaustiveness check fails to type-check
 if any registry command has no handler, and a runtime test enumerates the map's
 keys against the registry's command ids and asserts the two sets diff empty — the
@@ -210,9 +211,10 @@ the rebuilt turn will consume, not a path exercised today.
 
 `exposure.agent` is the only per-row datum that gates the agent surface. The v1
 inventory covers project add and list, review capture and open-PR, and the
-settings ops. Session-scoped tools (list and open session) wait on their
-`session.*` commands; a client-locus `navigate` command does not exist in the
-registry yet, so it is left unbound rather than stubbed.
+settings ops. Session-scoped tools stay unexposed by choice: `session.list` and
+its rename / pin / archive writes exist (C18), but they are client-surface reads
+and writes, not app tools. A client-locus `navigate` command does not exist in
+the registry yet, so it is left unbound rather than stubbed.
 
 ## Code map
 

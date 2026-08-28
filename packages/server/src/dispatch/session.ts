@@ -3,7 +3,9 @@ import {
   parseCommandInput,
   parseCommandOutput,
   type Review,
+  type SessionModel,
   type SessionTrail,
+  type SidebarSession,
 } from "@rennet/protocol";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
@@ -19,6 +21,12 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  *     so the dock shows history and survives reload. This read serves those rows via
  *     `transcriptRowsForReview`; honest-empty (`[]`) when no turns were captured yet. The live ask
  *     threads still arrive separately via `review.reattach`. The identity trail is Rennet's here.
+ *
+ *   • `session.list` + `session.rename` / `session.setPinned` / `session.archive` (C03, bound
+ *     in C18): the sidebar's session rows and their writes, served from the durable session
+ *     store. The sidebar was honestly EMPTY because protocol carried no `session.list`; these
+ *     serve real rows and persist every edit, so a rename, a pin, or an archive survives
+ *     reload. Restore is un-archive (the boolean), not a fourth command.
  *
  *   • `session.rounds` (C09): the rounds-ledger read. Projects the live rounds runtime's
  *     `RoundRecord[]` for the review's session (resolved read-only from the ask-log/target
@@ -47,6 +55,26 @@ export function sessionTrailForReview(review: Review): SessionTrail {
   return { title, target, ...(projectName ? { projectName } : {}) };
 }
 
+/**
+ * One persisted session as the sidebar reads it (C18). Every field is a FACT of the record:
+ * the title is the reviewer's own rename, else the claimed branch, else the honest "New
+ * review" placeholder for a session that has claimed nothing yet. `target` distinguishes
+ * only what the claim can prove — a PR number means `your-pr`, its absence means
+ * `your-branch`; a teammate's PR is not knowable from the session record, so it is never
+ * guessed. `targetState` and unread activity are likewise absent rather than invented.
+ */
+export function sidebarSessionOf(session: SessionModel): SidebarSession {
+  return {
+    id: session.id,
+    projectId: session.projectId,
+    title: session.title ?? session.claim?.branch ?? "New review",
+    target: session.claim?.prNumber === undefined ? "your-branch" : "your-pr",
+    ...(session.pinned ? { pinned: true } : {}),
+    ...(session.archivedAt === undefined ? {} : { archived: true }),
+    createdAt: session.createdAt,
+  };
+}
+
 export function sessionHandlers(rt: DispatchRuntime) {
   return {
     "session.transcript": async (rawInput) => {
@@ -67,6 +95,36 @@ export function sessionHandlers(rt: DispatchRuntime) {
       rt.requireReviewById(input.reviewId); // reachability: unknown review is a genuine error
       const records = rt.deps.roundRecordsForReview?.(input.reviewId) ?? [];
       return parseCommandOutput(name, { records: [...records] });
+    },
+    "session.list": async (rawInput) => {
+      const name = "session.list" as const;
+      parseCommandInput(name, rawInput);
+      // The sidebar's rows, straight off the durable session store. No store wired ⇒ an
+      // honest empty sidebar: the capability is present, the rows are simply not there.
+      return parseCommandOutput(name, { sessions: [...(rt.deps.sessions?.list() ?? [])] });
+    },
+    "session.rename": async (rawInput) => {
+      const name = "session.rename" as const;
+      // An emptied title CLEARS the reviewer's title, so the row falls back to the
+      // claimed branch — the same restore-the-default rule an emptied project name
+      // follows. A session the store does not hold answers `null`: nothing was written.
+      const input = parseCommandInput(name, rawInput);
+      const session = rt.deps.sessions?.rename(input.sessionId, input.title) ?? null;
+      return parseCommandOutput(name, { session });
+    },
+    "session.setPinned": async (rawInput) => {
+      const name = "session.setPinned" as const;
+      const input = parseCommandInput(name, rawInput);
+      const session = rt.deps.sessions?.setPinned(input.sessionId, input.pinned) ?? null;
+      return parseCommandOutput(name, { session });
+    },
+    "session.archive": async (rawInput) => {
+      const name = "session.archive" as const;
+      // Archive is the only release (a soft delete — the record survives on disk), and
+      // `archived: false` is its inverse, so an accidental archive is recoverable.
+      const input = parseCommandInput(name, rawInput);
+      const session = rt.deps.sessions?.setArchived(input.sessionId, input.archived) ?? null;
+      return parseCommandOutput(name, { session });
     },
   } satisfies Record<string, CommandHandler>;
 }

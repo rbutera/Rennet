@@ -229,11 +229,12 @@ The Projects page also carries project **identity** (display name with the
 the issue tracker's fields — GitHub rides the host's `gh` CLI and exposes no
 further fields; JIRA and Linear expose a project key, a base URL, and the *name*
 of the environment variable holding the token (never the token itself). Of these,
-Review Context (map visibility) is the section wired to a live command today;
-identity, glyph, worktree pattern, issue-tracker, and guidance edits resolve
-through the settings seam but have no served write yet, so they persist once their
-backends land. The page shows them so the surface is complete, not because every
-edit is yet durable.
+Review Context (map visibility) and the display NAME are wired to live commands
+today — the name writes through `project.rename`, which the sidebar's own rename
+also calls, and an emptied name restores the `org/repo` identity host-side. The
+glyph, worktree, issue-tracker, and guidance edits resolve through the settings
+seam but have no served write yet: those controls render DISABLED with a line
+naming the gap, rather than accepting edits that would vanish.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in

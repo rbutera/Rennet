@@ -11,10 +11,10 @@ import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
+import { sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge } from "../test/memory-bridge";
 import { CommandMenu } from "./command-menu";
 import type { RegistryRowView } from "./command-menu-entries";
-import { type SidebarSession, SidebarSessionProjectionProvider } from "./sidebar-data";
 
 function project(id: string, name: string): Project {
   return {
@@ -101,26 +101,15 @@ describe("command menu (§9)", () => {
 
   it("sessions come from the projection; running one opens the chat and routes to it", async () => {
     const history = memoryHistory("/");
-    const bridge = new MemoryBridge(frontDoorHandlers([project("p1", "atlas")]));
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project("p1", "atlas")]),
+      ...sessionHandlers([{ id: "s1", projectId: "p1", title: "Alpha review" }]),
+    });
     useRennetStore.setState((s) => ({ ui: { ...s.ui, commandMenuOpen: true, chatOpen: false } }));
-    const sessions: Record<string, readonly SidebarSession[]> = {
-      p1: [{ id: "s1", slug: "s1", title: "Alpha review", time: "2h", target: "your-branch" }],
-    };
     mount(
       <BridgeProvider bridge={bridge}>
         <Router hook={history.hook} searchHook={history.searchHook}>
-          <SidebarSessionProjectionProvider
-            value={{
-              sessionsByProject: sessions,
-              renameSession: () => undefined,
-              setSessionPinned: () => undefined,
-              archiveSession: () => undefined,
-              restoreSession: () => undefined,
-              renameProject: () => undefined,
-            }}
-          >
-            <CommandMenu />
-          </SidebarSessionProjectionProvider>
+          <CommandMenu />
         </Router>
       </BridgeProvider>,
     );
