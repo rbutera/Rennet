@@ -30,10 +30,6 @@
 @layer base {
   :root {
     color-scheme: light;
-    /* The vertical room C20's floating chip layer needs over a full-bleed main view
-     * (an 11-unit / 44px chip row). Named once so the clearance and the scroller's
-     * give-back can never drift apart. */
-    --rn-floating-chrome-clearance: 2.75rem;
   }
   [data-scheme="dark"] {
     color-scheme: dark;
@@ -135,12 +131,17 @@
  * correctly left alone. */
 @layer components {
   .rennet-floating-chrome {
-    padding-top: var(--rn-floating-chrome-clearance);
+    /* The vertical room the chip layer needs (an 11-unit / 44px chip row). Declared
+     * here and inherited by the scroller below, so the clearance and its give-back
+     * can never drift apart. NOT an `--rn-*` name: that prefix belongs to
+     * `@rennet/theme`'s palette and consumer stylesheets may not define one. */
+    --floating-chrome-clearance: 2.75rem;
+    padding-top: var(--floating-chrome-clearance);
   }
   .rennet-floating-chrome .min-h-0.flex-1.overflow-y-auto {
-    margin-top: calc(var(--rn-floating-chrome-clearance) * -1);
-    padding-top: var(--rn-floating-chrome-clearance);
-    scroll-padding-top: var(--rn-floating-chrome-clearance);
+    margin-top: calc(var(--floating-chrome-clearance) * -1);
+    padding-top: var(--floating-chrome-clearance);
+    scroll-padding-top: var(--floating-chrome-clearance);
   }
 }
 

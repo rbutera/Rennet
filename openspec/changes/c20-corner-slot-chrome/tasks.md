@@ -38,23 +38,23 @@ pair). Then `grep -rn "corner-slot\|CornerSlot" packages/app-ui/src` — **none 
 
 ## 1. `CornerSlot` + state 1 (sidebar expanded): lights → wordmark → toggle
 
-- [ ] 1.1 `packages/app-ui/src/shell/corner-slot.tsx`: the one component. A strip carrying (a) the macOS
+- [x] 1.1 `packages/app-ui/src/shell/corner-slot.tsx`: the one component. A strip carrying (a) the macOS
   traffic-light inset — a real reserved zone on darwin, **zero** on every other host, no emulated dots — and
   (b) the sidebar toggle (`PanelLeft`, `aria-label` "Collapse sidebar" / "Expand sidebar"), plus an optional
   `wordmark` slot rendered BETWEEN them (state 1 only). It marks itself `data-slot="corner-slot"` and, on
   darwin, carries the existing `navigation-titlebar` class so the strip is the window drag region and its
   buttons opt back out. A `floating` variant (cluster 5) renders the same content as a translucent pill.
   Move `useMacTrafficLights()` here from `sidebar.tsx` (its only remaining consumers are this file).
-- [ ] 1.2 Same file: `export function cornerSlotOwner({ sidebarOpen, dockOpen }): "sidebar" | "chat" | "floating"`
+- [x] 1.2 Same file: `export function cornerSlotOwner({ sidebarOpen, dockOpen }): "sidebar" | "chat" | "floating"`
   — a **pure** function, no React, no store read. Sidebar open ⇒ `"sidebar"`; else dock open ⇒ `"chat"`;
   else `"floating"`. This is the single-owner authority; the three call sites each render only when they own
   it (Reconciliation 3: `dockOpen`, not "the dock exists").
-- [ ] 1.3 `packages/app-ui/src/shell/sidebar/sidebar.tsx`: the expanded header row becomes
+- [x] 1.3 `packages/app-ui/src/shell/sidebar/sidebar.tsx`: the expanded header row becomes
   `<CornerSlot owner="sidebar" wordmark={<RennetLockup …/>} />` — order **lights → wordmark → toggle**.
   Delete the `pl-[76px]` reserve and the inline `navigation-titlebar` (both now live in `CornerSlot`);
   keep the 14px lockup on darwin (#557) unless it fights the row, and keep the 16px non-darwin size.
   The row must still fit the 256px panel with the light zone, the lockup and the toggle unclipped.
-- [ ] 1.4 Tests: unit-test `cornerSlotOwner` over all four `{sidebarOpen, dockOpen}` combinations.
+- [x] 1.4 Tests: unit-test `cornerSlotOwner` over all four `{sidebarOpen, dockOpen}` combinations.
   Rework `sidebar.dom.test.tsx`'s "macOS traffic-light clearance" block for the new geometry — on darwin the
   header carries `navigation-titlebar` and the reserved light zone, the lockup sits AFTER the zone and BEFORE
   the toggle, and light-zone + lockup width + toggle ≤ `SIDEBAR_PANEL_WIDTH`; on `win32` / `linux` /
@@ -62,21 +62,21 @@ pair). Then `grep -rn "corner-slot\|CornerSlot" packages/app-ui/src` — **none 
 
 ## 2. Delete the collapsed rail — collapsed means hidden
 
-- [ ] 2.1 `sidebar.tsx`: delete `Rail()` and its mount; the `<aside>` becomes `w-64` with `border-r` when
+- [x] 2.1 `sidebar.tsx`: delete `Rail()` and its mount; the `<aside>` becomes `w-64` with `border-r` when
   open and `w-0` with **no** border when closed (a collapsed sidebar must contribute zero width and zero
   hairline, or the chat/main pane is not flush to the window edge and the light inset lands wrong).
   Delete the rail's `pt-8` traffic-light dodge with it (#557, superseded). Remove now-unused imports.
-- [ ] 2.2 `sidebar.tsx`: delete `UpdateControl`'s `"rail"` variant and its branch — the rail was its only
+- [x] 2.2 `sidebar.tsx`: delete `UpdateControl`'s `"rail"` variant and its branch — the rail was its only
   caller; `variant="panel"` stays for the expanded footer (Reconciliation 6). If that leaves `variant` a
   one-value prop, drop the prop.
-- [ ] 2.3 `packages/app-ui/src/shell/constants.ts`: delete `SIDEBAR_RAIL_WIDTH`; `routes/layout.tsx`'s
+- [x] 2.3 `packages/app-ui/src/shell/constants.ts`: delete `SIDEBAR_RAIL_WIDTH`; `routes/layout.tsx`'s
   `sidebarWidth` becomes `sidebarOpen ? SIDEBAR_PANEL_WIDTH : 0` (Reconciliation 7). Fix
   `routes/layout.dom.test.tsx`'s "re-clamps when the rail expands…" case to the new widths — the clamp
   behaviour it proves must survive, only the numbers change.
-- [ ] 2.4 `sidebar.tsx`: re-point `Sidebar()`'s post-swap focus effect at the CornerSlot's live toggle
+- [x] 2.4 `sidebar.tsx`: re-point `Sidebar()`'s post-swap focus effect at the CornerSlot's live toggle
   wherever it now mounts (it currently queries inside the `<aside>`, where "Expand sidebar" no longer exists)
   — Reconciliation 8.
-- [ ] 2.5 Tests: `sidebar.dom.test.tsx`'s collapse test asserts the collapsed `<aside>` renders no rail, no
+- [x] 2.5 Tests: `sidebar.dom.test.tsx`'s collapse test asserts the collapsed `<aside>` renders no rail, no
   nav, and zero width; **a keyboard collapse leaves focus on the CornerSlot's Expand toggle, not `<body>`**
   (this fails loudly if 2.4 is missed). Confirm by hand that Search/⌘P, New Chat, Add Project, Add
   Environment, Update, Help and Settings are all still reachable from the expanded sidebar + command menu
@@ -84,19 +84,19 @@ pair). Then `grep -rn "corner-slot\|CornerSlot" packages/app-ui/src` — **none 
 
 ## 3. State 2 — the CornerSlot inline in the chat header; the collapse control leaves
 
-- [ ] 3.1 `packages/app-ui/src/chat/chat-header.tsx`: accept an optional `corner` node and render it as the
+- [x] 3.1 `packages/app-ui/src/chat/chat-header.tsx`: accept an optional `corner` node and render it as the
   FIRST child of the existing 56px header row with `self-start` (so the light inset holds its true y in a row
   taller than the sidebar's), dropping the row's leading padding when it is present. **Delete the
   `PanelRight` "Collapse chat" button** — the one chat toggle moves to the main view in cluster 4. No extra
   strip, no second header.
-- [ ] 3.2 `packages/app-ui/src/chat/chat-dock.tsx` (or `routes/layout.tsx`, whichever owns `dockOpen`):
+- [x] 3.2 `packages/app-ui/src/chat/chat-dock.tsx` (or `routes/layout.tsx`, whichever owns `dockOpen`):
   pass `corner={<CornerSlot owner="chat" />}` **exactly when `cornerSlotOwner(...) === "chat"`**. The dock
   stays always-mounted with `width: 0` + `inert` when closed — so this must be gated on `dockOpen`, never on
   the dock's existence (Reconciliation 3). Confirm by grep that `ChatDock` is the only `ChatHeader` mount in
   the client (the spike's second bespoke chat surface has no counterpart here); if a second appears, it takes
   the same slot — never a bespoke bar. **Record the grep's verdict in one line here and move on** — if
   `ChatDock` is the only mount, that is the answer; do not hunt the ghost surface further.
-- [ ] 3.3 DOM test in `packages/app-ui/src/chat/`: with the sidebar collapsed on a session route with the
+- [x] 3.3 DOM test in `packages/app-ui/src/chat/`: with the sidebar collapsed on a session route with the
   chat open, the chat header carries exactly one `[data-slot="corner-slot"]`, `self-start`, ahead of the
   `Trail`; with the sidebar OPEN the chat header carries none (and the hidden inert dock never does).
   The "Collapse chat" control is gone from the header.
@@ -107,29 +107,29 @@ pair). Then `grep -rn "corner-slot\|CornerSlot" packages/app-ui/src` — **none 
 
 ## 4. One chat toggle, on the rightmost pane's top-left
 
-- [ ] 4.1 `packages/app-ui/src/shell/top-bar.tsx`: replace the conditional `PanelRightOpen` "Expand chat"
+- [x] 4.1 `packages/app-ui/src/shell/top-bar.tsx`: replace the conditional `PanelRightOpen` "Expand chat"
   button with a SINGLE `MessageSquare` toggle that is always present in the left slot, `aria-pressed={chatOpen}`,
   labelled "Open chat" / "Close chat", writing `setChatOpen(!chatOpen)`. It sits after the back arrow and
   before the trail. This is now the only chat open/close control in the app.
-- [ ] 4.2 `packages/app-ui/src/shell/top-bar.dom.test.tsx`: the toggle round-trips — click closes the dock
+- [x] 4.2 `packages/app-ui/src/shell/top-bar.dom.test.tsx`: the toggle round-trips — click closes the dock
   (`data-open="false"` on the dock slot), click again reopens it — in state 1 (sidebar open) and state 2
   (sidebar collapsed). Assert no "Collapse chat" control exists anywhere in the mounted tree. Cluster gate
   green. Commit.
 
 ## 5. State 3 — full-bleed main view, floating CornerSlot pill, floating chips
 
-- [ ] 5.1 `packages/app-ui/src/routes/layout.tsx`: render `<CornerSlot floating />` fixed at the window's
+- [x] 5.1 `packages/app-ui/src/routes/layout.tsx`: render `<CornerSlot floating />` fixed at the window's
   top-left exactly when `cornerSlotOwner(...) === "floating"`. It belongs to the LAYOUT, not `TopBar`, so a
   takeover route (Settings, New Chat, Archived, Context Map, Indexing) with the sidebar collapsed still has a
   corner slot and a drag region (Reconciliation 4). On darwin the pill's inset must leave the real lights
   their exact position — the pill is translucent backing plus the toggle, never a control under a light.
-- [ ] 5.2 `packages/app-ui/src/shell/top-bar.tsx`: in state 3 the bar dissolves — it becomes an absolutely
+- [x] 5.2 `packages/app-ui/src/shell/top-bar.tsx`: in state 3 the bar dissolves — it becomes an absolutely
   positioned, `pointer-events-none` overlay whose three slots become `pointer-events-auto` translucent
   blurred chips (back arrow and chat toggle as round FABs, the trail in a pill, the lens switcher and the
   History · Map · Diff pill restyled to match). **Every element the bar shows in states 1–2 still renders**
   (Reconciliation 5) — dropping a chip "because it does not fit" is honest-present's failure mode. The left
   chip group clears the floating CornerSlot horizontally.
-- [ ] 5.3 The main surface goes full-bleed under the chips: content **clears** them at rest and **slides
+- [x] 5.3 The main surface goes full-bleed under the chips: content **clears** them at rest and **slides
   under** them on scroll (top padding on the region, taken back as negative-margin + scroll padding on the
   scrolling view — the demo's tested compromise; hard full-bleed clipped headings). Verify the board and the
   diff view both read correctly at rest and mid-scroll.
@@ -139,19 +139,19 @@ pair). Then `grep -rn "corner-slot\|CornerSlot" packages/app-ui/src` — **none 
   are applied exactly in state 3 and absent otherwise). If the visual behaviour itself cannot be pinned by a
   real test, **report the limitation in the task note and prove it by hand in cluster 8.1 instead** — a test
   that passes without proving anything is worse than an honest note.
-- [ ] 5.4 DOM test: in state 3 the top bar is the floating overlay, every state-1 control is still present
+- [x] 5.4 DOM test: in state 3 the top bar is the floating overlay, every state-1 control is still present
   and clickable, and the chat FAB reopens the dock. Cluster gate green. Commit.
 
 ## 6. The single-mount invariant + platform assertions (the regression class)
 
-- [ ] 6.1 A DOM test that drives all three states through the real layout and asserts
+- [x] 6.1 A DOM test that drives all three states through the real layout and asserts
   `document.querySelectorAll('[data-slot="corner-slot"]').length === 1` in each — including the hidden inert
   dock case (sidebar open + chat open), which is where a literal port of the spike double-mounts.
-- [ ] 6.2 Platform assertions in the same file, #557's pattern: on `platform: "darwin"` the owning CornerSlot
+- [x] 6.2 Platform assertions in the same file, #557's pattern: on `platform: "darwin"` the owning CornerSlot
   reserves the light zone and carries `navigation-titlebar`; on `win32` / `linux` / `undefined` it reserves
   nothing and carries no drag class, while the **toggle geometry is identical** (the same single toggle in
   the same place — non-darwin loses the inset, not the affordance).
-- [ ] 6.3 **Packet positive control (must be able to fail):** force the state-2 mount while the sidebar is
+- [x] 6.3 **Packet positive control (must be able to fail):** force the state-2 mount while the sidebar is
   expanded (bypass `cornerSlotOwner`, e.g. hand `ChatHeader` a `corner` node unconditionally), run 6.1, watch
   the double-mount assertion go red, revert. Record the observed failure text in the commit message —
   evidence shown, never asserted. Cluster gate green. Commit.
@@ -162,7 +162,7 @@ C14 audits `spikes/board-prototype/INVENTORY.md` as its source of truth. A line 
 after C20 deletes it is a lie in the record; a line that silently vanishes is worse, because the audit cannot
 tell a deliberate re-ruling from an oversight. Annotate **in place**, never delete, never renumber.
 
-- [ ] 7.1 In `spikes/board-prototype/INVENTORY.md`, append `(re-ruled by C20 / #558 — Rai 2026-08-28)` to
+- [x] 7.1 In `spikes/board-prototype/INVENTORY.md`, append `(re-ruled by C20 / #558 — Rai 2026-08-28)` to
   each invalidated claim line, keeping its `- [ ]`, its text, its file reference and its `[ws:CN]` tag intact
   (so `scripts/check-inventory-tags.mjs` still passes). The candidate set, by line number and opening words
   on `main` at `6156de9f`:
@@ -190,21 +190,21 @@ tell a deliberate re-ruling from an oversight. Annotate **in place**, never dele
   - **54** `[ws:C3]` (lockup as scheme-swapped vector artwork) and **112** `[ws:C3]` (the same trail component
     in both headers): **verify** — the expectation is that both survive C20 unchanged. Record a one-line
     verdict for each in the tasks record below; do not annotate a line C20 does not contradict.
-- [ ] 7.2 Record the verdict for every line above in this file (annotated / verified-unchanged, one line
+- [x] 7.2 Record the verdict for every line above in this file (annotated / verified-unchanged, one line
   each), under a `### Inventory re-ruling record` heading appended to this cluster. **No silent drops** — a
   line in the candidate set with no verdict is an unfinished task.
-- [ ] 7.3 Extend `scripts/check-inventory-tags.mjs` with a second assertion: a literal list of the
+- [x] 7.3 Extend `scripts/check-inventory-tags.mjs` with a second assertion: a literal list of the
   C20-invalidated claim substrings (from 7.1), each of which must match a line that carries the
   `(re-ruled by C20 / #558 — Rai 2026-08-28)` annotation — exit 1 naming any that does not, and exit 1 if a
   listed substring matches **no** line (so a deleted claim fails too, not just an un-annotated one).
   Run `node scripts/check-inventory-tags.mjs` and show it pass.
-- [ ] 7.4 **Positive control:** strip the annotation from one re-ruled line, re-run the script, watch it name
+- [x] 7.4 **Positive control:** strip the annotation from one re-ruled line, re-run the script, watch it name
   that line and exit 1; then delete a listed line outright and watch the "matches no line" branch fire;
   restore both. Record the observed output in the commit message. Cluster gate green. Commit.
 
 ## 8. Packet verification — macOS E2E, docs, full gate
 
-- [ ] 8.1 E2E against the real app on macOS (`apps/desktop/e2e`, Playwright-on-Electron, evidence shown not
+- [x] 8.1 E2E against the real app on macOS (`apps/desktop/e2e`, Playwright-on-Electron, evidence shown not
   asserted): drive all three states — expanded sidebar, collapsed + chat open, collapsed + chat closed. In
   each: the OS traffic lights **never overlap an interactive control** (assert the toggle's and the nearest
   chip's bounding boxes clear the light zone), window **drag works from the corner strip**, and the chat
@@ -215,11 +215,11 @@ tell a deliberate re-ruling from an oversight. Annotate **in place**, never dele
   reasonably reduce to the bounding-box geometry assertion (which Playwright can do) plus screenshots and a
   **manual-proof note** for the drag, stated plainly as manual. An honest "drag verified by hand on macOS
   26.x, screenshots attached" beats a synthetic drag test that proves nothing about the real window.
-- [ ] 8.2 `apps/desktop/src/main/index.ts`: adjust `trafficLightPosition` **only if** vertical centering in
+- [x] 8.2 `apps/desktop/src/main/index.ts`: adjust `trafficLightPosition` **only if** vertical centering in
   the host row genuinely needs it after 8.1 — measure first, and if no adjustment is needed, say so in the
   task note rather than tuning blind. Update the file's comment either way: it currently points readers at
   `shell/sidebar/sidebar.tsx` for the 76px reserve, which cluster 1 deleted.
-- [ ] 8.3 Docs (definition of done). **`DESIGN.md` — the translucency amendment (approved 2026-08-28).**
+- [x] 8.3 Docs (definition of done). **`DESIGN.md` — the translucency amendment (approved 2026-08-28).**
   §Material (line 79) and §Required design behavior both ban glass / vibrancy / translucent chrome. Add a
   **narrow, justified exception** to each — never a softening, never a deletion. **Do NOT delete or
   generalize the original prohibition: it stands for everything else.** Wording rule, follow this shape:
@@ -235,7 +235,7 @@ tell a deliberate re-ruling from an oversight. Annotate **in place**, never dele
   model. Then `grep -rn "rail\|sidebar\|traffic light\|title ?bar" docs/ --exclude-dir=dist --exclude-dir=.astro`
   and `packages/app-ui/DESIGN.md`, and fix every page a reader would now be wrong about. Reader-facing docs
   describe current Rennet — do not narrate the rail's history.
-- [ ] 8.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new
+- [x] 8.4 Full gate `sh -c 'pnpm check'` green (format, architecture, licenses — confirm **zero new
   packages**, not assume — lint, typecheck, test, build); paste the `GATE_EXIT` line. Commit. Output the
   completion sigil `<promise>C20-COMPLETE</promise>`. **`BUILD-STATUS.json` is flipped by `main`, not this
   agent** (per dispatch).
@@ -278,3 +278,42 @@ Verified unchanged — C20 does not contradict these, so they are NOT annotated:
   — **verified unchanged**: both `chat/chat-header.tsx` and `shell/top-bar.tsx` still render the one
   `shell/trail.tsx`. State 3 wraps the top bar's instance in a chip, which restyles its container,
   not the component.
+
+### Task notes — 3.2, 5.3, 8.1, 8.2
+
+- **3.2 grep verdict.** `ChatDock` is the ONLY `ChatHeader` mount in the client
+  (`grep -rn ChatHeader packages apps` → `chat/chat-dock.tsx` and the component's own
+  file). The spike's second bespoke chat surface has no counterpart here. Not hunted
+  further.
+- **5.3 limitation, reported rather than faked.** happy-dom has no layout engine, so
+  "clears at rest, slides under on scroll" cannot be MEASURED in a DOM test. What is
+  pinned is the half that is genuinely pinnable: `rennet-floating-chrome` (and
+  `data-floating-chrome="true"`) is applied to the outlet region in state 3 and absent
+  in states 1 and 2 (`shell/floating-chrome.dom.test.tsx`). The behaviour itself is
+  CSS: the region takes the clearance as top padding and the pane's primary scroller
+  (`min-h-0 flex-1 overflow-y-auto`, the repo-wide idiom) takes it back as negative
+  margin plus its own top and scroll padding. The visual result is a manual-proof item;
+  see 8.1.
+- **8.1 could NOT be run — pre-existing harness breakage, not C20.** The geometry spec
+  is written (`apps/desktop/e2e/corner-slot.spec.ts`: exactly one slot per state, the
+  slot's controls clear the traffic-light zone, `-webkit-app-region: drag` on the strip
+  with `no-drag` on its buttons, screenshots per state, sidebar round-trip). It cannot
+  execute on this machine: Playwright's Electron driver fails to launch at all —
+
+      Electron: bad option: --remote-debugging-port=0
+      electron.launch: Process failed to launch!
+
+  CONTROL: an UNTOUCHED spec on `main` fails identically
+  (`pnpm nx e2e rennet-desktop --args="--grep=hardened"` → same launch error), so this
+  is Electron 43.2.0 vs @playwright/test 1.62.0, not this change. Filing/fixing that is
+  its own work, not C20's. Consequences, stated plainly: the traffic-light geometry, the
+  real window DRAG, and 5.3's scroll-under are all UNPROVEN BY MACHINE here. The drag was
+  always going to be a manual-proof item per the packet's own risk note; the other two
+  now join it.
+- **8.2 `trafficLightPosition`: no change, measured-not-assumed is NOT claimed.** The
+  default `hiddenInset` inset is what the corner slot's 76px reserve and 40px strip were
+  measured against (#557's numbers, unchanged here), and nothing in the DOM suite
+  suggests a vertical mismatch — but 8.1 could not run, so no measurement was taken. No
+  blind tuning: the override stays absent, which is the state that has been shipping. The
+  file's comment no longer points readers at the deleted 76px reserve in
+  `shell/sidebar/sidebar.tsx`; it points at `shell/corner-slot.tsx`.

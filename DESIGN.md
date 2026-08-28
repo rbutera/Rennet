@@ -78,6 +78,8 @@ Canvas, title bar, and toolbar share one background. Panels use the `canvas`, `s
 
 All neutral colors have a warm cast. Do not use glass, vibrancy, translucent chrome, or decorative shadows.
 
+One narrow exception, approved by Rai on 2026-08-28 while watching it render: chrome that floats over content in the full-bleed state may use a translucent, blurred ground — the only sanctioned use; opaque grounds remain the rule everywhere else (Rai, 2026-08-28). This covers the desktop shell's corner-slot pill and the floating chip layer the session bar dissolves into when both the sidebar and the chat are closed, and nothing else. The prohibition above stands unchanged for every other surface.
+
 ## Color
 
 Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in Rennet applications and `data-theme="light|dark"` in Starlight. Follow the operating-system preference until the user stores an override.
@@ -158,7 +160,9 @@ design-ramp test enforces the ramp over the component sources.
 
 ## Layout
 
-The desktop shell is a collapsible left sidebar (projects grouped by machine, sessions, search, settings) beside the conversation column and a main surface whose top bar carries the view switcher and the primary hand-off action; rbutera/Rennet#458 records the rulings. The earlier no-navigation-rail rule is withdrawn.
+The desktop shell is a collapsible left sidebar (projects grouped by machine, sessions, search, settings) beside the conversation column and a main surface whose top bar carries the view switcher and the primary hand-off action; rbutera/Rennet#458 records the rulings. Collapsed means hidden: the sidebar has no icon rail, and its affordances stay one toggle away in the expanded panel or on ⌘P/⌘K.
+
+**The leftmost pane owns the traffic lights.** On macOS the window hides its native titlebar, so one corner slot — the light inset plus the sidebar toggle — mounts in exactly one place at a time: the sidebar header while the sidebar is expanded (lights, then the wordmark, then the toggle), the chat header while the sidebar is collapsed and the chat is open, and a floating pill over the main view when both are closed. In that last state the main surface runs full-bleed and the session top bar dissolves into a floating chip layer; content clears the chips at rest and slides under them on scroll. One chat open/close control lives on the main view's top-left, in both directions. rbutera/Rennet#558 records the ruling.
 
 The marketing shell is at most 1440px wide with 40px side gutters. Section spacing ranges from 88px to 168px. Responsive layouts preserve the document order when columns collapse.
 
@@ -250,6 +254,6 @@ The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme
 - Use serif for annotations and review prose. Use sans serif for controls and data.
 - Test light and dark schemes.
 - Preserve the full review and all important claims at every breakpoint.
-- Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state.
+- Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state. Chrome floating over content in the full-bleed state may use a translucent, blurred ground — the one sanctioned exception (see Material, Rai 2026-08-28); opaque grounds remain the rule everywhere else.
 - Do not turn a page into a grid of equal feature cards.
 - Do not average independent model outputs into one consensus.
