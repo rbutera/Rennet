@@ -43,6 +43,7 @@ import {
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
+  type DiscoveryDeps,
   defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
@@ -558,6 +559,48 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return detected;
     })();
     return harnessDetection;
+  }
+
+  // Per-host agent detection (C17 cluster 3, #485) — the server-side fan-out behind
+  // `harness.hosts`. The client holds ONE daemon connection, so THIS daemon asks each host
+  // the only way it CAN be asked, and answers `null` for a host it cannot ask at all:
+  //
+  //  • `local` — this process runs on that host; the memoized ambient detection IS the answer.
+  //  • `wsl:<distro>` — the distro's OWN discovery deps (login-shell PATH + curated dirs +
+  //    `<path> --version`, every probe entering the distro through `wsl.exe`), so the rows are
+  //    the distro's binaries, never the host's. The distro is first asked for its login-shell
+  //    PATH: no answer ⇒ `wsl.exe` cannot enter it, so the host is UNASKED (`null`) rather than
+  //    reported as having no agents. The answer is reused, so this costs no extra spawn.
+  //  • `remote:<deviceId>` — a paired device DIALS this daemon; nothing here can dial back to
+  //    run a probe on it. `null` — honestly unasked, never this machine's agents copied over.
+  //
+  // Memoized per host like the local line: the probes spawn a login shell, and the settings
+  // surface re-reads this on every toggle.
+  const harnessDetectionByHost = new Map<string, Promise<DetectedHarness[] | null>>();
+  function detectHarnessesOn(source: ProjectSource): Promise<DetectedHarness[] | null> {
+    if (source === "local") return detectHarnesses();
+    if (!source.startsWith("wsl:")) return Promise.resolve(null);
+    const distro = source.slice("wsl:".length);
+    let detection = harnessDetectionByHost.get(source);
+    if (!detection) {
+      detection = (async (): Promise<DetectedHarness[] | null> => {
+        if (env.RENNET_DISABLE_HARNESS === "1") return [];
+        const distroDeps = await wslDiscoveryDeps(distro);
+        const loginShellPath = await distroDeps.loginShellPath();
+        if (loginShellPath === null) return null; // the distro could not be entered.
+        const deps: DiscoveryDeps = { ...distroDeps, loginShellPath: async () => loginShellPath };
+        const [claude, codex] = await Promise.all([
+          discoverClaude(deps, CLAUDE_TESTED_RANGE).catch(() => null),
+          discoverCodex(deps, {}).catch(() => null),
+        ]);
+        const detected: DetectedHarness[] = [];
+        if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
+        if (codex?.chosen) detected.push({ id: "codex", version: codex.chosen.version ?? null });
+        return detected;
+      })();
+      harnessDetectionByHost.set(source, detection);
+    }
+    return detection;
   }
 
   // Forge (source-control) CLI detection (C17, #483 gh rides again). Same disclosure
@@ -2197,6 +2240,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // The version a host's daemon would update TO: the one this daemon ships. That is a
       // real number, so `updateAvailable` is a real comparison rather than a fake flag.
       latestDaemonVersion: serverVersion,
+      // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
+      detectHarnessesOn,
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {

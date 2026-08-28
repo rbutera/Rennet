@@ -12,7 +12,9 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // — the rounds-ledger read), plus forge.detect (C17 cluster 1 — the per-host forge/`gh`
 // CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`), plus
 // daemon.status (C17 cluster 2 — per-host daemon reachable/version/lastSeenVersion/
-// updateAvailable, where an unreachable host invents nothing). A
+// updateAvailable, where an unreachable host invents nothing), plus harness.hosts
+// (C17 cluster 3 — SERVER-side per-host agent detection, where a host that cannot be
+// asked reads honestly absent instead of inheriting the local machine's agents). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row.
 const ABSORBED_IDS = [
@@ -43,6 +45,7 @@ const ABSORBED_IDS = [
   "github.setToken",
   "github.status",
   "harness.detect",
+  "harness.hosts",
   "noise.review",
   "openspec.change",
   "openspec.coverage",
@@ -124,7 +127,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(81);
+    expect(ABSORBED_IDS).toHaveLength(82);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

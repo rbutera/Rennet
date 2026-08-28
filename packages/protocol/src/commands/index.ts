@@ -34,6 +34,7 @@ import {
   handoffDisclosureSchema,
   handoffDispositionSchema,
   handoffRunOutputSchema,
+  harnessHostDetectionSchema,
   knowledgeDispositionResultSchema,
   noiseReviewSchema,
   openSpecChangeSchema,
@@ -396,6 +397,15 @@ const definitions = {
     // The ambient detection line: which harnesses were found (felt, not ceremonial).
     input: z.object({}),
     output: z.object({ detected: z.array(detectedHarnessSchema) }),
+  },
+  // Per-host harness detection (C17 cluster 3, #485). SERVER-side fan-out: the daemon this is
+  // dispatched to asks EVERY host the settings surface enumerates — itself directly, a WSL
+  // distro through `wsl.exe`, a paired remote device not at all (it dials US; there is no
+  // outbound connection to dial back). Each entry carries `asked`, so a host that could not be
+  // interrogated reads honestly absent rather than inheriting the local machine's agents.
+  "harness.hosts": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(harnessHostDetectionSchema) }),
   },
   // Forge (source-control) CLI detection, mirroring harness.detect (C17, #484 seam / #483
   // "gh rides again"). Runs on the daemon it is dispatched to = that host; the client folds

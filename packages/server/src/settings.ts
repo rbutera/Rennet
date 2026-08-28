@@ -14,6 +14,8 @@ import type {
   DaemonHostSection,
   DaemonHostStatus,
   DaemonSettings,
+  DetectedHarness,
+  HarnessHostDetection,
   PairedDevice,
   Project,
   ProjectSource,
@@ -75,6 +77,16 @@ export interface SettingsCompositionDeps {
    * truthful answer for a composition with no way to ask.
    */
   probeDaemon?(source: ProjectSource): Promise<{ version: string | null } | null>;
+  /**
+   * Ask ONE host which coding harnesses are installed ON IT (C17 cluster 3, #485). Resolves
+   * `null` when that host CANNOT BE ASKED from here — the caller then reports honest absence
+   * (`asked: false`, no rows) rather than copying this machine's agents onto it. An empty
+   * ARRAY is the different, real claim: that host was asked and has none.
+   *
+   * Absent dep ⇒ no host can be asked, which is the truthful answer for a composition with
+   * no detection effect wired.
+   */
+  detectHarnessesOn?(source: ProjectSource): Promise<DetectedHarness[] | null>;
   /**
    * The newest daemon version this client knows of — the version the app/server ships, which
    * is what a host's daemon would be updated TO. Absent ⇒ `updateAvailable` is withheld
@@ -138,6 +150,16 @@ export interface SettingsComposition {
    * refresh status on its own cadence.
    */
   daemonStatus(): Promise<DaemonHostStatus[]>;
+  /**
+   * The coding agents detected ON EACH HOST (C17 cluster 3, #485), for exactly the hosts
+   * `get().daemonHosts` enumerates — the same enumeration `daemonStatus` walks, so a card can
+   * never show agents belonging to another machine. Detection happens HERE, server-side: the
+   * client holds ONE daemon connection (the locus daemon), so it has nothing to fan out over.
+   *
+   * A host this daemon cannot interrogate reads `asked: false` with no rows. That is an
+   * honest absence, not "no agents installed" — and never the local set copied across.
+   */
+  harnessHosts(): Promise<HarnessHostDetection[]>;
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   /**
@@ -385,6 +407,21 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         }
       }
       return statuses;
+    },
+
+    harnessHosts: async (): Promise<HarnessHostDetection[]> => {
+      const hosts: HarnessHostDetection[] = [];
+      for (const host of daemonHostSections(deps.listProjects())) {
+        // A detection that REJECTS is a host that could not be asked, exactly like a dep
+        // that resolves null — either way nothing was observed there, so nothing is claimed.
+        const detected = await deps.detectHarnessesOn?.(host.source).catch(() => null);
+        hosts.push(
+          detected
+            ? { source: host.source, asked: true, detected }
+            : { source: host.source, asked: false, detected: [] },
+        );
+      }
+      return hosts;
     },
 
     guidance: async (projectId: string, repoPath: string): Promise<SettingsGuidance> => {

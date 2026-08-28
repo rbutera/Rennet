@@ -1811,6 +1811,28 @@ export const daemonHostStatusSchema = z.object({
 });
 export type DaemonHostStatus = z.infer<typeof daemonHostStatusSchema>;
 
+/**
+ * One host's detected coding agents (C17 cluster 3, #485) — the wire shape `harness.hosts`
+ * returns, keyed by the same `source` `daemonHosts` enumerates. Detection is SERVER-side:
+ * the daemon this is dispatched to asks each host the only way it CAN be asked, so the
+ * client never fans out over connections it does not have.
+ *
+ * `asked` is the honesty flag and the whole point of the shape: a host this daemon has no
+ * way to interrogate (a paired device that dials US; a distro `wsl.exe` cannot enter) reads
+ * `asked: false` with NO rows — an HONEST ABSENCE, distinct from `asked: true` with no rows,
+ * which is the real claim "that host has no coding agents installed". The local set is never
+ * copied onto a host it was not observed on.
+ */
+export const harnessHostDetectionSchema = z.object({
+  /** The host these harnesses were detected on — the `source` key `daemonHosts` enumerates. */
+  source: sourceSchema,
+  /** This daemon could interrogate that host. `false` ⇒ the empty row list claims NOTHING. */
+  asked: z.boolean(),
+  /** Exactly the harnesses observed ON that host. Empty when unasked, or genuinely none. */
+  detected: z.array(detectedHarnessSchema),
+});
+export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
+
 /** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({
   /** The resolved effective scheme (builtin `system`, overridden by global). */
