@@ -309,8 +309,15 @@ export async function runBoardRegeneration(
     const landed = successor.id !== input.priorPatchsetId;
     // The whole-tree citation grounding (W5). Best-effort by design: a tree git
     // could not read still drafts — on the diff-derived inventories, the behaviour
-    // before this change — rather than sinking the round over a lint input.
-    const tree = await deps.fileInventory?.(successor).catch(() => undefined);
+    // before this change — rather than sinking the round over a lint input. The
+    // try/catch covers a synchronous throw as well as a rejection, so a broken
+    // reader degrades instead of reaching the outer handler and failing the round.
+    let tree: TreeInventories | undefined;
+    try {
+      tree = await deps.fileInventory?.(successor);
+    } catch {
+      tree = undefined;
+    }
     const collation = assembleRoundCollation({
       patchset: successor,
       knowledge: deps.knowledgeFor(successor),
