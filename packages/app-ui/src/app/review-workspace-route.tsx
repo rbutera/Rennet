@@ -2,6 +2,7 @@ import type { Review } from "@rennet/protocol";
 import { useEffect, useRef } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
+import { useMutation } from "../data";
 import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
@@ -36,7 +37,39 @@ import { useRennetStore } from "../store";
 // toggles to `?view=handoff` and YIELDS while the hand-off is open (R49); leaving the hand-off is
 // the top-bar's back arrow, so the board/diff pill stays reachable. A retrospective review offers
 // no exit, so `ExitFab` renders nothing for it (law 10).
+//
+// Freshness is the route's too (#576, restoring #38's surface). `architecture-contracts.md`:
+// "The product does not present a mutated old artifact as fresh." The engine already knew — the
+// watcher marks the repository dirty and `review.checkFreshness` folds the review to
+// `status: "invalid"` — but nothing was ASKING, so the client presented a stale review as
+// current. The round path regenerates internally, so the uncovered case is the reviewer editing
+// their own tree while reading; the harm is posting that stale review under their own name.
+// This is INFORMATION, not a gate: nothing is blocked, nothing needs acknowledging, and
+// Regenerate is a plain button running the same `review.regenerate` a round already runs.
 const LIVE_GENERATION = "live";
+
+/**
+ * What a freshness answer stales: the review the route renders, and the boards read off it.
+ *
+ * ⚠️ COUPLED to `routes/slug.ts`, which declares itself the single swap point for how a session
+ * resolves and says it moves off `review.load` when B9 lands. `review.load` here must name the
+ * read that feeds this route's `review` prop — the moment those two disagree, the notice below
+ * silently stops appearing, which is this issue (#576) all over again. `freshness.dom.test.tsx`
+ * mounts through `useSlugResolution` for exactly that reason: change the read, and it goes red.
+ */
+const STALED_BY_FRESHNESS = ["review.load", "board.read"] as const;
+
+/** Fire-and-forget: `useMutation` already holds the fault; this only settles the rejection. */
+const held = () => undefined;
+
+/**
+ * The provenance of the patchset on screen — `local` (a working-tree capture, watchable for
+ * freshness) vs a `github-*` PR snapshot pinned to the pull request's OIDs. Absent ⇒ `local`,
+ * the default `wire.ts` declares, which also keeps a partial test fixture on the honest path.
+ */
+function patchsetSource(review: Review): string {
+  return review.patchsets?.find((p) => p.id === review.activePatchsetId)?.source ?? "local";
+}
 
 export function ReviewWorkspace({ review }: { review: Review }) {
   const [, navigate] = useLocation();
@@ -98,6 +131,47 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const boardGeneration =
     roundState.phase === "composed" ? roundState.newGeneration : LIVE_GENERATION;
 
+  // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
+  // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired
+  // into the working-tree freshness watcher (the renderer gates that off by patchset source)" —
+  // and `patchsetSource` is how the renderer is supposed to tell them apart (wire.ts). Asking
+  // anyway would capture THIS CLONE's tree, which can never match a `github-local`/`github-rest`
+  // patchset id, so the daemon commits `ReviewInvalidated`, the notice claims a change that never
+  // happened, and Regenerate replaces the reviewed PR diff with a local capture — a lie, a
+  // persisted write, and the destruction of the artifact under review. It is reachable, not
+  // theoretical: `repositoryDirty` is ONE global flag, so an edit in any watched repo arms it and
+  // the next PR review to mount collects the answer.
+  const fromWorkingTree = patchsetSource(review) === "local";
+  // Ask whether this review went stale — on mount, and again on every window focus, which is
+  // exactly when the reviewer comes back from editing their own tree. The daemon short-circuits
+  // when its watcher saw nothing, so a focus is cheap. Both writes stale `review.load`, so the
+  // notice below renders off the REFRESHED status rather than the one this window opened on.
+  const reviewId = review.id;
+  const repoPath = review.repositoryRoot;
+  const { mutate: checkFreshness } = useMutation("review.checkFreshness", {
+    invalidates: STALED_BY_FRESHNESS,
+  });
+  const { mutate: regenerate, pending: regenerating } = useMutation("review.regenerate", {
+    invalidates: STALED_BY_FRESHNESS,
+  });
+  useEffect(() => {
+    if (!fromWorkingTree) return;
+    // A failed check leaves the last known status standing: the surface never CLAIMS fresh, it
+    // only says stale when the daemon said so, so an unanswered check is silence, not a lie.
+    const ask = () => {
+      void checkFreshness({ commandId: crypto.randomUUID(), reviewId, repoPath }).catch(held);
+    };
+    ask();
+    window.addEventListener("focus", ask);
+    return () => window.removeEventListener("focus", ask);
+  }, [checkFreshness, reviewId, repoPath, fromWorkingTree]);
+  // The staleness expression mobile already computes — a COPY of
+  // `apps/mobile/src/lib/projection.ts`, not a shared helper, so the pointer home is the only
+  // thing keeping the two honest. Mobile's reachability half is dropped (a desktop window IS its
+  // daemon connection) and the working-tree gate is added, because a PR snapshot that somehow
+  // carries `invalid` must not be narrated as "the repository changed".
+  const stale = fromWorkingTree && review.status === "invalid";
+
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
       lens: query.lens,
@@ -116,6 +190,30 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     // also what C20's floating-chip clearance hangs off, so the board reads correctly under
     // the state-3 chip layer instead of starting beneath them.
     <div className="relative flex h-full min-h-0 flex-col bg-canvas">
+      {/* One line, above the branch so it is present on the hand-off too — the surface where a
+          stale review would be posted under the reviewer's own name. It reads and it offers a
+          button; it blocks nothing and every view stays exactly as reachable as before. */}
+      {stale ? (
+        <div
+          data-testid="review-stale"
+          role="status"
+          className="flex shrink-0 items-baseline gap-3 border-border border-b bg-accent-surface px-6 py-2 text-sm text-ink-soft"
+        >
+          <span>
+            The repository changed since this review was captured — you are reading the older tree.
+          </span>
+          <button
+            type="button"
+            disabled={regenerating}
+            onClick={() => {
+              void regenerate({ commandId: crypto.randomUUID(), reviewId, repoPath }).catch(held);
+            }}
+            className="text-accent underline underline-offset-2 disabled:no-underline disabled:opacity-60"
+          >
+            {regenerating ? "Regenerating…" : "Regenerate"}
+          </button>
+        </div>
+      ) : null}
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
