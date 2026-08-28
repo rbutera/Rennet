@@ -197,6 +197,10 @@ export interface RoundsRuntimeDeps {
   /** Read the durable rounds ledger for a session (C15 2.2). Present ⇒ `ledger()` returns the
    *  reconciled durable records; absent ⇒ `ledger()` falls back to the in-memory ledger. */
   readonly readRounds?: (sessionId: string) => readonly RoundRecord[];
+  /** Read a persisted generation by id (C15 2.3) — the switcher-facing drill-down read the
+   *  ledger uses to open the frozen predecessor. Absent/never-persisted ⇒ `undefined`
+   *  (honest); the store throws on a corrupt file. */
+  readonly loadGeneration?: (id: string) => Generation | undefined;
 }
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
@@ -241,6 +245,10 @@ export interface RoundsRuntime {
   dispatchRound(input: RoundDispatchInput): Promise<void>;
   /** The session's rounds ledger — every `RoundRecord` this runtime recorded, in order. */
   ledger(sessionId: string): readonly RoundRecord[];
+  /** Read a minted generation by id (C15 2.3) — the ledger's `GenerationSwitcher` drills back
+   *  to a round's frozen predecessor (`RoundRecord.frozenPredecessor`) through this. Absent
+   *  generation (or no durable store) ⇒ `undefined`; the store throws on a corrupt file. */
+  generation(id: string): Generation | undefined;
 }
 
 export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
@@ -459,6 +467,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       // The durable ledger (reconciled to one record per round) is the truth when a store is
       // wired; the in-memory map is the fallback for a runtime with no durability (tests).
       return deps.readRounds?.(sessionId) ?? ledger.get(sessionId) ?? [];
+    },
+    generation(id: string): Generation | undefined {
+      return deps.loadGeneration?.(id);
     },
   };
 }

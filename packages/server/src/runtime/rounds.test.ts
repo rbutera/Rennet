@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BoardMetaStore } from "@rennet/adapters";
+import { BoardMetaStore, GenerationStore, RoundRecordStore } from "@rennet/adapters";
 import type {
   CodexExecutor,
   DeltaPacket,
@@ -158,6 +158,47 @@ describe("createRoundsRuntime", () => {
     expect(boardGeneration.status).toBe("live");
     // The ledger carries the record.
     expect(runtime.ledger("s1")).toEqual([record]);
+  });
+
+  it("exposes both generations by id — the switcher drills back to the frozen predecessor (C15 2.3)", async () => {
+    const genDir = mkdtempSync(join(tmpdir(), "gen-store-"));
+    const roundDir = mkdtempSync(join(tmpdir(), "round-store-"));
+    const generationStore = new GenerationStore(genDir);
+    const roundStore = new RoundRecordStore(roundDir);
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        persistGeneration: (gen) => generationStore.save(gen),
+        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+        readRounds: (sessionId) => roundStore.read(sessionId),
+        loadGeneration: (id) => generationStore.load(id),
+      }),
+    );
+    // The prior generation carries a real drafted board, so drilling back reaches boards.
+    const priorWithBoards: Generation = {
+      id: "gen:ps-0",
+      patchsetId: "ps-0",
+      lensBoards: { design: "board:gen1-design" },
+      status: "live",
+    };
+    const { record } = await runtime.runRound(roundInput({ previousGeneration: priorWithBoards }));
+
+    // The record links back to the frozen predecessor by id.
+    expect(record.frozenPredecessor).toBe("gen:ps-0");
+    expect(record.boardGeneration).toBe("gen:ps-1");
+
+    // Both generations are reachable by id from a fresh store instance (restart-durable).
+    const reader = createRoundsRuntime(
+      baseDeps({ loadGeneration: (id) => new GenerationStore(genDir).load(id) }),
+    );
+    const frozen = reader.generation("gen:ps-0");
+    const live = reader.generation("gen:ps-1");
+    // The switcher-facing read returns the FROZEN gen-1 boards, not the live gen-2.
+    expect(frozen?.status).toBe("frozen");
+    expect(frozen?.lensBoards.design).toBe("board:gen1-design");
+    expect(live?.status).toBe("live");
+    expect(live?.id).toBe("gen:ps-1");
+    // A generation that was never minted is honestly absent.
+    expect(reader.generation("gen:never")).toBeUndefined();
   });
 
   it("re-reports against the existing generation when no patchset landed", async () => {

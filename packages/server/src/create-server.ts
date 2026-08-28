@@ -1552,6 +1552,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     persistGeneration: (gen) => generationStore.save(gen),
     recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
     readRounds: (sessionId) => roundRecordStore.read(sessionId),
+    loadGeneration: (id) => generationStore.load(id),
   });
   const dispatch = createDispatch({
     service,
