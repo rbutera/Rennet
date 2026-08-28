@@ -93,7 +93,7 @@ Almost never. The only sanctioned cases:
 - The Nx task-history SQLite DB throws `FOREIGN KEY constraint failed` (or `disk I/O error`) and the target exits 1 *after* printing "Successfully ran target" with zero real errors. This is a known Nx-internal concurrency bug (nrwl/nx#28035, #28424; present through 23.1.0), not a fault in your work or the cache's inputs. It only triggers when two separate `nx` processes write the same task-history DB at once. Recover with `pnpm nx reset` once, then re-run. Do not add `--skip-nx-cache` to the gate to hide it.
 - You are debugging the cache config itself and need a cold baseline to compare against.
 
-Prevention beats recovery here: run **one** `nx` invocation at a time within a worktree. Rennet's worktree-per-agent model already isolates the task-history DB across agents (each worktree root gets its own `.nx/`), so the crash needs two concurrent Nx processes *in the same worktree* — avoid that and you avoid the crash.
+Prevention beats recovery here: run **one** `nx` invocation at a time within a worktree. **Worktrees do NOT isolate the Nx cache** (corrected 2026-08-28; the earlier claim here that "each worktree root gets its own `.nx/`" was false): a worktree's `.git` is a file pointing at the main checkout, and Nx resolves its cache + task-history DB relative to the repo root — every worktree shares ONE cache and ONE task-history DB. Two agents gating in different worktrees ARE two Nx processes on the same DB. The working recipe for any concurrent-agent work: run every nx invocation with `NX_CACHE_DIRECTORY="$PWD/.nx-isolated/cache" NX_DAEMON=false` inside the worktree (cold cache, slower, correct; `.nx-isolated/` is excluded via the shared `.git/info/exclude`).
 
 ### Environment gotchas (nimbus / zsh)
 
@@ -103,6 +103,7 @@ Prevention beats recovery here: run **one** `nx` invocation at a time within a w
 - `noclobber` is set: `>` refuses to overwrite an existing file. Use `>|` to force, or write to a fresh path.
 - `openspec/` is ignored by the user's global gitignore (`~/.gitignore`). Stage openspec changes with `git add -f openspec/...`.
 - After `git push`, verify it landed: `git rev-parse origin/<branch>` must equal local HEAD, and `git cat-file -e origin/<branch>:<a-changed-file>`. A local commit is not a pushed commit.
+- **`git stash` is FORBIDDEN when multiple worktrees are active** (incident 2026-08-28): `refs/stash` is ONE ref shared across every worktree, so concurrent stash/pop races apply a SIBLING agent's content into your tree. Park WIP by committing to your branch (amend/fixup later) or writing a diff file. If you must touch an existing stash, address entries by SHA (`git stash list --format="%H %gd %s"`), never by index alone.
 
 ## Worktree lifecycle & cleanup (MANDATORY after merge)
 

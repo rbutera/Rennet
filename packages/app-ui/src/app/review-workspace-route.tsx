@@ -205,6 +205,7 @@ function HandoffMount({
       pr={exits.pr}
       onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}
+      onRevise={exits.onRevise}
     />
   );
 }

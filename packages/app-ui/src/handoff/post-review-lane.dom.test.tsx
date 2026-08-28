@@ -117,21 +117,124 @@ describe("PostReviewLane", () => {
     expect(store().review.stagedAsks["This holds up on the retry path."]).toBeDefined();
   });
 
-  it("selection Revise renders the affordance but is honestly gated — no fake success", () => {
+  it("selection Revise reworks the span through review.reviseSpan and re-stages the body", async () => {
+    stage("This holds up on the retry path.", "comment");
+    const calls: { askId: string; span: string; instruction: string }[] = [];
+    const r = mount(
+      <PostReviewLane
+        review={review}
+        onRevise={async (args) => {
+          calls.push(args);
+          return {
+            status: "reworked",
+            carriedAnchor: "It holds on retry.",
+            reworkedBody: "It holds on retry.",
+            receipt: { kind: "edit", id: "This holds up on the retry path.", body: "old" },
+          };
+        }}
+      />,
+    );
+    selectAndRelease(r.getByText("This holds up on the retry path."));
+    fireEvent.click(r.getByText("Revise"));
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "tighten this to one sentence" } });
+    // The control is LIVE (no gate note, not disabled) — the affordance runs for real.
+    expect(r.queryByText(/not available on this view/)).toBeNull();
+    const rework = r.getByRole("button", { name: "Rework" });
+    expect(rework.hasAttribute("disabled")).toBe(false);
+    await r.user.click(rework);
+
+    // Exactly one dispatch, carrying the selected span, the instruction, and the ask it belongs to.
+    expect(calls).toEqual([
+      {
+        askId: "This holds up on the retry path.",
+        span: "This holds up on the retry path.",
+        instruction: "tighten this to one sentence",
+      },
+    ]);
+    // The reworked body is staged back on the ask (a body swap in place) and rendered.
+    expect(store().review.stagedAsks["This holds up on the retry path."]?.body).toBe(
+      "It holds on retry.",
+    );
+    expect(await r.findByText("It holds on retry.")).toBeTruthy();
+  });
+
+  it("a rework over a PENDING INLINE EDIT shows the rework, not the stale shadow", async () => {
+    // This lane renders `draftEdits[id] ?? ask.body`, so a pending inline edit SHADOWS the ask
+    // body. Re-staging the reworked ask alone leaves that shadow on screen while the panel closes
+    // as success — a fabricated success. The rework supersedes the edit it ran against.
+    stage("This holds up on the retry path.", "comment");
+    act(() =>
+      store().reviewActions.setDraftEdit("This holds up on the retry path.", "MY PENDING EDIT"),
+    );
+    const r = mount(
+      <PostReviewLane
+        review={review}
+        onRevise={async () => ({
+          status: "reworked",
+          carriedAnchor: null,
+          reworkedBody: "guard the boundary on every retry",
+          receipt: {
+            kind: "edit",
+            id: "This holds up on the retry path.",
+            body: "MY PENDING EDIT",
+          },
+        })}
+      />,
+    );
+    // The shadow is what renders today — steer off it, exactly as the reviewer would.
+    selectAndRelease(r.getByText("MY PENDING EDIT"));
+    fireEvent.click(r.getByText("Revise"));
+    fireEvent.change(r.container.querySelector("textarea") as HTMLTextAreaElement, {
+      target: { value: "cover every retry" },
+    });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    // The card shows the rework; the stale shadow is gone from both the screen and the store.
+    expect(await r.findByText("guard the boundary on every retry")).toBeTruthy();
+    expect(r.queryByText("MY PENDING EDIT")).toBeNull();
+    expect(store().review.draftEdits["This holds up on the retry path."]).toBe(
+      "guard the boundary on every retry",
+    );
+  });
+
+  it("a rework that does not land states the reason and never dismisses as success", async () => {
+    stage("This holds up on the retry path.", "comment");
+    const r = mount(
+      <PostReviewLane
+        review={review}
+        onRevise={async () => ({
+          status: "unavailable",
+          reason: "The ask changed while the rework was running — discarded.",
+        })}
+      />,
+    );
+    selectAndRelease(r.getByText("This holds up on the retry path."));
+    fireEvent.click(r.getByText("Revise"));
+    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "tighten this" } });
+    await r.user.click(r.getByRole("button", { name: "Rework" }));
+
+    // The panel stays open with the daemon's honest reason; the ask body is untouched.
+    expect(
+      await r.findByText(/The ask changed while the rework was running — discarded\./),
+    ).toBeTruthy();
+    expect(store().review.stagedAsks["This holds up on the retry path."]?.body).toBe(
+      "body for This holds up on the retry path.",
+    );
+  });
+
+  it("without a bound rework the control is disabled and says so — no pretend run", () => {
     stage("This holds up on the retry path.", "comment");
     const r = mount(<PostReviewLane review={review} />);
     selectAndRelease(r.getByText("This holds up on the retry path."));
     fireEvent.click(r.getByText("Revise"));
-    // The affordance opens — the reviewer can draft the instruction (packet task 4.3)…
-    const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
-    fireEvent.change(box, { target: { value: "tighten this to one sentence" } });
-    // …but it states the gated truth and the Rework control is disabled: no pretend run (cluster 8).
-    expect(r.getByText(/Revise runs with the next round — not available yet/)).toBeTruthy();
+    expect(r.getByText(/Revise is not available on this view/)).toBeTruthy();
     expect(r.getByRole("button", { name: "Rework" }).hasAttribute("disabled")).toBe(true);
-    // Clicking the disabled control changes nothing: the ask is untouched, no draft edit recorded.
     fireEvent.click(r.getByRole("button", { name: "Rework" }));
-    expect(store().review.stagedAsks["This holds up on the retry path."]).toBeDefined();
-    expect(store().review.draftEdits["This holds up on the retry path."]).toBeUndefined();
+    expect(store().review.stagedAsks["This holds up on the retry path."]?.body).toBe(
+      "body for This holds up on the retry path.",
+    );
   });
 
   it("the Retired drawer restores a deleted block whole (re-staged, pip back up)", () => {
