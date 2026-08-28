@@ -15,9 +15,10 @@ The rule: **the leftmost pane owns the traffic lights.** One `CornerSlot`
 component = [macOS traffic-light inset] + [sidebar toggle, PanelLeft icon],
 with exactly one mount at a time:
 
-1. **Sidebar expanded** — CornerSlot in the sidebar header row. The Rennet
-   wordmark is REMOVED from the frame entirely (Rai's ruling; brand lives in
-   About/dock icon).
+1. **Sidebar expanded** — CornerSlot in the sidebar header row, with the
+   Rennet wordmark BETWEEN the lights and the sidebar toggle (Rai's amended
+   ruling 2026-08-28: lights → wordmark → toggle; the demo omitted the
+   wordmark — restore it here). States 2 and 3 carry NO wordmark.
 2. **Sidebar collapsed + chat open** — CornerSlot inline at the LEFT of the
    chat's existing header row (no extra strip; `self-start` so the light inset
    holds its real y, not the row centre). Applies to EVERY chat-column mount,
@@ -44,14 +45,15 @@ centering in the host row needs it. The CornerSlot strip is the drag region
 (`.navigation-titlebar` pattern from #557). Non-darwin: no lights inset, but
 the same single-toggle geometry; Windows keeps its native frame.
 
-Supersedes within #557's fix: the sidebar wordmark inset (`pl-[76px]`) and
-lockup shrink become dead once the wordmark is gone; the rail's `pt-8` dies
-with the rail.
+Supersedes within #557's fix: the `pl-[76px]` inset is replaced by the
+CornerSlot's own geometry (the wordmark now sits between lights and toggle);
+the rail's `pt-8` dies with the rail. Keep the 14px lockup size from #557
+unless it fights the row.
 
 ## Inventory reconciliation (C14 depends on this)
 
-This change deliberately contradicts §1 claims that assume the wordmark
-lockup, the 48px rail, and a chat-header collapse control. Enumerate the
+This change deliberately contradicts §1 claims that assume the wordmark's
+old placement, the 48px rail, and a chat-header collapse control. Enumerate the
 affected `[ws:C3]`/`[ws:C7]` lines in `spikes/board-prototype/INVENTORY.md`,
 and annotate each `(re-ruled by C20 / #558 — Rai 2026-08-28)` in place. C14
 verifies the C20 behavior for those lines, not the original claim. No silent
