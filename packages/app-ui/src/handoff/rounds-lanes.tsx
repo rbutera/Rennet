@@ -203,8 +203,10 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr, onRevise }: Roun
           <p className="text-sm text-muted-foreground">Nothing staged yet.</p>
         )}
 
-        {/* Dispatch Round: inert while nothing is staged (R37), and inert until C9 wires the round
-            run (`onDispatch`) — a live button with no handler would be a dead click that lies. */}
+        {/* Dispatch Round: inert while nothing is staged (R37), and inert when no round run is
+            wired (`onDispatch`) — a live button with no handler would be a dead click that lies.
+            The shipping tree DOES wire it (`routes/app.tsx` → `LiveRoundsScope`), so absent
+            `onDispatch` means a mount with no rounds source, not a permanently dead exit. */}
         <button
           ref={dispatchRef}
           type="button"
