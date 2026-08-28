@@ -1,5 +1,5 @@
 import { Toggle, ToggleGroup } from "@rennet/ui";
-import { ArrowLeft, PanelRightOpen } from "lucide-react";
+import { ArrowLeft, MessageSquare } from "lucide-react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { Icon } from "../components/icon";
 import { useRoundRecords } from "../rounds/rounds-data";
@@ -12,10 +12,15 @@ import { Trail, type TrailProps } from "./trail";
 // The 56px session top-bar (C03 §4, R51). The frame renders it on session routes
 // only (the 40px takeover tier belongs to each takeover surface — reconciliation
 // 6). A three-column grid: LEFT slot (back arrow exactly when `?view` is not the
-// board; the chat-expand control when the chat is collapsed; then the two-line
-// trail), a CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History ·
-// Map · Diff pill — a C2 `ToggleGroup` over `?view`, selection DERIVED from the
-// URL, toggling navigating with `viewToggle` (replace).
+// board; then the app's ONE chat open/close toggle; then the two-line trail), a
+// CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Map · Diff
+// pill — a C2 `ToggleGroup` over `?view`, selection DERIVED from the URL, toggling
+// navigating with `viewToggle` (replace).
+//
+// C20: the chat toggle lives on the RIGHTMOST pane, not in the chat header, and it
+// is present in BOTH directions — one control that opens and closes, never a split
+// expand-here / collapse-there pair. A control that only appears when the chat is
+// shut is a control you cannot find while the chat is open.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The pill's three explicit views, in order, mapped to their labels. */
@@ -85,7 +90,7 @@ export function TopBar() {
       data-slot="session-top-bar"
       className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-line bg-canvas px-3"
     >
-      {/* LEFT slot: back arrow (off-board), chat-expand (chat collapsed), trail. */}
+      {/* LEFT slot: back arrow (off-board), the one chat toggle, trail. */}
       <div className="flex min-w-0 items-center gap-2">
         {offBoard ? (
           <button
@@ -97,16 +102,16 @@ export function TopBar() {
             <Icon icon={ArrowLeft} className="size-4" />
           </button>
         ) : null}
-        {!chatOpen ? (
-          <button
-            type="button"
-            aria-label="Expand chat"
-            onClick={() => setChatOpen(true)}
-            className="flex size-7 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-          >
-            <Icon icon={PanelRightOpen} className="size-4" />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          aria-pressed={chatOpen}
+          aria-label={chatOpen ? "Close chat" : "Open chat"}
+          title={chatOpen ? "Close chat" : "Open chat"}
+          onClick={() => setChatOpen(!chatOpen)}
+          className="flex size-7 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+        >
+          <Icon icon={MessageSquare} className="size-4" />
+        </button>
         <Trail {...trail} />
       </div>
 
