@@ -10,9 +10,11 @@ import type { PatchFile, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
+import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, mount } from "../test/dom";
+import { MemoryBridge } from "../test/memory-bridge";
 
 // Start each test from a clean slice; the switch under test does its own reset, un-aided.
 afterEach(() => {
@@ -59,13 +61,19 @@ function stage(anchor: string) {
   );
 }
 
+/** These reviews drafted no boards — the board reads answer honest-missing, and the
+ *  subject here is the FAB + the review slice, not the board. */
+const noBoardsBridge = () => new MemoryBridge({ "board.read": () => ({ board: null }) });
+
 describe("review-identity isolation (C08 finding 2)", () => {
   it("switching review.id resets the slice — A's asks and verdict override never reach B", async () => {
-    const history = memoryHistory("/s/x"); // board view: the FAB is visible, no bridge needed
+    const history = memoryHistory("/s/x"); // board view: the FAB is visible
     const view = mount(
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <ReviewWorkspace review={review("A")} />
-      </Router>,
+      <BridgeProvider bridge={noBoardsBridge()}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <ReviewWorkspace review={review("A")} />
+        </Router>
+      </BridgeProvider>,
     );
 
     // Review A: stage two asks and override the verdict — the reviewer's acts on THIS review.
@@ -79,9 +87,11 @@ describe("review-identity isolation (C08 finding 2)", () => {
 
     // Switch to review B — a different identity. No test calls resetReview(): the surface must.
     view.rerender(
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <ReviewWorkspace review={review("B")} />
-      </Router>,
+      <BridgeProvider bridge={noBoardsBridge()}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <ReviewWorkspace review={review("B")} />
+        </Router>
+      </BridgeProvider>,
     );
 
     // B starts clean: no pip on the FAB (count 0), and the slice is empty — A's override is gone,
@@ -99,9 +109,11 @@ describe("review-identity isolation (C08 finding 2)", () => {
     stage("src/a.ts:5");
     const history = memoryHistory("/s/x");
     const view = mount(
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <ReviewWorkspace review={review("A")} />
-      </Router>,
+      <BridgeProvider bridge={noBoardsBridge()}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <ReviewWorkspace review={review("A")} />
+        </Router>
+      </BridgeProvider>,
     );
     expect(view.getByRole("button", { name: "Write Review, 1 staged" })).toBeTruthy();
     expect(Object.keys(useRennetStore.getState().review.stagedAsks)).toHaveLength(1);

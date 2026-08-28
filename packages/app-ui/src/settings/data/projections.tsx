@@ -160,6 +160,14 @@ export interface SettingsProjection {
    *  no UI lie). A stateful test/B10 projection sets it TRUE, so those editors are live
    *  and provable. (`setRepoVisibility` is NOT in this set — Repository is live-backed.) */
   readonly projectEditsPersist: boolean;
+  /**
+   * Whether the project NAME field has a served write store. Separate from
+   * {@link SettingsProjection.projectEditsPersist} because it is separately TRUE: the
+   * name writes through `project.rename` (C18) while the glyph, worktree, tracker and
+   * guidance editors still have no served write. One flag for both would either disable
+   * a live control or enable four dead ones.
+   */
+  readonly nameEditsPersist: boolean;
 
   /** Rename a host — flows through to the sidebar host-group header (one hosts state). */
   renameHost(id: string, name: string): void;
@@ -218,6 +226,7 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   trackerByProject: {},
   guidanceByProject: {},
   projectEditsPersist: false,
+  nameEditsPersist: false,
   renameHost: () => undefined,
   removeHost: () => undefined,
   // No backend to hand a handshake to, so the honest outcome is a failed reconnect.

@@ -1965,6 +1965,39 @@ export const daemonHostSectionSchema = z.object({
 export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
 
 /**
+ * One session row in the sidebar (C18) — the wire shape `session.list` serves and every
+ * session mutation echoes. Projected from the persisted `SessionModel`, so every field is
+ * a FACT of that record: `title` is the reviewer's own rename or the claimed branch;
+ * `target` is `your-pr` when the claim carries a PR number and `your-branch` otherwise
+ * (a teammate's PR is not knowable from the session record, so it is never guessed);
+ * `targetState` and unread activity are likewise absent rather than invented.
+ */
+export const sidebarSessionSchema = z.object({
+  id: z.string().min(1),
+  /** The project this session belongs to — the sidebar's grouping key. */
+  projectId: z.string().min(1),
+  /** The reviewer's chosen title, else the claimed branch, else "New review". */
+  title: z.string().min(1),
+  target: z.enum(["your-branch", "your-pr"]),
+  /**
+   * Where the target stands (needs-you / merged / reviewed) and whether the row carries
+   * unread orchestrator activity. The session record proves NEITHER today, so the host
+   * leaves both absent and the row renders without them — the shape carries them so the
+   * surface stays structurally able to show them the moment a source exists, never so a
+   * value can be guessed.
+   */
+  targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
+  unread: z.boolean().optional(),
+  /** Pinned to the top of its project group; absent reads as unpinned. */
+  pinned: z.boolean().optional(),
+  /** Archived (soft-deleted, the only release); absent reads as live. */
+  archived: z.boolean().optional(),
+  /** When the session was minted (epoch ms) — the client renders the relative line. */
+  createdAt: z.number(),
+});
+export type SidebarSession = z.infer<typeof sidebarSessionSchema>;
+
+/**
  * One host's daemon status (C17, #485) — the wire shape `daemon.status` returns, which the
  * client folds into the host card's `DaemonInfo`. An UNREACHABLE host INVENTS NOTHING: it
  * carries `reachable: false` and NO `version`, only the `lastSeenVersion` it actually

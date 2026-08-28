@@ -17,7 +17,6 @@ import type { RennetBridge, Review } from "@rennet/protocol";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
-import { BoardSourceProvider } from "../board/board-data";
 import { BridgeProvider } from "../data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { RunRoute } from "../rounds/run-route";
@@ -25,7 +24,7 @@ import { memoryHistory } from "../routes/history";
 import { ROUTES } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
-import { fixtureBoardSource } from "../test/fixtures/boards";
+import { fixtureBoardRead } from "../test/fixtures/boards";
 import type { TimelineRoundsSource } from "../test/fixtures/rounds";
 import {
   completedRoundRecord,
@@ -71,14 +70,12 @@ function appTree(
   return (
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <BoardSourceProvider value={fixtureBoardSource}>
-          <RoundsSourceProvider value={source}>
-            <Switch>
-              <Route path={ROUTES.sessionRun}>{(p) => <RunRoute slug={p.slug ?? ""} />}</Route>
-              <Route path={ROUTES.session}>{() => <ReviewWorkspace review={review} />}</Route>
-            </Switch>
-          </RoundsSourceProvider>
-        </BoardSourceProvider>
+        <RoundsSourceProvider value={source}>
+          <Switch>
+            <Route path={ROUTES.sessionRun}>{(p) => <RunRoute slug={p.slug ?? ""} />}</Route>
+            <Route path={ROUTES.session}>{() => <ReviewWorkspace review={review} />}</Route>
+          </Switch>
+        </RoundsSourceProvider>
       </Router>
     </BridgeProvider>
   );
@@ -86,7 +83,7 @@ function appTree(
 
 function mountApp(timeline: TimelineRoundsSource, path: string) {
   const history = memoryHistory(path);
-  const bridge = new MemoryBridge({});
+  const bridge = new MemoryBridge({ "board.read": fixtureBoardRead });
   const r = mount(appTree(timeline.source, history, bridge));
   // Re-read the mutated injected clock into the tree — the seam's re-render at cluster 8
   // (a `useCommandStream` push), here a test-driven tick. NO wall clock.
@@ -155,7 +152,7 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     expect(r.container.querySelectorAll('[data-testid="delta-dot"]')).toHaveLength(2);
   });
 
-  it("the completed round is reachable in the ledger, opening its own generation", () => {
+  it("the completed round is reachable in the ledger, opening its own generation", async () => {
     // After a round completes its record sits in the ledger; `?view=rounds` opens it —
     // the row, its report, and its own generation's boards, proven end to end over the real
     // workspace + the completed-round source. Finding 3: a producer-shaped `RoundRecord`
@@ -164,13 +161,11 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     // `RoundRecord` predecessor field (C09 ledger, F3).
     const history = memoryHistory("/s/s-1?view=rounds");
     const led = mount(
-      <BridgeProvider bridge={new MemoryBridge({})}>
+      <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
         <Router hook={history.hook} searchHook={history.searchHook}>
-          <BoardSourceProvider value={fixtureBoardSource}>
-            <RoundsSourceProvider value={fixtureCompletedRoundsSource}>
-              <ReviewWorkspace review={review} />
-            </RoundsSourceProvider>
-          </BoardSourceProvider>
+          <RoundsSourceProvider value={fixtureCompletedRoundsSource}>
+            <ReviewWorkspace review={review} />
+          </RoundsSourceProvider>
         </Router>
       </BridgeProvider>,
     );
@@ -179,7 +174,10 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     expect(led.container.querySelector('[data-round="1"]')).not.toBeNull();
     expect(led.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
     // The round opens on its own generation (gen2); no frozen predecessor to switch to.
-    expect(led.container.querySelector('article[data-generation="gen2"]')).not.toBeNull();
+    // The lens boards arrive over `board.read`, so wait out the in-flight read.
+    await waitFor(() =>
+      expect(led.container.querySelector('article[data-generation="gen2"]')).not.toBeNull(),
+    );
     expect(led.container.querySelector('[data-kind="generation-switcher"]')).toBeNull();
     led.unmount();
   });

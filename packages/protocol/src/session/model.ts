@@ -274,5 +274,13 @@ export const SessionModelSchema = z.object({
   threads: z.array(SessionThreadSchema),
   createdAt: z.number(),
   archivedAt: z.number().optional(),
+  /**
+   * The reviewer's own title for this session (C18 `session.rename`). Additive-optional:
+   * an unnamed session has none and the sidebar falls back to the claimed branch, so
+   * clearing a title RESTORES that fallback rather than persisting an empty label.
+   */
+  title: z.string().min(1).optional(),
+  /** Pinned to the top of its project group (C18 `session.setPinned`); absent ⇒ unpinned. */
+  pinned: z.boolean().optional(),
 });
 export type SessionModel = z.infer<typeof SessionModelSchema>;

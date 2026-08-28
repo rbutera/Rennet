@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
-import { FIXTURE_BOARDS, fixtureBoardSource } from "../test/fixtures/boards";
+import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
-import { BoardSourceProvider, resolveBoard } from "./board-data";
+import { resolveBoard } from "./board-data";
 import { LensBoardView } from "./board-view";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,17 +43,23 @@ const CONTENT_KINDS = [
   "noise_verdict",
 ] as const;
 
-function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
-  // Empty MemoryBridge = unbound dispatch; board citations read the honest error the
-  // document renders around (Reconciliation 2), exactly as the live seam will behave
-  // for a span outside the captured patchset.
-  return mount(
-    <BridgeProvider bridge={new MemoryBridge({})}>
-      <BoardSourceProvider value={fixtureBoardSource}>
-        <LensBoardView generation={generation} generations={generations} />
-      </BoardSourceProvider>
+async function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
+  // Boards arrive over the real `board.read` command; nothing else is stubbed, so board
+  // citations read the honest error the document renders around (Reconciliation 2),
+  // exactly as the live seam behaves for a span outside the captured patchset.
+  const result = mount(
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+      <LensBoardView reviewId="rev-1" generation={generation} generations={generations} />
     </BridgeProvider>,
   );
+  await settled(result.container);
+  return result;
+}
+
+/** Wait out the in-flight board reads, so an assertion sees an ANSWER (a board, an
+ *  honest empty, or an error) rather than the pending state. */
+async function settled(container: HTMLElement) {
+  await waitFor(() => expect(container.querySelector("[data-kind=board-pending]")).toBeNull());
 }
 
 const kindsIn = (root: ParentNode): Set<string> => {
@@ -77,7 +83,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     // gen1 carries all five lenses; visiting each mounts its board through the real
     // Section/registry pipeline. Section keeps children mounted while folded (Collapse
     // animates grid-rows), so folded sections still contribute their kinds.
-    const { container, user } = renderView("gen1");
+    const { container, user } = await renderView("gen1");
     const seen = new Set<string>();
     // The default (Flagged) lens first, then click through the rest.
     for (const k of kindsIn(container)) seen.add(k);
@@ -98,7 +104,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     // (CodeTabs) / annotation (AnchorReveal). With dispatch unbound the seam reads the
     // honest error line — proof the code_ref → AnchorReveal → CodeBlock path is live on
     // the real surface, not just in the isolated pool test.
-    const { container, user } = renderView("gen1");
+    const { container, user } = await renderView("gen1");
     const decisions = container.querySelector<HTMLButtonElement>("[data-lens=decisions]");
     if (!decisions) throw new Error("no decisions tab");
     await user.click(decisions);
@@ -122,9 +128,9 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     let valid = 0;
     for (const gen of GENERATIONS) {
       for (const lens of LENS_KINDS) {
-        const raw = fixtureBoardSource(gen, lens);
+        const raw = fixtureBoardRead({ generation: gen, lens }).board;
         const r = resolveBoard(raw, { generation: gen, lens });
-        if (raw === undefined) {
+        if (raw === null) {
           expect(r.status).toBe("missing");
           continue;
         }
@@ -160,7 +166,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
   });
 
   it("folds: a non-delta lens folds every section to its gist + counts; Flagged opens expanded", async () => {
-    const { container, user } = renderView("gen1");
+    const { container, user } = await renderView("gen1");
     expect(lensOf(container)).toBe("flagged"); // R44 default
     expect(
       [...container.querySelectorAll("[data-kind=board-section]")].every(
@@ -179,7 +185,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
   });
 
   it("delta marks: gen2 Flagged opens its delta sections expanded with a gold dot that clears on interaction", async () => {
-    const { container, getByText, user } = renderView("gen2");
+    const { container, getByText, user } = await renderView("gen2");
     expect(lensOf(container)).toBe("flagged");
     const deltaSections = container.querySelectorAll("[data-kind=board-section][data-delta]");
     expect(deltaSections.length).toBeGreaterThan(0);
@@ -210,7 +216,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
         target: "change-why",
         generation: "gen1",
       });
-    const { container, user } = renderView("gen1");
+    const { container, user } = await renderView("gen1");
     const design = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!design) throw new Error("no design tab");
     await user.click(design);
@@ -224,8 +230,8 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(container.textContent).toContain("why silent?");
   });
 
-  it("absent-lens: a lens with no board this generation yields no segment (never disabled)", () => {
-    const { container } = renderView("gen2");
+  it("absent-lens: a lens with no board this generation yields no segment (never disabled)", async () => {
+    const { container } = await renderView("gen2");
     const tabs = container.querySelector("[data-kind=lens-switcher]");
     expect(tabs?.querySelector("[data-lens=sequence]")).toBeTruthy();
     expect(tabs?.querySelector("[data-lens=flagged]")).toBeTruthy();
@@ -235,13 +241,14 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
   });
 
   it("generation drill-down: drilling from live gen2 back to frozen gen0 swaps to its read-only board", async () => {
-    const { container, user } = renderView("gen2", GENERATIONS);
+    const { container, user } = await renderView("gen2", GENERATIONS);
     const gens = container.querySelector("[data-kind=generation-switcher]");
     expect(gens?.querySelector("[data-generation=gen2]")?.getAttribute("data-frozen")).toBeNull();
     const gen0 = gens?.querySelector<HTMLButtonElement>("[data-generation=gen0]");
     expect(gen0?.getAttribute("data-frozen")).toBe("true");
     if (!gen0) throw new Error("no gen0 tab");
     await user.click(gen0);
+    await settled(container);
     // gen0 = the frozen propose-time Design board only; the document swaps to it by id.
     expect(lensOf(container)).toBe("design");
     expect(container.querySelector("[data-lens=flagged]")).toBeNull();

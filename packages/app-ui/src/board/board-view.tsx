@@ -28,6 +28,8 @@ import { Section } from "./section";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LensBoardViewProps {
+  /** The review whose boards are read — half of the `board.read` identity. */
+  readonly reviewId: string;
   /** The live generation to open on. */
   readonly generation: string;
   /** All generation ids for this review, oldest → newest (for drill-down). Defaults
@@ -36,14 +38,18 @@ export interface LensBoardViewProps {
   readonly generations?: readonly string[];
 }
 
-export function LensBoardView({ generation, generations = [generation] }: LensBoardViewProps) {
+export function LensBoardView({
+  reviewId,
+  generation,
+  generations = [generation],
+}: LensBoardViewProps) {
   const [selectedGeneration, setSelectedGeneration] = useState(generation);
   const [pickedLens, setPickedLens] = useState<LensKind | null>(null);
   // The `highlight` coach mark anchors the prose document (centered on the region) — it
   // only registers once a board actually renders, so an empty/error board never elects it.
   const highlightRef = useCoachAnchor("highlight");
 
-  const lenses = useLensBoards(selectedGeneration);
+  const lenses = useLensBoards(reviewId, selectedGeneration);
   const present = lenses.map((l) => l.lens);
 
   // The effective lens: the reviewer's pick if it still has a board this generation,
@@ -64,7 +70,7 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
   // effective (valid) lens; with none present, probe the reviewer's pick or the R44
   // default so a malformed board there still surfaces instead of vanishing.
   const displayLens: LensKind = effectiveLens ?? pickedLens ?? "flagged";
-  const shown = useBoardData(selectedGeneration, displayLens);
+  const shown = useBoardData(reviewId, selectedGeneration, displayLens);
   const board = shown.status === "valid" ? shown.board : undefined;
 
   return (
@@ -114,9 +120,15 @@ export function LensBoardView({ generation, generations = [generation] }: LensBo
               ? "The source returned a board for a different lens or generation."
               : shown.reason === "excluded-kind"
                 ? "The board carries an element kind that no lens board renders."
-                : "The board data did not match the expected shape."}
+                : shown.reason === "unreadable"
+                  ? "The board read failed, so its contents are unknown."
+                  : "The board data did not match the expected shape."}
           </p>
         </div>
+      ) : shown.status === "pending" ? (
+        <p data-kind="board-pending" className="text-muted-foreground text-sm">
+          Reading this board…
+        </p>
       ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">
           No board for this generation yet.

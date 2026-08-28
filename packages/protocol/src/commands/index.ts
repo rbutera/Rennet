@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
 import {
@@ -71,6 +72,7 @@ import {
   settingsRepoValueKeySchema,
   settingsRepoWriteOutcomeSchema,
   settingsViewSchema,
+  sidebarSessionSchema,
   sourceSchema,
   symbolInspectionSchema,
 } from "../wire";
@@ -533,6 +535,21 @@ const definitions = {
       contextAfter: z.array(z.string()),
     }),
   },
+  "board.read": {
+    // The lens-board read (C05 cluster 8, registered in C18). `LensBoardSchema` froze
+    // in B3 with the command left to "B4/B10's business"; this is it. Serves the
+    // PERSISTED board for one `(reviewId, generation, lens)` triple, projected from the
+    // whiteboard event log the lens pipeline wrote (`runLensBoard` → `whiteboard.apply`)
+    // plus the board-meta record that carries its board-level coverage. `board: null` is
+    // the honest MISSING answer — that lens drafted no board that generation — and is
+    // never a fabricated or partially-invented board.
+    input: z.object({
+      reviewId: z.string().min(1),
+      generation: z.string().min(1),
+      lens: LensKindSchema,
+    }),
+    output: z.object({ board: LensBoardSchema.nullable() }),
+  },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.
     // MAIN derives the stored shape (name, counts, open target) so the renderer
@@ -550,6 +567,15 @@ const definitions = {
       // silently disagree with `discovery.source` (persisting the wrong daemon).
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
+  },
+  "project.rename": {
+    // Rename a project's display name (C12 cluster 7, bound in C18) — the sidebar row
+    // and the Settings identity field are two callers of this one write. An EMPTIED
+    // name is not an error and is not stored empty: the host restores the `org/repo`
+    // fallback derived from the project's own path (R67), so the row reads its identity
+    // again rather than an unnamed blank. Returns the renamed project and the fresh list.
+    input: z.object({ projectId: z.string().min(1), name: z.string() }),
+    output: z.object({ project: projectSchema.nullable(), projects: z.array(projectSchema) }),
   },
   "projects.remove": {
     // Forget a project from the front-door list. Does NOT delete the repo on disk —
@@ -1335,6 +1361,31 @@ const definitions = {
   "session.rounds": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: z.object({ records: z.array(RoundRecordSchema) }),
+  },
+  // ── The sidebar's sessions (C03 cluster 2, bound in C18) ────────────────────
+  // The sidebar showed an honest EMPTY session state because protocol carried no
+  // `session.list`. These four are that projection and its writes, served from the
+  // durable session store: every row is a fact of a persisted `SessionModel`, and
+  // every write persists so a rename, a pin, or an archive survives reload. Archive
+  // carries the boolean rather than minting a fourth command — restore IS un-archive.
+  "session.list": {
+    input: z.object({}),
+    output: z.object({ sessions: z.array(sidebarSessionSchema) }),
+  },
+  "session.rename": {
+    // An emptied title is not stored empty: it CLEARS the reviewer's title, so the row
+    // falls back to the claimed branch (the same restore-the-default rule as a project).
+    input: z.object({ sessionId: z.string().min(1), title: z.string() }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  "session.setPinned": {
+    input: z.object({ sessionId: z.string().min(1), pinned: z.boolean() }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  "session.archive": {
+    // `archived: false` is RESTORE — un-archiving returns the session to the sidebar.
+    input: z.object({ sessionId: z.string().min(1), archived: z.boolean() }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
   },
   // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
   // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;

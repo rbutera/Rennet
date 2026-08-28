@@ -34,9 +34,12 @@ import { useReportBoard } from "./rounds-data";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function RoundsLedger({
+  reviewId,
   slug,
   records,
 }: {
+  /** The review whose boards the ledger detail reads (the `board.read` identity). */
+  readonly reviewId: string;
   readonly slug: string;
   readonly records: readonly RoundRecord[];
 }) {
@@ -122,7 +125,7 @@ export function RoundsLedger({
           Round diff
         </button>
 
-        <LensBoardView generation={liveGeneration} />
+        <LensBoardView reviewId={reviewId} generation={liveGeneration} />
       </div>
     </section>
   );

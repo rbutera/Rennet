@@ -13,8 +13,8 @@ import type { HostElement, LensBoard, LensKind, LensSection, SkippedHunk } from 
 // header becomes a section title + prose, a capability becomes a `requirement`.
 //
 // Fixtures arrive ONLY through the bridge/source seam (the import fence): a surface
-// never imports this directory; a test hands `fixtureBoardSource` to
-// `BoardSourceProvider`. See `./index.ts`.
+// never imports this directory; a test hands `fixtureBoardRead` to a MemoryBridge as
+// the `board.read` handler. See `./index.ts`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The fixture patchset every `code_ref` in these boards cites. */

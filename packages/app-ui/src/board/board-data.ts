@@ -1,5 +1,5 @@
 import { LENS_KINDS, type LensBoard, LensBoardSchema, type LensKind } from "@rennet/protocol";
-import { createContext, useContext } from "react";
+import { useCommand } from "../data";
 import { BOARD_EXCLUDED_KINDS } from "./registry";
 
 const excludedKinds: ReadonlySet<string> = new Set(BOARD_EXCLUDED_KINDS);
@@ -11,34 +11,12 @@ const excludedKinds: ReadonlySet<string> = new Set(BOARD_EXCLUDED_KINDS);
 // locally: whatever the seam returns is parsed against `LensBoardSchema`, and a
 // shape that fails surfaces as `error` DATA, never a thrown render.
 //
-// NO board-fetch command exists in the protocol yet — `commands/index.ts` registers
-// no `lensBoard`/`board` name, and `useCommand<K>` is typed over registered
-// `CommandName`, so it CANNOT name a command that does not exist. Registering it is
-// B4/B10's declared job (`lens-board.ts`: "the command that returns it is B4/B10's
-// business"). So today the board arrives through a `BoardSource` supplied on context
-// — the same shape C3 used for its not-yet-a-command session projection
-// (`SidebarSessionProjectionProvider`), because the MemoryBridge can only answer a
-// REGISTERED command. Tests hand `fixtureBoardSource` to {@link BoardSourceProvider};
-// the fixtures live behind the import fence (`test/fixtures/boards/`), never imported
-// by a surface.
-//
-// When B4/B10 registers and binds the board command, {@link useBoardData}'s body
-// becomes one `useCommand("<board command>", { generation, lens })` read and this
-// context is deleted — the ONLY file that changes (gated cluster 8).
+// The board arrives over `board.read` (registered + bound in C18): the host serves
+// the PERSISTED board for a `(reviewId, generation, lens)` triple from the whiteboard
+// event log the lens pipeline wrote. `board: null` is the honest missing answer for a
+// lens that drafted no board that generation, and a read that FAILS is `invalid`
+// (`unreadable`) — never folded into "no board yet".
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Raw board data for a `(generation, lens)` pair, or `undefined` when that lens has
- * no board that generation (absent-not-disabled — the lens switcher renders no
- * segment). Returns `unknown` on purpose: the seam OWNS validation, so a source can
- * hand back anything and {@link useBoardData} is the one place shape is proven.
- */
-export type BoardSource = (generation: string, lens: LensKind) => unknown;
-
-const BoardSourceContext = createContext<BoardSource>(() => undefined);
-
-/** Supplies the board source (fixtures today; deleted when the live command lands). */
-export const BoardSourceProvider = BoardSourceContext.Provider;
 
 /** The `(generation, lens)` pair a resolution was requested for — what the returned
  *  board's own identity must match. */
@@ -48,25 +26,28 @@ export interface BoardIdentity {
 }
 
 /**
- * Why a board resolved `invalid` — three honest failure modes, none of which may
+ * Why a board resolved `invalid` — four honest failure modes, none of which may
  * render as "no board yet" (that lie is finding 1). `shape`: the source returned data
  * `LensBoardSchema` rejected. `identity`: it returned a well-formed board for the WRONG
  * `(generation, lens)` — a stale or cross-wired read, not the board asked for.
  * `excluded-kind`: it carries a host kind no lens board renders (`round_outcome` /
  * `review_comment`, finding 4) — the spike's silent-hole defect, caught as data.
+ * `unreadable`: the read itself failed (the host could not serve this board).
  */
-export type BoardInvalidReason = "shape" | "identity" | "excluded-kind";
+export type BoardInvalidReason = "shape" | "identity" | "excluded-kind" | "unreadable";
 
 /**
  * The resolution of one `(generation, lens)` board request — a discriminated union so
  * an invalid board can never be mistaken for a missing one. `valid`: a board whose
  * shape AND identity check out and that carries only renderable kinds. `missing`: the
- * source has no board for this pair (absent-not-disabled). `invalid`: the source
- * answered, but with something wrong — surfaced as an honest error, never as empty.
+ * host has no board for this pair (absent-not-disabled). `pending`: the read is still
+ * in flight — not yet an answer, so it is never rendered as absence. `invalid`: the
+ * read answered, but with something wrong — surfaced as an honest error, never as empty.
  */
 export type BoardResolution =
   | { readonly status: "valid"; readonly board: LensBoard }
   | { readonly status: "missing" }
+  | { readonly status: "pending" }
   | { readonly status: "invalid"; readonly reason: BoardInvalidReason; readonly detail: unknown };
 
 /**
@@ -76,7 +57,7 @@ export type BoardResolution =
  * excluded kind each resolves `invalid` (rendered distinctly), separate from `missing`.
  */
 export function resolveBoard(raw: unknown, expected: BoardIdentity): BoardResolution {
-  if (raw === undefined) return { status: "missing" };
+  if (raw === undefined || raw === null) return { status: "missing" };
   const parsed = LensBoardSchema.safeParse(raw);
   if (!parsed.success) return { status: "invalid", reason: "shape", detail: parsed.error };
   const board = parsed.data;
@@ -94,16 +75,39 @@ export function resolveBoard(raw: unknown, expected: BoardIdentity): BoardResolu
   return { status: "valid", board };
 }
 
+/** Fold one `board.read` result into a {@link BoardResolution}: a rejected read is an
+ *  honest `unreadable`, an in-flight read is `pending`, and anything served routes
+ *  through {@link resolveBoard} so shape and identity are still proven client-side. */
+function resolveRead(
+  result: { data?: { board: LensBoard | null }; error: unknown; pending: boolean },
+  expected: BoardIdentity,
+): BoardResolution {
+  if (result.error !== undefined && result.error !== null) {
+    return { status: "invalid", reason: "unreadable", detail: result.error };
+  }
+  if (result.pending) return { status: "pending" };
+  return resolveBoard(result.data?.board, expected);
+}
+
 /**
  * Resolve the `LensBoard` for a `(generation, lens)` pair — the one hook every board
  * component reads. Any generation id resolves, so passing a FROZEN generation's id is
  * the generation drill-down read (C05 6.3); the current generation is just the live
- * one. Reads the context source and validates its result against the requested
- * identity, so a stale or malformed board is `invalid`, not a crash and not a lie.
+ * one. One `board.read` per pair, validated against the requested identity, so a stale
+ * or malformed board is `invalid`, not a crash and not a lie.
  */
-export function useBoardData(generation: string, lens: LensKind): BoardResolution {
-  const source = useContext(BoardSourceContext);
-  return resolveBoard(source(generation, lens), { generation, lens });
+export function useBoardData(
+  reviewId: string,
+  generation: string,
+  lens: LensKind,
+): BoardResolution {
+  // With no review or generation to read against there is nothing to ask for: the read
+  // stays disabled and resolves honest-missing rather than pending on a fetch never made.
+  const enabled = reviewId.length > 0 && generation.length > 0;
+  return resolveRead(useCommand("board.read", { reviewId, generation, lens }, { enabled }), {
+    generation,
+    lens,
+  });
 }
 
 /** A present lens paired with its resolved board — what the lens switcher renders. */
@@ -116,14 +120,22 @@ export interface LensBoardEntry {
  * The lenses that HAVE a board in `generation`, each with its board — the lens
  * switcher's absent-not-disabled set (C05 6.2). Probes every lens through the one
  * seam and keeps only those that resolve, so "which lenses are present" is derived
- * from board-data, never invented: a lens the source has no board for is simply
- * absent. One `useContext`; the fixed-length `LENS_KINDS` map is pure, so this stays
- * hooks-safe.
+ * from board-data, never invented: a lens the host has no board for is simply
+ * absent. `LENS_KINDS` is fixed-length, so the per-lens reads are hooks-safe.
  */
-export function useLensBoards(generation: string): LensBoardEntry[] {
-  const source = useContext(BoardSourceContext);
+export function useLensBoards(reviewId: string, generation: string): LensBoardEntry[] {
+  // One read per lens, written out so every hook is a top-level call in a fixed order.
+  // The `Record<LensKind, …>` annotation is the drift guard: a lens added to `LENS_KINDS`
+  // fails to compile here until it gets its read.
+  const byLens: Record<LensKind, BoardResolution> = {
+    design: useBoardData(reviewId, generation, "design"),
+    sequence: useBoardData(reviewId, generation, "sequence"),
+    decisions: useBoardData(reviewId, generation, "decisions"),
+    flagged: useBoardData(reviewId, generation, "flagged"),
+    noise: useBoardData(reviewId, generation, "noise"),
+  };
   return LENS_KINDS.flatMap((lens) => {
-    const resolution = resolveBoard(source(generation, lens), { generation, lens });
+    const resolution = byLens[lens];
     return resolution.status === "valid" ? [{ lens, board: resolution.board }] : [];
   });
 }

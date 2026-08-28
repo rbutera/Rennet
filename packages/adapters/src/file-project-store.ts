@@ -43,6 +43,17 @@ export interface FileProjectStoreDeps {
   id?: () => string;
 }
 
+/**
+ * The `org/repo` identity an emptied rename restores (R67): the last two segments of the
+ * project's path, the closest org/repo its record carries. The sidebar derives the same
+ * string for the rename field's placeholder, so the restored name is the one the reviewer
+ * was shown as the default.
+ */
+export function orgRepoName(path: string): string {
+  const parts = path.split(/[/\\]+/).filter(Boolean);
+  return parts.slice(-2).join("/") || path;
+}
+
 export class FileProjectStore {
   private readonly now: () => string;
   private readonly id: () => string;
@@ -102,6 +113,26 @@ export class FileProjectStore {
       `${JSON.stringify(fileSchema.parse({ projects: [...existing, project] }), null, 2)}\n`,
     );
     return project;
+  }
+
+  /**
+   * Rename a project's display name (C12 cluster 7). An EMPTY name is not stored empty:
+   * it restores the `org/repo` identity derived from the project's own open path (R67),
+   * which is the same fallback the sidebar shows as the field's placeholder. Returns the
+   * renamed project, or `undefined` when the id is not stored.
+   */
+  rename(id: string, name: string): Project | undefined {
+    const existing = this.list();
+    const project = existing.find((entry) => entry.id === id);
+    if (!project) return undefined;
+    const trimmed = name.trim();
+    const renamed: Project = {
+      ...project,
+      name: trimmed === "" ? orgRepoName(project.openPath || project.path) : trimmed,
+    };
+    const projects = existing.map((entry) => (entry.id === id ? renamed : entry));
+    writeFileSync(this.path, `${JSON.stringify(fileSchema.parse({ projects }), null, 2)}\n`);
+    return renamed;
   }
 
   /**

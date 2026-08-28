@@ -94,8 +94,6 @@ import type { Layered } from "./provenance";
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
-//   – nameByProject: `project.rename` is not registered, so the display name still has no
-//     served store here (it lands with that command).
 //
 // The per-project PREFS are served now (C18 group A): glyphByProject / worktreeByProject /
 // trackerByProject / guidanceByProject read `settings.get`'s resolved `prefs`, and their
@@ -103,7 +101,9 @@ import type { Layered } from "./provenance";
 // same rung `resolveTrackerConfig` folds, so a per-project tracker actually reaches
 // retrieval. Each write invalidates the read it changed, so the surface settles on what is
 // STORED rather than on an optimistic guess; a refused write (a malformed repo config,
-// Rule 75) leaves the control where the served read put it.
+// Rule 75) leaves the control where the served read put it. The project NAME rides its own
+// command — `project.rename`, read back off `projects.list` — so `nameEditsPersist` and
+// `projectEditsPersist` are separate flags over two separate stores.
 //
 // This provider wraps the live Settings takeover. Tests that mount a page directly
 // supply their own projection, so the seam stays fully test-drivable; a test may still
@@ -274,6 +274,13 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const { mutate: writeGuidance } = useMutation("settings.setGuidance", {
     invalidates: ["settings.get", "settings.guidance"],
   });
+  // The project NAME write (C18): `project.rename` persists to the projects store, and the
+  // read is `projects.list` itself — the renamed `project.name` IS what the Identity field
+  // shows, so no second read-model is needed. An emptied name restores the org/repo
+  // identity host-side (R67).
+  const { mutate: renameProject } = useMutation("project.rename", {
+    invalidates: ["projects.list"],
+  });
   const [adopted, setAdopted] = useState<readonly ReviewRole[] | null>(null);
 
   // The adoption covers exactly one gap — between a write's response and the read it
@@ -415,6 +422,21 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
 
     return {
       ...EMPTY_SETTINGS_PROJECTION,
+      // Both stores are served now: the NAME through `project.rename` (the projects
+      // store), and the glyph / worktree / tracker / guidance editors through the repo
+      // rung (C18 group A). Two flags because they are two stores — a daemon that serves
+      // one and not the other still tells the truth about which controls persist.
+      nameEditsPersist: true,
+      // Derived, not asserted: the prefs are editable exactly when the daemon that
+      // answered actually SERVES them. A host still running an older daemon returns rows
+      // with no `prefs`, and those pages keep their honest disabled state rather than
+      // enabling controls whose write that daemon would reject.
+      projectEditsPersist: [...rowByProject.values()].some((row) => row.prefs !== undefined),
+      setProjectName: (projectId, name) => {
+        // A refused write leaves the field where it was — the invalidated `projects.list`
+        // is the honest answer, never a fabricated rename.
+        void renameProject({ projectId, name }).catch(() => undefined);
+      },
       hosts,
       sourceControlByHost,
       agentsByHost,
@@ -525,6 +547,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     writeRole,
     writeProjectValue,
     writeGuidance,
+    renameProject,
   ]);
 
   return <SettingsProjectionProvider value={projection}>{children}</SettingsProjectionProvider>;

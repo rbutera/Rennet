@@ -2,10 +2,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
-import { mount } from "../test/dom";
-import { fixtureBoardSource } from "../test/fixtures/boards";
+import { mount, waitFor } from "../test/dom";
+import { fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
-import { BoardSourceProvider } from "./board-data";
 import { LensBoardView } from "./board-view";
 
 // Cluster 6 — the board document, lens switcher, and generation drill-down over the
@@ -14,16 +13,22 @@ import { LensBoardView } from "./board-view";
 
 const GENERATIONS = ["gen0", "gen1", "gen2"] as const;
 
-function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
-  // An empty MemoryBridge stands in for unbound dispatch — board citations read the
-  // honest error, which the board document renders around (Reconciliation 2).
-  return mount(
-    <BridgeProvider bridge={new MemoryBridge({})}>
-      <BoardSourceProvider value={fixtureBoardSource}>
-        <LensBoardView generation={generation} generations={generations} />
-      </BoardSourceProvider>
+async function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
+  // Boards arrive over `board.read`; the bridge stubs nothing else, so board citations
+  // read the honest error the board document renders around (Reconciliation 2).
+  const result = mount(
+    <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+      <LensBoardView reviewId="rev-1" generation={generation} generations={generations} />
     </BridgeProvider>,
   );
+  await settled(result.container);
+  return result;
+}
+
+/** Wait out the in-flight board reads, so an assertion sees an ANSWER (a board, an
+ *  honest empty, or an error) rather than the pending state. */
+async function settled(container: HTMLElement) {
+  await waitFor(() => expect(container.querySelector("[data-kind=board-pending]")).toBeNull());
 }
 
 const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAttribute("data-lens");
@@ -31,8 +36,8 @@ const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAtt
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
 describe("LensBoardView — board document, switchers, drill-down", () => {
-  it("renders a segment only for lenses present this generation (absent-not-disabled)", () => {
-    const { container } = renderView("gen2");
+  it("renders a segment only for lenses present this generation (absent-not-disabled)", async () => {
+    const { container } = await renderView("gen2");
     const tabs = container.querySelector("[data-kind=lens-switcher]");
     // gen2 carries sequence + flagged; the other three lenses have no board — no segment.
     expect(tabs?.querySelector("[data-lens=sequence]")).toBeTruthy();
@@ -43,7 +48,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
   });
 
   it("opens on the Flagged lens expanded (R44) and folds every section on another lens", async () => {
-    const { container, user } = renderView("gen1");
+    const { container, user } = await renderView("gen1");
     // R44: Flagged is the default lens and its sections arrive expanded.
     expect(lensOf(container)).toBe("flagged");
     const flaggedOpen = [...container.querySelectorAll("[data-kind=board-section]")];
@@ -61,7 +66,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
   });
 
   it("rolls the section deltas up to a lens pip that clears as the sections are viewed", async () => {
-    const { container, getByText, user } = renderView("gen2");
+    const { container, getByText, user } = await renderView("gen2");
     const flaggedTab = container.querySelector("[data-lens=flagged]");
     const pip = () => flaggedTab?.querySelector("[data-testid=lens-delta-pip]");
     // Two unviewed delta sections (g2-open reworked, g2-beyond new) → the rollup reads 2.
@@ -76,7 +81,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
   });
 
   it("drills back to a frozen generation's board, marked frozen, through the same seam", async () => {
-    const { container, user } = renderView("gen2", GENERATIONS);
+    const { container, user } = await renderView("gen2", GENERATIONS);
     const gens = container.querySelector("[data-kind=generation-switcher]");
     expect(gens).toBeTruthy();
     // gen2 is live; gen0/gen1 are frozen predecessors (read-only drill targets).
@@ -86,13 +91,14 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
 
     if (!gen0Tab) throw new Error("no gen0 tab");
     await user.click(gen0Tab);
+    await settled(container);
     // gen0 carries only the frozen Design board — the board swaps to it, resolved by id.
     expect(lensOf(container)).toBe("design");
     expect(container.querySelector("[data-lens=flagged]")).toBeNull();
   });
 
-  it("hides the generation switcher when there is only one generation", () => {
-    const { container } = renderView("gen1", ["gen1"]);
+  it("hides the generation switcher when there is only one generation", async () => {
+    const { container } = await renderView("gen1", ["gen1"]);
     expect(container.querySelector("[data-kind=generation-switcher]")).toBeNull();
   });
 
@@ -101,7 +107,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     // tasks). Expand a section on gen1's Design, drill to gen0's Design: without a
     // board-identity key the same-ref section keeps gen1's expanded fold state. Keyed by
     // boardId the subtree remounts, so gen0 opens folded (foldAll) as it should.
-    const { container, getByText, user } = renderView("gen1", GENERATIONS);
+    const { container, getByText, user } = await renderView("gen1", GENERATIONS);
     const designTab = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!designTab) throw new Error("no design tab");
     await user.click(designTab);
@@ -119,6 +125,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     );
     if (!gen0Tab) throw new Error("no gen0 tab");
     await user.click(gen0Tab);
+    await settled(container);
     expect(lensOf(container)).toBe("design");
     // Remounted, so the reused-ref section is folded again — not gen1's expanded state.
     expect(changeSection()?.getAttribute("data-open")).toBe("false");
