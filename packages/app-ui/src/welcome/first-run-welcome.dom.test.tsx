@@ -278,7 +278,10 @@ describe("FirstRunWelcome", () => {
     expect(screen.queryByText("Ready to Go")).toBeNull();
   });
 
-  it("discloses a missing harness without trapping the reviewer, then rechecks detection", async () => {
+  // Named for what the reviewer can DO, not for a restriction that holds. The title this
+  // replaced — "blocks review setup with a friendly install path" — read as a courtesy and
+  // pinned a first-run trap for a whole release; the name did the reviewer's thinking.
+  it("lets a reviewer with no harness continue, and picks up one they install", async () => {
     // What the DAEMON would answer right now, not "answer differently on the Nth call".
     // The count of reads before the click is not the point and is not this test's business:
     // the tree the welcome mounts into re-parents on first run, and a re-mounted reader
