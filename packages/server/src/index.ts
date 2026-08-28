@@ -56,6 +56,7 @@ export {
 // that run a daemon INSIDE a distro over `wsl.exe`, and the orchestrator that composes them
 // (+ core's home/bundle/node builders) into one "ensure a healthy WSL daemon" call.
 export {
+  createWslRunner,
   type FetchLike,
   probeWslDaemonHealth,
   readWslDaemonPort,
@@ -68,5 +69,6 @@ export {
 export {
   type EnsureWslDaemonDeps,
   ensureWslDaemon,
+  probeWslDaemon,
   type WslDaemonHandle,
 } from "./wsl-supervisor";

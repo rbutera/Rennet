@@ -126,16 +126,44 @@ previously-seen host, or "Not connected — daemon unreachable, version unknown"
 otherwise, never an invented current version. Reconnect appears only when a host
 is unreachable; Update Daemon only when a reachable host has an update.
 
+Reconnect performs a real re-handshake with that host's daemon. It reads
+"Connecting…" and is disabled for exactly as long as the attempt is in flight,
+then either the card turns reachable — because the refreshed status says the host
+answered, never because the button was pressed — or the card stays unreachable and
+shows the reason the handshake failed. Reconnect re-attempts the connection; it
+does not install or start software that was not already there.
+
+Update Daemon performs a real update of that host's daemon, and appears only when
+the host reported an actual newer version to move to — where there is no update to
+make, or no mechanism to make it with, the button is simply absent. It reads
+"Updating the daemon…" while the update is genuinely in flight, then either the
+daemon line shows the version the host answered with afterwards, or the card shows
+the reason the update did not happen. The mechanism today is a WSL distribution:
+Rennet delivers its own server bundle into the distro and restarts the daemon on
+it. This machine's daemon ships with the Rennet app, so updating Rennet updates it;
+a paired device runs its own Rennet and updates itself. Both say so plainly rather
+than offering a button that would do nothing.
+
 Each card carries a **Source Control** and an **Agents** section. Agents on This
 Machine are live: Rennet lists the coding harnesses it discovered (Claude, Codex)
 with their versions, and disabling one rules it out of reviews on that host
-without uninstalling anything. When at least one agent is enabled, a Review
-section exposes Model Mappings — see [Model Mappings](#model-mappings) below.
-Detection that is not yet wired renders an honest empty state rather than a
-fabricated row: remote-host agent detection and per-host source-control tool
-detection are not live yet, so those surfaces read empty until their backends
-land. GitHub sign-in is not a source-control row here — it lives on the front door
-and the project detail (see [First run](#first-run)).
+without uninstalling anything. Agent detection runs per host: the daemon asks each
+paired machine the only way it can be asked, so a card shows that machine's own
+harnesses, and a host the daemon cannot interrogate reads its honest not-detected
+line rather than inheriting this machine's answers. The enable decision is stored
+per host, so ruling an agent out survives a reload and leaves it running elsewhere.
+
+Source Control lists the forge CLIs detected on that host — GitHub / `gh` only;
+GitLab and Bitbucket are planned, not built. It is detected per host exactly as
+agents are: the daemon runs the probes on each machine the only way it can, so a
+WSL distribution shows its own `gh` and its own auth state, and a host the daemon
+cannot interrogate reads its honest "Connect … to detect its tooling" line rather
+than inheriting this machine's answer. Its enable toggle is stored per host the
+same way. A forge whose binary is not on the host's `PATH` has no row at all,
+rather than a stale hit.
+When at least one agent is enabled, a Review section exposes Model Mappings — see
+[Model Mappings](#model-mappings) below. GitHub sign-in is not a source-control row here — it lives on the front door and the project detail
+(see [First run](#first-run)).
 
 ### Model Mappings
 

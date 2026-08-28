@@ -12,7 +12,7 @@
 // Every effect (spawner, `run`, `fetch`, clock) is INJECTED, so the whole path is
 // unit-testable with no real distro or socket.
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { type LocusCommand, locusCommand, type WslRunResult } from "@rennet/core";
 import { daemonInfoSchema } from "./daemon-file";
 import { type DaemonIdentity, daemonIdentitySchema } from "./ws-listener";
@@ -33,6 +33,39 @@ export type FetchLike = (
  * still stall it. Wave 3's desktop runner wraps `execa` with a timeout to honor this.
  */
 export type WslRunner = (command: LocusCommand) => Promise<WslRunResult>;
+
+/**
+ * A bounded `WslRunner` over `child_process.execFile`: one `wsl.exe … -e <program> <argv>`
+ * exec → `{stdout, code}`, with its OWN timeout so a wedged distro call can never stall the
+ * health-wait loop (which only bounds the interval BETWEEN polls, not a single hanging run).
+ * No `execa` dependency — the built-in with a `timeout` is exactly enough. `windowsHide`
+ * keeps the console window from flashing; a non-zero/failed exec resolves a non-zero `code`
+ * (delivery and health both branch on the code, never on a thrown spawn error).
+ */
+export function createWslRunner(timeoutMs = 15_000): WslRunner {
+  return (command) =>
+    new Promise((resolvePromise) => {
+      execFile(
+        command.file,
+        [...command.args],
+        {
+          timeout: timeoutMs,
+          windowsHide: true,
+          maxBuffer: 8 * 1024 * 1024,
+          ...(command.cwd ? { cwd: command.cwd } : {}),
+        },
+        (error, stdout) => {
+          const code =
+            error && typeof (error as { code?: unknown }).code === "number"
+              ? (error as { code: number }).code
+              : error
+                ? 1
+                : 0;
+          resolvePromise({ stdout: stdout ?? "", code });
+        },
+      );
+    });
+}
 
 /** Where a WSL daemon lives: which distro and its distro-native data dir. */
 export interface WslDaemonLocation {

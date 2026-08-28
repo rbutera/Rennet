@@ -31,6 +31,7 @@ import type {
 } from "@rennet/protocol";
 import {
   type CoachMarks,
+  type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
   type ProcessedRepoSummary,
@@ -330,6 +331,7 @@ function harness(
         entries: [],
       }),
     detectHarnesses: () => Promise.resolve([]),
+    detectForges: () => Promise.resolve([]),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
       connectStart: () =>
@@ -2168,6 +2170,7 @@ function frontDoorHarness(seed: {
   projects?: Project[];
   discovery?: DiscoveryResult;
   detected?: DetectedHarness[];
+  detectedForges?: DetectedForge[];
   processEvents?: ProjectProcessEvent[];
   processedRepos?: ProcessedRepoSummary[];
   processProject?: DispatchDeps["processProject"];
@@ -2265,6 +2268,7 @@ function frontDoorHarness(seed: {
         entries: [],
       }),
     detectHarnesses: () => Promise.resolve(seed.detected ?? []),
+    detectForges: () => Promise.resolve(seed.detectedForges ?? []),
     github: {
       status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
       connectStart: () =>
@@ -2411,6 +2415,28 @@ describe("createDispatch — front door (issue #29)", () => {
     });
     const out = (await dispatch("harness.detect", {})) as { detected: DetectedHarness[] };
     expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "codex"]);
+  });
+
+  it("forge.detect returns the detected forge CLIs for sourceControlByHost", async () => {
+    const { dispatch } = frontDoorHarness({
+      detectedForges: [
+        {
+          id: "github",
+          version: "2.62.0",
+          status: "available",
+          detail: "Authenticated with GitHub through the `gh` CLI.",
+        },
+      ],
+    });
+    const out = (await dispatch("forge.detect", {})) as { detected: DetectedForge[] };
+    expect(out.detected).toEqual([
+      {
+        id: "github",
+        version: "2.62.0",
+        status: "available",
+        detail: "Authenticated with GitHub through the `gh` CLI.",
+      },
+    ]);
   });
 
   it("project.process streams the host's narration, then emits a terminal done, and returns the summary", async () => {
@@ -3142,6 +3168,13 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       ),
       setCoachmarks: vi.fn((input: CoachMarks) => input),
       setTrackerValue: vi.fn(() => ({})),
+      daemonStatus: vi.fn(async () => []),
+      reconnect: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
+      update: vi.fn(async () => ({ status: { source: "local" as const, reachable: false } })),
+      harnessHosts: vi.fn(async () => []),
+      forgeHosts: vi.fn(async () => []),
+      setHarnessEnabled: vi.fn(() => []),
+      setForgeEnabled: vi.fn(() => []),
       // C16 (#485): the council mappings ride the same dep. The stub resolves the
       // real council DEFAULTS, so the route is proven against honest values.
       reviewRoles: vi.fn(() => reviewRoleMappings()),
@@ -3230,6 +3263,84 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       }),
     ).rejects.toThrow();
     expect(settings.setRoleAssignment).toHaveBeenCalledTimes(1);
+  });
+
+  it("daemon.status routes to the settings composition's per-host detection (C17)", async () => {
+    const daemonStatus = vi.fn(async () => [
+      { source: "local" as const, reachable: true, version: "0.1.5", updateAvailable: false },
+      { source: "wsl:Ubuntu" as const, reachable: false, lastSeenVersion: "0.1.4" },
+    ]);
+    // Only the one route under test is stubbed; every other settings method is unreachable
+    // from `daemon.status`, so a full composition would be scaffolding for its own sake.
+    const settings = { daemonStatus } as unknown as DispatchDeps["settings"];
+    const { dispatch } = harness(undefined, { settings });
+    const out = (await dispatch("daemon.status", {})) as {
+      hosts: { source: string; reachable: boolean; version?: string }[];
+    };
+    expect(daemonStatus).toHaveBeenCalledTimes(1);
+    // The dark host crosses the wire with NO version — the wire shape cannot smuggle one in.
+    expect(out.hosts[1]).toEqual({
+      source: "wsl:Ubuntu",
+      reachable: false,
+      lastSeenVersion: "0.1.4",
+    });
+    expect(out.hosts[0]?.version).toBe("0.1.5");
+  });
+
+  it("daemon.status with NO settings dep reports NO hosts (never a fabricated one)", async () => {
+    const { dispatch } = harness();
+    expect(await dispatch("daemon.status", {})).toEqual({ hosts: [] });
+  });
+
+  it("harness.hosts routes to the settings composition's per-host agent detection (C17)", async () => {
+    const harnessHosts = vi.fn(async () => [
+      {
+        source: "local" as const,
+        asked: true,
+        detected: [{ id: "claude", version: "2.1.0", enabled: true }],
+      },
+      { source: "remote:d1" as const, asked: false, detected: [] },
+    ]);
+    const settings = { harnessHosts } as unknown as DispatchDeps["settings"];
+    const { dispatch } = harness(undefined, { settings });
+    const out = (await dispatch("harness.hosts", {})) as {
+      hosts: { source: string; asked: boolean; detected: { id: string }[] }[];
+    };
+    expect(harnessHosts).toHaveBeenCalledTimes(1);
+    expect(out.hosts[0]?.detected).toEqual([{ id: "claude", version: "2.1.0", enabled: true }]);
+    // The unaskable host crosses the wire EMPTY — the wire shape cannot smuggle the local
+    // machine's agents onto a host nothing was observed on.
+    expect(out.hosts[1]).toEqual({ source: "remote:d1", asked: false, detected: [] });
+  });
+
+  it("harness.hosts with NO settings dep reports NO hosts (never a fabricated one)", async () => {
+    const { dispatch } = harness();
+    expect(await dispatch("harness.hosts", {})).toEqual({ hosts: [] });
+  });
+
+  it("harness.setEnabled routes the per-host decision to the store, and fails loudly with none", async () => {
+    const setHarnessEnabled = vi.fn(() => ["codex"]);
+    const settings = { setHarnessEnabled } as unknown as DispatchDeps["settings"];
+    const { dispatch } = harness(undefined, { settings });
+    expect(
+      await dispatch("harness.setEnabled", {
+        source: "wsl:Ubuntu",
+        harnessId: "codex",
+        enabled: false,
+      }),
+    ).toEqual({ disabled: ["codex"] });
+    // The HOST travels with the decision — it is not applied to whichever host is local.
+    expect(setHarnessEnabled).toHaveBeenCalledWith({
+      source: "wsl:Ubuntu",
+      harnessId: "codex",
+      enabled: false,
+    });
+
+    // No store ⇒ the write REJECTS. Reporting a decision that went nowhere would be the lie.
+    const { dispatch: unwired } = harness();
+    await expect(
+      unwired("harness.setEnabled", { source: "local", harnessId: "codex", enabled: false }),
+    ).rejects.toThrow(/settings store/);
   });
 
   it("with NO settings dep wired, degrades to the builtin view + unresolved write (never throws)", async () => {

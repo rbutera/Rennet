@@ -9,8 +9,24 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // handlers land in cluster 2), plus review.reviseSpan (B11 cluster 5 — the
 // living-draft span-rework command), plus the two session READS B9/B10 deferred
 // (session.transcript — the chat dock's honest-absent transcript read; session.rounds
-// — the rounds-ledger read). A dropped or renamed command fails this loudly; a NEW
-// command is added here deliberately, with its registry row.
+// — the rounds-ledger read), plus forge.detect (C17 cluster 1 — the per-host forge/`gh`
+// CLI detection command that mirrors harness.detect and feeds `sourceControlByHost`), plus
+// daemon.status (C17 cluster 2 — per-host daemon reachable/version/lastSeenVersion/
+// updateAvailable, where an unreachable host invents nothing) and daemon.reconnect (C17
+// cluster 5 — the on-demand re-handshake behind the host card's Reconnect button, whose
+// failure carries the reason rather than reading green), plus harness.hosts
+// (C17 cluster 3 — SERVER-side per-host agent detection, where a host that cannot be
+// asked reads honestly absent instead of inheriting the local machine's agents) and
+// harness.setEnabled (C17 cluster 3.2 — the served per-host enable store the toggle writes
+// through, so a ruled-out agent stays ruled out across reload), plus forge.setEnabled (C17
+// amendment A — the same served store for the Source Control row's toggle, which until now
+// wrote nowhere and silently reset on reload), plus forge.hosts (C17 amendment B — the
+// per-host mirror of harness.hosts, so a WSL card shows ITS own `gh` instead of a section
+// it is structurally incapable of filling) and daemon.update (C17 cluster 6 — the real
+// per-host daemon update behind the Update Daemon button, honest when there is no
+// mechanism for that host). A
+// dropped or renamed command fails this loudly; a NEW command is added here deliberately,
+// with its registry row.
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
@@ -26,9 +42,15 @@ const ABSORBED_IDS = [
   "ask.stage",
   "ask.unstage",
   "attention.acknowledge",
+  "daemon.reconnect",
+  "daemon.status",
+  "daemon.update",
   "device.registerPush",
   "flagged.adjudication",
   "flagged.review",
+  "forge.detect",
+  "forge.hosts",
+  "forge.setEnabled",
   "fs.listDir",
   "github.connectCancel",
   "github.connectPoll",
@@ -37,6 +59,8 @@ const ABSORBED_IDS = [
   "github.setToken",
   "github.status",
   "harness.detect",
+  "harness.hosts",
+  "harness.setEnabled",
   "noise.review",
   "openspec.change",
   "openspec.coverage",
@@ -118,7 +142,7 @@ const AGENT_INVENTORY = [
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(79);
+    expect(ABSORBED_IDS).toHaveLength(87);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

@@ -90,7 +90,16 @@ export interface SpawnDaemonOptions {
 export function spawnDaemon(options: SpawnDaemonOptions): ChildProcess {
   mkdirSync(options.dataDir, { recursive: true });
   const logFd = openSync(join(options.dataDir, "daemon.log"), "a");
-  const args = [options.entryPath, "--data-dir", options.dataDir];
+  // `--host-bundle` is the entry we are launching: this IS the server bundle, and it is what
+  // a WSL daemon update delivers into the distro (C17, #534). Passing it here means no shell
+  // has to know the path twice.
+  const args = [
+    options.entryPath,
+    "--data-dir",
+    options.dataDir,
+    "--host-bundle",
+    options.entryPath,
+  ];
   if (options.serverVersion) args.push("--server-version", options.serverVersion);
 
   let child: ChildProcess;

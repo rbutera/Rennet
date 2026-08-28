@@ -19,11 +19,14 @@ import {
   composedHandoffBundleSchema,
   conversationAnchorSchema,
   councilPickSchema,
+  daemonHostStatusSchema,
   deltaDigestResultSchema,
+  detectedForgeSchema,
   detectedHarnessSchema,
   discoveryResultSchema,
   dispositionTypeSchema,
   flaggedReviewSchema,
+  forgeHostDetectionSchema,
   forgeRequestSchema,
   forgeReviewEventSchema,
   fsListDirResultSchema,
@@ -33,6 +36,7 @@ import {
   handoffDisclosureSchema,
   handoffDispositionSchema,
   handoffRunOutputSchema,
+  harnessHostDetectionSchema,
   knowledgeDispositionResultSchema,
   noiseReviewSchema,
   openSpecChangeSchema,
@@ -361,6 +365,97 @@ const definitions = {
     // The ambient detection line: which harnesses were found (felt, not ceremonial).
     input: z.object({}),
     output: z.object({ detected: z.array(detectedHarnessSchema) }),
+  },
+  // Per-host harness detection (C17 cluster 3, #485). SERVER-side fan-out: the daemon this is
+  // dispatched to asks EVERY host the settings surface enumerates — itself directly, a WSL
+  // distro through `wsl.exe`, a paired remote device not at all (it dials US; there is no
+  // outbound connection to dial back). Each entry carries `asked`, so a host that could not be
+  // interrogated reads honestly absent rather than inheriting the local machine's agents.
+  "harness.hosts": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(harnessHostDetectionSchema) }),
+  },
+  // Rule an agent in or out of reviews ON ONE HOST (C17 cluster 3.2) — the served store behind
+  // the per-host enable toggle, persisted in daemon-settings so the decision survives reload.
+  // Scoped to the host: ruling Codex out here leaves it running on a WSL distro. It never
+  // installs, uninstalls or hides anything — the row stays, with its toggle off.
+  "harness.setEnabled": {
+    input: z.object({
+      source: sourceSchema,
+      harnessId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    // The host's ruled-out ids after the write — the stored decision, read back verbatim.
+    output: z.object({ disabled: z.array(z.string()) }),
+  },
+  // Forge (source-control) CLI detection, mirroring harness.detect (C17, #484 seam / #483
+  // "gh rides again"). Runs on the daemon it is dispatched to = that host; the client folds
+  // the rows into `sourceControlByHost`. Singleton registry today — GitHub / `gh` only.
+  "forge.detect": {
+    input: z.object({}),
+    output: z.object({ detected: z.array(detectedForgeSchema) }),
+  },
+  // Per-host forge detection (C17 amendment B), the exact mirror of `harness.hosts`: the daemon
+  // this is dispatched to walks the SAME host enumeration and runs forge discovery through each
+  // host's OWN deps — itself directly, a WSL distro through `wsl.exe`, a paired remote device not
+  // at all. Each entry carries `asked`, so a host that cannot be interrogated reads honestly
+  // absent rather than inheriting this machine's `gh`. `forge.detect` stays for the single-host
+  // read; this is what the settings surface's Source Control sections are keyed by.
+  "forge.hosts": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(forgeHostDetectionSchema) }),
+  },
+  // Rule a forge CLI in or out ON ONE HOST (amendment A) — the served write behind the Source
+  // Control row's toggle, mirroring harness.setEnabled exactly and persisted on the same
+  // per-host daemon-settings entry, so the decision survives reload. Read back through
+  // `harness.hosts`'s `disabledForges`. It installs nothing and hides nothing: the row stays,
+  // with its toggle off.
+  "forge.setEnabled": {
+    input: z.object({
+      source: sourceSchema,
+      forgeId: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    /** The host's ruled-out forge ids after the write — the stored decision, verbatim. */
+    output: z.object({ disabled: z.array(z.string()) }),
+  },
+  // Per-host daemon status (C17, #485): the daemon this is dispatched to reports, for EVERY
+  // host the settings surface enumerates, whether that host's daemon answered, its running
+  // version, the version it was last seen running, and whether an update is available. A host
+  // that does not answer carries `reachable: false` with NO version — never a guessed one.
+  "daemon.status": {
+    input: z.object({}),
+    output: z.object({ hosts: z.array(daemonHostStatusSchema) }),
+  },
+  // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind
+  // the host card's Reconnect button. The same per-host handshake `daemon.status` polls, run on
+  // demand for one host and reporting WHY it failed: `local` re-reads the claim file, a WSL
+  // distro is re-entered over `wsl.exe` and its published port health-checked, a paired remote
+  // device cannot be dialled back at all and says so. The outcome is that host's real status —
+  // a failed reconnect stays `reachable: false` and carries the failure line, never a green card.
+  "daemon.reconnect": {
+    input: z.object({ source: sourceSchema }),
+    output: z.object({
+      /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
+      status: daemonHostStatusSchema,
+      /** Why the handshake failed, when it did. Absent on success. Never a generic filler. */
+      error: z.string().optional(),
+    }),
+  },
+  // UPDATE one host's daemon (C17 cluster 6, #534) — the operation behind the host card's
+  // Update Daemon button, which shows only when `daemon.status` reported a real
+  // `updateAvailable`. The only host kind with an update mechanism today is `wsl:<distro>`:
+  // the current server bundle is delivered into the distro and the old daemon restarted on it.
+  // A host with no mechanism (this machine's daemon ships with the app; a paired device
+  // updates itself) says so in `error` and changes nothing — never a dead "Updating…".
+  "daemon.update": {
+    input: z.object({ source: sourceSchema }),
+    output: z.object({
+      /** That host's status AFTER the attempt — the same shape `daemon.status` returns. */
+      status: daemonHostStatusSchema,
+      /** Why the update failed, when it did. Absent on success. Never a generic filler. */
+      error: z.string().optional(),
+    }),
   },
   // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
   // Connect is SKIPPABLE everywhere it appears (working-tree review needs no

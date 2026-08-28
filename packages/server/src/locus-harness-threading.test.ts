@@ -37,23 +37,17 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getCodexResolution review turn", () => {
     const calls = callArgs("getCodexResolution");
-    // Exactly 4 call sites that survive the Board rebuild (B2). Three review-side turns
-    // thread the repo-resolved `locus`; the one exception is the host-global availability
-    // boot probe, which passes `HOST_LOCUS` explicitly (no repo in scope). There is NO
-    // zero-arg form — the default parameter was removed, so `getCodexResolution()` no
-    // longer typechecks. This guards the remaining risk: a review site hardcoding HOST_LOCUS.
-    expect(calls).toHaveLength(4);
-    const hostCalls = calls.filter((arg) => arg === "HOST_LOCUS");
-    const locusCalls = calls.filter((arg) => arg.startsWith("locus"));
-    expect(hostCalls).toHaveLength(1);
-    expect(locusCalls).toHaveLength(3);
-    // Bind that one HOST_LOCUS call to the boot probe specifically: it lives in
-    // `getCodexAvailability`, not in any review turn. Hardcoding HOST_LOCUS at a review
-    // site would push this count past 1 AND fail this line-context check. (Indentation-
-    // agnostic since the composition now nests inside `createRennetServer` — #377.)
-    expect(source).toMatch(
-      /function getCodexAvailability\(\): Promise<CodexAvailability> \{\s+return getCodexResolution\(HOST_LOCUS\)/,
-    );
+    // Exactly 3 call sites, ALL of them review-side turns threading the repo-resolved
+    // `locus` — no HOST_LOCUS call survives. The host-global availability probe used to be
+    // the one exception; C17's review finding 2 deleted it, because reusing this cache
+    // (which holds a live adapter bound to a binary path) for the DISCLOSURE line is what
+    // pinned the codex row until the daemon restarted. Detection now probes directly.
+    // There is NO zero-arg form — the default parameter was removed, so
+    // `getCodexResolution()` no longer typechecks. Exact, not `>=`: a new host-default site
+    // added later must fail this, not slip under a floor.
+    expect(calls).toHaveLength(3);
+    expect(calls.filter((arg) => arg === "HOST_LOCUS")).toHaveLength(0);
+    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(3);
   });
 
   it("threads the locus through the read-pipeline via locusContextForRepo", () => {

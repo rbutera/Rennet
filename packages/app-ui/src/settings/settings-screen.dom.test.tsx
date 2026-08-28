@@ -213,11 +213,39 @@ describe("Settings nav preserves ?project across sibling routes (P1-4)", () => {
 });
 
 describe("Agent enablement persists across leaving Settings (P1-2)", () => {
+  /**
+   * A bridge over a SERVED enable store (C17 cluster 3.2): `harness.setEnabled` writes the
+   * host's ruled-out ids into `stored`, and `harness.hosts` reads them back. `stored` lives
+   * outside the bridge, so a full app remount — a reload — meets the SAME store, which is
+   * the whole point of the store: the decision outlives the renderer.
+   */
+  const stored = new Map<string, ReadonlySet<string>>();
   function agentBridge(): MemoryBridge {
     return new MemoryBridge(
       {
         ...frontDoorHandlers(NAV_PROJECTS),
-        "harness.detect": () => ({ detected: [{ id: "claude", version: "2.1.0" }] }),
+        "harness.hosts": () => ({
+          hosts: [
+            {
+              source: "local" as const,
+              asked: true,
+              detected: [
+                {
+                  id: "claude",
+                  version: "2.1.0",
+                  enabled: !stored.get("local")?.has("claude"),
+                },
+              ],
+            },
+          ],
+        }),
+        "harness.setEnabled": (input) => {
+          const disabled = new Set(stored.get(input.source) ?? []);
+          if (input.enabled) disabled.delete(input.harnessId);
+          else disabled.add(input.harnessId);
+          stored.set(input.source, disabled);
+          return { disabled: [...disabled] };
+        },
       },
       { platform: "darwin", version: "1.0.1" },
     );
@@ -227,7 +255,7 @@ describe("Agent enablement persists across leaving Settings (P1-2)", () => {
     return findByRole("switch", { name: "Use Claude on This Machine" });
   }
 
-  it("disable → leave → reopen keeps it disabled; a full remount resets it", async () => {
+  it("disable → leave → reopen keeps it disabled, and so does a full remount", async () => {
     const history = memoryHistory("/settings/environments");
     const first = mount(<RennetRouterApp bridge={agentBridge()} history={history} />);
     const toggle = await claudeToggle(first.findByRole);
@@ -244,11 +272,12 @@ describe("Agent enablement persists across leaving Settings (P1-2)", () => {
     expect((await claudeToggle(first.findByRole)).getAttribute("aria-checked")).toBe("false");
     cleanup();
 
-    // A full app remount (a reload) is where it resets — detection is fresh, none disabled.
+    // A full app remount (a reload) is where a SESSION-only set used to lose the decision.
+    // With the served store it survives: a fresh app, a fresh bridge, the same answer.
     const second = mount(
       <RennetRouterApp bridge={agentBridge()} history={memoryHistory("/settings/environments")} />,
     );
-    expect((await claudeToggle(second.findByRole)).getAttribute("aria-checked")).toBe("true");
+    expect((await claudeToggle(second.findByRole)).getAttribute("aria-checked")).toBe("false");
     cleanup();
   });
 });

@@ -305,8 +305,12 @@ pages:
 - **Environments** — one card per machine, with its OS glyph, name, and address
   or a **Local** chip. Each card carries the source-control tooling detected
   there, the coding harnesses detected there, and the model mappings for the
-  review roles. Rename inline; Reconnect appears only when a machine is
-  unreachable.
+  review roles — each detected on that machine, so a card never borrows another's
+  tooling. Rename inline; Reconnect appears only when a machine is unreachable,
+  and re-attempts the connection for real — it says "Connecting…" while it tries,
+  then either the card comes back or it tells you why it did not. Update Daemon
+  appears only when a machine really has a newer daemon to move to, and behaves
+  the same way: it updates for real, then shows the new version or the reason.
 - **Appearance** — light / dark / system, the interface theme pack, and a
   separate code theme that applies to every code surface including the diff.
 - **Keyboard Shortcuts** — every named command and its binding.

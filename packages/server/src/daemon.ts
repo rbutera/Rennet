@@ -33,6 +33,9 @@ export interface DaemonConfig {
   readonly env: NodeJS.ProcessEnv;
   /** Directory of a built browser UI to serve (issue #381). Absent ⇒ headless. */
   readonly uiDist?: string;
+  /** This daemon's own server bundle — what a WSL daemon UPDATE delivers into the distro
+   *  (C17, #534). `spawnDaemon` passes the entry it launched; absent ⇒ no bundle to deliver. */
+  readonly hostBundlePath?: string;
 }
 
 /**
@@ -52,6 +55,7 @@ export function resolveDaemonConfig(
       "data-dir": { type: "string" },
       "server-version": { type: "string" },
       "ui-dist": { type: "string" },
+      "host-bundle": { type: "string" },
     },
   });
   const dataDir =
@@ -61,6 +65,7 @@ export function resolveDaemonConfig(
     serverVersion: values["server-version"] ?? env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
     env,
     uiDist: values["ui-dist"],
+    hostBundlePath: values["host-bundle"],
   };
 }
 
@@ -88,6 +93,7 @@ export async function runDaemon(
     // The GitHub egress transport for a daemon: Node's global `fetch` (no Electron `net`).
     httpFetch: fetch,
     uiDist: config.uiDist,
+    hostBundlePath: config.hostBundlePath,
   });
 
   const info: DaemonInfo = {

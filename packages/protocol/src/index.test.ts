@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   commands,
+  daemonHostStatusSchema,
   dispositionSchema,
+  forgeHostDetectionSchema,
   globalConfigSchema,
+  harnessHostDetectionSchema,
   isCommandName,
   parseCommandInput,
   parseCommandOutput,
@@ -382,5 +385,81 @@ describe("projectSchema — source defaults to local for pre-existing rows", () 
     });
     expect(legacy.source).toBe("local");
     expect(projectSchema.parse({ ...legacy, source: "wsl:Ubuntu" }).source).toBe("wsl:Ubuntu");
+  });
+});
+
+// C17 review finding 8 — the per-host detection shapes are DISCRIMINATED UNIONS, so the
+// contradictory states are not merely discouraged, they are unrepresentable. These schemas
+// are unreleased, which is exactly when this is cheap to encode.
+describe("per-host detection wire shapes reject contradictory states (C17)", () => {
+  it("an unreachable daemon status cannot carry a running version ACROSS the boundary", () => {
+    // The union has no `version` on the unreachable arm, so the field is not merely
+    // discouraged — it does not survive parsing, and nothing downstream can read it. (The arms
+    // are not `.strict()`: unknown keys are STRIPPED, not rejected, because every field on this
+    // protocol is additive-optional and a newer engine must stay parseable by an older client.)
+    const parsed = daemonHostStatusSchema.parse({
+      source: "local",
+      reachable: false,
+      version: "1.2.3",
+    });
+    expect(parsed).toEqual({ source: "local", reachable: false });
+    expect(parsed).not.toHaveProperty("version");
+    // …and the two legal shapes parse.
+    expect(
+      daemonHostStatusSchema.safeParse({ source: "local", reachable: true, version: "1.2.3" })
+        .success,
+    ).toBe(true);
+    expect(
+      daemonHostStatusSchema.safeParse({
+        source: "local",
+        reachable: false,
+        lastSeenVersion: "1.2.3",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("an UNASKED host cannot carry detected rows — agents or forge CLIs", () => {
+    const harnessRow = { id: "claude", version: "2.1.0", enabled: true };
+    expect(
+      harnessHostDetectionSchema.safeParse({
+        source: "wsl:Ubuntu",
+        asked: false,
+        detected: [harnessRow],
+      }).success,
+    ).toBe(false);
+    const forgeRow = {
+      id: "github",
+      version: "2.89.0",
+      status: "available",
+      detail: "Authenticated with GitHub through the `gh` CLI.",
+    };
+    expect(
+      forgeHostDetectionSchema.safeParse({
+        source: "wsl:Ubuntu",
+        asked: false,
+        detected: [forgeRow],
+      }).success,
+    ).toBe(false);
+
+    // Asked-with-rows and unasked-with-none are the two legal shapes, and a DECISION
+    // (the forge ruling) is still valid on a host that could not be asked.
+    expect(
+      harnessHostDetectionSchema.safeParse({
+        source: "local",
+        asked: true,
+        detected: [harnessRow],
+      }).success,
+    ).toBe(true);
+    expect(
+      harnessHostDetectionSchema.safeParse({
+        source: "wsl:Ubuntu",
+        asked: false,
+        detected: [],
+        disabledForges: ["github"],
+      }).success,
+    ).toBe(true);
+    expect(
+      forgeHostDetectionSchema.safeParse({ source: "local", asked: true, detected: [] }).success,
+    ).toBe(true);
   });
 });

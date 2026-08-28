@@ -43,12 +43,14 @@ import {
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
+  type DiscoveryDeps,
   defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
   defaultCodexTransportEffects,
   defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
+  defaultForgeDetectionDeps,
   defaultFsListDirDeps,
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
@@ -97,6 +99,7 @@ import {
   resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
+  detectForges as runForgeDetection,
   runGitHubDeviceFlow,
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
@@ -106,6 +109,7 @@ import {
   TranscriptStore,
   validateGitHubToken,
   wslDiscoveryDeps,
+  wslForgeDetectionDeps,
 } from "@rennet/adapters";
 import {
   attachRiskCrossCheck,
@@ -147,6 +151,7 @@ import {
 import type {
   ConventionCatalogue,
   CouncilHarnessId,
+  DetectedForge,
   DetectedHarness,
   FlaggedReview,
   GitHubAuthStatus,
@@ -158,6 +163,7 @@ import type {
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
+  ProjectSource,
   Review,
 } from "@rennet/protocol";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
@@ -173,6 +179,7 @@ import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
+import { liveProbe, liveProbeMap } from "./live-detection";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
@@ -204,11 +211,87 @@ import {
 } from "./runtime/rounds";
 import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
 import { createSettingsComposition } from "./settings";
+import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { startWsListener, type WsListener } from "./ws-listener";
+import { createWslRunner } from "./wsl-daemon";
+import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
+
+/**
+ * Ask ONE host's daemon whether it is running and on which version — the read behind the
+ * settings surface's host cards (C17, #485). Each host kind is asked the only way it CAN be
+ * asked from here, and a kind with no way to reach it answers `null`, which the caller
+ * reports as unreachable. Nothing here ever returns a version it did not observe:
+ *
+ *  • `local` — this process IS that host's daemon, and it is answering right now, so the
+ *    host is reachable by construction. `findHealthyDaemon` names the RUNNING version off
+ *    the verified claim; a stale or absent claim file falls back to the version of the
+ *    daemon executing this line. Both are observed facts, never a guess.
+ *  • `wsl:<distro>` — probed INSIDE the distro over `wsl.exe` (`probeWslDaemon`): resolve
+ *    `$HOME`, read the published port, health-check it. No spawn, no bundle delivery, no
+ *    restart — a status read must not start a daemon that was not running.
+ *  • `remote:<deviceId>` — a paired device DIALS this daemon; there is no outbound
+ *    connection to dial back, so its daemon cannot be reached from here. `null`.
+ */
+async function probeDaemonForHost(
+  source: ProjectSource,
+  dataDir: string,
+  serverVersion: string,
+): Promise<{ version: string | null } | null> {
+  if (source === "local") {
+    const verdict = await findHealthyDaemon(dataDir);
+    const claimed =
+      verdict.kind === "healthy" || verdict.kind === "incompatible"
+        ? verdict.identity.version
+        : null;
+    return { version: claimed ?? serverVersion };
+  }
+  if (source.startsWith("wsl:")) {
+    const identity = await probeWslDaemon(source.slice("wsl:".length), {
+      run: createWslRunner(),
+    });
+    return identity ? { version: identity.version } : null;
+  }
+  return null;
+}
+
+/**
+ * RE-ATTEMPT one host's handshake on demand (C17 cluster 5, #533) — the effect behind the host
+ * card's Reconnect button. It is the same handshake `probeDaemonForHost` performs, run fresh for
+ * one host, with one difference: a host kind that cannot be reached from here at ALL throws its
+ * reason instead of resolving `null`, so the card can say WHY rather than showing a bare failure.
+ *
+ * What it deliberately does NOT do is start a daemon that is not running. Delivering a bundle
+ * and spawning inside a distro is the UPDATE path (`ensureWslDaemon`, which owns the host bundle
+ * the shell resolves) — Reconnect re-attempts the connection and reports what it found, and a
+ * button that quietly installed software would be a different action wearing this one's label.
+ */
+async function reconnectDaemonForHost(
+  source: ProjectSource,
+  dataDir: string,
+  serverVersion: string,
+): Promise<{ version: string | null } | null> {
+  if (source.startsWith("remote:")) {
+    throw new Error(
+      "A paired device dials this daemon; Rennet cannot dial back to reconnect it. Reconnect from that device.",
+    );
+  }
+  const answer = await probeDaemonForHost(source, dataDir, serverVersion);
+  if (!answer && source.startsWith("wsl:")) {
+    throw new Error(
+      `No Rennet daemon answered in WSL distro "${source.slice("wsl:".length)}". Open a project on that distro to start one.`,
+    );
+  }
+  return answer;
+}
 
 export interface RennetServerOptions {
-  /** The per-user data directory (Electron passes app.getPath("userData")); every store resolves under it. */
+  /**
+   * The per-user data directory (Electron passes app.getPath("userData")). The SQLite store,
+   * the daemon claim and the log resolve under it — but NOT every store: the settings ladder
+   * (`client-settings.json`, `daemon-settings.json`, `devices.json`) lives under `$HOME/.rennet`
+   * by design, so a spawned daemon writes the real user's settings whatever `dataDir` says.
+   */
   readonly dataDir: string;
   /** Process environment for harness/CLI resolution and the RENNET_TEST_REPO short-circuit. Defaults to process.env. */
   readonly env?: NodeJS.ProcessEnv;
@@ -229,6 +312,13 @@ export interface RennetServerOptions {
    * the daemon runs headless. Passed straight to the WS listener's static handler.
    */
   readonly uiDist?: string;
+  /**
+   * This daemon's own server bundle on the host filesystem — the artifact a WSL daemon UPDATE
+   * delivers into the distro (C17 cluster 6, #534). `spawnDaemon` passes the entry it launched,
+   * which IS that bundle. Absent ⇒ this process cannot deliver one (a daemon started some other
+   * way), so a WSL update reports that plainly instead of shipping the wrong file.
+   */
+  readonly hostBundlePath?: string;
 }
 
 export interface RennetServer {
@@ -252,6 +342,7 @@ export interface RennetServer {
 export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
   const env = options.env ?? process.env;
   const dataDir = options.dataDir;
+  const serverVersion = options.serverVersion ?? "0.0.0-dev";
 
   let editorExecutables: Promise<string[]> | null = null;
   function getEditorExecutables(): Promise<string[]> {
@@ -472,10 +563,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return resolution;
   }
 
-  function getCodexAvailability(): Promise<CodexAvailability> {
-    return getCodexResolution(HOST_LOCUS).then((resolution) => resolution.availability);
-  }
-
   // The locus-aware seat probes the live producers (refine, draft-PR-body, delta digest,
   // compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
   // light-tier turn runs the distro's claude/codex — not the host's.
@@ -488,29 +575,147 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return (await getCodexResolution(locus)).executor;
   }
 
+  // The in-flight shares behind every detection read below (C17 review finding 2).
+  const shareHarnessDetection = liveProbe<DetectedHarness[]>();
+  const shareHarnessDetectionByHost = liveProbeMap<DetectedHarness[] | null>();
+  const shareForgeDetection = liveProbe<DetectedForge[]>();
+  const shareForgeDetectionByHost = liveProbeMap<DetectedForge[] | null>();
+
   // The ambient first-run detection line (issue #29): which harnesses are on the
   // machine. Read-only, no repository, no model call — it is DISCLOSURE, felt not
-  // ceremonial. Memoized like the harness/codex probes: the claude probe spawns the
-  // login shell, so it runs once on the first front-door mount, not at launch. A
-  // probe that finds nothing simply drops that harness; the line degrades to
-  // whatever was found (or nothing), never an error.
-  let harnessDetection: Promise<DetectedHarness[]> | null = null;
-  // gh is GONE from the detection line (v4.2): GitHub is an account (the device
-  // sign-in), not a CLI to detect. The line covers harnesses only.
+  // ceremonial. A probe that finds nothing simply drops that harness; the line degrades
+  // to whatever was found (or nothing), never an error.
+  //
+  // LIVE, not memoized (C17 review finding 2): the probes spawn a login shell, so concurrent
+  // readers share the RUNNING probe — but the answer is never kept past it. Installing or
+  // removing `claude` used to be invisible until the daemon restarted, which is a stale answer
+  // presented as a live detection. Codex is probed HERE rather than through
+  // `getCodexResolution`, whose cache holds a live adapter bound to a binary path: that cache
+  // is for EXECUTION, and borrowing it for disclosure is what pinned the codex row too.
+  //
+  // gh is GONE from this line (v4.2): GitHub is an account (the device sign-in), not a CLI to
+  // detect here. The line covers harnesses only; `forge.detect` covers the forge CLIs.
   function detectHarnesses(): Promise<DetectedHarness[]> {
-    harnessDetection ??= (async (): Promise<DetectedHarness[]> => {
+    return shareHarnessDetection(async (): Promise<DetectedHarness[]> => {
+      // `RENNET_DISABLE_HARNESS` disables the whole line, not just claude — the per-host path
+      // already reads it that way, and a flag named "disable harness" that still reported
+      // codex was disclosing something the operator had switched off.
+      if (env.RENNET_DISABLE_HARNESS === "1") return [];
       const [claude, codex] = await Promise.all([
-        env.RENNET_DISABLE_HARNESS === "1"
-          ? Promise.resolve(null)
-          : discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
-        getCodexAvailability().catch(() => null),
+        discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
+        discoverCodex(defaultCodexDiscoveryDeps(), {}).catch(() => null),
       ]);
       const detected: DetectedHarness[] = [];
       if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
-      if (codex?.available) detected.push({ id: "codex", version: codex.version ?? null });
+      if (codex?.chosen) detected.push({ id: "codex", version: codex.chosen.version ?? null });
       return detected;
-    })();
-    return harnessDetection;
+    });
+  }
+
+  // Per-host agent detection (C17 cluster 3, #485) — the server-side fan-out behind
+  // `harness.hosts`. The client holds ONE daemon connection, so THIS daemon asks each host
+  // the only way it CAN be asked, and answers `null` for a host it cannot ask at all:
+  //
+  //  • `local` — this process runs on that host; the memoized ambient detection IS the answer.
+  //  • `wsl:<distro>` — the distro's OWN discovery deps (login-shell PATH + curated dirs +
+  //    `<path> --version`, every probe entering the distro through `wsl.exe`), so the rows are
+  //    the distro's binaries, never the host's. The distro is first asked for its login-shell
+  //    PATH: no answer ⇒ `wsl.exe` cannot enter it, so the host is UNASKED (`null`) rather than
+  //    reported as having no agents. The answer is reused, so this costs no extra spawn.
+  //  • `remote:<deviceId>` — a paired device DIALS this daemon; nothing here can dial back to
+  //    run a probe on it. `null` — honestly unasked, never this machine's agents copied over.
+  //
+  // Shared per host WHILE IN FLIGHT, never cached past it (C17 review finding 2): the probes
+  // spawn a login shell and the settings surface re-reads on every toggle, so concurrent
+  // readers join one probe — but an agent installed in a distro shows up on the next read.
+  function detectHarnessesOn(source: ProjectSource): Promise<DetectedHarness[] | null> {
+    if (source === "local") return detectHarnesses();
+    if (!source.startsWith("wsl:")) return Promise.resolve(null);
+    const distro = source.slice("wsl:".length);
+    return shareHarnessDetectionByHost(source, async (): Promise<DetectedHarness[] | null> => {
+      if (env.RENNET_DISABLE_HARNESS === "1") return [];
+      // A distro whose `$HOME` cannot be probed cannot be entered at all, and
+      // `wslDiscoveryDeps` now THROWS rather than substituting `/root` — so the host reads
+      // unasked instead of being scanned against a home that is not its own.
+      const distroDeps = await wslDiscoveryDeps(distro).catch(() => null);
+      if (!distroDeps) return null;
+      const loginShellPath = await distroDeps.loginShellPath();
+      if (loginShellPath === null) return null; // the distro could not be entered.
+      const deps: DiscoveryDeps = { ...distroDeps, loginShellPath: async () => loginShellPath };
+      const [claude, codex] = await Promise.all([
+        discoverClaude(deps, CLAUDE_TESTED_RANGE).catch(() => null),
+        discoverCodex(deps, {}).catch(() => null),
+      ]);
+      const detected: DetectedHarness[] = [];
+      if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
+      if (codex?.chosen) detected.push({ id: "codex", version: codex.chosen.version ?? null });
+      return detected;
+    });
+  }
+
+  // Forge (source-control) CLI detection (C17, #483 gh rides again). Same disclosure model as
+  // detectHarnesses, including its liveness: shared while the probe runs, never cached past
+  // it, so installing `gh` — or signing in with it — shows up on the next read instead of
+  // after a restart. Singleton registry — GitHub / `gh` only. Feeds `sourceControlByHost`.
+  function detectForges(): Promise<DetectedForge[]> {
+    return shareForgeDetection(() =>
+      runForgeDetection(defaultForgeDetectionDeps()).catch(() => []),
+    );
+  }
+
+  // Per-host forge detection (C17 amendment B) — the exact mirror of `detectHarnessesOn`, so a
+  // WSL card shows the DISTRO's own `gh` (and its own auth state) instead of a Source Control
+  // section it is structurally incapable of filling. `local` is the memoized ambient answer;
+  // `wsl:<distro>` runs the whole probe chain inside the distro (a distro `wsl.exe` cannot
+  // enter reports UNASKED, never "no gh"); a paired `remote:` device dials US, so it cannot be
+  // probed at all. Shared per host while in flight, never cached past it — the same liveness
+  // as the agent probe, for the same reason.
+  function detectForgesOn(source: ProjectSource): Promise<DetectedForge[] | null> {
+    if (source === "local") return detectForges();
+    if (!source.startsWith("wsl:")) return Promise.resolve(null);
+    const distro = source.slice("wsl:".length);
+    return shareForgeDetectionByHost(source, async (): Promise<DetectedForge[] | null> => {
+      // Same rule as the agent probe: an unprobeable `$HOME` throws, so the host reads
+      // unasked rather than being scanned against a fabricated home.
+      const distroDeps = await wslForgeDetectionDeps(distro);
+      const loginShellPath = await distroDeps.loginShellPath();
+      if (loginShellPath === null) return null; // the distro could not be entered.
+      return runForgeDetection({ ...distroDeps, loginShellPath: async () => loginShellPath });
+    }).catch(() => null);
+  }
+
+  /**
+   * UPDATE one host's daemon (C17 cluster 6, #534) — the effect behind Update Daemon, offered
+   * only where `daemon.status` reported a real `updateAvailable`. Exactly one host kind has an
+   * update mechanism, and the others say why rather than pretending:
+   *
+   *  • `wsl:<distro>` — `ensureWslDaemon` IS the mechanism: it delivers THIS shell's server
+   *    bundle into the distro and, for a version-skew daemon, stops the old one by the pid its
+   *    identity carries before spawning the current bundle. The identity it returns names the
+   *    version now running, so the card reads an observed number, never an assumed one.
+   *  • `local` — this daemon ships with the Rennet app; updating it means updating the app.
+   *  • `remote:<deviceId>` — that device runs its own Rennet and updates itself.
+   */
+  async function updateDaemonForHost(source: ProjectSource): Promise<{ version: string | null }> {
+    if (source === "local") {
+      throw new Error(
+        "This machine's daemon ships with the Rennet app — update Rennet to update it.",
+      );
+    }
+    if (!source.startsWith("wsl:")) {
+      throw new Error("A paired device runs its own Rennet; update it from that device.");
+    }
+    if (!options.hostBundlePath) {
+      throw new Error(
+        "This Rennet daemon has no server bundle to deliver, so it cannot update a WSL daemon.",
+      );
+    }
+    const handle = await ensureWslDaemon(source.slice("wsl:".length), {
+      serverVersion,
+      hostBundlePath: options.hostBundlePath,
+      run: createWslRunner(),
+    });
+    return { version: handle.identity.version };
   }
 
   // ── The GitHub egress composition (issue #21, v4.2 device flow) ──────────────
@@ -1785,6 +1990,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // it's the picker that produces paths for the gated commands, not one itself.
     listDir: (input) => listDir(input, defaultFsListDirDeps()),
     detectHarnesses,
+    detectForges,
     github: githubAccount,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
     // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
@@ -2133,6 +2339,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Paired devices are the source for project-less remote hosts on the surface
       // (#476, finding 9) — a device paired before its first project is still listed.
       listPairedDevices: () => pairingStore.listDevices(),
+      // Ask ONE host's daemon whether it is running, for the host cards (C17, #485).
+      probeDaemon: (source) => probeDaemonForHost(source, dataDir, serverVersion),
+      // The same handshake, on demand, behind Reconnect (C17 cluster 5, #533) — throwing the
+      // reason for a host kind this daemon cannot reach at all.
+      reconnectDaemon: (source) => reconnectDaemonForHost(source, dataDir, serverVersion),
+      // The version a host's daemon would update TO — served ONLY for a host Rennet can
+      // actually update (review finding 5). A WSL distro can be updated when this daemon has a
+      // bundle to deliver; this machine's daemon ships with the app and a paired device
+      // updates itself, so neither gets an `updateAvailable` flag whose button could only fail.
+      latestDaemonVersionFor: (source) =>
+        source.startsWith("wsl:") && options.hostBundlePath ? serverVersion : undefined,
+      // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
+      detectHarnessesOn,
+      // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own `gh`.
+      detectForgesOn,
+      // The real per-host daemon update behind Update Daemon (C17 cluster 6, #534). A host
+      // kind with no mechanism throws its reason, so the card never reads a fake success.
+      updateDaemonOn: updateDaemonForHost,
       gitTopLevel: async (workingPath) => {
         let topLevel: string;
         try {
@@ -2193,7 +2417,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // giving the desktop shell a real `wsPort` before it loads the window.
   wsListener = await startWsListener({
     dispatch,
-    serverVersion: options.serverVersion ?? "0.0.0-dev",
+    serverVersion,
     // Non-loopback (remote) connections present a device token; verify it against the store.
     verifyDeviceToken: (token) => pairingStore.verifyToken(token),
     // The attention system (issue #383 M1): advertising `attention`, accepting presence, and
