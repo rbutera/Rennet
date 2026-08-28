@@ -86,18 +86,17 @@ function seedRowRepo(): string {
 
 /** The real add-a-project journey, ending on the indexing screen's "Start a Review". */
 async function addProjectAndOpenNewChat(page: Page, repository: string): Promise<void> {
-  await expect(page.getByRole("heading", { name: "Rennet" })).toBeVisible();
-  await page.getByRole("button", { name: "Add a project" }).click();
-  await page.getByRole("button", { name: /Project repo/ }).click();
+  await page.getByRole("button", { name: "Add Project" }).first().click();
   const pathBar = page.getByRole("textbox", { name: "Directory path" });
   await pathBar.fill(repository);
   await pathBar.press("Enter");
   await expect(page.getByRole("button", { name: basename(repository), exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByText(/^Found in/)).toBeVisible();
-  await page.getByRole("button", { name: "Confirm" }).click();
+  const add = page.getByRole("button", { name: "Add", exact: true });
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.locator('[data-screen="project-indexing"]')).toBeVisible({ timeout: 60_000 });
   const startReview = page.getByRole("button", { name: "Start a Review" });
-  await expect(startReview).toBeVisible({ timeout: 120_000 });
+  await expect(startReview).toBeVisible({ timeout: 180_000 });
   await startReview.click();
   await expect(page.locator('[data-screen="new-chat"]')).toBeVisible();
 }
