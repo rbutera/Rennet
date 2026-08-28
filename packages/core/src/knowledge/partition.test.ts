@@ -174,6 +174,40 @@ const TWO_CLUSTERS = {
   exportsOf,
 };
 
+/** A deterministic (seeded) shuffle, so a determinism test is itself reproducible. */
+function shuffled<T>(items: readonly T[], seed: number): T[] {
+  const out = [...items];
+  let state = seed >>> 0;
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    const j = state % (i + 1);
+    const swap = out[i] as T;
+    out[i] = out[j] as T;
+    out[j] = swap;
+  }
+  return out;
+}
+
+// 54 files across THREE scopes: three 18-file cliques chained by two bridges.
+const BIG_CLUSTERS = ["a", "b", "c"].map((scope) =>
+  Array.from({ length: 18 }, (_, i) => `packages/${scope}/src/f${String(i).padStart(2, "0")}.ts`),
+);
+const BIG_PAIRS: (readonly [string, string])[] = [
+  ...BIG_CLUSTERS.flatMap((cluster) => clique(cluster)),
+  [BIG_CLUSTERS[0]?.[17] as string, BIG_CLUSTERS[1]?.[0] as string],
+  [BIG_CLUSTERS[1]?.[17] as string, BIG_CLUSTERS[2]?.[0] as string],
+];
+const BIG_FIXTURE = {
+  files: BIG_CLUSTERS.flat().map(file),
+  scopes: [
+    { name: "@x/a", root: "packages/a" },
+    { name: "@x/b", root: "packages/b" },
+    { name: "@x/c", root: "packages/c" },
+  ],
+  graph: graphOf(BIG_PAIRS),
+  exportsOf,
+};
+
 describe("buildModuleBatches — communities, not directories", () => {
   it("splits two cliques joined by one bridge into two batches, covering every file once", () => {
     const batches = buildModuleBatches(TWO_CLUSTERS);
@@ -183,17 +217,27 @@ describe("buildModuleBatches — communities, not directories", () => {
     expect(batches[1]?.files.map((f) => f.path)).toEqual(CLUSTER_B);
   });
 
-  it("is DETERMINISTIC: two builds from shuffled inputs are deeply equal", () => {
-    const first = buildModuleBatches(TWO_CLUSTERS);
-    const second = buildModuleBatches({
-      ...TWO_CLUSTERS,
-      files: [...TWO_CLUSTERS.files].reverse(),
-      scopes: [...TWO_CLUSTERS.scopes].reverse(),
-    });
-    expect(second).toEqual(first);
+  it("is DETERMINISTIC over a 54-file, 3-scope fixture with files, scopes AND EDGES shuffled", () => {
+    // The edge list is the input the adjacency maps — and therefore Louvain's node
+    // and edge insertion order — are actually derived from, so a determinism test
+    // that only shuffles `files` and `scopes` never touches the thing most likely to
+    // leak iteration order. This shuffles all three, on a fixture large enough to
+    // produce several batches across several scopes.
+    const first = buildModuleBatches(BIG_FIXTURE);
+    expect(first.length).toBeGreaterThan(2);
+    expect(new Set(first.flatMap((b) => b.files.map((f) => f.path.split("/")[1]))).size).toBe(3);
+    for (const seed of [1, 7, 99, 12345]) {
+      const second = buildModuleBatches({
+        files: shuffled(BIG_FIXTURE.files, seed),
+        scopes: shuffled(BIG_FIXTURE.scopes, seed),
+        graph: graphOf(shuffled(BIG_PAIRS, seed)),
+        exportsOf,
+      });
+      expect(second).toEqual(first);
+    }
     // And a plain rebuild of the same input reproduces every id, which is what
     // makes a no-change refresh re-run nothing.
-    expect(buildModuleBatches(TWO_CLUSTERS).map((b) => b.id)).toEqual(first.map((b) => b.id));
+    expect(buildModuleBatches(BIG_FIXTURE).map((b) => b.id)).toEqual(first.map((b) => b.id));
   });
 
   it("derives ids from CONTENT, so an untouched batch keeps its id when a sibling changes", () => {
@@ -278,6 +322,52 @@ describe("buildModuleBatches — communities, not directories", () => {
     expect(batches).toHaveLength(2);
     expect(batches[0]?.files.every((f) => f.path.startsWith("packages/a/"))).toBe(true);
     expect(batches[1]?.files.every((f) => f.path.startsWith("packages/b/"))).toBe(true);
+  });
+
+  it("pools a CROSS-SCOPE tiny community per member, never wholly into one scope's pool", () => {
+    // A two-file community that straddles two packages: the edge between them is
+    // real, but each file still belongs to its own package. Filing the pair by its
+    // FIRST member's scope would drop `packages/b`'s file into `packages/a`'s batch.
+    const bridged = ["packages/a/src/x.ts", "packages/b/src/y.ts"] as const;
+    const aPair = ["packages/a/src/p0-x.ts", "packages/a/src/p0-y.ts"] as const;
+    const paths = [...bridged, ...aPair];
+    const batches = buildModuleBatches({
+      files: paths.map(file),
+      scopes: [
+        { name: "@x/a", root: "packages/a" },
+        { name: "@x/b", root: "packages/b" },
+      ],
+      graph: graphOf([bridged, aPair]),
+      exportsOf,
+    });
+    assertTotalCoverage(batches, paths.map(file));
+    // Every pooled batch is single-scope: no batch mixes packages/a with packages/b.
+    for (const batch of batches) {
+      const roots = new Set(batch.files.map((f) => f.path.split("/").slice(0, 2).join("/")));
+      expect(roots.size).toBe(1);
+    }
+    const owning = batches.find((b) => b.files.some((f) => f.path === "packages/b/src/y.ts"));
+    expect(owning?.files.map((f) => f.path)).toEqual(["packages/b/src/y.ts"]);
+  });
+
+  it("keeps two same-NAMED scopes with different roots apart when pooling", () => {
+    const pair = ["apps/web/a.ts", "apps/desktop/b.ts"] as const;
+    const batches = buildModuleBatches({
+      files: pair.map(file),
+      scopes: [
+        { name: "app", root: "apps/web" },
+        { name: "app", root: "apps/desktop" },
+      ],
+      graph: graphOf([pair]),
+      exportsOf,
+    });
+    assertTotalCoverage(batches, pair.map(file));
+    // Bucketed by ROOT, so the shared name does not blend two distinct packages.
+    expect(batches).toHaveLength(2);
+    expect(batches.map((b) => b.files.map((f) => f.path))).toEqual([
+      ["apps/desktop/b.ts"],
+      ["apps/web/a.ts"],
+    ]);
   });
 
   it("sends edge-less files to the directory fallback tier, still covering every file once", () => {

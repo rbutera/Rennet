@@ -116,8 +116,17 @@ export interface PartitionSlice {
   /**
    * Cross-batch neighbours, one entry per member that HAS any — a member with no
    * neighbour outside its batch is simply absent, which is the honest encoding of
-   * "nothing was cut here". Always empty for a directory-fallback slice: those
-   * files have no import edges to report.
+   * "nothing was cut here".
+   *
+   * Always empty for a directory-fallback slice, and the two ways a slice gets there
+   * do NOT mean the same thing:
+   *  - in the two-tier path, the fallback holds exactly the files with no resolved
+   *     import edge, so an empty list is the truth about those files;
+   *  - on the DEGRADATION path ({@link partitionsFromSnapshot} with an unreadable
+   *    import or symbol shard), the whole eligible inventory goes through
+   *    {@link buildPartitions}, so an empty list means the graph could not be read —
+   *    not that the file is edge-less. The slice ids say which case it is: a run with
+   *    no `mod:` slice at all is the degraded one.
    */
   readonly neighbors: readonly MemberNeighbors[];
 }
@@ -317,14 +326,21 @@ function chunkSizes(n: number, max: number, target: number): number[] {
   return Array.from({ length: pieces }, (_, i) => base + (i < remainder ? 1 : 0));
 }
 
-/** The name of the most specific (longest-root) scope containing `path`, or `""`. */
-function scopeOf(scopes: readonly { name: string; root: string }[], path: string): string {
+/**
+ * The ROOT of the most specific (longest-root) scope containing `path`, or `""` for
+ * a path under no scope.
+ *
+ * Root, not name: the root is the identity prefix ownership is actually decided by,
+ * so two distinct packages that happen to share a `name` stay distinct here — the
+ * same rule {@link buildPartitions} keys its groups on.
+ */
+function scopeRootOf(scopes: readonly { name: string; root: string }[], path: string): string {
   let best: { name: string; root: string } | undefined;
   for (const scope of scopes) {
     if (!underPrefix(path, scope.root)) continue;
     if (best === undefined || scope.root.length > best.root.length) best = scope;
   }
-  return best?.name ?? "";
+  return best?.root ?? "";
 }
 
 /**
@@ -340,10 +356,12 @@ function scopeOf(scopes: readonly { name: string; root: string }[], path: string
  *  3. A community over {@link MAX_BATCH_SIZE} splits into near-equal chunks of its
  *     SORTED member paths. Sorted paths cluster by directory, so alphabetic
  *     chunking is directory chunking in practice, without a second heuristic.
- *  4. A community under {@link MIN_BATCH_SIZE} is pooled — but pooled WITHIN its
- *     workspace scope, and only across scopes when a scope's leftovers are
- *     themselves tiny. Coherence beats compaction: a batch of unrelated two-file
- *     communities from one package is still a package.
+ *  4. A community under {@link MIN_BATCH_SIZE} is pooled — always WITHIN one
+ *     workspace scope, never across scopes, and per MEMBER, so a tiny community
+ *     that straddles two packages contributes to each package's own pool.
+ *     Coherence beats compaction: a batch of unrelated two-file communities from
+ *     one package is still a package, and a scope with too few leftovers to fill a
+ *     batch keeps its own undersized one.
  *  5. Every batch gets its {@link MemberNeighbors} map (see {@link NEIGHBOR_CAP}).
  *
  * Batches come back ordered by their lexically-first member, so the whole result
@@ -395,7 +413,7 @@ export function buildModuleBatches(input: ModuleBatchInput): readonly PartitionS
       slices.push({
         id: moduleBatchId(members.map((f) => f.path)),
         files: members,
-        neighbors: neighborMap(members, adjacency, input.graph, input.exportsOf),
+        neighbors: neighborMap(members, adjacency, outgoing, input.exportsOf),
       });
     }
   }
@@ -461,26 +479,35 @@ function communityBatches(
 
 /**
  * Pool the sub-{@link MIN_BATCH_SIZE} communities into misc batches of at most
- * {@link POOLED_BATCH_CAP}, keeping each pool inside one workspace scope where the
- * scope has enough leftovers to fill a batch. A scope whose leftovers do not reach
- * the cap keeps its own (undersized) batch rather than being blended with an
- * unrelated package — a small coherent batch reads better than a large incoherent
- * one, and the cost of an extra turn is the cheap half of this trade.
+ * {@link POOLED_BATCH_CAP}, keeping every pool inside ONE workspace scope. A scope
+ * whose leftovers do not reach the cap keeps its own (undersized) batch rather than
+ * being blended with an unrelated package — a small coherent batch reads better than
+ * a large incoherent one, and the cost of an extra turn is the cheap half of this
+ * trade. Nothing is ever pooled ACROSS scopes.
+ *
+ * Bucketing is PER MEMBER, not per community: a tiny community can legitimately
+ * straddle two packages (that is what an import edge between them means), and
+ * filing the whole thing under its first member's scope would drop the other
+ * package's file into a batch of a package it is not in. Each member is filed under
+ * its own most-specific scope ROOT — the identity prefix, so two packages sharing a
+ * `name` never blend either.
  */
 function poolTiny(
   tiny: readonly FileEntry[][],
   scopes: readonly { readonly name: string; readonly root: string }[],
 ): FileEntry[][] {
-  const byScope = new Map<string, FileEntry[]>();
+  const byScopeRoot = new Map<string, FileEntry[]>();
   for (const group of tiny) {
-    const scope = scopeOf(scopes, group[0]?.path ?? "");
-    const bucket = byScope.get(scope);
-    if (bucket === undefined) byScope.set(scope, [...group]);
-    else bucket.push(...group);
+    for (const member of group) {
+      const root = scopeRootOf(scopes, member.path);
+      const bucket = byScopeRoot.get(root);
+      if (bucket === undefined) byScopeRoot.set(root, [member]);
+      else bucket.push(member);
+    }
   }
   const pooled: FileEntry[][] = [];
-  for (const scope of [...byScope.keys()].sort(byString)) {
-    const files = (byScope.get(scope) as FileEntry[]).sort((a, b) => byString(a.path, b.path));
+  for (const root of [...byScopeRoot.keys()].sort(byString)) {
+    const files = (byScopeRoot.get(root) as FileEntry[]).sort((a, b) => byString(a.path, b.path));
     for (let i = 0; i < files.length; i += POOLED_BATCH_CAP) {
       pooled.push(files.slice(i, i + POOLED_BATCH_CAP));
     }
@@ -506,7 +533,7 @@ function poolTiny(
 function neighborMap(
   members: readonly FileEntry[],
   adjacency: ReadonlyMap<string, ReadonlyMap<string, number>>,
-  graph: ImportGraph,
+  outgoing: ReadonlyMap<string, ReadonlySet<string>>,
   exportsOf: (path: string) => readonly string[],
 ): MemberNeighbors[] {
   const inBatch = new Set(members.map((f) => f.path));
@@ -522,18 +549,22 @@ function neighborMap(
         .sort((a, b) => degreeOf(b) - degreeOf(a) || byString(a, b))
         .slice(0, NEIGHBOR_CAP),
     );
-    // The undirected adjacency decided WHO is a neighbour; the directed graph says
-    // which way, so the worker can tell a dependency from a dependent.
-    const imports = new Set(graph.importsOf(member.path));
-    const importedBy = new Set(graph.importersOf(member.path));
+    // The undirected adjacency decided WHO is a neighbour; `outgoing` — the SAME
+    // directed edge set the adjacency was bumped from — says which way, so the worker
+    // can tell a dependency from a dependent. Reading direction off that one source
+    // is what makes "neither direction" unrepresentable rather than merely unlikely:
+    // an adjacency entry exists only because some `from → to` was recorded here, so
+    // at least one of the two lookups below is always true, and the final arm is a
+    // real deduction instead of a fallback that could quietly mislabel an edge.
+    const imports = outgoing.get(member.path);
     out.push({
       path: member.path,
       neighbors: outside
         .filter((path) => kept.has(path))
         .map((path) => ({
           path,
-          direction: imports.has(path)
-            ? importedBy.has(path)
+          direction: imports?.has(path)
+            ? outgoing.get(path)?.has(member.path)
               ? ("both" as const)
               : ("imports" as const)
             : ("imported-by" as const),
