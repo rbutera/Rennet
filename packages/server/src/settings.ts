@@ -3,20 +3,29 @@ import type { ConventionCatalogueLoad } from "@rennet/adapters";
 import {
   detectLocus,
   escapePath,
+  REVIEW_ROLE_JOB_IDS,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
+  reviewRoleJobId,
+  reviewRoleMappings,
   SETTINGS_REGISTRY,
 } from "@rennet/core";
 import type {
   ClientSettings,
   CoachMarks,
+  CouncilJobId,
+  CouncilOverridePick,
+  CouncilOverrides,
+  CouncilPick,
   DaemonHostSection,
   DaemonSettings,
   PairedDevice,
   Project,
   ProjectSource,
   ProjectVisibility,
+  ReviewRoleMapping,
+  ReviewRoleScenario,
   SetRepoVisibilityOutcome,
   SettingsGuidance,
   SettingsProject,
@@ -122,6 +131,32 @@ export interface SettingsComposition {
    * what skip/dismiss/replay persisted.
    */
   setCoachmarks(input: CoachMarks): CoachMarks;
+  /**
+   * The model-council review-role mappings (C16, #485): the eight roles resolved
+   * across `dual`/`claudeOnly`/`codexOnly`, layering the viewer's persisted
+   * `routing.task` overrides over the council tables. HONEST-PRESENT — the tables
+   * are static, so this is never empty; a role that does not run in a scenario
+   * carries a `null` cell (the Flagged Second Seat in the single-provider columns).
+   */
+  reviewRoles(): ReviewRoleMapping[];
+  /**
+   * Set (a `CouncilPick`) or RESET (`null`) one review role's model assignment,
+   * then return the re-resolved mappings so the surface adopts the resolver's own
+   * answer. Model + effort only — harness derives from the model's provider (#89).
+   * A malformed config REFUSES the write (throws) exactly as `setKeybinding`.
+   *
+   * SCENARIO-INDEPENDENT BY CONSTRUCTION: the council's honoured override slot is
+   * `routing.task[jobId]`, which is not keyed by scenario (there is exactly one
+   * live scenario at run time — whichever the availability probe finds). `scenario`
+   * names the cell the viewer edited; the write moves every column that resolves
+   * through that job, and the returned re-resolution SHOWS all of them moving
+   * rather than pretending the edit was column-local.
+   */
+  setRoleAssignment(input: {
+    roleId: string;
+    scenario: ReviewRoleScenario;
+    assignment: CouncilPick | null;
+  }): ReviewRoleMapping[];
   /**
    * Write one issue-tracker value on the GLOBAL rung (#461, B7) — the ordinary
    * settings write B8's in-chat ask persists through. `null` resets (drops the
@@ -276,6 +311,27 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return hosts;
   };
 
+  // The persisted `routing.task` slice as council overrides (C16, #485). Only job
+  // ids the review-role catalogue actually names are admitted: a stale or unknown
+  // key in `client-settings.json` is IGNORED rather than fed to the resolver, so a
+  // hand-edited config can never route a job the surface does not show.
+  const storedOverrides = (client: ClientSettings): CouncilOverrides | undefined => {
+    const stored = client.routing?.task;
+    if (!stored) return undefined;
+    const task: Partial<Record<CouncilJobId, CouncilOverridePick>> = {};
+    let any = false;
+    for (const jobId of REVIEW_ROLE_JOB_IDS) {
+      const entry = stored[jobId];
+      if (entry === undefined) continue;
+      task[jobId] = entry;
+      any = true;
+    }
+    return any ? { task: task as Readonly<Record<CouncilJobId, CouncilOverridePick>> } : undefined;
+  };
+
+  const resolveReviewRoleView = (): ReviewRoleMapping[] =>
+    reviewRoleMappings(storedOverrides(deps.readGlobalState().config));
+
   return {
     get: async (): Promise<SettingsView> => {
       const schemeState = deps.readGlobalState();
@@ -304,6 +360,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         ...(schemeState.config.coachmarks ? { coachmarks: schemeState.config.coachmarks } : {}),
         // Every daemon host the surface covers (#476), local first (§4.2).
         daemonHosts: daemonHostSections(allProjects),
+        // The council review-role mappings (C16, #485). Honest-present: the
+        // assignment tables are static, so the eight roles ride every read even
+        // with no override stored — the Review section is never a blank.
+        reviewRoles: resolveReviewRoleView(),
       };
     },
 
@@ -371,6 +431,35 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // no ceremony (Rule Zero). Returns the stored slice so a reload reads it back.
       const written = deps.updateGlobal((current) => ({ ...current, coachmarks: input }));
       return written.coachmarks ?? { seen: [], skipAll: false };
+    },
+
+    reviewRoles: resolveReviewRoleView,
+
+    setRoleAssignment: (input): ReviewRoleMapping[] => {
+      // Map role → council job through the catalogue, so an override can only land
+      // on a job the council already routes (no fabricated ids).
+      const jobId = reviewRoleJobId(input.roleId);
+      if (jobId === undefined) {
+        throw new Error(`settings: unknown review role "${input.roleId}"`);
+      }
+      // `updateGlobal` REFUSES (throws) when the config is malformed, so an edit can
+      // never overwrite unparseable bytes (Rule 75). A pick SETS the override; `null`
+      // RESETS by dropping the entry, so the cell falls back to the council table.
+      // A plain write, first click, no confirmation (Rule Zero).
+      const written = deps.updateGlobal((current) => {
+        const task = { ...current.routing?.task };
+        if (input.assignment === null) delete task[jobId];
+        // Model + effort ONLY — harness always derives from the model's provider (#89).
+        else task[jobId] = { model: input.assignment.model, effort: input.assignment.effort };
+        // Clearing the last override drops the whole slice, so an install that
+        // reset everything is byte-identical to one that never overrode anything.
+        const next = { ...current };
+        delete next.routing;
+        return Object.keys(task).length === 0 ? next : { ...next, routing: { task } };
+      });
+      // Re-resolve from what was actually written — the surface adopts the
+      // resolver's own answer, never a hand-recomputed one that could disagree.
+      return reviewRoleMappings(storedOverrides(written));
     },
 
     setTrackerValue: (input): NonNullable<DaemonSettings["tracker"]> => {
