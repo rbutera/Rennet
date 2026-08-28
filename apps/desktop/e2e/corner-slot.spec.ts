@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
+import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // C20 (#558) corner-slot chrome, in the real packaged-shape app on macOS. The window
@@ -18,11 +18,9 @@ import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 // nothing about the real window. The real drag has NOT been verified by anyone yet;
 // its proof path is Rai's manual check on a shipped build.
 //
-// KNOWN NOT-RUN (2026-08-28), tracked as #569: this spec has never executed. Playwright's Electron
-// driver cannot launch the app on this toolchain at all — `Electron: bad option:
-// --remote-debugging-port=0` (Electron 43.2.0 vs @playwright/test 1.62.0), and an
-// UNTOUCHED spec on main fails identically, so it is not this change's doing. Treat
-// the assertions below as unverified until the harness launches again.
+// The geometry below is UNCHANGED by #574 and was never the fault: this spec read `[]` owners
+// because C21's first-run welcome unmounts the shell entirely, so there was no sidebar to own
+// the corner. Settling the welcome (below) is the whole repair — the slot logic was fine.
 //
 // The lights' zone with the default `hiddenInset` inset: three 12px buttons from
 // x≈12 to x≈82, vertically centred around y≈20. A control clears them by starting
@@ -65,6 +63,10 @@ test("the corner slot owns the window's top-left in every state, clear of the li
 
   try {
     const page = await application.firstWindow();
+    // The shell — and therefore the corner slot — only exists on the far side of the
+    // first-run welcome, which deliberately unmounts it (C21). The wizard is
+    // `first-run-welcome.spec.ts`'s subject; the chrome under it is this spec's.
+    await completeWelcome(page);
     await page.waitForSelector('[data-slot="corner-slot"]', { timeout: 60_000 });
 
     // ── State 1: sidebar expanded. The sidebar header IS the corner slot. ──
