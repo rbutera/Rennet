@@ -19,6 +19,7 @@ import {
   type ReviewEvent,
   ReviewService,
   type ReviewStorePort,
+  reviewRoleMappings,
 } from "@rennet/core";
 import type {
   ComposedHandoffBundle,
@@ -38,6 +39,7 @@ import {
   type ProjectProcessEvent,
   type ProjectProgressEvent,
   type ReviewAskStreamEvent,
+  type ReviewRoleMapping,
   reviewAskStreamEventSchema,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
@@ -3296,6 +3298,10 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       ),
       setCoachmarks: vi.fn((input: CoachMarks) => input),
       setTrackerValue: vi.fn(() => ({})),
+      // C16 (#485): the council mappings ride the same dep. The stub resolves the
+      // real council DEFAULTS, so the route is proven against honest values.
+      reviewRoles: vi.fn(() => reviewRoleMappings()),
+      setRoleAssignment: vi.fn(() => reviewRoleMappings()),
     };
     const { dispatch } = harness(undefined, { settings });
 
@@ -3355,6 +3361,31 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     ).rejects.toThrow();
     // Still called exactly once — only the valid write above reached the dep.
     expect(settings.setCoachmarks).toHaveBeenCalledTimes(1);
+
+    // setRoleAssignment threads role + scenario + pick to the dep and returns the
+    // dep's OWN re-resolved mappings for the optimistic adopt (C16, #485).
+    const assigned = (await dispatch("settings.setRoleAssignment", {
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    })) as { reviewRoles: ReviewRoleMapping[] };
+    expect(settings.setRoleAssignment).toHaveBeenCalledWith({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    });
+    expect(assigned.reviewRoles).toEqual(reviewRoleMappings());
+
+    // A model outside the council set is REJECTED at the command boundary, so it
+    // never reaches the dep — no fabricated routing is ever persisted (#89).
+    await expect(
+      dispatch("settings.setRoleAssignment", {
+        roleId: "lens-workers",
+        scenario: "dual",
+        assignment: { model: "gpt-4o", effort: "high" },
+      }),
+    ).rejects.toThrow();
+    expect(settings.setRoleAssignment).toHaveBeenCalledTimes(1);
   });
 
   it("with NO settings dep wired, degrades to the builtin view + unresolved write (never throws)", async () => {
@@ -3367,6 +3398,17 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(view.scheme).toBe("system");
     expect(view.appearanceMalformed).toBe(false);
     expect(view.projects).toEqual([]);
+    // HONEST-PRESENT (C16, #485): the council tables are static, so the review-role
+    // mappings are readable with no settings dep at all. The Review section renders
+    // the real defaults rather than a blank — all eight roles, every cell `default`.
+    const roles = (view as unknown as { reviewRoles: ReviewRoleMapping[] }).reviewRoles;
+    expect(roles).toEqual(reviewRoleMappings());
+    expect(roles).toHaveLength(8);
+    // The Flagged Second Seat does not run single-provider: an honest null, not a guess.
+    const secondSeat = roles.find((role) => role.id === "second-seat");
+    expect(secondSeat?.claudeOnly.value).toBeNull();
+    expect(secondSeat?.codexOnly.value).toBeNull();
+    expect(secondSeat?.dual.value).not.toBeNull();
 
     const guidance = (await dispatch("settings.guidance", {
       projectId: "p1",
@@ -3384,6 +3426,20 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(vis.status).toBe("unresolved");
     expect(vis.changed).toBe(false);
     expect(vis.gitignorePath).toBe("");
+
+    // A role write with no dep persists NOTHING, and says so: the response carries
+    // the council defaults (every cell `default`), never a fake success echoing the
+    // edit back as though it had been stored.
+    const assigned = (await dispatch("settings.setRoleAssignment", {
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "medium" },
+    })) as { reviewRoles: ReviewRoleMapping[] };
+    expect(assigned.reviewRoles).toEqual(reviewRoleMappings());
+    expect(assigned.reviewRoles.find((role) => role.id === "lens-workers")?.dual).toEqual({
+      value: { model: "opus-4.8", effort: "high" },
+      layer: "default",
+    });
   });
 });
 
