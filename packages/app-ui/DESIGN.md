@@ -48,12 +48,14 @@ The design-ramp test scans `.ts` and `.tsx` files for arbitrary text sizes, radi
 
 ## Type ramp
 
-Use `11 / 12 / 14 / 16 / 18 / 20 / 24` px plus the display expression `clamp(34px, 5vw, 56px)`. Source code expresses the scale in `rem`; the pixel values below assume a 16px root. Components use Tailwind utilities instead of raw sizes.
+Use `10 / 11 / 12 / 13 / 14 / 16 / 18 / 20 / 24` px plus the display expression `clamp(34px, 5vw, 56px)`. Source code expresses the scale in `rem`; the pixel values below assume a 16px root. Components use Tailwind utilities instead of raw sizes.
 
 | px | rem | utility | role | used for |
 |----|-----|---------|------|----------|
+| 10 | 0.625 | `text-10` | badge | inline badges inside a dense list row |
 | 11 | 0.6875 | `text-2xs` | micro | uppercase micro-caps, the smallest legible chrome |
 | 12 | 0.75 | `text-xs` | meta | secondary metadata, counts, pins |
+| 13 | 0.8125 | `text-13` | dense | dense picker and list rows (the file picker) |
 | 14 | 0.875 | `text-sm` | chrome | the standard chrome label and control text |
 | 16 | 1 | `text-base` | reading | reading text, emphasised labels, inputs |
 | 18 | 1.125 | `text-lg` | body | comfortable body and the annotation serif |

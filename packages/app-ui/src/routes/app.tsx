@@ -199,16 +199,12 @@ function FirstRunEligibility({
   if (projectsPending || welcomeClaimed === undefined) {
     return <div className="rn-startup-content rn-startup-pending">{children}</div>;
   }
-  if (welcomeClaimed) {
-    return (
-      <>
-        <div className="rn-startup-underlay" inert aria-hidden="true">
-          {children}
-        </div>
-        <FirstRunWelcome settings={settings} />
-      </>
-    );
-  }
+  // The shell must NOT mount beneath the welcome. A hidden-but-mounted underlay is
+  // not inert enough: its coach anchors still register, the coach store still elects
+  // a mark, and the coachmark portals to `document.body` — so it paints OVER the
+  // wizard, and a click in the wizard burns an unseen mark. Unmounting is the fix at
+  // the root; the shell comes up once, on the other side of the welcome.
+  if (welcomeClaimed) return <FirstRunWelcome settings={settings} />;
   return <div className="rn-startup-content">{children}</div>;
 }
 

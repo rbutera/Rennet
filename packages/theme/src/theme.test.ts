@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 
 // Invariants for the shared Affineur's Bench theme (root DESIGN.md, 2026-08-19).
@@ -22,8 +23,15 @@ function block(selector: string): string {
 const LIGHT = block(":root {");
 // Dark binds to both scheme vocabularies (data-scheme app/marketing, data-theme docs).
 const DARK = block('[data-scheme="dark"],');
-// The prefers-color-scheme fallback nests one deeper; slice from its guard selector.
-const fallbackStart = css.indexOf(':root:not([data-scheme="light"])');
+// The prefers-color-scheme fallback nests one deeper. Read its guard selector
+// verbatim out of the file — anchored on the media query, NOT on the selector's
+// shape — so the cascade tests below run the REAL string and cannot pass against
+// a stale copy of it.
+const FALLBACK_GUARD = css.match(
+  /@media \(prefers-color-scheme: dark\) \{\s*(:root[^{]*?)\s*\{/,
+)?.[1];
+if (!FALLBACK_GUARD) throw new Error("palette.css: prefers-color-scheme guard not found");
+const fallbackStart = css.indexOf(FALLBACK_GUARD);
 const FALLBACK = css.slice(css.indexOf("{", fallbackStart), css.indexOf("}", fallbackStart));
 
 function hex(scope: string, name: string): string {
@@ -69,6 +77,45 @@ describe("scheme structure", () => {
         .filter((name) => !name.startsWith("--rn-font-"))
         .sort();
     expect(names(DARK)).toEqual(names(LIGHT));
+  });
+});
+
+// The OS-dark fallback used to be guarded by
+// `:root:not([data-scheme="light"]):not([data-theme="light"])` — specificity (0,3,0),
+// which OUTRANKED every theme pack's (0,2,0) selector on <html> whenever the OS was
+// dark and the scheme was not explicitly light. That is the default state on a dark
+// Mac, so picking a pack changed nothing. The guard must match ONLY an unstamped
+// root, and `:where()` must zero its specificity so it can never outrank a pack.
+describe("the OS-dark fallback guard yields to a stamped root", () => {
+  const stamp = (attributes: Record<string, string>) => {
+    const root = new Window().document.documentElement;
+    for (const [name, value] of Object.entries(attributes)) root.setAttribute(name, value);
+    return root;
+  };
+
+  it("carries zero specificity", () => {
+    expect(FALLBACK_GUARD).toContain(":where(");
+  });
+
+  it("matches an unstamped root (the read is not vacuous)", () => {
+    expect(stamp({}).matches(FALLBACK_GUARD)).toBe(true);
+  });
+
+  it("does NOT match a root the app or Starlight has stamped", () => {
+    for (const stamped of [
+      { "data-scheme": "dark" },
+      { "data-scheme": "light" },
+      { "data-theme": "dark" },
+      { "data-theme": "light" },
+    ]) {
+      expect(stamp(stamped).matches(FALLBACK_GUARD), JSON.stringify(stamped)).toBe(false);
+    }
+  });
+
+  it("a pack's dark selector owns the stamped root the guard let go", () => {
+    const root = stamp({ "data-rn-theme": "dracula", "data-scheme": "dark" });
+    expect(root.matches('[data-rn-theme="dracula"][data-scheme="dark"]')).toBe(true);
+    expect(root.matches(FALLBACK_GUARD)).toBe(false);
   });
 });
 
@@ -154,8 +201,10 @@ describe("computed WCAG contrast", () => {
 
 describe("ratified anchors (root DESIGN.md reconciliation)", () => {
   it("matches the ratified ground and accent hexes", () => {
-    expect(hex(DARK, "--rn-canvas")).toBe("#0e0d0c");
-    expect(hex(DARK, "--rn-surface")).toBe("#151413");
+    // Dark grounds are the desaturated neutral near-blacks (2026-08-28): the warm
+    // originals read as too saturated and too bright at canvas size.
+    expect(hex(DARK, "--rn-canvas")).toBe("#0a0a0a");
+    expect(hex(DARK, "--rn-surface")).toBe("#131313");
     expect(hex(DARK, "--rn-accent")).toBe("#e8b13c");
     expect(hex(LIGHT, "--rn-canvas")).toBe("#fbfaf7");
     expect(hex(LIGHT, "--rn-surface")).toBe("#ffffff");

@@ -1,13 +1,11 @@
 // @vitest-environment happy-dom
 //
-// C10 §2 — the settings data seam. Three proofs: (1) a LIVE write persists to the
+// C10 §2 — the settings data seam. Two proofs: (1) a LIVE write persists to the
 // bridge and a re-read reflects it (the appearance scheme through `settings.setAppearance`,
-// with the provenance rung moving builtin → global); (2) the `{ value, layer }` keep
-// contract lifts into the shared chip's `ResolvedProvenance`; (3) the B10-absent
-// projection resolves through its context — honest-empty by default, stateful when a
-// test supplies it. No page reaches a fixture directly; data enters only through the
+// with the provenance rung moving builtin → global); (2) the B10-absent projection
+// resolves through its context — honest-empty by default, stateful when a test
+// supplies it. No page reaches a fixture directly; data enters only through the
 // bridge context or the projection provider.
-import type { ResolvedProvenance } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../../data";
 import { cleanup, mount, waitFor } from "../../test/dom";
@@ -18,7 +16,6 @@ import {
   EMPTY_SETTINGS_PROJECTION,
   type SettingsHost,
   SettingsProjectionProvider,
-  toProvenance,
   useSettingsProjection,
 } from ".";
 
@@ -179,14 +176,6 @@ describe("AppearancePage — reset-to-builtin, read/write states, backing files 
     // Theme Pack now persists there; Code Theme remains the one session-only axis.
     expect(container.querySelectorAll('[data-slot="session-only"]').length).toBe(1);
     cleanup();
-  });
-});
-
-describe("toProvenance — the {value, layer} keep contract lifts into the chip shape", () => {
-  it("wraps one layered value as a single effective contribution", () => {
-    const p: ResolvedProvenance = toProvenance({ value: "git-visible", layer: "repo" });
-    expect(p.layer).toBe("repo");
-    expect(p.contributions).toEqual([{ layer: "repo", value: "git-visible", effective: true }]);
   });
 });
 

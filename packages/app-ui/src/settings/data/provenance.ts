@@ -1,20 +1,15 @@
-import type { ResolvedProvenance, SettingsLayer } from "@rennet/protocol";
+import type { SettingsLayer } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The provenance KEEP contract (C10 §2, reconciliation 8). The spike's
 // `settings-data.ts` fixture DIES, but its `{ value, layer }` shape is a product
 // feature (B10 serves it): every layered value the settings surface reads carries
-// the ladder rung it resolved from, and the shared `ProvenanceChip` names it.
+// the ladder rung it resolved from, so a write knows which rung it lands on and a
+// Reset knows there is a rung to fall back to.
 //
-// Two provenance shapes meet at this seam:
-//   • The LIVE commands (`settings.get`, `setAppearance`, …) already return the
-//     resolver's own `ResolvedProvenance` — the effective layer plus the full
-//     lowest-first contribution list. Those flow straight to the chip.
-//   • The B10-absent PROJECTIONS (environments, detection, mappings, glyphs,
-//     worktree, tracker) carry a single `{ value, layer }` until the engine serves
-//     their contribution ladders. `toProvenance` lifts one into the chip's shape as
-//     a single effective contribution — never inventing lower-rung offers we have
-//     not detected.
+// The rung is not BADGED on the project surfaces — Repository and Issue Tracker
+// render the controls and their values, not a layer chip (the Appearance page's
+// `ProvenanceChip` reads the live resolver's own `ResolvedProvenance` directly).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -25,14 +20,4 @@ import type { ResolvedProvenance, SettingsLayer } from "@rennet/protocol";
 export interface Layered<T> {
   readonly value: T;
   readonly layer: SettingsLayer;
-}
-
-/**
- * Lift a single `{ value, layer }` into the `ResolvedProvenance` the shared
- * {@link ProvenanceChip} renders — one contribution, itself effective. A live value
- * already arrives as `ResolvedProvenance` and skips this; only the B10-absent
- * projections pass through here, and they have no lower-rung offer to show yet.
- */
-export function toProvenance({ value, layer }: Layered<unknown>): ResolvedProvenance {
-  return { layer, contributions: [{ layer, value: String(value), effective: true }] };
 }

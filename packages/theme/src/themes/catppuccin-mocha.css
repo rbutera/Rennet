@@ -32,9 +32,16 @@
   --rn-accent-surface: #ecdcff;
   /* evidence green */
   --rn-green: #40a02b;
-  --rn-model: #179299;
   --rn-green-soft: rgb(64 160 43 / 0.12);
   --rn-green-line: rgb(64 160 43 / 0.3);
+  /* copper — caution register (Latte yellow, darkened for AA on the light grounds) */
+  --rn-warn: #9c6a04;
+  --rn-warn-soft: rgb(156 106 4 / 0.12);
+  --rn-warn-line: rgb(156 106 4 / 0.32);
+  /* verdigris — the machine's voice (Latte teal) */
+  --rn-model: #179299;
+  --rn-model-soft: rgb(23 146 153 / 0.1);
+  --rn-model-line: rgb(23 146 153 / 0.3);
   /* danger */
   --rn-danger: #d20f39;
   --rn-danger-soft: rgb(210 15 57 / 0.1);
@@ -86,9 +93,16 @@
   --rn-accent-surface: #2a2140;
   /* evidence green */
   --rn-green: #a6e3a1;
-  --rn-model: #94e2d5;
   --rn-green-soft: rgb(166 227 161 / 0.15);
   --rn-green-line: rgb(166 227 161 / 0.4);
+  /* copper — caution register (Mocha peach) */
+  --rn-warn: #fab387;
+  --rn-warn-soft: rgb(250 179 135 / 0.15);
+  --rn-warn-line: rgb(250 179 135 / 0.4);
+  /* verdigris — the machine's voice (Mocha teal) */
+  --rn-model: #94e2d5;
+  --rn-model-soft: rgb(148 226 213 / 0.15);
+  --rn-model-line: rgb(148 226 213 / 0.4);
   /* danger */
   --rn-danger: #f38ba8;
   --rn-danger-soft: rgb(243 139 168 / 0.15);

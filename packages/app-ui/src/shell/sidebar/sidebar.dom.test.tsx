@@ -12,6 +12,11 @@ import { Router } from "wouter";
 import { useUpdateReady } from "../../components/update-ready";
 import { BridgeProvider } from "../../data";
 import { memoryHistory } from "../../routes/history";
+import type { ProjectIconName } from "../../settings/assets/project-icon";
+import {
+  EMPTY_SETTINGS_PROJECTION,
+  SettingsProjectionProvider,
+} from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { cleanup, fireEvent, mount, waitFor } from "../../test/dom";
 import { frontDoorHandlers } from "../../test/fixtures/front-door";
@@ -56,6 +61,8 @@ function mountSidebar(opts: {
   path?: string;
   extraHandlers?: MemoryBridgeHandlers;
   platform?: string;
+  /** Persisted project glyphs, as the C10 settings projection serves them (D5). */
+  glyphs?: Readonly<Record<string, ProjectIconName>>;
 }) {
   const history = memoryHistory(opts.path ?? "/");
   const bridge = new MemoryBridge(
@@ -68,9 +75,13 @@ function mountSidebar(opts: {
   );
   const utils = mount(
     <BridgeProvider bridge={bridge}>
-      <Router hook={history.hook} searchHook={history.searchHook}>
-        <Sidebar />
-      </Router>
+      <SettingsProjectionProvider
+        value={{ ...EMPTY_SETTINGS_PROJECTION, glyphByProject: opts.glyphs ?? {} }}
+      >
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <Sidebar />
+        </Router>
+      </SettingsProjectionProvider>
     </BridgeProvider>,
   );
   return { ...utils, history, bridge };
@@ -166,6 +177,25 @@ describe("sidebar tree (C03 §3)", () => {
     expect(getByText("This machine")).toBeTruthy();
     expect(getByText("Alpha")).toBeTruthy();
     expect(getByText("Beta")).toBeTruthy();
+  });
+
+  it("renders the project's persisted glyph, falling back to layers (D5)", async () => {
+    // Positive control: a project whose settings glyph is `rocket` must NOT render
+    // the default `layers` mark — the sidebar reads `glyphByProject`, it does not
+    // hardcode a glyph (the bug this replaces).
+    const chosen = mountSidebar({
+      projects: [project("p1", "atlas")],
+      glyphs: { p1: "rocket" },
+    });
+    const chosenRow = (await chosen.findByText("atlas")).closest("button");
+    expect(chosenRow?.querySelector("svg.lucide-rocket")).toBeTruthy();
+    expect(chosenRow?.querySelector("svg.lucide-layers")).toBeNull();
+    cleanup();
+
+    // No persisted glyph → the default mark, unchanged.
+    const bare = mountSidebar({ projects: [project("p1", "atlas")] });
+    const bareRow = (await bare.findByText("atlas")).closest("button");
+    expect(bareRow?.querySelector("svg.lucide-layers")).toBeTruthy();
   });
 
   it("groups a remote project under a remote host", async () => {
@@ -349,7 +379,7 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     });
     const slot = cornerSlot(container);
     expect(slot.getAttribute("data-owner")).toBe("sidebar");
-    expect(slot.className).toContain("pl-[76px]");
+    expect(slot.className).toContain("pl-[81px]");
     expect(slot.className).not.toContain("pl-3");
     // With hiddenInset the strip IS the titlebar; the shared `navigation-titlebar`
     // rule drags it and opts its buttons back out.
@@ -364,11 +394,11 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     // Node.DOCUMENT_POSITION_FOLLOWING (4).
     expect(svg.compareDocumentPosition(toggle) & 4).toBe(4);
 
-    // Unclipped: the 76px reserved zone + the lockup's own rendered width + the
+    // Unclipped: the 81px reserved zone + the lockup's own rendered width + the
     // 12px trailing pad + the 24px collapse toggle must all fit the 256px panel.
     const width = Number(svg.getAttribute("width"));
     expect(width).toBeCloseTo(14 * LOCKUP_RATIO, 3);
-    expect(76 + width + 12 + 24).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
+    expect(81 + width + 12 + 24).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
   });
 
   it("leaves every non-darwin host un-inset, full-size and undraggable", () => {
@@ -379,7 +409,7 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
       });
       const slot = cornerSlot(container);
       expect(slot.className).toContain("pl-3");
-      expect(slot.className).not.toContain("pl-[76px]");
+      expect(slot.className).not.toMatch(/pl-\[\d+px\]/);
       expect(slot.className).not.toContain("navigation-titlebar");
       expect(slotLockup(slot).getAttribute("height")).toBe("16");
       // Non-darwin loses the inset, not the affordance: the same single toggle.

@@ -33,4 +33,4 @@ export {
   useSettingsProjection,
   type WorktreeSettings,
 } from "./projections";
-export { type Layered, toProvenance } from "./provenance";
+export type { Layered } from "./provenance";

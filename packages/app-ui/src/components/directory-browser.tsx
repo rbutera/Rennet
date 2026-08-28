@@ -156,7 +156,7 @@ export function DirectoryBrowser({
 
       {error ? (
         <p
-          className="directory-browser-error px-3.5 py-2 rounded-chip border border-danger bg-danger-soft text-ink text-sm"
+          className="directory-browser-error px-3 py-2 rounded-md border border-danger/50 bg-danger/10 text-ink text-13"
           role="alert"
         >
           {error}
@@ -166,7 +166,7 @@ export function DirectoryBrowser({
       <div
         role="listbox"
         aria-label="Directories"
-        className="directory-browser-list flex flex-col gap-1 max-h-72 overflow-y-auto rounded-surface border border-line bg-surface p-1.5"
+        className="directory-browser-list flex flex-col gap-0.5 max-h-[min(45dvh,24rem)] min-h-32 overflow-y-auto rounded-md border border-border p-1"
       >
         {showEmpty ? (
           <div className="directory-browser-empty px-3 py-6 text-center text-sm text-ink-faint">
@@ -177,13 +177,14 @@ export function DirectoryBrowser({
             <div
               key={entry.path}
               role="option"
+              aria-selected={index === focusIndex}
               aria-disabled={entry.unreadable}
               tabIndex={index === focusIndex ? 0 : -1}
               ref={(node) => {
                 rowRefs.current[index] = node;
               }}
               className={cn(
-                "directory-browser-row flex items-center gap-2.5 rounded-control px-3 py-2 text-base outline-none focus-visible:ring-2 focus-visible:ring-accent-soft",
+                "directory-browser-row flex items-center gap-2.5 rounded-control px-2 py-2.5 text-13 outline-none focus-visible:ring-2 focus-visible:ring-accent-soft sm:py-1.5",
                 entry.unreadable
                   ? "text-ink-faint opacity-50 cursor-not-allowed"
                   : "text-ink cursor-pointer hover:bg-raised",
@@ -196,10 +197,10 @@ export function DirectoryBrowser({
               onFocus={() => setFocusIndex(index)}
               onKeyDown={(event) => handleRowKeyDown(event, index, entry)}
             >
-              <Icon icon={Folder} className="size-3.5 flex-none text-ink-faint" />
+              <Icon icon={Folder} className="size-3.5 flex-none text-ink-soft" />
               <span className="truncate">{entry.name}</span>
               {entry.isRepo ? (
-                <span className="directory-browser-repo-badge ml-auto inline-flex flex-none items-center gap-1 rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-soft">
+                <span className="directory-browser-repo-badge ml-auto inline-flex flex-none items-center gap-1 rounded-chip border border-line px-1.5 py-0.5 text-10 text-ink-soft">
                   <Icon icon={GitBranch} className="size-3" />
                   repo
                 </span>
@@ -217,13 +218,13 @@ function PathBreadcrumb({ path, onNavigate }: { path: string; onNavigate(path: s
   const segments = segmentsOf(path);
   return (
     <nav
-      className="directory-browser-breadcrumb flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm text-ink-faint"
+      className="directory-browser-breadcrumb flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto text-xs text-ink-faint"
       aria-label="Current path"
     >
       {segments.map((segment, index) => {
         const current = index === segments.length - 1;
         return (
-          <span className="directory-browser-crumb flex items-center gap-1" key={segment.path}>
+          <span className="directory-browser-crumb flex items-center gap-0.5" key={segment.path}>
             {index > 0 ? (
               <span className="text-ink-faint/70" aria-hidden="true">
                 /
@@ -232,8 +233,8 @@ function PathBreadcrumb({ path, onNavigate }: { path: string; onNavigate(path: s
             <button
               type="button"
               className={cn(
-                "rounded-chip px-1.5 py-1 truncate",
-                current ? "text-ink font-semibold" : "text-ink-soft hover:bg-raised hover:text-ink",
+                "rounded px-1 py-0.5 truncate",
+                current ? "text-ink font-medium" : "text-ink-soft hover:bg-raised hover:text-ink",
               )}
               aria-current={current ? "page" : undefined}
               disabled={current}

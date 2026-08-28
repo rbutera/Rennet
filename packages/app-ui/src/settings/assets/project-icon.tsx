@@ -14,6 +14,7 @@ import {
   Shield,
   Terminal,
 } from "lucide-react";
+import { Icon } from "../../components/icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Project glyphs (C10 §8.2, claims 649–652), ported from the spike's
@@ -53,5 +54,7 @@ export function ProjectIcon({
   readonly className?: string;
 }) {
   const Glyph = PROJECT_ICONS[icon ?? DEFAULT_PROJECT_ICON];
-  return <Glyph className={cn("size-3.5", className)} aria-hidden="true" />;
+  // Through the product `Icon` wrapper so the glyph carries Rennet's 1.6px stroke
+  // (and its aria-hidden default) everywhere it renders — sidebar included (D5).
+  return <Icon icon={Glyph} className={cn("size-3.5", className)} />;
 }

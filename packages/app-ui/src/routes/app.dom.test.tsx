@@ -41,15 +41,16 @@ describe("RennetRouterApp", () => {
       "forge.hosts": () => ({ hosts: [] }),
     });
     const history = memoryHistory("/"); // "/" redirects to /new-chat
-    const { findByText, getByTestId } = mount(
+    const { findByText, queryByTestId } = mount(
       <RennetRouterApp bridge={bridge} history={history} />,
     );
     expect(
       await findByText("You stopped writing the code. You still have to answer for it."),
     ).toBeTruthy();
-    expect(
-      getByTestId("chat-dock-slot").closest(".rn-startup-underlay")?.hasAttribute("inert"),
-    ).toBe(true);
+    // The shell is NOT mounted beneath the welcome (D7). A hidden-but-mounted underlay
+    // still registered coach anchors and still let the coachmark — which portals to
+    // `document.body`, outside the underlay — paint over the wizard.
+    expect(queryByTestId("chat-dock-slot")).toBeNull();
   });
 
   it("shows the focused Add Project entry after a completed welcome has no projects", async () => {
