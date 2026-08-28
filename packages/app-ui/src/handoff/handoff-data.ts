@@ -160,10 +160,8 @@ export function composeReviewDraft(
   const body: ReviewComment[] = [];
   const byPath = new Map<string, ComposedLineComment[]>();
   let requestChanges = 0;
-  let approvals = 0;
   for (const comment of composed.comments) {
     if (comment.type === "request-change") requestChanges += 1;
-    if (comment.type === "approve") approvals += 1;
     if (comment.line === undefined) {
       body.push(comment);
       continue;
@@ -176,14 +174,23 @@ export function composeReviewDraft(
     path,
     comments,
   }));
+  // The same derivation core runs (`deriveReviewEvent`) over the same set the daemon uses —
+  // BOTH strata, comments AND body notes: a request-change wins, else an approval, else a
+  // neutral comment. Mirrored here (app-ui cannot import core) so the control names what the
+  // composition actually proposes when the durable override differs. Deriving over the line
+  // comments alone would claim "overridden — proposed comment" for a pathless request-change
+  // ask, with a revert button that reverts to nothing — a lie about the reviewer's own verdict.
+  const outbound = [...composed.comments, ...(composed.bodyNotes ?? [])];
+  const proposed: ProposedVerdict = outbound.some((c) => c.type === "request-change")
+    ? "REQUEST_CHANGES"
+    : outbound.some((c) => c.type === "approve")
+      ? "APPROVE"
+      : "COMMENT";
   return {
     body,
     lineGroups,
     verdict: composed.verdict,
-    // The same derivation core runs (`deriveReviewEvent`): a request-change wins, else an
-    // approval, else a neutral comment. Mirrored here — app-ui cannot import core — so the
-    // control can name what the composition proposes when the durable override differs.
-    proposed: requestChanges > 0 ? "REQUEST_CHANGES" : approvals > 0 ? "APPROVE" : "COMMENT",
+    proposed,
     arithmetic: { requestChanges, comments: composed.comments.length - requestChanges },
     destination: composed.destination,
   };

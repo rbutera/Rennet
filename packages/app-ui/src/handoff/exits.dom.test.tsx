@@ -164,6 +164,74 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
   });
 
+  it("a verdict flip writes the ask log and RECOMPOSES — Post posts the recomposed verdict", async () => {
+    // The single verdict channel (#435). The verdict rides in the composition binding, so it can
+    // only change by changing the COMPOSITION: a flip writes `ask.setVerdictOverride`, the daemon
+    // recomposes, and Post ships the recomposed event. There is no second verdict argument, and a
+    // flip that stayed local would silently post the un-flipped verdict.
+    //
+    // The composed set here has NO request-change among the line comments — the request-change is
+    // a pathless BODY note, exactly like the daemon's own derivation input. So "proposed" must be
+    // derived over BOTH strata; deriving over the line comments alone would report the composition
+    // as "overridden — proposed comment" against its own honest REQUEST_CHANGES.
+    const calls: string[] = [];
+    let composedVerdict: "REQUEST_CHANGES" | "COMMENT" | "APPROVE" = "REQUEST_CHANGES";
+    let postedVerdict: string | undefined;
+    const handlers: MemoryBridgeHandlers = {
+      "publish.compose": () => {
+        calls.push(`compose:${composedVerdict}`);
+        return {
+          status: "review",
+          comments: [
+            { path: "src/a.ts", line: 5, side: "RIGHT", type: "comment", body: "a line note" },
+          ],
+          bodyNotes: [{ type: "request-change", body: "guard the boundary" }],
+          payload: PAYLOAD,
+          verdict: composedVerdict,
+          destination: "acme/orbital#7",
+          title: "acme/orbital#7",
+          compositionId: `comp-${composedVerdict}`,
+        };
+      },
+      "ask.setVerdictOverride": (input) => {
+        calls.push(`override:${input.verdict}`);
+        // The real daemon lands the override on the ask log, so the NEXT compose carries it.
+        composedVerdict = input.verdict ?? "REQUEST_CHANGES";
+        return { receipt: { kind: "verdict-override-set", verdict: "APPROVE" } };
+      },
+      "publish.review": (input) => {
+        calls.push("review");
+        postedVerdict = input.verdict;
+        return {
+          dryRun: false,
+          request: { endpoint: "graphql", method: "POST", body: {} },
+          marker: "m1",
+          ledger: [],
+          outcome: { reviewRef: "R_1", url: "https://x/1", reused: false },
+        };
+      },
+    };
+    const r = mountHandoff(review({ postTarget }), handlers);
+    stage("src/a.ts:5", "request-change");
+    expect(await r.findByText("a line note")).toBeTruthy();
+    // The composition agrees with itself: the body-note request-change IS the proposal, so the
+    // control reports no override and offers no dead revert.
+    expect(r.getByText(/proposed from your review/)).toBeTruthy();
+    expect(r.queryByText(/overridden/)).toBeNull();
+
+    await r.user.click(r.getByRole("button", { name: /Approve/ }));
+
+    // The flip landed on the ask log and the lane RECOMPOSED (the override now differs from the
+    // proposal, which only the recomposed draft can say).
+    expect(await r.findByText(/overridden — proposed request changes/)).toBeTruthy();
+    expect(calls).toEqual(["compose:REQUEST_CHANGES", "override:APPROVE", "compose:APPROVE"]);
+
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+    // What posts is the RECOMPOSED verdict — the event on screen, never a stale one.
+    expect(postedVerdict).toBe("APPROVE");
+    expect(await r.findByText(/Approve · 1 line comment · body/)).toBeTruthy();
+  });
+
   it("an inline edit that can't reach the composition is marked pending — never silently divergent", async () => {
     // The reviewer stages an ask AND types an inline edit into the store. `publish.compose` takes
     // no edit input, so that edit cannot reach the outbound bytes. The lane must (a) still post the

@@ -51,19 +51,25 @@ afterEach(() => {
 });
 
 describe("PostReviewLane", () => {
-  it("proposes the verdict from the staged asks and flips it with 'use proposal'", async () => {
+  it("proposes the verdict from the staged asks and flips it DURABLY (with 'use proposal' to revert)", async () => {
+    // A flip must reach the durable ask log, not just the local store (#435): `publish.compose`
+    // composes from the ask log, so a local-only flip would be silently discarded the moment the
+    // composed preview arrived — the reviewer's own verdict, lost without a word.
+    const durable: (string | null)[] = [];
     stage("src/a.ts:3", "request-change");
-    const r = mount(<PostReviewLane review={review} />);
+    const r = mount(<PostReviewLane review={review} onSetVerdict={(v) => durable.push(v)} />);
     // A request-change ask proposes Request Changes, with its arithmetic beside the control.
     expect(r.getByText(/proposed from your review · 1 request change · 0 comments/)).toBeTruthy();
     expect(store().review.verdictOverride).toBeNull(); // no override yet — the proposal stands
 
     await r.user.click(r.getByRole("button", { name: /Approve/ }));
     expect(store().review.verdictOverride).toBe("APPROVE");
+    expect(durable).toEqual(["APPROVE"]); // …and it landed on the ask log
     expect(r.getByText(/overridden — proposed request changes/)).toBeTruthy();
 
     await r.user.click(r.getByRole("button", { name: "use proposal" }));
     expect(store().review.verdictOverride).toBeNull();
+    expect(durable).toEqual(["APPROVE", null]); // the revert is durable too
     expect(r.getByText(/proposed from your review/)).toBeTruthy();
   });
 

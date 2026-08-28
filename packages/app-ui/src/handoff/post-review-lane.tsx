@@ -124,10 +124,22 @@ export function PostReviewLane({
         onSetVerdict={onSetVerdict}
       />
     );
-  return <WorkingReviewDraft review={review} onPost={onPost} onRevise={onRevise} />;
+  return (
+    <WorkingReviewDraft
+      review={review}
+      onPost={onPost}
+      onSetVerdict={onSetVerdict}
+      onRevise={onRevise}
+    />
+  );
 }
 
-function WorkingReviewDraft({ review, onPost, onRevise }: Omit<PostReviewLaneProps, "draft">) {
+function WorkingReviewDraft({
+  review,
+  onPost,
+  onSetVerdict,
+  onRevise,
+}: Omit<PostReviewLaneProps, "draft">) {
   const patchsetId = review.activePatchsetId;
   const postTarget = review.postTarget;
   const prRef = postTarget
@@ -153,6 +165,15 @@ function WorkingReviewDraft({ review, onPost, onRevise }: Omit<PostReviewLanePro
     [codeComments],
   );
   const threadsStaying = Object.keys(quoteThreads).length;
+
+  // A verdict flip is DURABLE (#435): it writes the ask log, which is what `publish.compose`
+  // reads, so the flip survives into the composition instead of being discarded the moment the
+  // composed preview arrives. The local store keeps this pre-compose lane's control responsive
+  // (there is no composition to read back from yet); the durable write is what makes it real.
+  const flipVerdict = (verdict: ProposedVerdict | null): void => {
+    setVerdictOverride(verdict);
+    onSetVerdict?.(verdict);
+  };
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -265,7 +286,7 @@ function WorkingReviewDraft({ review, onPost, onRevise }: Omit<PostReviewLanePro
           <VerdictControl
             arithmetic={arithmetic}
             verdictOverride={verdictOverride}
-            setVerdictOverride={setVerdictOverride}
+            setVerdictOverride={flipVerdict}
           />
         </div>
 
