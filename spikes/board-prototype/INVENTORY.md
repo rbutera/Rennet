@@ -50,15 +50,15 @@ onto the checklist lines they govern.
 
 ### Sidebar structure
 
-- [ ] The sidebar collapses between a 256px full panel and a 48px icon rail, animating width on one persistent element while the content swaps inside it — `components/app-sidebar.tsx` (R1, R47 amendment) [ws:C3]
+- [ ] The sidebar collapses between a 256px full panel and a 48px icon rail, animating width on one persistent element while the content swaps inside it — `components/app-sidebar.tsx` (R1, R47 amendment) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): collapsed is now width 0 / hidden; there is no 48px icon rail.
 - [ ] The expanded sidebar header carries the real Rennet lockup as vector artwork, scheme-swapped between light and dark files, never rendered as a font — `components/app-sidebar.tsx` [ws:C3]
-- [ ] Both the expanded panel and the rail carry a collapse/expand control — `components/app-sidebar.tsx` [ws:C3]
+- [ ] Both the expanded panel and the rail carry a collapse/expand control — `components/app-sidebar.tsx` [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): the CornerSlot carries the one toggle, wherever it mounts.
 - [ ] The top action block is ordered Search → New Chat → Add Project → Add Environment — `components/app-sidebar.tsx` (R35 sidebar rework, R56 amendment) [ws:C3]
 - [ ] The Search row shows a `⌘P` key hint and opens the command menu — `components/app-sidebar.tsx` (R7, #477) [ws:C3]
 - [ ] New Chat opens a project-picker popover with a searchable project list and a "New Project" escape at the bottom — `components/app-sidebar.tsx` (R2) [ws:C3]
 - [ ] Add Project opens the Add Project dialog — `components/app-sidebar.tsx` [ws:C3]
 - [ ] Add Environment opens the pairing dialog — `components/app-sidebar.tsx` (R56 amendment) [ws:C3]
-- [ ] The collapsed rail carries Search above New Chat at the top, and Update, Help, Settings bottom-anchored in that order — `components/app-sidebar.tsx` (R15, R16) [ws:C3]
+- [ ] The collapsed rail carries Search above New Chat at the top, and Update, Help, Settings bottom-anchored in that order — `components/app-sidebar.tsx` (R15, R16) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): deleted with the rail; the affordances live in the expanded sidebar and ⌘P/⌘K.
 - [ ] There is no "PROJECTS" section label; host group headers are the only section headers — `components/app-sidebar.tsx` (R35 sidebar rework) [ws:C3]
 - [ ] Host group headers show a monitor glyph for the local machine and a server glyph for remote environments — `components/app-sidebar.tsx` (R3) [ws:C3]
 - [ ] No IP address and no use of the word "daemon" appears anywhere in sidebar copy — `components/app-sidebar.tsx` (R3, R13) [ws:C3]
@@ -94,7 +94,7 @@ onto the checklist lines they govern.
 
 ### Update, Help, Settings
 
-- [ ] An Update control sits at the sidebar's foot (accent-filled, with a refresh glyph) and in the collapsed rail — `components/app-sidebar.tsx` (R15) [ws:C3]
+- [ ] An Update control sits at the sidebar's foot (accent-filled, with a refresh glyph) and in the collapsed rail — `components/app-sidebar.tsx` (R15) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): the sidebar's foot stands; the rail half is gone.
 - [ ] The Update control opens a dialog titled "Update Available" listing what the release contains, with Later and Update Now — `components/app-sidebar.tsx` (R15) [ws:C3]
 - [ ] The Help control opens a popover with Documentation, Keyboard Shortcuts, Replay Tour, and Report an Issue — `components/app-sidebar.tsx` (R16, #476) [ws:C3]
 - [ ] Help → Keyboard Shortcuts navigates to the keybindings settings page — `components/app-sidebar.tsx` (#476) [ws:C3]
@@ -105,9 +105,9 @@ onto the checklist lines they govern.
 ### Top bar (main surface header)
 
 - [ ] The main-surface header is 56px tall — `components/main-surface.tsx` (R51) [ws:C3]
-- [ ] Header height is two deliberate tiers: session surfaces (the board bar, the chat-pane header, the run route) run 56px, and takeover surfaces (New Chat, Settings, Archived, Context Map, Indexing) run 40px — `components/main-surface.tsx`, `components/chat-column.tsx`, `components/settings-view.tsx` (R51, R60) [ws:C3]
-- [ ] The header is a three-column grid: left slot (back arrow, chat-expand, trail), centered lens switcher, right slot (History · Map · Diff) — `components/main-surface.tsx` (R49 amendment, R51) [ws:C3]
-- [ ] When the chat column is collapsed, the header's left slot shows an expand-chat control followed by the two-line session trail — `components/main-surface.tsx` (R52 amendment) [ws:C3]
+- [ ] Header height is two deliberate tiers: session surfaces (the board bar, the chat-pane header, the run route) run 56px, and takeover surfaces (New Chat, Settings, Archived, Context Map, Indexing) run 40px — `components/main-surface.tsx`, `components/chat-column.tsx`, `components/settings-view.tsx` (R51, R60) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): states 1–2 keep the tiers; state 3 dissolves the session bar into a floating chip layer.
+- [ ] The header is a three-column grid: left slot (back arrow, chat-expand, trail), centered lens switcher, right slot (History · Map · Diff) — `components/main-surface.tsx` (R49 amendment, R51) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): the left slot's control is now a single always-present chat toggle, and state 3 renders the grid as chips.
+- [ ] When the chat column is collapsed, the header's left slot shows an expand-chat control followed by the two-line session trail — `components/main-surface.tsx` (R52 amendment) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): the toggle is present in BOTH directions, not only when the chat is collapsed.
 - [ ] The session trail is two lines: session title over target-icon + `project › target` words, with "· needs you" as words beside the accent icon, never a pill — `components/location-trail.tsx` (R51, R52 amendment) [ws:C3]
 - [ ] The same trail component renders in the chat-pane header and in the main top bar — `components/location-trail.tsx`, `components/chat-column.tsx` (R52 amendment) [ws:C3]
 - [ ] A back arrow appears in the header's left slot exactly when the current view is not a lens board — `components/main-surface.tsx` [ws:C3]
@@ -386,9 +386,9 @@ onto the checklist lines they govern.
 ## 5. Chat & orchestrator presence
 
 - [ ] The chat column is a persistent dock beside the active surface, with a header, a scrolling conversation, and a composer — `components/chat-column.tsx` (law 2) [ws:C3]
-- [ ] The chat-pane header is 56px and carries the two-line session trail plus a collapse control, matching the main bar — `components/chat-column.tsx` (R52 amendment) [ws:C3]
+- [ ] The chat-pane header is 56px and carries the two-line session trail plus a collapse control, matching the main bar — `components/chat-column.tsx` (R52 amendment) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): the collapse control leaves; in state 2 the header's leading element is the CornerSlot.
 - [ ] There is exactly one chat-pane header component; no surface renders a bespoke chat bar — `components/chat-column.tsx` (R52) [ws:C3]
-- [ ] Collapsing the chat reveals the same trail and an expand affordance in the main top bar — `components/main-surface.tsx` (R52) [ws:C3]
+- [ ] Collapsing the chat reveals the same trail and an expand affordance in the main top bar — `components/main-surface.tsx` (R52) [ws:C3] (re-ruled by C20 / #558 — Rai 2026-08-28): the one toggle is always in the main top bar, in both directions.
 - [ ] The whole conversation — turns, tool lines, composer — rides one centered 720px column, so a widened chat does not stretch edge to edge — `components/conversation-pane.tsx`, `components/input-bar.tsx` (R36 layout fix) [ws:C7]
 - [ ] The conversation scrolls to the newest turn whenever a turn arrives — `components/conversation-pane.tsx` [ws:C7]
 - [ ] User turns render as right-aligned speech bubbles at 85% of the column width with a timestamp beneath — `components/turn.tsx` (R6) [ws:C7]
@@ -691,7 +691,7 @@ onto the checklist lines they govern.
 ## 9. Command menu
 
 - [ ] `⌘P` (and `Ctrl+P`) toggles the command menu from anywhere — `components/command-menu.tsx` (R7) [ws:C11]
-- [ ] The sidebar's Search row and the rail's Search button open the same menu — `components/app-sidebar.tsx`, `components/command-menu.tsx` [ws:C11]
+- [ ] The sidebar's Search row and the rail's Search button open the same menu — `components/app-sidebar.tsx`, `components/command-menu.tsx` [ws:C11] (re-ruled by C20 / #558 — Rai 2026-08-28): the rail's Search button is gone; the sidebar's Search row and ⌘P/⌘K open the menu.
 - [ ] The menu is a modal command dialog with fuzzy filtering, arrow-key navigation, Enter to run, and Escape to close — `components/command-menu.tsx`, `components/ui/command.tsx` (#477) [ws:C11]
 - [ ] Every entry shows its group name beside its title — `components/command-menu.tsx` [ws:C11]
 - [ ] Sessions appear as entries, keyed by title with the project and host as extra keywords — `components/command-menu.tsx` (#477) [ws:C11]

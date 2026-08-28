@@ -239,3 +239,42 @@ tell a deliberate re-ruling from an oversight. Annotate **in place**, never dele
   packages**, not assume — lint, typecheck, test, build); paste the `GATE_EXIT` line. Commit. Output the
   completion sigil `<promise>C20-COMPLETE</promise>`. **`BUILD-STATUS.json` is flipped by `main`, not this
   agent** (per dispatch).
+
+### Inventory re-ruling record
+
+Annotated in place with `(re-ruled by C20 / #558 — Rai 2026-08-28)` — line numbers as
+they stood on `main` at `6156de9f`, unchanged (no deletions, no renumbering):
+
+- **53** `[ws:C3]` "The sidebar collapses between a 256px full panel and a 48px icon rail…"
+  — **annotated**: collapsed is now width 0 / hidden; there is no 48px icon rail.
+- **55** `[ws:C3]` "Both the expanded panel and the rail carry a collapse/expand control"
+  — **annotated**: the CornerSlot carries the one toggle, wherever it mounts.
+- **61** `[ws:C3]` "The collapsed rail carries Search above New Chat at the top…"
+  — **annotated**: deleted with the rail; the affordances live in the expanded sidebar and ⌘P/⌘K.
+- **97** `[ws:C3]` "An Update control sits at the sidebar's foot … and in the collapsed rail"
+  — **annotated**: the foot half stands; the rail half is gone.
+- **108** `[ws:C3]` "Header height is two deliberate tiers…"
+  — **annotated**: states 1–2 keep the tiers; state 3 dissolves the session bar into a floating chip layer.
+- **109** `[ws:C3]` "The header is a three-column grid: left slot (back arrow, chat-expand, trail)…"
+  — **annotated**: the left slot's control is now a single always-present chat toggle, and state 3 renders the grid as chips.
+- **110** `[ws:C3]` "When the chat column is collapsed, the header's left slot shows an expand-chat control…"
+  — **annotated**: the toggle is present in BOTH directions, not only when the chat is collapsed.
+- **389** `[ws:C3]` "The chat-pane header is 56px and carries the two-line session trail plus a collapse control…"
+  — **annotated**: the collapse control leaves; in state 2 the header's leading element is the CornerSlot.
+- **391** `[ws:C3]` "Collapsing the chat reveals the same trail and an expand affordance in the main top bar"
+  — **annotated**: the one toggle is always in the main top bar, in both directions.
+- **694** `[ws:C11]` "The sidebar's Search row and the rail's Search button open the same menu"
+  — **annotated**: the rail's Search button is gone; the sidebar's Search row and ⌘P/⌘K open the menu.
+  *(A C11 line, outside the packet's stated C3/C7 set, but genuinely contradicted — flagged in the
+  commit so C14 is not surprised.)*
+
+Verified unchanged — C20 does not contradict these, so they are NOT annotated:
+
+- **54** `[ws:C3]` (the expanded header's lockup is scheme-swapped vector artwork, never a font)
+  — **verified unchanged**: the lockup still renders through `RennetLockup` in the sidebar's header
+  row, now as the CornerSlot's `wordmark` slot. Its nature (real vector artwork, scheme-swapped,
+  14px on darwin / 16px elsewhere) is exactly what it was; only its neighbours moved.
+- **112** `[ws:C3]` (the same trail component renders in the chat-pane header and the main top bar)
+  — **verified unchanged**: both `chat/chat-header.tsx` and `shell/top-bar.tsx` still render the one
+  `shell/trail.tsx`. State 3 wraps the top bar's instance in a chip, which restyles its container,
+  not the component.
