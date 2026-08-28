@@ -156,9 +156,9 @@
     "note": "LANDED #560 @a6e1b520 (closes #543, #533, #534). Full host/tool detection: forge.detect + per-host daemon.status + served harness.hosts/setEnabled + forge-enable read (amendment A) + forge.hosts (amendment B) + Reconnect + Update Daemon, real-daemon E2E with real-gh rename control. Codex 8-finding FIX -> opus CONFIRMED (non-strict-arms doctrine endorsed). Fold judgments: c16 session-only disabled set SUPERSEDED by served store; three c16 tests converted harness.detect->harness.hosts (real integration catch); three not-live-yet doc claims dropped (all went live today). FOR C14: detection-eviction remove/restore cycle has MANUAL-ONLY E2E coverage (helper unit + structural eviction committed) \u2014 scoped bounce if the sweep wants it committed. RENNET_DISABLE_HARNESS now also suppresses codex locally. Snapshot 87."
   },
   "c18": {
-    "status": "implementing",
-    "passes": false,
-    "note": "Issue #551 (OPEN \u2014 group-A owed). SLICES 1-2 LANDED #562 @2a7bf793: board.read live (three honest states, BoardSource deleted \u2014 c15 UNPARKED), session.list/rename/setPinned/archive + project.rename R67, registry 93. Review FIX->CONFIRMED (keystroke-rename made draft-commit red-first; migration script removed; caption truth). Group-A continuation building the honest settings-engine slice on feat/c18-group-a (registry keys, per-repoKey rung, tracker repo layer, conventions writer, then the projectEditsPersist flip). Group-A @1d589d22 Codex FIX: 5 upheld (tracker kind/cred mixing w/ repro; stale capability flag + silent writePref no-op; guidance clobbers user prose w/ repro; glyph:7 control unbound; caption/docs lies) \u2014 fix loop with warm implementer. C18-COMPLETE after it lands."
+    "status": "landed",
+    "passes": true,
+    "note": "C18-COMPLETE: slices 1-2 #562 (board.read, session mutations, project.rename) + group-A #563 @3de83f82 (closes #551). Five prefs served for real: registry keys, per-repoKey rung on the project config.json, tracker kind-floor law shared by chip+retrieval, id-addressed guidance writer, DERIVED projectEditsPersist (skew-honest). Registry 95. Both Codex fix loops closed CONFIRMED."
   },
   "c19": {
     "status": "landed",
