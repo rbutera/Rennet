@@ -138,6 +138,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     const watcher = capturingWatch();
 
     const handle = await startRepoRehydration({
+      projectId: "project-1",
       repoPath: root,
       explicitBaseRef: "main",
       store,
@@ -202,6 +203,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     const watcher = capturingWatch();
     const calls: unknown[] = [];
     const handle = await startRepoRehydration({
+      projectId: "project-1",
       repoPath: root,
       explicitBaseRef: "main",
       store,
@@ -246,6 +248,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     const calls: { toOid: string }[] = [];
     let structuralCount = 0;
     const handle = await startRepoRehydration({
+      projectId: "project-1",
       repoPath: root,
       explicitBaseRef: "main",
       store,
@@ -304,6 +307,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
 
     // No initial generate → no manifest → nothing to keep warm.
     const handle = await startRepoRehydration({
+      projectId: "project-1",
       repoPath: root,
       explicitBaseRef: "main",
       store,
@@ -331,6 +335,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     const clock = fakeTimers();
     const watcher = capturingWatch();
     const handle = await startRepoRehydration({
+      projectId: "project-1",
       repoPath: root,
       explicitBaseRef: "main",
       store,

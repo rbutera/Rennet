@@ -25,7 +25,7 @@ import {
   runPartitionWorker,
 } from "@rennet/core";
 import type { ProjectProcessEvent } from "@rennet/protocol";
-import { PROACTIVE_REHYDRATION_COMMAND_ID } from "@rennet/protocol";
+import { proactiveRehydrationCommandId } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createKnowledgeSwarmRuntime } from "../src/runtime/knowledge-swarm";
 
@@ -233,11 +233,13 @@ describe.skipIf(!LIVE)("c22 — the verify seat at real statement volume", () =>
       store: new ProjectSnapshotStore(mkdtempSync(join(tmpdir(), "c22-empty-"))),
       resolveClaudePort: async () => adapter,
       resolveCodexExecutor: async () => null,
-      narrate: (event) => broadcast.push({ commandId: PROACTIVE_REHYDRATION_COMMAND_ID, event }),
+      narrate: (projectId, event) =>
+        broadcast.push({ commandId: proactiveRehydrationCommandId(projectId), event }),
     });
     // A repo the scratch store has no snapshot for: a real non-`ok` outcome
     // through the real runtime, no stubbing.
     const outcome = await runtime.runForRepo({
+      projectId: "c22-project",
       repoKey: "c22-no-such-repo",
       repoRoot: SUBJECT,
       toOid: "0".repeat(40),
@@ -247,7 +249,7 @@ describe.skipIf(!LIVE)("c22 — the verify seat at real statement volume", () =>
     if (outcome.status === "ok") return;
     const carried = broadcast.find(
       (entry) =>
-        entry.commandId === PROACTIVE_REHYDRATION_COMMAND_ID &&
+        entry.commandId === proactiveRehydrationCommandId("c22-project") &&
         entry.event.kind === "stage" &&
         entry.event.detail === outcome.reason,
     );

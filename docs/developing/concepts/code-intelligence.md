@@ -95,18 +95,29 @@ untouched, rather than publishing an unadjudicated slice of the repository as if
 the seat had read it — so the chunks still queued behind a failure are abandoned
 instead of spending turns on a verdict already decided.
 
-Chunking bounds what the seat can synthesize. Cross-cutting claims are minted
-within a chunk, which still spans many partitions, but a pattern whose evidence
-falls on both sides of a chunk boundary is not visible to any single turn, so
-the map loses it. Widening that reach needs a second synthesis pass over the
-chunks' outputs; until one exists, cross-cutting coverage on a large repository
-is chunk-local rather than repository-wide.
+Chunking bounds what one turn can synthesize, so a final cross-boundary pass
+runs over the chunks' own output: every chunk's cross-cutting claims, plus a
+one-line summary of what each chunk covered, feed a single closing turn that
+mints the claims spanning two chunks. That input is proportional to the number
+of chunks, not the number of statements, which is what keeps it inside the
+context window that the unchunked prompt overflowed. The pass is best-effort —
+if the closing turn fails, the run keeps its chunk-local synthesis rather than
+discarding a good map over a bonus turn.
 
-The pass runs in the background under a stable progress id and reports its
-outcome — including the reason it skipped or failed — on the project's build
-timeline. A failure that arrives as a thrown error is converted to the same
-typed outcome and narrated on the same line as a reported one, so a knowledge
-run is never silently absent.
+One residual: the closing turn reads the chunks' claims, not their raw
+hypotheses, so a pattern that only becomes visible in two individual hypotheses
+on opposite sides of a boundary can still be missed. Cross-cutting coverage is
+therefore near-repository-wide rather than exhaustive.
+
+The pass runs in the background and reports its outcome — including the reason
+it skipped or failed — on the project's build timeline, under a progress id
+keyed to that project so one project's background work never appears on
+another's. A failure that arrives as a thrown error is converted to the same
+typed outcome and narrated on the same line as a reported one. The client
+retains a project's background narration above the screen that shows it, so a
+failure that happened while the reader was elsewhere is still there when they
+open the project — a run is never silently absent, and never visible only to
+whoever was watching.
 
 ## Current scope
 

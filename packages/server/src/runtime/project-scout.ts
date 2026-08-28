@@ -30,10 +30,13 @@ export interface ProjectScoutRuntimeDeps {
   readonly gitForRepo: (repoRoot: string) => GitExec;
   readonly resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>;
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
-  readonly narrate: (event: ProjectProcessEvent) => void;
+  /** Scoped to the project whose scout is running (the channel is per-project). */
+  readonly narrate: (projectId: string, event: ProjectProcessEvent) => void;
 }
 
 export interface ProjectScoutRunInput {
+  /** The project this run narrates under. */
+  readonly projectId: string;
   readonly repoKey: string;
   readonly repoRoot: string;
 }
@@ -78,7 +81,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
         });
         saveScoutFacts(deps.store, input.repoKey, result);
         const detected = Object.keys(result.facts).length;
-        deps.narrate({
+        deps.narrate(input.projectId, {
           kind: "stage",
           repo: repoLabel,
           stage: "knowledge",
@@ -89,7 +92,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
       } catch (error) {
         // The scout is fire-and-forget garnish on processing: a failure narrates
         // and returns null, never breaks the project add.
-        deps.narrate({
+        deps.narrate(input.projectId, {
           kind: "stage",
           repo: repoLabel,
           stage: "knowledge",

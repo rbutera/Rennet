@@ -208,9 +208,8 @@ export interface MapVerifyInput {
  * died with "Prompt is too long" and the whole run's statements were discarded.
  * 150 renders to roughly 12k tokens of hypothesis list, well inside any seat.
  *
- * ponytail: cross-cutting synthesis is now chunk-local (a chunk still spans many
- * slices, so cross-slice reach survives); a hierarchical second-pass synthesis
- * over the chunks' outputs is the upgrade path if that reach proves too narrow.
+ * Chunking bounds what one turn can synthesize, so `runCrossBoundarySynthesis`
+ * runs a second pass over the chunks' OUTPUTS to reach across the boundaries.
  */
 export const MAP_VERIFY_CHUNK_SIZE = 150;
 
@@ -280,6 +279,54 @@ from the file inventory you have seen in the cited spans.`,
   ].join("\n");
 }
 
+/** One line per chunk: what it covered, without repeating a single hypothesis. */
+function chunkDigest(
+  entries: readonly WorkerStatement[],
+  result: VerifyChunkOk,
+  index: number,
+): string {
+  const confirmed = result.verdicts.filter((v) => v.verdict === "confirmed").length;
+  const subjects = [...new Set(entries.map((entry) => entry.statement.subject))];
+  const shown = subjects.slice(0, CROSS_BOUNDARY_SUBJECTS_PER_CHUNK);
+  const more = subjects.length - shown.length;
+  return `- chunk ${index + 1}: ${entries.length} hypotheses, ${confirmed} confirmed, ${
+    result.verdicts.length - confirmed
+  } rejected; subjects: ${shown.join(", ")}${more > 0 ? ` (+${more} more)` : ""}`;
+}
+
+/**
+ * Distinct subjects named per chunk in the cross-boundary digest. The digest is
+ * O(chunks), never O(statements) — that is the whole point of it.
+ */
+const CROSS_BOUNDARY_SUBJECTS_PER_CHUNK = 12;
+
+function buildCrossBoundaryPrompt(
+  candidates: readonly KnowledgeStatement[],
+  digests: readonly string[],
+  snapshot: KnowledgeSnapshotContext,
+): string {
+  const rendered = candidates.map((statement) =>
+    renderHypothesis({ statement } satisfies WorkerStatement),
+  );
+  return [
+    KNOWLEDGE_CONTRACT,
+    `\nYou are the CROSS-BOUNDARY synthesis seat. The verify seat read the
+repository's hypotheses in ${digests.length} separate turns, so no single turn
+could see a pattern whose evidence lay in two different turns. Below are the
+cross-cutting claims each of those turns produced, plus a one-line summary of
+what each turn covered.
+
+Mint ONLY the statements that span these turns — a pattern visible when two of
+the claims below are read together and invisible in either alone. Do not restate
+a claim that is already listed; it is already recorded. Obey the same evidence
+rules: re-read the cited spans and cite only paths you have seen there. Emit an
+empty 'verdicts' array — this seat mints, it does not re-adjudicate.`,
+    `\nWHAT EACH VERIFY TURN COVERED:\n${digests.join("\n")}`,
+    `\nTHEIR CROSS-CUTTING CLAIMS (base ${snapshot.baseOid.slice(0, 12)}):\n${rendered.join("\n")}`,
+    "\nEmit the cross-boundary statements, or none if the claims do not connect.",
+  ].join("\n");
+}
+
 /**
  * Run the verify/synthesis seat: flips each worker hypothesis to `confirmed` or
  * `rejected` per the seat's span-bounded re-read (an id without a verdict stays
@@ -329,7 +376,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
     chunks.map((chunk) => async (): Promise<VerifyChunkResult> => {
       if (firstFailure !== undefined) return { status: "failed", failureReason: firstFailure };
       const result = await runVerifyChunk({
-        entries: chunk,
+        prompt: buildVerifyPrompt(chunk, snapshot),
         snapshot,
         provenance,
         generator,
@@ -373,7 +420,42 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
       else rejected += 1;
     }
   }
-  const crossCutting = okChunks.flatMap((result) => result.crossCutting);
+  const chunkCrossCutting = okChunks.flatMap((result) => result.crossCutting);
+  // The second pass (#591): chunking cost the seat any pattern whose two halves
+  // landed in different turns, and the map lost it silently. This turn reaches
+  // across those boundaries.
+  //
+  // BOUNDED BY CONSTRUCTION — do not "improve" this into a pass over the raw
+  // hypotheses, which is exactly the unbounded prompt that killed whole runs.
+  // Its input is the chunks' OUTPUTS: O(chunks) digest lines plus the handful of
+  // cross-cutting claims each turn minted, never the ~1900 statements. The
+  // `chunkSize` slice is a hard ceiling on top of that, so this prompt cannot
+  // grow past a single verify chunk's proven-safe size no matter how large the
+  // repository is.
+  const candidates = chunkCrossCutting.slice(0, Math.max(1, chunkSize));
+  const crossBoundary =
+    okChunks.length > 1 && candidates.length > 0
+      ? await runVerifyChunk({
+          prompt: buildCrossBoundaryPrompt(
+            candidates,
+            okChunks.map((result, index) => chunkDigest(chunks[index] ?? [], result, index)),
+            snapshot,
+          ),
+          snapshot,
+          provenance,
+          generator,
+          filesByPath,
+          tally,
+          runTurn,
+          maxRetries,
+        })
+      : null;
+  // Best-effort: a failed second pass keeps the chunk-local synthesis rather
+  // than discarding a whole good run over a bonus turn.
+  const crossCutting =
+    crossBoundary?.status === "ok"
+      ? [...chunkCrossCutting, ...crossBoundary.crossCutting]
+      : chunkCrossCutting;
   const set: KnowledgeSet = {
     schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
     repoKey: snapshot.repoKey,
@@ -394,7 +476,8 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
 }
 
 interface VerifyChunkInput {
-  readonly entries: readonly WorkerStatement[];
+  /** The rendered prompt — a hypothesis chunk, or the cross-boundary pass's. */
+  readonly prompt: string;
   readonly snapshot: KnowledgeSnapshotContext;
   readonly provenance: KnowledgeProvenanceSeed;
   readonly generator: string;
@@ -419,11 +502,10 @@ type VerifyChunkResult =
 
 type VerifyChunkOk = Extract<VerifyChunkResult, { status: "ok" }>;
 
-/** One verify turn over one chunk of hypotheses, with the seat's own retries. */
+/** One seat turn over one rendered prompt, with the seat's own retries. */
 async function runVerifyChunk(input: VerifyChunkInput): Promise<VerifyChunkResult> {
-  const { entries, snapshot, provenance, generator, filesByPath, tally, runTurn, maxRetries } =
+  const { prompt, snapshot, provenance, generator, filesByPath, tally, runTurn, maxRetries } =
     input;
-  const prompt = buildVerifyPrompt(entries, snapshot);
   let lastFailure = "the map verify pass did not complete";
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {

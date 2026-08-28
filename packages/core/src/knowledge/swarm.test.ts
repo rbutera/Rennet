@@ -329,6 +329,109 @@ describe("runMapVerify", () => {
     expect(verify.rejected).toBe(2);
   });
 
+  it("runs a bounded cross-boundary pass over the chunks' own cross-cutting output", async () => {
+    // Chunking cost the seat any pattern whose halves landed in different turns.
+    // The second pass reads the chunks' OUTPUTS — never their hypotheses — so it
+    // can see across the boundary without rebuilding the prompt that overflowed.
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: Array.from({ length: 4 }, (_, index) =>
+            rawStatement({ claim: `claim number ${index}` }),
+          ),
+        }),
+    });
+    const prompts: string[] = [];
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 2,
+      concurrency: 1,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        turn += 1;
+        return emitted({
+          verdicts: [],
+          crossCutting: [rawStatement({ claim: `chunk-local pattern ${turn}` })],
+        });
+      },
+    });
+
+    // Two hypothesis chunks, then exactly one synthesis turn over their output.
+    expect(prompts).toHaveLength(3);
+    const boundary = prompts[2] ?? "";
+    expect(boundary).toContain("CROSS-BOUNDARY");
+    expect(boundary).toContain("chunk-local pattern 1");
+    expect(boundary).toContain("chunk-local pattern 2");
+    // Bounded: it carries a digest LINE per chunk, not the chunks' hypotheses.
+    expect(boundary).toContain("chunk 1: 2 hypotheses");
+    for (const entry of worker.statements) {
+      expect(boundary).not.toContain(entry.statement.claim);
+    }
+    // Its mint lands in the set beside the chunk-local ones.
+    expect(verify.status).toBe("ok");
+    expect(verify.crossCutting).toBe(3);
+    const claims = verify.set?.statements.map((s) => s.claim) ?? [];
+    expect(claims).toContain("chunk-local pattern 3");
+  });
+
+  it("skips the cross-boundary pass when one chunk already saw everything", async () => {
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () => emitted({ statements: [rawStatement()] }),
+    });
+    let turns = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () => {
+        turns += 1;
+        return emitted({ verdicts: [], crossCutting: [rawStatement({ claim: "one pattern" })] });
+      },
+    });
+    expect(turns).toBe(1); // nothing straddles a boundary that does not exist
+    expect(verify.status).toBe("ok");
+  });
+
+  it("keeps a good run when the cross-boundary pass fails (best-effort, not fatal)", async () => {
+    const worker = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: [rawStatement(), rawStatement({ claim: "second claim" })],
+        }),
+    });
+    let turn = 0;
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 1,
+      concurrency: 1,
+      maxRetries: 0,
+      runTurn: async () => {
+        turn += 1;
+        return turn > 2
+          ? { status: "failed", message: "Prompt is too long" }
+          : emitted({ verdicts: [], crossCutting: [rawStatement({ claim: `pattern ${turn}` })] });
+      },
+    });
+    // Both hypothesis chunks succeeded; only the bonus synthesis turn died.
+    expect(verify.status).toBe("ok");
+    expect(verify.crossCutting).toBe(2);
+    expect(verify.set?.statements).toHaveLength(4);
+  });
+
   it("dedups by statement id across workers and cross-cutting re-mints", async () => {
     const results = await workerResults();
     const duplicate = results[0]?.statements[0]?.statement;

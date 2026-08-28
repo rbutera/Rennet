@@ -60,7 +60,7 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  */
 
 /** The stable push id background rehydration narration is streamed under. */
-export { PROACTIVE_REHYDRATION_COMMAND_ID } from "@rennet/protocol";
+export { proactiveRehydrationCommandId } from "@rennet/protocol";
 
 /** A started per-repo watcher. `close()` stops the fs watch (idempotent). */
 export interface RepoRehydrationHandle {
@@ -77,6 +77,7 @@ export interface ResolvedRepo {
 }
 
 interface KnowledgeAdvance {
+  readonly projectId: string;
   readonly repoKey: string;
   readonly repoRoot: string;
   readonly toOid: string;
@@ -103,6 +104,8 @@ async function defaultResolveRepo(
 
 /** Inputs for starting one repo's proactive rehydration watcher. */
 export interface StartRepoRehydrationDeps {
+  /** The project this repo belongs to — the narration channel's scope. */
+  readonly projectId: string;
   readonly repoPath: string;
   /** The confirmed primary branch the initial snapshot was built at (may be absent). */
   readonly explicitBaseRef?: string | undefined;
@@ -119,6 +122,7 @@ export interface StartRepoRehydrationDeps {
    * the prior set's identity, so the advance carries only the target OID.
    */
   readonly runKnowledgePass?: (advance: {
+    readonly projectId: string;
     readonly repoKey: string;
     readonly repoRoot: string;
     readonly toOid: string;
@@ -238,6 +242,7 @@ export async function startRepoRehydration(
         deps.narrate({ kind: "repo-done", repo: repoLabel, summary });
         if (deps.runKnowledgePass) {
           scheduleKnowledge({
+            projectId: deps.projectId,
             repoKey: resolved.repoKey,
             repoRoot: resolved.root,
             toOid: result.manifest.baseOid,
@@ -267,6 +272,7 @@ export async function startRepoRehydration(
   const manifest = deps.store.loadManifest(resolved.repoKey);
   if (manifest && deps.runKnowledgePass) {
     scheduleKnowledge({
+      projectId: deps.projectId,
       repoKey: resolved.repoKey,
       repoRoot: resolved.root,
       toOid: manifest.baseOid,
@@ -298,7 +304,8 @@ export interface ProactiveRehydration {
 export interface ProactiveRehydrationDeps {
   readonly store: ProjectSnapshotStore;
   readonly generator: ProjectSnapshotGenerator;
-  readonly narrate: (event: ProjectProcessEvent) => void;
+  /** Narrate ONE project's background pass — the channel is scoped by project. */
+  readonly narrate: (projectId: string, event: ProjectProcessEvent) => void;
   readonly onError?: (error: unknown) => void;
   readonly git?: GitExec;
   readonly runKnowledgePass?: StartRepoRehydrationDeps["runKnowledgePass"];
@@ -343,11 +350,12 @@ export function createProactiveRehydration(deps: ProactiveRehydrationDeps): Proa
         inFlight.add(repoPath);
         try {
           const handle = await startRepo({
+            projectId: project.id,
             repoPath,
             explicitBaseRef: project.primaryBranch,
             store: deps.store,
             generator: deps.generator,
-            narrate: deps.narrate,
+            narrate: (event) => deps.narrate(project.id, event),
             ...(deps.onError ? { onError: deps.onError } : {}),
             ...(deps.git ? { git: deps.git } : {}),
             ...(deps.runKnowledgePass ? { runKnowledgePass: deps.runKnowledgePass } : {}),

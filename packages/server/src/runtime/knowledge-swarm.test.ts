@@ -74,10 +74,11 @@ describe("createKnowledgeSwarmRuntime", () => {
       store: new ProjectSnapshotStore(tempDir()),
       resolveClaudePort: async () => null,
       resolveCodexExecutor: async () => null,
-      narrate: (event) => narrated.push(event),
+      narrate: (_projectId, event) => narrated.push(event),
     });
 
     const outcome = await runtime.runForRepo({
+      projectId: "project-1",
       repoKey: "repo",
       repoRoot: join(tempDir(), "rennet"),
       toOid: "a".repeat(40),
@@ -110,10 +111,11 @@ describe("createKnowledgeSwarmRuntime", () => {
         throw new Error("spawn claude ENOENT");
       },
       resolveCodexExecutor: async () => null,
-      narrate: (event) => narrated.push(event),
+      narrate: (_projectId, event) => narrated.push(event),
     });
 
     const outcome = await runtime.runForRepo({
+      projectId: "project-1",
       repoKey: "repo",
       repoRoot: join(tempDir(), "rennet"),
       toOid: "a".repeat(40),

@@ -31,7 +31,11 @@ describe("createProjectScoutRuntime", () => {
       },
     });
 
-    const result = await runtime.runForRepo({ repoKey: "repo", repoRoot: tempDir() });
+    const result = await runtime.runForRepo({
+      projectId: "project-1",
+      repoKey: "repo",
+      repoRoot: tempDir(),
+    });
 
     // The deterministic floor stood: GitHub detected from the remote, persisted.
     expect(result?.facts.trackerKind?.value).toBe("github");

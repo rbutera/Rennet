@@ -1,3 +1,4 @@
+import type { ProjectProcessEvent } from "@rennet/protocol";
 import type { StateCreator } from "zustand";
 import type { RennetState } from "./index";
 
@@ -43,7 +44,20 @@ export interface UiState {
    * never cancels it (the spinner tracks the real run, not the mounted screen).
    */
   readonly processingProjectIds: readonly string[];
+  /**
+   * Background narration per project — the proactive rehydration pass and the
+   * knowledge swarm that rides it. Ephemeral client state for the same reason
+   * `processingProjectIds` is: it tracks the real background RUN, not the
+   * mounted screen. It lives here because the run outlives the screen — a swarm
+   * that failed while the reader was elsewhere used to be gone by the time they
+   * looked, which made "we narrate failures" true only for whoever was watching.
+   * Capped at `BACKGROUND_EVENT_LIMIT` per project, oldest dropped first.
+   */
+  readonly backgroundEvents: Readonly<Record<string, readonly ProjectProcessEvent[]>>;
 }
+
+/** Retained background lines per project. A long swarm narrates one line per partition. */
+export const BACKGROUND_EVENT_LIMIT = 500;
 
 export interface UiSlice {
   readonly ui: UiState;
@@ -64,6 +78,8 @@ export interface UiSlice {
     clearAddProjectSource(): void;
     /** Mark (or unmark) a project as processing — drives the sidebar indexing spinner. */
     setProjectProcessing(projectId: string, processing: boolean): void;
+    /** Retain one background narration line for `projectId`. */
+    appendBackgroundEvent(projectId: string, event: ProjectProcessEvent): void;
   };
 }
 
@@ -78,6 +94,7 @@ const initialUi: UiState = {
   commandMenuMode: "search",
   openDialogs: [],
   processingProjectIds: [],
+  backgroundEvents: {},
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -125,6 +142,14 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
           : s.ui.processingProjectIds.filter((id) => id !== projectId);
         return { ui: { ...s.ui, processingProjectIds: next } };
       }),
+    appendBackgroundEvent: (projectId, event) =>
+      set((s) => {
+        const prior = s.ui.backgroundEvents[projectId] ?? [];
+        const next = [...prior, event].slice(-BACKGROUND_EVENT_LIMIT);
+        return {
+          ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },
+        };
+      }),
   },
 });
 
@@ -136,6 +161,13 @@ export const selectFolded = (nodeId: string) => (s: RennetState) =>
 export const selectDialogOpen = (id: string) => (s: RennetState) => s.ui.openDialogs.includes(id);
 /** The frontmost open dialog id, or null. DERIVED — never stored as its own field. */
 export const selectTopDialog = (s: RennetState): string | null => s.ui.openDialogs.at(-1) ?? null;
+/** One project's retained background narration (empty when nothing has run). */
+export const selectBackgroundEvents =
+  (projectId: string) =>
+  (s: RennetState): readonly ProjectProcessEvent[] =>
+    s.ui.backgroundEvents[projectId] ?? EMPTY_EVENTS;
+const EMPTY_EVENTS: readonly ProjectProcessEvent[] = [];
+
 /** The projects currently processing (sidebar indexing spinner). */
 export const selectProcessingProjectIds = (s: RennetState): readonly string[] =>
   s.ui.processingProjectIds;

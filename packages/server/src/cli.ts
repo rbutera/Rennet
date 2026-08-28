@@ -561,13 +561,16 @@ async function enrichMap(input: {
     store,
     resolveClaudePort: async () => adapter ?? null,
     resolveCodexExecutor: async () => codexExecutor,
-    narrate: (event) => {
+    // The CLI narrates to its own stdout, so the per-project channel scoping
+    // that the app's WS broadcast needs is irrelevant here.
+    narrate: (_projectId, event) => {
       if (event.kind === "stage")
         io.out(`  ${event.note}${event.detail ? ` (${event.detail})` : ""}`);
     },
   });
   io.out(`Running the knowledge swarm at ${manifest.baseOid.slice(0, 12)}`);
   const outcome = await runtime.runForRepo({
+    projectId: manifest.repoKey,
     repoKey: manifest.repoKey,
     repoRoot: root,
     toOid: manifest.baseOid,

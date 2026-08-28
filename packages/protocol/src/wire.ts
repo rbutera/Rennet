@@ -568,13 +568,24 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
 export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;
 
 /**
- * The stable `onProgress` id background rehydration — the snapshot warm-up and
+ * The `onProgress` id prefix background rehydration — the snapshot warm-up and
  * the knowledge swarm that rides it — streams its `ProjectProcessEvent`s under.
  * It lives here rather than in the server because it is a WIRE fact: a screen
  * that does not subscribe to this id cannot see a background pass at all, which
  * is how a forty-minute knowledge run failed invisibly.
  */
-export const PROACTIVE_REHYDRATION_COMMAND_ID = "proactive:rehydration";
+export const PROACTIVE_REHYDRATION_COMMAND_PREFIX = "proactive:rehydration";
+
+/**
+ * The background-narration id for ONE project. The channel used to be a single
+ * process-global id, so every project's background pass was broadcast to every
+ * project's screen: a screen showed another project's swarm on its own build
+ * timeline. `onProgress` matches ids exactly, so keying the id by project is
+ * what makes a subscriber see only its own work.
+ */
+export function proactiveRehydrationCommandId(projectId: string): string {
+  return `${PROACTIVE_REHYDRATION_COMMAND_PREFIX}:${projectId}`;
+}
 
 /**
  * Live narration for a `project.detail` fetch — the PR half only (the local half

@@ -28,11 +28,17 @@ export interface KnowledgeSwarmRuntimeDeps {
   readonly resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>;
   /** The locus-aware codex utility executor probe (null when no `codex` resolves). */
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
-  /** The existing progress push (same channel the processing screen renders). */
-  readonly narrate: (event: ProjectProcessEvent) => void;
+  /**
+   * The existing progress push (same channel the processing screen renders),
+   * scoped to the project whose pass is running — the channel used to be
+   * process-global, so one project's swarm narrated onto every project's screen.
+   */
+  readonly narrate: (projectId: string, event: ProjectProcessEvent) => void;
 }
 
 export interface KnowledgeSwarmRunInput {
+  /** The project this run narrates under. */
+  readonly projectId: string;
   readonly repoKey: string;
   readonly repoRoot: string;
   /** The base OID the snapshot is fresh at (the run's target). */
@@ -117,7 +123,7 @@ export function createKnowledgeSwarmRuntime(
       const repoLabel = basename(input.repoRoot);
       const narrated = (outcome: KnowledgeSwarmOutcome): KnowledgeSwarmOutcome => {
         const line = knowledgeOutcomeLine(repoLabel, outcome);
-        if (line) deps.narrate(line);
+        if (line) deps.narrate(input.projectId, line);
         return outcome;
       };
       // Every THROWN failure becomes the same typed, narrated outcome the
@@ -147,7 +153,8 @@ export function createKnowledgeSwarmRuntime(
             repoKey: input.repoKey,
             repoRoot: input.repoRoot,
             baseOid: input.toOid,
-            onProgress: (event) => deps.narrate(knowledgeStageLine(repoLabel, event)),
+            onProgress: (event) =>
+              deps.narrate(input.projectId, knowledgeStageLine(repoLabel, event)),
           }),
         );
       } catch (error) {
