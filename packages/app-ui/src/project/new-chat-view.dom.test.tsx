@@ -171,7 +171,12 @@ function renderView(
 
   function Harness() {
     const project = new URLSearchParams(useSearch()).get("project") ?? "";
-    return <NewChatView projectId={project} />;
+    // Mirror `NewChatScreen`: it resolves a project before mounting the view and shows the
+    // add-project entry otherwise, so `NewChatView` never runs on an empty id. The harness
+    // used to mount it anyway, which fired `project.detail` with `projectId: ""` — a read
+    // the daemon rejects (`z.string().min(1)`), invisible until MemoryBridge started
+    // parsing. A harness that reaches states the app cannot reach tests a different app.
+    return project === "" ? null : <NewChatView projectId={project} />;
   }
 
   const view = mount(

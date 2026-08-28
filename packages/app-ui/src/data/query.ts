@@ -17,6 +17,11 @@ export interface CommandResult<T> {
   readonly error: unknown;
   readonly pending: boolean;
   readonly stale: boolean;
+  /** A read is IN FLIGHT right now, whether or not `data` is already populated. A caller
+   *  that wants to conclude something from ABSENCE ("this id is in no list") needs this:
+   *  `pending` only covers the first-ever load, so on a refetch `data` is populated but
+   *  out of date, and a `find` that misses is not proof the thing does not exist. */
+  readonly fetching: boolean;
 }
 
 export interface UseCommandOptions {
@@ -60,5 +65,6 @@ export function useCommand<K extends CommandName>(
     error: snapshot.error,
     pending: enabled && snapshot.data === undefined && snapshot.error === undefined,
     stale: snapshot.stale,
+    fetching: snapshot.fetching,
   };
 }

@@ -73,9 +73,19 @@ export function useSlugResolution(slug: string): SlugResolution {
     // No review by this id. If a SESSION owns it, this is the chat-only session.
     const session = sessions.data?.sessions.find((candidate) => candidate.id === slug);
     if (session) return { status: "session", sessionId: session.id, session };
-    // Still waiting on the session list — do not flash "not found" at a slug that is
-    // about to resolve. The mint navigates here immediately, so this is the common path.
-    if (!sessions.data && !sessions.error) return { status: "pending" };
+    // The list itself FAILED. "I could not read the list" is not "the slug is in no
+    // list" — reporting a disconnect or a server fault as not-found blames the reviewer's
+    // url for the daemon's problem. Report the fault that actually happened.
+    if (sessions.error) return { status: "error", slug, error: sessions.error };
+    // NOT-FOUND IS A CLAIM ABOUT ABSENCE, so only a settled, current list may make it.
+    // `!sessions.data` alone covers the first-ever load and nothing else — which is the
+    // wrong half of the problem, because the front door arrives here with the sidebar's
+    // list ALREADY loaded. The mint stales it and navigates in the same act, so the list
+    // in hand is populated and one session out of date: `find` misses the session that was
+    // just minted and the click that worked renders "Not found". Refetching (`fetching`)
+    // and known-out-of-date (`stale`) are both "wait", and stale covers the render between
+    // the invalidation landing and the refetch starting.
+    if (!sessions.data || sessions.stale || sessions.fetching) return { status: "pending" };
     return { status: "not-found", slug };
   }
   return { status: "pending" };

@@ -220,7 +220,132 @@ describe("/s/:slug for a review-less session (F1 cluster 4, C21 mint)", () => {
   });
 });
 
+/** A review the daemon can serve for `/s/rev-1`, minimal but schema-real. */
+const REVIEW = {
+  id: "rev-1",
+  repositoryRoot: "/repo",
+  patchsets: [
+    {
+      id: "ps-1",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      repository: {
+        id: "repo",
+        root: "/repo",
+        commonDir: "/repo/.git",
+        baseRef: "main",
+        baseOid: "b0",
+        headOid: "h0",
+      },
+      files: [],
+      rawDiff: "X",
+      byteLength: 1,
+      truncated: false,
+    },
+  ],
+  activePatchsetId: "ps-1",
+  dispositions: [],
+  status: "current",
+};
+
+/** One persisted orchestrator turn, as `review.reattach` returns it. */
+const transcriptOf = (body: string) => ({
+  threads: [
+    {
+      threadId: "t-1",
+      anchor: { kind: "fragment" as const, label: "conversation", key: "t-1" },
+      messages: [{ id: "m-1", author: "harness" as const, body }],
+    },
+  ],
+  inFlight: [],
+});
+
+describe("a reopened session shows the daemon's transcript, not the one it left with", () => {
+  it("re-reads review.reattach on reopen, so a turn that landed while away is not hidden", async () => {
+    // Codex P1. The dock's reattach `commandId` is stable per review by design (two readers,
+    // one fetch), so the cache key is the SAME one the reviewer left behind. Nothing evicted
+    // or staled it, so `ensure` saw fresh data and skipped the server read: the transcript
+    // silently omitted everything that arrived while the route was closed, and only a full
+    // reload — which resets both the ids and the cache — brought it back.
+    let body = "the answer you were reading";
+    let reads = 0;
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([{ id: "rev-1", projectId: "proj-1" }]),
+      "review.load": () => ({ review: REVIEW }),
+      "review.reattach": () => {
+        reads += 1;
+        return transcriptOf(body);
+      },
+    } as never);
+    const history = memoryHistory("/s/rev-1");
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    mount(<RennetRouterApp bridge={bridge} history={history} />);
+    expect(await screen.findByText("the answer you were reading")).toBeTruthy();
+    expect(reads).toBe(1);
+
+    // Leave the session. The orchestrator finishes a turn on the daemon while it is closed.
+    act(() => history.navigate("/settings/appearance"));
+    body = "the turn that landed while you were away";
+
+    // Come back. This is a REOPEN, not a reload — the renderer never restarted.
+    act(() => history.navigate("/s/rev-1"));
+    expect(await screen.findByText("the turn that landed while you were away")).toBeTruthy();
+    expect(reads).toBe(2);
+  });
+});
+
 describe("the chat dock resolves its review from the route (F1 cluster 4)", () => {
+  it("does not double the reviewer's own message when the ask beats the first reattach", async () => {
+    // Codex P1 (duplicate message). The optimistic echo is keyed `you-${turnId}` while the
+    // daemon persists the same turn as `${turnId}::you` (server dispatch/review.ts). Those
+    // are two ids for one message, so `appendMessage`'s id-guard cannot see they are the
+    // same — and on the pre-settle path (ask sent while the initial reattach is still in
+    // flight, then flushed onto the settled snapshot) the reviewer's message renders twice.
+    let turnId = "";
+    let threadId = "";
+    let settle: (() => void) | undefined;
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([{ id: "rev-1", projectId: "proj-1" }]),
+      "review.load": () => ({ review: REVIEW }),
+      "review.reattach": () =>
+        new Promise((resolve) => {
+          settle = () =>
+            resolve({
+              // The snapshot the daemon serves ALREADY carries the just-persisted turn.
+              threads: [
+                {
+                  threadId,
+                  anchor: { kind: "fragment" as const, label: "conversation", key: threadId },
+                  messages: [{ id: `${turnId}::you`, author: "you" as const, body: "does b?" }],
+                },
+              ],
+              inFlight: [],
+            });
+        }),
+      "review.ask": (input: CommandInput<"review.ask">): AskReviewResult => {
+        turnId = input.turnId ?? "";
+        threadId = input.threadId ?? "";
+        return { mode: "orchestrator", primary: { model: "opus", answer: "no impact" } };
+      },
+    } as never);
+    const history = memoryHistory("/s/rev-1");
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    const { user } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+    const box = await screen.findByLabelText("Message the orchestrator");
+    await user.type(box, "does b?");
+    await user.click(screen.getByLabelText("Send"));
+    await waitFor(() => expect(turnId).not.toBe(""));
+
+    // Now the reattach lands, and the buffered echo is flushed onto it.
+    await act(async () => {
+      settle?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getAllByText("does b?").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("does b?")).toHaveLength(1);
+  });
+
   it("sends review.ask for the route's review with NO SessionTranscriptProvider mounted", async () => {
     // THE FIX. `useChatDock` read its reviewId from a test-only context that the app
     // never mounted, so in the real product reviewId was undefined and `send()` returned

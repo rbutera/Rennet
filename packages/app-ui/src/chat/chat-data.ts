@@ -551,12 +551,17 @@ export function useChatDock(): ChatDockModel {
       // Fix #1: optimistic user-turn echo. The ask stream yields ONLY orchestrator turns and
       // send() deliberately does not refetch reattach (that would clobber folded deltas), so
       // without this the reviewer's own message would never render this mount. We append the
-      // "you" turn into the SAME reattach entry the transcript reads, under a distinct id (the
-      // daemon persists the orchestrator turn under `turnId`), so it renders instantly and in
-      // order — the user bubble ahead of the streaming reply. When the authoritative transcript
-      // later supplies the persisted "you" message, `appendMessage`'s id-guard keeps it from
-      // doubling. If reattach has not settled yet, the settle-flush applies the echo afterwards.
-      const echo = { threadId, id: `you-${turnId}`, body: text };
+      // "you" turn into the SAME reattach entry the transcript reads, so it renders instantly
+      // and in order — the user bubble ahead of the streaming reply. If reattach has not
+      // settled yet, the settle-flush applies the echo afterwards.
+      //
+      // The id is the DAEMON'S id for this same message, byte for byte (`dispatch/review.ts`
+      // persists the reviewer's turn as `${turnId}::you`) — not a client-side `you-${turnId}`.
+      // `appendMessage`'s guard dedupes by id, and two ids for one message defeat it: when the
+      // reattach snapshot already carries the persisted turn (an ask sent while the initial
+      // read is still in flight, then flushed onto it), the reviewer's own message rendered
+      // TWICE. Agreeing on the id is what makes the guard able to do its job.
+      const echo = { threadId, id: `${turnId}::you`, body: text };
       if (settledRef.current) foldEcho(echo);
       else optimistic.current.push(echo);
       // One ask, dispatch-bound (#251): the daemon persists the reviewer's turn under these

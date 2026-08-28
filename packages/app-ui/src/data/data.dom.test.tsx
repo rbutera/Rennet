@@ -20,6 +20,12 @@ function project(id: string): Project {
   };
 }
 
+// Real UUIDs: `MemoryBridge.invoke` parses every input against the wire schema, and
+// `commandId` is `z.uuid()`. A stub driven with a made-up id is a stub driven with a value
+// the daemon would refuse — the exact gap that let a dead chat dock ship green.
+const PROCESS_ID = "0d5a0a2b-6b0f-4c8e-9a2b-1f7c3d5e9a10";
+const REMOVE_ID = "3b9c1e44-2a7d-4f61-8c0b-5e2a9d4f7b31";
+
 function ProjectsCount() {
   const { data, pending, error } = useCommand("projects.list", {});
   if (error) return <span>error:{(error as Error).message}</span>;
@@ -52,11 +58,11 @@ describe("data seam", () => {
       "project.process": () => new Promise<never>(() => undefined),
     });
     function Processing() {
-      const { data } = useCommand("project.process", { commandId: "c1", projectId: "p1" });
+      const { data } = useCommand("project.process", { commandId: PROCESS_ID, projectId: "p1" });
       useCommandStream({
         channel: "progress",
-        subscriptionKey: "c1",
-        command: { name: "project.process", input: { commandId: "c1", projectId: "p1" } },
+        subscriptionKey: PROCESS_ID,
+        command: { name: "project.process", input: { commandId: PROCESS_ID, projectId: "p1" } },
         fold: (prev, event) => ({
           repos:
             event.kind === "repo-done"
@@ -77,7 +83,7 @@ describe("data seam", () => {
       repo: "atlas",
       summary: { repo: "atlas", path: "/repos/atlas", ok: true },
     };
-    act(() => bridge.emitProgress("c1", event));
+    act(() => bridge.emitProgress(PROCESS_ID, event));
     await waitFor(() => expect(getByText("repos:1")).toBeTruthy());
   });
 
@@ -93,7 +99,7 @@ describe("data seam", () => {
     function Remover() {
       const { mutate } = useMutation("projects.remove", { invalidates: ["projects.list"] });
       return (
-        <button type="button" onClick={() => void mutate({ commandId: "c", projectId: "a" })}>
+        <button type="button" onClick={() => void mutate({ commandId: REMOVE_ID, projectId: "a" })}>
           remove
         </button>
       );
