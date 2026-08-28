@@ -145,7 +145,28 @@ jobs:
             "apps/desktop/out/make/SHA256SUMS"
           )
           for asset in "${assets[@]}"; do test -f "$asset"; done
-          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-notes.md --generate-notes "${assets[@]}"
+          # Draft-first, upload-with-retry, undraft-last, mirroring auto-release.yml:
+          # one-shot create+upload loses the whole release to a transient upload
+          # failure (uploads.github.com can 404 before a fresh release record
+          # propagates, and gh deletes the release it just created on upload failure).
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file release-notes.md --generate-notes
+          fi
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" --clobber "${assets[@]}"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::asset upload failed after 3 attempts"; exit 1
+            fi
+            echo "upload attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          uploaded="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          if [ "$uploaded" -ne "${#assets[@]}" ]; then
+            echo "::error::expected ${#assets[@]} assets on $TAG, found $uploaded"; exit 1
+          fi
+          gh release edit "$TAG" --draft=false
 
       # Assert the OUTCOME, never an intermediate exit code: both release breaks on
       # 2026-08-28 (SIGPIPE ca443db0, pnpm's `--` 0d38fd73) had green intermediate
