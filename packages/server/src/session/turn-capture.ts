@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// The two seams the composition root needs to run a coding turn THROUGH the
+// The three seams the composition root needs to run a coding turn THROUGH the
 // session turn loop (B09 cluster 2's loop, instantiated in `create-server.ts`).
 //
 //   1. `createTranscriptCapture` — the loop's `recordTranscript` sink. Projects the
@@ -9,12 +9,17 @@
 //      DISPLAY read-model, so an unwritable or corrupt log never fails the coding
 //      turn that produced it.
 //
-//   2. `turnLoopRunPort` — the loop as a `HandoffRunPort`, so the issue-#18
-//      checkpoint bracket keeps its exact shape (pre-checkpoint → turn →
-//      post-checkpoint → diff) while the turn ITSELF is serialized per session,
-//      resumed from the persisted `HarnessCursor`, and captured.
+//   2. `createContextRebuiltEmit` — the loop's `emit` sink, for the one transcript row
+//      the projector CANNOT produce: `context_rebuilt` is synthesized by the loop when a
+//      resume vanishes, not carried on the event stream.
 //
-// Both live here rather than inline in the composition root so they are testable
+//   3. `turnLoopRunPort` — the loop as a `HandoffRunPort`, so the issue-#18
+//      checkpoint bracket keeps its exact shape (pre-checkpoint → turn →
+//      post-checkpoint → diff) while the turn ITSELF is resumed from the persisted
+//      `HarnessCursor` and captured. (Serialization is the ROUNDS RUNTIME's on this
+//      path — it already enqueues each dispatch, bracket included, per session id.)
+//
+// All three live here rather than inline in the composition root so they are testable
 // standalone (the `session-entry` / `pipeline-guard` precedent).
 // ─────────────────────────────────────────────────────────────────────────────
 
