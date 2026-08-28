@@ -73,6 +73,11 @@ export interface NewChatMint {
   readonly error: unknown;
 }
 
+/** The rejection absorber: `useMutation` already recorded the reason on `error`. */
+function noop(): void {
+  return;
+}
+
 export function useNewChatMint(projectId: string): NewChatMint {
   const [, navigate] = useLocation();
   // The mint changes the sidebar's rows and the claims New Chat hides by, so it stales
@@ -94,8 +99,8 @@ export function useNewChatMint(projectId: string): NewChatMint {
           navigate(sessionPath(session.id, typed === "" ? {} : { ask: typed }));
         })
         // `useMutation` already holds the reason in `error`, which the surface renders.
-        // Swallowing here only stops an unhandled rejection, never the reporting.
-        .catch(() => {});
+        // Absorbing it here only stops an unhandled rejection, never the reporting.
+        .catch(noop);
     },
     [mutate, navigate, projectId],
   );
