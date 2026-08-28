@@ -194,12 +194,18 @@ had for 52. Any ramp test measures RSS per lane and swap pressure alongside
 throughput — the machine, not the provider, is the ceiling. The concurrency
 default becomes a named, tested policy rather than an unrevisited 4.
 
-Worker-session hygiene rides along: both harness paths are already ephemeral
-in Rennet code (session per turn, teardown in `finally`), but neither CLI's
-own transcript is suppressed, so a swarm run litters `~/.claude/projects` and
-`~/.codex/sessions` with one file per turn. Point `CLAUDE_CONFIG_DIR` /
-`CODEX_HOME` at a Rennet-owned scratch directory for swarm seats and clean it
-after the run.
+Worker-session hygiene is already solved on main
+([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
+swarm turns carry `SessionSpec.ephemeral`, which maps to the Claude Agent
+SDK's `persistSession: false` and Codex's undocumented `thread/start`
+`ephemeral` param (verified against codex-cli 0.147.0's generated schema —
+re-verify on codex upgrades), so
+neither CLI writes a transcript for those turns at all — proven by a live test
+that counts files on disk (`ephemeral-session.real.test.ts`). The user's own
+agentic sessions deliberately still persist, so `codex resume --last` stays
+theirs. New swarm seats added by this plan must ride the same
+`ephemeral: true` choke points (`codex-exec.ts`, `harness-run-turn.ts`)
+rather than adding env redirects.
 
 ## Build order
 
