@@ -316,6 +316,15 @@ function fakeQuery(
   };
 }
 
+/** One SDK partial-message frame carrying a text increment (the shape the SDK emits
+ *  only when `includePartialMessages` is set). */
+function streamTextDelta(text: string): unknown {
+  return {
+    type: "stream_event",
+    event: { type: "content_block_delta", delta: { type: "text_delta", text } },
+  };
+}
+
 async function drain(session: { events: AsyncIterable<HarnessEvent> }): Promise<HarnessEvent[]> {
   const collected: HarnessEvent[] = [];
   for await (const event of session.events) collected.push(event);
@@ -386,6 +395,49 @@ describe("ClaudeAdapter session", () => {
     expect(options.env.RENNET_HARNESS_SESSION).toBeDefined();
     // No API key was injected: a metered key is detected, never forced.
     expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it("streams text.delta from stream_event frames when the spec asks for partial text", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const frames = [
+      initFrame("oauth"),
+      streamTextDelta("Hel"),
+      streamTextDelta("lo"),
+      { type: "result", subtype: "success", result: "Hello" },
+    ];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery(frames, (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    // Positive control: drop `streamPartialText` here and the two assertions below
+    // redden — the SDK option is omitted and no live turn would ever emit a delta.
+    const session = await adapter.createSession({ cwd: "/repo", streamPartialText: true });
+    await session.send({ prompt: "hi" });
+    const events = await drain(session);
+    expect(capturedArgs[0]?.options.includePartialMessages).toBe(true);
+    const deltas = events.filter((event) => event.kind === "text.delta");
+    expect(deltas.map((event) => (event.kind === "text.delta" ? event.text : ""))).toEqual([
+      "Hel",
+      "lo",
+    ]);
+    // In order, and before the terminal frame.
+    const kinds = events.map((event) => event.kind);
+    expect(kinds.indexOf("text.delta")).toBeLessThan(kinds.indexOf("session.ended"));
+  });
+
+  it("omits includePartialMessages when the spec does not ask for partial text", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const session = await adapter.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "hi" });
+    expect(capturedArgs[0]?.options.includePartialMessages).toBeUndefined();
   });
 
   it("propagates a signal already aborted at creation (no un-cancellable live turn)", async () => {

@@ -60,6 +60,19 @@ describe("toSdkOptions", () => {
     expect("outputSchema" in sdk).toBe(false);
   });
 
+  it("omits includePartialMessages unless the caller asked for partial frames", () => {
+    // The SDK emits NO `stream_event` frames unless this is set, so the adapter's
+    // text.delta mapping has no source. Opt-in (F1 Decision 4): pipeline turns keep
+    // their exact current frame volume.
+    const off = toSdkOptions(baseOptions()) as Record<string, unknown>;
+    expect("includePartialMessages" in off).toBe(false);
+    const on = toSdkOptions(baseOptions({ includePartialMessages: true })) as Record<
+      string,
+      unknown
+    >;
+    expect(on.includePartialMessages).toBe(true);
+  });
+
   it("omits outputFormat entirely when no schema is set", () => {
     const sdk = toSdkOptions(baseOptions()) as Record<string, unknown>;
     expect("outputFormat" in sdk).toBe(false);

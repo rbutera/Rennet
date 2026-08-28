@@ -341,6 +341,13 @@ export interface SessionSpec {
    * half-resume). The persisted shape is the frozen `HarnessCursor`.
    */
   readonly resume?: { readonly harnessSessionId: string };
+  /**
+   * Ask the harness to emit incremental text/thinking frames as the turn runs;
+   * absent ⇒ settled messages only. Opt-in by design (F1 Decision 4): the
+   * pipeline's lens/utility/compose turns keep their exact current frame volume,
+   * and only a caller that actually consumes deltas (the chat ask) pays for them.
+   */
+  readonly streamPartialText?: boolean;
 }
 
 export interface TurnInput {
