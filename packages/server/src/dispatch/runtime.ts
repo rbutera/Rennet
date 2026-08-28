@@ -578,6 +578,16 @@ export interface DispatchDeps {
    */
   readonly sessions?: {
     list(): readonly SidebarSession[];
+    /**
+     * The New Chat front door (C21): mint a durable session and claim its target in ONE
+     * act. `target` absent mints a no-target session (claims nothing); present mints or
+     * REATTACHES to the session already claiming that branch/PR, so a second click on one
+     * target never produces a second session.
+     */
+    mint(
+      projectId: string,
+      target?: { branch: string; prNumber?: number },
+    ): { session: SidebarSession; reattached: boolean };
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;

@@ -140,6 +140,7 @@ import {
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
+  mintSession,
   queryKnowledge,
   queryProjectMap,
   ReviewService,
@@ -1880,6 +1881,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // pin, and an archive all survive reload; restore is un-archive.
     sessions: {
       list: () => sessionStore.list().map(sidebarSessionOf),
+      // The New Chat front door (C21): mint + claim in one act, through the SAME
+      // `SessionEntry` the round dispatch mints with, so a target claimed here and a target
+      // claimed by a round resolve to one session. No branch ⇒ the no-target mint (the
+      // "talk about the project" row): a fresh claimless session, so every visit is its own
+      // chat rather than reattaching to an unrelated one.
+      mint: (projectId, target) => {
+        if (target === undefined) {
+          const session = mintSession(projectId);
+          sessionStore.save(session);
+          return { session: sidebarSessionOf(session), reattached: false };
+        }
+        const entered = sessionEntry.enter(projectId, target);
+        return { session: sidebarSessionOf(entered.session), reattached: entered.reattached };
+      },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
         return session && sidebarSessionOf(session);

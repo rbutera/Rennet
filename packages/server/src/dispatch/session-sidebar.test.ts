@@ -2,8 +2,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileProjectStore, SessionStore } from "@rennet/adapters";
-import type { SessionModel } from "@rennet/protocol";
+import { mintSession } from "@rennet/core";
+import type { SessionModel, SidebarSession } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { SessionEntry } from "../session/session-entry";
 import { projectHandlers } from "./project";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 import { sessionHandlers, sidebarSessionOf } from "./session";
@@ -22,10 +24,22 @@ function sessionsDir(): string {
  *  so "read it back through a new store" is a genuine reload, not a cached answer. */
 function sessionDispatch(dir: string) {
   const store = new SessionStore(dir);
+  const entry = new SessionEntry(store);
   const rt = createDispatchRuntime({
     service: { reviewById: () => undefined },
     sessions: {
       list: () => store.list().map(sidebarSessionOf),
+      // The composition root's own mint, verbatim (create-server.ts) — so the front door
+      // this test drives is the front door the app runs.
+      mint: (projectId: string, target?: { branch: string; prNumber?: number }) => {
+        if (target === undefined) {
+          const session = mintSession(projectId);
+          store.save(session);
+          return { session: sidebarSessionOf(session), reattached: false };
+        }
+        const entered = entry.enter(projectId, target);
+        return { session: sidebarSessionOf(entered.session), reattached: entered.reattached };
+      },
       rename: (id: string, title: string) => {
         const session = store.rename(id, title);
         return session && sidebarSessionOf(session);
@@ -154,5 +168,79 @@ describe("project.rename (C12 cluster 7, bound in C18)", () => {
       project: null,
       projects: [],
     });
+  });
+});
+
+type Minted = { session: SidebarSession | null; reattached: boolean };
+
+describe("session.mint — the New Chat front door (C21)", () => {
+  it("mints a session AND claims the target in one act, surviving a reload", async () => {
+    const dir = sessionsDir();
+    const out = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p1",
+      branch: "feat/seam",
+      prNumber: 42,
+    })) as Minted;
+    expect(out.reattached).toBe(false);
+    expect(out.session?.claim).toEqual({ branch: "feat/seam", prNumber: 42 });
+    // A PR claim reads as `your-pr`, and the row is titled by the branch it claimed.
+    expect(out.session?.target).toBe("your-pr");
+    expect(out.session?.title).toBe("feat/seam");
+    // A FRESH store over the same dir — the mint is on disk, not in memory.
+    const listed = (await sessionDispatch(dir).handlers["session.list"]({})) as {
+      sessions: SidebarSession[];
+    };
+    expect(listed.sessions.map((row) => row.id)).toEqual([out.session?.id]);
+  });
+
+  it("a second click on a claimed target REATTACHES — one session per target, never two", async () => {
+    const dir = sessionsDir();
+    const first = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p1",
+      branch: "feat/seam",
+      prNumber: 42,
+    })) as Minted;
+    // The PR row and the branch row are ONE claimed thing (#466 res. 11): entering by the
+    // branch alone still lands on the session the PR click minted.
+    const again = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p1",
+      branch: "feat/seam",
+    })) as Minted;
+    expect(again.reattached).toBe(true);
+    expect(again.session?.id).toBe(first.session?.id);
+    const listed = (await sessionDispatch(dir).handlers["session.list"]({})) as {
+      sessions: SidebarSession[];
+    };
+    expect(listed.sessions).toHaveLength(1);
+  });
+
+  it("a claim is project-scoped, and a no-target mint claims nothing", async () => {
+    const dir = sessionsDir();
+    const here = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p1",
+      branch: "feat/seam",
+    })) as Minted;
+    // The same branch name in ANOTHER project is a different target — never a cross-attach.
+    const elsewhere = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p2",
+      branch: "feat/seam",
+    })) as Minted;
+    expect(elsewhere.reattached).toBe(false);
+    expect(elsewhere.session?.id).not.toBe(here.session?.id);
+    // The "talk about the project" row: no branch ⇒ no claim, so it hides no row.
+    const bare = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p1",
+    })) as Minted;
+    expect(bare.session?.claim).toBeUndefined();
+    expect(bare.session?.title).toBe("New review");
+  });
+
+  it("no session store wired answers an honest null — nothing was minted", async () => {
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+    } as unknown as DispatchDeps);
+    expect(
+      await sessionHandlers(rt)["session.mint"]({ projectId: "p1", branch: "feat/seam" }),
+    ).toEqual({ session: null, reattached: false });
   });
 });

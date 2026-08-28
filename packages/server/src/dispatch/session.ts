@@ -28,6 +28,13 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  *     serve real rows and persist every edit, so a rename, a pin, or an archive survives
  *     reload. Restore is un-archive (the boolean), not a fourth command.
  *
+ *   • `session.mint` (C21): the New Chat front door's WRITE. A row click mints a durable
+ *     session AND claims its target in one act, through the same `SessionEntry` the round
+ *     dispatch already mints with — so a target claimed from New Chat and a target claimed
+ *     by a dispatched round are the SAME session, never two. Mint-or-reattach: a second
+ *     click on a claimed target returns the session owning it. No branch ⇒ a no-target
+ *     session (the "talk about the project" row), which claims nothing.
+ *
  *   • `session.rounds` (C09): the rounds-ledger read. Projects the live rounds runtime's
  *     `RoundRecord[]` for the review's session (resolved read-only from the ask-log/target
  *     claim). Empty until a round RECORDS (`runRound`); the dispatch WRITE (B11) runs the
@@ -71,6 +78,10 @@ export function sidebarSessionOf(session: SessionModel): SidebarSession {
     target: session.claim?.prNumber === undefined ? "your-branch" : "your-pr",
     ...(session.pinned ? { pinned: true } : {}),
     ...(session.archivedAt === undefined ? {} : { archived: true }),
+    // The claimed target, verbatim off the record (C21) — New Chat hides every row matching
+    // either half of it while the claim holds. A no-target session carries none, so it hides
+    // nothing; archive is still the only release, read off `archived`.
+    ...(session.claim === undefined ? {} : { claim: session.claim }),
     createdAt: session.createdAt,
   };
 }
@@ -113,6 +124,26 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // The sidebar's rows, straight off the durable session store. No store wired ⇒ an
       // honest empty sidebar: the capability is present, the rows are simply not there.
       return parseCommandOutput(name, { sessions: [...(rt.deps.sessions?.list() ?? [])] });
+    },
+    "session.mint": async (rawInput) => {
+      const name = "session.mint" as const;
+      // The New Chat front door (C21). No store wired ⇒ `session: null`: nothing was
+      // minted, said in the same honest language the sibling writes use — never a
+      // fabricated row the client would then navigate into.
+      const input = parseCommandInput(name, rawInput);
+      const minted = rt.deps.sessions?.mint(
+        input.projectId,
+        input.branch === undefined
+          ? undefined
+          : {
+              branch: input.branch,
+              ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
+            },
+      );
+      return parseCommandOutput(name, {
+        session: minted?.session ?? null,
+        reattached: minted?.reattached ?? false,
+      });
     },
     "session.rename": async (rawInput) => {
       const name = "session.rename" as const;
