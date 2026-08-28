@@ -362,3 +362,39 @@ jobs:
             --notes "$(cat notes.md)" \
             --generate-notes \
             "${assets[@]}"
+
+  # 6. The tag is pushed by job 2, so from that moment on a version EXISTS whether
+  #    or not anything shipped for it. Two runs in one day proved that gap: a
+  #    SIGPIPE in `decide` (ca443db0) and pnpm forwarding `--` into `release:check`
+  #    (0d38fd73) each ended with a tag and no assets behind it — invisible to an
+  #    install that auto-updates from release assets. So this asserts the OUTCOME
+  #    per platform, and `always()` makes it run even when publish was skipped,
+  #    which is exactly what happened to v0.3.39.
+  verify:
+    needs: [version, publish]
+    if: ${{ always() && needs.version.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Assert the tag actually shipped installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # A missing release is the loudest case, so fall back to an empty asset
+          # list rather than letting gh's own error stand in for the diagnosis.
+          assets="$(gh release view "$TAG" --json assets || echo '{"assets":[]}')"
+          # `node`, not `pnpm run`: pnpm forwarding its own `--` is what broke v0.3.39.
+          printf '%s' "$assets" | node scripts/check-release-assets.mjs "$TAG" macos windows
