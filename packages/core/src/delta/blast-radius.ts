@@ -29,7 +29,9 @@ export interface BlastRadiusSignalMark {
 // Signals: `deletions`, `irreversibility`, `codeowners`, `safety-net` compute from the
 // changeset + ownership. `fan-in` (#200) computes dependent counts when the reference
 // index is supplied (per-file), and stays NOT ASSESSED when it is not — never a silent
-// zero. `contract-surface` waits on exported-API extraction and stays NOT ASSESSED.
+// zero. That absence is checked TWICE: once for the index as a whole, and once PER FILE,
+// because an index the base snapshot populated still cannot answer about a path it never
+// carried. `contract-surface` waits on exported-API extraction and stays NOT ASSESSED.
 // Never churn-heat: the enum has no such member.
 
 /**
@@ -53,15 +55,27 @@ export interface BlastRadiusSignalMark {
  *    tell two same-named symbols apart.
  * There is no arm carrying both surfaces, so a textual fallback CANNOT be handed to a
  * consumer as an edge-backed answer: it is a compile error, not a convention.
+ *
+ * ⭐ `knowsPath` is on BOTH arms and is REQUIRED, because "is the index populated at
+ * all?" and "can it answer about THIS file?" are different questions and only the
+ * second one is per-file. A file the BASE snapshot does not carry — an added file, a
+ * rename's destination, a path the snapshot's file cap never indexed — gets zero
+ * dependents from every lookup here, which would render as "checked, nothing depends
+ * on this" when the base was never able to answer. Required, not optional, so an
+ * index cannot fall into the old silent-zero behaviour by omitting it.
  */
 export type FanInIndex =
   | {
       readonly method: "import-edges";
+      /** Whether the BASE snapshot carries this path at all (see the note above). */
+      knowsPath(path: string): boolean;
       /** Repo-relative paths that IMPORT the given file. */
       importersOf(path: string): readonly string[];
     }
   | {
       readonly method: "textual";
+      /** Whether the BASE snapshot carries this path at all (see the note above). */
+      knowsPath(path: string): boolean;
       /** Symbol names DEFINED in the given changed file (its exports/declarations). */
       definedSymbols(path: string): readonly string[];
       /** Repo-relative paths that REFERENCE the given identifier name (its occurrence sites' files). */
@@ -305,16 +319,36 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusSignalMa
   if (input.fanIn) {
     const fanIn = input.fanIn;
     for (const file of input.files) {
+      // Fan-in is a question about the BASE, so it is asked at the BASE-side path: a
+      // rename's dependents are the importers of where the file USED to live, and
+      // querying the destination path would answer about a file that did not exist yet.
+      const basePath =
+        file.status === "renamed" && file.previousPath ? file.previousPath : file.path;
+      // ...and the base can only answer about paths it carries. An added file (or one
+      // the snapshot never indexed) returns zero dependents from every lookup, which
+      // would render as "checked, nothing depends on this". The honest answer for THAT
+      // file is not-assessed — the same taxonomy the absent-index chip uses, one grain
+      // finer. Per-file, at mark time; the repo-wide index is still assessed.
+      if (!fanIn.knowsPath(basePath)) {
+        marks.push({
+          target: `rennet:file/${file.path}`,
+          signal: "fan-in",
+          assessed: false,
+          reason: `Fan-in not assessed for this file — ${basePath} is not in the base snapshot (added, or not indexed), so "nothing depends on it" could not be told from "nothing was checked".`,
+        });
+        continue;
+      }
       const dependents = new Set<string>(
-        fanIn.method === "import-edges" ? fanIn.importersOf(file.path) : [],
+        fanIn.method === "import-edges" ? fanIn.importersOf(basePath) : [],
       );
       if (fanIn.method === "textual") {
-        for (const name of fanIn.definedSymbols(file.path)) {
+        for (const name of fanIn.definedSymbols(basePath)) {
           for (const referencingPath of fanIn.referencingFiles(name)) {
             dependents.add(referencingPath);
           }
         }
       }
+      dependents.delete(basePath);
       dependents.delete(file.path);
       if (dependents.size > 0) {
         const n = dependents.size;

@@ -2,21 +2,34 @@ import type { OwnershipRule, PatchFile } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { type BlastRadiusInput, computeBlastRadius, type FanInIndex } from "./blast-radius";
 
-/** A fake fan-in index: files' defined symbols, and which files reference each name. */
+/**
+ * A fake fan-in index: files' defined symbols, and which files reference each name.
+ * `known` is the BASE file inventory — defaulting to the indexed files, so a test
+ * that wants "this path is not at base" says so explicitly.
+ */
 function fakeFanIn(
   defined: Record<string, string[]>,
   referencedBy: Record<string, string[]>,
+  known: string[] = Object.keys(defined),
 ): FanInIndex {
   return {
     method: "textual",
+    knowsPath: (path) => known.includes(path),
     definedSymbols: (path) => defined[path] ?? [],
     referencingFiles: (name) => referencedBy[name] ?? [],
   };
 }
 
 /** A fake EDGE-BACKED fan-in index: which files import each file. */
-function fakeImportFanIn(importedBy: Record<string, string[]>): FanInIndex {
-  return { method: "import-edges", importersOf: (path) => importedBy[path] ?? [] };
+function fakeImportFanIn(
+  importedBy: Record<string, string[]>,
+  known: string[] = Object.keys(importedBy),
+): FanInIndex {
+  return {
+    method: "import-edges",
+    knowsPath: (path) => known.includes(path),
+    importersOf: (path) => importedBy[path] ?? [],
+  };
 }
 
 function file(path: string, over: Partial<PatchFile> = {}): PatchFile {
@@ -337,7 +350,11 @@ describe("blast radius — fan-in", () => {
     const perFile = of(marks, "fan-in").filter((p) => p.target === "rennet:file/src/a.ts");
     expect(perFile).toHaveLength(1);
     expect(perFile[0]?.assessed).toBe(true);
-    expect(perFile[0]?.reason).toMatch(/^3 files reference/);
+    // The WHOLE sentence, not a prefix: subject and verb must agree, and a prefix
+    // match is satisfied by the ungrammatical form this assertion exists to catch.
+    expect(perFile[0]?.reason).toBe(
+      "3 files reference this file's symbols; changes here ripple to them.",
+    );
     // Fan-in is now ASSESSED, so it is NOT among the not-assessed chips (only contract-surface is).
     expect(marks.filter((p) => p.assessed === false).map((p) => p.signal)).toEqual([
       "contract-surface",
@@ -376,7 +393,11 @@ describe("blast radius — fan-in", () => {
     const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/b.ts"] });
     const marks = run([file("src/a.ts")], [], fanIn);
     const perFile = of(marks, "fan-in").filter((p) => p.target === "rennet:file/src/a.ts");
-    expect(perFile[0]?.reason).toMatch(/^1 file reference/);
+    // `/^1 file reference/` was satisfied by BOTH the ungrammatical "1 file
+    // references"-less form and the fix, so it could not fail. The full literal can.
+    expect(perFile[0]?.reason).toBe(
+      "1 file references this file's symbols; changes here ripple to them.",
+    );
   });
 
   it("stays NOT ASSESSED when no index is supplied — never a silent zero (#200 guard)", () => {
@@ -393,7 +414,7 @@ describe("blast radius — fan-in", () => {
     expect(perFile).toHaveLength(1);
     // The wording is the honesty: "import this file" is a stronger, provable claim
     // than "reference this file's symbols", and only the edge-backed arm may make it.
-    expect(perFile[0]?.reason).toMatch(/^2 files import this file/);
+    expect(perFile[0]?.reason).toBe("2 files import this file; changes here ripple to them.");
     const marker = marks.find(
       (p) => p.signal === "fan-in" && p.target === "rennet:review/blast-radius",
     );
@@ -414,6 +435,45 @@ describe("blast radius — fan-in", () => {
     const fanIn = fakeImportFanIn({ "src/a.ts": ["src/a.ts"] });
     const marks = run([file("src/a.ts")], [], fanIn);
     expect(of(marks, "fan-in").filter((p) => p.target.startsWith("rennet:file/"))).toHaveLength(0);
+  });
+
+  // ── per-file availability: the base snapshot cannot answer for every path ────
+  //
+  // The repo-wide index being populated does NOT mean it can answer about THIS
+  // file. An ADDED file is not at base, so every lookup returns nothing — and
+  // "nothing" rendered as a zero-dependent result is the silent zero the taxonomy
+  // exists to prevent, one grain finer than the absent-index chip.
+
+  it("an ADDED file is NOT ASSESSED — the base snapshot never carried it", () => {
+    // `src/b.ts` is at base and has a real dependent (control: it still paints).
+    // `src/added.ts` is not, and must NOT read as "checked, nothing depends on it".
+    const fanIn = fakeImportFanIn({ "src/b.ts": ["src/c.ts"] }, ["src/b.ts"]);
+    const marks = run([file("src/b.ts"), file("src/added.ts", { status: "added" })], [], fanIn);
+    const added = of(marks, "fan-in").filter((p) => p.target === "rennet:file/src/added.ts");
+    expect(added).toHaveLength(1);
+    expect(added[0]?.assessed).toBe(false);
+    expect(added[0]?.reason).toContain("src/added.ts");
+    // The control half: the base-side file is still assessed in the same run, so
+    // this is per-file availability and not the whole index going dark.
+    const known = of(marks, "fan-in").filter((p) => p.target === "rennet:file/src/b.ts");
+    expect(known[0]?.assessed).toBe(true);
+    expect(known[0]?.reason).toBe("1 file imports this file; changes here ripple to them.");
+  });
+
+  it("a RENAME is assessed against its PREVIOUS path, which is what the base carries", () => {
+    // Only the OLD path exists at base and only the OLD path has importers. Querying
+    // the destination would answer about a file the base never had — a silent zero.
+    const fanIn = fakeImportFanIn({ "src/old.ts": ["src/c.ts", "src/d.ts"] }, ["src/old.ts"]);
+    const marks = run(
+      [file("src/new.ts", { status: "renamed", previousPath: "src/old.ts" })],
+      [],
+      fanIn,
+    );
+    const perFile = of(marks, "fan-in").filter((p) => p.target === "rennet:file/src/new.ts");
+    expect(perFile).toHaveLength(1);
+    expect(perFile[0]?.assessed).toBe(true);
+    // Marked on the NEW path (the visible element), counted at the OLD one.
+    expect(perFile[0]?.reason).toBe("2 files import this file; changes here ripple to them.");
   });
 });
 
