@@ -87,11 +87,14 @@ function openspecTouch(files: Patchset["files"]): OpenSpecTouch | undefined {
  * (B6/B7/rounds) and are carried through, never re-modeled.
  *
  * Blast radius here is patchset-only: ownership rules and the fan-in index live
- * with the project snapshot (I/O), so those signals stay honestly not-assessed /
- * absent until B8's dispatch — which owns the snapshot — feeds them in. The
- * openspec section is path grain for the same reason: artifact TEXT is read off
- * disk, so the full `parseOpenSpecChange` runs where the text lives (B8), over
- * the same seam-exported parser.
+ * with the project snapshot (I/O), so those signals are honestly not-assessed /
+ * absent. They are STILL absent on the shipping path — B8 landed and the one live
+ * caller, `server/src/runtime/round-collation.ts`'s `assembleRoundCollation`, passes
+ * patchset + knowledge + dossier + successor account and no snapshot. Feeding them
+ * in is a caller-side change this signature already accommodates. The openspec
+ * section is path grain for the same reason: artifact TEXT is read off disk, so the
+ * full `parseOpenSpecChange` must run where the text lives, over the same
+ * seam-exported parser.
  */
 export function buildDeltaPacket(
   patchset: Patchset,
