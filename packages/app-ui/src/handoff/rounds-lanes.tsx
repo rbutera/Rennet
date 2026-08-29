@@ -298,7 +298,7 @@ function PrBody({ body, patchsetId }: { body: string; patchsetId: string }) {
         return (
           <RichText
             key={key}
-            text={block.replace(/\*\*([^*]+)\*\*/g, "$1")}
+            text={block}
             patchsetId={patchsetId}
             paragraphClassName={cn(
               "text-sm leading-relaxed text-foreground/85",

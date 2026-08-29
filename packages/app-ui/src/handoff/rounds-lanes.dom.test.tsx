@@ -75,6 +75,19 @@ describe("RoundsLanes", () => {
     expect(r.queryByRole("heading", { name: "Changes" })).toBeNull();
   });
 
+  it("renders PR body headings and bold as semantic elements", () => {
+    const r = mount(
+      <RoundsLanes
+        review={review}
+        pr={{ ...draftedPr, body: "## Summary\n\nGuards the **retry boundary**." }}
+      />,
+    );
+
+    expect(r.getByRole("heading", { level: 3, name: "Summary" })).toBeTruthy();
+    expect(r.container.querySelector("strong")?.textContent).toBe("retry boundary");
+    expect(r.queryByText(/\*\*/)).toBeNull();
+  });
+
   it("Dispatch Round stays inert with no onDispatch — even once an ask is staged", () => {
     // No `onDispatch` prop: this mount has no rounds scope. A live button here would be a dead
     // click that lies, so it stays disabled BOTH while nothing is staged AND after an ask
