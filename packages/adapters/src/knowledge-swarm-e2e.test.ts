@@ -387,6 +387,107 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     expect(run3.skippedCosmetic).toBe(0);
   });
 
+  it("an IMPORT-ONLY edit re-runs its slice — the exports did not move, the graph did", async () => {
+    // The case the symbols-only signature could not see. Adding an import leaves every
+    // exported name and kind exactly as it was and shifts every line below it — which
+    // is precisely the shape the diff calls cosmetic — while changing the file's
+    // partition membership, its batch's cut edges and the neighbour map the worker
+    // reads. Classified on exports alone this routed ZERO workers, and the map went on
+    // describing a graph the repository had left.
+    //
+    // The fixture is built here rather than borrowed: `workspaceRepo`'s `b` has no
+    // sibling to import, and adding one would be a second changed path.
+    const root = mkdtempSync(join(tmpdir(), "rennet-swarm-imports-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-swarm-imports-store-"));
+    scratch.push(root, storeDir);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+    write(root, "packages/a/package.json", JSON.stringify({ name: "@t/a", private: true }));
+    write(root, "packages/a/src/index.ts", "export const a = 1;\n");
+    write(root, "packages/a/src/helper.ts", "export const helper = 2;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    const oid1 = git(root, "rev-parse", "HEAD");
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid1 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+    const first = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([], undefined, true),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(first.status).toBe("ok");
+
+    // The edit: ONE import line added. `export const a = 1;` is untouched, so the
+    // symbol shard's `<kind> <name>` list is byte-identical across the two snapshots
+    // and only the imports shard can tell these two blobs apart.
+    write(root, "packages/a/src/index.ts", 'import "./helper.js";\nexport const a = 1;\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "import only");
+    const oid2 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid2 });
+
+    const prompts: string[] = [];
+    const run = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(run.status).toBe("ok");
+    if (run.status !== "ok") return;
+    expect(run.skippedCosmetic).toBe(0);
+    expect(run.ranPartitions).toBeGreaterThan(0);
+    expect(prompts.some((prompt) => prompt.includes("packages/a/src/index.ts"))).toBe(true);
+
+    // ── The control, in-test: a comment ADDED BESIDE the import, so the specifier set
+    // is byte-identical to the commit above and only the lines move. Same file, same
+    // run, same shape of edit — and it routes zero workers. That is what isolates the
+    // verdict above to the imports: it is not "any edit to this file is structural
+    // now", it is this file's import list moving.
+    //
+    // Note the control must KEEP the import: replacing it with a comment would itself
+    // be an import change, which is the assertion above wearing a control's clothes.
+    write(
+      root,
+      "packages/a/src/index.ts",
+      'import "./helper.js";\n// a comment\nexport const a = 1;\n',
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "comment only");
+    const oid3 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid3 });
+
+    const controlPrompts: string[] = [];
+    const control = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(controlPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid3,
+    });
+    expect(control.status).toBe("ok");
+    if (control.status !== "ok") return;
+    expect(controlPrompts).toEqual([]);
+    expect(control.ranPartitions).toBe(0);
+    expect(control.skippedCosmetic).toBeGreaterThan(0);
+  });
+
   it("a non-TS edit re-runs its slice — the extractor ceiling, at the live caller", async () => {
     // The honest fallback, end to end: a markdown shard says `symbols: []` on both
     // sides of the edit, exactly like an unchanged TypeScript file with no exports.

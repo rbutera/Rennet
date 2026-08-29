@@ -259,6 +259,35 @@ describe("loadSymbolShard — a shard that cannot answer `generated` is refused"
     expect(index.ok).toBe(true);
     if (index.ok) expect(index.index.generatedBlobs.has(B_A)).toBe(true);
   });
+
+  it("refuses a shard whose `symbols` array holds something that is not a symbol", () => {
+    // `Array.isArray` plus a cast said "this shard has symbols" and every reader then
+    // dereferenced `.kind` on it. `symbols: [null]` hash-checks perfectly clean and
+    // THREW — a crash, in five callers, from bytes the fail-closed contract at the top
+    // of the module promises to refuse. Each malformed element below is a different
+    // wrong shape, and each must land on `shard-unavailable`, never on an exception.
+    for (const symbols of [
+      [null],
+      ["run"],
+      [{ name: "run", kind: "function" }], // no line
+      [{ name: 1, kind: "function", line: 1 }], // wrong element types
+      [{ name: "run", kind: "function", line: 1 }, null], // one good, one not
+    ]) {
+      const { snapshot } = withSymbolShardBytes(
+        canonicalize({ ...body, generated: false, symbols }),
+      );
+      const overview = queryFileOverview(snapshot, "packages/core/src/a.ts");
+      expect(overview.ok).toBe(false);
+      if (!overview.ok) expect(overview.reason).toBe("shard-unavailable");
+      expect(querySymbolIndex(snapshot).ok).toBe(false);
+      expect(queryFileContext(snapshot, "packages/core/src/a.ts").ok).toBe(false);
+      expect(querySymbolDefinition(snapshot, { name: "run" }).ok).toBe(false);
+    }
+    // The control: the same shard with a well-formed symbol decodes, so the five
+    // refusals above are about the element shapes and nothing else.
+    const healthy = withSymbolShardBytes(canonicalize({ ...body, generated: false }));
+    expect(queryFileOverview(healthy.snapshot, "packages/core/src/a.ts").ok).toBe(true);
+  });
 });
 
 describe("queryProjectMap", () => {

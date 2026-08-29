@@ -1,7 +1,7 @@
 import type { KnowledgeSet, KnowledgeStatement, SnapshotSymbol } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { LoadedSnapshot } from "../project-context";
-import { symbolShardBytes } from "../project-snapshot";
+import { importShardBytes, symbolShardBytes } from "../project-snapshot";
 import { dispositionCarrier, planReverify, routeDelta, structuralChanges } from "./incremental";
 import { coalesceFallbackSlices, type PartitionSlice } from "./partition";
 
@@ -51,30 +51,51 @@ interface BlobSpec {
   readonly path: string;
   readonly blobOid: string;
   readonly symbols?: readonly SnapshotSymbol[];
+  /** The raw import specifiers the blob names — the other half of the signature. */
+  readonly imports?: readonly string[];
   readonly generated?: boolean;
   /** Emit no shard for this blob at all (a binary asset, an unindexed blob). */
   readonly noShard?: boolean;
+  /** Emit no IMPORTS shard, keeping the symbols shard (a half-indexed manifest). */
+  readonly noImportShard?: boolean;
   /** Emit a shard whose bytes do not hash to their digest (a damaged store). */
   readonly damaged?: boolean;
+  /** Override the symbol extractor id, to compare two differently-extracted sides. */
+  readonly extractor?: string;
+  /**
+   * Point this blob's manifest entry at ANOTHER blob's symbol shard: a cross-wired
+   * index that passes every hash check and answers about the wrong file.
+   */
+  readonly symbolShardOf?: string;
 }
 
 function snapshotOf(blobs: readonly BlobSpec[]): LoadedSnapshot {
   const shards = new Map<string, string>();
   const digestByBlob = new Map<string, string>();
+  const importDigestByBlob = new Map<string, string>();
   for (const blob of blobs) {
     if (blob.noShard) continue;
     const built = symbolShardBytes({
-      blobOid: blob.blobOid,
-      extractor: "structural-ts-v1",
+      blobOid: blob.symbolShardOf ?? blob.blobOid,
+      extractor: blob.extractor ?? "structural-ts-v2",
       generated: blob.generated ?? false,
       symbols: [...(blob.symbols ?? [])],
     });
     digestByBlob.set(blob.blobOid, built.digest);
     shards.set(built.digest, blob.damaged ? `${built.bytes} ` : built.bytes);
+    if (blob.noImportShard) continue;
+    const imports = importShardBytes({
+      blobOid: blob.blobOid,
+      extractor: "structural-imports-v1",
+      imports: [...(blob.imports ?? [])],
+    });
+    importDigestByBlob.set(blob.blobOid, imports.digest);
+    shards.set(imports.digest, imports.bytes);
   }
   return {
     files: blobs.map((blob) => ({ path: blob.path, blobOid: blob.blobOid })),
     symbolDigestByBlob: digestByBlob,
+    importDigestByBlob,
     load: (digest: string) => shards.get(digest),
   } as unknown as LoadedSnapshot;
 }
@@ -160,6 +181,66 @@ describe("structuralChanges — the cosmetic/structural signature diff", () => {
       expect(structuralChanges(["src/a.ts"], broken, healthy)).toEqual(["src/a.ts"]);
       expect(structuralChanges(["src/a.ts"], healthy, broken)).toEqual(["src/a.ts"]);
     }
+  });
+
+  it("an IMPORT-ONLY edit is structural: same exports, different graph", () => {
+    // The export surface is byte-identical on both sides. What moved is what the file
+    // imports — which decides its module batch, that batch's cut edges and the
+    // neighbour map its worker is fed, none of which the symbol shard can see.
+    const before = snapshotOf([
+      { path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)], imports: ["./one"] },
+    ]);
+    for (const imports of [
+      ["./one", "./two"], // added
+      [], // removed
+      ["./other"], // re-pointed
+    ]) {
+      const after = snapshotOf([
+        { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], imports },
+      ]);
+      expect(structuralChanges(["src/a.ts"], after, before)).toEqual(["src/a.ts"]);
+    }
+    // The control: the same fixture with the import list put back is cosmetic, so the
+    // three verdicts above are about the imports and not about the changed blobOid.
+    const unchanged = snapshotOf([
+      { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], imports: ["./one"] },
+    ]);
+    expect(structuralChanges(["src/a.ts"], unchanged, before)).toEqual([]);
+  });
+
+  it("a missing IMPORTS shard cannot answer, so it falls back to structural", () => {
+    const healthy = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    const half = snapshotOf([
+      { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], noImportShard: true },
+    ]);
+    expect(structuralChanges(["src/a.ts"], half, healthy)).toEqual(["src/a.ts"]);
+    expect(structuralChanges(["src/a.ts"], healthy, half)).toEqual(["src/a.ts"]);
+  });
+
+  it("a CROSS-WIRED shard — valid hash, another blob's structure — is refused", () => {
+    // The one wrong answer that looks right: the bytes hash back to the digest the
+    // manifest named, so every integrity check passes, and the shard is about a
+    // DIFFERENT file. Read as an answer it says "the signature did not move" while
+    // describing something else entirely.
+    const before = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    const crossWired = snapshotOf([
+      // `b2`'s manifest entry points at a shard whose own blobOid is `elsewhere`, and
+      // whose symbols happen to match — so only the blobOid check can catch it.
+      { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], symbolShardOf: "elsewhere" },
+    ]);
+    expect(structuralChanges(["src/a.ts"], crossWired, before)).toEqual(["src/a.ts"]);
+  });
+
+  it("two sides produced by DIFFERENT extractors are not comparable, so structural", () => {
+    // An older shard's silence is not a newer shard's answer. Identical symbols and
+    // imports on both sides; only the extractor identity differs.
+    const before = snapshotOf([
+      { path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)], extractor: "structural-ts-v1" },
+    ]);
+    const after = snapshotOf([
+      { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], extractor: "structural-ts-v2" },
+    ]);
+    expect(structuralChanges(["src/a.ts"], after, before)).toEqual(["src/a.ts"]);
   });
 
   it("an identical blob on both sides is cosmetic; no prior snapshot means all structural", () => {

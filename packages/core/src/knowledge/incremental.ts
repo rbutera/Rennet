@@ -30,44 +30,71 @@ import { fileBlobIndex, knowledgeStatementId } from "./read";
 // file EXPORTS, which is the skeleton a worker was fed and what its statements are
 // about, so re-running its batch buys a re-worded version of the same claims.
 //
-// So the changed set is split before it reaches routing. A file whose export
-// signature is identical across the two snapshots is COSMETIC and routes no worker;
-// everything else is STRUCTURAL and routes as before. Statements still re-anchor on
-// EVERY blob change through `planReverify` — this decides which slices spend a model
-// turn, not which statements are re-verified, and the two are deliberately different
-// questions.
+// So the changed set is split before it reaches routing. A file whose SIGNATURE —
+// its exported symbols, its generated bit, and the imports it names — is identical
+// across the two snapshots is COSMETIC and routes no worker; everything else is
+// STRUCTURAL and routes as before. Statements still re-anchor on EVERY blob change
+// through `planReverify` — this decides which slices spend a model turn, not which
+// statements are re-verified, and the two are deliberately different questions.
+
+/** Whether two same-length-agnostic string lists are element-wise equal. */
+function sameList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
 
 /**
- * Whether one changed path's edit left the file's EXPORT SIGNATURE alone.
+ * Whether one changed path's edit left the file's SIGNATURE alone — its export
+ * surface, its generated bit, AND the imports it names.
  *
  * The decision table, and every honest "we cannot tell" in it lands on structural —
  * a needless turn is the cheap error here, a skipped one is invisible:
  *
- * | case                                             | verdict    |
- * |--------------------------------------------------|------------|
- * | absent from either snapshot (added, deleted)      | structural |
- * | same blob on both sides (a mode change, a rename) | cosmetic   |
- * | the symbol extractor does not read this language  | structural |
- * | either symbol shard missing or unreadable         | structural |
- * | the generated-banner bit moved                    | structural |
- * | a symbol added, removed, renamed, or re-kinded    | structural |
- * | identical symbols, different lines or bodies      | cosmetic   |
+ * | case                                                 | verdict    |
+ * |------------------------------------------------------|------------|
+ * | no prior snapshot, or one that will not materialize   | structural |
+ * | a prior snapshot that is not the one the knowledge    |            |
+ * | was learned against (fingerprint mismatch)            | structural |
+ * | absent from either snapshot (added, deleted)          | structural |
+ * | same blob on both sides (a mode change, a rename)     | cosmetic   |
+ * | the symbol extractor does not read this language      | structural |
+ * | either shard missing, unreadable, or about another    |            |
+ * | blob than the one asked for                           | structural |
+ * | the two sides were produced by different extractors   | structural |
+ * | the generated-banner bit moved                        | structural |
+ * | a symbol added, removed, renamed, or re-kinded        | structural |
+ * | an import specifier added, removed, or re-pointed     | structural |
+ * | identical symbols and imports, different lines/bodies | cosmetic   |
+ *
+ * The first two rows are WHOLE-RUN, not per-file: they are decided once by the caller
+ * ({@link structuralChanges} is handed `null`) and make every path in the change
+ * structural at a stroke. Two comparable snapshots are a precondition of this pass
+ * saying anything at all.
+ *
+ * IMPORTS ARE PART OF THE SIGNATURE, and leaving them out was a real defect rather
+ * than a stated ceiling. An import-only edit preserves every exported name and kind
+ * while moving the file's partition membership, the module batch it lands in, that
+ * batch's cut edges, and the neighbour maps its worker reads — so it was classified
+ * cosmetic and routed no worker at all, and the map went on describing a graph the
+ * repository had left. The imports shard is content-addressed on the same terms as
+ * the symbols shard, so this costs one more shard decode per changed path.
  *
  * TWO CEILINGS, both deliberate and both stated because they are invisible from the
  * outside:
  *
- *  1. **Exports only.** `structural-ts-v1` extracts top-level exported declarations,
+ *  1. **Exports only.** `structural-ts-v2` extracts top-level exported declarations,
  *     so a rewritten private helper reads as cosmetic. That is the right answer for
  *     what the statements assert — they are anchored claims about the file's surface
  *     — and the wrong answer for a claim about an internal mechanism, which a worker
  *     is free to make. The mitigation is not a finer diff: it is that such a claim's
- *     anchors moved, so `planReverify` re-anchors it and the verify seat sees it
- *     flagged. What is genuinely lost is the chance to MINT a new statement about an
- *     internal change, and the answer to that is the next extractor, not this filter.
- *  2. **TS/JS only.** Every other file gets a shard with `symbols: []`, so comparing
- *     shards would call every markdown edit cosmetic. {@link hasSymbolExtractor}
- *     refuses to guess: a `.md`, `.json`, `.py` or `.sql` edit is structural and
- *     re-runs its slice's worker. Widening this needs extractors, not heuristics.
+ *     anchors moved, so `planReverify` re-anchors it (dropping its now-stale line
+ *     span) and the verify seat sees it flagged, told to re-read. What is genuinely
+ *     lost is the chance to MINT a new statement about an internal change, and the
+ *     answer to that is the next extractor, not this filter.
+ *  2. **TS/JS only.** Every other file gets a symbols shard with `symbols: []` and no
+ *     imports shard at all, so comparing shards would call every markdown edit
+ *     cosmetic. {@link hasSymbolExtractor} refuses to guess: a `.md`, `.json`, `.py`
+ *     or `.sql` edit is structural and re-runs its slice's worker. Widening this
+ *     needs extractors, not heuristics.
  */
 function isCosmetic(
   path: string,
@@ -82,10 +109,19 @@ function isCosmetic(
   const now = queryBlobSignature(current, currentBlob);
   const before = queryBlobSignature(prior, priorBlob);
   if (now === null || before === null) return false;
+  // Same extraction on both sides, or the comparison is between two different
+  // questions: a v1 shard's silence about the generated bit is not a v2 shard's
+  // `false`, and a future extractor that indexes more can only differ from this one.
+  if (
+    now.symbolExtractor !== before.symbolExtractor ||
+    now.importExtractor !== before.importExtractor
+  ) {
+    return false;
+  }
   return (
     now.generated === before.generated &&
-    now.symbols.length === before.symbols.length &&
-    now.symbols.every((symbol, index) => symbol === before.symbols[index])
+    sameList(now.symbols, before.symbols) &&
+    sameList(now.imports, before.imports)
   );
 }
 

@@ -122,12 +122,33 @@ function loadBlobShard(
 }
 
 /**
+ * Whether one decoded `symbols` element is shaped like a {@link SnapshotSymbol}.
+ *
+ * `Array.isArray` alone answered "the shard has a symbols array" and the cast did the
+ * rest, so `symbols: [null]` hash-checked clean and threw at the first `.kind` read —
+ * in five different callers, none of which can do anything useful with half a shard.
+ * `kind` is checked as a string rather than against the kind union: this is a shape
+ * guard for our own canonical bytes, and a new extractor kind must not turn every
+ * reader into a refusal.
+ */
+function isSnapshotSymbol(value: unknown): value is SnapshotSymbol {
+  if (!value || typeof value !== "object") return false;
+  const symbol = value as Record<string, unknown>;
+  return (
+    typeof symbol.name === "string" &&
+    typeof symbol.kind === "string" &&
+    typeof symbol.line === "number"
+  );
+}
+
+/**
  * Load, hash-verify, and parse a per-file symbol shard, or `undefined` on any
  * problem. Addressed by `blobOid`; carries no path.
  */
 function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undefined {
   const shard = loadBlobShard(load, digest);
   if (!shard || !Array.isArray(shard.body.symbols)) return undefined;
+  if (!shard.body.symbols.every(isSnapshotSymbol)) return undefined;
   // `generated` is REQUIRED on a current shard, so a shard that lacks it is refused
   // rather than read as `generated: false`. Coercing it would turn a pre-v4 shard —
   // one that genuinely cannot answer the question — into a confident "this file is
@@ -165,6 +186,10 @@ function loadReferenceShard(load: ShardLoader, digest: string): ReferenceShard |
 function loadImportShard(load: ShardLoader, digest: string): ImportShard | undefined {
   const shard = loadBlobShard(load, digest);
   if (!shard || !Array.isArray(shard.body.imports)) return undefined;
+  // Element shapes, on the same grounds as {@link isSnapshotSymbol}: the specifiers
+  // are compared and joined as strings, and one non-string in the array is a decode
+  // failure rather than an edge nobody can resolve.
+  if (!shard.body.imports.every((specifier) => typeof specifier === "string")) return undefined;
   return {
     blobOid: shard.blobOid,
     extractor: shard.extractor,
@@ -1160,7 +1185,8 @@ export function queryImportGraph(snapshot: LoadedSnapshot): ImportGraphResult {
   }
 
   edges.sort(
-    (a, b) => byPath(a.from, b.from) || byPath(a.to, b.to) || byPath(a.specifier, b.specifier) || 0,
+    (a, b) =>
+      byString(a.from, b.from) || byString(a.to, b.to) || byString(a.specifier, b.specifier) || 0,
   );
 
   const outgoing = new Map<string, Set<string>>();
@@ -1170,7 +1196,7 @@ export function queryImportGraph(snapshot: LoadedSnapshot): ImportGraphResult {
     addAdjacent(incoming, edge.to, edge.from);
   }
   const sortedOf = (index: Map<string, Set<string>>, path: string): readonly string[] =>
-    [...(index.get(path) ?? [])].sort(byPath);
+    [...(index.get(path) ?? [])].sort(byString);
 
   return {
     ok: true,
@@ -1231,19 +1257,25 @@ export function querySymbolIndex(snapshot: LoadedSnapshot): SymbolIndexResult {
     const shard = loadSymbolShard(snapshot.load, digest);
     if (shard === undefined) return { ok: false, reason: "shard-unavailable", digest };
     if (shard.generated) generatedBlobs.add(blobOid);
-    exportsByBlob.set(blobOid, [...new Set(shard.symbols.map((s) => s.name))].sort(byPath));
+    exportsByBlob.set(blobOid, [...new Set(shard.symbols.map((s) => s.name))].sort(byString));
     symbolsByBlob.set(blobOid, shard.symbols);
   }
   return { ok: true, index: { generatedBlobs, exportsByBlob, symbolsByBlob } };
 }
 
-function byPath(left: string, right: string): number {
+/**
+ * Code-unit order over two strings. Named for what it compares, not for what its
+ * first caller happened to pass: it sorts paths, symbol names and `<kind> <name>`
+ * signature entries alike, and a name reading `byPath` at a call site sorting symbols
+ * claims a domain it does not have.
+ */
+function byString(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**
- * One blob's structural SIGNATURE (context-map rebuild, W4): the whole of what the
- * `symbols` shard says about it, MINUS line numbers.
+ * One blob's structural SIGNATURE (context-map rebuild, W4): what the `symbols` and
+ * `imports` shards together say about it, MINUS line numbers.
  *
  * Lines are dropped deliberately. Every symbol below an inserted line moves, so a
  * signature carrying them would report an unrelated edit at the top of a file as a
@@ -1263,31 +1295,63 @@ export interface BlobSignature {
   readonly symbols: readonly string[];
   /** The generated-banner bit ({@link SymbolShard.generated}). */
   readonly generated: boolean;
+  /**
+   * The DISTINCT RAW import specifiers the blob names ({@link ImportShard.imports}),
+   * already sorted in the shard's own canonical order.
+   *
+   * The export surface alone is NOT the whole of what an edit can move. An
+   * import-only edit — a specifier added, dropped, or re-pointed — leaves every
+   * exported name and kind exactly as it was while changing the file's partition
+   * membership, the module batch it lands in, the batch's cut edges and the neighbour
+   * maps its worker is fed. Classified on symbols alone it read as COSMETIC and routed
+   * no worker, so the map kept describing a shape the repository had left.
+   */
+  readonly imports: readonly string[];
+  /** The symbol extractor identity ({@link SymbolShard.extractor}). */
+  readonly symbolExtractor: string;
+  /** The import extractor identity ({@link ImportShard.extractor}). */
+  readonly importExtractor: string;
 }
 
 /**
- * The signature of ONE blob, decoding exactly one shard — the per-blob read
- * {@link querySymbolIndex} is the whole-repo version of. Used to compare a file
+ * The signature of ONE blob, decoding exactly the two shards it needs — the per-blob
+ * read {@link querySymbolIndex} is the whole-repo version of. Used to compare a file
  * across two snapshots, where decoding both corpora to answer about a handful of
  * changed paths would be absurd.
  *
- * `null` means CANNOT ANSWER — the manifest has no symbol shard for this blob, or the
- * loader cannot produce it intact. It never means "no symbols"; a blob the extractor
- * indexed and found nothing in answers with an empty `symbols` array. A caller that
- * reads null as "unchanged" would silently skip work, so the distinction is the
- * whole point of the return type.
+ * `null` means CANNOT ANSWER, and every check below lands there rather than on a
+ * confident answer, because the one caller ({@link structuralChanges}) reads null as
+ * "run the worker" and an equality it cannot justify as "skip it". It never means "no
+ * symbols"; a blob the extractor indexed and found nothing in answers with an empty
+ * `symbols` array. The refusals:
+ *
+ *  - either shard family has no entry for this blob, or the loader cannot produce it
+ *    intact (absent, hash mismatch, malformed, wrong element shapes);
+ *  - the shard's OWN `blobOid` is not the blob that was asked about. Hash-validity
+ *    proves the bytes are the bytes the manifest named, NOT that they are about this
+ *    blob — a cross-wired `blobOid → digest` index passes every hash check and answers
+ *    with another file's structure, which is the one wrong answer that looks right.
+ *
+ * The extractor identities ride along rather than being checked here: this reads one
+ * snapshot and cannot see the other's, so comparing them is the comparison's job.
  */
 export function queryBlobSignature(
   snapshot: LoadedSnapshot,
   blobOid: string,
 ): BlobSignature | null {
-  const digest = snapshot.symbolDigestByBlob.get(blobOid);
-  if (digest === undefined) return null;
-  const shard = loadSymbolShard(snapshot.load, digest);
-  if (shard === undefined) return null;
+  const symbolDigest = snapshot.symbolDigestByBlob.get(blobOid);
+  const importDigest = snapshot.importDigestByBlob.get(blobOid);
+  if (symbolDigest === undefined || importDigest === undefined) return null;
+  const symbols = loadSymbolShard(snapshot.load, symbolDigest);
+  const imports = loadImportShard(snapshot.load, importDigest);
+  if (symbols === undefined || imports === undefined) return null;
+  if (symbols.blobOid !== blobOid || imports.blobOid !== blobOid) return null;
   return {
-    symbols: shard.symbols.map((symbol) => `${symbol.kind} ${symbol.name}`).sort(byPath),
-    generated: shard.generated,
+    symbols: symbols.symbols.map((symbol) => `${symbol.kind} ${symbol.name}`).sort(byString),
+    generated: symbols.generated,
+    imports: imports.imports,
+    symbolExtractor: symbols.extractor,
+    importExtractor: imports.extractor,
   };
 }
 
