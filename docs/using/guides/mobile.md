@@ -34,7 +34,10 @@ in-app event stream still works while the phone can reach the daemon.
 A source-built app lives in `apps/mobile` (Expo and React Native) and can already
 read and act on daemon state. It is not publicly distributed, and the desktop does
 not yet generate the QR code or pairing link the phone needs, so there is no
-complete end-to-end pairing flow yet. The app pairs by exchanging a
+complete end-to-end pairing flow yet. Reading a review's body on the phone — the
+cohorts, findings, and hunks — is unavailable while the board is being rebuilt;
+the review screen says so rather than offering a route that dead-ends. The delta
+digest, a live turn, and publishing all work. The app pairs by exchanging a
 `rennet://pair?url=...&code=...` link for a device token stored in the platform's
 secure storage, the same pairing model [Remote access](./remote-access.md)
 describes.

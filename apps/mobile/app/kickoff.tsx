@@ -7,7 +7,7 @@
 // daemon resolves it inbound (the M1 projection pattern) — so capture/openPr address a repo by key.
 
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { type ReactNode, useEffect, useMemo, useReducer, useState } from "react";
+import { type ReactNode, useEffect, useReducer, useState } from "react";
 import { ScrollView, Text, TextInput, View } from "react-native";
 import { Card, OutlineButton, Screen, SectionLabel } from "../src/components/ui";
 import { newCommandId } from "../src/lib/ids";
@@ -15,9 +15,8 @@ import {
   initialKickoff,
   type KickoffProject,
   kickoffReducer,
-  matchProjectRepoKey,
   type ProjectedRepoRef,
-  parsePrRef,
+  planOpenPr,
 } from "../src/lib/kickoff";
 import { useRuntime } from "../src/runtime/context";
 import type { DaemonConnection } from "../src/runtime/daemon-registry";
@@ -71,16 +70,15 @@ export default function Kickoff(): ReactNode {
     };
   }, [connection]);
 
-  const parsed = useMemo(() => parsePrRef(prLink), [prLink]);
-
   async function openPr(): Promise<void> {
-    if (!connection || !parsed) return;
-    const repoKey = matchProjectRepoKey(projects, parsed);
-    if (!repoKey) {
-      dispatch({
-        type: "failed",
-        reason: `No paired project owns ${parsed.owner}/${parsed.repo}. Add it on your desktop first.`,
-      });
+    // No `connection` renders the "pair a daemon first" screen instead of this form, so the form's
+    // Open is only ever pressed with one. Everything else routes through `planOpenPr`, which is
+    // total: an empty or unparseable link becomes a `failed` reason the danger line below renders,
+    // never a press that does nothing.
+    if (!connection) return;
+    const plan = planOpenPr(prLink, projects);
+    if (plan.kind === "failed") {
+      dispatch({ type: "failed", reason: plan.reason });
       return;
     }
     dispatch({ type: "start", kind: "pr" });
@@ -93,8 +91,8 @@ export default function Kickoff(): ReactNode {
     try {
       const result = await connection.supervisor.invoke("review.openPr", {
         commandId,
-        ref: parsed.ref,
-        repoPath: repoKey,
+        ref: plan.ref,
+        repoPath: plan.repoKey,
       });
       finishInto(router, connection, result.review, dispatch);
     } catch (error) {
