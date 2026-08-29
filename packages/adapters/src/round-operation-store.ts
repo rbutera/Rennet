@@ -126,12 +126,41 @@ function sameSourceLandingAttempt(
   left: RoundSourceLandingAttempt,
   right: RoundSourceLandingAttempt,
 ): boolean {
-  return (
+  const sameBase =
     left.effect === right.effect &&
     left.executionId === right.executionId &&
     left.baselineCommit === right.baselineCommit &&
     left.workerHead === right.workerHead &&
-    left.startedAt === right.startedAt
+    left.startedAt === right.startedAt;
+  if (!sameBase) return false;
+  if (left.strategy === undefined || right.strategy === undefined) {
+    return left.strategy === right.strategy;
+  }
+  return sameReceipt(left.units, right.units) && sameReceipt(left.unitReceipts, right.unitReceipts);
+}
+
+function extendsSourceLandingPrefix(
+  current: RoundSourceLandingAttempt,
+  next: RoundSourceLandingAttempt,
+): boolean {
+  if (current.strategy !== "exclusive-move-v1" || next.strategy !== "exclusive-move-v1") {
+    return false;
+  }
+  if (
+    current.effect !== next.effect ||
+    current.executionId !== next.executionId ||
+    current.baselineCommit !== next.baselineCommit ||
+    current.workerHead !== next.workerHead ||
+    current.startedAt !== next.startedAt ||
+    !sameReceipt(current.units, next.units) ||
+    next.unitReceipts.length !== current.unitReceipts.length + 1
+  ) {
+    return false;
+  }
+  const nextReceipt = next.unitReceipts[current.unitReceipts.length];
+  return (
+    sameReceipt(current.unitReceipts, next.unitReceipts.slice(0, -1)) &&
+    nextReceipt?.unitId === current.units[current.unitReceipts.length]?.id
   );
 }
 
@@ -277,14 +306,32 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameCommitAttempt(current.commit, next.failure.commit)
       );
     case "commits-settled":
+      if (next.phase === "source-landing") {
+        return (
+          sameReceipt(current.workspace, next.workspace) &&
+          sameReceipt(current.worker, next.worker) &&
+          sameReceipt(current.gate, next.gate) &&
+          sameReceipt(current.commits, next.commits)
+        );
+      }
       return (
-        next.phase === "source-landing" &&
-        sameReceipt(current.workspace, next.workspace) &&
-        sameReceipt(current.worker, next.worker) &&
-        sameReceipt(current.gate, next.gate) &&
-        sameReceipt(current.commits, next.commits)
+        next.phase === "failed" &&
+        next.failure.at === "source-landing-planning" &&
+        sameReceipt(current.workspace, next.failure.workspace) &&
+        sameReceipt(current.worker, next.failure.worker) &&
+        sameReceipt(current.gate, next.failure.gate) &&
+        sameReceipt(current.commits, next.failure.commits)
       );
     case "source-landing":
+      if (next.phase === "source-landing") {
+        return (
+          sameReceipt(current.workspace, next.workspace) &&
+          sameReceipt(current.worker, next.worker) &&
+          sameReceipt(current.gate, next.gate) &&
+          sameReceipt(current.commits, next.commits) &&
+          extendsSourceLandingPrefix(current.landing, next.landing)
+        );
+      }
       if (next.phase === "source-landed") {
         return (
           sameReceipt(current.workspace, next.workspace) &&

@@ -583,6 +583,12 @@ export {
   type RoundOperationTransition,
 } from "./round-operation-store";
 export {
+  cleanupTransactionalRoundSourceLanding,
+  landTransactionalRoundSourceUnit,
+  planTransactionalRoundSourceLanding,
+  RoundSourceLandingConflictError,
+} from "./round-source-landing";
+export {
   defaultGenerationStoreDir,
   defaultRoundRecordStoreDir,
   GenerationStore,

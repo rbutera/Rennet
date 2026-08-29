@@ -20,10 +20,14 @@ import {
   type RoundReportVerificationAttempt,
   type RoundSourceLandingAttempt,
   type RoundSourceLandingReceipt,
+  type RoundSourceLandingUnit,
+  type RoundSourceLandingUnitReceipt,
   type RoundWorkerAttempt,
   type RoundWorkerReceipt,
   type RoundWorkspaceAttempt,
   type RoundWorkspaceReceipt,
+  type TransactionalRoundSourceLandingAttempt,
+  type TransactionalRoundSourceLandingReceipt,
 } from "@rennet/protocol";
 
 export interface RoundExecutionEffectInput<TAttempt> {
@@ -34,6 +38,16 @@ export interface RoundExecutionEffectInput<TAttempt> {
 export interface RoundReportVerificationInput
   extends RoundExecutionEffectInput<RoundReportVerificationAttempt> {
   readonly report: RoundReportDraftReceipt;
+}
+
+export interface RoundSourceLandingUnitInput
+  extends RoundExecutionEffectInput<TransactionalRoundSourceLandingAttempt> {
+  readonly unit: RoundSourceLandingUnit;
+}
+
+export interface RoundSourceLandingCleanupInput {
+  readonly operation: RoundOperation;
+  readonly receipt: TransactionalRoundSourceLandingReceipt;
 }
 
 export type RoundTerminalDrainDecision =
@@ -67,10 +81,16 @@ export interface RoundExecutionPorts {
   readonly settleCommits: (
     input: RoundExecutionEffectInput<RoundCommitAttempt>,
   ) => Promise<RoundCommitReceipt>;
-  readonly planSourceLanding: (operation: RoundOperation) => RoundSourceLandingAttempt;
+  readonly planSourceLanding: (
+    operation: RoundOperation,
+  ) => RoundSourceLandingAttempt | Promise<RoundSourceLandingAttempt>;
   readonly landSourceChanges: (
     input: RoundExecutionEffectInput<RoundSourceLandingAttempt>,
   ) => Promise<RoundSourceLandingReceipt>;
+  readonly landSourceUnit?: (
+    input: RoundSourceLandingUnitInput,
+  ) => Promise<RoundSourceLandingUnitReceipt>;
+  readonly cleanupSourceLanding?: (input: RoundSourceLandingCleanupInput) => Promise<void>;
   readonly planRoundRecording: (operation: RoundOperation) => RoundRecordingAttempt;
   readonly recordRound: (
     input: RoundExecutionEffectInput<RoundRecordingAttempt>,
@@ -165,6 +185,19 @@ function hasPartialWorkerEvidence(
 
 function hasPartialCommitEvidence(commits: RoundCommitReceipt): boolean {
   return commits.count > 0 !== (commits.from !== commits.to);
+}
+
+function transactionalLandingReceipt(
+  attempt: TransactionalRoundSourceLandingAttempt,
+  landedAt: number,
+): TransactionalRoundSourceLandingReceipt {
+  const outcome =
+    attempt.units.length === 0
+      ? "unchanged"
+      : attempt.unitReceipts.some((receipt) => receipt.outcome === "applied")
+        ? "applied"
+        : "already-applied";
+  return { ...attempt, outcome, landedAt };
 }
 
 class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
@@ -594,7 +627,21 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "commits-settled": {
-          const attempt = this.options.ports.planSourceLanding(operation);
+          let attempt: RoundSourceLandingAttempt;
+          try {
+            attempt = await this.options.ports.planSourceLanding(operation);
+          } catch (error) {
+            operation = this.fail(operation, {
+              at: "source-landing-planning",
+              reason: errorReason(error),
+              failedAt: Math.max(this.now(), operation.updatedAt),
+              workspace: state.workspace,
+              worker: state.worker,
+              gate: state.gate,
+              commits: state.commits,
+            });
+            break;
+          }
           operation = this.persist(
             operation,
             {
@@ -610,6 +657,84 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "source-landing": {
+          if (state.landing.strategy === "exclusive-move-v1") {
+            const landSourceUnit = this.options.ports.landSourceUnit;
+            if (landSourceUnit === undefined) {
+              operation = this.fail(operation, {
+                at: "source-landing",
+                reason: "transactional source landing has no per-unit effect port",
+                failedAt: Math.max(this.now(), operation.updatedAt),
+                workspace: state.workspace,
+                worker: state.worker,
+                gate: state.gate,
+                commits: state.commits,
+                landing: state.landing,
+              });
+              break;
+            }
+            let unitFailed = false;
+            while (operation.state.phase === "source-landing") {
+              const landing = operation.state.landing;
+              if (landing.strategy !== "exclusive-move-v1") {
+                throw new Error("transactional source landing changed strategy while running");
+              }
+              const unit = landing.units[landing.unitReceipts.length];
+              if (unit === undefined) break;
+              let unitReceipt: RoundSourceLandingUnitReceipt;
+              try {
+                unitReceipt = await landSourceUnit({ operation, attempt: landing, unit });
+              } catch (error) {
+                operation = this.fail(operation, {
+                  at: "source-landing",
+                  reason: errorReason(error),
+                  failedAt: Math.max(this.now(), operation.updatedAt),
+                  workspace: operation.state.workspace,
+                  worker: operation.state.worker,
+                  gate: operation.state.gate,
+                  commits: operation.state.commits,
+                  landing,
+                });
+                unitFailed = true;
+                break;
+              }
+              operation = this.persist(
+                operation,
+                {
+                  phase: "source-landing",
+                  workspace: operation.state.workspace,
+                  worker: operation.state.worker,
+                  gate: operation.state.gate,
+                  commits: operation.state.commits,
+                  landing: {
+                    ...landing,
+                    unitReceipts: [...landing.unitReceipts, unitReceipt],
+                  },
+                },
+                unitReceipt.landedAt,
+              ).operation;
+            }
+            if (unitFailed || operation.state.phase !== "source-landing") break;
+            if (operation.state.landing.strategy !== "exclusive-move-v1") {
+              throw new Error("transactional source landing settled with a legacy attempt");
+            }
+            const receipt = transactionalLandingReceipt(
+              operation.state.landing,
+              Math.max(this.now(), operation.updatedAt),
+            );
+            operation = this.persist(
+              operation,
+              {
+                phase: "source-landed",
+                workspace: operation.state.workspace,
+                worker: operation.state.worker,
+                gate: operation.state.gate,
+                commits: operation.state.commits,
+                landing: receipt,
+              },
+              receipt.landedAt,
+            ).operation;
+            break;
+          }
           let receipt: RoundSourceLandingReceipt;
           try {
             receipt =
@@ -651,6 +776,13 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "source-landed": {
+          if (state.landing.strategy === "exclusive-move-v1") {
+            const cleanupSourceLanding = this.options.ports.cleanupSourceLanding;
+            if (cleanupSourceLanding === undefined) {
+              throw new Error("transactional source landing has no cleanup effect port");
+            }
+            await cleanupSourceLanding({ operation, receipt: state.landing });
+          }
           const attempt = this.options.ports.planRoundRecording(operation);
           operation = this.persist(
             operation,

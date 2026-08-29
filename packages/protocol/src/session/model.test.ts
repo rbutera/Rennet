@@ -14,9 +14,12 @@ import {
   RoundReportDraftAttemptSchema,
   RoundReportDraftReceiptSchema,
   RoundReportReceiptSchema,
+  RoundSourceLandingAttemptSchema,
+  RoundSourceLandingReceiptSchema,
   RoundWorkspaceAttemptSchema,
   RoundWorkspaceReceiptSchema,
   roundOperationProgressSnapshot,
+  roundSourceLandingArtifactPaths,
   SessionModelSchema,
   SessionThreadSchema,
   SessionTranscriptRowSchema,
@@ -233,6 +236,79 @@ describe("session/ durable shapes (#466/#457)", () => {
       RoundRecordSchema.safeParse({ ...round, askOccurrences: [{ id: "th-1", revision: -1 }] })
         .success,
     ).toBe(false);
+  });
+
+  it("accepts only an exact transactional source-landing receipt prefix", () => {
+    const units = [
+      {
+        id: "unit-a",
+        path: "a.txt",
+        baseline: { kind: "git", mode: "100644", oid: "a".repeat(40) },
+        target: { kind: "git", mode: "100644", oid: "b".repeat(40) },
+        ...roundSourceLandingArtifactPaths("landing-transaction", "unit-a"),
+      },
+      {
+        id: "unit-b",
+        path: "b.txt",
+        baseline: { kind: "absent" },
+        target: { kind: "git", mode: "100644", oid: "c".repeat(40) },
+        ...roundSourceLandingArtifactPaths("landing-transaction", "unit-b"),
+      },
+    ] as const;
+    const attempt = {
+      effect: "source-landing",
+      strategy: "exclusive-move-v1",
+      executionId: "landing-transaction",
+      baselineCommit: "baseline",
+      workerHead: "worker",
+      startedAt: 1,
+      units,
+      unitReceipts: [{ unitId: "unit-a", outcome: "applied", landedAt: 2 }],
+    } as const;
+
+    expect(RoundSourceLandingAttemptSchema.parse(attempt)).toEqual(attempt);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        unitReceipts: [{ unitId: "unit-b", outcome: "applied", landedAt: 2 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [{ ...units[0], stagePath: units[0].backupPath }, units[1]],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [
+          {
+            ...units[0],
+            baseline: { kind: "git", mode: "160000", oid: "a".repeat(40) },
+          },
+          units[1],
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingReceiptSchema.safeParse({
+        ...attempt,
+        outcome: "applied",
+        landedAt: 3,
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingReceiptSchema.parse({
+        ...attempt,
+        unitReceipts: [
+          ...attempt.unitReceipts,
+          { unitId: "unit-b", outcome: "already-applied", landedAt: 3 },
+        ],
+        outcome: "applied",
+        landedAt: 4,
+      }).outcome,
+    ).toBe("applied");
   });
 
   // ── The rework count (review finding 10) ──────────────────────────────────

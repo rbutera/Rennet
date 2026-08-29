@@ -276,24 +276,202 @@ export const RoundCommitReceiptSchema = z.object({
 });
 export type RoundCommitReceipt = z.infer<typeof RoundCommitReceiptSchema>;
 
-export const RoundSourceLandingAttemptSchema = z.object({
+const roundSourceLandingBase = {
   effect: z.literal("source-landing"),
   executionId: id,
   baselineCommit: id,
   workerHead: id,
   startedAt: z.number().int().nonnegative(),
+};
+
+const repoRelativePath = id.refine(
+  (path) =>
+    !path.startsWith("/") &&
+    !path.includes("\\") &&
+    path.split("/").every((part) => part.length > 0 && part !== "." && part !== ".."),
+  "must be a normalized repository-relative path",
+);
+const landingArtifactPath = repoRelativePath.refine(
+  (path) => path.startsWith(".rennet/round-landings/"),
+  "must be inside .rennet/round-landings",
+);
+const gitObjectId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+const ROUND_SOURCE_LANDING_ARTIFACT_ROOT = ".rennet/round-landings";
+
+export function roundSourceLandingArtifactPaths(
+  executionId: string,
+  unitId: string,
+): { readonly stagePath: string; readonly backupPath: string } {
+  const transactionKey = sha256Hex(executionId).slice(0, 24);
+  const root = `${ROUND_SOURCE_LANDING_ARTIFACT_ROOT}/${transactionKey}/${unitId}`;
+  return { stagePath: `${root}/stage`, backupPath: `${root}/backup` };
+}
+
+export const RoundSourceLandingPathDescriptorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("absent") }),
+  z.object({
+    kind: z.literal("git"),
+    mode: z.enum(["100644", "100755", "120000"]),
+    oid: gitObjectId,
+  }),
+]);
+export type RoundSourceLandingPathDescriptor = z.infer<
+  typeof RoundSourceLandingPathDescriptorSchema
+>;
+
+export const RoundSourceLandingUnitSchema = z
+  .object({
+    id,
+    path: repoRelativePath,
+    baseline: RoundSourceLandingPathDescriptorSchema,
+    target: RoundSourceLandingPathDescriptorSchema,
+    stagePath: landingArtifactPath,
+    backupPath: landingArtifactPath,
+  })
+  .refine((unit) => unit.baseline.kind !== "absent" || unit.target.kind !== "absent", {
+    message: "landing unit cannot be absent at both endpoints",
+  })
+  .refine((unit) => JSON.stringify(unit.baseline) !== JSON.stringify(unit.target), {
+    message: "landing unit endpoints must differ",
+  });
+export type RoundSourceLandingUnit = z.infer<typeof RoundSourceLandingUnitSchema>;
+
+export const RoundSourceLandingUnitReceiptSchema = z.object({
+  unitId: id,
+  outcome: z.enum(["applied", "already-applied"]),
+  landedAt: z.number().int().nonnegative(),
 });
+export type RoundSourceLandingUnitReceipt = z.infer<typeof RoundSourceLandingUnitReceiptSchema>;
+
+const legacySourceLandingAttemptShape = {
+  ...roundSourceLandingBase,
+  strategy: z.never().optional(),
+};
+
+export const LegacyRoundSourceLandingAttemptSchema = z.object(legacySourceLandingAttemptShape);
+export type LegacyRoundSourceLandingAttempt = z.infer<typeof LegacyRoundSourceLandingAttemptSchema>;
+
+const transactionalSourceLandingAttemptShape = {
+  ...roundSourceLandingBase,
+  strategy: z.literal("exclusive-move-v1"),
+  units: z.array(RoundSourceLandingUnitSchema),
+  unitReceipts: z.array(RoundSourceLandingUnitReceiptSchema),
+};
+
+function validateLandingUnitPrefix(
+  landing: {
+    readonly executionId: string;
+    readonly units: readonly RoundSourceLandingUnit[];
+    readonly unitReceipts: readonly RoundSourceLandingUnitReceipt[];
+  },
+  context: z.RefinementCtx,
+  requireComplete: boolean,
+): void {
+  if (landing.unitReceipts.length > landing.units.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["unitReceipts"],
+      message: "contains more receipts than manifest units",
+    });
+    return;
+  }
+  if (requireComplete && landing.unitReceipts.length !== landing.units.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["unitReceipts"],
+      message: "must contain the complete manifest receipt prefix",
+    });
+  }
+  for (const [index, receipt] of landing.unitReceipts.entries()) {
+    if (receipt.unitId !== landing.units[index]?.id) {
+      context.addIssue({
+        code: "custom",
+        path: ["unitReceipts", index, "unitId"],
+        message: "does not match the manifest unit at this prefix position",
+      });
+    }
+  }
+  const unitIds = landing.units.map((unit) => unit.id);
+  const unitPaths = landing.units.map((unit) => unit.path);
+  const artifactPaths = landing.units.flatMap((unit) => [unit.stagePath, unit.backupPath]);
+  if (new Set(unitIds).size !== unitIds.length) {
+    context.addIssue({ code: "custom", path: ["units"], message: "unit ids must be unique" });
+  }
+  if (new Set(unitPaths).size !== unitPaths.length) {
+    context.addIssue({ code: "custom", path: ["units"], message: "unit paths must be unique" });
+  }
+  if (new Set(artifactPaths).size !== artifactPaths.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["units"],
+      message: "transaction artifact paths must be unique",
+    });
+  }
+  for (const [index, unit] of landing.units.entries()) {
+    const expected = roundSourceLandingArtifactPaths(landing.executionId, unit.id);
+    if (unit.stagePath !== expected.stagePath || unit.backupPath !== expected.backupPath) {
+      context.addIssue({
+        code: "custom",
+        path: ["units", index],
+        message: "transaction artifact paths do not match execution and unit identity",
+      });
+    }
+  }
+}
+
+export const TransactionalRoundSourceLandingAttemptSchema = z
+  .object(transactionalSourceLandingAttemptShape)
+  .superRefine((landing, context) => validateLandingUnitPrefix(landing, context, false));
+export type TransactionalRoundSourceLandingAttempt = z.infer<
+  typeof TransactionalRoundSourceLandingAttemptSchema
+>;
+
+export const RoundSourceLandingAttemptSchema = z.union([
+  TransactionalRoundSourceLandingAttemptSchema,
+  LegacyRoundSourceLandingAttemptSchema,
+]);
 export type RoundSourceLandingAttempt = z.infer<typeof RoundSourceLandingAttemptSchema>;
 
 const roundSourceLandingReceiptBase = {
-  ...RoundSourceLandingAttemptSchema.shape,
+  ...legacySourceLandingAttemptShape,
   landedAt: z.number().int().nonnegative(),
 };
 
-export const RoundSourceLandingReceiptSchema = z.discriminatedUnion("outcome", [
+const LegacyRoundSourceLandingReceiptSchema = z.discriminatedUnion("outcome", [
   z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("unchanged") }),
   z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("applied") }),
   z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("already-applied") }),
+]);
+
+export const TransactionalRoundSourceLandingReceiptSchema = z
+  .object({
+    ...transactionalSourceLandingAttemptShape,
+    outcome: z.enum(["unchanged", "applied", "already-applied"]),
+    landedAt: z.number().int().nonnegative(),
+  })
+  .superRefine((landing, context) => {
+    validateLandingUnitPrefix(landing, context, true);
+    const expectedOutcome =
+      landing.units.length === 0
+        ? "unchanged"
+        : landing.unitReceipts.some((receipt) => receipt.outcome === "applied")
+          ? "applied"
+          : "already-applied";
+    if (landing.outcome !== expectedOutcome) {
+      context.addIssue({
+        code: "custom",
+        path: ["outcome"],
+        message: `must be ${expectedOutcome} for these unit receipts`,
+      });
+    }
+  });
+export type TransactionalRoundSourceLandingReceipt = z.infer<
+  typeof TransactionalRoundSourceLandingReceiptSchema
+>;
+
+export const RoundSourceLandingReceiptSchema = z.union([
+  TransactionalRoundSourceLandingReceiptSchema,
+  LegacyRoundSourceLandingReceiptSchema,
 ]);
 export type RoundSourceLandingReceipt = z.infer<typeof RoundSourceLandingReceiptSchema>;
 
@@ -380,6 +558,14 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commit: RoundCommitAttemptSchema,
+  }),
+  z.object({
+    at: z.literal("source-landing-planning"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
   }),
   z.object({
     at: z.literal("source-landing"),
@@ -1028,6 +1214,7 @@ function progressFailure(
         gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
+    case "source-landing-planning":
     case "source-landing":
     case "round-recording":
       return {
