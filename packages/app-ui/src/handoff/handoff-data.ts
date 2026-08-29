@@ -168,9 +168,7 @@ export function composeReviewDraft(
 ): ReviewDraft {
   const body: ReviewComment[] = [];
   const byPath = new Map<string, ComposedLineComment[]>();
-  let requestChanges = 0;
   for (const comment of composed.comments) {
-    if (comment.type === "request-change") requestChanges += 1;
     if (comment.line === undefined) {
       body.push(comment);
       continue;
@@ -189,19 +187,21 @@ export function composeReviewDraft(
   // composition actually proposes when the durable override differs. Deriving over the line
   // comments alone would claim "overridden — proposed comment" for a pathless request-change
   // ask, with a revert button that reverts to nothing — a lie about the reviewer's own verdict.
-  const outbound = [...composed.comments, ...(composed.bodyNotes ?? [])];
+  const bodyNotes = composed.bodyNotes ?? [];
+  const outbound = [...composed.comments, ...bodyNotes];
+  const requestChanges = outbound.filter((comment) => comment.type === "request-change").length;
   const proposed: ProposedVerdict = outbound.some((c) => c.type === "request-change")
     ? "REQUEST_CHANGES"
     : outbound.some((c) => c.type === "approve")
       ? "APPROVE"
       : "COMMENT";
   return {
-    bodyNotes: composed.bodyNotes ?? [],
+    bodyNotes,
     body,
     lineGroups,
     verdict: composed.verdict,
     proposed,
-    arithmetic: { requestChanges, comments: composed.comments.length - requestChanges },
+    arithmetic: { requestChanges, comments: outbound.length - requestChanges },
     destination: composed.destination,
   };
 }

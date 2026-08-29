@@ -306,4 +306,48 @@ describe("PostReviewLane", () => {
     expect(r.getByText("Design · Retry policy")).toBeTruthy();
     expect(r.getByText("the policy matches its documented boundary")).toBeTruthy();
   });
+
+  it("labels every composed review-body note with its exact disposition", () => {
+    const bodyNotes = [
+      {
+        id: "ask-approve",
+        anchor: "Source for Approve",
+        type: "approve",
+        body: "Approve body",
+      },
+      {
+        id: "ask-request-change",
+        anchor: "Source for Request Change",
+        type: "request-change",
+        body: "Request Change body",
+      },
+      {
+        id: "ask-comment",
+        anchor: "Source for Comment",
+        type: "comment",
+        body: "Comment body",
+      },
+      {
+        id: "ask-question",
+        anchor: "Source for Question",
+        type: "question",
+        body: "Question body",
+      },
+    ] satisfies ReviewDraft["bodyNotes"];
+    const draft: ReviewDraft = {
+      bodyNotes,
+      body: [],
+      lineGroups: [],
+      verdict: "REQUEST_CHANGES",
+      proposed: "REQUEST_CHANGES",
+      arithmetic: { requestChanges: 1, comments: 3 },
+      destination: "acme/orbital#7",
+    };
+
+    const r = mount(<PostReviewLane review={review} draft={draft} />);
+
+    expect(
+      [...r.container.querySelectorAll('[data-slot="badge"]')].map((badge) => badge.textContent),
+    ).toEqual(["Approve", "Request Change", "Comment", "Question"]);
+  });
 });

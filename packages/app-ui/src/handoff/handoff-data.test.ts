@@ -152,4 +152,35 @@ describe("handoff/handoff-data", () => {
     expect(draft.bodyNotes).toEqual(composed.bodyNotes);
     expect(draft.body).toEqual([]);
   });
+
+  it("counts request-change and non-request review-body notes in verdict arithmetic", () => {
+    const composed: Extract<CommandOutput<"publish.compose">, { status: "review" }> = {
+      status: "review",
+      comments: [],
+      bodyNotes: [
+        {
+          id: "ask-blocking",
+          anchor: "Correctness · Retry policy",
+          type: "request-change",
+          body: "bound the retry loop",
+        },
+        {
+          id: "ask-question",
+          anchor: "Design · Retry policy",
+          type: "question",
+          body: "what owns the retry budget?",
+        },
+      ],
+      payload: "canonical-review-bytes",
+      verdict: "REQUEST_CHANGES",
+      destination: "acme/orbital#7",
+      title: "acme/orbital#7",
+      compositionId: "composition-1",
+    };
+
+    const draft = composeReviewDraft(composed);
+
+    expect(draft.proposed).toBe("REQUEST_CHANGES");
+    expect(draft.arithmetic).toEqual({ requestChanges: 1, comments: 1 });
+  });
 });

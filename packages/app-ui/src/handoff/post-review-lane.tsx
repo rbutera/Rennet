@@ -64,11 +64,18 @@ const VERDICT_LABEL: Record<ProposedVerdict, string> = {
   COMMENT: "Comment",
 };
 
+const INTENT_LABEL = {
+  approve: "Approve",
+  "request-change": "Request Change",
+  comment: "Comment",
+  question: "Question",
+} satisfies Record<DispositionKind, string>;
+
 function IntentTag({ type }: { type: DispositionKind }) {
   const requestChange = type === "request-change";
   return (
     <Badge variant={requestChange ? "destructive" : "secondary"} className="shrink-0">
-      {requestChange ? "Request Change" : "Comment"}
+      {INTENT_LABEL[type]}
     </Badge>
   );
 }
