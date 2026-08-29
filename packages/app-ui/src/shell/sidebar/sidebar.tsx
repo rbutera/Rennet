@@ -623,9 +623,11 @@ function SidebarTree() {
                       <Icon icon={MapIcon} />
                       View Context Map
                     </ContextMenuItem>
-                    {/* Project rename is omitted until B9 supplies the real rename
-                        seam — an inert editor that snaps the name back is worse than
-                        no action (a live no-op lies about what happened). */}
+                    {/* No rename item here. The seam exists and is served —
+                        `project.rename` is registered, dispatched, and bound by
+                        `sidebar-data.ts`'s `renameProject` — but nothing in this menu
+                        calls it, so the project name is renamed from Settings →
+                        Projects. Tracked on #572 (F3). */}
                     <ContextMenuItem onClick={() => navigate(projectSettingsPath(project.id))}>
                       <Icon icon={Settings2} />
                       Project Settings

@@ -75,9 +75,10 @@ describe("RoundsLanes", () => {
     expect(r.queryByRole("heading", { name: "Changes" })).toBeNull();
   });
 
-  it("Dispatch Round stays inert with no round wired — even once an ask is staged (C9-gated)", () => {
-    // No `onDispatch`: the round run is C9's. A live button here would be a dead click that lies,
-    // so it stays disabled BOTH while nothing is staged AND after an ask stages — until C9 wires it.
+  it("Dispatch Round stays inert with no onDispatch — even once an ask is staged", () => {
+    // No `onDispatch` prop: this mount has no rounds scope. A live button here would be a dead
+    // click that lies, so it stays disabled BOTH while nothing is staged AND after an ask
+    // stages. The app itself always passes one (the live rounds source landed in C9).
     const r = mount(<RoundsLanes review={review} />);
     expect(r.getByText("Nothing staged yet.")).toBeTruthy();
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);

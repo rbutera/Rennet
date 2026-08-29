@@ -128,8 +128,8 @@ describe("invalidation UX (#576)", () => {
 // Review finding C. The three cases above hand `review` in as a prop, so they prove "the ask
 // fires" and "an invalid prop renders" — never that the ANSWER reaches the surface. This one
 // closes the loop through `useSlugResolution`, the module that owns how a session resolves and
-// that declares it will move off `review.load` at B9. If `STALED_BY_FRESHNESS` ever stops naming
-// the read that feeds the prop, the banner silently stops appearing — and this test goes red.
+// which command feeds the prop. If `STALED_BY_FRESHNESS` ever stops naming that read, the
+// banner silently stops appearing — and this test goes red.
 describe("invalidation UX — the answer reaches the surface (#576, coupled to routes/slug.ts)", () => {
   it("stales the session read, so the notice renders off the REFRESHED status", async () => {
     let status: "current" | "invalid" = "current";

@@ -438,9 +438,11 @@ function ProvenanceChip({ provenance }: { provenance: Provenance }) {
  * Settings → Projects. Escape inside a field blurs it (and stops the view's Escape), never
  * leaving the view. The logo/mark is cosmetic and never enters agent context.
  *
- * ponytail: edits live in component state only. There is no project-config WRITE command in
- * the protocol yet (Settings → Projects is C10), so "Looks right" does NOT claim it saved —
- * it dismisses the card and points the reviewer at Settings, where the real edit will land.
+ * ponytail: edits live in component state only. This card writes nothing. A project-config
+ * WRITE now exists for part of it — `settings.setProjectValue` (C18 group A) covers the
+ * tracker and worktree keys, though not branch / gate / logo — and this card does not use
+ * it. So "Looks right" does NOT claim it saved: it dismisses the card and points the
+ * reviewer at Settings → Projects, where the served edit does land.
  */
 function ScoutQuestionnaire({
   answers,

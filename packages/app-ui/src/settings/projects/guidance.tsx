@@ -14,10 +14,11 @@ import { UnbackedNote } from "./unbacked-note";
 // editor (never the settings takeover); an Add Rule control sits at the bottom;
 // saving with empty text is refused.
 //
-// GUIDANCE has no live write command on this branch (only `settings.guidance` reads),
-// so the whole section rides the settings projection (`setGuidance`) — one coherent
-// seam, provable now, swapped to the engine's guidance write at B10. The `settings.get`
-// resolver is not split across two sources for a value it cannot yet persist.
+// The whole section rides the settings projection (`setGuidance`) — one coherent seam.
+// The live projection binds that setter to the served `settings.setGuidance` on the repo
+// rung (C18 group A) and reads the rules back off `settings.get`'s resolved `prefs`, so
+// an edit here persists; the editors disable themselves for a project whose served row
+// the projection cannot address (`prefsBackedByProject`).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SEVERITY_CHIP: Record<GuidanceSeverity, string> = {

@@ -12,9 +12,8 @@ import {
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /**
- * The client-facing SESSION READ dispatch layer B9 (the runtime) and B11 (the round WRITE)
- * deferred — the seam that unblocks C07's chat dock and C09's rounds ledger off their
- * MemoryBridge/honest-absent stubs.
+ * The client-facing SESSION dispatch layer — the seam C07's chat dock and C09's rounds
+ * ledger read through, off their old MemoryBridge/honest-absent stubs.
  *
  *   • `session.transcript` (C07): the chat dock's read. The harness CLI stays the canonical
  *     conversation owner (#466 res. 3; Rennet persists only the `HarnessCursor` for resume) —
@@ -39,9 +38,10 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  *
  *   • `session.rounds` (C09): the rounds-ledger read. Projects the live rounds runtime's
  *     `RoundRecord[]` for the review's session (resolved read-only from the ask-log/target
- *     claim). Empty until a round RECORDS (`runRound`); the dispatch WRITE (B11) runs the
- *     workers but the record wiring is a separate deferred piece — so the read honestly
- *     returns `[]` today and real rows once a round records.
+ *     claim). A session that has dispatched no round is honestly `[]`; from the first round
+ *     onward it carries real rows, because BOTH `runRound` and `dispatchRound` record a
+ *     `RoundRecord` — the dispatch-only one stamped `ROUND_NO_REGEN` for the generation it
+ *     did not mint, superseded in the durable ledger when the regeneration lands.
  */
 
 /**

@@ -719,14 +719,16 @@ export const projectDetailSchema = z.object({
   prs: z.array(pullRequestSchema),
   /**
    * A >1000 upstream truncation, surfaced so a partial surface never renders as
-   * complete (the SSO partial-results banner). The fixture sets it false today; the
-   * live GraphQL loop sets it from the explicit truncation state later.
+   * complete (the SSO partial-results banner). The live source ORs it across the
+   * per-repo PR fetches (`adapters/src/project-detail-source.ts`); the fixture and the
+   * no-PR-source degrade both report false.
    */
   truncated: z.boolean(),
   /**
    * Why GitHub auth is unavailable. Absent (undefined) when auth resolved and PRs
-   * were fetched. Present when the PR source was not wired — a missing token renders
-   * as an honest hint, never as "zero PRs".
+   * were fetched. Present when the PR source could not answer — no token wired, or a
+   * post-auth network outage — so a missing token renders as an honest hint, never as
+   * "zero PRs".
    */
   authUnavailable: z
     .enum(["not-connected", "token-invalid", "insufficient-scope", "network"])

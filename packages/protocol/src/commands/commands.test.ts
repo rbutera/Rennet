@@ -143,8 +143,8 @@ const ABSORBED_IDS = [
 // unexposed; no navigate command exists yet). Mirrors AGENT_EXPOSED in index.ts so an
 // exposure edit is deliberate.
 // `repository.choose` + `project.discover` are the add-project prerequisites (the
-// tool cannot fabricate a DiscoveryResult); `navigate` stays out until C11 (a
-// client-locus row would force a host dispatch handler). Kept sorted — the invariant
+// tool cannot fabricate a DiscoveryResult); `navigate` stays out (a client-locus row
+// would force a host dispatch handler, and C11 shipped the menu without one). Kept sorted — the invariant
 // test compares against the alphabetically sorted list of agent-exposed ids.
 const AGENT_INVENTORY = [
   "project.discover",

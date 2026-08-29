@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 //
 // The archived-sessions view (C10 §9, enriching C12's minimal list) over a MemoryBridge.
-// Sessions are B9-shaped: they arrive through the sidebar's session projection (empty in
-// the live client until B9), so the test drives archived rows through the projection
+// Sessions arrive through the sidebar's session projection (served off `session.list` in
+// the live client), so the test drives archived rows through the projection
 // context — no fake session protocol. Search matches title OR project name; Escape in the
 // search field clears it BEFORE the window listener can close the view; sort covers
 // recent (fuzzy-time parse) / project / title; a row opens its session; Unarchive calls

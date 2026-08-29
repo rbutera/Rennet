@@ -4,9 +4,9 @@ import type { FileChangeStatus, PatchFile, Review } from "@rennet/protocol";
 // The patchset-projection seam (C6, reconciliation 2) — the ONE place the diff surface
 // reads changed files off a resolved review. The projection already arrived through
 // `review.load` in `routes/slug.ts`'s `useSlugResolution`; this module never issues a
-// command of its own. So when B3/B4 introduce a dedicated patchset-projection command
-// distinct from the full-review read, THIS file is the only one that changes — exactly
-// how C4 isolated the span-read behind `citations.ts`.
+// command of its own. If a dedicated patchset-projection command distinct from the
+// full-review read is ever introduced — B3 and B4 both landed without one — THIS file is
+// the only one that changes, exactly how C4 isolated the span-read behind `citations.ts`.
 //
 // The raw diff needs no filesystem and no span-read: `PatchFile.patch` carries its own
 // unified-diff text inline. This module (and `diff-parse.ts`) touch no filesystem module —
