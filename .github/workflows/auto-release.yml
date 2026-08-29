@@ -252,7 +252,9 @@ jobs:
   #    Squirrel feed (Setup.exe, *-full.nupkg, RELEASES) plus the win32 zip.
   build-windows:
     needs: version
-    runs-on: windows-latest
+    # Desktop build traverses to adapters; the ruled Electron node-gyp fork
+    # recognises Visual Studio only through 2022.
+    runs-on: windows-2022
     timeout-minutes: 20
     steps:
       - name: Checkout tag

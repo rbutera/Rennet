@@ -4,13 +4,44 @@
   "sourceRoot": "packages/adapters/src",
   "projectType": "library",
   "tags": ["scope:rennet", "layer:adapter"],
+  "namedInputs": {
+    "nativeHelper": [
+      "{projectRoot}/native/**/*",
+      "{workspaceRoot}/scripts/build-exclusive-namespace-move.mjs",
+      { "externalDependencies": ["@electron/node-gyp"] }
+    ]
+  },
   "targets": {
-    "build": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
+    "build": {
+      "cache": false,
+      "command": "pnpm exec tsc -p packages/adapters/tsconfig.json && node scripts/build-exclusive-namespace-move.mjs",
+      "inputs": ["default", "^production", "nativeHelper"],
+      "outputs": ["{projectRoot}/dist"]
+    },
     "lint": {
       "command": "pnpm exec eslint packages/adapters/src --max-warnings=0 && pnpm exec biome check packages/adapters/src"
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
-    "test": { "command": "pnpm exec vitest run packages/adapters/src" },
+    "test": {
+      "cache": false,
+      "dependsOn": ["build"],
+      "inputs": ["default", "^production", "nativeHelper"],
+      "command": "pnpm exec vitest run packages/adapters/src"
+    },
+    "native-test": {
+      "cache": false,
+      "dependsOn": ["build"],
+      "inputs": ["default", "^production", "nativeHelper"],
+      "command": "pnpm exec vitest run packages/adapters/src/exclusive-namespace-move.test.ts packages/adapters/src/exclusive-namespace-move.native.test.ts"
+    },
+    "native-determinism-test": {
+      "cache": false,
+      "inputs": [
+        "nativeHelper",
+        "{workspaceRoot}/scripts/check-exclusive-namespace-move-determinism.mjs"
+      ],
+      "command": "node scripts/check-exclusive-namespace-move-determinism.mjs"
+    },
     "real-turn": {
       "cache": false,
       "command": "RENNET_LIVE_CLAUDE=1 pnpm exec vitest run packages/adapters/integration"

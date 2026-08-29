@@ -7,8 +7,10 @@
 # (forbidden-import) check and the licenses check each assert a deliberate-failure
 # calibration, so a green run is meaningful, not decoration.
 #
-# The gate is intentionally platform-independent (Vite builds, Vitest, ESLint,
-# Biome, tsc) and runs on Linux. It deliberately does NOT run:
+# The full gate runs on Linux, including the Linux exclusive-namespace helper.
+# A focused matrix below compiles that first-party helper, exercises its native
+# semantics, and proves repeatable host builds on Linux, macOS, and Windows. CI
+# deliberately does NOT run:
 #   - `e2e`     (Playwright + Electron; needs a display, not part of `pnpm check`)
 #   - `package` / `package-smoke` (Electron packaging; macOS-only, lives in the
 #                 signed release workflows and issue #298's distribution slice)
@@ -99,3 +101,39 @@ jobs:
         run: pnpm check
         env:
           NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:4210
+
+  exclusive-namespace-move:
+    name: exclusive namespace move (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The exact-SHA Electron node-gyp fork recognises Visual Studio through
+        # 2022. Keep Windows fixed until that ruled toolchain gains VS 2026.
+        os: [ubuntu-latest, macos-14, windows-2022]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test exclusive namespace move
+        run: pnpm nx run rennet-adapters:native-test
+        env:
+          NX_DAEMON: "false"
+
+      - name: Verify reproducible native build
+        run: pnpm nx run rennet-adapters:native-determinism-test
+        env:
+          NX_DAEMON: "false"

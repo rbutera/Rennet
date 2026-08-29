@@ -139,6 +139,13 @@ export {
 } from "./design-artifact-discovery";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {
+  createExclusiveNamespaceMover,
+  type ExclusiveMoveHelperExecution,
+  type ExclusiveNamespaceMoveOutcome,
+  type ExclusiveNamespaceMover,
+  type RunExclusiveMoveHelper,
+} from "./exclusive-namespace-move";
+export {
   createExecObservingTurn,
   EXEC_OUTPUT_TAIL,
   type ExecObservingTurnOptions,
