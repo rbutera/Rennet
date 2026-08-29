@@ -1409,7 +1409,7 @@ const definitions = {
   // Both are SERVED. `session.transcript` is the chat dock's read (C07): the header
   // trail + the transcript rows + the harness context figure. The harness CLI remains
   // the canonical conversation owner (#466 res. 3), but the session turn loop captures
-  // the harness events it already sees, R19-scrubs them and persists them, so `rows`
+  // the harness events it already sees and persists them verbatim, so `rows`
   // carries real coding turns for a session that has run one and is honestly `[]` for a
   // session that has not. `contextWindow` stays absent — no read port reports it. The
   // live ask threads still arrive separately via `review.reattach`. `session.rounds` is

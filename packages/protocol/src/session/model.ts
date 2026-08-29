@@ -308,7 +308,7 @@ export const ThoughtBlockSchema = z.object({
  * A running → done tool-call step, projected from a `tool.started` joined with its
  * `tool.output` (B). `toolKind` is the SERIALIZABLE icon selector — the client maps it to a
  * concrete icon (C07); the wire never carries a component. `denied` marks a `tool.denied`.
- * Every path-bearing string here is R19-scrubbed at projection time, before it is persisted.
+ * Path-bearing strings are stored verbatim; R19 scrubs them at the wire, for a remote client only.
  */
 export const ActionStepSchema = z.object({
   kind: z.literal("action"),
@@ -349,7 +349,7 @@ export type ContentBlock = z.infer<typeof ContentBlockSchema>;
  * (tool calls, outputs, thinking, prose), persisted so the dock shows history and survives
  * reload. Three representable rows:
  *   - `turn`: one coding turn — orchestrator (or user) — with its thought/action preface and
- *     its prose/code body. Path-bearing content is R19-scrubbed before persistence.
+ *     its prose/code body. Path-bearing content is stored verbatim and scrubbed at the wire.
  *   - `compact-boundary`: the harness summarized in place; its own figures, absent ⇒ unknown.
  *   - `context-rebuilt`: the harness lost the transcript and Rennet rebuilt from the boards.
  */
@@ -376,10 +376,11 @@ export const SessionTranscriptRowSchema = z.discriminatedUnion("kind", [
 export type SessionTranscriptRow = z.infer<typeof SessionTranscriptRowSchema>;
 
 /**
- * The chat dock's session read (C07): the header trail, the historical transcript rows,
- * and the harness context figure. Honest-absent today — no coding-transcript store exists
- * (the harness owns it), so `rows` is empty and `contextWindow` absent until a transcript
- * read port lands; the live ask threads arrive separately via `review.reattach`.
+ * The chat dock's session read (C07): the header trail, the historical transcript rows, and the
+ * harness context figure. `rows` carries the coding turns the session turn loop captured and
+ * persisted, and is honestly `[]` for a session that has run none. `contextWindow` stays absent —
+ * no read port reports one, and Rennet never estimates a token budget. The live ask threads
+ * arrive separately via `review.reattach`.
  */
 export const SessionTranscriptSchema = z.object({
   trail: SessionTrailSchema,

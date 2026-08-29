@@ -98,14 +98,22 @@ redundant inner lock on this path. The issue-#18 checkpoint bracket is unchanged
 around it: pre-checkpoint, turn, post-checkpoint, diff.
 
 The loop is where the **display transcript** is captured because it is the single
-reader of every harness event. Its `recordTranscript` sink is the one choke point
-that projects those events onto the transcript rows the chat dock renders
-(`harnessEventsToRows`), scrubs host paths out of them there, and appends them to
-the durable `TranscriptStore` that `session.transcript` reads. The rows are a
-display read-model, additive to the cursor: the CLI still owns the conversation.
-A session whose turns have not run reads back empty because it genuinely has no
-rows, and a transcript log that cannot be written never fails the coding turn
-that produced it.
+reader of every harness event. Its `recordTranscript` sink projects those events
+onto the transcript rows the chat dock renders (`harnessEventsToRows`) and
+appends them to the durable `TranscriptStore` that `session.transcript` reads.
+The rows are a display read-model, additive to the cursor: the CLI still owns the
+conversation. A session whose turns have not run reads back empty because it
+genuinely has no rows, and a transcript log that cannot be written never fails
+the coding turn that produced it.
+
+The rows are stored **verbatim**, host paths and all. R19 is a rule about what
+crosses the wire to a *remote* client, and the daemon applies it at that
+boundary: a projected connection's `session.transcript` response has known roots
+and the home directory replaced with display tokens and any remaining absolute
+path redacted, while a loopback connection reads the row exactly as it was
+stored. Scrubbing at write time instead would destroy the reviewer's own paths on
+the reviewer's own disk and buy nothing, since every read already crosses that
+boundary.
 
 The `context_rebuilt` marker takes the loop's other sink, `emit`, because it is
 not a harness event — the loop synthesizes it when a resume vanishes, so no

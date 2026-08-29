@@ -88,7 +88,7 @@ export interface TurnLoopDeps {
    * Capture a completed turn's raw harness events for the DISPLAY transcript (issue-set B).
    * The turn loop is the single serialized writer that already sees every event and persists
    * the cursor, so it is the natural capture point. The sink (wired in the composition root)
-   * projects these events to transcript rows — R19-scrubbing at that choke point using `cwd` —
+   * projects these events to transcript rows — verbatim, R19 runs at the wire —
    * and appends them to the durable transcript store. Optional: absent ⇒ no transcript captured
    * (the session read stays honest-empty), the harness CLI remains canonical either way.
    */

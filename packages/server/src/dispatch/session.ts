@@ -18,7 +18,7 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  *   • `session.transcript` (C07): the chat dock's read. The harness CLI stays the canonical
  *     conversation owner (#466 res. 3; Rennet persists only the `HarnessCursor` for resume) —
  *     but issue-set B adds an ADDITIVE display read-model: the turn loop captures the harness
- *     events it already sees, projects them to transcript rows (R19-scrubbed), and persists them
+ *     events it already sees, projects them to transcript rows and persists them verbatim
  *     so the dock shows history and survives reload. This read serves those rows via
  *     `transcriptRowsForReview`; honest-empty (`[]`) when no turns were captured yet. The live ask
  *     threads still arrive separately via `review.reattach`. The identity trail is Rennet's here.
@@ -127,7 +127,8 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // the client only calls this once a slug has resolved to a real review.
       const review = rt.requireReviewById(input.reviewId);
       // The projected coding turns the turn loop captured for this session (issue-set B), already
-      // R19-scrubbed at projection time. Honest-empty by construction: no store wired, or a session
+      // stored raw (R19 runs at the wire, for a projected connection). Honest-empty by
+      // construction: no store wired, or a session
       // with no captured turns yet, returns `[]` — capability present, never fabricated content.
       const rows = rt.deps.transcriptRowsForReview?.(input.reviewId) ?? [];
       return parseCommandOutput(name, { trail: sessionTrailForReview(review), rows: [...rows] });

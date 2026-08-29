@@ -576,8 +576,8 @@ export interface DispatchDeps {
   /**
    * The display-transcript read for `session.transcript` (issue-set B): the projected coding-turn
    * rows the turn loop captured and persisted for this review's session, resolved read-only via
-   * the same `resolveRoundSessionId` the rounds read uses. Rows are ALREADY R19-scrubbed at
-   * projection time. Absent ⇒ no transcript store wired; a session with no captured turns yet
+   * the same `resolveRoundSessionId` the rounds read uses. Rows are stored RAW — R19 scrubs them
+   * at the wire, for a projected connection only. Absent ⇒ no transcript store wired; a session with no captured turns yet
    * returns `[]` (honest-empty — the capability is present, no fabricated content). The harness
    * CLI stays the canonical conversation owner; this is an additive display read-model.
    */

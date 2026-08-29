@@ -1755,8 +1755,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   //     instead of starting cold — and a resume the CLI no longer has rebuilds context
   //     honestly rather than silently.
   //   • CAPTURE. The `recordTranscript` sink is the WRITE side of `session.transcript` (C07):
-  //     the harness events the loop already sees, projected to display rows and R19-scrubbed
-  //     at this one choke point, appended to the durable store the read serves. Nothing is
+  //     the harness events the loop already sees, projected to display rows and appended
+  //     VERBATIM to the durable store the read serves (R19 is applied at the wire, for a
+  //     projected connection only — see `projectCommandOutput`). Nothing is
   //     fabricated — a session whose turns have not run reads back empty because it genuinely
   //     has no rows. The `emit` sink carries the loop's SYNTHESIZED `context_rebuilt` marker,
   //     which is not a harness event and so cannot come from the projector.
@@ -1781,7 +1782,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Rebuilt fresh every turn, from the loop's own key. The loop merges the resume pointer
       // itself from the just-loaded cursor.
       buildSpec: () => ({ cwd: repoRoot }),
-      // The WRITE side of `session.transcript`: project → R19-scrub → append (failure-isolated;
+      // The WRITE side of `session.transcript`: project → append, raw (failure-isolated;
       // a display read-model never fails the coding turn that produced it).
       recordTranscript: createTranscriptCapture(transcriptStore, (error) =>
         console.error("Session transcript capture failed", error),
@@ -2012,7 +2013,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     // The display-transcript read for `session.transcript` (issue-set B): the coding-turn rows
     // the turn loop captured and persisted for this review's session, resolved READ-ONLY via the
-    // SAME target-claim derivation the rounds read uses. Rows were R19-scrubbed at projection time.
+    // SAME target-claim derivation the rounds read uses. Rows are stored raw and scrubbed at the
+    // wire, so a loopback client reads its own host paths and a projected one never does.
     // Honest-empty when no turns were captured yet — the harness CLI stays the canonical owner and
     // this is an additive display read-model. The WRITE side is the session turn loop's
     // `recordTranscript` sink above, which every round-dispatched coding turn runs through.
