@@ -24,6 +24,7 @@ import type {
   DispositionType,
   FlaggedReview,
   HandoffBundle,
+  LensAbsenceReason,
   LensBoard,
   LensKind,
   NoiseReview,
@@ -631,6 +632,12 @@ export interface DispatchDeps {
     generation: string,
     lens: LensKind,
   ) => Promise<LensBoard | undefined>;
+  /** A durable successful absence for the same board identity, when no board exists. */
+  readonly lensAbsenceForReview?: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => Promise<LensAbsenceReason | undefined>;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

@@ -91,6 +91,7 @@ The three delta headers, confirmed across this corpus (107 ADDED, 21 MODIFIED, 4
 Notes for a renderer:
 
 - A single change spec can carry more than one delta header (e.g. a `## MODIFIED Requirements` block followed by `## ADDED Requirements`). See `openspec/changes/archive/2026-08-16-add-windows-support/specs/packaged-editor-resolution/spec.md`.
+- Rennet renders that mixed file as one capability root and card, with exact per-operation sections in source order beneath it. Each requirement and its nearest operation section retain the operation badge; the card shows the ordered unique badge roll-up and uses the added-capability edge whenever `ADDED` is present.
 - `MODIFIED` is a whole-requirement replacement, so a lens cannot show an intra-requirement diff from the change file alone — it must diff the modified requirement against the base `specs/` requirement of the same name.
 - A change that creates a new capability may open its delta with `## Purpose` before the delta headers (the promoted spec inherits it).
 - `RENAMED` is not part of this corpus or the current writing guide; treat `ADDED`/`MODIFIED`/`REMOVED` as the complete set.

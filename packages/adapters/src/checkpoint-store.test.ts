@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filesTouchedByDiff } from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
+import { captureReviewedTree, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 
 // win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
 // lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
@@ -119,6 +119,44 @@ describe("GitCheckpointStore", () => {
     const ref = await store.capture();
     await store.discard(ref);
     expect(git(root, "for-each-ref", "--format=%(refname)", "refs/rennet/")).not.toContain(ref.ref);
+  });
+});
+
+describe("captureReviewedTree", () => {
+  it("pins the complete capture without moving HEAD or changing the real index", async () => {
+    const root = repository();
+    const headBefore = git(root, "rev-parse", "HEAD");
+    writeFileSync(join(root, ".gitignore"), "forced.txt\n");
+    writeFileSync(join(root, "forced.txt"), "force-added before capture\n");
+    git(root, "add", ".gitignore");
+    git(root, "add", "-f", "forced.txt");
+    writeFileSync(join(root, "tracked.txt"), "working tree before capture\n");
+    writeFileSync(join(root, "untracked-before.txt"), "present before capture\n");
+    const statusBefore = git(root, "status", "--porcelain=v1", "-z");
+    const indexTreeBefore = git(root, "write-tree");
+
+    const reviewedTree = await captureReviewedTree(root);
+    expect(git(root, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(git(root, "write-tree")).toBe(indexTreeBefore);
+    expect(git(root, "status", "--porcelain=v1", "-z")).toBe(statusBefore);
+
+    writeFileSync(join(root, "tracked.txt"), "working tree after capture\n");
+    writeFileSync(join(root, "untracked-before.txt"), "changed after capture\n");
+    writeFileSync(join(root, "untracked-after.txt"), "created after capture\n");
+
+    expect(git(root, "show", `${reviewedTree}:tracked.txt`)).toBe("working tree before capture");
+    expect(git(root, "show", `${reviewedTree}:untracked-before.txt`)).toBe(
+      "present before capture",
+    );
+    expect(git(root, "show", `${reviewedTree}:forced.txt`)).toBe("force-added before capture");
+    expect(git(root, "ls-tree", "-r", "--name-only", reviewedTree)).not.toContain(
+      "untracked-after.txt",
+    );
+    expect(git(root, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(git(root, "write-tree")).toBe(indexTreeBefore);
+    expect(git(root, "rev-parse", `refs/rennet/review-trees/${reviewedTree}^{tree}`)).toBe(
+      reviewedTree,
+    );
   });
 });
 

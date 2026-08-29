@@ -143,6 +143,50 @@ describe("generation lifecycle (append-then-freeze)", () => {
     });
     expect(gen.lensBoards).toEqual({ design: "b:design" });
   });
+
+  it("records a successful lens absence separately from a board that has not arrived", () => {
+    const gen = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "design",
+          absence: "no-material",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    expect(gen.lensBoards).toEqual({});
+    expect(gen.absentLenses).toEqual({ design: "no-material" });
+  });
+
+  it("clears a durable lens absence when that lens later produces a board", () => {
+    const absent = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "design",
+          absence: "no-material",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    const present = withLensBoards(absent, {
+      boards: [
+        {
+          lens: "design",
+          boardId: "b:design",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+
+    expect(present.lensBoards).toEqual({ design: "b:design" });
+    expect(present.absentLenses).toBeUndefined();
+  });
 });
 
 // ── The rounds runtime ──
@@ -359,6 +403,61 @@ describe("createRoundsRuntime", () => {
     );
     expect(afterRestart.ledger("crashy")).toEqual([]);
     expect(afterRestart.generation("gen:ps-1")).toBeUndefined();
+  });
+
+  it("persists no-spec absence before board metadata so restart cannot turn it into pending", async () => {
+    const genDir = mkdtempSync(join(tmpdir(), "gen-no-spec-crash-"));
+    const metaDir = mkdtempSync(join(tmpdir(), "meta-no-spec-crash-"));
+    const generationStore = new GenerationStore(genDir);
+    const metaStore = new BoardMetaStore(metaDir);
+    const sessionId = "no-spec-crash";
+    const first = createRoundsRuntime(
+      baseDeps({
+        persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+        loadDraftedBoards: (_repo, session, generation) =>
+          metaStore.listForGeneration(session, generation),
+        persistGeneration: (generation) => {
+          if (Object.keys(generation.lensBoards).length > 0) {
+            throw new Error("crashed after board metadata");
+          }
+          generationStore.save(generation);
+        },
+        loadGeneration: (id) => generationStore.load(id),
+      }),
+    );
+
+    await expect(
+      first.runRound(
+        roundInput({
+          session: { id: sessionId } as RoundInput["session"],
+          designArtifacts: null,
+        }),
+      ),
+    ).rejects.toThrow("crashed after board metadata");
+    expect(generationStore.load("gen:ps-1")?.absentLenses).toEqual({
+      design: "no-material",
+    });
+    expect(metaStore.listForGeneration(sessionId, "gen:ps-1").length).toBeGreaterThan(0);
+
+    const restarted = createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => {
+          throw new Error("durable evidence must not re-draft");
+        },
+        loadDraftedBoards: (_repo, session, generation) =>
+          metaStore.listForGeneration(session, generation),
+        persistGeneration: (generation) => generationStore.save(generation),
+        loadGeneration: (id) => generationStore.load(id),
+      }),
+    );
+    const recovered = await restarted.runRound(
+      roundInput({
+        session: { id: sessionId } as RoundInput["session"],
+        designArtifacts: null,
+      }),
+    );
+    expect(recovered.boardGeneration.absentLenses).toEqual({ design: "no-material" });
+    expect(recovered.boardGeneration.lensBoards).not.toHaveProperty("design");
   });
 
   // ── A dispatch that THROWS (review finding 5) ──────────────────────────────

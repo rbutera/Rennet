@@ -1,4 +1,3 @@
-import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseOpenSpecChange } from "@rennet/core";
 import type { OpenSpecChange, Patchset } from "@rennet/protocol";
@@ -13,15 +12,10 @@ import type { GitExec } from "./git-range-diff";
 // patchset's changed paths (`openspec/changes/<name>/`), and its artifacts are read
 // AT THE REVIEWED HEAD, not off an arbitrary checkout:
 //
-//   • WORKING-TREE review (`intent.surface === "working-tree"`): the reviewed content,
-//     including uncommitted edits, IS the working tree at `repository.root` — read it
-//     off disk.
-//   • RANGE / PR / RETROSPECTIVE review (any other surface, incl. an absent intent):
-//     the reviewed head is `repository.headOid`, which is diffed WITHOUT a checkout, so
-//     read the blob at that OID via `git show` (and list `specs/` via `git ls-tree`).
-//     A PR that ADDS or EDITS a change is invisible on the base checkout — this is the
-//     path that makes it visible. Same seam #206's verification reader uses
-//     (`createVerificationFileReaderForPatchset`).
+// Local reviews pin their complete working-tree bytes in `reviewedTreeOid`; range / PR /
+// retrospective reviews use `headOid`. Both are immutable Git objects, so later disk
+// edits cannot rewrite a captured Spec board. A legacy local patchset without the new
+// field falls back to its committed head rather than mutable checkout bytes.
 //
 // Deterministic and model-free — no model turn, no gate. When the patchset touches no
 // change, it returns `null` and the Spec angle shows its honest empty state.
@@ -52,28 +46,6 @@ type ReadArtifact = (repoRelativePath: string) => Promise<string | undefined>;
 /** The candidate capability names under a change's `specs/` dir at the reviewed state. */
 type ListSpecCapabilities = (specsRelativePath: string) => Promise<string[]>;
 
-/** Read a file off disk as UTF-8, or `undefined` when it does not exist. */
-async function readDisk(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-/** The immediate subdirectory names under a disk `specs/` dir (empty when absent). */
-async function listDiskCapabilities(specsDir: string): Promise<string[]> {
-  const entries = await readdir(specsDir, { withFileTypes: true }).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  });
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort(byName);
-}
-
 /** The immediate entry names of a `specs/` tree at `headOid` (empty when absent). */
 async function listGitCapabilities(
   git: GitExec,
@@ -97,8 +69,8 @@ async function listGitCapabilities(
 
 /**
  * Read the OpenSpec change the reviewed patchset selected, parsed into the structured
- * `OpenSpecChange` the Spec angle renders — reading each artifact AT THE REVIEWED HEAD
- * (disk for a working-tree review, `git show <headOid>:<path>` for a range/PR review).
+ * `OpenSpecChange` the Spec angle renders — reading each artifact from the immutable
+ * reviewed tree (`reviewedTreeOid ?? headOid`).
  * Returns `null` when the patchset touches no `openspec/changes/<name>/` — the honest
  * "no OpenSpec change in this review" case.
  */
@@ -111,19 +83,11 @@ export async function readOpenSpecChange(
 
   const root = patchset.repository.root;
   const changeRel = `${CHANGES_PREFIX}${name}`;
-  const isWorkingTree = patchset.intent?.surface === "working-tree";
-
-  let read: ReadArtifact;
-  let listCapabilities: ListSpecCapabilities;
-  if (isWorkingTree) {
-    read = (rel) => readDisk(join(root, rel));
-    listCapabilities = (specsRel) => listDiskCapabilities(join(root, specsRel));
-  } else {
-    const headOid = patchset.repository.headOid;
-    const gitShow = createGitShowFileRead({ git, repositoryRoot: root, headOid });
-    read = (rel) => gitShow(join(root, rel));
-    listCapabilities = (specsRel) => listGitCapabilities(git, root, headOid, specsRel);
-  }
+  const reviewedOid = patchset.repository.reviewedTreeOid ?? patchset.repository.headOid;
+  const gitShow = createGitShowFileRead({ git, repositoryRoot: root, headOid: reviewedOid });
+  const read: ReadArtifact = (rel) => gitShow(join(root, rel));
+  const listCapabilities: ListSpecCapabilities = (specsRel) =>
+    listGitCapabilities(git, root, reviewedOid, specsRel);
 
   const [proposalMd, designMd, tasksMd, capabilities] = await Promise.all([
     read(`${changeRel}/proposal.md`),

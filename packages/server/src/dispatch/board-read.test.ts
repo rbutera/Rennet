@@ -49,6 +49,8 @@ function harness(deps: Partial<DispatchDeps> = {}) {
 
 const lensBoardForReview: DispatchDeps["lensBoardForReview"] = (_reviewId, generation, lens) =>
   Promise.resolve(generation === DESIGN.generation && lens === DESIGN.lens ? DESIGN : undefined);
+const lensAbsenceForReview: DispatchDeps["lensAbsenceForReview"] = (_reviewId, generation, lens) =>
+  Promise.resolve(generation === DESIGN.generation && lens === "noise" ? "no-material" : undefined);
 
 describe("board.read — the lens-board read", () => {
   it("serves the persisted board for a (review, generation, lens) the host drafted", async () => {
@@ -69,6 +71,15 @@ describe("board.read — the lens-board read", () => {
       lens: "noise",
     });
     expect(out).toEqual({ board: null });
+  });
+
+  it("distinguishes a durably absent lens from a board that has not arrived", async () => {
+    const out = await harness({ lensBoardForReview, lensAbsenceForReview })["board.read"]({
+      reviewId: REVIEW_ID,
+      generation: "gen-1",
+      lens: "noise",
+    });
+    expect(out).toEqual({ board: null, absence: "no-material" });
   });
 
   it("answers honest-MISSING when no board substrate is wired at all", async () => {

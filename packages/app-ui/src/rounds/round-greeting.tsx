@@ -35,8 +35,8 @@ const NO_STEPS: readonly LaneRow[] = Object.freeze([]);
 
 /** The greeting's per-lane status label — EXHAUSTIVE over `RowStatus` (finding 5). A
  *  regenerating lane reads "re-drafting"; a queued one "queued"; a drafted-but-unannounced
- *  one "drafted"; a FAILED one "failed" — never the old "done" that made a queued or failed
- *  drafter lie as a settled success. */
+ *  one "drafted"; a successful no-material lane "not present"; a FAILED one "failed" —
+ *  never the old "done" that made a queued or failed drafter lie as a settled success. */
 function laneStatusLabel(status: RowStatus): string {
   switch (status) {
     case "queued":
@@ -45,6 +45,8 @@ function laneStatusLabel(status: RowStatus): string {
       return "re-drafting";
     case "drafted":
       return "drafted";
+    case "absent":
+      return "not present";
     case "failed":
       return "failed";
     case "done":
@@ -63,6 +65,7 @@ function laneNote(lane: LensLane): string {
   if (lane.status === "done")
     return lane.verdict === "carrying-forward" ? "carrying forward" : "reworked";
   if (lane.status === "failed") return lane.reason;
+  if (lane.status === "absent") return lane.reason;
   return laneStatusLabel(lane.status);
 }
 
@@ -82,7 +85,8 @@ function laneNote(lane: LensLane): string {
  */
 function finishSteps(state: RoundState, lanes: readonly LensLane[]): readonly LaneRow[] {
   const settled =
-    lanes.length > 0 && lanes.every((l) => l.status === "done" || l.status === "failed");
+    lanes.length > 0 &&
+    lanes.every((l) => l.status === "done" || l.status === "absent" || l.status === "failed");
   if (state.phase === "composed") {
     return [
       { id: "post-process", label: "Cleaning up drafts · post-process pass", status: "done" },

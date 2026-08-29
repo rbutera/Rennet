@@ -70,9 +70,19 @@ The schema declares a closed palette of thirteen kinds: the typed lens outputs
 a genuinely new structured shape becomes a new typed kind.
 
 The board document is a Rennet-owned envelope above those elements. It carries
-an authored title, a Markdown introduction, and the `reading` or `structured`
-measure. `HostBoardSchema` and `DraftBoardSchema` validate it, but it is not a
-fourteenth whiteboard element and does not enter the board event log as an op.
+an authored title, a Markdown introduction, the `reading` or `structured`
+measure, and optional source links and labelled string stats. Sections can
+carry their own sources and an artifact `spec_delta`; requirements can carry
+their name, capability, canonical scenario refs, related files, exact source,
+artifact delta, and host-grounded coverage. `HostBoardSchema` and
+`DraftBoardSchema` validate this data, but the document is not a fourteenth
+whiteboard element and does not enter the board event log as an op.
+
+A source ref carries a repo-relative path and may add its stable discovery
+candidate id, label, and line. Candidate identity disambiguates two selected
+artifact sets that share a file; it does not replace the path the editor opens.
+Design decisions stated by an artifact carry `inferred: false` and that exact
+source. Sparse decisions may honestly leave evidence or alternatives empty.
 
 The file keeps two honest layers, matching the kit's own doctrine that authoring
 is convenience and the wire is truth:
@@ -133,6 +143,11 @@ that the thirteen element kinds cannot carry. The pipeline persists this record
 before announcing the board. `board.read` combines it with the event-log
 projection, so a restart preserves the authored title and introduction rather
 than reconstructing them from section elements.
+
+A successful no-material result has no board or board-meta row. Its durable home
+is the generation's `absentLenses` map. `board.read` pairs `board: null` with the
+`no-material` code for that case, keeping it distinct from a board that has not
+arrived yet.
 
 ### Write and broadcast path
 

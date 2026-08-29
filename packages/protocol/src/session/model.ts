@@ -107,11 +107,16 @@ export type SessionThread = z.infer<typeof SessionThreadSchema>;
  * the generation freezes immutable and a successor is minted — the successor
  * account compares N vs N+1.
  */
+export const LensAbsenceReasonSchema = z.enum(["no-material"]);
+export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
+
 export const GenerationSchema = z.object({
   id,
   patchsetId: id,
   /** Per-lens draft boards (L2), keyed by lens; present once drafted. */
   lensBoards: z.partialRecord(z.enum(LENS_KINDS), id),
+  /** Successful per-lens absences, distinct from a board that has not arrived yet. */
+  absentLenses: z.partialRecord(z.enum(LENS_KINDS), LensAbsenceReasonSchema).optional(),
   /** The orchestrator-authored composition board (L3), once composed. */
   compositionBoardId: id.optional(),
   status: z.enum(["live", "frozen"]),
@@ -187,9 +192,8 @@ export type RoundRecord = z.infer<typeof RoundRecordSchema>;
 // duplicate or re-ordered frame just re-states rows the fold already holds.
 
 /** A live progress row's status — the run route's queued / spinner / check, as data.
- *  `drafted` belongs only to a lens lane (its board is written, its delta verdict not yet
- *  known); the step rows never reach it. */
-export const RowStatusSchema = z.enum(["queued", "running", "drafted", "done", "failed"]);
+ *  `drafted` and `absent` belong only to a lens lane; step rows never reach either. */
+export const RowStatusSchema = z.enum(["queued", "running", "drafted", "done", "absent", "failed"]);
 export type RowStatus = z.infer<typeof RowStatusSchema>;
 
 const laneBase = { id, label: z.string() };
@@ -222,14 +226,16 @@ export type LaneVerdict = z.infer<typeof LaneVerdictSchema>;
  * LaneRowSchema}, with the verdict bound to the state that can HAVE one: `queued` and
  * `running` carry no verdict because none has been computed; `drafted` is the real window
  * between a board's draft landing and its arrival (cross-lens coverage runs in between,
- * and the verdict rides the arrival); `done` REQUIRES the verdict; `failed` requires the
- * drafter's reason. There is no representable "settled lane with no verdict".
+ * and the verdict rides the arrival); `done` REQUIRES the verdict; `absent` records a
+ * successful no-material result; `failed` requires the drafter's reason. There is no
+ * representable "settled lane with no verdict".
  */
 export const LensLaneSchema = z.discriminatedUnion("status", [
   z.object({ ...laneBase, status: z.literal("queued") }),
   z.object({ ...laneBase, status: z.literal("running") }),
   z.object({ ...laneBase, status: z.literal("drafted") }),
   z.object({ ...laneBase, status: z.literal("done"), verdict: LaneVerdictSchema }),
+  z.object({ ...laneBase, status: z.literal("absent"), reason: z.string() }),
   z.object({ ...laneBase, status: z.literal("failed"), reason: z.string() }),
 ]);
 export type LensLane = z.infer<typeof LensLaneSchema>;

@@ -36,6 +36,7 @@ import { execa } from "execa";
 
 /** The hidden ref namespace — off every branch, so it never shows in log/branch. */
 const CHECKPOINT_REF_PREFIX = "refs/rennet/checkpoints/";
+const REVIEW_TREE_REF_PREFIX = "refs/rennet/review-trees/";
 const CHECKPOINT_MESSAGE = "rennet: handoff checkpoint";
 
 /**
@@ -116,6 +117,54 @@ async function headOid(locus: Locus, root: string): Promise<string | null> {
 }
 
 /**
+ * Materialise the literal working tree in a throwaway index without changing the
+ * user's real index. Seeding from the real index tree is load-bearing: an empty
+ * temporary index followed by `add -A` silently omits a tracked path that is now
+ * ignored (including a newly force-added path), even though it belongs to the
+ * user's reviewed tree.
+ */
+async function writeWorkingTree(locus: Locus, root: string, indexFile: string): Promise<string> {
+  const indexTree = await git(locus, root, ["write-tree"]);
+  await git(locus, root, ["read-tree", indexTree], indexFile);
+  await git(locus, root, ["add", "-A"], indexFile);
+  return git(locus, root, ["write-tree"], indexFile);
+}
+
+async function removeSnapshotIndex(locus: Locus, indexFile: string): Promise<void> {
+  if (locus.kind === "host") {
+    await rm(indexFile, { force: true });
+    return;
+  }
+  const command = locusCommand(locus, "rm", ["-f", indexFile]);
+  await execa(command.file, [...command.args], { reject: false, shell: false });
+}
+
+/**
+ * Capture and retain the complete local working-tree state as a deterministic Git
+ * tree. The ref points directly to the tree: no synthetic commit, author identity,
+ * timestamp, branch, HEAD, or real-index mutation participates in the snapshot.
+ */
+export async function captureReviewedTree(
+  root: string,
+  locus: Locus = HOST_LOCUS,
+): Promise<string> {
+  const indexFile = checkpointIndexPath(locus);
+  try {
+    const tree = await writeWorkingTree(locus, root, indexFile);
+    await git(locus, root, [
+      "-c",
+      "core.logAllRefUpdates=false",
+      "update-ref",
+      `${REVIEW_TREE_REF_PREFIX}${tree}`,
+      tree,
+    ]);
+    return tree;
+  } finally {
+    await removeSnapshotIndex(locus, indexFile);
+  }
+}
+
+/**
  * A checkpoint store bound to one repository root. Implements the node-free
  * `CheckpointPort` the core handoff orchestrator (`runHandoffTurn`) depends on, so
  * `core` never imports this git-bound module — the desktop composition root wires it.
@@ -137,11 +186,7 @@ export class GitCheckpointStore implements CheckpointPort {
   async capture(): Promise<CheckpointRef> {
     const indexFile = checkpointIndexPath(this.locus);
     try {
-      // An empty temp index + `add -A` stages the LITERAL working tree (all present,
-      // non-ignored files). No pathspec, no deletions-vs-HEAD subtlety: the resulting
-      // tree is the working tree as it stands right now.
-      await git(this.locus, this.root, ["add", "-A"], indexFile);
-      const tree = await git(this.locus, this.root, ["write-tree"], indexFile);
+      const tree = await writeWorkingTree(this.locus, this.root, indexFile);
       const parent = await headOid(this.locus, this.root);
       const commit = await git(
         this.locus,
@@ -173,12 +218,7 @@ export class GitCheckpointStore implements CheckpointPort {
 
   /** Remove the throwaway checkpoint index at its locus (host fs vs in-distro rm). */
   private async removeCheckpointIndex(indexFile: string): Promise<void> {
-    if (this.locus.kind === "host") {
-      await rm(indexFile, { force: true });
-      return;
-    }
-    const command = locusCommand(this.locus, "rm", ["-f", indexFile]);
-    await execa(command.file, [...command.args], { reject: false, shell: false });
+    await removeSnapshotIndex(this.locus, indexFile);
   }
 
   /**

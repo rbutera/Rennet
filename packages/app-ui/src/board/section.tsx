@@ -1,9 +1,16 @@
-import { DOMAIN_COUNT_KINDS, type DomainCountKind, type LensSection } from "@rennet/protocol";
+import {
+  DOMAIN_COUNT_KINDS,
+  type DomainCountKind,
+  type LensKind,
+  type LensSection,
+} from "@rennet/protocol";
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
+import { SourceChips, SpecDeltaBadge } from "./design-meta";
+import { DesignSectionBody } from "./design-structure";
 import { useBoardId, useElement } from "./kinds/element-context";
 import { BoardChildren } from "./kinds/renderers";
 import { selectDeltaViewed } from "./viewed-delta";
@@ -97,9 +104,11 @@ function FoldLine({
  */
 export function Section({
   entry,
+  lens,
   defaultOpen,
 }: {
   readonly entry: LensSection;
+  readonly lens?: LensKind;
   readonly defaultOpen?: boolean;
 }) {
   const boardId = useBoardId();
@@ -110,9 +119,14 @@ export function Section({
 
   // A dangling / non-section ref renders nothing (mirrors the pool's other resolvers).
   if (el?.kind !== "section") return null;
-  const { title, children } = el.data;
+  const { title, children, sources, spec_delta: specDelta } = el.data;
 
   const showDot = entry.delta !== undefined && !viewed;
+  const headingLabel = [
+    title,
+    ...(specDelta === undefined ? [] : [`${specDelta} specification`]),
+    ...(entry.delta === undefined ? [] : [DELTA_LABEL[entry.delta]]),
+  ].join(", ");
   const interact = () => {
     setOpen((o) => !o);
     if (entry.delta !== undefined) markViewed(boardId, entry.ref);
@@ -124,34 +138,39 @@ export function Section({
       data-kind="board-section"
       data-section-id={entry.ref}
       {...(entry.delta ? { "data-delta": entry.delta } : {})}
+      {...(specDelta ? { "data-spec-delta": specDelta } : {})}
       data-open={open}
       className="flex scroll-mt-16 flex-col gap-4"
     >
-      <h2 className="contents">
-        <button
-          type="button"
-          onClick={interact}
-          aria-expanded={open}
-          aria-label={entry.delta ? `${title}, ${DELTA_LABEL[entry.delta]}` : title}
-          className="flex w-full items-center gap-2 text-left"
-        >
-          <Icon
-            icon={ChevronDown}
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              !open && "-rotate-90",
-            )}
-          />
-          {showDot ? (
-            <span
-              data-testid="delta-dot"
-              aria-hidden="true"
-              className="size-1.5 shrink-0 rounded-full bg-primary"
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={interact}
+            aria-expanded={open}
+            aria-label={headingLabel}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <Icon
+              icon={ChevronDown}
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                !open && "-rotate-90",
+              )}
             />
-          ) : null}
-          <span className="min-w-0 flex-1 font-medium text-xl text-foreground">{title}</span>
-        </button>
-      </h2>
+            {showDot ? (
+              <span
+                data-testid="delta-dot"
+                aria-hidden="true"
+                className="size-1.5 shrink-0 rounded-full bg-primary"
+              />
+            ) : null}
+            <span className="min-w-0 font-medium text-xl text-foreground">{title}</span>
+            {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
+          </button>
+        </h2>
+        <SourceChips sources={sources ?? []} />
+      </div>
       <Collapse open={!open}>
         <button type="button" onClick={interact} className="flex w-full pl-5 text-left">
           <FoldLine gist={entry.gist} counts={entry.counts} />
@@ -159,7 +178,11 @@ export function Section({
       </Collapse>
       <Collapse open={open}>
         <div className="flex flex-col gap-6 pl-5">
-          <BoardChildren ids={children} />
+          {lens === "design" ? (
+            <DesignSectionBody section={el} />
+          ) : (
+            <BoardChildren ids={children} />
+          )}
         </div>
       </Collapse>
     </section>

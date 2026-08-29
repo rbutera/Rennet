@@ -5,7 +5,7 @@ import { BridgeProvider } from "../data";
 import { mount } from "../test/dom";
 import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
-import { useBoardData } from "./board-data";
+import { lensReadsSettled, useBoardData } from "./board-data";
 
 // The board-fetch seam resolves boards through the registered `board.read` command
 // (C18). The fixtures live behind the import fence and reach the seam only as a
@@ -16,6 +16,7 @@ const REVIEW = "rev-1";
 function BoardProbe({ generation, lens }: { generation: string; lens: LensKind }) {
   const r = useBoardData(REVIEW, generation, lens);
   if (r.status === "invalid") return <span>invalid:{r.reason}</span>;
+  if (r.status === "absent") return <span>absent:{r.reason}</span>;
   if (r.status === "missing") return <span>missing</span>;
   if (r.status === "pending") return <span>pending</span>;
   return (
@@ -29,7 +30,10 @@ function BoardProbe({ generation, lens }: { generation: string; lens: LensKind }
 function probe(
   generation: string,
   lens: LensKind,
-  served: (input: { generation: string; lens: LensKind }) => { board: LensBoard | null },
+  served: (input: { generation: string; lens: LensKind }) => {
+    board: LensBoard | null;
+    absence?: "no-material";
+  },
 ) {
   return mount(
     <BridgeProvider bridge={new MemoryBridge({ "board.read": served })}>
@@ -43,6 +47,19 @@ function probe(
 const serving = (board: unknown) => () => ({ board }) as { board: LensBoard | null };
 
 describe("board-data seam — the single board resolution point", () => {
+  it("treats durable absence as settled, while a missing board remains pollable", () => {
+    const absent = { status: "absent", reason: "no-material" } as const;
+    const resolutions = {
+      design: absent,
+      sequence: absent,
+      decisions: absent,
+      flagged: absent,
+      noise: absent,
+    };
+    expect(lensReadsSettled(resolutions)).toBe(true);
+    expect(lensReadsSettled({ ...resolutions, design: { status: "missing" } })).toBe(false);
+  });
+
   it("resolves a board for a (generation, lens) pair, validated against LensBoardSchema", async () => {
     const { findByText } = probe("gen1", "design", fixtureBoardRead);
     // The design board's first section is `change`; its element pool is non-empty —
@@ -112,6 +129,14 @@ describe("board-data seam — the single board resolution point", () => {
     // host says so with `board: null`.
     const { findByText } = probe("gen2", "design", fixtureBoardRead);
     expect(await findByText("missing")).toBeTruthy();
+  });
+
+  it("resolves a successful no-spec result separately from a board still missing", async () => {
+    const { findByText } = probe("gen2", "design", () => ({
+      board: null,
+      absence: "no-material",
+    }));
+    expect(await findByText("absent:no-material")).toBeTruthy();
   });
 
   it("drills into a frozen generation's board through the same seam", async () => {

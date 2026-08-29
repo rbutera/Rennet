@@ -36,6 +36,19 @@ const author = { kind: "lens-agent", id: "lens:design" } as const;
 
 // A fixture board exercising every one of the 13 kinds.
 const fullBoard = {
+  document: {
+    title: "Credential refresh design",
+    introMarkdown: "The specification adds observable refresh outcomes.",
+    measure: "structured" as const,
+    sources: [
+      { path: "openspec/changes/refresh/proposal.md", label: "proposal.md" },
+      { path: "openspec/changes/refresh/design.md", label: "design.md", line: 12 },
+    ],
+    stats: [
+      { label: "Capabilities", value: "2 added · 1 modified" },
+      { label: "Tasks", value: "11/13" },
+    ],
+  },
   elements: [
     {
       id: "cr1",
@@ -76,7 +89,19 @@ const fullBoard = {
     {
       id: "req1",
       kind: "requirement",
-      data: { author, shall: "must close handles", coverage: "met", trace: ["cr1"] },
+      data: {
+        author,
+        name: "Handles close after use",
+        capability: "refresh-observability",
+        shall: "must close handles",
+        scenarios: ["p1"],
+        related_files: ["src/a.ts", "src/a.test.ts"],
+        source: { path: "openspec/changes/refresh/specs/runtime/spec.md", line: 8 },
+        spec_delta: "added",
+        coverage: "met",
+        trace: ["cr1"],
+        tests: 3,
+      },
     },
     {
       id: "nv1",
@@ -102,7 +127,14 @@ const fullBoard = {
     {
       id: "s1",
       kind: "section",
-      data: { author, title: "Findings", children: ["f1"], delta: "new" },
+      data: {
+        author,
+        title: "Findings",
+        children: ["f1"],
+        sources: [{ path: "openspec/changes/refresh/specs/runtime/spec.md", label: "spec.md" }],
+        spec_delta: "modified",
+        delta: "new",
+      },
     },
     { id: "p1", kind: "prose", data: { author, markdown: "Some **prose**." } },
     { id: "c1", kind: "callout", data: { author, variant: "warning", body: "heads up" } },
@@ -178,7 +210,6 @@ describe("host board schema (#462)", () => {
     ["finding", "concurrence"],
     ["decision", "evidence"],
     ["decision", "alternatives"],
-    ["requirement", "trace"],
     ["order_step", "children"],
     ["section", "children"],
     ["review_comment", "covers"],
@@ -210,6 +241,45 @@ describe("host board schema (#462)", () => {
     const r = HostBoardSchema.safeParse(withExtra);
     expect(r.success).toBe(true);
   });
+
+  it("accepts a proposal requirement with no implementation coverage", () => {
+    expect(
+      HostElementSchema.safeParse({
+        id: "req-proposal",
+        kind: "requirement",
+        data: {
+          author,
+          shall: "The daemon SHALL record every refresh outcome.",
+          scenarios: ["p1"],
+          source: { path: "openspec/changes/refresh/specs/runtime/spec.md", line: 8 },
+          spec_delta: "added",
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects invalid spec delta states, source lines, and test counts", () => {
+    const requirement = fullBoard.elements.find((element) => element.kind === "requirement");
+    if (requirement?.kind !== "requirement") throw new Error("fixture requirement");
+    expect(
+      HostElementSchema.safeParse({
+        ...requirement,
+        data: { ...requirement.data, spec_delta: "new" },
+      }).success,
+    ).toBe(false);
+    expect(
+      HostElementSchema.safeParse({
+        ...requirement,
+        data: { ...requirement.data, source: { path: "spec.md", line: 0 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      HostElementSchema.safeParse({
+        ...requirement,
+        data: { ...requirement.data, tests: -1 },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 // The omit POLICY, pinned independently of production `DRAFT_OMITTED_KINDS`
@@ -230,6 +300,8 @@ describe("draft board seam (parseDraft)", () => {
       title: "The change in reading order",
       introMarkdown: "Start with the durable write, then follow its projection.",
       measure: "reading" as const,
+      sources: [{ path: "openspec/changes/write/proposal.md", label: "proposal.md" }],
+      stats: [{ label: "Tasks", value: "0/7" }],
     };
     const authored = parseDraft({ ...draftBoard, document });
     expect(authored.ok).toBe(true);

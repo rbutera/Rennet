@@ -123,6 +123,18 @@ export {
   saveConventionCatalogue,
 } from "./convention-catalogue-reader";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
+export {
+  DESIGN_ARTIFACT_LIMITS,
+  type DesignArtifact,
+  type DesignArtifactCandidate,
+  type DesignArtifactFormat,
+  type DesignArtifactLimits,
+  type DesignArtifactRole,
+  type DesignArtifactSet,
+  type DesignCandidateRelevance,
+  type DiscoverDesignArtifactsOptions,
+  discoverDesignArtifacts,
+} from "./design-artifact-discovery";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExecObservingTurn,

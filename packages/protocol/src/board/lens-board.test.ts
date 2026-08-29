@@ -21,6 +21,11 @@ const fixture = {
     title: "Design · durable refresh observations",
     introMarkdown: "The specification and implementation agree on one write path.",
     measure: "structured",
+    sources: [
+      { path: "openspec/changes/refresh/proposal.md", label: "proposal.md" },
+      { path: "openspec/changes/refresh/design.md", label: "design.md", line: 14 },
+    ],
+    stats: [{ label: "Tasks", value: "11/13" }],
   },
   sections: [
     {
@@ -95,11 +100,15 @@ describe("LensBoard projection (client asset risk 1)", () => {
         title: "Follow the durable write",
         introMarkdown: "The reader starts at persistence.",
         measure: "structured",
+        sources: [{ path: "openspec/changes/write/design.md", label: "design.md" }],
+        stats: [{ label: "Steps", value: "4" }],
       }),
     ).toEqual({
       title: "Follow the durable write",
       introMarkdown: "The reader starts at persistence.",
       measure: "reading",
+      sources: [{ path: "openspec/changes/write/design.md", label: "design.md" }],
+      stats: [{ label: "Steps", value: "4" }],
     });
   });
 

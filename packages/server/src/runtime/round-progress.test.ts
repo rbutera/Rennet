@@ -1,7 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BoardMetaStore, GenerationStore } from "@rennet/adapters";
+import {
+  BoardMetaStore,
+  DESIGN_ARTIFACT_LIMITS,
+  type DesignArtifactSet,
+  GenerationStore,
+} from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort, LintTarget } from "@rennet/core";
 import type {
   DraftBoard,
@@ -88,6 +93,33 @@ const KNOWLEDGE: KnowledgeSet = {
   statements: [],
 };
 
+const NO_MATERIAL_DESIGN_ARTIFACTS: DesignArtifactSet = {
+  changedPaths: ["src/a.ts"],
+  omittedChangedPathCount: 0,
+  candidates: [
+    {
+      id: "openspec:unrelated-feature",
+      format: "openspec",
+      name: "unrelated-feature",
+      nameSourceBytes: 17,
+      nameTruncated: false,
+      relevance: { kind: "repository-candidate" },
+      artifacts: [
+        {
+          path: "openspec/changes/unrelated-feature/proposal.md",
+          role: "proposal",
+          content: "# Unrelated feature\n\nThis change governs billing notifications.",
+          sourceBytes: 63,
+          truncated: false,
+        },
+      ],
+      omittedArtifactCount: 0,
+    },
+  ],
+  omittedCandidateCount: 0,
+  limits: DESIGN_ARTIFACT_LIMITS,
+};
+
 const author = { kind: "lens-agent", id: "seat" };
 
 /** A schema-valid board carrying ONE section whose child prose says `body`. Two boards
@@ -105,20 +137,20 @@ function sectioned(body: string): DraftBoard {
 }
 
 /**
- * A claude port that answers each DRAFTING turn with `boardFor(lens)`. The pipeline funnels
+ * A claude port that answers each DRAFTING turn with `outputFor(lens)`. The pipeline funnels
  * every drafted board through a post-process turn (`prompts/post-process.md`) on the same
  * seat; that turn must hand back the board it was given, so the fake replays the last
  * drafted board for it. (Answering post-process with a fresh board silently replaced a
  * lens's re-draft — which is exactly what the 3.3 control caught.)
  */
-function fakeClaudePort(boardFor: (lens: string) => DraftBoard): HarnessPort {
+function fakeClaudePort(outputFor: (lens: string) => unknown): HarnessPort {
   const lensFromPrompt = (p: string): string =>
     /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
-  let lastDrafted: DraftBoard | undefined;
-  const answer = (prompt: string): DraftBoard => {
+  let lastDrafted: unknown;
+  const answer = (prompt: string): unknown => {
     const lens = lensFromPrompt(prompt);
     if (lens === "post-process" && lastDrafted !== undefined) return lastDrafted;
-    lastDrafted = boardFor(lens);
+    lastDrafted = outputFor(lens);
     return lastDrafted;
   };
   return {
@@ -213,9 +245,9 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  function runtimeWith(boardFor: (lens: string) => DraftBoard) {
+  function runtimeWith(outputFor: (lens: string) => unknown) {
     return createRoundsRuntime({
-      resolveClaudePort: async () => fakeClaudePort(boardFor),
+      resolveClaudePort: async () => fakeClaudePort(outputFor),
       resolveCodexExecutor: async () => null as CodexExecutor | null,
       boardsRuntimeFor: () => ({
         service: boards.service,
@@ -389,6 +421,57 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     // …and a failed lane STRUCTURALLY carries its reason (finding 8) — no empty detail.
     expect(design?.status === "failed" ? design.reason : "").not.toBe("");
     // Boards did land, so the round still composed — the failure is one lane's, not the round's.
+    expect(events.at(-1)?.type).toBe("composed");
+  });
+
+  it("a grounded Design dismissal settles that lane as absent while the other lenses compose", async () => {
+    const events: RoundEvent[] = [];
+    const outcome = await runtimeWith((lens) =>
+      lens === "design"
+        ? {
+            absence: "no-material",
+            candidates: NO_MATERIAL_DESIGN_ARTIFACTS.candidates.map((candidate) => ({
+              id: candidate.id,
+              relevance: candidate.relevance.kind,
+              reason: "This specification describes a different feature than the reviewed change.",
+            })),
+          }
+        : sectioned("fine"),
+    ).runRound({
+      session: { ...session, id: "design-absent-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-no-spec" }),
+      onProgress: (event) => events.push(event),
+      designArtifacts: NO_MATERIAL_DESIGN_ARTIFACTS,
+      ...collationFor(),
+    });
+
+    const settled = [...events].reverse().find((event) => event.type === "lens");
+    if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
+    const design = settled.lanes.find((lane) => lane.id === "design");
+    expect(design).toEqual({
+      id: "design",
+      label: "Design",
+      status: "absent",
+      reason: "No Design specification applies to this change.",
+    });
+    const absentAt = events.findIndex(
+      (event) =>
+        event.type === "lens" &&
+        event.lanes.some((lane) => lane.id === "design" && lane.status === "absent"),
+    );
+    const sequenceDoneAt = events.findIndex(
+      (event) =>
+        event.type === "lens" &&
+        event.lanes.some((lane) => lane.id === "sequence" && lane.status === "done"),
+    );
+    expect(absentAt).toBeGreaterThanOrEqual(0);
+    expect(absentAt).toBeLessThan(sequenceDoneAt);
+    expect(outcome.boardGeneration.lensBoards).not.toHaveProperty("design");
+    expect(Object.keys(outcome.boardGeneration.lensBoards)).toHaveLength(4);
+    expect(outcome.boardGeneration.absentLenses).toEqual({ design: "no-material" });
     expect(events.at(-1)?.type).toBe("composed");
   });
 

@@ -21,7 +21,11 @@ export function boardHandlers(rt: DispatchRuntime) {
       rt.requireReviewById(input.reviewId);
       const board =
         (await rt.deps.lensBoardForReview?.(input.reviewId, input.generation, input.lens)) ?? null;
-      return parseCommandOutput(name, { board });
+      const absence =
+        board === null
+          ? await rt.deps.lensAbsenceForReview?.(input.reviewId, input.generation, input.lens)
+          : undefined;
+      return parseCommandOutput(name, { board, ...(absence === undefined ? {} : { absence }) });
     },
   } satisfies Record<string, CommandHandler>;
 }

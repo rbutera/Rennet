@@ -9,10 +9,18 @@ agent's ability to inspect, edit, test, commit, or push.
 
 ## Review identity and capture
 
-A review targets an immutable patchset. Local Git capture records the merge-base
-to current HEAD diff together with staged, unstaged, and untracked changes. Each
-file record keeps the complete byte count even when the visible content is
-truncated. Binary files and submodules remain explicit capture states rather
+A review targets an immutable patchset. Local Git capture writes the complete
+reviewed working state—indexed, unstaged, and non-ignored untracked files—to a deterministic
+Git tree through a temporary index seeded from the real index. It pins that tree
+under `refs/rennet/review-trees/<tree-oid>` without moving the branch, HEAD, or
+the real index. The patchset keeps `headOid` as the actual branch commit and
+records the pinned tree separately as `reviewedTreeOid`.
+
+The diff, file records, intent snapshots, repository inventory, and design
+artifact reads all derive from the merge base and that one reviewed tree. A file
+edited or deleted after capture therefore cannot change the review being
+drafted. Each file record keeps the complete byte count even when visible content
+is truncated. Binary files and submodules remain explicit capture states rather
 than disappearing from the review.
 
 Recapture adds a successor patchset. It never rewrites the patchset that prior

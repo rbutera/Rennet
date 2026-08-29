@@ -17,6 +17,8 @@ import type { ElementOf } from "../registry";
 
 interface BoardElements {
   readonly index: ReadonlyMap<string, HostElement>;
+  /** The review source/artifact navigation commands target. */
+  readonly reviewId: string;
   /** The patchset prose citations resolve against — the first `code_ref`'s, or "". */
   readonly patchsetId: string;
   /** The board's generation — half the durable-highlight scope key (finding 2). */
@@ -27,6 +29,7 @@ interface BoardElements {
 
 const BoardElementsContext = createContext<BoardElements>({
   index: new Map(),
+  reviewId: "",
   patchsetId: "",
   generation: "",
   boardId: "",
@@ -50,11 +53,14 @@ export function toCodeRef(element: ElementOf<"code_ref">): CodeRef {
  *  (from the resolved board) and by cluster-3 tests (from a fixture element list). */
 export function BoardElementsProvider({
   elements,
+  reviewId = "",
   generation = "",
   boardId = "",
   children,
 }: {
   readonly elements: readonly HostElement[];
+  /** The review source/artifact navigation commands target. */
+  readonly reviewId?: string;
   /** The board's generation — the durable-highlight scope key (finding 2). */
   readonly generation?: string;
   /** The board's id — the viewed-delta scope key (finding 3). */
@@ -66,12 +72,18 @@ export function BoardElementsProvider({
     const firstCodeRef = elements.find((el) => el.kind === "code_ref");
     return {
       index,
+      reviewId,
       patchsetId: firstCodeRef?.kind === "code_ref" ? firstCodeRef.data.patchset_id : "",
       generation,
       boardId,
     };
-  }, [elements, generation, boardId]);
+  }, [elements, reviewId, generation, boardId]);
   return <BoardElementsContext.Provider value={value}>{children}</BoardElementsContext.Provider>;
+}
+
+/** The review id for source/artifact navigation, or "" outside a review board. */
+export function useBoardReviewId(): string {
+  return useContext(BoardElementsContext).reviewId;
 }
 
 /** The patchset a board's prose citations resolve against. */
@@ -93,6 +105,11 @@ export function useBoardId(): string {
 export function useElement(id: string | undefined): HostElement | undefined {
   const { index } = useContext(BoardElementsContext);
   return id === undefined ? undefined : index.get(id);
+}
+
+/** The resolved board pool for structural projections that need to follow nested sections. */
+export function useBoardElementIndex(): ReadonlyMap<string, HostElement> {
+  return useContext(BoardElementsContext).index;
 }
 
 /** Resolve every id to its element, dropping any that dangle. */

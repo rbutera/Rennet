@@ -1,24 +1,32 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { WhiteboardClient } from "@rennet/adapters";
-import { councilSeatTurn } from "@rennet/adapters";
+import type { DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
+import { councilSeatTurn, createCoverageTurn } from "@rennet/adapters";
 import {
   assertCoverage,
   type CodexExecutor,
+  type CoverageHunkInput,
+  type CoverageRequirementInput,
   carriedElementIds,
+  createInvocationBudget,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
+  type DesignTaskProgressSource,
+  deriveDesignTaskProgress,
   type HarnessPort,
   type HarnessTurnResult,
   isCarriedForward,
+  isScaffoldPath,
   type LintContext,
   type LintHunk,
   type LintTarget,
   lintReviewDraft,
   NO_CONCERN_ANSWER,
   type Omission,
+  parseDesignSourceObligations,
   type RegisterLintContext,
   reconcileFindings,
+  runCoverageMapping,
   stampDeltas,
   validateDraft,
 } from "@rennet/core";
@@ -76,6 +84,18 @@ import { z } from "zod";
 // ── The board output schema (the host schema the drafter's session is constrained to) ──
 
 let cachedBoardSchema: unknown;
+const DesignNoMaterialSchema = z.object({
+  absence: z.literal("no-material"),
+  candidates: z.array(
+    z.object({
+      id: z.string().min(1),
+      relevance: z.enum(["changed-artifact", "references-changed-path", "repository-candidate"]),
+      reason: z.string().trim().min(1),
+    }),
+  ),
+});
+const DesignDraftOutputSchema = z.union([DraftBoardSchema, DesignNoMaterialSchema]);
+let cachedDesignDraftSchema: unknown;
 /**
  * The JSON-schema view of the frozen `DraftBoardSchema`, derived once (never
  * hand-authored — reconciliation 2/F4). Passed to the harness session as the
@@ -91,6 +111,16 @@ export function boardOutputSchema(): unknown {
     cachedBoardSchema = { type: "object", properties: { elements: { type: "array" } } };
   }
   return cachedBoardSchema;
+}
+
+function designDraftOutputSchema(): unknown {
+  if (cachedDesignDraftSchema !== undefined) return cachedDesignDraftSchema;
+  try {
+    cachedDesignDraftSchema = z.toJSONSchema(DesignDraftOutputSchema, { io: "output" });
+  } catch {
+    cachedDesignDraftSchema = boardOutputSchema();
+  }
+  return cachedDesignDraftSchema;
 }
 
 // ── Draft → board ops (the host writes ops on the drafter's behalf, D2) ──
@@ -424,12 +454,15 @@ export function renderDrafterPrompt(
   promptText: string,
   packet: DeltaPacket,
   reportBoard?: DraftBoard,
+  designArtifacts?: DesignArtifactSet,
+  hostSchema: unknown = boardOutputSchema(),
 ): string {
   const context = JSON.stringify({
     deltaPacket: packet,
-    hostSchema: boardOutputSchema(),
+    hostSchema,
     // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
     ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
+    ...(designArtifacts === undefined ? {} : { designArtifacts }),
   });
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
 }
@@ -532,6 +565,49 @@ export interface LensBoardOutcome {
   readonly immutability: readonly Violation[];
   /** An honest resolution failure — no harness for this seat (never a throw, never a block). */
   readonly failure?: string;
+  /** A successful absence: discovery found no material for this lens. */
+  readonly absence?: "no-material";
+}
+
+export interface DesignCoverageRequest {
+  readonly patchsetId: string;
+  readonly requirements: readonly CoverageRequirementInput[];
+  readonly hunks: readonly CoverageHunkInput[];
+}
+
+export type DesignCoverageMapper = (request: DesignCoverageRequest) => Promise<{
+  readonly status: "ok" | "failed";
+  readonly edges: readonly {
+    readonly capability: string;
+    readonly requirement: string;
+    readonly hunks: readonly string[];
+    readonly tests: number;
+  }[];
+}>;
+
+/** Build the real grounded coverage turn over one resolved Claude seat. */
+export function createDesignCoverageMapper(
+  port: HarnessPort,
+  repoRoot: string,
+): DesignCoverageMapper {
+  const turn = createCoverageTurn(port, { cwd: repoRoot });
+  return async (request) => {
+    const result = await runCoverageMapping({
+      ...request,
+      runTurn: async (prompt) => {
+        try {
+          return await turn(prompt);
+        } catch (error) {
+          return {
+            status: "failed",
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+      budget: createInvocationBudget(2),
+    });
+    return { status: result.status, edges: result.edges };
+  };
 }
 
 // ── The scheduler deps (all injected — the runtime is pure over them) ──
@@ -551,6 +627,12 @@ export interface LensPipelineDeps {
   readonly hunks: readonly LintHunk[];
   /** Per-lens lint context the caller assembles (files, patchsetId, scaffold globs…). */
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /** Undefined keeps the legacy drafter-owned discovery path; null is a successful no-spec result. */
+  readonly designArtifacts?: DesignArtifactSet | null;
+  /** Pinned discovery failed before drafting. Settles Design only; sibling lenses still run. */
+  readonly designArtifactFailure?: string;
+  /** Grounded requirement-to-hunk mapping. Absent means coverage was not computed. */
+  readonly mapDesignCoverage?: DesignCoverageMapper;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
   /** The sole board-op writer (B04). */
@@ -559,6 +641,8 @@ export interface LensPipelineDeps {
   readonly boardIdFor: (lens: LintTarget) => string;
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
+  /** A successful lens absence, emitted as soon as discovery settles it. */
+  readonly onLensAbsence?: (lens: LensKind, reason: "no-material") => void | Promise<void>;
   /**
    * The durable home for a board's coverage/validation metadata (finding 3): the
    * `skippedHunks` and validation blemishes the whiteboard event log cannot carry.
@@ -620,10 +704,11 @@ function resolveBoardSeat(
   jobId: CouncilJobId,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  outputSchema: unknown = boardOutputSchema(),
 ): ((prompt: string, attempt: number) => Promise<HarnessTurnResult>) | { failure: string } {
   const seat = councilSeatTurn(
     jobId,
-    boardOutputSchema(),
+    outputSchema,
     {
       claudePort: deps.claudePort,
       codexExecutor: deps.codexExecutor,
@@ -641,6 +726,13 @@ function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
   return result.status === "emitted" ? result.body : fallback;
 }
 
+class GroundedDesignAbsenceSignal extends Error {
+  constructor() {
+    super("The Design candidate set was dismissed with grounded no-material evidence.");
+    this.name = "GroundedDesignAbsenceSignal";
+  }
+}
+
 /**
  * Draft one lens: seed the seat, run the cluster-3 validation loop (post-process
  * wired to the real `board-post-process` editor pass), and return the validated
@@ -653,12 +745,37 @@ function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
  * exactly the resolution-failure path — so one crashed retry never aborts a lens
  * that already has passing elements.
  */
+function draftOneLens(
+  basePrompt: string,
+  seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
+  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+  ctx: LintContext,
+  transformOutput?: (output: unknown) => unknown,
+): Promise<Awaited<ReturnType<typeof validateDraft>> | { readonly failure: string }>;
+function draftOneLens(
+  basePrompt: string,
+  seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
+  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+  ctx: LintContext,
+  transformOutput: (output: unknown) => unknown,
+  initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
+): Promise<
+  | Awaited<ReturnType<typeof validateDraft>>
+  | { readonly failure: string }
+  | { readonly absence: "no-material" }
+>;
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   ctx: LintContext,
-): Promise<Awaited<ReturnType<typeof validateDraft>> | { failure: string }> {
+  transformOutput: (output: unknown) => unknown = (output) => output,
+  initialAbsence?: (output: unknown) => { readonly absence: "no-material" } | undefined,
+): Promise<
+  | Awaited<ReturnType<typeof validateDraft>>
+  | { readonly failure: string }
+  | { readonly absence: "no-material" }
+> {
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
@@ -667,25 +784,45 @@ async function draftOneLens(
         failure: `${who}: the initial drafting turn did not emit a board (${first.status}).`,
       };
     }
-    const validated = await validateDraft(first.body, ctx, {
-      runTurn: async (req) => {
-        try {
-          const retry = await seatTurn(
-            renderRetryPrompt(basePrompt, req.draft, req.pointers),
-            req.attempt,
-          );
-          // An honest turn failure keeps the current draft — the loop re-lints, the
-          // offending element escalates a rung, and an unfixable one becomes an
-          // honest omission. Never a wipe (returning an empty board would drop passers).
-          return bodyOr(retry, req.draft);
-        } catch {
-          // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
-          // keep the draft, let the loop escalate; one crashed retry is not fatal.
-          return req.draft;
-        }
-      },
-      ...(postProcess === undefined ? {} : { postProcess }),
-    });
+    const absence = initialAbsence?.(first.body);
+    if (absence !== undefined) return absence;
+    let retryAbsence: { readonly absence: "no-material" } | undefined;
+    let validated: Awaited<ReturnType<typeof validateDraft>>;
+    try {
+      validated = await validateDraft(transformOutput(first.body), ctx, {
+        runTurn: async (req) => {
+          try {
+            const retry = await seatTurn(
+              renderRetryPrompt(basePrompt, req.draft, req.pointers),
+              req.attempt,
+            );
+            if (retry.status === "emitted") {
+              retryAbsence = initialAbsence?.(retry.body);
+              if (retryAbsence !== undefined) throw new GroundedDesignAbsenceSignal();
+            }
+            // An honest turn failure keeps the current draft — the loop re-lints, the
+            // offending element escalates a rung, and an unfixable one becomes an
+            // honest omission. Never a wipe (returning an empty board would drop passers).
+            return transformOutput(bodyOr(retry, req.draft));
+          } catch (error) {
+            if (error instanceof GroundedDesignAbsenceSignal) throw error;
+            // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
+            // keep the draft, let the loop escalate; one crashed retry is not fatal.
+            return req.draft;
+          }
+        },
+        ...(postProcess === undefined
+          ? {}
+          : {
+              postProcess: async (board: DraftBoard) => transformOutput(await postProcess(board)),
+            }),
+      });
+    } catch (error) {
+      if (error instanceof GroundedDesignAbsenceSignal && retryAbsence !== undefined) {
+        return retryAbsence;
+      }
+      throw error;
+    }
     if (!validated.everParsed) {
       return {
         failure: `${who}: no parseable board across ${validated.attempts} attempts — recorded as a failure, not an empty board.`,
@@ -737,23 +874,87 @@ async function persistBoard(
   return { ok: true };
 }
 
-/** Keep the document envelope stable across the prose-only post-process pass. */
+const POST_PROCESS_NARRATIVE_KINDS: ReadonlySet<DraftElement["kind"]> = new Set([
+  "prose",
+  "callout",
+  "annotation",
+]);
+
+/** Keep typed output and the document envelope stable across the prose-only editor pass. */
 function preservePostProcessDocument(before: DraftBoard, edited: unknown): unknown {
   const parsed = DraftBoardSchema.safeParse(edited);
   if (!parsed.success) return edited;
 
+  const beforeById = new Map(before.elements.map((element) => [element.id, element]));
+  const preservedIds = new Set<string>();
+  const preserveTree = (id: string): void => {
+    if (preservedIds.has(id)) return;
+    const element = beforeById.get(id);
+    if (element === undefined) return;
+    preservedIds.add(id);
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) return;
+    for (const child of children) if (typeof child === "string") preserveTree(child);
+  };
+  for (const element of before.elements) {
+    if (element.kind === "requirement") {
+      preserveTree(element.id);
+      const scenarios = (element.data as { scenarios?: unknown }).scenarios;
+      if (Array.isArray(scenarios)) {
+        for (const scenario of scenarios) if (typeof scenario === "string") preserveTree(scenario);
+      }
+      continue;
+    }
+    if (
+      element.kind === "section" &&
+      ((element.data as { sources?: unknown }).sources !== undefined ||
+        (element.data as { spec_delta?: unknown }).spec_delta !== undefined)
+    ) {
+      preserveTree(element.id);
+    }
+  }
+  const isProtectedOriginal = (element: DraftElement): boolean =>
+    preservedIds.has(element.id) || !POST_PROCESS_NARRATIVE_KINDS.has(element.kind);
+  const editedById = new Map(parsed.data.elements.map((element) => [element.id, element]));
+  const originalIds = new Set(before.elements.map((element) => element.id));
+  const elements: DraftElement[] = [];
+  for (const original of before.elements) {
+    if (isProtectedOriginal(original)) {
+      elements.push(original);
+      continue;
+    }
+    const editedElement = editedById.get(original.id);
+    if (editedElement === undefined) continue;
+    elements.push(POST_PROCESS_NARRATIVE_KINDS.has(editedElement.kind) ? editedElement : original);
+  }
+  for (const element of parsed.data.elements) {
+    if (originalIds.has(element.id) || !POST_PROCESS_NARRATIVE_KINDS.has(element.kind)) continue;
+    elements.push(element);
+  }
+
   if (before.document === undefined) {
-    const withoutInventedDocument = { ...parsed.data };
+    const withoutInventedDocument = { ...parsed.data, elements };
     delete withoutInventedDocument.document;
     return withoutInventedDocument;
   }
 
+  const document =
+    parsed.data.document === undefined
+      ? { ...before.document }
+      : {
+          ...parsed.data.document,
+          title: before.document.title,
+          measure: before.document.measure,
+        };
+  if (before.document.sources === undefined) delete document.sources;
+  else document.sources = before.document.sources;
+  if (before.document.stats === undefined) delete document.stats;
+  else document.stats = before.document.stats;
+
   return {
     ...parsed.data,
-    document:
-      parsed.data.document === undefined
-        ? before.document
-        : { ...parsed.data.document, measure: before.document.measure },
+    document,
+    elements,
   };
 }
 
@@ -803,7 +1004,9 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
 
   const outcomes: LensBoardOutcome[] = [];
   for (const lens of LENS_KINDS) {
-    outcomes.push(await runLensBoard(lens, deps, council, postProcess, reportBoard));
+    const outcome = await runLensBoard(lens, deps, council, postProcess, reportBoard);
+    outcomes.push(outcome);
+    if (outcome.absence !== undefined) await deps.onLensAbsence?.(lens, outcome.absence);
   }
 
   // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
@@ -923,6 +1126,739 @@ interface ValidatedLike {
   readonly immutability: readonly Violation[];
 }
 
+function discoveredArtifacts(set: DesignArtifactSet | null | undefined): readonly {
+  readonly candidate: string;
+  readonly format: DesignArtifactSet["candidates"][number]["format"];
+  readonly path: string;
+  readonly text: string;
+  readonly role: string;
+  readonly truncated: boolean;
+  readonly sourceBytes: number;
+}[] {
+  if (set == null) return [];
+  return set.candidates.flatMap((candidate) =>
+    candidate.artifacts.map((artifact) => ({
+      candidate: candidate.id,
+      format: candidate.format,
+      path: artifact.path,
+      text: artifact.content,
+      role: artifact.role,
+      truncated: artifact.truncated,
+      sourceBytes: artifact.sourceBytes,
+    })),
+  );
+}
+
+function designArtifactBundleIncomplete(set: DesignArtifactSet | null | undefined): boolean {
+  if (set == null) return false;
+  return (
+    set.omittedCandidateCount > 0 ||
+    set.omittedChangedPathCount > 0 ||
+    set.candidates.some(
+      (candidate) =>
+        candidate.omittedArtifactCount > 0 ||
+        candidate.nameTruncated ||
+        candidate.artifacts.some((artifact) => artifact.truncated),
+    )
+  );
+}
+
+function designArtifactCandidates(set: DesignArtifactSet | null | undefined): readonly {
+  readonly id: string;
+  readonly name: string;
+  readonly format: DesignArtifactSet["candidates"][number]["format"];
+  readonly paths: readonly string[];
+  readonly relevance: DesignArtifactSet["candidates"][number]["relevance"]["kind"];
+}[] {
+  if (set == null) return [];
+  return set.candidates
+    .map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+      format: candidate.format,
+      paths: [...new Set(candidate.artifacts.map((artifact) => artifact.path))],
+      relevance: candidate.relevance.kind,
+    }))
+    .filter((candidate) => candidate.paths.length > 0);
+}
+
+type DiscoveredDesignArtifact = ReturnType<typeof discoveredArtifacts>[number];
+
+interface TaskProjectionSource {
+  readonly artifact: DiscoveredDesignArtifact;
+  readonly progress: DesignTaskProgressSource;
+}
+
+function designSourceKey(candidate: string, path: string): string {
+  return `${candidate}\u0000${path}`;
+}
+
+function sourceCandidate(
+  source: { readonly candidate?: unknown },
+  artifacts: DesignArtifactSet,
+): string | undefined {
+  if (typeof source.candidate === "string") return source.candidate;
+  return artifacts.candidates.length === 1 ? artifacts.candidates[0]?.id : undefined;
+}
+
+function selectedTaskProjectionSources(
+  board: DraftBoard,
+  artifacts: DesignArtifactSet,
+): readonly TaskProjectionSource[] {
+  const selectedArtifacts = selectedProjectionArtifacts(board, artifacts);
+
+  const progress = deriveDesignTaskProgress(
+    selectedArtifacts.map((artifact) => ({
+      candidate: artifact.candidate,
+      format: artifact.format,
+      role: artifact.role,
+      path: artifact.path,
+      text: artifact.text,
+    })),
+  );
+  return progress.sources.flatMap((sourceProgress) => {
+    const artifact = selectedArtifacts.find(
+      (candidate) =>
+        candidate.candidate === sourceProgress.source.candidate &&
+        candidate.path === sourceProgress.source.path,
+    );
+    return artifact === undefined ? [] : [{ artifact, progress: sourceProgress }];
+  });
+}
+
+function selectedProjectionArtifacts(
+  board: DraftBoard,
+  artifacts: DesignArtifactSet,
+): readonly DiscoveredDesignArtifact[] {
+  const selected = new Set(
+    (board.document?.sources ?? []).flatMap((source) => {
+      const candidate = sourceCandidate(source, artifacts);
+      return candidate === undefined ? [] : [designSourceKey(candidate, source.path)];
+    }),
+  );
+  const discovered = discoveredArtifacts(artifacts);
+  return discovered.filter((artifact) =>
+    selected.has(designSourceKey(artifact.candidate, artifact.path)),
+  );
+}
+
+function normalizedTaskText(value: unknown): string | undefined {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : undefined;
+}
+
+const HOST_OWNED_DESIGN_FIELDS = [
+  "task_progress",
+  "scenario_clauses",
+  "requirement_refs",
+  "acceptance_criteria",
+  "task_manifest",
+  "glossary_term",
+  "source_cells",
+  "status",
+] as const;
+
+function stripDesignHostClaims(board: DraftBoard): DraftBoard {
+  return {
+    ...board,
+    elements: board.elements.map((element) => {
+      const data = { ...(element.data as Record<string, unknown>) };
+      for (const field of HOST_OWNED_DESIGN_FIELDS) delete data[field];
+      return { ...element, data } as DraftElement;
+    }),
+  };
+}
+
+function taskStatDocument(
+  document: DraftBoard["document"],
+  done: number,
+  total: number,
+): DraftBoard["document"] {
+  if (document === undefined) return document;
+  const stats = document.stats ?? [];
+  const taskIndex = stats.findIndex((stat) => stat.label.toLowerCase() === "tasks");
+  const withoutTasks = stats.filter((stat) => stat.label.toLowerCase() !== "tasks");
+  if (total === 0) {
+    const withoutStats = { ...document };
+    delete withoutStats.stats;
+    return withoutTasks.length === 0 ? withoutStats : { ...withoutStats, stats: withoutTasks };
+  }
+  const taskStat = { label: "Tasks", value: `${done}/${total}` };
+  const next = [...withoutTasks];
+  next.splice(taskIndex < 0 ? next.length : Math.min(taskIndex, next.length), 0, taskStat);
+  return { ...document, stats: next };
+}
+
+function sourceLinksArtifact(
+  element: DraftElement,
+  artifact: DiscoveredDesignArtifact,
+  artifacts: DesignArtifactSet,
+): boolean {
+  if (element.kind !== "section") return false;
+  const sources = (element.data as { sources?: unknown }).sources;
+  if (!Array.isArray(sources)) return false;
+  return sources.some((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const source = value as { path?: unknown; candidate?: unknown };
+    return (
+      source.path === artifact.path && sourceCandidate(source, artifacts) === artifact.candidate
+    );
+  });
+}
+
+export function projectDesignTaskProgress(
+  input: DraftBoard,
+  artifacts: DesignArtifactSet,
+): DraftBoard {
+  const board = stripDesignHostClaims(input);
+  const selectedArtifacts = selectedProjectionArtifacts(board, artifacts);
+  const sources = selectedTaskProjectionSources(board, artifacts);
+  const byId = new Map(board.elements.map((element) => [element.id, element]));
+  const parentByChild = new Map<string, string>();
+  for (const element of board.elements) {
+    if (element.kind !== "section") continue;
+    for (const child of element.data.children) {
+      if (!parentByChild.has(child)) parentByChild.set(child, element.id);
+    }
+  }
+  const topologyDescendants = (roots: readonly DraftElement[]): DraftElement[] => {
+    const ordered: DraftElement[] = [];
+    const seen = new Set<string>();
+    const visit = (id: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const element = byId.get(id);
+      if (element === undefined) return;
+      ordered.push(element);
+      if (element.kind !== "section") return;
+      for (const child of element.data.children) visit(child);
+    };
+    for (const root of roots) {
+      if (root.kind !== "section") continue;
+      for (const child of root.data.children) visit(child);
+    }
+    return ordered;
+  };
+
+  const taskProgress = new Map<string, Record<string, unknown>>();
+  const sourceMetadata = new Map<string, Record<string, unknown>>();
+  const addSourceMetadata = (id: string, metadata: Record<string, unknown>): void => {
+    sourceMetadata.set(id, { ...sourceMetadata.get(id), ...metadata });
+  };
+  const scenarioClauses = new Map<
+    string,
+    { readonly condition: string; readonly response: string }
+  >();
+  for (const requirement of board.elements) {
+    if (requirement.kind !== "requirement") continue;
+    const data = requirement.data as {
+      shall?: unknown;
+      scenarios?: unknown;
+      source?: { path?: unknown; candidate?: unknown; line?: unknown };
+    };
+    if (typeof data.shall !== "string") continue;
+    const sourcePath = data.source?.path;
+    const candidate = sourceCandidate(data.source ?? {}, artifacts);
+    if (typeof sourcePath !== "string" || candidate === undefined) continue;
+    const artifact = selectedArtifacts.find(
+      (entry) => entry.candidate === candidate && entry.path === sourcePath,
+    );
+    if (artifact === undefined) continue;
+    const obligations = parseDesignSourceObligations({
+      format: artifact.format,
+      role: artifact.role,
+      path: artifact.path,
+      text: artifact.text,
+    });
+    const sourceRequirement = obligations.find(
+      (obligation) =>
+        obligation.kind === "requirement" &&
+        normalizedTaskText(obligation.text) === normalizedTaskText(data.shall) &&
+        (typeof data.source?.line !== "number" || obligation.line === data.source.line),
+    );
+    if (sourceRequirement?.kind !== "requirement") continue;
+    if (sourceRequirement.status !== undefined) {
+      addSourceMetadata(requirement.id, { status: sourceRequirement.status });
+    }
+    if (!Array.isArray(data.scenarios)) continue;
+    const sourceScenarios = obligations.filter(
+      (obligation) =>
+        obligation.kind === "scenario" && obligation.parentKey === sourceRequirement.key,
+    );
+    for (const scenarioId of data.scenarios) {
+      if (typeof scenarioId !== "string") continue;
+      const scenario = byId.get(scenarioId);
+      if (scenario?.kind !== "prose") continue;
+      const sourceScenario = sourceScenarios.find(
+        (obligation) =>
+          normalizedTaskText(obligation.text) === normalizedTaskText(scenario.data.markdown),
+      );
+      if (sourceScenario?.kind !== "scenario" || sourceScenario.clauses === undefined) continue;
+      scenarioClauses.set(scenarioId, sourceScenario.clauses);
+    }
+  }
+
+  for (const renderedDecision of board.elements) {
+    if (renderedDecision.kind !== "decision") continue;
+    const data = renderedDecision.data as {
+      statement?: unknown;
+      source?: { path?: unknown; candidate?: unknown; line?: unknown };
+    };
+    if (typeof data.statement !== "string") continue;
+    const sourcePath = data.source?.path;
+    const candidate = sourceCandidate(data.source ?? {}, artifacts);
+    if (typeof sourcePath !== "string" || candidate === undefined) continue;
+    const artifact = selectedArtifacts.find(
+      (entry) => entry.candidate === candidate && entry.path === sourcePath,
+    );
+    if (artifact === undefined) continue;
+    const sourceDecision = parseDesignSourceObligations({
+      format: artifact.format,
+      role: artifact.role,
+      path: artifact.path,
+      text: artifact.text,
+    }).find(
+      (obligation) =>
+        obligation.kind === "decision" &&
+        normalizedTaskText(obligation.text) === normalizedTaskText(data.statement) &&
+        (typeof data.source?.line !== "number" || obligation.line === data.source.line),
+    );
+    if (sourceDecision?.kind !== "decision" || sourceDecision.sourceCells === undefined) continue;
+    addSourceMetadata(renderedDecision.id, { source_cells: sourceDecision.sourceCells });
+  }
+
+  for (const artifact of selectedArtifacts) {
+    const roots = board.elements.filter(
+      (element) =>
+        !parentByChild.has(element.id) && sourceLinksArtifact(element, artifact, artifacts),
+    );
+    const glossary = parseDesignSourceObligations({
+      format: artifact.format,
+      role: artifact.role,
+      path: artifact.path,
+      text: artifact.text,
+    }).filter((obligation) => obligation.kind === "glossary-term");
+    const prose = topologyDescendants(roots).filter((element) => element.kind === "prose");
+    const used = new Set<string>();
+    for (const obligation of glossary) {
+      const match = prose.find(
+        (element) =>
+          !used.has(element.id) &&
+          normalizedTaskText(element.data.markdown) === normalizedTaskText(obligation.text),
+      );
+      if (match === undefined) continue;
+      used.add(match.id);
+      addSourceMetadata(match.id, {
+        glossary_term: {
+          term: obligation.term,
+          definition: obligation.definition,
+          avoid: obligation.avoid,
+        },
+      });
+    }
+  }
+  let taskDone = 0;
+  let taskTotal = 0;
+
+  for (const source of sources) {
+    const sourceCount = { done: source.progress.done, total: source.progress.total };
+    const roots = board.elements.filter(
+      (element) =>
+        !parentByChild.has(element.id) && sourceLinksArtifact(element, source.artifact, artifacts),
+    );
+    const rootIds = new Set(roots.map(({ id }) => id));
+    const prose = topologyDescendants(roots).filter((element) => element.kind === "prose");
+    const used = new Set<string>();
+    const renderedGroups = new Map<
+      string,
+      {
+        readonly rootId: string;
+        readonly sectionId: string;
+        readonly tasks: DesignTaskProgressSource["tasks"];
+      }
+    >();
+
+    for (const obligation of source.progress.tasks) {
+      const match = prose.find(
+        (element) =>
+          !used.has(element.id) && normalizedTaskText(element.data.markdown) === obligation.text,
+      );
+      if (match === undefined) continue;
+      used.add(match.id);
+      if (obligation.requirementRefs !== undefined) {
+        addSourceMetadata(match.id, { requirement_refs: obligation.requirementRefs });
+      }
+      if (obligation.acceptanceCriteria !== undefined) {
+        addSourceMetadata(match.id, { acceptance_criteria: obligation.acceptanceCriteria });
+      }
+
+      let parent = parentByChild.get(match.id);
+      let nearestSection: string | undefined;
+      let rootId: string | undefined;
+      const visited = new Set<string>();
+      while (parent !== undefined && !visited.has(parent)) {
+        visited.add(parent);
+        if (byId.get(parent)?.kind === "section") {
+          nearestSection ??= parent;
+          if (rootIds.has(parent)) {
+            rootId = parent;
+            break;
+          }
+        }
+        parent = parentByChild.get(parent);
+      }
+      if (rootId === undefined || nearestSection === undefined) continue;
+      const previous = renderedGroups.get(obligation.parentKey);
+      renderedGroups.set(obligation.parentKey, {
+        rootId,
+        sectionId: previous?.sectionId ?? nearestSection,
+        tasks: [...(previous?.tasks ?? []), obligation],
+      });
+    }
+
+    const groupsByRoot = new Map<string, typeof renderedGroups>();
+    for (const [parentKey, group] of renderedGroups) {
+      const groups = groupsByRoot.get(group.rootId) ?? new Map();
+      groups.set(parentKey, group);
+      groupsByRoot.set(group.rootId, groups);
+    }
+    for (const root of roots) {
+      const groups = groupsByRoot.get(root.id) ?? new Map();
+      const grouped = [...groups.values()].some((group) => group.sectionId !== root.id);
+      taskProgress.set(root.id, {
+        kind: "source",
+        format: source.artifact.format,
+        role: source.artifact.role,
+        layout: grouped ? "grouped" : "ungrouped",
+        ...(grouped ? {} : sourceCount),
+      });
+      for (const group of groups.values()) {
+        const manifest = group.tasks.find(
+          (task: DesignTaskProgressSource["tasks"][number]) => task.manifest !== undefined,
+        )?.manifest;
+        if (manifest !== undefined) {
+          addSourceMetadata(group.sectionId, { task_manifest: manifest });
+        }
+      }
+      if (!grouped) continue;
+      for (const [parentKey, group] of groups) {
+        if (group.sectionId === root.id) continue;
+        if (source.progress.format !== "superpowers" || source.artifact.role !== "plan") {
+          taskProgress.set(group.sectionId, { kind: "group", state: "static" });
+          continue;
+        }
+        const complete =
+          source.progress.groups.find((candidate) => candidate.parentKey === parentKey)?.complete ??
+          false;
+        taskProgress.set(group.sectionId, {
+          kind: "group",
+          state: complete ? "complete" : "incomplete",
+        });
+      }
+    }
+
+    taskTotal += sourceCount.total;
+    taskDone += sourceCount.done;
+  }
+
+  return {
+    ...board,
+    document: taskStatDocument(board.document, taskDone, taskTotal),
+    elements: board.elements.map((element) => {
+      const progress = taskProgress.get(element.id);
+      const clauses = scenarioClauses.get(element.id);
+      const metadata = sourceMetadata.get(element.id);
+      if (progress === undefined && clauses === undefined && metadata === undefined) return element;
+      return {
+        ...element,
+        data: {
+          ...(element.data as Record<string, unknown>),
+          ...metadata,
+          ...(progress === undefined ? {} : { task_progress: progress }),
+          ...(clauses === undefined ? {} : { scenario_clauses: clauses }),
+        },
+      } as unknown as DraftElement;
+    }),
+  };
+}
+
+function groundedDesignAbsence(
+  output: unknown,
+  set: DesignArtifactSet,
+): { readonly absence: "no-material" } | undefined {
+  if (designArtifactBundleIncomplete(set)) return undefined;
+  const parsed = DesignNoMaterialSchema.safeParse(output);
+  if (!parsed.success || parsed.data.candidates.length !== set.candidates.length) return undefined;
+  const byId = new Map(parsed.data.candidates.map((candidate) => [candidate.id, candidate]));
+  if (byId.size !== set.candidates.length) return undefined;
+  for (const candidate of set.candidates) {
+    const dismissed = byId.get(candidate.id);
+    if (dismissed?.relevance !== candidate.relevance.kind) return undefined;
+  }
+  return { absence: "no-material" };
+}
+
+function requirementInputs(board: DraftBoard): CoverageRequirementInput[] {
+  const byId = new Map(board.elements.map((element) => [element.id, element]));
+  return board.elements.flatMap((element) => {
+    if (element.kind !== "requirement") return [];
+    const data = element.data as Record<string, unknown>;
+    const shall = typeof data.shall === "string" ? data.shall : "";
+    const name = typeof data.name === "string" && data.name.length > 0 ? data.name : element.id;
+    const source =
+      typeof data.source === "object" && data.source !== null
+        ? (data.source as { path?: unknown }).path
+        : undefined;
+    const capability =
+      typeof data.capability === "string" && data.capability.length > 0
+        ? data.capability
+        : typeof source === "string" && source.length > 0
+          ? source
+          : "design";
+    const scenarioIds = Array.isArray(data.scenarios)
+      ? data.scenarios.filter((id): id is string => typeof id === "string")
+      : [];
+    const scenarios = scenarioIds.flatMap((id) => {
+      const scenario = byId.get(id);
+      if (scenario?.kind !== "prose") return [];
+      const markdown = (scenario.data as { markdown?: unknown }).markdown;
+      return typeof markdown === "string" && markdown.length > 0 ? [markdown] : [];
+    });
+    return [{ capability, name, statement: shall, scenarios }];
+  });
+}
+
+function offeredCoverageHunks(deps: LensPipelineDeps): {
+  readonly inputs: CoverageHunkInput[];
+  readonly ids: ReadonlySet<string>;
+} {
+  const artifactPaths = new Set(discoveredArtifacts(deps.designArtifacts).map(({ path }) => path));
+  const inputs = (deps.deltaPacket.hunks?.hunks ?? [])
+    .filter((hunk) => !artifactPaths.has(hunk.path) && !isScaffoldPath(hunk.path))
+    .map((hunk) => ({
+      id: hunk.id,
+      filePath: hunk.path,
+      addedLines: hunk.body
+        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+        .map((line) => line.slice(1)),
+      deletedLines: hunk.body
+        .filter((line) => line.startsWith("-") && !line.startsWith("---"))
+        .map((line) => line.slice(1)),
+    }));
+  return { inputs, ids: new Set(inputs.map((hunk) => hunk.id)) };
+}
+
+function clearDraftedCoverage(board: DraftBoard): DraftBoard {
+  return stripDraftedDesignCoverage(board) as DraftBoard;
+}
+
+function ensureDesignScaffoldSkips(board: DraftBoard, deps: LensPipelineDeps): DraftBoard {
+  const existing = boardSkippedHunks(board);
+  const known = new Set(existing.map(({ hunk }) => hunk));
+  const scaffoldSkips = (deps.deltaPacket.hunks?.hunks ?? []).flatMap((hunk) => {
+    if (!isScaffoldPath(hunk.path) || known.has(hunk.id)) return [];
+    known.add(hunk.id);
+    return [
+      {
+        hunk: hunk.id,
+        reason: `${hunk.path} is a generated scaffold stamp owned by the Noise lens.`,
+      },
+    ];
+  });
+  if (scaffoldSkips.length === 0) return board;
+  return { ...board, skippedHunks: [...existing, ...scaffoldSkips] };
+}
+
+function containsString(value: unknown, target: string): boolean {
+  if (value === target) return true;
+  if (Array.isArray(value)) return value.some((item) => containsString(item, target));
+  if (typeof value !== "object" || value === null) return false;
+  return Object.values(value as Record<string, unknown>).some((item) =>
+    containsString(item, target),
+  );
+}
+
+/**
+ * Coverage and related implementation paths are host-owned evidence. Remove any
+ * drafter-authored mapping while the value is still unknown input, before
+ * schema/lint and again after the editor pass. A code ref used only by an invented
+ * trace goes with it, so it cannot teach a hunk.
+ */
+export function stripDraftedDesignCoverage(output: unknown): unknown {
+  if (typeof output !== "object" || output === null || Array.isArray(output)) return output;
+  const record = output as Record<string, unknown>;
+  if (!Array.isArray(record.elements)) return output;
+
+  const tracedIds = new Set<string>();
+  const elements = record.elements.map((candidate) => {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      return candidate;
+    }
+    const element = candidate as Record<string, unknown>;
+    if (
+      element.kind !== "requirement" ||
+      typeof element.data !== "object" ||
+      element.data === null ||
+      Array.isArray(element.data)
+    ) {
+      return candidate;
+    }
+    const data = { ...(element.data as Record<string, unknown>) };
+    if (Array.isArray(data.trace)) {
+      for (const id of data.trace) if (typeof id === "string") tracedIds.add(id);
+    }
+    delete data.coverage;
+    delete data.trace;
+    delete data.tests;
+    delete data.related_files;
+    return { ...element, data };
+  });
+
+  const withoutCoverageOnlyRefs = elements.filter((candidate) => {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      return true;
+    }
+    const element = candidate as Record<string, unknown>;
+    if (element.kind !== "code_ref" || typeof element.id !== "string") return true;
+    if (!tracedIds.has(element.id)) return true;
+    return elements.some(
+      (other) =>
+        other !== candidate &&
+        typeof other === "object" &&
+        other !== null &&
+        containsString((other as Record<string, unknown>).data, element.id as string),
+    );
+  });
+
+  return { ...record, elements: withoutCoverageOnlyRefs };
+}
+
+function codeRefForCoverageHunk(
+  hunkId: string,
+  id: string,
+  patchsetId: string,
+  hunks: readonly LintHunk[],
+): DraftElement | undefined {
+  const hunk = hunks.find((candidate) => candidate.id === hunkId);
+  if (hunk === undefined) return undefined;
+  const head = hunk.newLines > 0;
+  const start = head ? hunk.newStart : hunk.oldStart;
+  const lines = head ? hunk.newLines : hunk.oldLines;
+  if (start === undefined || lines === undefined || lines <= 0) return undefined;
+  return {
+    id,
+    kind: "code_ref",
+    data: {
+      author: { kind: "orchestrator", id: "coverage-mapper" },
+      patchset_id: patchsetId,
+      path: head ? hunk.path : (hunk.previousPath ?? hunk.path),
+      side: head ? "head" : "base",
+      start_line: start,
+      end_line: start + lines - 1,
+    },
+  } as DraftElement;
+}
+
+async function groundDesignCoverage(
+  board: DraftBoard,
+  deps: LensPipelineDeps,
+): Promise<DraftBoard> {
+  const cleared = ensureDesignScaffoldSkips(clearDraftedCoverage(board), deps);
+  const requirements = requirementInputs(cleared);
+  const offered = offeredCoverageHunks(deps);
+  if (
+    requirements.length === 0 ||
+    offered.inputs.length === 0 ||
+    deps.mapDesignCoverage === undefined
+  ) {
+    return cleared;
+  }
+
+  let mapped: Awaited<ReturnType<DesignCoverageMapper>>;
+  try {
+    mapped = await deps.mapDesignCoverage({
+      patchsetId: deps.deltaPacket.patchset.id,
+      requirements,
+      hunks: offered.inputs,
+    });
+  } catch {
+    return cleared;
+  }
+  if (mapped.status !== "ok") return cleared;
+
+  const edgeByKey = new Map(
+    mapped.edges.map((edge) => [`${edge.capability}\u0000${edge.requirement}`, edge] as const),
+  );
+  const ids = new Set(cleared.elements.map((element) => element.id));
+  const refsByHunk = new Map<string, string>();
+  const pathByRef = new Map<string, string>();
+  const addedRefs: DraftElement[] = [];
+  const refForHunk = (hunkId: string): string | undefined => {
+    const known = refsByHunk.get(hunkId);
+    if (known !== undefined) return known;
+    if (!offered.ids.has(hunkId)) return undefined;
+    let id = `coverage-hunk-${hunkId}`;
+    let suffix = 2;
+    while (ids.has(id)) {
+      id = `coverage-hunk-${hunkId}-${suffix}`;
+      suffix += 1;
+    }
+    const ref = codeRefForCoverageHunk(hunkId, id, deps.deltaPacket.patchset.id, deps.hunks);
+    if (ref === undefined) return undefined;
+    ids.add(id);
+    refsByHunk.set(hunkId, id);
+    const path = (ref.data as { path?: unknown }).path;
+    if (typeof path === "string") pathByRef.set(id, path);
+    addedRefs.push(ref);
+    return id;
+  };
+
+  const elements = cleared.elements.map((element) => {
+    if (element.kind !== "requirement") return element;
+    const data = element.data as Record<string, unknown>;
+    const name = typeof data.name === "string" && data.name.length > 0 ? data.name : element.id;
+    const source =
+      typeof data.source === "object" && data.source !== null
+        ? (data.source as { path?: unknown }).path
+        : undefined;
+    const capability =
+      typeof data.capability === "string" && data.capability.length > 0
+        ? data.capability
+        : typeof source === "string" && source.length > 0
+          ? source
+          : "design";
+    const edge = edgeByKey.get(`${capability}\u0000${name}`);
+    if (edge === undefined) return element;
+    const trace = edge.hunks.flatMap((anchor) => {
+      const prefix = "rennet:hunk/";
+      const hunkId = anchor.startsWith(prefix) ? anchor.slice(prefix.length) : "";
+      const ref = hunkId.length > 0 ? refForHunk(hunkId) : undefined;
+      return ref === undefined ? [] : [ref];
+    });
+    const coverage = trace.length === 0 ? "gap" : edge.tests > 0 ? "met" : "partial";
+    const relatedFiles = [
+      ...new Set(
+        trace.flatMap((refId) => {
+          const path = pathByRef.get(refId);
+          return path === undefined ? [] : [path];
+        }),
+      ),
+    ];
+    const grounded: Record<string, unknown> = { ...data, coverage, trace, tests: edge.tests };
+    if (relatedFiles.length > 0) grounded.related_files = relatedFiles;
+    return {
+      ...element,
+      data: grounded,
+    } as DraftElement;
+  });
+  const groundedHunks = new Set(refsByHunk.keys());
+  const skippedHunks = boardSkippedHunks(cleared).filter(({ hunk }) => !groundedHunks.has(hunk));
+  return {
+    ...cleared,
+    elements: [...elements, ...addedRefs],
+    ...("skippedHunks" in cleared ? { skippedHunks } : {}),
+  };
+}
+
 /**
  * The Flagged dual seat (J1/J2, cluster 5.2): run `lens-draft-flagged` as TWO
  * independent seats — Claude and Codex, each forced to its own provider — and
@@ -1018,9 +1954,59 @@ async function runLensBoard(
   postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
+  if (lens === "design" && deps.designArtifactFailure !== undefined) {
+    return {
+      lens,
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: deps.designArtifactFailure,
+    };
+  }
+  if (lens === "design" && deps.designArtifacts === null) {
+    return {
+      lens,
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      absence: "no-material",
+    };
+  }
   const promptText = await deps.readPrompt(LENS_PROMPT_FILES[lens]);
-  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, reportBoard);
-  const ctx = deps.lintContextFor(lens);
+  const semanticDesignAbsence =
+    lens === "design" && deps.designArtifacts !== undefined && deps.designArtifacts !== null;
+  const basePrompt = renderDrafterPrompt(
+    promptText,
+    deps.deltaPacket,
+    reportBoard,
+    lens === "design" ? (deps.designArtifacts ?? undefined) : undefined,
+    semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
+  );
+  const baseCtx = deps.lintContextFor(lens);
+  const artifacts = lens === "design" ? discoveredArtifacts(deps.designArtifacts) : [];
+  const artifactCandidates =
+    lens === "design" ? designArtifactCandidates(deps.designArtifacts) : [];
+  const ctx: LintContext =
+    artifacts.length > 0
+      ? {
+          ...baseCtx,
+          artifacts,
+          ...(artifactCandidates.length === 0 ? {} : { artifactCandidates }),
+          ...(designArtifactBundleIncomplete(deps.designArtifacts)
+            ? { artifactBundleIncomplete: true }
+            : {}),
+        }
+      : baseCtx;
+  const transformDesignOutput = (output: unknown): unknown => {
+    const withoutCoverage = stripDraftedDesignCoverage(output);
+    if (deps.designArtifacts === undefined || deps.designArtifacts === null) {
+      return withoutCoverage;
+    }
+    const parsed = DraftBoardSchema.safeParse(withoutCoverage);
+    return parsed.success
+      ? projectDesignTaskProgress(parsed.data, deps.designArtifacts)
+      : withoutCoverage;
+  };
 
   let validated: ValidatedLike;
   if (lens === "flagged") {
@@ -1032,15 +2018,45 @@ async function runLensBoard(
     validated = dual;
   } else {
     const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
-    const seat = resolveBoardSeat(jobId, deps, council);
+    const seat = resolveBoardSeat(
+      jobId,
+      deps,
+      council,
+      semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
+    );
     if ("failure" in seat) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
     }
-    const drafted = await draftOneLens(basePrompt, seat, postProcess, ctx);
+    const drafted =
+      semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
+        ? await draftOneLens(basePrompt, seat, postProcess, ctx, transformDesignOutput, (output) =>
+            groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
+          )
+        : await draftOneLens(
+            basePrompt,
+            seat,
+            postProcess,
+            ctx,
+            lens === "design" ? transformDesignOutput : undefined,
+          );
     if ("failure" in drafted) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: drafted.failure };
     }
+    if ("absence" in drafted) {
+      return { lens, omissions: [], blemishes: [], immutability: [], absence: drafted.absence };
+    }
     validated = drafted;
+  }
+
+  if (lens === "design") {
+    const grounded = await groundDesignCoverage(validated.board, deps);
+    validated = {
+      ...validated,
+      board:
+        deps.designArtifacts === undefined || deps.designArtifacts === null
+          ? stripDesignHostClaims(grounded)
+          : projectDesignTaskProgress(grounded, deps.designArtifacts),
+    };
   }
 
   // R58 delta stamps against the prior generation's board (cluster 4).

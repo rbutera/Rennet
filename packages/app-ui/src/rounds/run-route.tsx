@@ -1,5 +1,5 @@
 import { cn } from "@rennet/ui";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Minus } from "lucide-react";
 import { useEffect } from "react";
 import { Redirect } from "wouter";
 import { useRennetStore } from "../store";
@@ -25,7 +25,8 @@ import { useRoundPending, useRoundState } from "./rounds-data";
 /** A stable empty row list — phases without prep/worker rows resolve to the same ref. */
 const NO_ROWS: readonly LaneRow[] = Object.freeze([]);
 
-/** The status glyph for a live row — queued ring, running spinner, done check, failed dot.
+/** The status glyph for a live row — queued ring, running spinner, done check, absent
+ *  dash, failed dot.
  *  Shared with the greeting's regeneration lanes (finding 5) so a queued/failed drafter reads
  *  the same everywhere, never a false green check. */
 export function StatusIcon({ status }: { readonly status: RowStatus }) {
@@ -37,6 +38,8 @@ export function StatusIcon({ status }: { readonly status: RowStatus }) {
     );
   if (status === "failed")
     return <span className="size-3.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />;
+  if (status === "absent")
+    return <Minus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />;
   // `drafted` and `done` are both "this one is finished" — a lens lane's verdict is the
   // thing that differs, and it renders beside the glyph, not as a second glyph.
   return <Check className="size-3.5 shrink-0 text-green-500" aria-hidden="true" />;

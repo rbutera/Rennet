@@ -1,10 +1,18 @@
 import { rmSync } from "node:fs";
 import { basename } from "node:path";
 import { expect, test } from "@playwright/test";
-import { BOARD_IMPLEMENTATION_PATH, BOARD_TEST_PATH, seedBoardFixture } from "./board-fixture";
+import {
+  BOARD_DESIGN_DECOY_PATH,
+  BOARD_DESIGN_SCENARIO,
+  BOARD_DESIGN_SPEC_PATH,
+  BOARD_IMPLEMENTATION_PATH,
+  BOARD_TEST_PATH,
+  seedBoardFixture,
+} from "./board-fixture";
 import {
   addProject,
   completeWelcome,
+  git,
   launchRennet,
   makeTempDir,
   openDiffView,
@@ -125,6 +133,33 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
   test.setTimeout(300_000);
 
   const repository = seedReviewRepo("rennet-e2e-board-positive-");
+  writeRepoFile(
+    repository,
+    BOARD_DESIGN_DECOY_PATH,
+    "# Earlier widget specification\n\nThe widget SHALL expose the old value.\n",
+  );
+  git(repository, "add", BOARD_DESIGN_DECOY_PATH);
+  git(repository, "commit", "-qm", "spec: preserve earlier widget contract");
+  git(repository, "branch", "-f", "main", "HEAD");
+  writeRepoFile(
+    repository,
+    BOARD_DESIGN_SPEC_PATH,
+    [
+      "# Widget value specification",
+      "",
+      "## Why",
+      "Reviewers need the specification and implementation evidence in one reading path.",
+      "",
+      "## MODIFIED Requirements",
+      "",
+      "### Requirement: Expose the reviewed widget value",
+      "The widget SHALL expose the reviewed value.",
+      "",
+      "#### Scenario: Reading the widget",
+      BOARD_DESIGN_SCENARIO,
+      "",
+    ].join("\n"),
+  );
   writeRepoFile(repository, BOARD_TEST_PATH, "import { widget } from './widget';\nvoid widget;\n");
   const userData = makeTempDir("rennet-e2e-board-positive-state-");
   const home = makeTempDir("rennet-e2e-board-positive-home-");
@@ -158,6 +193,84 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     expect(
       Math.abs(topBarBox.x + topBarBox.width / 2 - (railBox.x + railBox.width / 2)),
     ).toBeLessThan(2);
+
+    const beforeDesign = await page.evaluate(() => history.length);
+    await rail.getByRole("tab", { name: /Design/ }).click();
+    expect(await page.evaluate(() => history.length)).toBe(beforeDesign);
+    await expectQuery(page, { lens: "design" });
+    await expect(board).toHaveAttribute("data-lens", "design");
+    await expect(
+      board.getByRole("heading", { name: "Widget value specification", level: 1 }),
+    ).toBeVisible();
+    await expect(
+      board.getByText(
+        "Reviewers need the specification and implementation evidence in one reading path.",
+      ),
+    ).toBeVisible();
+    const stats = board.locator('[data-kind="board-stats"]');
+    await expect(stats.getByText("Requirements", { exact: true })).toBeVisible();
+    await expect(stats.getByText("1", { exact: true })).toBeVisible();
+    await expect(stats.getByText("Capabilities", { exact: true })).toBeVisible();
+    await expect(stats.getByText("0 new / 1 modified", { exact: true })).toBeVisible();
+    const designSection = board.locator(
+      '[data-kind="board-section"][data-section-id^="design-section:"]',
+    );
+    await expect(designSection).toBeVisible();
+    const designSectionId = `design-section:${fixture.liveGeneration}:design`;
+    await expect(designSection).toHaveAttribute("id", designSectionId);
+    await expect(designSection).toHaveAttribute("data-section-id", designSectionId);
+    const artifactSource = board.locator(
+      `[data-kind="artifact-chip"][data-source-path="${BOARD_DESIGN_SPEC_PATH}"]`,
+    );
+    await expect(artifactSource).toBeVisible();
+    await expect(artifactSource).toHaveAttribute("href", `#${designSectionId}`);
+    await expect(artifactSource).toHaveAttribute("data-target-id", designSectionId);
+    await expect(artifactSource).toHaveAttribute("aria-label", "Jump to widget/spec.md");
+    await installScrollProbe(page);
+    const beforeArtifactJump = await currentHash(page);
+    const beforeArtifactHistory = await page.evaluate(() => history.length);
+    await artifactSource.click();
+    expect(await currentHash(page)).toBe(beforeArtifactJump);
+    expect(await page.evaluate(() => history.length)).toBe(beforeArtifactHistory);
+    await expect.poll(() => scrollTargets(page)).toContain(designSectionId);
+    const capabilityGrid = board.getByRole("navigation", { name: "Design capabilities" });
+    const capability = capabilityGrid.getByRole("link", { name: "Jump to widget-value" });
+    await expect(capability).toHaveAttribute("href", `#${designSectionId}`);
+    await expect(capability).toHaveAttribute("data-capability", "widget-value");
+    await expect(capability).toHaveAttribute("data-spec-delta", "modified");
+    await expect(capability).toContainText("1 requirement · 1 scenario");
+    await installScrollProbe(page);
+    const beforeCapabilityJump = await currentHash(page);
+    const beforeCapabilityHistory = await page.evaluate(() => history.length);
+    await capability.click();
+    expect(await currentHash(page)).toBe(beforeCapabilityJump);
+    expect(await page.evaluate(() => history.length)).toBe(beforeCapabilityHistory);
+    await expect.poll(() => scrollTargets(page)).toContain(designSectionId);
+    await expect(
+      designSection.locator(
+        `[data-kind="source-chip"][data-source-path="${BOARD_DESIGN_SPEC_PATH}"][data-source-line="6"]`,
+      ),
+    ).toBeVisible();
+    await expect(board.locator(`[data-source-path="${BOARD_DESIGN_DECOY_PATH}"]`)).toHaveCount(0);
+    await expect(
+      board.getByRole("heading", { name: "Expose the reviewed widget value" }),
+    ).toBeVisible();
+    await expect(board.getByText(BOARD_DESIGN_SCENARIO)).toBeVisible();
+    await expect(board.getByText("covered by 2 hunks · 1 test")).toBeVisible();
+    const requirement = board.locator('[data-kind="requirement"][data-spec-delta="modified"]');
+    await expect(requirement).toBeVisible();
+    await expect(
+      requirement.locator('[data-kind="spec-delta"][data-spec-delta="modified"]'),
+    ).toBeVisible();
+    await expect(
+      board.locator(
+        `[data-kind="related-file-chip"][data-source-path="${BOARD_IMPLEMENTATION_PATH}"]`,
+      ),
+    ).toBeVisible();
+    await expect(
+      board.locator(`[data-kind="related-file-chip"][data-source-path="${BOARD_TEST_PATH}"]`),
+    ).toBeVisible();
+
     const sequenceTab = rail.getByRole("tab", { name: /Sequence/ });
     const sequenceLabel = sequenceTab.locator("span").last();
     const containerThreshold = await page.evaluate(

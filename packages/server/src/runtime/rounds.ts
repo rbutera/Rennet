@@ -34,7 +34,7 @@
 // `deltaPacket.successorAccount`) — this runtime only wires the seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { WhiteboardClient } from "@rennet/adapters";
+import { type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
 import type {
   CodexExecutor,
   DeltaPacket,
@@ -62,6 +62,7 @@ import { PipelineStartGuard } from "../session/pipeline-guard";
 import {
   type BoardArrivalEvent,
   type BoardMeta,
+  createDesignCoverageMapper,
   type LensBoardOutcome,
   type LensPipelineResult,
   type PromptReader,
@@ -146,6 +147,14 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
       set(lens, { status: "failed", reason });
       emit(snapshot());
     },
+    /** Discovery completed successfully and found no material for this lens. */
+    absent(lens: LensKind, reason: string): void {
+      set(lens, { status: "absent", reason });
+      const next = LENS_KINDS[LENS_KINDS.indexOf(lens) + 1];
+      if (next !== undefined && lanes.get(next)?.status === "queued")
+        set(next, { status: "running" });
+      emit(snapshot());
+    },
   };
 }
 
@@ -180,10 +189,21 @@ export function withLensBoards(
   result: Pick<LensPipelineResult, "boards">,
 ): Generation {
   const lensBoards: Partial<Record<LensKind, string>> = { ...gen.lensBoards };
+  const absentLenses: Partial<Record<LensKind, "no-material">> = { ...gen.absentLenses };
   for (const o of result.boards) {
-    if (o.lens !== "report" && o.boardId !== undefined) lensBoards[o.lens] = o.boardId;
+    if (o.lens === "report") continue;
+    if (o.boardId !== undefined) {
+      lensBoards[o.lens] = o.boardId;
+      delete absentLenses[o.lens];
+    } else if (o.absence !== undefined) {
+      absentLenses[o.lens] = o.absence;
+      delete lensBoards[o.lens];
+    }
   }
-  return { ...gen, lensBoards };
+  if (Object.keys(absentLenses).length > 0) return { ...gen, lensBoards, absentLenses };
+  const generationWithoutAbsences = { ...gen };
+  delete generationWithoutAbsences.absentLenses;
+  return { ...generationWithoutAbsences, lensBoards };
 }
 
 /**
@@ -212,7 +232,7 @@ function reportedReworkCount(report: LensBoardOutcome | undefined): number | und
 /** The drafters' own failure reasons, for the terminal event a board-less round emits. */
 function failureReasons(pipeline: LensPipelineResult): string {
   const reasons = [pipeline.report, ...pipeline.boards].flatMap((outcome) =>
-    outcome === undefined || outcome.boardId !== undefined
+    outcome === undefined || outcome.boardId !== undefined || outcome.absence !== undefined
       ? []
       : [`${outcome.lens}: ${outcome.failure ?? "no board"}`],
   );
@@ -253,6 +273,10 @@ export interface RoundInput {
   readonly deltaPacket: DeltaPacket;
   readonly hunks: readonly LintHunk[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /** Deterministically discovered Design artifacts; null means discovery succeeded with no spec. */
+  readonly designArtifacts?: DesignArtifactSet | null;
+  /** Pinned Design discovery failed; Design settles failed while sibling lenses continue. */
+  readonly designArtifactFailure?: string;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -449,6 +473,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     input: RoundInput,
     boardGeneration: Generation,
   ): Promise<LensPipelineResult> {
+    if (input.designArtifacts === null) {
+      await deps.persistGeneration?.({
+        ...boardGeneration,
+        absentLenses: {
+          ...boardGeneration.absentLenses,
+          design: "no-material",
+        },
+      });
+    }
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const boardIds = new Map<LintTarget, string>();
     for (const target of LINT_TARGETS) boardIds.set(target, await boards.createRennetBoard());
@@ -493,6 +526,23 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             }
             lanes.arrived(event.lens, event.carried);
           };
+    const earlyAbsentLenses: Partial<Record<LensKind, "no-material">> = {
+      ...boardGeneration.absentLenses,
+    };
+    const onLensAbsence =
+      lanes === undefined && deps.persistGeneration === undefined
+        ? undefined
+        : async (lens: LensKind, reason: "no-material"): Promise<void> => {
+            lanes?.absent(
+              lens,
+              reason === "no-material" ? "No Design specification applies to this change." : reason,
+            );
+            earlyAbsentLenses[lens] = reason;
+            await deps.persistGeneration?.({
+              ...boardGeneration,
+              absentLenses: { ...earlyAbsentLenses },
+            });
+          };
 
     const pipeline = await runLensPipeline({
       claudePort,
@@ -501,10 +551,22 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       deltaPacket: input.deltaPacket,
       hunks: input.hunks,
       lintContextFor: input.lintContextFor,
+      ...(input.designArtifacts === undefined
+        ? {}
+        : {
+            designArtifacts: input.designArtifacts,
+            ...(claudePort === null
+              ? {}
+              : { mapDesignCoverage: createDesignCoverageMapper(claudePort, input.repoRoot) }),
+          }),
+      ...(input.designArtifactFailure === undefined
+        ? {}
+        : { designArtifactFailure: input.designArtifactFailure }),
       readPrompt: deps.readPrompt,
       whiteboard: new WhiteboardClient(boards.service),
       boardIdFor,
       ...(onBoardArrival === undefined ? {} : { onBoardArrival }),
+      ...(onLensAbsence === undefined ? {} : { onLensAbsence }),
       ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
         : {
@@ -534,6 +596,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // working" forever, which is the same stall a silent crash leaves behind.
     for (const outcome of pipeline.boards) {
       if (outcome.boardId !== undefined || outcome.lens === "report") continue;
+      if (outcome.absence !== undefined) continue;
       lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
     }
     return pipeline;
@@ -552,7 +615,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // the patchset the drafters are reading; mint it from that patchset rather than from a
     // predecessor that does not exist.
     const boardGeneration = landed
-      ? mintGeneration(newGenerationId(worked.patchsetId as string), worked.patchsetId as string)
+      ? (deps.loadGeneration?.(newGenerationId(worked.patchsetId as string)) ??
+        mintGeneration(newGenerationId(worked.patchsetId as string), worked.patchsetId as string))
       : (input.previousGeneration ??
         mintGeneration(
           newGenerationId(input.deltaPacket.patchset.id),

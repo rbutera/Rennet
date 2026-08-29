@@ -102,6 +102,10 @@
                 "type": "string",
                 "minLength": 1
               },
+              "reviewedTreeOid": {
+                "type": "string",
+                "minLength": 1
+              },
               "headRef": {
                 "type": "string",
                 "minLength": 1

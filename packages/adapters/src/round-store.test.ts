@@ -11,6 +11,7 @@ const frozenGen = (id: string): Generation => ({
   id,
   patchsetId: "ps-1",
   lensBoards: { design: "board:d", decisions: "board:x" },
+  absentLenses: { noise: "no-material" },
   status: "frozen",
 });
 
@@ -23,6 +24,7 @@ describe("GenerationStore", () => {
     expect(reloaded?.id).toBe("gen:ps-1");
     expect(reloaded?.status).toBe("frozen");
     expect(reloaded?.lensBoards).toEqual({ design: "board:d", decisions: "board:x" });
+    expect(reloaded?.absentLenses).toEqual({ noise: "no-material" });
   });
 
   it("returns undefined for a generation never persisted (honest absence, not fabricated)", () => {

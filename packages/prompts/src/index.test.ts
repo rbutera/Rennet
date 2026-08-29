@@ -40,6 +40,46 @@ describe("lens prompt manifest", () => {
     expect(text.replace(/\s+/g, " ")).toContain("never change `document.measure`");
   });
 
+  it("keeps the Design prompt on one candidate and one canonical scenario owner", () => {
+    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.design), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
+
+    expect(normalized).toContain("Never combine candidates into one document");
+    expect(normalized).not.toContain("render their complete artifact sets together");
+    expect(normalized).toContain("A scenario is a child only through `requirement.scenarios`");
+    expect(normalized).toContain("exact `Format` label");
+    expect(normalized).toContain("exact first line names the selected plan");
+    expect(normalized).toContain("one source-linked capability root");
+    expect(normalized).toContain("exact nested operation sections");
+    expect(normalized).toContain("Never promote the operations into separate capability roots");
+  });
+
+  it("assigns each format-specific Design projection to one canonical owner", () => {
+    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.design), "utf8");
+    const fields = [
+      "`requirement_refs`",
+      "`status`",
+      "`acceptance_criteria`",
+      "`task_manifest`",
+      "`source_cells`",
+      "`glossary_term`",
+    ];
+
+    for (const field of fields) expect(text.split(field)).toHaveLength(2);
+    expect(fields.map((field) => text.indexOf(field))).toEqual(
+      [...fields.map((field) => text.indexOf(field))].sort((left, right) => left - right),
+    );
+    expect(text.replace(/\s+/g, " ")).toContain(
+      "The surface renders each display projection once, on the owning element named below",
+    );
+    expect(text.replace(/\s+/g, " ")).toContain(
+      "host-owned parser projections: do not author them",
+    );
+    expect(text.replace(/\s+/g, " ")).toContain(
+      "strips any drafter-supplied claims for these fields, then stamps exact source values before lint and rendering",
+    );
+  });
+
   it("carries the round-report drafter with verification duty and the shared ground rules", () => {
     const text = readFileSync(join(srcDir, ROUND_REPORT_FILE), "utf8");
     expect(text.length).toBeGreaterThan(500);

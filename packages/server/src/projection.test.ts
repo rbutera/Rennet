@@ -651,8 +651,12 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
   ...classified("repo-relative", [
     // The lens-board read (C18): a board's `code_ref` elements cite the CAPTURED patchset by
     // repo-relative path (`codeRefSchema`'s own field, the same one `review.setDisposition`
-    // carries) — never a host-absolute path, so no remote projection translates it.
+    // carries). Design source chips use the same reviewed-repository coordinate space —
+    // never a host-absolute path, so no remote projection translates any of them.
     "board.read.output.board.elements.data.path",
+    "board.read.output.board.document.sources.path",
+    "board.read.output.board.elements.data.source.path",
+    "board.read.output.board.elements.data.sources.path",
     // The round diff (#571): the ledger read splits `RoundRecord.diff` — a `git diff` run
     // INSIDE the repo — into per-file patches, so each `path` is the `diff --git a/… b/…`
     // header's repo-relative path, exactly like a patchset's `files.path` above. Never

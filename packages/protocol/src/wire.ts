@@ -25,6 +25,10 @@ const repositoryProvenanceSchema = z.object({
   baseRef: z.string().min(1),
   baseOid: z.string().min(1),
   headOid: z.string().min(1),
+  // A local working-tree capture keeps `headOid` as the actual branch commit and
+  // pins the reviewed bytes separately as a full Git tree. Optional keeps stored
+  // range/PR patchsets and pre-field local reviews wire-compatible.
+  reviewedTreeOid: z.string().min(1).optional(),
   // The head's branch ref (#107) — named in the schema so it survives IPC intact
   // rather than being stripped (the type declares it, so the schema must carry it,
   // the #242 discipline). Optional: a detached HEAD has no branch, so the field is
