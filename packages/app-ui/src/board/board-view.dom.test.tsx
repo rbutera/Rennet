@@ -73,6 +73,27 @@ const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAtt
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
 describe("LensBoardView — board document, switchers, drill-down", () => {
+  it("renders durable no-spec absence without borrowing another lens board", async () => {
+    const { container, findByText } = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": (input) =>
+              input.lens === "design"
+                ? { board: null, absence: "no-material" }
+                : fixtureBoardRead(input),
+          })
+        }
+      >
+        <LensBoardView reviewId="rev-1" generation="gen1" lens="design" />
+      </BridgeProvider>,
+    );
+
+    expect(await findByText("No Design specification was found.")).toBeTruthy();
+    expect(container.querySelector("[data-kind=board-absent]")).toBeTruthy();
+    expect(container.querySelector("article[data-lens]")).toBeNull();
+  });
+
   it("renders document metadata, structured measure, and a semantic anchored outline", async () => {
     const { container } = await renderView("gen1", GENERATIONS, "design");
     const document = container.querySelector<HTMLElement>("[data-kind=lens-board-view]");

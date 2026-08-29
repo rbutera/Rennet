@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { basename, isAbsolute, join, normalize, posix, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, isAbsolute, posix } from "node:path";
 import type { Patchset } from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
 import { listTree, readBlobText } from "./project-snapshot-source";
@@ -45,6 +45,7 @@ export type DesignCandidateRelevance =
   | { readonly kind: "repository-candidate" };
 
 export interface DesignArtifactCandidate {
+  readonly id: string;
   readonly format: DesignArtifactFormat;
   readonly name: string;
   readonly nameSourceBytes: number;
@@ -146,6 +147,12 @@ function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort(byCodePoint);
 }
 
+function candidateId(candidate: CandidateInput): string {
+  const identity = [candidate.format, ...uniqueSorted(candidate.artifacts.map(({ path }) => path))];
+  const digest = createHash("sha256").update(identity.join("\u0000")).digest("hex").slice(0, 16);
+  return `${candidate.format}-${digest}`;
+}
+
 function toRepoPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\.\//, "");
 }
@@ -158,46 +165,13 @@ function safeRepoPath(path: string): string | undefined {
   return normalized;
 }
 
-function isWorkingTreeReview(patchset: Patchset): boolean {
-  return (patchset.source ?? "local") === "local";
-}
-
-async function readDiskFile(root: string, repoPath: string): Promise<string | undefined> {
-  const normalized = safeRepoPath(repoPath);
-  if (normalized === undefined) return undefined;
-  const absolutePath = join(root, ...normalized.split("/"));
-  const relativePath = relative(root, absolutePath);
-  if (
-    relativePath.length === 0 ||
-    isAbsolute(relativePath) ||
-    normalize(relativePath).split(sep).includes("..")
-  ) {
-    return undefined;
-  }
-  try {
-    return await readFile(absolutePath, "utf8");
-  } catch (error) {
-    const code = error instanceof Error && "code" in error ? error.code : undefined;
-    if (code === "ENOENT" || code === "EISDIR") return undefined;
-    throw error;
-  }
-}
-
 async function reviewedState(options: DiscoverDesignArtifactsOptions): Promise<ReviewedState> {
   const { patchset, git } = options;
   const root = patchset.repository.root;
-  const tree = await listTree(root, patchset.repository.headOid, git);
+  const reviewedOid = patchset.repository.reviewedTreeOid ?? patchset.repository.headOid;
+  const tree = await listTree(root, reviewedOid, git);
   const blobs = new Map(tree.map((entry) => [toRepoPath(entry.path), entry.blobOid]));
-  const paths = isWorkingTreeReview(patchset)
-    ? uniqueSorted([
-        ...blobs.keys(),
-        ...patchset.files.flatMap((file) =>
-          file.previousPath === undefined
-            ? [toRepoPath(file.path)]
-            : [toRepoPath(file.path), toRepoPath(file.previousPath)],
-        ),
-      ])
-    : uniqueSorted(blobs.keys());
+  const paths = uniqueSorted(blobs.keys());
   const pending = new Map<string, Promise<string | undefined>>();
 
   return {
@@ -207,16 +181,11 @@ async function reviewedState(options: DiscoverDesignArtifactsOptions): Promise<R
       if (repoPath === undefined) return Promise.resolve(undefined);
       const cached = pending.get(repoPath);
       if (cached !== undefined) return cached;
-      let operation: Promise<string | undefined>;
-      if (isWorkingTreeReview(patchset)) {
-        operation = readDiskFile(root, repoPath);
-      } else {
-        const blobOid = blobs.get(repoPath);
-        operation =
-          blobOid === undefined
-            ? Promise.resolve(undefined)
-            : readBlobText(root, blobOid, git).then((content) => content);
-      }
+      const blobOid = blobs.get(repoPath);
+      const operation =
+        blobOid === undefined
+          ? Promise.resolve(undefined)
+          : readBlobText(root, blobOid, git).then((content) => content);
       pending.set(repoPath, operation);
       return operation;
     },
@@ -416,10 +385,43 @@ async function discoverBmad(state: ReviewedState): Promise<CandidateInput[]> {
   const artifacts = sortArtifacts(loaded.filter((entry) => entry !== undefined));
   if (artifacts.length === 0) return [];
   const primaryPrd = artifacts.find((entry) => entry.path === config.prdFile);
-  const name =
+  const projectName =
     (primaryPrd === undefined ? undefined : firstHeading(primaryPrd.content)) ??
     artifacts.map((entry) => firstHeading(entry.content)).find((value) => value !== undefined);
-  return [{ format: "bmad", name: name ?? "BMAD project", artifacts }];
+  const shared = artifacts.filter((entry) => entry.role === "prd" || entry.role === "architecture");
+  const epics = artifacts.filter((entry) => entry.role === "epic");
+  const stories = artifacts.filter((entry) => entry.role === "story");
+  if (stories.length === 0 && epics.length === 0) {
+    return [{ format: "bmad", name: projectName ?? "BMAD project", artifacts }];
+  }
+
+  const epicNumber = (entry: DesignArtifact): string | undefined =>
+    /(?:^|[^a-z])epic[-_\s]*(\d+)/i.exec(
+      `${entry.path}\n${firstHeading(entry.content) ?? ""}`,
+    )?.[1];
+  const storyEpicNumber = (entry: DesignArtifact): string | undefined =>
+    /(?:^|\/)(\d+)\.[^./]+(?:\.story)?\.md$/i.exec(entry.path)?.[1];
+  const usedEpics = new Set<string>();
+  const candidates: CandidateInput[] = stories.map((story) => {
+    const number = storyEpicNumber(story);
+    const matchingEpics =
+      number === undefined ? [] : epics.filter((entry) => epicNumber(entry) === number);
+    for (const epic of matchingEpics) usedEpics.add(epic.path);
+    return {
+      format: "bmad",
+      name: firstHeading(story.content) ?? basename(story.path, ".story.md"),
+      artifacts: sortArtifacts([...shared, ...matchingEpics, story]),
+    };
+  });
+  for (const epic of epics) {
+    if (usedEpics.has(epic.path)) continue;
+    candidates.push({
+      format: "bmad",
+      name: firstHeading(epic.content) ?? basename(epic.path, ".md"),
+      artifacts: sortArtifacts([...shared, epic]),
+    });
+  }
+  return candidates;
 }
 
 function isDatedMarkdown(path: string): boolean {
@@ -553,41 +555,66 @@ function isAdrUnder(path: string, root: string): boolean {
 
 async function discoverGrillWithDocs(state: ReviewedState): Promise<CandidateInput[]> {
   const mapContent = await state.read("CONTEXT-MAP.md");
-  const paths: { path: string; role: DesignArtifactRole }[] = [];
+  const candidates: CandidateInput[] = [];
   if (mapContent !== undefined && mapContent.trim().length > 0) {
-    paths.push({ path: "CONTEXT-MAP.md", role: "context-map" });
+    const mapArtifact = artifactFromContent("CONTEXT-MAP.md", "context-map", mapContent);
     const contextPaths = contextPathsFromMap(mapContent);
-    for (const path of contextPaths) paths.push({ path, role: "context" });
-    const contextRoots = contextPaths
-      .map((path) => posix.dirname(path))
-      .filter((path) => path !== ".");
-    for (const path of state.paths) {
-      if (isAdrUnder(path, "") || contextRoots.some((root) => isAdrUnder(path, root))) {
-        paths.push({ path, role: "adr" });
-      }
+    for (const contextPath of contextPaths) {
+      const context = await artifact(state, contextPath, "context");
+      if (context === undefined) continue;
+      const root = posix.dirname(contextPath);
+      const adrPaths = root === "." ? [] : state.paths.filter((path) => isAdrUnder(path, root));
+      const adrs = await Promise.all(adrPaths.map((path) => artifact(state, path, "adr")));
+      candidates.push({
+        format: "grill-with-docs",
+        name: firstHeading(context.content) ?? basename(root),
+        artifacts: sortArtifacts([
+          mapArtifact,
+          context,
+          ...adrs.filter((entry) => entry !== undefined),
+        ]),
+      });
+    }
+    const rootAdrPaths = state.paths.filter((path) => isAdrUnder(path, ""));
+    for (const path of rootAdrPaths) {
+      const adr = await artifact(state, path, "adr");
+      if (adr === undefined) continue;
+      candidates.push({
+        format: "grill-with-docs",
+        name: firstHeading(adr.content) ?? basename(path, ".md"),
+        artifacts: sortArtifacts([mapArtifact, adr]),
+      });
+    }
+    if (candidates.length === 0) {
+      candidates.push({
+        format: "grill-with-docs",
+        name: firstHeading(mapContent) ?? "Project context",
+        artifacts: [mapArtifact],
+      });
     }
   } else {
-    if (state.paths.includes("CONTEXT.md")) paths.push({ path: "CONTEXT.md", role: "context" });
-    for (const path of state.paths) {
-      if (isAdrUnder(path, "")) paths.push({ path, role: "adr" });
+    const context = state.paths.includes("CONTEXT.md")
+      ? await artifact(state, "CONTEXT.md", "context")
+      : undefined;
+    const rootAdrPaths = state.paths.filter((path) => isAdrUnder(path, ""));
+    for (const path of rootAdrPaths) {
+      const adr = await artifact(state, path, "adr");
+      if (adr === undefined) continue;
+      candidates.push({
+        format: "grill-with-docs",
+        name: firstHeading(adr.content) ?? basename(path, ".md"),
+        artifacts: sortArtifacts([...(context === undefined ? [] : [context]), adr]),
+      });
+    }
+    if (candidates.length === 0 && context !== undefined) {
+      candidates.push({
+        format: "grill-with-docs",
+        name: firstHeading(context.content) ?? "Project context",
+        artifacts: [context],
+      });
     }
   }
-  const loaded = await Promise.all(paths.map((entry) => artifact(state, entry.path, entry.role)));
-  const artifacts = sortArtifacts(loaded.filter((entry) => entry !== undefined));
-  if (artifacts.length === 0) return [];
-  const rootContext = artifacts.find(
-    (entry) => entry.path === "CONTEXT-MAP.md" || entry.path === "CONTEXT.md",
-  );
-  return [
-    {
-      format: "grill-with-docs",
-      name:
-        rootContext === undefined
-          ? "Project context"
-          : (firstHeading(rootContext.content) ?? "Project context"),
-      artifacts,
-    },
-  ];
+  return candidates;
 }
 
 function relevanceFor(
@@ -691,6 +718,7 @@ function utf8Prefix(content: string, maxBytes: number): string {
 
 function boundCandidateContent(
   candidate: CandidateInput & { readonly relevance: DesignCandidateRelevance },
+  id: string,
   contentBudget: number,
   changedPaths: readonly string[],
 ): DesignArtifactCandidate {
@@ -706,6 +734,7 @@ function boundCandidateContent(
   let remainder = selected.length === 0 ? 0 : contentBudget % selected.length;
   const name = utf8Prefix(candidate.name, DESIGN_ARTIFACT_LIMITS.maxCandidateNameBytes);
   return {
+    id,
     format: candidate.format,
     name,
     nameSourceBytes: Buffer.byteLength(candidate.name),
@@ -764,7 +793,7 @@ function boundCandidates(
   }
   return {
     candidates: selected.map((candidate, index) =>
-      boundCandidateContent(candidate, budgets[index] ?? 0, changedPaths),
+      boundCandidateContent(candidate, candidateId(candidate), budgets[index] ?? 0, changedPaths),
     ),
     omittedCandidateCount: inputs.length - selected.length,
   };

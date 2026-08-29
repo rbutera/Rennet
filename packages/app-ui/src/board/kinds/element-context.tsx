@@ -107,6 +107,11 @@ export function useElement(id: string | undefined): HostElement | undefined {
   return id === undefined ? undefined : index.get(id);
 }
 
+/** The resolved board pool for structural projections that need to follow nested sections. */
+export function useBoardElementIndex(): ReadonlyMap<string, HostElement> {
+  return useContext(BoardElementsContext).index;
+}
+
 /** Resolve every id to its element, dropping any that dangle. */
 export function useElements(ids: readonly string[]): HostElement[] {
   const { index } = useContext(BoardElementsContext);

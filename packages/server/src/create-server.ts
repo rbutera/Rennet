@@ -54,6 +54,7 @@ import {
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
+  discoverDesignArtifacts,
   discoverProject,
   discoverWorktreeIdentities,
   ensureManagedClone,
@@ -2000,10 +2001,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     fileInventory: (patchset: Patchset) =>
       readTreeLineCounts(
         patchset.repository.root,
-        patchset.repository.headOid,
+        patchset.repository.reviewedTreeOid ?? patchset.repository.headOid,
         patchset.repository.baseOid,
         gitForRepo(patchset.repository.root),
       ),
+    designArtifactsFor: (patchset: Patchset) =>
+      discoverDesignArtifacts({
+        patchset,
+        git: gitForRepo(patchset.repository.root),
+      }),
     // The REAL prior generation, rebuilt from its two durable halves (the generation
     // record + the board-meta rows' projected boards). Absent ⇒ this session has
     // never drafted over that patchset, so this is honestly a first generation.
@@ -2322,6 +2328,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         document: meta.document,
         skippedHunks: meta.skippedHunks,
       });
+    },
+    lensAbsenceForReview: async (reviewId: string, generation: string, lens: LensKind) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return undefined;
+      const stored = generationStore.load(generation);
+      if (
+        stored === undefined ||
+        !review.patchsets.some((patchset) => patchset.id === stored.patchsetId)
+      ) {
+        return undefined;
+      }
+      return stored.absentLenses?.[lens];
     },
     dispatchRound: async ({ review, workOrder }) => {
       // The WRITE half of the session identity, and it lives beside its READ half

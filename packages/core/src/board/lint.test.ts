@@ -279,20 +279,30 @@ describe("no-remainder-narration (L9 / R18)", () => {
 
 describe("scaffold-is-noise-lane (L10 / R22)", () => {
   it("fires when a non-Noise board cites a scaffold path", () => {
-    const bad = board([codeRef("c", "packages/x/openspec/change.md", 1, 1)], { skippedHunks: [] });
-    const scoped = ctx({ files: new Map([["packages/x/openspec/change.md", 10]]) });
+    const bad = board([codeRef("c", "openspec/changes/auth/.openspec.yaml", 1, 1)], {
+      skippedHunks: [],
+    });
+    const scoped = ctx({ files: new Map([["openspec/changes/auth/.openspec.yaml", 10]]) });
     expect(rulesHit(lint(bad, scoped))).toContain("scaffold-is-noise-lane");
   });
 
   it("does not fire on the Noise board", () => {
-    const noiseBoard = board([codeRef("c", "packages/x/openspec/change.md", 1, 1)], {
+    const noiseBoard = board([codeRef("c", "openspec/changes/auth/.openspec.yaml", 1, 1)], {
       skippedHunks: [],
     });
     const scoped = ctx({
       lens: "noise" as LensKind,
-      files: new Map([["packages/x/openspec/change.md", 10]]),
+      files: new Map([["openspec/changes/auth/.openspec.yaml", 10]]),
     });
     expect(rulesHit(lint(noiseBoard, scoped))).not.toContain("scaffold-is-noise-lane");
+  });
+
+  it("does not misclassify an OpenSpec source artifact as generated scaffold", () => {
+    const path = "openspec/changes/auth/specs/session/spec.md";
+    const design = board([codeRef("c", path, 1, 1)], { skippedHunks: [] });
+    const scoped = ctx({ lens: "design", files: new Map([[path, 10]]) });
+
+    expect(rulesHit(lint(design, scoped))).not.toContain("scaffold-is-noise-lane");
   });
 
   it("ships a sane default scaffold glob set", () => {
@@ -415,6 +425,846 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
     expect(rulesHit(lint(reqBoard("anything at all"), scoped))).not.toContain(
       "requirement-verbatim",
     );
+  });
+
+  it("checks a requirement only against the exact source artifact it names", () => {
+    const bad = board(
+      [
+        el("r", "requirement", {
+          shall: "The system SHALL refresh the token",
+          source: { path: "specs/session.md" },
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [
+        { path: "specs/auth.md", text: "The system SHALL refresh the token." },
+        { path: "specs/session.md", text: "The system SHALL preserve the session." },
+      ],
+    });
+
+    expect(rulesHit(lint(bad, scoped))).toContain("requirement-verbatim");
+  });
+
+  it("passes source-indexed verbatim text from the named artifact", () => {
+    const ok = board(
+      [
+        el("r", "requirement", {
+          shall: "The system SHALL preserve the session",
+          source: { path: "specs/session.md" },
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [
+        { path: "specs/auth.md", text: "The system SHALL refresh the token." },
+        { path: "specs/session.md", text: "The system SHALL preserve the session." },
+      ],
+    });
+
+    expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-verbatim");
+  });
+
+  it("rejects a requirement whose source path is not in the discovered artifact set", () => {
+    const bad = board(
+      [
+        el("r", "requirement", {
+          shall: "The system SHALL preserve the session",
+          source: { path: "specs/typo.md" },
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [{ path: "specs/session.md", text: "The system SHALL preserve the session." }],
+    });
+
+    expect(rulesHit(lint(bad, scoped))).toContain("requirement-source-known");
+  });
+
+  it("rejects a sourceless requirement when discovery supplied exact artifacts", () => {
+    const bad = board(
+      [el("r", "requirement", { shall: "The system SHALL preserve the session" })],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [{ path: "specs/session.md", text: "The system SHALL preserve the session." }],
+    });
+
+    expect(rulesHit(lint(bad, scoped))).toContain("requirement-source-known");
+  });
+
+  it("rejects a paraphrased scenario even when the SHALL text is verbatim", () => {
+    const bad = board(
+      [
+        el("r", "requirement", {
+          shall: "The system SHALL preserve the session",
+          scenarios: ["scenario"],
+          source: { path: "specs/session.md" },
+        }),
+        el("scenario", "prose", { markdown: "WHEN it expires THEN refresh everything." }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [
+        {
+          path: "specs/session.md",
+          text: "The system SHALL preserve the session. WHEN the token expires THEN refresh the session.",
+        },
+      ],
+    });
+
+    const violations = lint(bad, scoped).filter(
+      (violation) => violation.ruleId === "requirement-verbatim",
+    );
+    expect(violations).toEqual([expect.objectContaining({ elementRef: "scenario/markdown" })]);
+  });
+
+  it("accepts a verbatim scenario anchored through its requirement", () => {
+    const scenario = "WHEN the token expires THEN refresh the session.";
+    const ok = board(
+      [
+        el("r", "requirement", {
+          shall: "The system SHALL preserve the session",
+          scenarios: ["scenario"],
+          source: { path: "specs/session.md" },
+        }),
+        el("scenario", "prose", { markdown: scenario }),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [
+        {
+          path: "specs/session.md",
+          text: `The system SHALL preserve the session. ${scenario}`,
+        },
+      ],
+    });
+
+    expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-verbatim");
+  });
+
+  it("rejects a requirement scenario ref that resolves to a non-narrative element", () => {
+    const bad = board(
+      [
+        el("r", "requirement", {
+          shall: "The system SHALL preserve the session",
+          scenarios: ["not-a-scenario"],
+          source: { path: "specs/session.md" },
+        }),
+        codeRef("not-a-scenario", "src/auth.ts", 10, 11),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design",
+      artifacts: [{ path: "specs/session.md", text: "The system SHALL preserve the session." }],
+    });
+
+    expect(rulesHit(lint(bad, scoped))).toContain("requirement-scenario-narrative");
+  });
+});
+
+describe("Design source navigation grounding", () => {
+  const artifacts = [{ path: "specs/session.md", text: "The system SHALL preserve it." }];
+  const scoped = ctx({
+    lens: "design",
+    artifacts,
+    files: new Map([
+      ["specs/session.md", 10],
+      ["src/session.ts", 100],
+    ]),
+  });
+
+  it("rejects invented document/section source chips and related files", () => {
+    const bad = board(
+      [
+        el("section", "section", {
+          title: "Session",
+          children: ["requirement"],
+          sources: [{ path: "specs/invented.md" }],
+        }),
+        el("requirement", "requirement", {
+          shall: "The system SHALL preserve it.",
+          source: { path: "specs/session.md" },
+          related_files: ["src/invented.ts"],
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: "specs/invented.md" }],
+        },
+        skippedHunks: [],
+      },
+    );
+
+    const hit = rulesHit(lint(bad, scoped));
+    expect(hit).toContain("design-source-known");
+    expect(hit).toContain("design-related-file-known");
+  });
+
+  it("accepts source chips and related files that resolve in the reviewed repository", () => {
+    const ok = board(
+      [
+        el("section", "section", {
+          title: "Session",
+          children: ["requirement"],
+          sources: [{ path: "specs/session.md" }],
+        }),
+        el("requirement", "requirement", {
+          shall: "The system SHALL preserve it.",
+          source: { path: "specs/session.md" },
+          related_files: ["src/session.ts"],
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: "specs/session.md" }],
+        },
+        skippedHunks: [],
+      },
+    );
+
+    const hit = rulesHit(lint(ok, scoped));
+    expect(hit).not.toContain("design-source-known");
+    expect(hit).not.toContain("design-related-file-known");
+  });
+
+  it("rejects source-chip lines outside the reviewed artifact", () => {
+    const bad = board(
+      [
+        el("section", "section", {
+          title: "Session",
+          children: ["requirement"],
+          sources: [{ path: "specs/session.md", line: 11 }],
+        }),
+        el("requirement", "requirement", {
+          shall: "The system SHALL preserve it.",
+          source: { path: "specs/session.md", line: 11 },
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: "specs/session.md", line: 11 }],
+        },
+        skippedHunks: [],
+      },
+    );
+
+    expect(
+      lint(bad, scoped).filter((violation) => violation.ruleId === "design-source-line-known"),
+    ).toHaveLength(3);
+  });
+
+  it("accepts the last reviewed line for document, section, and requirement sources", () => {
+    const ok = board(
+      [
+        el("section", "section", {
+          title: "Session",
+          children: ["requirement"],
+          sources: [{ path: "specs/session.md", line: 10 }],
+        }),
+        el("requirement", "requirement", {
+          shall: "The system SHALL preserve it.",
+          source: { path: "specs/session.md", line: 10 },
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: "specs/session.md", line: 10 }],
+        },
+        skippedHunks: [],
+      },
+    );
+
+    expect(rulesHit(lint(ok, scoped))).not.toContain("design-source-line-known");
+  });
+
+  it("grounds source lines from discovered text when the whole-tree inventory is unavailable", () => {
+    const artifactOnly = ctx({
+      lens: "design",
+      artifacts: [
+        {
+          path: "specs/session.md",
+          text: "Session\nThe system SHALL preserve it.",
+        },
+      ],
+      files: new Map(),
+    });
+    const ok = board(
+      [
+        el("section", "section", {
+          title: "Session",
+          children: ["requirement"],
+          sources: [{ path: "specs/session.md", line: 2 }],
+        }),
+        el("requirement", "requirement", {
+          shall: "The system SHALL preserve it.",
+          source: { path: "specs/session.md", line: 2 },
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: "specs/session.md", line: 2 }],
+        },
+        skippedHunks: [],
+      },
+    );
+
+    expect(rulesHit(lint(ok, artifactOnly))).not.toContain("design-source-line-known");
+  });
+
+  it("requires every strongly relevant artifact in the header and a named section", () => {
+    const proposal = "specs/proposal.md";
+    const design = "specs/design.md";
+    const incomplete = board(
+      [
+        el("proposal", "section", {
+          title: "Proposal",
+          children: [],
+          sources: [{ path: proposal }],
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: proposal }],
+        },
+        skippedHunks: [],
+      },
+    );
+    const complete = board(
+      [
+        el("proposal", "section", {
+          title: "Proposal",
+          children: [],
+          sources: [{ path: proposal }],
+        }),
+        el("design", "section", {
+          title: "Design",
+          children: [],
+          sources: [{ path: design }],
+        }),
+      ],
+      {
+        document: {
+          title: "Session",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: proposal }, { path: design }],
+        },
+        skippedHunks: [],
+      },
+    );
+    const completeCtx = ctx({
+      lens: "design",
+      artifacts: [
+        { path: proposal, text: "Why" },
+        { path: design, text: "How" },
+      ],
+      artifactCandidates: [{ id: "candidate-1", paths: [proposal, design] }],
+      files: new Map([
+        [proposal, 10],
+        [design, 10],
+      ]),
+    });
+
+    expect(rulesHit(lint(incomplete, completeCtx))).toContain("design-artifact-set-complete");
+    expect(rulesHit(lint(complete, completeCtx))).not.toContain("design-artifact-set-complete");
+  });
+
+  it("does not force a same-path-reference decoy candidate into the selected design", () => {
+    const targetProposal = "specs/target/proposal.md";
+    const targetDesign = "specs/target/design.md";
+    const decoyProposal = "specs/decoy/proposal.md";
+    const decoyDesign = "specs/decoy/design.md";
+    const selected = board(
+      [
+        el("proposal", "section", {
+          title: "Proposal",
+          children: [],
+          sources: [{ path: targetProposal, candidate: "candidate-target" }],
+        }),
+        el("design", "section", {
+          title: "Design",
+          children: [],
+          sources: [{ path: targetDesign, candidate: "candidate-target" }],
+        }),
+      ],
+      {
+        document: {
+          title: "Target",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [
+            { path: targetProposal, candidate: "candidate-target" },
+            { path: targetDesign, candidate: "candidate-target" },
+          ],
+        },
+        skippedHunks: [],
+      },
+    );
+    const decoyCtx = ctx({
+      lens: "design",
+      artifacts: [
+        { path: targetProposal, text: "Target proposal mentions src/auth.ts" },
+        { path: targetDesign, text: "Target design mentions src/auth.ts" },
+        { path: decoyProposal, text: "Old proposal also mentions src/auth.ts" },
+        { path: decoyDesign, text: "Old design also mentions src/auth.ts" },
+      ],
+      artifactCandidates: [
+        { id: "candidate-target", paths: [targetProposal, targetDesign] },
+        { id: "candidate-decoy", paths: [decoyProposal, decoyDesign] },
+      ],
+      files: new Map([
+        [targetProposal, 1],
+        [targetDesign, 1],
+        [decoyProposal, 1],
+        [decoyDesign, 1],
+      ]),
+    });
+
+    expect(rulesHit(lint(selected, decoyCtx))).not.toContain("design-artifact-set-complete");
+  });
+
+  it("keeps partial-overlap candidates separate by their stable identity", () => {
+    const shared = "specs/shared.md";
+    const targetOnly = "plans/target.md";
+    const decoyOnly = "plans/decoy.md";
+    const selected = board(
+      [
+        el("shared", "section", {
+          title: "Shared design",
+          children: [],
+          sources: [{ path: shared, candidate: "candidate-target" }],
+        }),
+        el("target", "section", {
+          title: "Target plan",
+          children: [],
+          sources: [{ path: targetOnly, candidate: "candidate-target" }],
+        }),
+      ],
+      {
+        document: {
+          title: "Target",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [
+            { path: shared, candidate: "candidate-target" },
+            { path: targetOnly, candidate: "candidate-target" },
+          ],
+        },
+        skippedHunks: [],
+      },
+    );
+    const overlapCtx = ctx({
+      lens: "design",
+      artifacts: [
+        { path: shared, text: "Shared architecture" },
+        { path: targetOnly, text: "Target plan" },
+        { path: decoyOnly, text: "Unrelated plan" },
+      ],
+      artifactCandidates: [
+        { id: "candidate-target", paths: [shared, targetOnly] },
+        { id: "candidate-decoy", paths: [shared, decoyOnly] },
+      ],
+      files: new Map([
+        [shared, 1],
+        [targetOnly, 1],
+        [decoyOnly, 1],
+      ]),
+    });
+
+    const hit = rulesHit(lint(selected, overlapCtx));
+    expect(hit).not.toContain("design-source-candidate-known");
+    expect(hit).not.toContain("design-artifact-set-complete");
+  });
+
+  it("rejects an unqualified source when discovery returned overlapping candidates", () => {
+    const shared = "specs/shared.md";
+    const ambiguous = board(
+      [
+        el("shared", "section", {
+          title: "Shared design",
+          children: [],
+          sources: [{ path: shared }],
+        }),
+      ],
+      {
+        document: {
+          title: "Ambiguous",
+          introMarkdown: "Why it changes.",
+          measure: "structured",
+          sources: [{ path: shared }],
+        },
+        skippedHunks: [],
+      },
+    );
+    const overlapCtx = ctx({
+      lens: "design",
+      artifacts: [{ path: shared, text: "Shared architecture" }],
+      artifactCandidates: [
+        { id: "candidate-target", paths: [shared, "plans/target.md"] },
+        { id: "candidate-decoy", paths: [shared, "plans/decoy.md"] },
+      ],
+      files: new Map([[shared, 1]]),
+    });
+
+    expect(rulesHit(lint(ambiguous, overlapCtx))).toContain("design-source-candidate-known");
+  });
+
+  describe("reverse completeness and derived anatomy", () => {
+    const candidate = "openspec-session";
+    const path = "openspec/changes/session/specs/session/spec.md";
+    const text = [
+      "## ADDED Requirements",
+      "",
+      "### Requirement: Preserve the session",
+      "",
+      "The system SHALL preserve the session.",
+      "",
+      "#### Scenario: Refresh an expired session",
+      "- **WHEN** the token expires",
+      "- **THEN** refresh the session",
+      "",
+      "### Requirement: Recover after restart",
+      "",
+      "The system SHALL recover the session after restart.",
+      "",
+      "#### Scenario: Reopen the application",
+      "- **WHEN** the application restarts",
+      "- **THEN** restore the session",
+      "",
+      "## Tasks",
+      "",
+      "- [x] Persist the session",
+      "- [ ] Prove restart recovery",
+    ].join("\n");
+    const source = { path, candidate };
+    const scenarioOne =
+      "Scenario: Refresh an expired session - **WHEN** the token expires - **THEN** refresh the session";
+    const scenarioTwo =
+      "Scenario: Reopen the application - **WHEN** the application restarts - **THEN** restore the session";
+    const completeDesign = (): DraftBoard =>
+      board(
+        [
+          el("source", "section", {
+            title: "Session specification",
+            children: ["capability", "tasks"],
+            sources: [source],
+          }),
+          el("capability", "section", {
+            title: "Session",
+            children: ["requirement-1", "scenario-1", "requirement-2", "scenario-2"],
+          }),
+          el("requirement-1", "requirement", {
+            shall: "The system SHALL preserve the session.",
+            capability: "session",
+            spec_delta: "added",
+            scenarios: ["scenario-1"],
+            source,
+          }),
+          el("scenario-1", "prose", { markdown: scenarioOne }),
+          el("requirement-2", "requirement", {
+            shall: "The system SHALL recover the session after restart.",
+            capability: "restart",
+            spec_delta: "modified",
+            scenarios: ["scenario-2"],
+            source,
+          }),
+          el("scenario-2", "prose", { markdown: scenarioTwo }),
+          el("tasks", "section", { title: "Tasks", children: ["task-group"] }),
+          el("task-group", "section", {
+            title: "Delivery",
+            children: ["task-1", "task-2"],
+          }),
+          el("task-1", "prose", { markdown: "- [x] Persist the session" }),
+          el("task-2", "prose", { markdown: "- [ ] Prove restart recovery" }),
+        ],
+        {
+          document: {
+            title: "Session",
+            introMarkdown: "Keep sessions across restarts.",
+            measure: "structured",
+            sources: [source],
+            stats: [
+              { label: "Requirements", value: "2" },
+              { label: "Capabilities", value: "1 new / 1 modified" },
+              { label: "Tasks", value: "1/2" },
+            ],
+          },
+          skippedHunks: [],
+        },
+      );
+    const completeCtx = (over: Partial<LintContext> = {}): LintContext =>
+      ctx({
+        lens: "design",
+        hunks: [],
+        artifacts: [{ candidate, path, role: "spec", text }],
+        artifactCandidates: [{ id: candidate, paths: [path], relevance: "changed-artifact" }],
+        files: new Map([[path, text.split("\n").length]]),
+        ...over,
+      });
+    const reverseRules = new Set([
+      "design-artifact-content-complete",
+      "design-artifact-content-order",
+      "design-artifact-anatomy",
+      "design-header-complete",
+      "design-incompleteness-visible",
+    ]);
+
+    it("accepts an exact, source-ordered requirement, scenario, and task projection", () => {
+      const violations = lint(completeDesign(), completeCtx()).filter((violation) =>
+        reverseRules.has(violation.ruleId),
+      );
+
+      expect(violations).toEqual([]);
+    });
+
+    it("rejects an empty source-linked region even when the header names the artifact", () => {
+      const empty = completeDesign();
+      empty.elements = [
+        el("source", "section", {
+          title: "Session specification",
+          children: [],
+          sources: [source],
+        }),
+      ];
+
+      expect(rulesHit(lint(empty, completeCtx()))).toContain("design-artifact-content-complete");
+    });
+
+    it("rejects missing source requirements, scenarios, and tasks", () => {
+      const missing = completeDesign();
+      missing.elements = missing.elements.filter(
+        (element) => !["requirement-2", "scenario-2", "task-2"].includes(element.id),
+      );
+
+      const violations = lint(missing, completeCtx()).filter(
+        (violation) => violation.ruleId === "design-artifact-content-complete",
+      );
+      expect(violations.map((violation) => violation.message)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("recover the session"),
+          expect.stringContaining("Reopen the application"),
+          expect.stringContaining("Prove restart recovery"),
+        ]),
+      );
+    });
+
+    it("keeps repeated source tasks as separate disposition anchors", () => {
+      const repeatedText = `${text}\n- [ ] Prove restart recovery`;
+      const violations = lint(
+        completeDesign(),
+        completeCtx({
+          artifacts: [{ candidate, path, role: "spec", text: repeatedText }],
+          files: new Map([[path, repeatedText.split("\n").length]]),
+        }),
+      ).filter((violation) => violation.ruleId === "design-artifact-content-complete");
+
+      expect(violations).toEqual([
+        expect.objectContaining({ message: expect.stringContaining("Prove restart recovery") }),
+      ]);
+    });
+
+    it("rejects reversed scenario and task disposition anchors", () => {
+      const reversed = completeDesign();
+      reversed.elements = reversed.elements.map((element) => {
+        if (element.id === "capability") {
+          return el("capability", "section", {
+            title: "Session",
+            children: ["requirement-1", "scenario-2", "requirement-2", "scenario-1"],
+          });
+        }
+        if (element.id === "task-group") {
+          return el("task-group", "section", {
+            title: "Delivery",
+            children: ["task-2", "task-1"],
+          });
+        }
+        return element;
+      });
+
+      const orderViolations = lint(reversed, completeCtx()).filter(
+        (violation) => violation.ruleId === "design-artifact-content-order",
+      );
+      expect(orderViolations).toHaveLength(2);
+    });
+
+    it("derives header counts from the rendered source projection", () => {
+      const wrong = completeDesign();
+      wrong.document = {
+        ...wrong.document,
+        stats: [
+          { label: "Requirements", value: "1" },
+          { label: "Capabilities", value: "2 new / 0 modified" },
+          { label: "Tasks", value: "2/2" },
+        ],
+      } as NonNullable<DraftBoard["document"]>;
+
+      expect(
+        lint(wrong, completeCtx()).filter(
+          (violation) => violation.ruleId === "design-header-complete",
+        ),
+      ).toHaveLength(3);
+    });
+
+    it("requires proposal what-changes and impact regions", () => {
+      const proposalPath = "openspec/changes/session/proposal.md";
+      const proposalSource = { path: proposalPath, candidate };
+      const proposalCtx = completeCtx({
+        artifacts: [
+          {
+            candidate,
+            path: proposalPath,
+            role: "proposal",
+            text: [
+              "# Session",
+              "",
+              "## What Changes",
+              "",
+              "- Change session persistence.",
+              "",
+              "## Impact",
+              "",
+              "Restart recovery changes.",
+            ].join("\n"),
+          },
+        ],
+        artifactCandidates: [
+          { id: candidate, paths: [proposalPath], relevance: "changed-artifact" },
+        ],
+        files: new Map([[proposalPath, 3]]),
+      });
+      const proposal = board(
+        [
+          el("proposal", "section", {
+            title: "Proposal",
+            children: ["summary"],
+            sources: [proposalSource],
+          }),
+          el("summary", "prose", { markdown: "Change session persistence." }),
+        ],
+        {
+          document: {
+            title: "Session",
+            introMarkdown: "Persist sessions.",
+            measure: "structured",
+            sources: [proposalSource],
+            stats: [
+              { label: "Requirements", value: "0" },
+              { label: "Capabilities", value: "0 new / 0 modified" },
+            ],
+          },
+          skippedHunks: [],
+        },
+      );
+
+      expect(rulesHit(lint(proposal, proposalCtx))).toContain("design-artifact-anatomy");
+      proposal.elements = [
+        el("proposal", "section", {
+          title: "Proposal",
+          children: ["what-changes", "impact"],
+          sources: [proposalSource],
+        }),
+        el("what-changes", "section", { title: "What Changes", children: ["change"] }),
+        el("change", "prose", { markdown: "Change session persistence." }),
+        el("impact", "section", { title: "Impact", children: ["impact-copy"] }),
+        el("impact-copy", "prose", { markdown: "Restart recovery changes." }),
+      ];
+      expect(rulesHit(lint(proposal, proposalCtx))).not.toContain("design-artifact-anatomy");
+    });
+
+    it("requires bounded discovery to be visible in the document", () => {
+      expect(
+        rulesHit(lint(completeDesign(), completeCtx({ artifactBundleIncomplete: true }))),
+      ).toContain("design-incompleteness-visible");
+
+      const visible = completeDesign();
+      visible.elements = [
+        ...visible.elements,
+        el("incomplete", "callout", {
+          variant: "warning",
+          body: "The discovered source bundle is incomplete because one artifact was truncated.",
+        }),
+      ];
+      expect(
+        rulesHit(lint(visible, completeCtx({ artifactBundleIncomplete: true }))),
+      ).not.toContain("design-incompleteness-visible");
+    });
+
+    it("rejects a repository-only decoy when a changed candidate exists", () => {
+      const decoy = "specs/old.md";
+      const decoySource = { path: decoy, candidate: "decoy" };
+      const selected = board(
+        [
+          el("decoy", "section", {
+            title: "Old design",
+            children: ["old-copy"],
+            sources: [decoySource],
+          }),
+          el("old-copy", "prose", { markdown: "Old design." }),
+        ],
+        {
+          document: {
+            title: "Old design",
+            introMarkdown: "Old design.",
+            measure: "structured",
+            sources: [decoySource],
+            stats: [
+              { label: "Requirements", value: "0" },
+              { label: "Capabilities", value: "0 new / 0 modified" },
+            ],
+          },
+          skippedHunks: [],
+        },
+      );
+      const relevanceCtx = ctx({
+        lens: "design",
+        hunks: [],
+        artifacts: [
+          { candidate: "decoy", path: decoy, text: "Old design." },
+          { candidate, path, text },
+        ],
+        artifactCandidates: [
+          { id: "decoy", paths: [decoy], relevance: "repository-candidate" },
+          { id: candidate, paths: [path], relevance: "changed-artifact" },
+        ],
+        files: new Map([
+          [decoy, 1],
+          [path, text.split("\n").length],
+        ]),
+      });
+
+      expect(rulesHit(lint(selected, relevanceCtx))).toContain("design-candidate-relevant");
+    });
   });
 });
 
@@ -674,6 +1524,29 @@ describe("decision-grounded (S6 / P4)", () => {
   it("passes a decision that cites evidence and names an alternative", () => {
     expect(rulesHit(lint(decision({}), designCtx))).not.toContain("decision-grounded");
   });
+
+  it("accepts an honestly sparse stated ADR without invented alternatives", () => {
+    const adrPath = "docs/adr/0001-store.md";
+    const statedCtx = ctx({
+      lens: "design",
+      artifacts: [
+        { candidate: "grill-adr", path: adrPath, text: "# Store events\n\nKeep the event store." },
+      ],
+      artifactCandidates: [{ id: "grill-adr", paths: [adrPath] }],
+      files: new Map([[adrPath, 3]]),
+    });
+    const stated = decision({
+      evidence: [],
+      alternatives: [],
+      inferred: false,
+      source: { path: adrPath, candidate: "grill-adr", line: 1 },
+    });
+
+    const hit = rulesHit(lint(stated, statedCtx));
+    expect(hit).not.toContain("decision-grounded");
+    expect(hit).not.toContain("design-decision-stated");
+    expect(hit).not.toContain("design-source-known");
+  });
 });
 
 // ── L16 (P5) — requirement order follows the source artifact ──────────────────
@@ -705,6 +1578,63 @@ describe("requirement-order (L16 / P5)", () => {
       { skippedHunks: [] },
     );
     const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
+    expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-order");
+  });
+
+  it("tracks ordering independently for each source artifact", () => {
+    const sourceReq = (id: string, shall: string, path: string) =>
+      el(id, "requirement", { shall, source: { path } });
+    const ok = board(
+      [
+        sourceReq("a1", "The system SHALL authenticate the user", "specs/auth.md"),
+        sourceReq("a2", "The system SHALL refresh the token", "specs/auth.md"),
+        sourceReq("s1", "The system SHALL create a session", "specs/session.md"),
+        sourceReq("s2", "The system SHALL expire the session", "specs/session.md"),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({
+      lens: "design" as LensKind,
+      artifacts: [
+        {
+          path: "specs/auth.md",
+          text: "The system SHALL authenticate the user. Later, the system SHALL refresh the token.",
+        },
+        {
+          path: "specs/session.md",
+          text: "The system SHALL create a session. Later, the system SHALL expire the session.",
+        },
+      ],
+    });
+
+    expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-order");
+  });
+
+  it("checks the section child order the reader actually renders", () => {
+    const bad = board(
+      [
+        el("section", "section", { title: "Requirements", children: ["r2", "r1"] }),
+        req("r1", "The system SHALL authenticate the user"),
+        req("r2", "The system SHALL refresh the token"),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
+
+    expect(rulesHit(lint(bad, scoped))).toContain("requirement-order");
+  });
+
+  it("passes visible source order even when pool storage order differs", () => {
+    const ok = board(
+      [
+        el("section", "section", { title: "Requirements", children: ["r1", "r2"] }),
+        req("r2", "The system SHALL refresh the token"),
+        req("r1", "The system SHALL authenticate the user"),
+      ],
+      { skippedHunks: [] },
+    );
+    const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
+
     expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-order");
   });
 
@@ -759,10 +1689,10 @@ describe("lintReviewDraft (P3 — living-review register: L3/L4/L7)", () => {
 // ── S4 — root-level scaffold paths (glob `**/` matches zero dirs) ─────────────
 
 describe("scaffold glob root-level (S4)", () => {
-  it("fires on a root-level openspec path (no leading directory)", () => {
+  it("does not treat a root-level OpenSpec source artifact as scaffold", () => {
     const bad = board([codeRef("c", "openspec/changes/x/proposal.md", 1, 1)], { skippedHunks: [] });
     const scoped = ctx({ files: new Map([["openspec/changes/x/proposal.md", 10]]) });
-    expect(rulesHit(lint(bad, scoped))).toContain("scaffold-is-noise-lane");
+    expect(rulesHit(lint(bad, scoped))).not.toContain("scaffold-is-noise-lane");
   });
 
   it("fires on a root-level lockfile and `.openspec.yaml`", () => {

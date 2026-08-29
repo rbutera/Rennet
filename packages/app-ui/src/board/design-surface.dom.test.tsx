@@ -14,7 +14,7 @@ const author = { kind: "lens-agent", id: "lens:design" } as const;
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
 describe("Design board document metadata", () => {
-  it("renders header stats and sends the exact artifact source to review.openInEditor", async () => {
+  it("renders header stats, jumps from the artifact chip, and opens the exact section source", async () => {
     const board: LensBoard = {
       lens: "design",
       generation: "gen-design",
@@ -35,8 +35,25 @@ describe("Design board document metadata", () => {
           },
         ],
       },
-      sections: [],
-      elements: [],
+      sections: [{ ref: "design-source", gist: "Refresh design.", counts: {} }],
+      elements: [
+        {
+          id: "design-source",
+          kind: "section",
+          data: {
+            author,
+            title: "Design",
+            children: [],
+            sources: [
+              {
+                path: "openspec/changes/refresh/design.md",
+                label: "design.md",
+                line: 14,
+              },
+            ],
+          },
+        },
+      ],
       skippedHunks: [],
     };
     const opened: Array<{ reviewId: string; path: string; line?: number }> = [];
@@ -57,6 +74,9 @@ describe("Design board document metadata", () => {
 
     expect(await view.findByText("2 added · 1 modified")).toBeTruthy();
     expect(view.getByText("11/13")).toBeTruthy();
+    expect(view.getByRole("link", { name: "Jump to design.md" }).getAttribute("href")).toBe(
+      "#design-source",
+    );
     await view.user.click(view.getByRole("button", { name: "Open design.md in editor" }));
     await waitFor(() =>
       expect(opened).toEqual([
@@ -67,6 +87,243 @@ describe("Design board document metadata", () => {
         },
       ]),
     );
+  });
+
+  it("composes the proposal spine, capability jumps, and grouped task progress", async () => {
+    const elements: HostElement[] = [
+      {
+        id: "proposal",
+        kind: "section",
+        data: {
+          author,
+          title: "Proposal",
+          children: ["proposal-summary", "what-changes", "impact"],
+          sources: [{ path: "openspec/changes/refresh/proposal.md" }],
+        },
+      },
+      {
+        id: "proposal-summary",
+        kind: "prose",
+        data: { author, markdown: "Refresh failures currently collapse into one prompt." },
+      },
+      {
+        id: "what-changes",
+        kind: "section",
+        data: {
+          author,
+          title: "What Changes",
+          children: ["refresh-log", "retry-owner"],
+        },
+      },
+      {
+        id: "refresh-log",
+        kind: "prose",
+        data: { author, markdown: "Record every refresh attempt and outcome." },
+      },
+      {
+        id: "retry-owner",
+        kind: "prose",
+        data: { author, markdown: "Move safe retry to the shared transport." },
+      },
+      {
+        id: "impact",
+        kind: "section",
+        data: { author, title: "Impact", children: ["impact-body"] },
+      },
+      {
+        id: "impact-body",
+        kind: "prose",
+        data: { author, markdown: "Adapters only. No new package or dependency." },
+      },
+      {
+        id: "refresh-observability",
+        kind: "section",
+        data: {
+          author,
+          title: "Refresh observability",
+          children: ["req-attempt", "req-outcome", "scenario-attempt", "scenario-outcome"],
+          spec_delta: "added",
+        },
+      },
+      {
+        id: "req-attempt",
+        kind: "requirement",
+        data: {
+          author,
+          name: "Attempt is visible",
+          capability: "refresh-observability",
+          shall: "The daemon SHALL record each refresh attempt.",
+          scenarios: ["scenario-attempt"],
+          spec_delta: "added",
+        },
+      },
+      {
+        id: "req-outcome",
+        kind: "requirement",
+        data: {
+          author,
+          name: "Outcome is visible",
+          capability: "refresh-observability",
+          shall: "The daemon SHALL record each refresh outcome.",
+          scenarios: ["scenario-outcome", "scenario-decline"],
+          spec_delta: "added",
+        },
+      },
+      {
+        id: "scenario-attempt",
+        kind: "prose",
+        data: { author, markdown: "WHEN refresh begins THEN an attempt is recorded." },
+      },
+      {
+        id: "scenario-outcome",
+        kind: "prose",
+        data: { author, markdown: "WHEN refresh succeeds THEN persisted is recorded." },
+      },
+      {
+        id: "scenario-decline",
+        kind: "prose",
+        data: { author, markdown: "WHEN refresh is declined THEN its code is recorded." },
+      },
+      {
+        id: "github-auth",
+        kind: "section",
+        data: {
+          author,
+          title: "GitHub auth",
+          children: ["req-retry"],
+          spec_delta: "modified",
+        },
+      },
+      {
+        id: "req-retry",
+        kind: "requirement",
+        data: {
+          author,
+          name: "Retry has one owner",
+          capability: "github-auth",
+          shall: "The refresh path SHALL call the exchange once.",
+          scenarios: [],
+          spec_delta: "modified",
+        },
+      },
+      {
+        id: "tasks",
+        kind: "section",
+        data: {
+          author,
+          title: "Tasks",
+          children: ["record-type", "field-proof"],
+          sources: [{ path: "openspec/changes/refresh/tasks.md" }],
+        },
+      },
+      {
+        id: "record-type",
+        kind: "section",
+        data: {
+          author,
+          title: "1 · Secret-free record type",
+          children: ["task-record", "task-export"],
+        },
+      },
+      {
+        id: "task-record",
+        kind: "prose",
+        data: { author, markdown: "- [x] Define RefreshLogRecord." },
+      },
+      {
+        id: "task-export",
+        kind: "prose",
+        data: { author, markdown: "- [x] Export the record type." },
+      },
+      {
+        id: "field-proof",
+        kind: "section",
+        data: {
+          author,
+          title: "2 · Field proof",
+          children: ["task-run", "task-capture"],
+        },
+      },
+      {
+        id: "task-run",
+        kind: "prose",
+        data: { author, markdown: "- [ ] Force a real refresh." },
+      },
+      {
+        id: "task-capture",
+        kind: "prose",
+        data: { author, markdown: "- [x] Capture the decline code." },
+      },
+    ];
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-structure",
+      boardId: "board-structure",
+      document: {
+        title: "Credential refresh",
+        introMarkdown: "The proposal makes refresh outcomes observable.",
+        measure: "structured",
+      },
+      sections: [
+        { ref: "proposal", gist: "Why this change exists.", counts: {} },
+        {
+          ref: "refresh-observability",
+          gist: "Refresh attempts and outcomes become visible.",
+          counts: { requirements: 2 },
+        },
+        {
+          ref: "github-auth",
+          gist: "Retry ownership moves out of refresh.",
+          counts: { requirements: 1 },
+        },
+        { ref: "tasks", gist: "Three of four tasks are done.", counts: {} },
+      ],
+      elements,
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": ({ generation, lens }) => ({
+              board: generation === board.generation && lens === "design" ? board : null,
+            }),
+          })
+        }
+      >
+        <LensBoardView reviewId="review-structure" generation={board.generation} lens="design" />
+      </BridgeProvider>,
+    );
+
+    expect(await view.findByText("Capabilities")).toBeTruthy();
+
+    const spine = view.container.querySelector('[data-kind="design-proposal-spine"]');
+    expect(spine?.querySelectorAll('[data-kind="design-change-row"]')).toHaveLength(2);
+    expect(view.getByText("refresh-log")).toBeTruthy();
+    expect(view.getByText("retry-owner")).toBeTruthy();
+    expect(spine?.querySelector('[data-kind="design-impact"]')?.textContent).toContain(
+      "Adapters only. No new package or dependency.",
+    );
+
+    const capabilityGrid = view.container.querySelector('[data-kind="capability-grid"]');
+    const added = capabilityGrid?.querySelector<HTMLAnchorElement>(
+      '[data-capability="refresh-observability"]',
+    );
+    expect(added?.getAttribute("href")).toBe("#refresh-observability");
+    expect(added?.className).toContain("border-l-green-line");
+    expect(added?.textContent).toContain("2 requirements · 3 scenarios");
+    expect(capabilityGrid?.querySelector('[data-capability="github-auth"]')?.textContent).toContain(
+      "1 requirement · 0 scenarios",
+    );
+
+    const progress = view.container.querySelector('[data-kind="task-progress"]');
+    const bars = progress?.querySelectorAll('[role="progressbar"]');
+    expect(bars).toHaveLength(2);
+    expect(bars?.[0]?.getAttribute("aria-valuenow")).toBe("2");
+    expect(bars?.[0]?.getAttribute("aria-valuemax")).toBe("2");
+    expect(bars?.[0]?.querySelector("span")?.className).toContain("bg-green");
+    expect(bars?.[1]?.getAttribute("aria-valuenow")).toBe("1");
+    expect(progress?.textContent).toContain("3/4");
   });
 });
 
@@ -155,6 +412,29 @@ describe("Design requirements", () => {
     expect(view.container.querySelector('[data-scenario-ref="scenario-proposal"]')).toBeTruthy();
   });
 
+  it("renders a completed zero-hunk mapping as honestly unimplemented", () => {
+    const requirement: HostElement = {
+      id: "req-unimplemented",
+      kind: "requirement",
+      data: {
+        author,
+        shall: "The daemon SHALL persist the refreshed token.",
+        coverage: "gap",
+        trace: [],
+        tests: 0,
+      },
+    };
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider elements={[requirement]} reviewId="review-gap">
+          <BoardElement element={requirement} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+
+    expect(view.getByText("unimplemented · 0 hunks")).toBeTruthy();
+  });
+
   it("renders name, capability, scenario elements, source, related files, and grounded counts", () => {
     const scenarios: HostElement[] = [
       {
@@ -229,7 +509,7 @@ describe("Design requirements", () => {
 
     expect(view.getByText("Every refresh is recorded")).toBeTruthy();
     expect(view.getByText("refresh-observability")).toBeTruthy();
-    expect(view.getByText("partial by 2 hunks · 3 tests")).toBeTruthy();
+    expect(view.getByText("covered by 2 hunks · 3 tests · partial")).toBeTruthy();
     expect(view.container.querySelector('[data-spec-delta="modified"]')).toBeTruthy();
     expect(view.container.querySelectorAll("[data-kind=related-file-chip]")).toHaveLength(2);
     expect(

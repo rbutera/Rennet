@@ -33,13 +33,12 @@ function CoverageChip({
   readonly tests: number | undefined;
 }) {
   if (coverage === undefined) return null;
-  const relation = coverage === "met" ? "covered" : coverage;
   const label =
     coverage === "gap"
-      ? "unimplemented"
-      : `${relation} by ${countLabel(hunks, "hunk")}${
+      ? `unimplemented · ${countLabel(hunks, "hunk")}`
+      : `covered by ${countLabel(hunks, "hunk")}${
           tests === undefined ? "" : ` · ${countLabel(tests, "test")}`
-        }`;
+        }${coverage === "partial" ? " · partial" : ""}`;
   return (
     <span
       data-kind="coverage-chip"

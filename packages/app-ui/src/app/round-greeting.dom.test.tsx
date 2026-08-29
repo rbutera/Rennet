@@ -146,6 +146,12 @@ describe("regeneration lanes render every status honestly — no false green che
       { id: "l-drafted", label: "Noise", status: "drafted" },
       { id: "l-done", label: "Decisions", status: "done", verdict: "reworked" },
       {
+        id: "l-absent",
+        label: "Design artifacts",
+        status: "absent",
+        reason: "No spec artifacts were discovered.",
+      },
+      {
         id: "l-failed",
         label: "Flagged",
         status: "failed",
@@ -185,6 +191,14 @@ describe("regeneration lanes render every status honestly — no false green che
     expect(row?.textContent).toContain("drafted");
     expect(row?.textContent).not.toContain("carrying forward");
     expect(row?.textContent).not.toContain("reworked");
+  });
+
+  it("an absent lane reads as a successful no-material result, not a failure", () => {
+    const r = renderGreeting();
+    const row = r.container.querySelector('[data-row="l-absent"]');
+    expect(row?.getAttribute("data-status")).toBe("absent");
+    expect(row?.textContent).toContain("No spec artifacts were discovered.");
+    expect(row?.textContent).not.toContain("failed");
   });
 
   // ── C15 3.3 — the carry-forward lane label reaches the reviewer's eye ──

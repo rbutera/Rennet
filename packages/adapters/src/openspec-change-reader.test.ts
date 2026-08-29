@@ -22,6 +22,7 @@ function tempRoot(): string {
 function patchsetOf(opts: {
   root: string;
   headOid: string;
+  reviewedTreeOid?: string;
   paths: string[];
   source?: PatchsetSource;
   surface?: PatchsetIntentSurface;
@@ -36,6 +37,7 @@ function patchsetOf(opts: {
       baseRef: "main",
       baseOid: "base000",
       headOid: opts.headOid,
+      ...(opts.reviewedTreeOid === undefined ? {} : { reviewedTreeOid: opts.reviewedTreeOid }),
     },
     files: opts.paths.map((path) => ({
       path,
@@ -92,7 +94,7 @@ describe("selectedOpenSpecChangeName", () => {
   });
 });
 
-describe("readOpenSpecChange — working-tree review (reads the checked-out disk)", () => {
+describe("readOpenSpecChange — working-tree review (reads the captured tree)", () => {
   function seedDisk(root: string, name: string, proposal: string): void {
     const dir = join(root, "openspec", "changes", name);
     mkdirSync(join(dir, "specs", "cap-a"), { recursive: true });
@@ -107,26 +109,41 @@ describe("readOpenSpecChange — working-tree review (reads the checked-out disk
     );
   }
 
-  it("reads and parses the selected change from disk, never touching git", async () => {
+  it("reads and parses the selected change from reviewedTreeOid, never later disk bytes", async () => {
     const root = tempRoot();
-    seedDisk(root, "my-change", "## Why\n\nWorking-tree proposal.\n");
-    const gitMustNotRun = vi.fn(() =>
-      Promise.reject(new Error("git must not run for a working-tree review")),
+    seedDisk(root, "my-change", "## Why\n\nLater disk proposal — must not surface.\n");
+    const reviewedTreeOid = "reviewed-tree";
+    const proposalPath = `${reviewedTreeOid}:openspec/changes/my-change/proposal.md`;
+    const tasksPath = `${reviewedTreeOid}:openspec/changes/my-change/tasks.md`;
+    const specPath = `${reviewedTreeOid}:openspec/changes/my-change/specs/cap-a/spec.md`;
+    const git = vi.fn(
+      fakeGit(
+        reviewedTreeOid,
+        {
+          [proposalPath]: "## Why\n\nCaptured working-tree proposal.\n",
+          [tasksPath]: "# Tasks\n\n## 1. Group\n\n- [x] 1.1 done\n- [ ] 1.2 todo\n",
+          [specPath]:
+            "## ADDED Requirements\n\n### Requirement: It works\n\nIt SHALL work.\n\n#### Scenario: happy\n\n- **WHEN** x\n- **THEN** y\n",
+        },
+        { [`${reviewedTreeOid}:openspec/changes/my-change/specs`]: ["cap-a"] },
+      ),
     );
     const change = await readOpenSpecChange(
       patchsetOf({
         root,
         headOid: "head000",
+        reviewedTreeOid,
         surface: "working-tree",
         paths: ["openspec/changes/my-change/proposal.md", "src/unrelated.ts"],
       }),
-      gitMustNotRun as unknown as GitExec,
+      git,
     );
     expect(change?.name).toBe("my-change");
-    expect(JSON.stringify(change?.proposal)).toContain("Working-tree proposal");
+    expect(JSON.stringify(change?.proposal)).toContain("Captured working-tree proposal");
+    expect(JSON.stringify(change?.proposal)).not.toContain("Later disk proposal");
     expect(change?.tasks?.total).toBe(2);
     expect(change?.specDeltas.map((delta) => delta.capability)).toEqual(["cap-a"]);
-    expect(gitMustNotRun).not.toHaveBeenCalled();
+    expect(git).toHaveBeenCalled();
   });
 
   it("returns null when the reviewed patchset touches no openspec change", async () => {

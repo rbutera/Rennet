@@ -35,9 +35,11 @@ const SOURCE_CHIP =
 function SourceChip({
   source,
   kind,
+  targetId,
 }: {
   readonly source: SourceRef;
   readonly kind: SourceChipKind;
+  readonly targetId?: string;
 }) {
   const reviewId = useBoardReviewId();
   const { mutate: openInEditor, pending } = useMutation("review.openInEditor");
@@ -54,6 +56,24 @@ function SourceChip({
       <span className="truncate">{label}</span>
     </>
   );
+
+  if (targetId !== undefined) {
+    return (
+      <a
+        {...common}
+        href={`#${targetId}`}
+        data-target-id={targetId}
+        aria-label={`Jump to ${label}`}
+        title={`Jump to ${label}`}
+        className={cn(
+          SOURCE_CHIP,
+          "cursor-pointer hover:border-accent-line hover:bg-raised hover:text-ink",
+        )}
+      >
+        {content}
+      </a>
+    );
+  }
 
   if (reviewId.length === 0) {
     return (
@@ -91,10 +111,12 @@ export function SourceChips({
   sources,
   kind = "source",
   className,
+  targetForSource,
 }: {
   readonly sources: readonly SourceRef[];
   readonly kind?: SourceChipKind;
   readonly className?: string;
+  readonly targetForSource?: (source: SourceRef) => string | undefined;
 }) {
   if (sources.length === 0) return null;
   return (
@@ -104,9 +126,10 @@ export function SourceChips({
     >
       {sources.map((source) => (
         <SourceChip
-          key={`${source.path}:${source.line ?? ""}:${source.label ?? ""}`}
+          key={`${source.candidate ?? ""}:${source.path}:${source.line ?? ""}:${source.label ?? ""}`}
           source={source}
           kind={kind}
+          targetId={targetForSource?.(source)}
         />
       ))}
     </div>

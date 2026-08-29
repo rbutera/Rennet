@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WhiteboardClient } from "@rennet/adapters";
+import { DESIGN_ARTIFACT_LIMITS, type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
 import {
   type DeltaPacket,
   type HarnessPort,
@@ -18,6 +18,7 @@ import {
   type BoardMeta,
   boardOutputSchema,
   composeReviewDraft,
+  type DesignCoverageMapper,
   draftToOps,
   reconcileFlaggedBoards,
   renderDrafterPrompt,
@@ -71,7 +72,40 @@ const concurrenceOf = (board: DraftBoard, id: string): { model: string; agree: n
 /** A minimal DeltaPacket — the pipeline inlines it into every prompt; content is opaque here. */
 const PACKET = {
   patchset: { id: "ps-1", createdAt: "", truncated: false, files: [] },
+  hunks: { hunks: [], byId: new Map() },
 } as unknown as DeltaPacket;
+
+const DESIGN_ARTIFACTS: DesignArtifactSet = {
+  changedPaths: ["src/auth.ts", "src/auth.test.ts"],
+  omittedChangedPathCount: 0,
+  candidates: [
+    {
+      id: "candidate-1",
+      format: "openspec",
+      name: "token-refresh",
+      nameSourceBytes: 13,
+      nameTruncated: false,
+      relevance: {
+        kind: "references-changed-path",
+        paths: ["src/auth.ts", "src/auth.test.ts"],
+        omittedPathCount: 0,
+      },
+      artifacts: [
+        {
+          path: "openspec/changes/token-refresh/specs/auth/spec.md",
+          role: "requirements",
+          content:
+            "## Token refresh\n\nThe system SHALL refresh the token before classifying an error.\n\n### Scenario: Expired token\nWHEN a request uses an expired token\nTHEN the client refreshes it before retrying.",
+          sourceBytes: 192,
+          truncated: false,
+        },
+      ],
+      omittedArtifactCount: 0,
+    },
+  ],
+  omittedCandidateCount: 0,
+  limits: DESIGN_ARTIFACT_LIMITS,
+};
 
 /** The per-lens lint context: empty hunks/files ⇒ a single innocent prose element is clean. */
 const lintContextFor = (lens: LintTarget): LintContext => ({
@@ -93,6 +127,121 @@ const cleanBody = (lens: string): DraftBoard =>
         },
       },
     ],
+  }) as unknown as DraftBoard;
+
+const DESIGN_SOURCE = "openspec/changes/token-refresh/specs/auth/spec.md";
+const DESIGN_HUNKS = [
+  {
+    id: "spec-hunk",
+    path: DESIGN_SOURCE,
+    header: "@@ -1 +1 @@",
+    body: [
+      "-The system SHALL keep the current token.",
+      "+The system SHALL refresh the token before classifying an error.",
+    ],
+    spans: { old: { start: 1, lines: 1 }, new: { start: 1, lines: 1 } },
+    lossy: false,
+  },
+  {
+    id: "impl-hunk",
+    path: "src/auth.ts",
+    header: "@@ -10,2 +10,4 @@",
+    body: ["+await refreshToken();", "+return retryRequest();"],
+    spans: { old: { start: 10, lines: 2 }, new: { start: 10, lines: 4 } },
+    lossy: false,
+  },
+  {
+    id: "test-hunk",
+    path: "src/auth.test.ts",
+    header: "@@ -20,0 +20,3 @@",
+    body: ["+it('refreshes before retrying', async () => {});"],
+    spans: { old: { start: 20, lines: 0 }, new: { start: 20, lines: 3 } },
+    lossy: false,
+  },
+] as const;
+
+const DESIGN_PACKET = {
+  ...PACKET,
+  hunks: { hunks: DESIGN_HUNKS, byId: new Map(DESIGN_HUNKS.map((hunk) => [hunk.id, hunk])) },
+} as unknown as DeltaPacket;
+
+const DESIGN_LINT_HUNKS: LintHunk[] = [
+  { id: "spec-hunk", path: DESIGN_SOURCE, newStart: 1, newLines: 1, oldStart: 1, oldLines: 1 },
+  { id: "impl-hunk", path: "src/auth.ts", newStart: 10, newLines: 4, oldStart: 10, oldLines: 2 },
+  {
+    id: "test-hunk",
+    path: "src/auth.test.ts",
+    newStart: 20,
+    newLines: 3,
+    oldStart: 20,
+    oldLines: 0,
+  },
+];
+
+const designBody = (): DraftBoard =>
+  ({
+    document: {
+      title: "Token refresh design",
+      introMarkdown: "Why the refresh order changes.",
+      measure: "structured",
+      sources: [{ path: DESIGN_SOURCE, label: "auth spec", line: 1 }],
+      stats: [
+        { label: "Requirements", value: "1" },
+        { label: "Capabilities", value: "0 new / 1 modified" },
+      ],
+    },
+    elements: [
+      {
+        id: "auth-section",
+        kind: "section",
+        data: {
+          author: { kind: "lens-agent", id: "design-seat" },
+          title: "Authentication",
+          children: ["requirement-refresh", "scenario-expired"],
+          sources: [{ path: DESIGN_SOURCE, line: 1 }],
+          spec_delta: "modified",
+        },
+      },
+      {
+        id: "scenario-expired",
+        kind: "prose",
+        data: {
+          author: { kind: "lens-agent", id: "design-seat" },
+          markdown:
+            "Scenario: Expired token\n\nWHEN a request uses an expired token\nTHEN the client refreshes it before retrying.",
+        },
+      },
+      {
+        id: "requirement-refresh",
+        kind: "requirement",
+        data: {
+          author: { kind: "lens-agent", id: "design-seat" },
+          name: "Refresh before retry",
+          capability: "auth",
+          shall: "The system SHALL refresh the token before classifying an error.",
+          scenarios: ["scenario-expired"],
+          related_files: ["src/auth.ts", "src/auth.test.ts"],
+          source: { path: DESIGN_SOURCE, line: 3 },
+          spec_delta: "modified",
+          coverage: "invented-by-drafter",
+          trace: ["fabricated-coverage-ref"],
+          tests: "ninety-nine",
+        },
+      },
+      {
+        id: "fabricated-coverage-ref",
+        kind: "code_ref",
+        data: {
+          author: { kind: "lens-agent", id: "design-seat" },
+          patchset_id: "ps-1",
+          path: "src/auth.ts",
+          side: "head",
+          start_line: 10,
+          end_line: 13,
+        },
+      },
+    ],
+    skippedHunks: [],
   }) as unknown as DraftBoard;
 
 /** A fake Claude port: captures the resolved model per session and answers a lens-appropriate board. */
@@ -189,6 +338,20 @@ describe("renderDrafterPrompt — what the packet's knowledge field actually sho
     expect(prompt).toContain('"inStore":2');
     expect(prompt).toContain('"mode":"unprojected"');
     expect(prompt).toContain("context.ask");
+  });
+
+  it("inlines the exact discovered Design artifact set instead of making the drafter rediscover it", () => {
+    const prompt = renderDrafterPrompt(
+      "PROMPT_FILE:prompts/design.md",
+      PACKET,
+      undefined,
+      DESIGN_ARTIFACTS,
+    );
+
+    expect(prompt).toContain('"id":"candidate-1"');
+    expect(prompt).toContain('"name":"token-refresh"');
+    expect(prompt).toContain('"path":"openspec/changes/token-refresh/specs/auth/spec.md"');
+    expect(prompt).toContain("The system SHALL refresh the token before classifying an error.");
   });
 });
 
@@ -459,6 +622,524 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(arrivals.map((a) => a.lens)).toEqual(lenses);
     // Coverage: no hunks ⇒ nothing uncovered.
     expect(result.coverage).toEqual([]);
+  });
+
+  it("treats a deterministically empty Design artifact set as a successful absent lane", async () => {
+    const captures: { model?: string; prompt?: string }[] = [];
+    const applied: Applied[] = [];
+    const arrivals: BoardArrivalEvent[] = [];
+    const timeline: string[] = [];
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "post-process") timeline.push(`draft:${lens}`);
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      designArtifacts: null,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => arrivals.push(event),
+      onLensAbsence: (lens) => {
+        timeline.push(`absent:${lens}`);
+      },
+    });
+
+    const design = result.boards.find((outcome) => outcome.lens === "design");
+    expect(design).toMatchObject({ lens: "design", absence: "no-material" });
+    expect(design?.failure).toBeUndefined();
+    expect(design?.board).toBeUndefined();
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:design");
+    expect(arrivals.map(({ lens }) => lens)).not.toContain("design");
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/design.md"))).toBe(false);
+    expect(result.boards.filter(({ board }) => board !== undefined)).toHaveLength(4);
+    expect(timeline.indexOf("absent:design")).toBeLessThan(timeline.indexOf("draft:sequence"));
+  });
+
+  it("accepts a grounded no-material result when every discovered candidate is a decoy", async () => {
+    const decoyArtifacts: DesignArtifactSet = {
+      ...DESIGN_ARTIFACTS,
+      candidates: DESIGN_ARTIFACTS.candidates.map((candidate) => ({
+        ...candidate,
+        relevance: { kind: "repository-candidate" as const },
+      })),
+    };
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "design") return cleanBody(lens);
+        return {
+          absence: "no-material",
+          candidates: decoyArtifacts.candidates.map((candidate) => ({
+            id: candidate.id,
+            relevance: candidate.relevance.kind,
+            reason: "This specification describes a different feature than the reviewed change.",
+          })),
+        };
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      designArtifacts: decoyArtifacts,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    expect(result.boards.find(({ lens }) => lens === "design")).toMatchObject({
+      lens: "design",
+      absence: "no-material",
+    });
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:design");
+  });
+
+  it("rejects a no-material result that does not account for every candidate", async () => {
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        return lens === "design" ? { absence: "no-material", candidates: [] } : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      designArtifacts: DESIGN_ARTIFACTS,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const design = result.boards.find(({ lens }) => lens === "design");
+    expect(design?.absence).toBeUndefined();
+    expect(design?.failure).toContain("no parseable board");
+  });
+
+  it("replaces drafter-authored Design coverage with grounded immutable hunk refs", async () => {
+    const captures: { model?: string; prompt?: string }[] = [];
+    const requests: Parameters<DesignCoverageMapper>[0][] = [];
+    const mapDesignCoverage: DesignCoverageMapper = async (request) => {
+      requests.push(request);
+      return {
+        status: "ok",
+        edges: [
+          {
+            capability: "auth",
+            requirement: "Refresh before retry",
+            hunks: ["rennet:hunk/impl-hunk", "rennet:hunk/test-hunk"],
+            tests: 1,
+          },
+        ],
+      };
+    };
+    const bodyFor = (prompt: string): unknown => {
+      const lens = lensFromPrompt(prompt);
+      if (lens === "design") {
+        return {
+          ...designBody(),
+          skippedHunks: [
+            { hunk: "impl-hunk", reason: "The drafter left implementation mapping to the host." },
+          ],
+        };
+      }
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return context ? JSON.parse(context[1] as string).board : { elements: [] };
+      }
+      return cleanBody(lens);
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, bodyFor),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: DESIGN_PACKET,
+      hunks: DESIGN_LINT_HUNKS,
+      lintContextFor: (lens) => ({
+        lens,
+        hunks: DESIGN_LINT_HUNKS,
+        files: new Map([
+          [DESIGN_SOURCE, 20],
+          ["src/auth.ts", 100],
+          ["src/auth.test.ts", 100],
+        ]),
+      }),
+      designArtifacts: DESIGN_ARTIFACTS,
+      mapDesignCoverage,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.requirements).toEqual([
+      {
+        capability: "auth",
+        name: "Refresh before retry",
+        statement: "The system SHALL refresh the token before classifying an error.",
+        scenarios: [
+          "Scenario: Expired token\n\nWHEN a request uses an expired token\nTHEN the client refreshes it before retrying.",
+        ],
+      },
+    ]);
+    expect(requests[0]?.hunks.map(({ id }) => id)).toEqual(["impl-hunk", "test-hunk"]);
+
+    const board = result.boards.find(({ lens }) => lens === "design")?.board;
+    expect(board?.elements.some(({ id }) => id === "fabricated-coverage-ref")).toBe(false);
+    expect((board as { skippedHunks?: unknown[] } | undefined)?.skippedHunks).toEqual([]);
+    const requirement = board?.elements.find(({ id }) => id === "requirement-refresh");
+    expect(requirement?.data).toMatchObject({ coverage: "met", tests: 1 });
+    const trace = (requirement?.data as { trace?: string[] } | undefined)?.trace ?? [];
+    expect(trace).toHaveLength(2);
+    const refs = board?.elements.filter(({ id }) => trace.includes(id)) ?? [];
+    expect(refs.map(({ data }) => (data as { path: string }).path)).toEqual([
+      "src/auth.ts",
+      "src/auth.test.ts",
+    ]);
+    expect(refs.map(({ data }) => data.author)).toEqual([
+      { kind: "orchestrator", id: "coverage-mapper" },
+      { kind: "orchestrator", id: "coverage-mapper" },
+    ]);
+  });
+
+  it("shows no Design coverage chip when the change contains only proposal artifacts", async () => {
+    let mappingCalls = 0;
+    const stampHunk = {
+      id: "openspec-stamp",
+      path: ".openspec.yaml",
+      header: "@@ -0,0 +1 @@",
+      body: ["+schema: spec-driven"],
+      spans: { old: { start: 0, lines: 0 }, new: { start: 1, lines: 1 } },
+      lossy: false,
+    } as const;
+    const stampLintHunk: LintHunk = {
+      id: stampHunk.id,
+      path: stampHunk.path,
+      newStart: 1,
+      newLines: 1,
+      oldStart: 0,
+      oldLines: 0,
+    };
+    const proposalPacket = {
+      ...DESIGN_PACKET,
+      hunks: {
+        hunks: [DESIGN_HUNKS[0], stampHunk],
+        byId: new Map<string, unknown>([
+          [DESIGN_HUNKS[0].id, DESIGN_HUNKS[0]],
+          [stampHunk.id, stampHunk],
+        ]),
+      },
+    } as unknown as DeltaPacket;
+    const bodyFor = (prompt: string): unknown => {
+      const lens = lensFromPrompt(prompt);
+      if (lens === "design") return designBody();
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return context ? JSON.parse(context[1] as string).board : { elements: [] };
+      }
+      return cleanBody(lens);
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], bodyFor),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: proposalPacket,
+      hunks: [DESIGN_LINT_HUNKS[0] as LintHunk, stampLintHunk],
+      lintContextFor: (lens) => ({
+        lens,
+        hunks: [DESIGN_LINT_HUNKS[0] as LintHunk, stampLintHunk],
+        files: new Map([
+          [DESIGN_SOURCE, 20],
+          [stampHunk.path, 1],
+          ["src/auth.ts", 100],
+          ["src/auth.test.ts", 100],
+        ]),
+      }),
+      designArtifacts: DESIGN_ARTIFACTS,
+      mapDesignCoverage: async () => {
+        mappingCalls += 1;
+        return { status: "ok", edges: [] };
+      },
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    expect(mappingCalls).toBe(0);
+    const board = result.boards.find(({ lens }) => lens === "design")?.board;
+    const data = board?.elements.find(({ id }) => id === "requirement-refresh")?.data as
+      | Record<string, unknown>
+      | undefined;
+    expect(data).toBeDefined();
+    expect(data).not.toHaveProperty("coverage");
+    expect(data).not.toHaveProperty("trace");
+    expect(data).not.toHaveProperty("tests");
+    expect(board?.skippedHunks).toEqual([
+      {
+        hunk: stampHunk.id,
+        reason: ".openspec.yaml is a generated scaffold stamp owned by the Noise lens.",
+      },
+    ]);
+  });
+
+  it("classifies grounded Design coverage as gap or partial from host evidence", async () => {
+    const bodyFor = (prompt: string): unknown => {
+      const lens = lensFromPrompt(prompt);
+      if (lens === "design") return designBody();
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return context ? JSON.parse(context[1] as string).board : { elements: [] };
+      }
+      return cleanBody(lens);
+    };
+    const run = async (hunks: readonly string[]) =>
+      runLensPipeline({
+        claudePort: fakeClaudePort([], bodyFor),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: DESIGN_PACKET,
+        hunks: DESIGN_LINT_HUNKS,
+        lintContextFor: (lens) => ({
+          lens,
+          hunks: DESIGN_LINT_HUNKS,
+          files: new Map([
+            [DESIGN_SOURCE, 20],
+            ["src/auth.ts", 100],
+            ["src/auth.test.ts", 100],
+          ]),
+        }),
+        designArtifacts: DESIGN_ARTIFACTS,
+        mapDesignCoverage: async () => ({
+          status: "ok",
+          edges: [
+            {
+              capability: "auth",
+              requirement: "Refresh before retry",
+              hunks,
+              tests: 0,
+            },
+          ],
+        }),
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+
+    const gap = await run([]);
+    const partial = await run(["rennet:hunk/impl-hunk"]);
+    const dataFor = (result: Awaited<ReturnType<typeof runLensPipeline>>) =>
+      result.boards
+        .find(({ lens }) => lens === "design")
+        ?.board?.elements.find(({ id }) => id === "requirement-refresh")?.data;
+
+    expect(dataFor(gap)).toMatchObject({ coverage: "gap", trace: [], tests: 0 });
+    expect(dataFor(partial)).toMatchObject({ coverage: "partial", tests: 0 });
+    expect((dataFor(partial) as { trace?: unknown[] } | undefined)?.trace).toHaveLength(1);
+  });
+
+  it("omits Design coverage when the host mapper fails or throws", async () => {
+    const bodyFor = (prompt: string): unknown => {
+      const lens = lensFromPrompt(prompt);
+      if (lens === "design") return designBody();
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return context ? JSON.parse(context[1] as string).board : { elements: [] };
+      }
+      return cleanBody(lens);
+    };
+    const mappers: DesignCoverageMapper[] = [
+      async () => ({ status: "failed", edges: [] }),
+      async () => {
+        throw new Error("coverage seat crashed");
+      },
+    ];
+
+    for (const mapDesignCoverage of mappers) {
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], bodyFor),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: DESIGN_PACKET,
+        hunks: DESIGN_LINT_HUNKS,
+        lintContextFor: (lens) => ({
+          lens,
+          hunks: DESIGN_LINT_HUNKS,
+          files: new Map([
+            [DESIGN_SOURCE, 20],
+            ["src/auth.ts", 100],
+            ["src/auth.test.ts", 100],
+          ]),
+        }),
+        designArtifacts: DESIGN_ARTIFACTS,
+        mapDesignCoverage,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+      const data = result.boards
+        .find(({ lens }) => lens === "design")
+        ?.board?.elements.find(({ id }) => id === "requirement-refresh")?.data as
+        | Record<string, unknown>
+        | undefined;
+      expect(data).toBeDefined();
+      expect(data).not.toHaveProperty("coverage");
+      expect(data).not.toHaveProperty("trace");
+      expect(data).not.toHaveProperty("tests");
+    }
+  });
+
+  it("keeps Design source navigation, stats, and verbatim scenarios across post-process", async () => {
+    const bodyFor = (prompt: string): unknown => {
+      const lens = lensFromPrompt(prompt);
+      if (lens === "design") {
+        const drafted = designBody();
+        return {
+          ...drafted,
+          elements: [
+            ...drafted.elements.map((element) =>
+              element.id === "auth-section"
+                ? {
+                    ...element,
+                    data: {
+                      ...element.data,
+                      children: ["requirement-refresh", "scenario-expired", "task-group"],
+                    },
+                  }
+                : element,
+            ),
+            {
+              id: "task-group",
+              kind: "section",
+              data: {
+                author: { kind: "lens-agent", id: "design-seat" },
+                title: "Delivery",
+                children: ["task-copy"],
+              },
+            },
+            {
+              id: "task-copy",
+              kind: "prose",
+              data: {
+                author: { kind: "lens-agent", id: "design-seat" },
+                markdown: "- [ ] Prove restart recovery",
+              },
+            },
+          ],
+          document: {
+            title: "Token refresh design",
+            introMarkdown: "Why the refresh order changes.",
+            measure: "structured",
+            sources: [{ path: DESIGN_SOURCE, label: "auth spec", line: 1 }],
+            stats: [
+              { label: "Requirements", value: "1" },
+              { label: "Capabilities", value: "0 new / 1 modified" },
+            ],
+          },
+        };
+      }
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        const board = context ? (JSON.parse(context[1] as string).board as DraftBoard) : undefined;
+        if (board?.document?.title !== "Token refresh design") return board ?? { elements: [] };
+        return {
+          ...board,
+          document: {
+            ...board.document,
+            sources: [{ path: "invented.md", label: "invented" }],
+            stats: [{ label: "Tasks", value: "3/3" }],
+          },
+          elements: board.elements
+            .filter((element) => element.id !== "task-copy")
+            .map((element) =>
+              element.id === "scenario-expired"
+                ? { ...element, data: { ...element.data, markdown: "A summarized scenario." } }
+                : element.id === "requirement-refresh"
+                  ? {
+                      ...element,
+                      data: {
+                        ...element.data,
+                        shall: "The editor invented this requirement.",
+                        source: { path: "invented.md" },
+                        related_files: ["src/invented.ts"],
+                      },
+                    }
+                  : element.id === "task-group"
+                    ? { ...element, data: { ...element.data, children: [] } }
+                    : element.id === "auth-section"
+                      ? {
+                          ...element,
+                          data: {
+                            ...element.data,
+                            children: ["requirement-refresh", "scenario-expired"],
+                            sources: [{ path: "invented.md" }],
+                            spec_delta: "removed",
+                          },
+                        }
+                      : element,
+            ),
+        };
+      }
+      return cleanBody(lens);
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], bodyFor),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: DESIGN_PACKET,
+      hunks: DESIGN_LINT_HUNKS,
+      lintContextFor: (lens) => ({
+        lens,
+        hunks: DESIGN_LINT_HUNKS,
+        files: new Map([
+          [DESIGN_SOURCE, 20],
+          ["src/auth.ts", 100],
+          ["src/auth.test.ts", 100],
+        ]),
+      }),
+      designArtifacts: DESIGN_ARTIFACTS,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const board = result.boards.find(({ lens }) => lens === "design")?.board;
+    expect(board?.document?.sources).toEqual([
+      { path: DESIGN_SOURCE, label: "auth spec", line: 1 },
+    ]);
+    expect(board?.document?.stats).toEqual([
+      { label: "Requirements", value: "1" },
+      { label: "Capabilities", value: "0 new / 1 modified" },
+    ]);
+    expect(board?.elements.find(({ id }) => id === "auth-section")?.data).toMatchObject({
+      sources: [{ path: DESIGN_SOURCE, line: 1 }],
+      spec_delta: "modified",
+    });
+    expect(board?.elements.find(({ id }) => id === "requirement-refresh")?.data).toMatchObject({
+      shall: "The system SHALL refresh the token before classifying an error.",
+      source: { path: DESIGN_SOURCE, line: 3 },
+      related_files: ["src/auth.ts", "src/auth.test.ts"],
+    });
+    expect(board?.elements.find(({ id }) => id === "scenario-expired")?.data).toMatchObject({
+      markdown:
+        "Scenario: Expired token\n\nWHEN a request uses an expired token\nTHEN the client refreshes it before retrying.",
+    });
+    expect(board?.elements.find(({ id }) => id === "task-group")?.data).toMatchObject({
+      children: ["task-copy"],
+    });
+    expect(board?.elements.find(({ id }) => id === "task-copy")?.data).toMatchObject({
+      markdown: "- [ ] Prove restart recovery",
+    });
   });
 
   it("seeds each drafter turn with the DeltaPacket + lens prompt + host schema (D1)", async () => {

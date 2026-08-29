@@ -1,11 +1,12 @@
-import { type BoardDocument, LENS_KINDS, type LensKind } from "@rennet/protocol";
+import type { BoardDocument, LensBoard, LensKind, SourceRef } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { useEffect } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, RichText } from "../review";
-import { useBoardData, useLensBoards } from "./board-data";
+import { lensBoardsFromResolutions, lensReadsSettled, useLensBoardResolutions } from "./board-data";
 import { SourceChips } from "./design-meta";
+import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
 import { Section } from "./section";
@@ -57,7 +58,8 @@ export function LensBoardView({
   // only registers once a board actually renders, so an empty/error board never elects it.
   const highlightRef = useCoachAnchor("highlight");
 
-  const lenses = useLensBoards(reviewId, selectedGeneration);
+  const resolutions = useLensBoardResolutions(reviewId, selectedGeneration);
+  const lenses = lensBoardsFromResolutions(resolutions);
   const present = lenses.map((l) => l.lens);
 
   // Drafting takes minutes and the daemon has no board-arrival push, so without this the
@@ -71,7 +73,7 @@ export function LensBoardView({
   // board-arrival channel (the `roundProgress` push already proves the transport), at which
   // point this whole effect goes.
   const refreshBoards = useRefreshCommand("board.read");
-  const awaitingLenses = lenses.length < LENS_KINDS.length;
+  const awaitingLenses = !lensReadsSettled(resolutions);
   useEffect(() => {
     if (!awaitingLenses) return;
     const timer = setInterval(refreshBoards, 5_000);
@@ -81,9 +83,9 @@ export function LensBoardView({
   // A generation may not carry every lens. A genuinely missing selected lens falls back
   // to the first present lens in canonical order. Invalid and pending selected boards stay
   // selected so their honest state is surfaced rather than hidden behind another board.
-  const selected = useBoardData(reviewId, selectedGeneration, lens);
+  const selected = resolutions[lens];
   const fallbackLens = present[0] ?? lens;
-  const fallback = useBoardData(reviewId, selectedGeneration, fallbackLens);
+  const fallback = resolutions[fallbackLens];
   const effectiveLens: LensKind = selected.status === "missing" ? fallbackLens : lens;
 
   // Flagged opens expanded (R44); every other lens folds all but its delta sections.
@@ -132,10 +134,16 @@ export function LensBoardView({
               data-generation={board.generation}
               className="flex flex-col"
             >
-              <BoardHeader document={board.document} />
+              <BoardHeader board={board} />
+              {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
               <div className="flex flex-col gap-8">
                 {board.sections.map((entry) => (
-                  <Section key={entry.ref} entry={entry} defaultOpen={forceOpen} />
+                  <Section
+                    key={entry.ref}
+                    entry={entry}
+                    lens={board.lens}
+                    defaultOpen={forceOpen}
+                  />
                 ))}
               </div>
             </article>
@@ -158,6 +166,19 @@ export function LensBoardView({
         <p data-kind="board-pending" className="text-muted-foreground text-sm">
           Reading this board…
         </p>
+      ) : shown.status === "absent" ? (
+        <div data-kind="board-absent" className="text-muted-foreground text-sm">
+          <p className="font-medium text-foreground">
+            {effectiveLens === "design"
+              ? "No Design specification was found."
+              : "No source material was found."}
+          </p>
+          <p>
+            {effectiveLens === "design"
+              ? "This generation has no spec artifacts to project into a Design board."
+              : "This generation has no material to project into the selected board."}
+          </p>
+        </div>
       ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">
           No board for this generation yet.
@@ -167,7 +188,17 @@ export function LensBoardView({
   );
 }
 
-function BoardHeader({ document }: { readonly document: BoardDocument }) {
+function sourceTarget(board: LensBoard, source: SourceRef): string | undefined {
+  return board.elements.find((element) => {
+    if (element.kind !== "section") return false;
+    return (element.data.sources ?? []).some(
+      (candidate) => candidate.path === source.path && candidate.candidate === source.candidate,
+    );
+  })?.id;
+}
+
+function BoardHeader({ board }: { readonly board: LensBoard }) {
+  const document: BoardDocument = board.document;
   return (
     <header className="mb-8 flex flex-col gap-4">
       <h1 className="font-display text-2xl text-foreground tracking-tight">{document.title}</h1>
@@ -182,7 +213,13 @@ function BoardHeader({ document }: { readonly document: BoardDocument }) {
         </dl>
       ) : null}
       {document.introMarkdown.length > 0 ? <BoardIntro markdown={document.introMarkdown} /> : null}
-      <SourceChips sources={document.sources ?? []} kind="artifact" />
+      <SourceChips
+        sources={document.sources ?? []}
+        kind="artifact"
+        {...(board.lens === "design"
+          ? { targetForSource: (source: SourceRef) => sourceTarget(board, source) }
+          : {})}
+      />
     </header>
   );
 }

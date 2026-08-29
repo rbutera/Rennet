@@ -12,10 +12,11 @@ export function SectionElement({ element }: { readonly element: ElementOf<"secti
   const { title, children, sources, spec_delta: specDelta } = element.data;
   return (
     <section
+      id={element.id}
       data-kind="section"
       data-element-id={element.id}
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
-      className="flex flex-col gap-2"
+      className="flex scroll-mt-16 flex-col gap-2"
     >
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-semibold text-base text-foreground">{title}</h3>

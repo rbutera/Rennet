@@ -93,12 +93,17 @@ describe("session/ durable shapes (#466/#457)", () => {
       id: "gen-1",
       patchsetId: "ps-1",
       lensBoards: { design: "board-d", noise: "board-n" },
+      absentLenses: { flagged: "no-material" },
       compositionBoardId: "board-c",
       status: "frozen",
     };
     expect(GenerationSchema.parse(generation).lensBoards.design).toBe("board-d");
+    expect(GenerationSchema.parse(generation).absentLenses?.flagged).toBe("no-material");
     expect(
       GenerationSchema.safeParse({ ...generation, lensBoards: { spec: "board-s" } }).success,
+    ).toBe(false);
+    expect(
+      GenerationSchema.safeParse({ ...generation, absentLenses: { design: "not-yet" } }).success,
     ).toBe(false);
   });
 
@@ -148,6 +153,10 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(
       LensLaneSchema.safeParse({ ...base, status: "failed", reason: "no board" }).success,
     ).toBe(true);
+    expect(LensLaneSchema.safeParse({ ...base, status: "absent" }).success).toBe(false);
+    expect(
+      LensLaneSchema.safeParse({ ...base, status: "absent", reason: "no spec artifacts" }).success,
+    ).toBe(true);
     // An in-flight lane has nothing to report yet, so it parses with nothing to report.
     expect(LensLaneSchema.safeParse({ ...base, status: "queued" }).success).toBe(true);
     // A step row is a DIFFERENT shape: it settles with its own account and never reaches
@@ -161,6 +170,9 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(
       LaneRowSchema.safeParse({ id: "turn", label: "Ran it", status: "drafted" }).success,
     ).toBe(false);
+    expect(LaneRowSchema.safeParse({ id: "turn", label: "Ran it", status: "absent" }).success).toBe(
+      false,
+    );
   });
 
   // ── The event sequence (review finding 7) ─────────────────────────────────

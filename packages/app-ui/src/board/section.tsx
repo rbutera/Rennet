@@ -1,10 +1,16 @@
-import { DOMAIN_COUNT_KINDS, type DomainCountKind, type LensSection } from "@rennet/protocol";
+import {
+  DOMAIN_COUNT_KINDS,
+  type DomainCountKind,
+  type LensKind,
+  type LensSection,
+} from "@rennet/protocol";
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import { SourceChips, SpecDeltaBadge } from "./design-meta";
+import { DesignSectionBody } from "./design-structure";
 import { useBoardId, useElement } from "./kinds/element-context";
 import { BoardChildren } from "./kinds/renderers";
 import { selectDeltaViewed } from "./viewed-delta";
@@ -98,9 +104,11 @@ function FoldLine({
  */
 export function Section({
   entry,
+  lens,
   defaultOpen,
 }: {
   readonly entry: LensSection;
+  readonly lens?: LensKind;
   readonly defaultOpen?: boolean;
 }) {
   const boardId = useBoardId();
@@ -170,7 +178,11 @@ export function Section({
       </Collapse>
       <Collapse open={open}>
         <div className="flex flex-col gap-6 pl-5">
-          <BoardChildren ids={children} />
+          {lens === "design" ? (
+            <DesignSectionBody section={el} />
+          ) : (
+            <BoardChildren ids={children} />
+          )}
         </div>
       </Collapse>
     </section>

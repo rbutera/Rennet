@@ -15,6 +15,13 @@ An existing frame or command payload may gain an optional field. It may not lose
 a field, make an optional field required, narrow an accepted value, or change a
 field's meaning within the same protocol version.
 
+Local patchsets use that append-only rule for `repository.reviewedTreeOid`. An
+older patchset omits it and repository-wide reads fall back to immutable
+`headOid`; a new local capture carries the pinned full working-state tree while
+`headOid` keeps its established meaning as the branch commit. Board source refs
+similarly gain optional candidate identity, and stated Design decisions may add
+optional `inferred` and `source` fields without changing legacy boards.
+
 The `commands` registry (`packages/protocol/src/commands/`) is the single
 validation authority for request inputs and response outputs: one table keyed by
 command id, each row carrying its input and output schema alongside label,
@@ -174,9 +181,17 @@ A round's progress rows are two shapes, each a union on `status` so the illegal
 states are unrepresentable rather than guarded at every read. A **step row** (a
 prep line, the worker turn) settles `done` with its own account of itself, or
 `failed` with a reason. A **lens lane** adds `drafted` — its board is written but
-cross-lens coverage has not run — and its `done` state *requires* the
-`carrying forward` / `reworked` verdict. There is no settled lane without a
-verdict and no failed row without a reason.
+cross-lens coverage has not run — plus `absent` for a successful discovery that
+found no material for that lens. Its `done` state *requires* the `carrying
+forward` / `reworked` verdict; `absent` and `failed` both require their honest
+reason. Step rows never use `drafted` or `absent`.
+
+The same successful absence is durable. A generation may record a lens in
+`absentLenses` with `no-material`; `board.read` then returns `board: null` plus
+that optional absence code. Older generations and older daemons omit the field,
+which remains the ordinary missing-board answer rather than being reclassified
+as successful absence. The client polls missing boards but treats the explicit
+absence as settled.
 
 A client can also outrun the daemon it is connected to. An older daemon does not
 answer `session.rounds` or `session.roundEvents` at all, and the rounds surfaces

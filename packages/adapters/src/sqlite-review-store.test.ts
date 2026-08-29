@@ -21,6 +21,7 @@ const patchset: Patchset = {
     baseRef: "main",
     baseOid: "base",
     headOid: "head",
+    reviewedTreeOid: "reviewed-tree",
   },
   files: [file("file.ts", "+base")],
   rawDiff: "+base",

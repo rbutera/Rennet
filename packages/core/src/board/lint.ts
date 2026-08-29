@@ -142,6 +142,26 @@ export interface LintContext {
   readonly patchsetIdentifiers?: ReadonlySet<string>;
   /** Source artifact text, when the caller supplies it — enables `requirement-verbatim`/`-order`. */
   readonly artifactText?: string;
+  /**
+   * Source-indexed artifact texts for a multi-file Design set. A requirement carrying
+   * `data.source.path` is checked only against that exact reviewed artifact, so two
+   * files cannot make one another's paraphrase or ordering check pass accidentally.
+   */
+  readonly artifacts?: readonly {
+    readonly candidate?: string;
+    readonly path: string;
+    readonly text: string;
+    readonly role?: string;
+    readonly truncated?: boolean;
+    readonly sourceBytes?: number;
+  }[];
+  /** Candidate identity and paths so one selected source set cannot absorb a neighbouring candidate. */
+  readonly artifactCandidates?: readonly {
+    readonly id: string;
+    readonly paths: readonly string[];
+    readonly relevance?: "changed-artifact" | "references-changed-path" | "repository-candidate";
+  }[];
+  readonly artifactBundleIncomplete?: boolean;
 }
 
 /**
@@ -150,7 +170,6 @@ export interface LintContext {
  */
 export const DEFAULT_SCAFFOLD_GLOBS: readonly string[] = [
   "**/.openspec.yaml",
-  "**/openspec/**",
   "**/*.lock",
   "**/pnpm-lock.yaml",
   "**/package-lock.json",
@@ -539,6 +558,14 @@ function matchesGlob(path: string, glob: string): boolean {
   }
   return new RegExp(`^${body}$`).test(path);
 }
+
+export function isScaffoldPath(
+  path: string,
+  globs: readonly string[] = DEFAULT_SCAFFOLD_GLOBS,
+): boolean {
+  return globs.some((glob) => matchesGlob(path, glob));
+}
+
 /** L10 — scaffold stamps are the Noise lane (R22): only Noise cites a scaffold path. */
 const scaffoldIsNoiseLane: Rule = (draft, ctx) => {
   if (ctx.lens === "noise") return [];
@@ -547,7 +574,7 @@ const scaffoldIsNoiseLane: Rule = (draft, ctx) => {
     if (el.kind !== "code_ref") return [];
     const path = (el.data as { path?: unknown }).path;
     if (typeof path !== "string") return [];
-    return globs.some((g) => matchesGlob(path, g))
+    return isScaffoldPath(path, globs)
       ? [
           {
             ruleId: "scaffold-is-noise-lane",
@@ -653,14 +680,24 @@ const noTaughtAndSkipped: Rule = (draft, ctx) => {
  * is deliberately NOT required non-empty — an empty trace is an honest
  * unimplemented obligation (Design prompt: "Zero hunks renders as unimplemented").
  */
-const decisionGrounded: Rule = (draft) =>
+const decisionGrounded: Rule = (draft, ctx) =>
   draft.elements.flatMap((el) => {
     if (el.kind !== "decision") return [];
-    const d = el.data as { evidence?: unknown; alternatives?: unknown };
+    const d = el.data as {
+      evidence?: unknown;
+      alternatives?: unknown;
+      inferred?: unknown;
+      source?: unknown;
+    };
     const out: Violation[] = [];
     const evidence = Array.isArray(d.evidence) ? d.evidence : [];
     const alternatives = Array.isArray(d.alternatives) ? d.alternatives : [];
-    if (evidence.length === 0) {
+    const statedDesign =
+      ctx.lens === "design" &&
+      d.inferred === false &&
+      typeof d.source === "object" &&
+      d.source !== null;
+    if (evidence.length === 0 && !statedDesign) {
       out.push({
         ruleId: "decision-grounded",
         elementRef: ref(el.id, "evidence"),
@@ -668,7 +705,7 @@ const decisionGrounded: Rule = (draft) =>
           "A decision cites where the call is visible: `evidence` is empty. Anchor it to the code (a code_ref).",
       });
     }
-    if (alternatives.length === 0) {
+    if (alternatives.length === 0 && !statedDesign) {
       out.push({
         ruleId: "decision-grounded",
         elementRef: ref(el.id, "alternatives"),
@@ -724,25 +761,781 @@ const reportCoherent: Rule = (draft) => {
   return out;
 };
 
-/** L13 — a requirement's `shall` text is verbatim in the source artifact (anti-paraphrase). */
-const requirementVerbatim: Rule = (draft, ctx) => {
-  if (ctx.artifactText === undefined) return []; // degrade: only checkable with the source
-  const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
-  const haystack = normalize(ctx.artifactText);
-  return draft.elements.flatMap((el) => {
-    if (el.kind !== "requirement") return [];
-    const shall = (el.data as { shall?: unknown }).shall;
-    if (typeof shall !== "string" || shall.length === 0) return [];
-    return haystack.includes(normalize(shall))
+function requirementArtifact(
+  element: DraftElement,
+  ctx: LintContext,
+): { readonly key: string; readonly text: string } | undefined {
+  const data = element.data as { source?: unknown };
+  const source =
+    typeof data.source === "object" && data.source !== null
+      ? (data.source as { path?: unknown; candidate?: unknown })
+      : undefined;
+  const path = source?.path;
+  const candidate = source?.candidate;
+  if (ctx.artifacts !== undefined) {
+    if (typeof path !== "string") return undefined;
+    const artifact = ctx.artifacts.find(
+      (entry) =>
+        entry.path === path &&
+        (typeof candidate !== "string" ||
+          entry.candidate === undefined ||
+          entry.candidate === candidate),
+    );
+    return artifact === undefined
+      ? undefined
+      : { key: `${artifact.candidate ?? "legacy"}\u0000${artifact.path}`, text: artifact.text };
+  }
+  return ctx.artifactText === undefined
+    ? undefined
+    : { key: "legacy-artifact", text: ctx.artifactText };
+}
+
+/** Source chips and related-file links resolve before the client makes them actionable. */
+function sourceLineKnown(source: unknown, elementRef: string, ctx: LintContext): Violation[] {
+  if (typeof source !== "object" || source === null) return [];
+  const { path, candidate, line } = source as {
+    path?: unknown;
+    candidate?: unknown;
+    line?: unknown;
+  };
+  if (typeof path !== "string" || typeof line !== "number") return [];
+  const artifactText = ctx.artifacts?.find(
+    (artifact) =>
+      artifact.path === path &&
+      (typeof candidate !== "string" ||
+        artifact.candidate === undefined ||
+        artifact.candidate === candidate),
+  )?.text;
+  const lineCount =
+    ctx.files.get(path) ??
+    (artifactText === undefined ? undefined : artifactText.split(/\r?\n/).length);
+  if (lineCount !== undefined && line <= lineCount) return [];
+  return [
+    {
+      ruleId: "design-source-line-known",
+      elementRef: `${elementRef}/line`,
+      message:
+        lineCount === undefined
+          ? `Source line ${line} cannot resolve because \`${path}\` is absent from the reviewed file inventory.`
+          : `Source line ${line} is outside \`${path}\`, which has ${lineCount} lines in the reviewed state.`,
+    },
+  ];
+}
+
+function sourceCandidateKnown(source: unknown, elementRef: string, ctx: LintContext): Violation[] {
+  if (ctx.artifactCandidates === undefined || ctx.artifactCandidates.length === 0) return [];
+  if (typeof source !== "object" || source === null) return [];
+  const { path, candidate } = source as { path?: unknown; candidate?: unknown };
+  if (candidate === undefined && ctx.artifactCandidates.length === 1) return [];
+  const match =
+    typeof candidate === "string"
+      ? ctx.artifactCandidates.find((entry) => entry.id === candidate)
+      : undefined;
+  if (match !== undefined && typeof path === "string" && match.paths.includes(path)) return [];
+  return [
+    {
+      ruleId: "design-source-candidate-known",
+      elementRef: `${elementRef}/candidate`,
+      message:
+        candidate === undefined
+          ? "A source shared among multiple discovered candidates names the exact candidate it belongs to."
+          : `Source candidate \`${String(candidate)}\` is unknown or does not contain \`${String(path)}\`.`,
+    },
+  ];
+}
+
+const designSourcesKnown: Rule = (draft, ctx) => {
+  if (ctx.artifacts === undefined) return [];
+  const artifactPaths = new Set(ctx.artifacts.map((artifact) => artifact.path));
+  const out: Violation[] = [];
+  const checkSources = (sources: unknown, elementRef: string): void => {
+    if (!Array.isArray(sources)) return;
+    sources.forEach((source, index) => {
+      const path =
+        typeof source === "object" && source !== null
+          ? (source as { path?: unknown }).path
+          : undefined;
+      if (typeof path === "string" && artifactPaths.has(path)) {
+        out.push(...sourceCandidateKnown(source, `${elementRef}/${index}`, ctx));
+        out.push(...sourceLineKnown(source, `${elementRef}/${index}`, ctx));
+        return;
+      }
+      out.push({
+        ruleId: "design-source-known",
+        elementRef: `${elementRef}/${index}/path`,
+        message:
+          typeof path === "string"
+            ? `Source chip \`${path}\` is not one of the discovered artifacts.`
+            : "Each source chip names an exact discovered artifact path.",
+      });
+    });
+  };
+
+  checkSources(draft.document?.sources, "/document/sources");
+  for (const element of draft.elements) {
+    if (element.kind === "section") {
+      checkSources((element.data as { sources?: unknown }).sources, `${element.id}/sources`);
+    }
+    if (element.kind === "decision" && ctx.lens === "design") {
+      const data = element.data as { inferred?: unknown; source?: unknown };
+      if (data.inferred !== false) {
+        out.push({
+          ruleId: "design-decision-stated",
+          elementRef: `${element.id}/inferred`,
+          message:
+            "A decision taken from a Design artifact is explicitly marked `inferred: false`.",
+        });
+      }
+      const source = data.source;
+      const path =
+        typeof source === "object" && source !== null
+          ? (source as { path?: unknown }).path
+          : undefined;
+      if (typeof path !== "string" || !artifactPaths.has(path)) {
+        out.push({
+          ruleId: "design-source-known",
+          elementRef: `${element.id}/source/path`,
+          message: "A stated Design decision names its exact discovered artifact source.",
+        });
+      } else {
+        out.push(...sourceCandidateKnown(source, `${element.id}/source`, ctx));
+        out.push(...sourceLineKnown(source, `${element.id}/source`, ctx));
+      }
+    }
+    if (element.kind !== "requirement") continue;
+    const related = (element.data as { related_files?: unknown }).related_files;
+    if (!Array.isArray(related)) continue;
+    related.forEach((path, index) => {
+      if (typeof path === "string" && ctx.files.has(path)) return;
+      out.push({
+        ruleId: "design-related-file-known",
+        elementRef: `${element.id}/related_files/${index}`,
+        message:
+          typeof path === "string"
+            ? `Related file \`${path}\` does not exist in the reviewed repository.`
+            : "Each related file is an exact repo-relative path.",
+      });
+    });
+  }
+  return out;
+};
+
+function resolvedCandidateId(source: { readonly candidate?: unknown }, ctx: LintContext): string {
+  if (typeof source.candidate === "string") return source.candidate;
+  return ctx.artifactCandidates?.length === 1 ? (ctx.artifactCandidates[0]?.id ?? "") : "";
+}
+
+function sourceKey(
+  source: { readonly path?: unknown; readonly candidate?: unknown },
+  ctx: LintContext,
+): string | undefined {
+  return typeof source.path === "string"
+    ? `${resolvedCandidateId(source, ctx)}\u0000${source.path}`
+    : undefined;
+}
+
+/** Every artifact in each header-selected candidate has a named rendered region. */
+const designArtifactSetComplete: Rule = (draft, ctx) => {
+  if (ctx.artifactCandidates === undefined || ctx.artifactCandidates.length === 0) {
+    return [];
+  }
+  const documentSourceRefs = draft.document?.sources ?? [];
+  const sectionSourceRefs = draft.elements.flatMap((element) =>
+    element.kind === "section"
+      ? ((element.data as { sources?: readonly { path?: unknown; candidate?: unknown }[] })
+          .sources ?? [])
+      : [],
+  );
+  const requirementSourceRefs = draft.elements.flatMap((element) => {
+    if (element.kind !== "requirement") return [];
+    const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
+    return source === undefined ? [] : [source];
+  });
+  const documentSources = new Set(
+    documentSourceRefs.flatMap((source) => {
+      const key = sourceKey(source, ctx);
+      return key === undefined ? [] : [key];
+    }),
+  );
+  const sectionSources = new Set(
+    sectionSourceRefs.flatMap((source) => {
+      const key = sourceKey(source, ctx);
+      return key === undefined ? [] : [key];
+    }),
+  );
+  if (documentSources.size === 0) {
+    return [
+      {
+        ruleId: "design-artifact-set-complete",
+        elementRef: "/document/sources",
+        message: "The Design document must select one discovered artifact candidate.",
+      },
+    ];
+  }
+  const out: Violation[] = [];
+  const selectedCandidateIds = new Set(
+    documentSourceRefs.map((source) => resolvedCandidateId(source, ctx)).filter(Boolean),
+  );
+  for (const candidate of ctx.artifactCandidates) {
+    if (!selectedCandidateIds.has(candidate.id)) continue;
+    for (const path of candidate.paths) {
+      const key = `${candidate.id}\u0000${path}`;
+      if (!documentSources.has(key)) {
+        out.push({
+          ruleId: "design-artifact-set-complete",
+          elementRef: "/document/sources",
+          message: `Selected candidate \`${candidate.id}\` is missing artifact \`${path}\` from the header roll-up.`,
+        });
+      }
+      if (!sectionSources.has(key)) {
+        out.push({
+          ruleId: "design-artifact-set-complete",
+          elementRef: "/elements",
+          message: `Selected artifact \`${path}\` has no named source-linked section.`,
+        });
+      }
+    }
+  }
+  const renderedSources = new Set([
+    ...sectionSources,
+    ...requirementSourceRefs.flatMap((source) => {
+      const value = sourceKey(source, ctx);
+      return value === undefined ? [] : [value];
+    }),
+  ]);
+  for (const key of renderedSources) {
+    if (documentSources.has(key)) continue;
+    const path = key.slice(key.indexOf("\u0000") + 1);
+    out.push({
+      ruleId: "design-artifact-set-complete",
+      elementRef: "/document/sources",
+      message: `Rendered artifact \`${path}\` is missing from the document source roll-up.`,
+    });
+  }
+  return out;
+};
+
+/** Deterministic relevance prevents a complete nearby decoy from validating. */
+const designCandidateRelevant: Rule = (draft, ctx) => {
+  if (ctx.artifactCandidates === undefined) return [];
+  const strong = ctx.artifactCandidates.filter(
+    (candidate) =>
+      candidate.relevance !== undefined && candidate.relevance !== "repository-candidate",
+  );
+  if (strong.length === 0) return [];
+  const selectedIds = new Set(
+    (draft.document?.sources ?? []).map((source) => resolvedCandidateId(source, ctx)),
+  );
+  return ctx.artifactCandidates.flatMap((candidate) =>
+    selectedIds.has(candidate.id) && candidate.relevance === "repository-candidate"
+      ? [
+          {
+            ruleId: "design-candidate-relevant",
+            elementRef: "/document/sources",
+            message: `Candidate \`${candidate.id}\` has no deterministic relation to the change while a changed or path-referencing candidate exists.`,
+          },
+        ]
+      : [],
+  );
+};
+
+type DesignObligationKind = "requirement" | "scenario" | "task";
+interface DesignObligation {
+  readonly kind: DesignObligationKind;
+  readonly text: string;
+  readonly line: number;
+  readonly done?: boolean;
+}
+
+const normalizeDesignText = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+function designObligations(text: string): DesignObligation[] {
+  const lines = text.split(/\r?\n/);
+  const obligations: DesignObligation[] = [];
+  const add = (obligation: DesignObligation): void => {
+    if (obligation.text.length > 0) obligations.push(obligation);
+  };
+
+  let offset = 0;
+  for (const paragraph of text.split(/\r?\n\s*\r?\n/)) {
+    const start = text.indexOf(paragraph, offset);
+    offset = Math.max(offset, start + paragraph.length);
+    if (!/\bSHALL\b/.test(paragraph)) continue;
+    const cleaned = paragraph
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#{1,6}\s+/.test(line))
+      .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
+      .filter(Boolean)
+      .join(" ");
+    add({
+      kind: "requirement",
+      text: normalizeDesignText(cleaned),
+      line: text.slice(0, Math.max(0, start)).split(/\r?\n/).length,
+    });
+  }
+
+  let inAcceptanceCriteria = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (heading !== null) {
+      inAcceptanceCriteria = /acceptance criteria/i.test(heading[2] ?? "");
+      const scenario = /^#{3,6}\s+Scenario:\s*(.+?)\s*$/i.exec(line);
+      if (scenario !== null) {
+        const parts = [`Scenario: ${scenario[1] ?? ""}`];
+        for (let next = index + 1; next < lines.length; next += 1) {
+          const candidate = lines[next] ?? "";
+          if (/^#{1,6}\s+/.test(candidate)) break;
+          if (candidate.trim().length > 0) parts.push(candidate.trim());
+        }
+        add({ kind: "scenario", text: normalizeDesignText(parts.join(" ")), line: index + 1 });
+      }
+      const task = /^###\s+(Task\s+\d+:\s*.+?)\s*$/i.exec(line);
+      if (task !== null) {
+        add({ kind: "task", text: normalizeDesignText(task[1] ?? ""), line: index + 1 });
+      }
+      continue;
+    }
+    const checkbox = /^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
+    if (checkbox !== null) {
+      add({
+        kind: "task",
+        text: normalizeDesignText(line.trim()),
+        line: index + 1,
+        done: (checkbox[1] ?? "").toLowerCase() === "x",
+      });
+      continue;
+    }
+    if (inAcceptanceCriteria) {
+      const item = /^\s*(?:[-*]|\d+[.)])\s+(.+?)\s*$/.exec(line)?.[1];
+      if (item !== undefined) {
+        add({ kind: "scenario", text: normalizeDesignText(item), line: index + 1 });
+      }
+    }
+  }
+  return obligations.sort((left, right) => left.line - right.line);
+}
+
+function orderedDesignElements(draft: DraftBoard): DraftElement[] {
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  const nested = new Set<string>();
+  for (const element of draft.elements) {
+    const children = (element.data as { children?: unknown }).children;
+    if (Array.isArray(children)) {
+      for (const child of children) if (typeof child === "string") nested.add(child);
+    }
+  }
+  const ordered: DraftElement[] = [];
+  const visited = new Set<string>();
+  const visit = (element: DraftElement): void => {
+    if (visited.has(element.id)) return;
+    visited.add(element.id);
+    ordered.push(element);
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) return;
+    for (const child of children) {
+      if (typeof child !== "string") continue;
+      const nestedElement = byId.get(child);
+      if (nestedElement !== undefined) visit(nestedElement);
+    }
+  };
+  for (const element of draft.elements) if (!nested.has(element.id)) visit(element);
+  for (const element of draft.elements) visit(element);
+  return ordered;
+}
+
+function sectionDescendants(section: DraftElement, draft: DraftBoard): DraftElement[] {
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  const descendants: DraftElement[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const element = byId.get(id);
+    if (element === undefined) return;
+    descendants.push(element);
+    const children = (element.data as { children?: unknown }).children;
+    if (Array.isArray(children)) {
+      for (const child of children) if (typeof child === "string") visit(child);
+    }
+  };
+  const children = (section.data as { children?: unknown }).children;
+  if (Array.isArray(children)) {
+    for (const child of children) if (typeof child === "string") visit(child);
+  }
+  return descendants;
+}
+
+function markdownH2Section(text: string, title: string): string[] | undefined {
+  const lines = text.split(/\r?\n/);
+  const target = normalizeDesignText(title).toLowerCase();
+  const start = lines.findIndex((line) => {
+    const heading = /^##\s+(.+?)\s*$/.exec(line)?.[1];
+    return heading !== undefined && normalizeDesignText(heading).toLowerCase() === target;
+  });
+  if (start === -1) return undefined;
+  const section: string[] = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (/^##\s+/.test(line)) break;
+    section.push(line);
+  }
+  return section;
+}
+
+function topLevelListItems(lines: readonly string[]): string[] {
+  const items: string[] = [];
+  let current: string[] | undefined;
+  for (const line of lines) {
+    const item = /^[-*]\s+(.+?)\s*$/.exec(line)?.[1];
+    if (item !== undefined) {
+      if (current !== undefined) items.push(normalizeDesignText(current.join(" ")));
+      current = [item];
+      continue;
+    }
+    if (current !== undefined && line.trim().length > 0 && !/^#{1,6}\s+/.test(line)) {
+      current.push(line.trim());
+    }
+  }
+  if (current !== undefined) items.push(normalizeDesignText(current.join(" ")));
+  return items;
+}
+
+function designArtifactKey(
+  artifact: { readonly candidate?: string; readonly path: string },
+  ctx: LintContext,
+): string | undefined {
+  const candidate =
+    artifact.candidate ??
+    (ctx.artifactCandidates?.length === 1 ? ctx.artifactCandidates[0]?.id : undefined);
+  return candidate === undefined ? undefined : `${candidate}\u0000${artifact.path}`;
+}
+
+function selectedDesignArtifacts(draft: DraftBoard, ctx: LintContext) {
+  const selected = new Set(
+    (draft.document?.sources ?? []).flatMap((source) => {
+      const key = sourceKey(source, ctx);
+      return key === undefined ? [] : [key];
+    }),
+  );
+  return (ctx.artifacts ?? []).filter((artifact) => {
+    const key = designArtifactKey(artifact, ctx);
+    return key !== undefined && selected.has(key);
+  });
+}
+
+/** Reverse-check source obligations so an empty sourced region cannot certify completeness. */
+const designArtifactContentComplete: Rule = (draft, ctx) => {
+  if (ctx.artifacts === undefined || ctx.artifactCandidates === undefined) return [];
+  const ordered = orderedDesignElements(draft);
+  const orderIndex = new Map(ordered.map((element, index) => [element.id, index]));
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  const out: Violation[] = [];
+
+  for (const artifact of selectedDesignArtifacts(draft, ctx)) {
+    const key = designArtifactKey(artifact, ctx);
+    if (key === undefined) continue;
+    const sections = draft.elements.filter((element) => {
+      if (element.kind !== "section") return false;
+      const sources = (
+        element.data as { sources?: readonly { path?: unknown; candidate?: unknown }[] }
+      ).sources;
+      return sources?.some((source) => sourceKey(source, ctx) === key) ?? false;
+    });
+    const descendants = sections.flatMap((section) => sectionDescendants(section, draft));
+    if (sections.length === 0 || descendants.length === 0) {
+      out.push({
+        ruleId: "design-artifact-content-complete",
+        elementRef: "/elements",
+        message: `Artifact \`${artifact.path}\` needs a non-empty source-linked region.`,
+      });
+      continue;
+    }
+
+    const obligations = designObligations(artifact.text);
+    const requirements = draft.elements.filter((element) => {
+      if (element.kind !== "requirement") return false;
+      const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
+      return source !== undefined && sourceKey(source, ctx) === key;
+    });
+    const scenarioElements = requirements.flatMap((requirement) => {
+      const scenarios = (requirement.data as { scenarios?: unknown }).scenarios;
+      return Array.isArray(scenarios)
+        ? scenarios.flatMap((id) => {
+            const element = typeof id === "string" ? byId.get(id) : undefined;
+            return element?.kind === "prose" ? [element] : [];
+          })
+        : [];
+    });
+    const taskElements = descendants.filter((element) => element.kind === "prose");
+    const used = new Set<string>();
+    const previousIndex: Partial<Record<DesignObligationKind, number>> = {};
+
+    for (const obligation of obligations) {
+      const candidates =
+        obligation.kind === "requirement"
+          ? requirements
+          : obligation.kind === "scenario"
+            ? scenarioElements
+            : taskElements;
+      const match = candidates.find((element) => {
+        if (used.has(element.id)) return false;
+        const data = element.data as { shall?: unknown; markdown?: unknown };
+        const text =
+          element.kind === "requirement"
+            ? data.shall
+            : element.kind === "prose"
+              ? data.markdown
+              : undefined;
+        return typeof text === "string" && normalizeDesignText(text) === obligation.text;
+      });
+      if (match === undefined) {
+        out.push({
+          ruleId: "design-artifact-content-complete",
+          elementRef: "/elements",
+          message: `Artifact \`${artifact.path}\` is missing its ${obligation.kind}: ${obligation.text}`,
+        });
+        continue;
+      }
+      used.add(match.id);
+      const index = orderIndex.get(match.id) ?? Number.MAX_SAFE_INTEGER;
+      const previous = previousIndex[obligation.kind];
+      if (previous !== undefined && index < previous) {
+        out.push({
+          ruleId: "design-artifact-content-order",
+          elementRef: ref(match.id),
+          message: `${obligation.kind} elements from \`${artifact.path}\` must preserve source order.`,
+        });
+      }
+      previousIndex[obligation.kind] = index;
+    }
+
+    if (artifact.role === "proposal") {
+      for (const title of ["what changes", "impact"]) {
+        const sourceSection = markdownH2Section(artifact.text, title);
+        if (sourceSection === undefined) continue;
+        const renderedSection = descendants.find(
+          (element) =>
+            element.kind === "section" &&
+            normalizeDesignText(
+              String((element.data as { title?: unknown }).title ?? ""),
+            ).toLowerCase() === title,
+        );
+        if (renderedSection === undefined) {
+          out.push({
+            ruleId: "design-artifact-anatomy",
+            elementRef: sections[0]?.id ?? "/elements",
+            message: `Artifact \`${artifact.path}\` needs a nested \`${title}\` section.`,
+          });
+          continue;
+        }
+        const prose = sectionDescendants(renderedSection, draft).filter(
+          (element) => element.kind === "prose",
+        );
+        if (sourceSection.some((line) => line.trim().length > 0) && prose.length === 0) {
+          out.push({
+            ruleId: "design-artifact-anatomy",
+            elementRef: ref(renderedSection.id),
+            message: `Artifact \`${artifact.path}\` needs its declared ${title} prose.`,
+          });
+          continue;
+        }
+        if (title !== "what changes") continue;
+        const declaredChanges = topLevelListItems(sourceSection);
+        const renderedChanges = prose.map((element) =>
+          normalizeDesignText(
+            String((element.data as { markdown?: unknown }).markdown ?? "").replace(/^[-*]\s+/, ""),
+          ),
+        );
+        const remaining = [...renderedChanges];
+        for (const change of declaredChanges) {
+          const index = remaining.indexOf(change);
+          if (index !== -1) {
+            remaining.splice(index, 1);
+            continue;
+          }
+          out.push({
+            ruleId: "design-artifact-anatomy",
+            elementRef: ref(renderedSection.id),
+            message: `Artifact \`${artifact.path}\` needs one exact What Changes row for: ${change}`,
+          });
+        }
+      }
+    }
+  }
+  return out;
+};
+
+const designHeaderComplete: Rule = (draft, ctx) => {
+  if (ctx.artifacts === undefined || ctx.artifactCandidates === undefined) return [];
+  const artifacts = selectedDesignArtifacts(draft, ctx);
+  if (artifacts.length === 0) return [];
+  const selectedKeys = new Set(
+    artifacts.flatMap((artifact) => {
+      const key = designArtifactKey(artifact, ctx);
+      return key === undefined ? [] : [key];
+    }),
+  );
+  const requirements = draft.elements.filter((element) => {
+    if (element.kind !== "requirement") return false;
+    const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
+    const key = source === undefined ? undefined : sourceKey(source, ctx);
+    return key !== undefined && selectedKeys.has(key);
+  });
+  const capabilities = new Map<string, string>();
+  for (const requirement of requirements) {
+    const data = requirement.data as { capability?: unknown; spec_delta?: unknown };
+    if (typeof data.capability === "string") {
+      capabilities.set(data.capability, typeof data.spec_delta === "string" ? data.spec_delta : "");
+    }
+  }
+  const tasks = artifacts.flatMap((artifact) =>
+    designObligations(artifact.text).filter((obligation) => obligation.kind === "task"),
+  );
+  const expected = new Map<string, string>([
+    ["requirements", String(requirements.length)],
+    [
+      "capabilities",
+      `${[...capabilities.values()].filter((delta) => delta === "added").length} new / ${[...capabilities.values()].filter((delta) => delta === "modified").length} modified`,
+    ],
+  ]);
+  if (tasks.length > 0) {
+    expected.set("tasks", `${tasks.filter((task) => task.done).length}/${tasks.length}`);
+  }
+  const actual = new Map(
+    (draft.document?.stats ?? []).map((stat) => [stat.label.toLowerCase(), stat.value]),
+  );
+  return [...expected].flatMap(([label, value]) =>
+    actual.get(label) === value
       ? []
       : [
           {
-            ruleId: "requirement-verbatim",
-            elementRef: ref(el.id, "shall"),
-            message:
-              "SHALL text is quoted, not summarized: the requirement's `shall` is not a verbatim substring of the source artifact.",
+            ruleId: "design-header-complete",
+            elementRef: "/document/stats",
+            message: `Design header stat \`${label}\` must be \`${value}\` from the selected artifacts.`,
           },
-        ];
+        ],
+  );
+};
+
+const designIncompletenessVisible: Rule = (draft, ctx) => {
+  if (ctx.artifactBundleIncomplete !== true) return [];
+  const visible = draft.elements.some(
+    (element) =>
+      element.kind === "callout" &&
+      /\b(incomplete|truncated|omitted|shortened)\b/i.test(
+        String((element.data as { body?: unknown }).body ?? ""),
+      ),
+  );
+  return visible
+    ? []
+    : [
+        {
+          ruleId: "design-incompleteness-visible",
+          elementRef: "/elements",
+          message:
+            "A bounded or truncated discovery bundle needs an explicit incompleteness callout.",
+        },
+      ];
+};
+
+/** A discovered artifact bundle makes each requirement's source path checkable. */
+const requirementSourceKnown: Rule = (draft, ctx) => {
+  if (ctx.artifacts === undefined) return [];
+  const paths = new Set(ctx.artifacts.map((artifact) => artifact.path));
+  return draft.elements.flatMap((element) => {
+    if (element.kind !== "requirement") return [];
+    const source = (element.data as { source?: unknown }).source;
+    const path =
+      typeof source === "object" && source !== null
+        ? (source as { path?: unknown }).path
+        : undefined;
+    if (typeof path === "string" && paths.has(path)) {
+      return [
+        ...sourceCandidateKnown(source, ref(element.id, "source"), ctx),
+        ...sourceLineKnown(source, ref(element.id, "source"), ctx),
+      ];
+    }
+    return [
+      {
+        ruleId: "requirement-source-known",
+        elementRef: ref(element.id, "source"),
+        message:
+          typeof path === "string"
+            ? `Requirement source \`${path}\` is not one of the discovered artifacts.`
+            : "A requirement drawn from discovered artifacts names its exact source path.",
+      },
+    ];
+  });
+};
+
+/** Requirement scenario refs resolve only to narrative scenario regions. */
+const requirementScenariosNarrative: Rule = (draft) => {
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  return draft.elements.flatMap((element) => {
+    if (element.kind !== "requirement") return [];
+    const scenarios = (element.data as { scenarios?: unknown }).scenarios;
+    if (!Array.isArray(scenarios)) return [];
+    return scenarios.flatMap((scenarioId, index) => {
+      const scenario = typeof scenarioId === "string" ? byId.get(scenarioId) : undefined;
+      if (scenario?.kind === "prose") return [];
+      return [
+        {
+          ruleId: "requirement-scenario-narrative",
+          elementRef: ref(element.id, `scenarios/${index}`),
+          message:
+            typeof scenarioId === "string" && scenario !== undefined
+              ? `Requirement scenario \`${scenarioId}\` resolves to \`${scenario.kind}\`; scenarios must resolve to prose regions.`
+              : `Requirement scenario \`${String(scenarioId)}\` does not resolve to a prose region.`,
+        },
+      ];
+    });
+  });
+};
+
+/** L13 — requirement and scenario text stay verbatim in their source artifact. */
+const requirementVerbatim: Rule = (draft, ctx) => {
+  const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  return draft.elements.flatMap((el) => {
+    if (el.kind !== "requirement") return [];
+    const artifact = requirementArtifact(el, ctx);
+    if (artifact === undefined) return []; // degrade: only checkable with the exact source
+    const data = el.data as { shall?: unknown; scenarios?: unknown };
+    const haystack = normalize(artifact.text);
+    const violations: Violation[] = [];
+    if (
+      typeof data.shall === "string" &&
+      data.shall.length > 0 &&
+      !haystack.includes(normalize(data.shall))
+    ) {
+      violations.push({
+        ruleId: "requirement-verbatim",
+        elementRef: ref(el.id, "shall"),
+        message:
+          "SHALL text is quoted, not summarized: the requirement's `shall` is not a verbatim substring of the source artifact.",
+      });
+    }
+    const scenarioIds = Array.isArray(data.scenarios) ? data.scenarios : [];
+    for (const scenarioId of scenarioIds) {
+      if (typeof scenarioId !== "string") continue;
+      const scenario = byId.get(scenarioId);
+      if (scenario?.kind !== "prose") continue;
+      const markdown = (scenario.data as { markdown?: unknown }).markdown;
+      if (
+        typeof markdown === "string" &&
+        markdown.length > 0 &&
+        !haystack.includes(normalize(markdown))
+      ) {
+        violations.push({
+          ruleId: "requirement-verbatim",
+          elementRef: ref(scenario.id, "markdown"),
+          message:
+            "Scenario text is quoted, not summarized: the referenced scenario is not a verbatim substring of the requirement's source artifact.",
+        });
+      }
+    }
+    return violations;
   });
 };
 
@@ -754,18 +1547,46 @@ const requirementVerbatim: Rule = (draft, ctx) => {
  * without the source text; a `shall` not found verbatim is L13's lane, skipped here.
  */
 const requirementOrder: Rule = (draft, ctx) => {
-  if (ctx.artifactText === undefined) return [];
   const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
-  const haystack = normalize(ctx.artifactText);
   const out: Violation[] = [];
-  let prevOffset = -1;
-  for (const el of draft.elements) {
+  const previousOffset = new Map<string, number>();
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  const nested = new Set<string>();
+  for (const element of draft.elements) {
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
+  }
+  const ordered: DraftElement[] = [];
+  const visited = new Set<string>();
+  const visit = (element: DraftElement): void => {
+    if (visited.has(element.id)) return;
+    visited.add(element.id);
+    if (element.kind === "requirement") ordered.push(element);
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) return;
+    for (const child of children) {
+      if (typeof child !== "string") continue;
+      const target = byId.get(child);
+      if (target !== undefined) visit(target);
+    }
+  };
+  for (const element of draft.elements) {
+    if (element.kind === "section" && !nested.has(element.id)) visit(element);
+  }
+  for (const element of draft.elements) visit(element);
+
+  for (const el of ordered) {
     if (el.kind !== "requirement") continue;
+    const artifact = requirementArtifact(el, ctx);
+    if (artifact === undefined) continue;
     const shall = (el.data as { shall?: unknown }).shall;
     if (typeof shall !== "string" || shall.length === 0) continue;
+    const haystack = normalize(artifact.text);
     const offset = haystack.indexOf(normalize(shall));
     if (offset === -1) continue; // not verbatim — L13 owns it
-    if (offset < prevOffset) {
+    const prior = previousOffset.get(artifact.key) ?? -1;
+    if (offset < prior) {
       out.push({
         ruleId: "requirement-order",
         elementRef: ref(el.id, "shall"),
@@ -773,7 +1594,7 @@ const requirementOrder: Rule = (draft, ctx) => {
           "Requirements keep the artifact's own order: this `shall` appears before a requirement already rendered above it.",
       });
     }
-    prevOffset = offset;
+    previousOffset.set(artifact.key, offset);
   }
   return out;
 };
@@ -816,6 +1637,14 @@ export const LENS_RULES: readonly Rule[] = [
   noTaughtAndSkipped,
   decisionGrounded,
   reportCoherent,
+  designSourcesKnown,
+  designCandidateRelevant,
+  designArtifactSetComplete,
+  designArtifactContentComplete,
+  designHeaderComplete,
+  designIncompletenessVisible,
+  requirementSourceKnown,
+  requirementScenariosNarrative,
   requirementVerbatim,
   requirementOrder,
 ];

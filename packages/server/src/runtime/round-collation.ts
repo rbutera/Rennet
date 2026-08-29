@@ -7,6 +7,7 @@
 // patchset, these derive the collation universe.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { DesignArtifactSet } from "@rennet/adapters";
 import {
   buildDeltaPacket,
   type DeltaPacket,
@@ -381,6 +382,8 @@ export interface BoardRegenerationDeps {
    *  citation past the diff. Rejecting/throwing degrades to the diff-derived
    *  inventories rather than failing the regeneration. */
   readonly fileInventory?: (patchset: Patchset) => Promise<TreeInventories>;
+  /** Deterministic spec discovery at the reviewed state; null is a successful no-spec result. */
+  readonly designArtifactsFor?: (patchset: Patchset) => Promise<DesignArtifactSet | null>;
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
   readonly emit: (event: RoundEvent) => void;
@@ -439,6 +442,14 @@ export async function runBoardRegeneration(
     } catch {
       tree = undefined;
     }
+    let designArtifacts: DesignArtifactSet | null | undefined;
+    try {
+      designArtifacts = await deps.designArtifactsFor?.(successor);
+    } catch {
+      // Discovery is an input enrichment, not a review gate. Undefined keeps the
+      // drafter's legacy repo-reading path; null alone means discovery proved no spec.
+      designArtifacts = undefined;
+    }
     const collation = assembleRoundCollation({
       patchset: successor,
       knowledge: knowledgeSource.set,
@@ -467,6 +478,7 @@ export async function runBoardRegeneration(
         ...(landed ? { patchsetId: successor.id } : {}),
       }),
       onProgress: deps.emit,
+      ...(designArtifacts === undefined ? {} : { designArtifacts }),
       ...collation,
     });
   } catch (error) {

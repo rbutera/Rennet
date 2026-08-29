@@ -6,6 +6,7 @@ import {
   AskEventBodySchema,
   AskProjectionSchema,
   attentionFamilySchema,
+  LensAbsenceReasonSchema,
   QuoteThreadSchema,
   RoundEventSchema,
   RoundRecordSchema,
@@ -591,7 +592,11 @@ const definitions = {
       generation: z.string().min(1),
       lens: LensKindSchema,
     }),
-    output: z.object({ board: LensBoardSchema.nullable() }),
+    output: z.object({
+      board: LensBoardSchema.nullable(),
+      /** Present only when the generation durably settled this lens without a board. */
+      absence: LensAbsenceReasonSchema.optional(),
+    }),
   },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.

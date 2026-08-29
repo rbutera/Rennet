@@ -21,7 +21,8 @@ When a completed frozen generation has no Flagged board, the client selects its
 first present lens and replaces the URL with that canonical address. A live
 generation drafts progressively: it may show the first board that arrives, but
 it keeps the requested address so a later Flagged arrival restores that reading.
-A missing board produces no segment rather than a disabled one.
+A lens durably settled without a board produces no segment rather than a
+disabled one. A board that is merely missing can still be in flight.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`),
 one markdown file per lens plus the post-process editor pass, the
@@ -158,8 +159,11 @@ Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
 files, and comments from each section's direct children. Repeated code refs for
 one path count as one file, and structural prose does not inflate the count. A
-pair the host drafted no board for answers `null`; the lens is absent, and no
-board is assembled from another generation's elements.
+pair with no persisted board answers `null`. When discovery successfully found
+no material, the generation also carries `absence: no-material`; the client
+treats that result as settled, omits its segment, and stops polling. A plain
+`null` remains missing because the board may still be in flight. No board is
+assembled from another generation's elements.
 
 The client addresses a frozen board with `?generation=<id>` and treats an
 absent generation parameter as the live generation. Both the generation and
@@ -216,6 +220,9 @@ A board says what it does not know as plainly as what it does.
 - A drafting seat that fails renders as **failed**, never as empty. The
   surface distinguishes a lens that ran and found nothing from a lens that did
   not run.
+- Design discovery that completes and finds no supported spec artifacts is a
+  successful **absent** lane, not a failed drafter and not an empty board. The
+  other four lenses continue normally.
 - An element the validation loop could not make pass leaves a trace, never a
   silent hole. If it was dropped, its hunks are in `skippedHunks` with a reason
   (the honest-omission exit); if the retry cap was hit, its unresolved
@@ -273,16 +280,60 @@ on them.
 
 ## The Design lens
 
-The Design lens discovers the change's spec artifacts and renders the whole
-set as a structured artifact, never a markdown view. Known formats and their
-exact shapes are documented in the
-[spec-format survey](../reference/spec-formats/openspec.md) (OpenSpec, Kiro,
-BMAD, Superpowers, grill-with-docs). Every discovered artifact gets a named
-region with a provenance chip; an absent artifact is honestly absent. The
-header carries the artifact set as jump chips, capability rows use an
-add-green edge, requirement rows keep normative language verbatim, and each
-requirement's coverage chip counts the hunks and tests that claim it — zero
-hunks renders as an honest "unimplemented".
+Before drafting, the host discovers spec artifacts deterministically at the
+reviewed state. It recognises OpenSpec, Kiro, BMAD, Superpowers, and
+grill-with-docs; their exact shapes are documented in the
+[spec-format survey](../reference/spec-formats/openspec.md). BMAD discovery
+honours its configured paths before conventional locations and scopes a
+candidate to one story or unmatched epic. Grill-with-docs scopes candidates to
+one linked context or root ADR. Candidates carry stable ids derived from their
+format and complete path set, then rank by changed artifacts and references to
+changed paths, so an unrelated repository candidate cannot win merely because
+it sorts first. If every candidate is unrelated, the drafter must account for
+each id and relevance class in a grounded `no-material` answer. The drafter
+receives source bytes from the patchset's pinned reviewed tree and never reads
+mutable working-tree replacements.
+
+Discovery is bounded: it retains at most 48 candidates, 64 artifacts per
+candidate, 192 KiB of source content in total, and 512 KiB for the complete
+serialized bundle. Every retained artifact records its full byte count and
+whether its supplied text was shortened; candidates and the set record omission
+counts and the applied limits. Relevant candidates get the larger share of the
+budget. A shortened bundle renders an explicit incompleteness account and a
+source link rather than presenting the preview as the whole specification.
+
+The resulting board is a structured composition, not a Markdown viewer. Its
+header names the source set and reports derived capability, requirement, and
+task counts. Header artifact chips jump to their rendered regions; section and
+requirement source chips open the repo-relative file in the project editor. A
+proposal renders tagged What Changes rows beside its Impact region, capabilities
+render as counted jump cards, and task groups show their own completed/total
+progress. Each artifact gets a source-linked region; requirements preserve their
+normative text and source order, and every scenario and task remains its own
+canonical child element so later dispositions can address it. The rendered
+content still comes from the immutable discovery bundle.
+
+Requirement coverage is host-owned. After drafting, the host discards any
+coverage fields the drafter supplied, offers only non-artifact patchset hunks
+to a dedicated mapping turn, grounds its answer against those exact hunk ids,
+and mints immutable `code_ref` anchors from the patchset geometry. A completed
+mapping shows met, partial, or gap with a grounded test count. A failed mapping
+shows no chip. Proposal-only work has no implementation relation to map, so it
+shows task progress such as `0/N` without fabricated coverage.
+
+`spec_delta` and the round `delta` marker are independent: the first records
+the artifact's added, modified, removed, or renamed state; the second records
+whether the rendered section changed since the prior review generation.
+Source-indexed lint checks each requirement only against its named artifact and
+tracks source order independently per file. Once the drafter selects a
+candidate, lint requires every retained artifact in that candidate in both the
+header roll-up and a named region without forcing nearby candidates into the
+board. Reverse checks require every source requirement, scenario, and task once
+and in source order, verify proposal anatomy and derived header values, and make
+bounded discovery visible. The prose post-process cannot drop or rewrite a
+source-linked subtree. Source lines resolve against the reviewed file or the
+retained artifact text, and requirement scenario refs resolve only to narrative
+scenario regions.
 
 ## Reading affordances every board shares
 

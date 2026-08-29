@@ -392,6 +392,46 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     expect(events.at(-1)?.type).toBe("composed");
   });
 
+  it("no Design artifacts settles that lane as absent while the other lenses compose", async () => {
+    const events: RoundEvent[] = [];
+    const outcome = await runtimeWith(() => sectioned("fine")).runRound({
+      session: { ...session, id: "design-absent-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-no-spec" }),
+      onProgress: (event) => events.push(event),
+      designArtifacts: null,
+      ...collationFor(),
+    });
+
+    const settled = [...events].reverse().find((event) => event.type === "lens");
+    if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
+    const design = settled.lanes.find((lane) => lane.id === "design");
+    expect(design).toEqual({
+      id: "design",
+      label: "Design",
+      status: "absent",
+      reason: "No spec artifacts were discovered.",
+    });
+    const absentAt = events.findIndex(
+      (event) =>
+        event.type === "lens" &&
+        event.lanes.some((lane) => lane.id === "design" && lane.status === "absent"),
+    );
+    const sequenceDoneAt = events.findIndex(
+      (event) =>
+        event.type === "lens" &&
+        event.lanes.some((lane) => lane.id === "sequence" && lane.status === "done"),
+    );
+    expect(absentAt).toBeGreaterThanOrEqual(0);
+    expect(absentAt).toBeLessThan(sequenceDoneAt);
+    expect(outcome.boardGeneration.lensBoards).not.toHaveProperty("design");
+    expect(Object.keys(outcome.boardGeneration.lensBoards)).toHaveLength(4);
+    expect(outcome.boardGeneration.absentLenses).toEqual({ design: "no-material" });
+    expect(events.at(-1)?.type).toBe("composed");
+  });
+
   // ── The lineage the round ACTUALLY has (review finding 2) ──────────────────
   //
   // Above, `previous` is handed in by the test. In production it was handed in by NOBODY:

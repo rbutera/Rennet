@@ -35,10 +35,9 @@ afterEach(() => {
 });
 
 describe("GitCaptureAdapter", () => {
-  it("keeps the Windows-view root for WSL file reads, identity, and snapshot pinning", async () => {
+  it("keeps the Windows-view root for WSL identity and snapshot pinning", async () => {
     const windowsRoot = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo";
     const distroRoot = "/home/rai/repo";
-    const readPaths: string[] = [];
     const pinnedRoots: string[] = [];
     const run: GitExec = async (_root, args) => {
       const command = args.join(" ");
@@ -51,10 +50,11 @@ describe("GitCaptureAdapter", () => {
       }
       if (command === "rev-parse --verify origin/main^{commit}") return "base\n";
       if (command === "merge-base origin/main HEAD") return "base\n";
-      if (command === "diff --binary --full-index --no-ext-diff --no-textconv base --") return "";
-      if (command === "diff --name-status -z base --") return "";
-      if (command === "diff --numstat -z base --") return "";
-      if (command === "ls-files --others --exclude-standard -z") return "untracked.txt\0";
+      if (command === "diff --binary --full-index --no-ext-diff --no-textconv base tree --") {
+        return "";
+      }
+      if (command === "diff --name-status -z base tree --") return "";
+      if (command === "diff --numstat -z base tree --") return "";
       if (command === "log --format=%s base..head") return "";
       throw new Error(`unexpected git command: ${command}`);
     };
@@ -68,17 +68,17 @@ describe("GitCaptureAdapter", () => {
       () => ({ kind: "wsl", distro: "Ubuntu" }),
       {
         gitFor: () => run,
-        readFile: (async (path) => {
-          readPaths.push(path.toString());
-          return Buffer.from("untracked\n");
-        }) as typeof import("node:fs/promises").readFile,
+        captureReviewedTree: async (root) => {
+          pinnedRoots.push(root);
+          return "tree";
+        },
       },
     ).capture(windowsRoot);
 
-    expect(readPaths).toEqual([`${windowsRoot}\\untracked.txt`]);
-    expect(pinnedRoots).toEqual([windowsRoot]);
+    expect(pinnedRoots).toEqual([distroRoot, windowsRoot]);
     expect(patchset.repository.root).toBe(windowsRoot);
     expect(patchset.repository.commonDir).toBe(`${windowsRoot}\\.git`);
+    expect(patchset.repository.reviewedTreeOid).toBe("tree");
   });
 
   it("stamps the effective project snapshot identity resolved at capture time", async () => {
@@ -163,6 +163,29 @@ describe("GitCaptureAdapter", () => {
     writeFileSync(join(root, "tracked.txt"), "second\n");
     const second = await adapter.capture(root);
     expect(second.id).not.toBe(first.id);
+  });
+
+  it("retains the exact working-tree bytes after the checkout changes", async () => {
+    const root = repository();
+    writeFileSync(join(root, "tracked.txt"), "captured tracked\n");
+    writeFileSync(join(root, "untracked-before.txt"), "captured untracked\n");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+    const reviewedTree = patchset.repository.reviewedTreeOid;
+    if (reviewedTree === undefined) throw new Error("capture omitted reviewedTreeOid");
+
+    writeFileSync(join(root, "tracked.txt"), "later tracked\n");
+    writeFileSync(join(root, "untracked-before.txt"), "later untracked\n");
+    writeFileSync(join(root, "untracked-after.txt"), "not captured\n");
+
+    expect(git(root, "show", `${reviewedTree}:tracked.txt`)).toBe("captured tracked\n");
+    expect(git(root, "show", `${reviewedTree}:untracked-before.txt`)).toBe("captured untracked\n");
+    expect(git(root, "ls-tree", "-r", "--name-only", reviewedTree)).not.toContain(
+      "untracked-after.txt",
+    );
+    expect(patchset.rawDiff).toContain("+captured tracked");
+    expect(patchset.rawDiff).toContain("+captured untracked");
+    expect(patchset.rawDiff).not.toContain("later tracked");
   });
 
   it("attributes rename counts and provenance to the destination path", async () => {

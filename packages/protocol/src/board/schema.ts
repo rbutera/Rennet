@@ -56,6 +56,7 @@ export const AuthorSchema = z.object({
 /** A repository artifact that a board can open at its authored source. */
 export const SourceRefSchema = z.object({
   path: z.string().min(1),
+  candidate: z.string().min(1).optional(),
   label: z.string().min(1).optional(),
   line: z.number().int().positive().optional(),
 });
@@ -139,6 +140,8 @@ const decisionData = withAuthor({
   evidence: z.array(z.string()),
   alternatives: z.array(z.string()),
   why: z.string(),
+  inferred: z.boolean().optional(),
+  source: SourceRefSchema.optional(),
 });
 const requirementData = withAuthor({
   shall: z.string(),
@@ -393,6 +396,8 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     evidence: a("element", true, "code_ref elements evidencing it.", true),
     alternatives: a("element", true, "Alternative-option elements considered.", true),
     why: a("string", true, "Rationale, as markdown."),
+    inferred: a("boolean", false, "False when the source artifact states the decision."),
+    source: a("json", false, "Source artifact { path, candidate?, label?, line? }."),
   }),
   requirement: authored("A shall-requirement, its source scenarios, and change coverage.", {
     shall: a("string", true, "The requirement text."),
@@ -400,7 +405,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     capability: a("string", false, "Optional capability slug."),
     scenarios: a("element", false, "Canonical child elements for the scenarios.", true),
     related_files: a("string", false, "Repo-relative related file paths.", true),
-    source: a("json", false, "Source artifact { path, label?, line? }."),
+    source: a("json", false, "Source artifact { path, candidate?, label?, line? }."),
     spec_delta: a("string", false, "added | modified | removed | renamed."),
     coverage: a("string", false, "met | gap | partial; absent when no mapping exists."),
     trace: a("element", false, "code_ref elements tracing coverage.", true),
@@ -426,7 +431,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
   section: authored("A section of the document: a title and child elements.", {
     title: a("string", true, "The section title."),
     children: a("element", true, "Child elements in the section.", true),
-    sources: a("json", false, "Source artifacts { path, label?, line? }.", true),
+    sources: a("json", false, "Source artifacts { path, candidate?, label?, line? }.", true),
     spec_delta: a("string", false, "added | modified | removed | renamed source-spec delta."),
     delta: a("string", false, "new | reworked round-delta stamp; absent = carried."),
   }),

@@ -47,6 +47,7 @@ function writeFiles(root: string, files: Readonly<Record<string, string>>): void
 function patchsetOf(options: {
   readonly root: string;
   readonly headOid: string;
+  readonly reviewedTreeOid?: string;
   readonly paths: readonly string[];
   readonly surface: PatchsetIntentSurface;
   readonly source?: NonNullable<Patchset["source"]>;
@@ -61,6 +62,9 @@ function patchsetOf(options: {
       baseRef: "main",
       baseOid: options.headOid,
       headOid: options.headOid,
+      ...(options.reviewedTreeOid === undefined
+        ? {}
+        : { reviewedTreeOid: options.reviewedTreeOid }),
     },
     files: options.paths.map((path) => ({
       path,
@@ -163,7 +167,7 @@ const familyCases: readonly FamilyCase[] = [
     },
     expectedCandidates: [
       {
-        name: "Product",
+        name: "Story 1.1",
         artifacts: [
           { path: "planning/prd.md", role: "prd" },
           { path: "planning/architecture.md", role: "architecture" },
@@ -233,11 +237,17 @@ const familyCases: readonly FamilyCase[] = [
     },
     expectedCandidates: [
       {
-        name: "Commerce contexts",
+        name: "Keep an event store",
+        artifacts: [
+          { path: "CONTEXT-MAP.md", role: "context-map" },
+          { path: "docs/adr/0001-event-store.md", role: "adr" },
+        ],
+      },
+      {
+        name: "Ordering",
         artifacts: [
           { path: "CONTEXT-MAP.md", role: "context-map" },
           { path: "src/ordering/CONTEXT.md", role: "context" },
-          { path: "docs/adr/0001-event-store.md", role: "adr" },
           { path: "src/ordering/docs/adr/0001-order-state.md", role: "adr" },
         ],
       },
@@ -317,41 +327,58 @@ describe("discoverDesignArtifacts", () => {
     const openspec = result?.candidates.filter((candidate) => candidate.format === "openspec");
 
     expect(openspec?.map((candidate) => candidate.name)).toEqual(["zzz-target", "aaa-decoy"]);
+    expect(new Set(openspec?.map((candidate) => candidate.id)).size).toBe(2);
     expect(openspec?.[0]?.relevance).toEqual({
       kind: "references-changed-path",
       paths: ["src/target.ts"],
       omittedPathCount: 0,
     });
     expect(openspec?.[1]?.relevance).toEqual({ kind: "repository-candidate" });
+
+    const reranked = await discoverDesignArtifacts({
+      patchset: patchsetOf({
+        ...repo,
+        paths: ["openspec/changes/aaa-decoy/proposal.md"],
+        surface: "working-tree",
+      }),
+      git: execaGit,
+    });
+    const idsByName = (candidates: NonNullable<typeof result>["candidates"]) =>
+      new Map(candidates.map((candidate) => [candidate.name, candidate.id]));
+    expect(idsByName(reranked?.candidates ?? [])).toEqual(idsByName(result?.candidates ?? []));
   });
 
-  it("reads disk for a working-tree review and the pinned head for a range review", async () => {
+  it("reads the captured local tree and never later working-tree bytes", async () => {
     const path = "openspec/changes/state/proposal.md";
     const repo = repository({ [path]: "# Proposal\n\nPinned head content.\n" });
-    writeFiles(repo.root, { [path]: "# Proposal\n\nWorking tree content.\n" });
+    writeFiles(repo.root, { [path]: "# Proposal\n\nCaptured tree content.\n" });
+    git(repo.root, "add", "-A");
+    const reviewedTreeOid = git(repo.root, "write-tree").trim();
+    writeFiles(repo.root, { [path]: "# Proposal\n\nLater disk content.\n" });
 
-    const pinned = await discoverDesignArtifacts({
+    const captured = await discoverDesignArtifacts({
       patchset: patchsetOf({
         ...repo,
         paths: [path],
         surface: "working-tree",
-        source: "github-local",
+        reviewedTreeOid,
       }),
       git: execaGit,
     });
-    const working = await discoverDesignArtifacts({
-      patchset: patchsetOf({ ...repo, paths: [path], surface: "working-tree" }),
+    const range = await discoverDesignArtifacts({
+      patchset: patchsetOf({ ...repo, paths: [path], surface: "github-pr" }),
       git: execaGit,
     });
 
-    expect(pinned?.candidates[0]?.artifacts[0]?.content).toContain("Pinned head content");
-    expect(pinned?.candidates[0]?.artifacts[0]?.content).not.toContain("Working tree content");
-    expect(working?.candidates[0]?.artifacts[0]?.content).toContain("Working tree content");
+    expect(captured?.candidates[0]?.artifacts[0]?.content).toContain("Captured tree content");
+    expect(captured?.candidates[0]?.artifacts[0]?.content).not.toContain("Later disk content");
+    expect(range?.candidates[0]?.artifacts[0]?.content).toContain("Pinned head content");
 
-    const withSource = patchsetOf({ ...repo, paths: [path], surface: "github-pr" });
-    const { source: _source, ...legacyLocal } = withSource;
-    const legacy = await discoverDesignArtifacts({ patchset: legacyLocal, git: execaGit });
-    expect(legacy?.candidates[0]?.artifacts[0]?.content).toContain("Working tree content");
+    const legacy = await discoverDesignArtifacts({
+      patchset: patchsetOf({ ...repo, paths: [path], surface: "working-tree" }),
+      git: execaGit,
+    });
+    expect(legacy?.candidates[0]?.artifacts[0]?.content).toContain("Pinned head content");
   });
 
   it("uses BMAD configured paths instead of conventional decoys", async () => {

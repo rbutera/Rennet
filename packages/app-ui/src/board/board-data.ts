@@ -1,4 +1,10 @@
-import { LENS_KINDS, type LensBoard, LensBoardSchema, type LensKind } from "@rennet/protocol";
+import {
+  LENS_KINDS,
+  type LensAbsenceReason,
+  type LensBoard,
+  LensBoardSchema,
+  type LensKind,
+} from "@rennet/protocol";
 import { useCommand } from "../data";
 import { BOARD_EXCLUDED_KINDS } from "./registry";
 
@@ -46,6 +52,7 @@ export type BoardInvalidReason = "shape" | "identity" | "excluded-kind" | "unrea
  */
 export type BoardResolution =
   | { readonly status: "valid"; readonly board: LensBoard }
+  | { readonly status: "absent"; readonly reason: LensAbsenceReason }
   | { readonly status: "missing" }
   | { readonly status: "pending" }
   | { readonly status: "invalid"; readonly reason: BoardInvalidReason; readonly detail: unknown };
@@ -79,13 +86,20 @@ export function resolveBoard(raw: unknown, expected: BoardIdentity): BoardResolu
  *  honest `unreadable`, an in-flight read is `pending`, and anything served routes
  *  through {@link resolveBoard} so shape and identity are still proven client-side. */
 function resolveRead(
-  result: { data?: { board: LensBoard | null }; error: unknown; pending: boolean },
+  result: {
+    data?: { board: LensBoard | null; absence?: LensAbsenceReason };
+    error: unknown;
+    pending: boolean;
+  },
   expected: BoardIdentity,
 ): BoardResolution {
   if (result.error !== undefined && result.error !== null) {
     return { status: "invalid", reason: "unreadable", detail: result.error };
   }
   if (result.pending) return { status: "pending" };
+  if (result.data?.board == null && result.data?.absence !== undefined) {
+    return { status: "absent", reason: result.data.absence };
+  }
   return resolveBoard(result.data?.board, expected);
 }
 
@@ -123,19 +137,39 @@ export interface LensBoardEntry {
  * from board-data, never invented: a lens the host has no board for is simply
  * absent. `LENS_KINDS` is fixed-length, so the per-lens reads are hooks-safe.
  */
-export function useLensBoards(reviewId: string, generation: string): LensBoardEntry[] {
+export type LensBoardResolutions = Readonly<Record<LensKind, BoardResolution>>;
+
+/** Resolve every fixed lens exactly once so callers can distinguish settled absence. */
+export function useLensBoardResolutions(
+  reviewId: string,
+  generation: string,
+): LensBoardResolutions {
   // One read per lens, written out so every hook is a top-level call in a fixed order.
   // The `Record<LensKind, …>` annotation is the drift guard: a lens added to `LENS_KINDS`
   // fails to compile here until it gets its read.
-  const byLens: Record<LensKind, BoardResolution> = {
+  return {
     design: useBoardData(reviewId, generation, "design"),
     sequence: useBoardData(reviewId, generation, "sequence"),
     decisions: useBoardData(reviewId, generation, "decisions"),
     flagged: useBoardData(reviewId, generation, "flagged"),
     noise: useBoardData(reviewId, generation, "noise"),
   };
+}
+
+export function lensBoardsFromResolutions(byLens: LensBoardResolutions): LensBoardEntry[] {
   return LENS_KINDS.flatMap((lens) => {
     const resolution = byLens[lens];
     return resolution.status === "valid" ? [{ lens, board: resolution.board }] : [];
   });
+}
+
+/** Whether every lens has reached a durable or terminal read result. */
+export function lensReadsSettled(byLens: LensBoardResolutions): boolean {
+  return Object.values(byLens).every(
+    (resolution) => resolution.status !== "missing" && resolution.status !== "pending",
+  );
+}
+
+export function useLensBoards(reviewId: string, generation: string): LensBoardEntry[] {
+  return lensBoardsFromResolutions(useLensBoardResolutions(reviewId, generation));
 }

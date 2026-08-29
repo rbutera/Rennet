@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, posix, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, posix, resolve } from "node:path";
 import { detectLocus, type Locus, type PatchsetCapturePort, toWindowsView } from "@rennet/core";
-import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/protocol";
+import type { PatchFile, Patchset, PatchsetIntent } from "@rennet/protocol";
+import { captureReviewedTree as captureReviewedWorkingTree } from "./checkpoint-store";
 import {
-  type Counts,
   DEFAULT_VISIBLE_BYTE_LIMIT,
   execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
@@ -18,7 +17,7 @@ import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
 // The changed-path / numstat / truncation parsing lives in `git-range-diff` so
 // the working-tree capture here and the commit-range capture there parse a diff
 // identically. This adapter keeps the working-tree-specific pieces: base
-// resolution, untracked-file synthesis, and the index+unstaged+untracked union.
+// resolution and the pinned index+unstaged+untracked tree.
 
 // Every git spawn goes through an injected, locus-aware runner (add-windows-support):
 // host = `git` in cwd; WSL = `wsl.exe -d <distro> --cd <distro-cwd> -e git …`.
@@ -45,40 +44,6 @@ async function succeeds(
   } catch {
     return false;
   }
-}
-
-function quotedGitPath(path: string): string {
-  return JSON.stringify(`b/${path}`);
-}
-
-async function untrackedPatch(
-  repositoryRoot: string,
-  path: string,
-  read: typeof readFile,
-  resolveHostPath: (root: string, path: string) => string,
-): Promise<{ patch: string; counts: Counts }> {
-  const bytes = await read(resolveHostPath(repositoryRoot, path));
-  if (bytes.includes(0)) {
-    return {
-      patch: `diff --git ${JSON.stringify(`a/${path}`)} ${quotedGitPath(path)}\nnew file mode 100644\nBinary files /dev/null and ${quotedGitPath(path)} differ\n`,
-      counts: { additions: null, deletions: null, binary: true },
-    };
-  }
-  const text = bytes.toString("utf8");
-  const lines = text.length === 0 ? [] : text.replace(/\n$/, "").split("\n");
-  const body = lines.map((line) => `+${line}`).join("\n");
-  return {
-    patch: [
-      `diff --git ${JSON.stringify(`a/${path}`)} ${quotedGitPath(path)}`,
-      "new file mode 100644",
-      "--- /dev/null",
-      `+++ ${quotedGitPath(path)}`,
-      `@@ -0,0 +1,${lines.length} @@`,
-      body,
-      "",
-    ].join("\n"),
-    counts: { additions: lines.length, deletions: 0, binary: false },
-  };
 }
 
 async function resolveBase(
@@ -121,7 +86,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
     private readonly resolveLocus: (repositoryPath: string) => Locus = detectLocus,
     private readonly effects: {
       readonly gitFor?: (locus: Locus) => GitExec;
-      readonly readFile?: typeof readFile;
+      readonly captureReviewedTree?: (root: string, locus: Locus) => Promise<string>;
     } = {},
   ) {}
 
@@ -131,7 +96,6 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
     const run = (this.effects.gitFor ?? execaGitFor)(locus);
     const gitRoot = (await git(run, repositoryPath, ["rev-parse", "--show-toplevel"])).trim();
     const hostRoot = locus.kind === "wsl" ? toWindowsView(gitRoot, locus.distro) : gitRoot;
-    const resolveHostPath = locus.kind === "wsl" ? win32.resolve : resolve;
     const commonDirValue = (await git(run, gitRoot, ["rev-parse", "--git-common-dir"])).trim();
     const gitCommonDir =
       locus.kind === "wsl"
@@ -152,25 +116,27 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       (await git(run, gitRoot, ["symbolic-ref", "--short", "-q", "HEAD"], false)).trim() ||
       undefined;
     const { baseRef, baseOid } = await resolveBase(run, gitRoot);
+    const reviewedTreeOid = await (this.effects.captureReviewedTree ?? captureReviewedWorkingTree)(
+      gitRoot,
+      locus,
+    );
 
-    const trackedDiff = await git(run, gitRoot, [
+    const completeDiff = await git(run, gitRoot, [
       "diff",
       "--binary",
       "--full-index",
       "--no-ext-diff",
       "--no-textconv",
       baseOid,
+      reviewedTreeOid,
       "--",
     ]);
     const changedPaths = parseChangedPaths(
-      await git(run, gitRoot, ["diff", "--name-status", "-z", baseOid, "--"]),
+      await git(run, gitRoot, ["diff", "--name-status", "-z", baseOid, reviewedTreeOid, "--"]),
     );
-    const counts = parseCounts(await git(run, gitRoot, ["diff", "--numstat", "-z", baseOid, "--"]));
-    const untrackedPaths = (
-      await git(run, gitRoot, ["ls-files", "--others", "--exclude-standard", "-z"])
-    )
-      .split("\0")
-      .filter(Boolean);
+    const counts = parseCounts(
+      await git(run, gitRoot, ["diff", "--numstat", "-z", baseOid, reviewedTreeOid, "--"]),
+    );
 
     const files: PatchFile[] = [];
     for (const changedPath of changedPaths) {
@@ -181,14 +147,17 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
         "--no-ext-diff",
         "--no-textconv",
         baseOid,
+        reviewedTreeOid,
         "--",
+        ...(changedPath.previousPath === undefined ? [] : [changedPath.previousPath]),
         changedPath.path,
       ]);
-      const fileCounts = counts.get(changedPath.path) ?? {
-        additions: null,
-        deletions: null,
-        binary: true,
-      };
+      const fileCounts = counts.get(changedPath.path) ??
+        counts.get(changedPath.previousPath ?? "") ?? {
+          additions: null,
+          deletions: null,
+          binary: true,
+        };
       files.push({
         ...changedPath,
         ...fileCounts,
@@ -196,25 +165,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       });
     }
 
-    const untrackedPatches: string[] = [];
-    for (const path of untrackedPaths) {
-      const { patch, counts: fileCounts } = await untrackedPatch(
-        hostRoot,
-        path,
-        this.effects.readFile ?? readFile,
-        resolveHostPath,
-      );
-      untrackedPatches.push(patch);
-      files.push({
-        path,
-        status: "added",
-        ...fileCounts,
-        patch: visible(patch, FILE_VISIBLE_BYTE_LIMIT),
-      });
-    }
-
     files.sort((left, right) => left.path.localeCompare(right.path));
-    const completeDiff = [trackedDiff, ...untrackedPatches].filter(Boolean).join("\n");
     const bytes = Buffer.from(completeDiff);
     const repository = {
       id: createHash("sha256").update(commonDir).digest("hex"),
@@ -223,6 +174,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       baseRef,
       baseOid,
       headOid,
+      reviewedTreeOid,
       ...(headRef !== undefined ? { headRef } : {}),
     };
     const id = createHash("sha256")
@@ -232,16 +184,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       .update(bytes)
       .digest("hex");
 
-    const intent = await captureLocalIntent(
-      run,
-      gitRoot,
-      hostRoot,
-      baseOid,
-      headOid,
-      files,
-      this.effects.readFile ?? readFile,
-      resolveHostPath,
-    );
+    const intent = await captureLocalIntent(run, gitRoot, baseOid, headOid, reviewedTreeOid, files);
     const projectSnapshotId = await this.resolveProjectSnapshotId?.(hostRoot, baseOid);
 
     return {
@@ -264,17 +207,17 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
  * intent), and the available surface — the commit subjects between base and head —
  * is captured instead. The changeset's spec documents are snapshotted from their
  * current working-tree content, frozen so a later edit to the same file cannot
- * change what the review was captured against.
+ * change what the review was captured against. The complete working tree is also
+ * retained as `repository.reviewedTreeOid`; these inline snapshots remain for
+ * compatibility with existing intent readers.
  */
 async function captureLocalIntent(
   run: GitExec,
   gitRoot: string,
-  hostRoot: string,
   baseOid: string,
   headOid: string,
+  reviewedTreeOid: string,
   files: readonly PatchFile[],
-  read: typeof readFile,
-  resolveHostPath: (root: string, path: string) => string,
 ): Promise<PatchsetIntent> {
   const log = await git(run, gitRoot, ["log", "--format=%s", `${baseOid}..${headOid}`], false);
   const commitSubjects = log
@@ -282,10 +225,10 @@ async function captureLocalIntent(
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
-  const specSnapshots: PatchsetSpecSnapshot[] = [];
+  const specSnapshots: ReturnType<typeof snapshotSpec>[] = [];
   for (const path of specPathsOf(files)) {
     try {
-      const content = await read(resolveHostPath(hostRoot, path), "utf8");
+      const content = await git(run, gitRoot, ["show", `${reviewedTreeOid}:${path}`]);
       specSnapshots.push(snapshotSpec(path, content));
     } catch {
       // Deleted or unreadable in the working tree: omit it honestly.

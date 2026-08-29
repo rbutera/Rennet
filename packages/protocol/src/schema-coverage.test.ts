@@ -26,6 +26,7 @@ describe("patchsetSchema — a previously-stripped field now survives the round 
         baseRef: "origin/main",
         baseOid: "0".repeat(40),
         headOid: "1".repeat(40),
+        reviewedTreeOid: "2".repeat(40),
       },
       files: [],
       rawDiff: "",
@@ -41,6 +42,7 @@ describe("patchsetSchema — a previously-stripped field now survives the round 
     });
 
     expect(parsed.projectSnapshotId).toBe("snap_abc");
+    expect(parsed.repository.reviewedTreeOid).toBe("2".repeat(40));
     expect(parsed.intent?.surface).toBe("github-pr");
     expect(parsed.intent?.prTitle).toBe("Add X");
     expect(parsed.intent?.specSnapshots?.[0]?.path).toBe("spec.md");
