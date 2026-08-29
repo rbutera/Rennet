@@ -1,4 +1,9 @@
-import { commands, projectProcessEventSchema, reviewAskStreamEventSchema } from "@rennet/protocol";
+import {
+  commands,
+  projectProcessEventSchema,
+  type ReviewAskStreamEvent,
+  reviewAskStreamEventSchema,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 import {
@@ -6,6 +11,7 @@ import {
   INBOUND_HOST_PATH_FIELDS,
   INBOUND_REPO_RELATIVE_PATH_FIELDS,
   ProjectionResolveError,
+  projectAskStreamEvent,
   projectBoardEvent,
   projectBoardProjection,
   projectCommandOutput,
@@ -167,6 +173,61 @@ describe("outbound structural projection", () => {
     // the stray path, which is exactly why the branch has to exist.
     const other = JSON.stringify(projectCommandOutput("session.rounds", rawTranscript, ctx));
     expect(other).toContain("/etc/hosts/passwd");
+  });
+
+  it("projects structured ask-state transcript rows without changing prose-only stream events", () => {
+    const state = {
+      kind: "ask-state",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      channel: "orchestrator",
+      rows: rawTranscript.rows,
+    } as ReviewAskStreamEvent;
+    const projected = JSON.stringify(projectAskStreamEvent(state, ctx));
+    expect(projected).not.toContain(REPO);
+    expect(projected).not.toContain("/etc/hosts/passwd");
+    expect(projected).toContain("<rennet>/src/a.ts");
+    expect(projected).toContain("<path>");
+
+    const delta = {
+      kind: "ask-delta",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      channel: "orchestrator",
+      delta: `/model-authored/${REPO}`,
+    } as ReviewAskStreamEvent;
+    expect(projectAskStreamEvent(delta, ctx)).toBe(delta);
+  });
+
+  it("projects raw transcript rows nested under review reattach", () => {
+    const out = projectCommandOutput(
+      "review.reattach",
+      {
+        threads: [
+          {
+            threadId: "thread-1",
+            anchor: { kind: "fragment", label: "conversation", key: "thread-1" },
+            messages: [{ id: "turn-1", author: "harness", body: "done", rows: rawTranscript.rows }],
+          },
+        ],
+        inFlight: [
+          {
+            threadId: "thread-1",
+            turnId: "turn-2",
+            channel: "orchestrator",
+            model: "harness",
+            bodySoFar: "",
+            rows: rawTranscript.rows,
+          },
+        ],
+      },
+      ctx,
+    );
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain(REPO);
+    expect(serialized).not.toContain("/etc/hosts/passwd");
+    expect(serialized).toContain("<rennet>/src/a.ts");
+    expect(serialized).toContain("<path>");
   });
 
   it("projects a project list output", () => {
@@ -646,7 +707,14 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // and `projectCommandOutput`'s `session.transcript` branch is what translates it for a
     // projected connection (scrub roots/home, then redact any leftover absolute path). Same
     // treatment as the free-text a projected `rpcError` carries — the row content is harness text.
+    "session.transcript.output.rows.blocks.path",
     "session.transcript.output.rows.body.path",
+    "askStreamEvent.rows.blocks.path",
+    "askStreamEvent.rows.body.path",
+    "review.reattach.output.inFlight.rows.blocks.path",
+    "review.reattach.output.inFlight.rows.body.path",
+    "review.reattach.output.threads.messages.rows.blocks.path",
+    "review.reattach.output.threads.messages.rows.body.path",
   ]),
   ...classified("repo-relative", [
     // The lens-board read (C18): a board's `code_ref` elements cite the CAPTURED patchset by

@@ -38,6 +38,17 @@ describe("app_* agent tool surface (#465)", () => {
     expect(ids.has("projects.remove" as CommandName)).toBe(false);
   });
 
+  it("projects the durable ask writer into the conversational tool surface", async () => {
+    const dispatch = vi.fn(noop);
+    const stage = buildAppTools(dispatch).find((tool) => tool.commandId === "ask.stage");
+    expect(stage?.inputSchema).toBe(commands["ask.stage"].args);
+
+    const input = { sessionId: "session-1", ask: { id: "ask-1" } };
+    await stage?.run(input);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith("ask.stage", input, undefined);
+  });
+
   it("exposes the WHOLE add-project flow so the agent can complete it (finding 8)", () => {
     // projects.add takes a DiscoveryResult it cannot fabricate: it must come from
     // project.discover, over a path granted by repository.choose. All three ride the

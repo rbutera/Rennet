@@ -243,9 +243,11 @@ diff position.
 conversation with the orchestrator that travels with you across every board. Ask
 it about the change and it runs a real turn on your own `claude` — grounded in
 this review's diff, able to read the repository — and streams the answer back as
-it arrives. The exchange persists, so it is still there after a reload. Chat
-answers; it does not yet stage asks for you. Stage those from the board, a line,
-or a highlighted span.
+it arrives. The exchange persists, so it is still there after a reload. You can
+also explicitly ask it to stage a specific conclusion as a review ask; Rennet
+runs the staging action once and records its receipt in the conversation. A
+conclusion the orchestrator merely suggests is not staged until you ask it to act
+or stage it yourself from the board, a line, or a highlighted span.
 
 ## Stage asks
 

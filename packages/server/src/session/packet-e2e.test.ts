@@ -304,7 +304,7 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       error: {
         class: "invalid-request",
         origin: "harness",
-        message: "resume rejected: no conversation found",
+        message: "No conversation found with session ID: gone",
         retryable: false,
         retryableSource: "inferred",
         // The SDK's terminal resume-refusal subtype, preserved by the real adapter (F4).

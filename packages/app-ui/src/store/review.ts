@@ -123,11 +123,13 @@ export interface QuoteScope {
   readonly generation?: string;
 }
 
-// A per-process thread-id counter — monotonic, deterministic, and independent of any
-// store instance (a fresh `createRennetStore` shares no OTHER state, so unique ids
-// across instances is all that's needed; no crypto, no collision).
-let quoteThreadSeq = 0;
-const nextQuoteThreadId = (): string => `qt-${++quoteThreadSeq}`;
+function nextQuoteThreadId(threads: Readonly<Record<string, QuoteThread>>): string {
+  let id: string;
+  do {
+    id = `qt-${crypto.randomUUID()}`;
+  } while (threads[id] !== undefined);
+  return id;
+}
 
 export interface ReviewState {
   /** Staged asks keyed by ask `id` (identity), NOT anchor — so same-anchor asks coexist. */
@@ -201,7 +203,7 @@ const initialReview: ReviewState = {
   draftEdits: {},
 };
 
-export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> = (set) => {
+export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> = (set, get) => {
   // The write sink lives in the SLICE CLOSURE, not in `review` state: it is a seam, not
   // something a surface renders, and the store's delete-on-sight rule keeps render state to
   // what a selector could derive. One sink per `createRennetStore()`, so a test store can
@@ -279,7 +281,7 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
         });
       },
       addQuoteComment: (anchor, text, kind, scope) => {
-        const id = nextQuoteThreadId();
+        const id = nextQuoteThreadId(get().review.quoteThreads);
         const thread = {
           anchor,
           ...(kind === undefined ? {} : { kind }),

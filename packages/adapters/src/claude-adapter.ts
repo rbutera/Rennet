@@ -12,6 +12,7 @@ import {
   type HarnessError,
   type HarnessEvent,
   type HarnessHealth,
+  type HarnessInProcessTool,
   type HarnessPort,
   type HarnessSession,
   METERED_API_KEY_SOURCES,
@@ -115,6 +116,8 @@ export interface ClaudeQueryOptions {
    * capability already delivered — do not read it as one.
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
+  /** App-owned tools mounted into this turn by the SDK composition root. */
+  readonly inProcessTools?: readonly HarnessInProcessTool[];
   readonly appendSystemPrompt?: string;
   /**
    * The harness session id to resume (B09 cursor-resume). The composition root
@@ -151,6 +154,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function stringField(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" ? value : null;
+}
+
+function resultErrorMessage(record: Record<string, unknown>, subtype: string | null): string {
+  const result = stringField(record, "result");
+  if (result !== null) return result;
+  const errors = record.errors;
+  if (Array.isArray(errors)) {
+    const first = errors.find((error): error is string => typeof error === "string");
+    if (first !== undefined) return first;
+  }
+  return subtype ?? "result error";
 }
 
 /**
@@ -204,6 +218,10 @@ export function classifyToolKind(name: string): ToolKind {
   if (["Read", "NotebookRead"].includes(name)) return "read";
   if (["Grep", "Glob", "LS", "WebFetch", "WebSearch"].includes(name)) return "search";
   return "other";
+}
+
+function displayToolName(name: string): string {
+  return /^mcp__rennet-app(?:-\d+)?__(app_[a-z0-9_]+)$/iu.exec(name)?.[1] ?? name;
 }
 
 /**
@@ -351,12 +369,13 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
   }
 
   if (type === "system" && subtype === "permission_denied") {
+    const toolName = stringField(record, "tool_name") ?? "unknown";
     return [
       {
         ...envelope(context, frame),
         kind: "tool.denied",
         callId: stringField(record, "tool_use_id"),
-        toolName: stringField(record, "tool_name") ?? "unknown",
+        toolName: displayToolName(toolName),
         by: "policy",
         reason:
           stringField(record, "reason") ?? stringField(record, "message") ?? "denied by policy",
@@ -412,16 +431,16 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
           text: stringField(blockRecord, "thinking") ?? "",
         });
       } else if (blockType === "tool_use") {
-        const name = stringField(blockRecord, "name") ?? "unknown";
+        const nativeName = stringField(blockRecord, "name") ?? "unknown";
         events.push({
           ...envelope(context, frame),
           kind: "tool.started",
           call: {
             id: stringField(blockRecord, "id") ?? randomUUID(),
-            name,
+            name: displayToolName(nativeName),
             input: asRecord(blockRecord.input) ?? {},
             parentToolCallId: null,
-            kind: classifyToolKind(name),
+            kind: classifyToolKind(nativeName),
           },
         });
       }
@@ -488,10 +507,7 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
   if (type === "result") {
     const isError = record.is_error === true || subtype?.startsWith("error") === true;
     if (isError) {
-      const error = mapClaudeError(
-        subtype,
-        stringField(record, "result") ?? subtype ?? "result error",
-      );
+      const error = mapClaudeError(subtype, resultErrorMessage(record, subtype));
       return [
         { ...envelope(context, frame), kind: "error", error },
         {
@@ -718,6 +734,7 @@ export class ClaudeAdapter implements HarnessPort {
       // carries it, so every session this harness creates would reach it. Nothing
       // configures it today — no loopback canvasOps server is stood up.
       ...(this.#config.mcpServers === undefined ? {} : { mcpServers: this.#config.mcpServers }),
+      ...(spec.inProcessTools === undefined ? {} : { inProcessTools: spec.inProcessTools }),
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }
         : {}),

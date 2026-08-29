@@ -2,6 +2,7 @@ import {
   createSeqCounter,
   type EnvelopeContext,
   type HarnessEvent,
+  type HarnessInProcessTool,
   isResumeVanished,
   type SessionOutcome,
 } from "@rennet/core";
@@ -180,6 +181,28 @@ describe("normalizeClaudeFrame: passthrough and content", () => {
     expect(tool?.kind === "tool.started" && tool.call.kind).toBe("read");
   });
 
+  it("shows an app-owned MCP call by its registry tool name", () => {
+    const events = normalizeClaudeFrame(
+      {
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "app-1",
+              name: "mcp__rennet-app__app_ask_stage",
+              input: { sessionId: "review-1" },
+            },
+          ],
+        },
+      },
+      context(),
+    );
+    const tool = events.find((event) => event.kind === "tool.started");
+    expect(tool?.kind === "tool.started" && tool.call.name).toBe("app_ask_stage");
+    expect(tool?.kind === "tool.started" && tool.call.kind).toBe("mcp");
+  });
+
   it("emits tool.output from a user tool_result, echoing the tool_use_id (#259)", () => {
     const frame = {
       type: "user",
@@ -270,15 +293,30 @@ describe("resume-vanished detection through the real adapter mapping (B09 F4)", 
     return ended.outcome;
   };
 
-  it("treats a resumed error_during_execution result as a vanished transcript", () => {
+  it("treats the real missing-resume frame as a vanished transcript", () => {
     const outcome = outcomeOf({
       type: "result",
       subtype: "error_during_execution",
       is_error: true,
-      result: "resume rejected: no conversation found",
+      session_id: "00000000-0000-4000-8000-000000000000",
+      errors: ["No conversation found with session ID: 00000000-0000-4000-8000-000000000000"],
     });
     expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("expected failed outcome");
+    expect(outcome.error.message).toBe(
+      "No conversation found with session ID: 00000000-0000-4000-8000-000000000000",
+    );
     expect(isResumeVanished(true, outcome)).toBe(true);
+  });
+
+  it("does NOT replay a generic error_during_execution after execution began", () => {
+    const outcome = outcomeOf({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      errors: ["tool completed before the response stream failed"],
+    });
+    expect(isResumeVanished(true, outcome)).toBe(false);
   });
 
   it("does NOT treat a resumed error_max_turns result as vanished", () => {
@@ -427,6 +465,30 @@ describe("ClaudeAdapter session", () => {
     const session = await adapter.createSession({ cwd: "/repo" });
     await session.send({ prompt: "act" });
     expect(capturedArgs[0]?.options.mcpServers).toBeUndefined();
+  });
+
+  it("carries only the current session's in-process tools into query options", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const tool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema: {},
+      run: async () => ({ receipt: "once" }),
+    };
+
+    const withTool = await adapter.createSession({ cwd: "/repo", inProcessTools: [tool] });
+    await withTool.send({ prompt: "stage it" });
+    const afterRemoval = await adapter.createSession({ cwd: "/repo" });
+    await afterRemoval.send({ prompt: "what remains?" });
+
+    expect(capturedArgs[0]?.options.inProcessTools).toEqual([tool]);
+    expect(capturedArgs[1]?.options.inProcessTools).toBeUndefined();
   });
 
   it("streams text.delta from stream_event frames when the spec asks for partial text", async () => {

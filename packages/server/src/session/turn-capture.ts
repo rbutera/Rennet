@@ -26,7 +26,7 @@
 // standalone (the `session-entry` / `pipeline-guard` precedent).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { type HandoffRunPort, harnessEventsToRows } from "@rennet/core";
+import { type HandoffRunPort, type HarnessEvent, harnessEventsToRows } from "@rennet/core";
 import type { SessionTranscriptRow } from "@rennet/protocol";
 import type { SessionTurnLoop, TurnLoopDeps } from "./turn-loop";
 
@@ -52,9 +52,12 @@ export function createTranscriptCapture(
   store: TranscriptSink,
   onError: (error: unknown) => void = () => undefined,
 ): NonNullable<TurnLoopDeps["recordTranscript"]> {
-  return ({ sessionId, events }) => {
+  return ({ sessionId, events, turnId }) => {
     try {
-      store.append(sessionId, harnessEventsToRows(events));
+      store.append(
+        sessionId,
+        harnessEventsToRows(events, turnId === undefined ? undefined : { turnId }),
+      );
     } catch (error) {
       onError(error);
     }
@@ -102,7 +105,19 @@ export function turnLoopRunPort(
   sessionId: string,
 ): HandoffRunPort {
   return async (input) => {
-    const { outcome } = await loop.runTurn(sessionId, input.prompt);
+    const onEvent =
+      input.onEvent || input.onDelta
+        ? (event: HarnessEvent) => {
+            input.onEvent?.(event);
+            if (event.kind === "text.delta") input.onDelta?.(event.text);
+          }
+        : undefined;
+    const { outcome } = await loop.runTurn(sessionId, input.prompt, {
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(onEvent === undefined ? {} : { onEvent }),
+      ...(input.inProcessTools === undefined ? {} : { inProcessTools: input.inProcessTools }),
+      ...(input.transcriptTurnId === undefined ? {} : { transcriptTurnId: input.transcriptTurnId }),
+    });
     if (outcome.status === "completed") {
       return {
         status: "completed",

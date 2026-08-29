@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { AskProjection } from "@rennet/protocol";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRennetStore,
   selectCodeComment,
@@ -126,6 +127,45 @@ describe("rennet store", () => {
       store.getState().reviewActions.addQuoteReply("qt-nope", "user", "ignored");
       store.getState().reviewActions.removeQuoteComment(id);
       expect(store.getState().review.quoteThreads[id]).toBeUndefined();
+    });
+
+    it("mints around a persisted quote-thread id after hydration", () => {
+      const ids: `${string}-${string}-${string}-${string}-${string}`[] = [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+      ];
+      const randomUUID = vi
+        .spyOn(crypto, "randomUUID")
+        .mockImplementation(() => ids.shift() ?? "00000000-0000-4000-8000-000000000003");
+      const store = createRennetStore();
+      const actions = store.getState().reviewActions;
+      const first = actions.addQuoteComment("probe", "probe");
+      const numeric = /^qt-(\d+)$/.exec(first);
+      const persistedId = numeric === null ? first : `qt-${Number(numeric[1]) + 1}`;
+      const projection: AskProjection = {
+        stagedAsks: {},
+        lineComments: {},
+        quoteThreads: {
+          [persistedId]: {
+            anchor: "persisted passage",
+            messages: [{ author: "user", text: "persisted question" }],
+          },
+        },
+        retired: {},
+        verdictOverride: null,
+      };
+
+      actions.resetReview();
+      actions.hydrateAsks(projection);
+      const mintedId = actions.addQuoteComment("new passage", "new question");
+
+      expect(mintedId).not.toBe(persistedId);
+      expect(store.getState().review.quoteThreads[persistedId]?.messages[0]?.text).toBe(
+        "persisted question",
+      );
+      expect(Object.keys(store.getState().review.quoteThreads)).toHaveLength(2);
+      randomUUID.mockRestore();
     });
 
     it("a missing-thread reply is a proven no-op — review state is byte-identical", () => {

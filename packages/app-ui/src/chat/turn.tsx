@@ -1,6 +1,6 @@
 import { CodeBlock } from "../review";
 import { ActionStep } from "./action-step";
-import type { ActivityStep, TurnRow } from "./chat-data";
+import type { ActivityStep, TranscriptBlock, TurnRow } from "./chat-data";
 import { StreamingProse } from "./streaming-prose";
 import { ThoughtBlock } from "./thought-block";
 
@@ -27,6 +27,56 @@ function ActivitySequence({ steps }: { readonly steps: readonly ActivityStep[] }
           <ActionStep key={step.id} step={step} />
         ),
       )}
+    </div>
+  );
+}
+
+function OrderedTranscript({
+  blocks,
+  animate,
+}: {
+  readonly blocks: readonly TranscriptBlock[];
+  readonly animate: boolean;
+}) {
+  let lastUnresolvedActivity = -1;
+  for (const [index, block] of blocks.entries()) {
+    if ((block.kind === "thought" || block.kind === "action") && block.status === "streaming") {
+      lastUnresolvedActivity = index;
+    }
+  }
+  const visibleBlocks =
+    lastUnresolvedActivity === -1 ? blocks : blocks.slice(0, lastUnresolvedActivity + 1);
+  return (
+    <div className="flex max-w-[640px] flex-col gap-3">
+      {visibleBlocks.map((block, index) => {
+        if (block.kind === "thought" || block.kind === "action") {
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: projected blocks are a fixed positional log.
+            <ActivitySequence key={index} steps={[block]} />
+          );
+        }
+        if (block.kind === "text") {
+          return (
+            <StreamingProse
+              // biome-ignore lint/suspicious/noArrayIndexKey: projected blocks are a fixed positional log.
+              key={index}
+              animate={animate}
+              paragraphs={[block.text]}
+              className="font-serif text-sm leading-relaxed text-foreground/90"
+            />
+          );
+        }
+        return (
+          <CodeBlock
+            // biome-ignore lint/suspicious/noArrayIndexKey: projected blocks are a fixed positional log.
+            key={index}
+            path={block.path}
+            code={block.code}
+            startLine={block.startLine}
+            highlightLines={block.highlightLines}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -64,38 +114,44 @@ export function Turn({
           className="max-w-[640px] font-serif text-sm leading-relaxed text-foreground/90"
         />
       )}
-      {turn.preface && turn.preface.length > 0 && <ActivitySequence steps={turn.preface} />}
-      {turn.body && turn.body.length > 0 ? (
-        <div className="flex max-w-[640px] flex-col gap-3">
-          {turn.body.map((block, index) =>
-            block.kind === "text" ? (
-              <StreamingProse
-                // biome-ignore lint/suspicious/noArrayIndexKey: body blocks are a fixed positional list.
-                key={index}
-                animate={animate}
-                paragraphs={[block.text]}
-                className="font-serif text-sm leading-relaxed text-foreground/90"
-              />
-            ) : (
-              <CodeBlock
-                // biome-ignore lint/suspicious/noArrayIndexKey: body blocks are a fixed positional list.
-                key={index}
-                path={block.path}
-                code={block.code}
-                startLine={block.startLine}
-                highlightLines={block.highlightLines}
-              />
-            ),
-          )}
-        </div>
+      {turn.blocks && turn.blocks.length > 0 ? (
+        <OrderedTranscript blocks={turn.blocks} animate={animate} />
       ) : (
-        turn.paragraphs.length > 0 && (
-          <StreamingProse
-            animate={animate}
-            paragraphs={turn.paragraphs}
-            className="max-w-[640px] font-serif text-sm leading-relaxed text-foreground/90"
-          />
-        )
+        <>
+          {turn.preface && turn.preface.length > 0 && <ActivitySequence steps={turn.preface} />}
+          {turn.body && turn.body.length > 0 ? (
+            <div className="flex max-w-[640px] flex-col gap-3">
+              {turn.body.map((block, index) =>
+                block.kind === "text" ? (
+                  <StreamingProse
+                    // biome-ignore lint/suspicious/noArrayIndexKey: body blocks are a fixed positional list.
+                    key={index}
+                    animate={animate}
+                    paragraphs={[block.text]}
+                    className="font-serif text-sm leading-relaxed text-foreground/90"
+                  />
+                ) : (
+                  <CodeBlock
+                    // biome-ignore lint/suspicious/noArrayIndexKey: body blocks are a fixed positional list.
+                    key={index}
+                    path={block.path}
+                    code={block.code}
+                    startLine={block.startLine}
+                    highlightLines={block.highlightLines}
+                  />
+                ),
+              )}
+            </div>
+          ) : (
+            turn.paragraphs.length > 0 && (
+              <StreamingProse
+                animate={animate}
+                paragraphs={turn.paragraphs}
+                className="max-w-[640px] font-serif text-sm leading-relaxed text-foreground/90"
+              />
+            )
+          )}
+        </>
       )}
     </div>
   );

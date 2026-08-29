@@ -35,7 +35,9 @@ export function ActionStep({ step }: { readonly step: ActionStepData }) {
         {label}
         {detail ? ` · ${detail}` : ""}
       </span>
-      <span className="sr-only">{isRunning ? "running" : "done"}</span>
+      <span className="sr-only" aria-live="polite">
+        {isRunning ? "running" : "done"}
+      </span>
     </div>
   );
 }

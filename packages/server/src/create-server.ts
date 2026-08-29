@@ -175,6 +175,7 @@ import type {
   RoundEvent,
   SessionModel,
 } from "@rennet/protocol";
+import { buildAppTools } from "./agent-tools";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
@@ -2836,10 +2837,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // deltas out through dispatch. No harness ⇒ an honest line naming `claude`.
     reviewAsk: createLiveReviewAskPorts({
       askOrchestrator: createLiveOrchestratorAsk({
-        resolveRunPort: async (repoRoot) => {
+        resolveRunPort: async (repoRoot, review) => {
           const adapter = await claudeAdapterForRepo(repoRoot);
-          return adapter ? claudeHandoffRunPort(adapter) : null;
+          if (!adapter) return null;
+          if (review) {
+            const sessionId = sessionIdForReview(review);
+            if (sessionStore.load(sessionId)) {
+              return turnLoopRunPort(turnLoopForRepo(repoRoot, adapter), sessionId);
+            }
+          }
+          return claudeHandoffRunPort(adapter);
         },
+        askLogIdForReview: (review) => review.id,
+        toolsForReview: () => buildAppTools((name, input, ctx) => dispatch(name, input, ctx)),
       }),
       askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the

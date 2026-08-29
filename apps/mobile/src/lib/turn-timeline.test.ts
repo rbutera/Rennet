@@ -88,6 +88,24 @@ describe("turn-timeline live fold (#382 M2, task 1.1)", () => {
     expect(isTurnRunning(state)).toBe(false);
   });
 
+  it("keeps the prose stream stable when a structured activity snapshot arrives", () => {
+    const state = fold(emptyTimeline, [
+      delta("t3", "Hel"),
+      {
+        kind: "ask-state",
+        threadId: "th1",
+        turnId: "t3",
+        channel: "orchestrator",
+        rows: [],
+      },
+      delta("t3", "lo"),
+      complete("t3", "Hello."),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]).toMatchObject({ body: "Hello.", status: "complete" });
+  });
+
   it("marks an interrupted turn truthfully, keeping its partial body", () => {
     const state = fold(emptyTimeline, [
       delta("t4", "partial…"),

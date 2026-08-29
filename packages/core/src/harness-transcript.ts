@@ -22,10 +22,23 @@
 // event model and this fold cover the ground — so no attribution notice is owed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ActivityStep, ContentBlock, SessionTranscriptRow } from "@rennet/protocol";
+import type {
+  ActivityStep,
+  ContentBlock,
+  SessionTranscriptRow,
+  TranscriptBlock,
+} from "@rennet/protocol";
 import type { HarnessEvent, ToolCall } from "./harness";
 
 type TurnStatus = "streaming" | "complete" | "interrupted";
+type ThoughtBlock = Extract<TranscriptBlock, { kind: "thought" }>;
+type ActionBlock = Extract<TranscriptBlock, { kind: "action" }>;
+type PendingBlock = TranscriptBlock | { kind: "pending-text"; text: string };
+
+export interface HarnessTranscriptProjectorOptions {
+  /** Public transcript id to use instead of the harness's turn id. */
+  readonly turnId?: string;
+}
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -57,111 +70,270 @@ function firstLine(text: string): string {
   return line.length > 200 ? `${line.slice(0, 197)}…` : line;
 }
 
+function isoTime(receivedAt: number | undefined): string | undefined {
+  if (receivedAt === undefined || !Number.isFinite(receivedAt)) return undefined;
+  const date = new Date(receivedAt);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function thoughtLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function fenceInfo(info: string): { path: string; lang?: string } {
+  const pathMatch = /\bpath=(?:"([^"]*)"|'([^']*)'|([^\s]+))/u.exec(info);
+  const explicitPath = pathMatch?.[1] ?? pathMatch?.[2] ?? pathMatch?.[3];
+  const remainder = pathMatch ? info.replace(pathMatch[0], "").trim() : info.trim();
+  const tokens = remainder.split(/\s+/u).filter((token) => token.length > 0);
+  const lang = tokens[0];
+  const path = explicitPath ?? tokens[1] ?? "";
+  return { path, ...(lang === undefined ? {} : { lang }) };
+}
+
+function contentBlocks(text: string): ContentBlock[] {
+  const lines = text.split("\n");
+  const blocks: ContentBlock[] = [];
+  let textStart = 0;
+  let foundFence = false;
+  let lineIndex = 0;
+
+  const pushText = (start: number, end: number) => {
+    const prose = lines.slice(start, end).join("\n").trim();
+    if (prose !== "") blocks.push({ kind: "text", text: prose });
+  };
+
+  while (lineIndex < lines.length) {
+    const opening = /^ {0,3}(`{3,})([^\n]*)$/u.exec(lines[lineIndex] ?? "");
+    if (!opening) {
+      lineIndex += 1;
+      continue;
+    }
+
+    const fence = opening[1];
+    if (fence === undefined) {
+      lineIndex += 1;
+      continue;
+    }
+    const closing = new RegExp(`^ {0,3}${fence}[ \\t]*$`, "u");
+    let closingIndex = lineIndex + 1;
+    while (closingIndex < lines.length && !closing.test(lines[closingIndex] ?? "")) {
+      closingIndex += 1;
+    }
+    if (closingIndex >= lines.length) {
+      lineIndex += 1;
+      continue;
+    }
+
+    foundFence = true;
+    pushText(textStart, lineIndex);
+    blocks.push({
+      kind: "code",
+      ...fenceInfo(opening[2] ?? ""),
+      code: lines.slice(lineIndex + 1, closingIndex).join("\n"),
+    });
+    lineIndex = closingIndex + 1;
+    textStart = lineIndex;
+  }
+
+  if (!foundFence) return text.trim() === "" ? [] : [{ kind: "text", text }];
+  pushText(textStart, lines.length);
+  return blocks;
+}
+
+function orderedBlocks(pending: readonly PendingBlock[]): TranscriptBlock[] {
+  const blocks: TranscriptBlock[] = [];
+  for (const block of pending) {
+    if (block.kind === "pending-text") blocks.push(...contentBlocks(block.text));
+    else blocks.push(block);
+  }
+  return blocks;
+}
+
+function isActivityStep(block: TranscriptBlock): block is ActivityStep {
+  return block.kind === "thought" || block.kind === "action";
+}
+
+function isContentBlock(block: TranscriptBlock): block is ContentBlock {
+  return block.kind === "text" || block.kind === "code";
+}
+
+function turnIdFor(
+  events: readonly HarnessEvent[],
+  options: HarnessTranscriptProjectorOptions,
+): string {
+  if (options.turnId !== undefined && options.turnId !== "") return options.turnId;
+  const harnessTurnId = events.find(
+    (event) => event.turnId !== null && event.turnId !== "",
+  )?.turnId;
+  return harnessTurnId ?? `turn-${events[0]?.seq ?? 0}`;
+}
+
 /**
- * Project one turn's harness events (in arrival order) onto transcript rows. Normally one
- * orchestrator `turn` row — its thought/action `preface` and its prose/code `body` — plus a
- * `compact-boundary` row for each in-turn compaction (which flushes the turn-so-far first, so
- * order is preserved). Content is carried verbatim; the wire projection is what scrubs.
+ * Project one turn's harness events in arrival order. New rows carry one ordered `blocks`
+ * stream plus the legacy `preface` and `body` projections. A compaction flushes the current
+ * segment before its boundary row. Content is carried verbatim; the wire projection scrubs it.
  */
-export function harnessEventsToRows(events: readonly HarnessEvent[]): SessionTranscriptRow[] {
+export function harnessEventsToRows(
+  events: readonly HarnessEvent[],
+  options: HarnessTranscriptProjectorOptions = {},
+): SessionTranscriptRow[] {
   const rows: SessionTranscriptRow[] = [];
-  const anchor = events[0]?.seq ?? 0;
+  const baseTurnId = turnIdFor(events, options);
 
-  let preface: ActivityStep[] = [];
-  let body: ContentBlock[] = [];
-  let deltaBuf = "";
+  let pending: PendingBlock[] = [];
   let finalText: string | undefined;
-  let status: TurnStatus = "complete";
-  let seq = 0;
+  let firstReceivedAt: number | undefined;
+  let status: TurnStatus = "streaming";
+  let turnSegment = 0;
 
-  const actionByCall = new Map<string, number>();
-  let openThought: { idx: number; buf: string } | null = null;
+  const actionByCall = new Map<string, ActionBlock>();
+  let openThought: { block: ThoughtBlock; startedAt: number; text: string } | null = null;
+  let openText: Extract<PendingBlock, { kind: "pending-text" }> | null = null;
 
-  const closeThought = () => {
+  const closeThought = (receivedAt: number, settledStatus: TurnStatus = "complete") => {
+    if (openThought === null) return;
+    const elapsedMs = receivedAt - openThought.startedAt;
+    if (Number.isFinite(elapsedMs) && elapsedMs >= 0) openThought.block.seconds = elapsedMs / 1_000;
+    openThought.block.status = settledStatus;
     openThought = null;
   };
 
-  const flushTurn = () => {
-    if (preface.length === 0 && body.length === 0 && deltaBuf.trim() === "" && !finalText) return;
-    // Prefer settled `text.message` prose; fall back to the streaming delta echo, then to the
-    // outcome's finalText — so a turn that only streamed still shows its reply.
-    if (body.length === 0) {
-      const fallback = deltaBuf.trim() !== "" ? deltaBuf : (finalText ?? "");
-      if (fallback.trim() !== "") body.push({ kind: "text", text: fallback });
+  const closeText = () => {
+    openText = null;
+  };
+
+  const markReceivedAt = (receivedAt: number) => {
+    if (firstReceivedAt === undefined) firstReceivedAt = receivedAt;
+  };
+
+  const interruptOpenActions = () => {
+    for (const block of pending) {
+      if (block.kind === "action" && block.status === "streaming") block.status = "interrupted";
     }
+  };
+
+  const flushTurn = (settledStatus: TurnStatus = status) => {
+    let blocks = orderedBlocks(pending);
+    const hasContent = blocks.some(isContentBlock);
+    if (!hasContent && finalText !== undefined && finalText.trim() !== "") {
+      blocks = [...blocks, ...contentBlocks(finalText)];
+    }
+    if (blocks.length === 0) return;
+
+    const preface = blocks.filter(isActivityStep);
+    const body = blocks.filter(isContentBlock);
     const paragraphs = body
-      .filter((b): b is Extract<ContentBlock, { kind: "text" }> => b.kind === "text")
-      .flatMap((b) => splitParagraphs(b.text));
+      .filter((block): block is Extract<ContentBlock, { kind: "text" }> => block.kind === "text")
+      .flatMap((block) => splitParagraphs(block.text));
+    const rowId = turnSegment === 0 ? baseTurnId : `${baseTurnId}:segment:${turnSegment}`;
+    const time = isoTime(firstReceivedAt);
     rows.push({
       kind: "turn",
-      id: `turn-${anchor}-${seq++}`,
+      id: rowId,
       speaker: "orchestrator",
-      status,
+      status: settledStatus,
       paragraphs,
+      ...(time === undefined ? {} : { time }),
       ...(preface.length ? { preface } : {}),
       ...(body.length ? { body } : {}),
+      blocks,
     });
-    preface = [];
-    body = [];
-    deltaBuf = "";
+    turnSegment += 1;
+    pending = [];
     finalText = undefined;
-    status = "complete";
+    firstReceivedAt = undefined;
+    status = "streaming";
     actionByCall.clear();
     openThought = null;
+    openText = null;
   };
 
   for (const event of events) {
     switch (event.kind) {
-      case "thinking.message":
       case "thinking.delta": {
-        const chunk = event.kind === "thinking.message" ? `${event.text}\n` : event.text;
+        closeText();
         if (openThought === null) {
-          const idx = preface.length;
-          preface.push({
+          markReceivedAt(event.receivedAt);
+          const block: ThoughtBlock = {
             kind: "thought",
-            id: `thought-${anchor}-${idx}`,
-            status: "complete",
+            id: `thought-${event.seq}`,
+            status: "streaming",
             text: [],
-          });
-          openThought = { idx, buf: "" };
+          };
+          pending.push(block);
+          openThought = { block, startedAt: event.receivedAt, text: "" };
         }
-        openThought.buf += chunk;
-        const block = preface[openThought.idx];
-        if (block && block.kind === "thought") {
-          block.text = openThought.buf
-            .split("\n")
-            .map((l) => l.trim())
-            .filter((l) => l.length > 0);
+        openThought.text += event.text;
+        openThought.block.text = thoughtLines(openThought.text);
+        break;
+      }
+      case "thinking.message": {
+        closeText();
+        if (openThought !== null) {
+          if (event.text.trim() !== "") {
+            openThought.text = event.text;
+            openThought.block.text = thoughtLines(event.text);
+          }
+          closeThought(event.receivedAt);
+        } else if (event.text.trim() !== "") {
+          markReceivedAt(event.receivedAt);
+          pending.push({
+            kind: "thought",
+            id: `thought-${event.seq}`,
+            status: "complete",
+            text: thoughtLines(event.text),
+          });
         }
         break;
       }
-      case "text.message":
-        closeThought();
-        if (event.text.trim() !== "") body.push({ kind: "text", text: event.text });
+      case "text.message": {
+        closeThought(event.receivedAt);
+        if (event.text.trim() !== "") {
+          markReceivedAt(event.receivedAt);
+          if (openText === null) {
+            pending.push({ kind: "pending-text", text: event.text });
+          } else {
+            openText.text = event.text;
+          }
+        }
+        closeText();
         break;
-      case "text.delta":
-        closeThought();
-        deltaBuf += event.text;
+      }
+      case "text.delta": {
+        closeThought(event.receivedAt);
+        if (openText === null) {
+          markReceivedAt(event.receivedAt);
+          openText = { kind: "pending-text", text: "" };
+          pending.push(openText);
+        }
+        openText.text += event.text;
         break;
+      }
       case "tool.started": {
-        closeThought();
+        closeThought(event.receivedAt);
+        closeText();
+        markReceivedAt(event.receivedAt);
         const { label, detail } = describeTool(event.call);
-        actionByCall.set(event.call.id, preface.length);
-        preface.push({
+        const block: ActionBlock = {
           kind: "action",
           id: `act-${event.call.id}`,
           label,
           ...(detail ? { detail } : {}),
           status: "streaming",
           toolKind: event.call.kind,
-        });
+        };
+        actionByCall.set(event.call.id, block);
+        pending.push(block);
         break;
       }
       case "tool.output": {
-        closeThought();
-        const idx = actionByCall.get(event.callId);
-        const step = idx === undefined ? undefined : preface[idx];
-        if (step && step.kind === "action") {
+        closeThought(event.receivedAt);
+        closeText();
+        const step = actionByCall.get(event.callId);
+        if (step) {
           step.status = "complete";
           const summary = firstLine(event.text);
           if (summary) step.doneDetail = summary;
@@ -170,17 +342,18 @@ export function harnessEventsToRows(events: readonly HarnessEvent[]): SessionTra
         break;
       }
       case "tool.denied": {
-        closeThought();
-        const idx = event.callId === null ? undefined : actionByCall.get(event.callId);
-        const step = idx === undefined ? undefined : preface[idx];
-        if (step && step.kind === "action") {
+        closeThought(event.receivedAt);
+        closeText();
+        const step = event.callId === null ? undefined : actionByCall.get(event.callId);
+        if (step) {
           step.status = "complete";
           step.denied = true;
           step.doneLabel = `Denied: ${event.reason}`;
         } else {
-          preface.push({
+          markReceivedAt(event.receivedAt);
+          pending.push({
             kind: "action",
-            id: `act-denied-${anchor}-${preface.length}`,
+            id: `act-denied-${event.seq}`,
             label: `Denied ${event.toolName}`,
             detail: event.reason,
             status: "complete",
@@ -191,19 +364,30 @@ export function harnessEventsToRows(events: readonly HarnessEvent[]): SessionTra
         break;
       }
       case "compact_boundary": {
-        flushTurn();
+        closeThought(event.receivedAt);
+        closeText();
+        flushTurn("complete");
+        const time = isoTime(event.receivedAt);
         rows.push({
           kind: "compact-boundary",
-          id: `compact-${anchor}-${seq++}`,
+          id: `compact-${baseTurnId}-${event.seq}`,
+          ...(time === undefined ? {} : { time }),
           ...(event.preTokens === undefined ? {} : { tokensBefore: event.preTokens }),
           ...(event.postTokens === undefined ? {} : { tokensAfter: event.postTokens }),
         });
         break;
       }
-      case "session.ended":
-        if (event.outcome.status === "cancelled") status = "interrupted";
-        if (event.outcome.status === "completed") finalText = event.outcome.finalText;
+      case "session.ended": {
+        status = event.outcome.status === "completed" ? "complete" : "interrupted";
+        closeThought(event.receivedAt, status);
+        closeText();
+        if (status === "interrupted") interruptOpenActions();
+        if (event.outcome.status === "completed") {
+          finalText = event.outcome.finalText;
+          if (finalText.trim() !== "") markReceivedAt(event.receivedAt);
+        }
         break;
+      }
       // session.started / auth / error / passthrough carry no transcript row content.
       default:
         break;

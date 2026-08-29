@@ -131,8 +131,10 @@ function foldInFlight(
 
 /**
  * Fold one live ask-stream event. `ask-focus` carries no body (a focus hint) and leaves the
- * timeline unchanged. `ask-delta` appends to the turn's coalesced body; `ask-complete` sets the
- * final body + marks complete; `ask-interrupted` marks the turn interrupted (its body stays).
+ * timeline unchanged. `ask-delta` appends to the turn's coalesced body; `ask-state` carries the
+ * desktop's structured activity snapshot and leaves this prose-only mobile timeline unchanged;
+ * `ask-complete` sets the final body + marks complete; `ask-interrupted` marks the turn
+ * interrupted (its body stays).
  * Every arm keys by `${turnId}::${channel}`, so a re-delivered event after a reconnect updates the
  * same entry — the caught-up event never renders twice.
  */
@@ -169,6 +171,8 @@ export function foldStreamEvent(state: TimelineState, event: ReviewAskStreamEven
           ...seqField,
         }),
       };
+    case "ask-state":
+      return state;
     case "ask-complete":
       return {
         entries: upsert(state.entries, {

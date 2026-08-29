@@ -4,6 +4,8 @@ import {
   DEFAULT_CODEX_UTILITY_EFFORT,
   DEFAULT_CODEX_UTILITY_MODEL,
   type HandoffRunPort,
+  type HarnessEvent,
+  type HarnessInProcessTool,
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
 
@@ -82,7 +84,9 @@ export interface LiveReviewAskDeps {
     review: Review;
     question: string;
     onDelta?: (text: string) => void;
-    selection?: { anchor: string; excerpt?: string };
+    onEvent?: (event: HarnessEvent) => void;
+    selection?: { anchor: string; excerpt?: string; target?: string; generation?: string };
+    turnId?: string;
     abortController?: AbortController;
   }): Promise<AskAnswer>;
 }
@@ -98,7 +102,11 @@ export interface LiveReviewAskPorts {
     question: string;
     /** Token-stream sink (#251): each orchestrator token as it arrives. */
     onDelta?: (text: string) => void;
-    selection?: { anchor: string; excerpt?: string };
+    /** Ordered normalized activity for the live transcript. */
+    onEvent?: (event: HarnessEvent) => void;
+    selection?: { anchor: string; excerpt?: string; target?: string; generation?: string };
+    /** Public identity shared by stream, persistence, and transcript capture. */
+    turnId?: string;
     onFocus?: (anchor: string) => void;
     /** Cancels the turn (#251 criterion 4): threaded to the SDK's `abortController`
      *  so `before-quit` reaps the live claude turn. */
@@ -120,7 +128,15 @@ export interface LiveReviewAskPorts {
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator({ review, question, onDelta, selection, abortController }) {
+    async askOrchestrator({
+      review,
+      question,
+      onDelta,
+      onEvent,
+      selection,
+      turnId,
+      abortController,
+    }) {
       if (!deps.askOrchestrator) {
         return { model: ORCHESTRATOR_ASK_LABEL, answer: NO_HARNESS_ANSWER };
       }
@@ -130,7 +146,9 @@ export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAsk
         review,
         question,
         ...(onDelta ? { onDelta } : {}),
+        ...(onEvent ? { onEvent } : {}),
         ...(selection ? { selection } : {}),
+        ...(turnId ? { turnId } : {}),
         ...(abortController ? { abortController } : {}),
       });
     },
@@ -279,7 +297,8 @@ export const NO_HARNESS_ANSWER =
 export function buildOrchestratorAskPrompt(
   review: Review,
   question: string,
-  selection?: { anchor: string; excerpt?: string },
+  selection?: { anchor: string; excerpt?: string; target?: string; generation?: string },
+  appContext?: { readonly askLogId: string; readonly toolNames: readonly string[] },
 ): string {
   const patchset = activePatchsetOf(review);
   const { text: clipped, truncated } = truncateToBytes(
@@ -309,7 +328,19 @@ export function buildOrchestratorAskPrompt(
   ];
   if (selection) {
     lines.push("", `The reviewer is looking at: ${selection.anchor}`);
+    if (selection.target) lines.push(`Board element: ${selection.target}`);
+    if (selection.generation) lines.push(`Board generation: ${selection.generation}`);
     if (selection.excerpt) lines.push("```", selection.excerpt, "```");
+  }
+  if (appContext) {
+    lines.push(
+      "",
+      `Current Rennet review ask-log id: ${appContext.askLogId}`,
+      `Available Rennet app tools: ${appContext.toolNames.join(", ")}`,
+      `For app_ask_stage, pass ${appContext.askLogId} as sessionId so the staged ask appears in this review.`,
+      "When the reviewer asks you to act in Rennet, call the matching app tool exactly once.",
+      "Treat its returned receipt/result as the authority and narrate the completed result, not intent.",
+    );
   }
   lines.push("", `The reviewer's question: ${question}`);
   return lines.join("\n");
@@ -319,7 +350,11 @@ export function buildOrchestratorAskPrompt(
  *  stays hermetically testable with fakes — no Electron, no real `claude`. */
 export interface LiveOrchestratorAskDeps {
   /** The turn port for a repository root, or `null` when no harness is installed. */
-  resolveRunPort(repoRoot: string): Promise<HandoffRunPort | null>;
+  resolveRunPort(repoRoot: string, review?: Review): Promise<HandoffRunPort | null>;
+  /** The registry-projected app tool surface, rebuilt for each turn. */
+  toolsForReview?: (review: Review) => readonly HarnessInProcessTool[];
+  /** Canonical ask-log identity named as `sessionId` by the `ask.*` command family. */
+  askLogIdForReview?: (review: Review) => string;
 }
 
 /**
@@ -334,17 +369,31 @@ export function createLiveOrchestratorAsk(
   review: Review;
   question: string;
   onDelta?: (text: string) => void;
-  selection?: { anchor: string; excerpt?: string };
+  onEvent?: (event: HarnessEvent) => void;
+  selection?: { anchor: string; excerpt?: string; target?: string; generation?: string };
+  turnId?: string;
   abortController?: AbortController;
 }) => Promise<AskAnswer> {
-  return async ({ review, question, onDelta, selection, abortController }) => {
+  return async ({ review, question, onDelta, onEvent, selection, turnId, abortController }) => {
     try {
-      const run = await deps.resolveRunPort(review.repositoryRoot);
+      const run = await deps.resolveRunPort(review.repositoryRoot, review);
       if (!run) return { model: ORCHESTRATOR_ASK_LABEL, answer: NO_HARNESS_ANSWER };
+      const tools = deps.toolsForReview?.(review) ?? [];
+      const askLogId = deps.askLogIdForReview?.(review);
       const outcome = await run({
         cwd: review.repositoryRoot,
-        prompt: buildOrchestratorAskPrompt(review, question, selection),
+        prompt: buildOrchestratorAskPrompt(
+          review,
+          question,
+          selection,
+          askLogId === undefined
+            ? undefined
+            : { askLogId, toolNames: tools.map((tool) => tool.name) },
+        ),
         ...(onDelta ? { onDelta } : {}),
+        ...(onEvent ? { onEvent } : {}),
+        ...(tools.length === 0 ? {} : { inProcessTools: tools }),
+        ...(turnId ? { transcriptTurnId: `${turnId}::orchestrator` } : {}),
         ...(abortController ? { signal: abortController.signal } : {}),
       });
       if (outcome.status === "failed") {

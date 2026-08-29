@@ -11,6 +11,7 @@ import type {
   RspTokenUsage,
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
+import type { HarnessEvent, HarnessInProcessTool } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The review→agent handoff loop (issue #18, Contracts §2.1 destination B — "your
@@ -275,6 +276,12 @@ export interface HandoffRunInput {
    * turns the harness's partial-message streaming on when it sees one.
    */
   readonly onDelta?: (text: string) => void;
+  /** Every normalized harness event in arrival order, for a truthful live activity view. */
+  readonly onEvent?: (event: HarnessEvent) => void;
+  /** App-owned tools available only to this turn. */
+  readonly inProcessTools?: readonly HarnessInProcessTool[];
+  /** Stable display id used by the live stream and durable transcript. */
+  readonly transcriptTurnId?: string;
 }
 
 /** The outcome of one write-enabled turn. A `failed` turn NEVER fabricates success. */

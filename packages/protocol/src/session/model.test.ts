@@ -10,7 +10,9 @@ import {
   RoundRecordSchema,
   SessionModelSchema,
   SessionThreadSchema,
+  SessionTranscriptRowSchema,
   ThreadAnchorSchema,
+  TranscriptBlockSchema,
 } from "./model";
 
 const codeAnchor = {
@@ -213,5 +215,99 @@ describe("session/ durable shapes (#466/#457)", () => {
     const parsed = SessionModelSchema.parse(bare);
     expect(parsed.claim).toBeUndefined();
     expect(parsed.reviewId).toBeUndefined();
+  });
+
+  it("keeps old persisted transcript turns readable without ordered blocks", () => {
+    const oldTurn = {
+      kind: "turn",
+      id: "turn-old",
+      speaker: "orchestrator",
+      status: "complete",
+      paragraphs: ["Finished the change."],
+      preface: [
+        {
+          kind: "action",
+          id: "action-old",
+          label: "Read",
+          status: "complete",
+          toolKind: "read",
+        },
+      ],
+      body: [{ kind: "text", text: "Finished the change." }],
+    } as const;
+
+    expect(SessionTranscriptRowSchema.parse(oldTurn)).toEqual(oldTurn);
+  });
+
+  it("parses one ordered transcript block stream across activity and content", () => {
+    const blocks = [
+      {
+        kind: "thought",
+        id: "thought-1",
+        status: "complete",
+        seconds: 1.25,
+        text: ["Check the caller first."],
+      },
+      { kind: "text", text: "The caller passes a stable id." },
+      {
+        kind: "action",
+        id: "action-1",
+        label: "Read",
+        status: "complete",
+        toolKind: "read",
+      },
+      {
+        kind: "code",
+        path: "packages/core/src/example.ts",
+        lang: "ts",
+        code: "export const answer = 42;",
+      },
+    ] as const;
+
+    expect(blocks.map((block) => TranscriptBlockSchema.parse(block).kind)).toEqual([
+      "thought",
+      "text",
+      "action",
+      "code",
+    ]);
+    expect(
+      SessionTranscriptRowSchema.parse({
+        kind: "turn",
+        id: "turn-new",
+        speaker: "orchestrator",
+        status: "complete",
+        paragraphs: ["The caller passes a stable id."],
+        blocks,
+      }),
+    ).toMatchObject({ blocks });
+  });
+
+  it("keeps transcript timestamps additive on turns and compact boundaries", () => {
+    const time = "2026-08-29T10:30:00.000Z";
+    const turn = SessionTranscriptRowSchema.parse({
+      kind: "turn",
+      id: "turn-timed",
+      speaker: "orchestrator",
+      status: "complete",
+      paragraphs: [],
+      time,
+    });
+    if (turn.kind !== "turn") throw new Error("expected a turn row");
+    expect(turn.time).toBe(time);
+
+    const compact = SessionTranscriptRowSchema.parse({
+      kind: "compact-boundary",
+      id: "compact-timed",
+      time,
+    });
+    if (compact.kind !== "compact-boundary") throw new Error("expected a compact boundary");
+    expect(compact.time).toBe(time);
+
+    const oldCompact = SessionTranscriptRowSchema.parse({
+      kind: "compact-boundary",
+      id: "compact-old",
+    });
+    if (oldCompact.kind !== "compact-boundary") throw new Error("expected a compact boundary");
+    expect(oldCompact.time).toBeUndefined();
   });
 });

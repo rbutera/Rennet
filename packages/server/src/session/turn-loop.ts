@@ -96,7 +96,16 @@ export interface TurnLoopDeps {
     readonly sessionId: string;
     readonly cwd: string;
     readonly events: readonly HarnessEvent[];
+    readonly turnId?: string;
   }) => void;
+}
+
+/** Options belonging to one invocation rather than the durable session. */
+export interface TurnRunOptions {
+  readonly signal?: AbortSignal;
+  readonly onEvent?: (event: HarnessEvent) => void;
+  readonly inProcessTools?: SessionSpec["inProcessTools"];
+  readonly transcriptTurnId?: string;
 }
 
 export interface TurnResult {
@@ -118,6 +127,24 @@ const STREAM_ENDED_WITHOUT_TERMINAL: HarnessError = {
   nativeCode: null,
 };
 
+const RESUME_VANISHED_TRANSCRIPT_SUFFIX = "::resume-vanished";
+
+function transcriptTurnIdForCapture(
+  stableTurnId: string | undefined,
+  attemptedResume: boolean,
+  events: readonly HarnessEvent[],
+): string | undefined {
+  if (stableTurnId === undefined || !attemptedResume) return stableTurnId;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.kind !== "session.ended") continue;
+    return isResumeVanished(true, event.outcome)
+      ? `${stableTurnId}${RESUME_VANISHED_TRANSCRIPT_SUFFIX}`
+      : stableTurnId;
+  }
+  return stableTurnId;
+}
+
 /** Drive one turn to its terminal outcome, always closing the session. The
  *  adapter emits `session.ended` for every terminal (completed OR failed); a
  *  stream that ends without one is surfaced as a failed outcome, never a hang.
@@ -129,6 +156,7 @@ async function runTurnToOutcome(
   prompt: string,
   onRow?: (row: TurnRow) => void,
   captureEvents?: (events: readonly HarnessEvent[]) => void,
+  onEvent?: (event: HarnessEvent) => void,
 ): Promise<SessionOutcome> {
   // Collect every event for the display-transcript capture. `session.ended` returns early, so
   // the capture runs in `finally` — a completed OR failed turn still records what it ran.
@@ -137,6 +165,7 @@ async function runTurnToOutcome(
     await session.send({ prompt });
     for await (const event of session.events) {
       collected.push(event);
+      onEvent?.(event);
       if (event.kind === "compact_boundary") {
         onRow?.({
           kind: "compact_boundary",
@@ -167,9 +196,9 @@ export class SessionTurnLoop {
 
   constructor(private readonly deps: TurnLoopDeps) {}
 
-  runTurn(sessionId: string, prompt: string): Promise<TurnResult> {
+  runTurn(sessionId: string, prompt: string, options: TurnRunOptions = {}): Promise<TurnResult> {
     const prior = this.#tails.get(sessionId) ?? Promise.resolve();
-    const run = prior.then(() => this.#runOnce(sessionId, prompt));
+    const run = prior.then(() => this.#runOnce(sessionId, prompt, options));
     this.#tails.set(
       sessionId,
       run.catch(() => undefined),
@@ -177,13 +206,13 @@ export class SessionTurnLoop {
     return run;
   }
 
-  async #runOnce(sessionId: string, prompt: string): Promise<TurnResult> {
+  async #runOnce(sessionId: string, prompt: string, options: TurnRunOptions): Promise<TurnResult> {
     const current = this.deps.store.load(sessionId);
     if (current === undefined) {
       throw new Error(`SessionTurnLoop: session ${sessionId} is not persisted; mint it first`);
     }
     const resume = planResume(current);
-    const outcome = await this.#runTurn(current, prompt, resume);
+    const outcome = await this.#runTurn(current, prompt, resume, options);
 
     // Resume-vanished fallback: the harness lost this conversation's transcript.
     // Rebuild context honestly — one fresh turn, no resume — and tell the reader.
@@ -198,7 +227,7 @@ export class SessionTurnLoop {
       // survives; only the harness pointer is cleared — boards/threads/claim stay.
       const rebuilt = dropCursor(this.deps.store.load(sessionId) ?? current);
       this.deps.store.save(rebuilt);
-      const freshOutcome = await this.#runTurn(rebuilt, prompt, undefined);
+      const freshOutcome = await this.#runTurn(rebuilt, prompt, undefined, options);
       if (freshOutcome.status !== "completed") {
         return { session: rebuilt, outcome: freshOutcome, contextRebuilt: true };
       }
@@ -228,20 +257,37 @@ export class SessionTurnLoop {
     session: SessionModel,
     prompt: string,
     resume: { harnessSessionId: string } | undefined,
+    options: TurnRunOptions,
   ): Promise<SessionOutcome> {
     const spec: SessionSpec = {
       ...this.deps.buildSpec(session),
       ...(resume === undefined ? {} : { resume }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.onEvent === undefined ? {} : { streamPartialText: true }),
+      ...(options.inProcessTools === undefined ? {} : { inProcessTools: options.inProcessTools }),
     };
     const emit = this.deps.emit;
     const onRow = emit ? (row: TurnRow) => emit(session.id, row) : undefined;
     const record = this.deps.recordTranscript;
     const capture = record
-      ? (events: readonly HarnessEvent[]) =>
-          record({ sessionId: session.id, cwd: spec.cwd, events })
+      ? (events: readonly HarnessEvent[]) => {
+          const turnId = transcriptTurnIdForCapture(
+            options.transcriptTurnId,
+            resume !== undefined,
+            events,
+          );
+          record({
+            sessionId: session.id,
+            cwd: spec.cwd,
+            events,
+            ...(turnId === undefined ? {} : { turnId }),
+          });
+        }
       : undefined;
     return this.deps.port
       .createSession(spec)
-      .then((harnessSession) => runTurnToOutcome(harnessSession, prompt, onRow, capture));
+      .then((harnessSession) =>
+        runTurnToOutcome(harnessSession, prompt, onRow, capture, options.onEvent),
+      );
   }
 }

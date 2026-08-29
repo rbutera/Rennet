@@ -36,6 +36,25 @@ import { wslClaudeExecutable } from "./wsl-launcher";
 /** The SDK's `query()` surface, narrowed to what this module calls. */
 type SdkQuery = (params: { prompt: string; options?: SdkOptions }) => Query;
 
+interface SdkToolResult {
+  readonly content: readonly [{ readonly type: "text"; readonly text: string }];
+}
+
+export interface ClaudeSdkTooling {
+  readonly tool: (
+    name: string,
+    description: string,
+    inputSchema: unknown,
+    handler: (input: unknown) => Promise<SdkToolResult>,
+  ) => unknown;
+  readonly createSdkMcpServer: (options: {
+    readonly name: string;
+    readonly tools: readonly unknown[];
+  }) => unknown;
+}
+
+export type LoadClaudeTooling = () => Promise<ClaudeSdkTooling>;
+
 /**
  * Loads the real SDK `query()`. Injectable so a hermetic test can supply a fake
  * without the SDK (and without spawning anything).
@@ -46,6 +65,55 @@ const loadRealQuery: LoadClaudeQuery = async () => {
   const module = await import("@anthropic-ai/claude-agent-sdk");
   return module.query as unknown as SdkQuery;
 };
+
+const loadRealTooling: LoadClaudeTooling = async () => {
+  const module = await import("@anthropic-ai/claude-agent-sdk");
+  return {
+    tool: module.tool as unknown as ClaudeSdkTooling["tool"],
+    createSdkMcpServer:
+      module.createSdkMcpServer as unknown as ClaudeSdkTooling["createSdkMcpServer"],
+  };
+};
+
+const IN_PROCESS_MCP_SERVER_NAME = "rennet-app";
+
+function availableServerName(servers: SdkOptions["mcpServers"]): string {
+  if (servers === undefined || !(IN_PROCESS_MCP_SERVER_NAME in servers)) {
+    return IN_PROCESS_MCP_SERVER_NAME;
+  }
+  let suffix = 2;
+  while (`${IN_PROCESS_MCP_SERVER_NAME}-${suffix}` in servers) suffix += 1;
+  return `${IN_PROCESS_MCP_SERVER_NAME}-${suffix}`;
+}
+
+function renderToolResult(result: unknown): string {
+  if (typeof result === "string") return result;
+  return JSON.stringify(result) ?? String(result);
+}
+
+async function withInProcessTools(
+  options: ClaudeQueryOptions,
+  sdkOptions: SdkOptions,
+  loadTooling: LoadClaudeTooling,
+): Promise<SdkOptions> {
+  if (options.inProcessTools === undefined || options.inProcessTools.length === 0) {
+    return sdkOptions;
+  }
+  const tooling = await loadTooling();
+  const tools = options.inProcessTools.map((descriptor) =>
+    tooling.tool(descriptor.name, descriptor.description, descriptor.inputSchema, async (input) => {
+      const result = await descriptor.run(input);
+      return { content: [{ type: "text", text: renderToolResult(result) }] };
+    }),
+  );
+  const serverName = availableServerName(sdkOptions.mcpServers);
+  const server = tooling.createSdkMcpServer({ name: serverName, tools });
+  sdkOptions.mcpServers = {
+    ...sdkOptions.mcpServers,
+    [serverName]: server,
+  } as NonNullable<SdkOptions["mcpServers"]>;
+  return sdkOptions;
+}
 
 /**
  * Translate the adapter's by-contract `ClaudeQueryOptions` into the real SDK
@@ -172,11 +240,19 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
  * iteration drives an actual `claude` subprocess. The SDK import is deferred to
  * first iteration so nothing loads it until a turn actually runs.
  */
-export function createClaudeQueryFn(loadQuery: LoadClaudeQuery = loadRealQuery): ClaudeQueryFn {
+export function createClaudeQueryFn(
+  loadQuery: LoadClaudeQuery = loadRealQuery,
+  loadTooling: LoadClaudeTooling = loadRealTooling,
+): ClaudeQueryFn {
   return (args: ClaudeQueryArgs): AsyncIterable<unknown> => ({
     async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
       const query = await loadQuery();
-      const iterator = query({ prompt: args.prompt, options: toSdkOptions(args.options) });
+      const options = await withInProcessTools(
+        args.options,
+        toSdkOptions(args.options),
+        loadTooling,
+      );
+      const iterator = query({ prompt: args.prompt, options });
       for await (const message of iterator) yield message as unknown;
     },
   });

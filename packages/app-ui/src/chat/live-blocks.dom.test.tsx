@@ -51,6 +51,12 @@ describe("thought block follows real status (task 3.3)", () => {
     expect(container.querySelector(".animate-spin")).toBeNull();
     expect(screen.getByText(/Thought for 4s/)).toBeTruthy();
   });
+
+  it("does not invent a duration when the harness reported none", () => {
+    mount(<ThoughtBlock step={{ ...thought("complete"), seconds: undefined }} />);
+    expect(screen.getByText("Thought")).toBeTruthy();
+    expect(screen.queryByText(/Thought for/)).toBeNull();
+  });
 });
 
 const runningStep: ActionStepData = {
@@ -69,10 +75,13 @@ describe("action step follows real status (task 3.3)", () => {
     const { rerender, container } = mount(<ActionStep step={runningStep} />);
     expect(container.querySelector(".animate-spin")).toBeTruthy();
     expect(screen.getByText(/Running/)).toBeTruthy();
+    const announcement = container.querySelector('[aria-live="polite"]');
+    expect(announcement?.textContent).toBe("running");
 
     rerender(<ActionStep step={{ ...runningStep, status: "complete" }} />);
     expect(container.querySelector(".animate-spin")).toBeNull();
     expect(screen.getByText(/Ran · pnpm test --filter routes · 7 passed/)).toBeTruthy();
+    expect(announcement?.textContent).toBe("done");
   });
 
   it("an interrupted action step settles — no infinite spinner", () => {

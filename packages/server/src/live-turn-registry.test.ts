@@ -130,13 +130,14 @@ describe("LiveTurnRegistry — scoped reaping on quit (issue #251, criterion 4)"
 
     expect(registry.bodyOf("t1")).toBe("abcdef");
     expect(registry.inFlightFor("rev")).toEqual([
-      {
+      expect.objectContaining({
         threadId: "th",
         turnId: "t1",
         channel: "orchestrator",
         model: "harness",
         bodySoFar: "abcdef",
-      },
+        time: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      }),
     ]);
     // Another review's live turns are not reported.
     expect(registry.inFlightFor("other")).toEqual([]);

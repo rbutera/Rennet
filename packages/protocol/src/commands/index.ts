@@ -816,6 +816,8 @@ const definitions = {
         .object({
           anchor: z.string().min(1),
           excerpt: z.string().optional(),
+          target: z.string().min(1).optional(),
+          generation: z.string().min(1).optional(),
         })
         .optional(),
       // The reviewer's RAW question for this turn (not the folded transcript), persisted
@@ -1554,6 +1556,7 @@ const definitions = {
  * `session.*` READS exist (host-locus) but stay UNEXPOSED to the agent — they are
  * client-surface reads, not app tools. None invented. */
 const AGENT_EXPOSED = new Set<string>([
+  "ask.stage",
   "repository.choose",
   "project.discover",
   "projects.add",

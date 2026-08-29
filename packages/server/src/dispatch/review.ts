@@ -4,6 +4,8 @@ import {
   askReview,
   buildHandoffBundle,
   disclosureFor,
+  type HarnessEvent,
+  harnessEventsToRows,
   isRepoRelativePath,
   mechanicalComposition,
   verifyComposedBundle,
@@ -13,9 +15,12 @@ import {
   type HandoffRunResult,
   parseCommandInput,
   parseCommandOutput,
+  type SessionTranscriptRow,
 } from "@rennet/protocol";
 import { deepLinkFor } from "../attention-planner";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
+
+const LIVE_ACTIVITY_SNAPSHOT_INTERVAL_MS = 50;
 
 export function reviewHandlers(rt: DispatchRuntime) {
   const {
@@ -184,6 +189,11 @@ export function reviewHandlers(rt: DispatchRuntime) {
         input.threadId && input.turnId && ctx?.emitAskStream
           ? { threadId: input.threadId, turnId: input.turnId, emit: ctx.emitAskStream }
           : undefined;
+      const harnessEvents: HarnessEvent[] = [];
+      let activityRows: SessionTranscriptRow[] = [];
+      let activityRowsDirty = false;
+      let activitySnapshotTimer: ReturnType<typeof setTimeout> | undefined;
+      const turnTime = new Date().toISOString();
       const onOrchestratorDelta = stream
         ? (delta: string) => {
             // Grow the registry's live body (#382 M2 finding 5) so a mid-turn reattach
@@ -232,7 +242,12 @@ export function reviewHandlers(rt: DispatchRuntime) {
           persist.store.putMessage({
             reviewId: persist.reviewId,
             threadId: persist.threadId,
-            message: { id: `${stream?.turnId}::you`, author: "you", body: input.turnBody },
+            message: {
+              id: `${stream?.turnId}::you`,
+              author: "you",
+              body: input.turnBody,
+              time: turnTime,
+            },
           });
         }
         persist.store.putMessage({
@@ -243,6 +258,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
             author: "harness",
             body: "",
             status: "streaming",
+            time: turnTime,
           },
         });
       }
@@ -322,9 +338,64 @@ export function reviewHandlers(rt: DispatchRuntime) {
             author: "harness",
             body: deps.liveTurns?.bodyOf(turnKey) ?? "",
             status: "interrupted",
+            time: turnTime,
+            ...(activityRows.length === 0 ? {} : { rows: activityRows }),
           },
         });
       };
+      const emitActivitySnapshot = (): void => {
+        if (!stream || !activityRowsDirty) return;
+        activityRows = harnessEventsToRows(harnessEvents, {
+          turnId: `${stream.turnId}::orchestrator`,
+        });
+        activityRowsDirty = false;
+        deps.liveTurns?.setRows?.(turnKey, activityRows);
+        stream.emit({
+          kind: "ask-state",
+          threadId: stream.threadId,
+          turnId: stream.turnId,
+          channel: "orchestrator",
+          rows: activityRows,
+        });
+      };
+      const flushActivitySnapshot = (): void => {
+        if (activitySnapshotTimer !== undefined) {
+          clearTimeout(activitySnapshotTimer);
+          activitySnapshotTimer = undefined;
+        }
+        emitActivitySnapshot();
+      };
+      const scheduleActivitySnapshot = (): void => {
+        if (activitySnapshotTimer !== undefined) return;
+        activitySnapshotTimer = setTimeout(() => {
+          activitySnapshotTimer = undefined;
+          emitActivitySnapshot();
+        }, LIVE_ACTIVITY_SNAPSHOT_INTERVAL_MS);
+      };
+      const onOrchestratorEvent = stream
+        ? (event: HarnessEvent) => {
+            harnessEvents.push(event);
+            switch (event.kind) {
+              case "text.delta":
+              case "thinking.delta":
+                activityRowsDirty = true;
+                scheduleActivitySnapshot();
+                break;
+              case "text.message":
+              case "thinking.message":
+              case "tool.started":
+              case "tool.output":
+              case "tool.denied":
+              case "compact_boundary":
+              case "session.ended":
+                activityRowsDirty = true;
+                flushActivitySnapshot();
+                break;
+              default:
+                break;
+            }
+          }
+        : undefined;
       try {
         const result = await askReview(mode, input.question, {
           askOrchestrator: (question) =>
@@ -332,8 +403,10 @@ export function reviewHandlers(rt: DispatchRuntime) {
               review,
               question,
               ...(onOrchestratorDelta ? { onDelta: onOrchestratorDelta } : {}),
+              ...(onOrchestratorEvent ? { onEvent: onOrchestratorEvent } : {}),
               ...(onOrchestratorFocus ? { onFocus: onOrchestratorFocus } : {}),
               ...(input.selection ? { selection: input.selection } : {}),
+              ...(stream ? { turnId: stream.turnId } : {}),
               ...(liveTurn ? { abortController: liveTurn } : {}),
             }),
           askCodex: (question) =>
@@ -343,6 +416,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
               ...(liveTurn ? { abortController: liveTurn } : {}),
             }),
         });
+        flushActivitySnapshot();
         // Terminal events: the orchestrator's tokens already streamed via onDelta;
         // codex is one-shot (no token stream) so its whole answer lands as its
         // completion. Both carry the SAME final answer the invoke returns — the stream
@@ -398,6 +472,8 @@ export function reviewHandlers(rt: DispatchRuntime) {
               author: "harness",
               model: result.primary.model,
               body: result.primary.answer,
+              time: turnTime,
+              ...(activityRows.length === 0 ? {} : { rows: activityRows }),
             },
           });
           if (result.secondOpinion) {
@@ -409,6 +485,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
                 author: "harness",
                 model: result.secondOpinion.model,
                 body: result.secondOpinion.answer,
+                time: turnTime,
               },
             });
           }
@@ -434,6 +511,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
         // The turn threw (a real failure, or a quit/Stop abort rejecting the in-flight turn):
         // clear the pending flag, tell the stream the truthful outcome, and raise turn-failed,
         // then rethrow. An abort reads as "interrupted"; any other throw as a genuine failure.
+        flushActivitySnapshot();
         clearAskPending();
         const why = error instanceof Error ? error.message : "The turn failed.";
         if (liveTurn?.signal.aborted) {
@@ -447,6 +525,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
         }
         throw error;
       } finally {
+        if (activitySnapshotTimer !== undefined) clearTimeout(activitySnapshotTimer);
         // The turn settled — completed, errored, or aborted-on-quit — so it leaves the
         // registry. Running in `finally` is what makes the "leaves when it settles"
         // guarantee hold on the throwing paths too (a quit-abort rejects the in-flight

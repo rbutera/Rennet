@@ -1,6 +1,7 @@
 import type {
   HarnessDescriptor,
   HarnessEvent,
+  HarnessInProcessTool,
   HarnessPort,
   HarnessSession,
   SessionOutcome,
@@ -10,7 +11,7 @@ import { mintSession } from "@rennet/core";
 import type { SessionModel, SessionTranscriptRow } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createContextRebuiltEmit, createTranscriptCapture, turnLoopRunPort } from "./turn-capture";
-import { SessionTurnLoop, type TurnResult } from "./turn-loop";
+import { SessionTurnLoop, type TurnResult, type TurnRunOptions } from "./turn-loop";
 
 // The two seams that make the session turn loop's instantiation real (B10 cluster 6): the
 // transcript-capture sink that lights up C07's `session.transcript` WRITE side, and the
@@ -182,6 +183,52 @@ describe("turnLoopRunPort — the round's coding turn runs THROUGH the loop", ()
     const outcome = await turnLoopRunPort(loop, "sess-1")({ cwd: REPO, prompt: "p" });
     expect(outcome).toEqual({ status: "failed", reason: "the handoff turn was cancelled" });
   });
+
+  it("forwards one turn's signal, app tools, event stream, and stable transcript id", async () => {
+    const event = ev({ kind: "text.delta", text: "live" });
+    const calls: Array<{ sessionId: string; prompt: string; options?: TurnRunOptions }> = [];
+    const loop = {
+      runTurn(sessionId: string, prompt: string, options?: TurnRunOptions): Promise<TurnResult> {
+        calls.push({ sessionId, prompt, options });
+        options?.onEvent?.(event);
+        return Promise.resolve({
+          session: { id: sessionId } as TurnResult["session"],
+          outcome: { status: "completed", finalText: "live" },
+        });
+      },
+    };
+    const tool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema: {},
+      run: async () => ({ receipt: "once" }),
+    };
+    const abort = new AbortController();
+    const events: HarnessEvent[] = [];
+    const deltas: string[] = [];
+
+    await turnLoopRunPort(
+      loop,
+      "sess-1",
+    )({
+      cwd: REPO,
+      prompt: "stage it",
+      signal: abort.signal,
+      inProcessTools: [tool],
+      transcriptTurnId: "public-1",
+      onEvent: (seen) => events.push(seen),
+      onDelta: (text) => deltas.push(text),
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.options).toMatchObject({
+      signal: abort.signal,
+      inProcessTools: [tool],
+      transcriptTurnId: "public-1",
+    });
+    expect(events).toEqual([event]);
+    expect(deltas).toEqual(["live"]);
+  });
 });
 
 // ── The resume-vanished marker, end to end through the real loop ──────────────
@@ -207,7 +254,7 @@ function resumeVanishedPort(specs: SessionSpec[]): HarnessPort {
               error: {
                 class: "invalid-request",
                 origin: "harness",
-                message: "no conversation found to resume",
+                message: "No conversation found with session ID: gone",
                 retryable: false,
                 retryableSource: "inferred",
                 nativeCode: "error_during_execution",

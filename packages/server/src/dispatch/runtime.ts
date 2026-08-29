@@ -11,6 +11,7 @@ import {
   type ForgeReviewTarget,
   forgeTargetKey,
   type HandoffTurnOutcome,
+  type HarnessEvent,
   type ReviewService,
   reviewBodyNotesFromProjection,
   reviewCommentsFromProjection,
@@ -370,7 +371,11 @@ export interface DispatchDeps {
       /** Token-stream sink (#251): each orchestrator token as it arrives, when the ask
        *  is a streamed one. Absent for a one-shot #139 ask. */
       onDelta?: (text: string) => void;
-      selection?: { anchor: string; excerpt?: string };
+      /** Ordered normalized activity for the live transcript snapshot. */
+      onEvent?: (event: HarnessEvent) => void;
+      selection?: { anchor: string; excerpt?: string; target?: string; generation?: string };
+      /** Public turn identity shared by stream, persistence, and transcript capture. */
+      turnId?: string;
       onFocus?: (anchor: string) => void;
       /** Cancels the turn (#251 criterion 4): the LiveTurnRegistry's controller for this
        *  turn, threaded to the claude SDK so `before-quit` reaps it. Absent → an
@@ -405,6 +410,8 @@ export interface DispatchDeps {
     settle(turnId: string): void;
     /** Grow a live turn's coalesced body as deltas stream (the reattach cursor, #382 M2 finding 5). */
     appendDelta(turnId: string, delta: string): void;
+    /** Replace the idempotent ordered activity snapshot used by live reattach. */
+    setRows?(turnId: string, rows: readonly SessionTranscriptRow[]): void;
     /** The coalesced body streamed so far — the truthful partial persisted on interrupt (finding 6). */
     bodyOf(turnId: string): string;
     /** Abort every in-flight turn on a review (the client "Stop", #382 M2); returns the count. */
