@@ -281,6 +281,53 @@ describe("PostReviewLane", () => {
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
   });
 
+  it("keeps quote threads and code comments visible as local residue after composition", () => {
+    act(() => {
+      store().reviewActions.addQuoteComment("quoted review prose", "keep this local");
+      store().reviewActions.setCodeComment("src/local.ts", 9, "also local");
+    });
+
+    const working = mount(<PostReviewLane review={review} />);
+    expect(working.getByText("1 thread · 1 code comment stay local")).toBeTruthy();
+    working.unmount();
+
+    const draft: ReviewDraft = {
+      bodyNotes: [],
+      body: [],
+      lineGroups: [
+        {
+          path: "src/outbound.ts",
+          comments: [
+            {
+              path: "src/outbound.ts",
+              line: 4,
+              comment: {
+                path: "src/outbound.ts",
+                line: 4,
+                side: "RIGHT",
+                type: "comment",
+                body: "outbound comment",
+              },
+            },
+          ],
+        },
+      ],
+      verdict: "COMMENT",
+      proposed: "COMMENT",
+      arithmetic: { requestChanges: 0, comments: 1 },
+      destination: "acme/orbital#7",
+    };
+    const composed = mount(<PostReviewLane review={review} draft={draft} />);
+    const lineComments = composed.getByText("Line Comments · 1");
+    const residue = composed.getByText("1 thread · 1 code comment stay local");
+    const post = composed.getByRole("button", { name: /Post Review/ });
+
+    expect(
+      lineComments.compareDocumentPosition(residue) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(residue.compareDocumentPosition(post) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+
   it("renders each composed review-body note with its intent and source provenance", () => {
     const draft = {
       bodyNotes: [
