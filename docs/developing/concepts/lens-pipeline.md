@@ -223,6 +223,9 @@ A board says what it does not know as plainly as what it does.
 - Design discovery that completes and finds no supported spec artifacts is a
   successful **absent** lane, not a failed drafter and not an empty board. The
   other four lenses continue normally.
+- Design discovery that cannot read the pinned reviewed tree settles Design as a
+  failed lane while the other four lenses continue. It never falls back to mutable
+  repository reads and never records `no-material` for evidence it could not inspect.
 - An element the validation loop could not make pass leaves a trace, never a
   silent hole. If it was dropped, its hunks are in `skippedHunks` with a reason
   (the honest-omission exit); if the retry cap was hit, its unresolved
@@ -285,14 +288,23 @@ reviewed state. It recognises OpenSpec, Kiro, BMAD, Superpowers, and
 grill-with-docs; their exact shapes are documented in the
 [spec-format survey](../reference/spec-formats/openspec.md). BMAD discovery
 honours its configured paths before conventional locations and scopes a
-candidate to one story or unmatched epic. Grill-with-docs scopes candidates to
-one linked context or root ADR. Candidates carry stable ids derived from their
-format and complete path set, then rank by changed artifacts and references to
-changed paths, so an unrelated repository candidate cannot win merely because
-it sorts first. If every candidate is unrelated, the drafter must account for
-each id and relevance class in a grounded `no-material` answer. The drafter
+candidate to one story or unmatched epic. In a single-context grill-with-docs
+repository, one candidate contains the root glossary and every root ADR. In a
+multi-context repository, each linked context gets one candidate with its local
+ADRs, while each system-wide root ADR remains a separate candidate beside the
+context map. Candidates carry stable ids derived from their format and complete
+path set, then rank by changed artifacts and references to
+changed paths. That deterministic rank orders the evidence; the drafter still
+makes the semantic selection, so a genuinely relevant repository-only companion
+is not forbidden and a nearby decoy does not win merely by sorting first. One
+Design document selects exactly one candidate and its complete artifact set; it
+never combines neighbouring candidates. If no
+candidate applies, the drafter must account for each id and relevance class in a
+grounded `no-material` answer. The drafter
 receives source bytes from the patchset's pinned reviewed tree and never reads
-mutable working-tree replacements.
+mutable working-tree replacements. If that pinned read fails, the Design lane
+reports the discovery failure instead of asking the drafter to rediscover the
+material from the repository; the sibling lenses continue.
 
 Discovery is bounded: it retains at most 48 candidates, 64 artifacts per
 candidate, 192 KiB of source content in total, and 512 KiB for the complete
@@ -303,15 +315,34 @@ budget. A shortened bundle renders an explicit incompleteness account and a
 source link rather than presenting the preview as the whole specification.
 
 The resulting board is a structured composition, not a Markdown viewer. Its
-header names the source set and reports derived capability, requirement, and
-task counts. Header artifact chips jump to their rendered regions; section and
+header names the source set, displays the selected format, and reports derived
+capability, requirement, and task counts. Each supported stat appears once.
+Header artifact chips list every selected artifact exactly once in discovered
+order, and their first named source regions preserve that order; labels do not
+change identity. Header chips jump to their rendered regions; section and
 requirement source chips open the repo-relative file in the project editor. A
-proposal renders tagged What Changes rows beside its Impact region, capabilities
+proposal renders source-grounded Why, tagged What Changes rows, and Impact; capabilities
 render as counted jump cards, and task groups show their own completed/total
 progress. Each artifact gets a source-linked region; requirements preserve their
 normative text and source order, and every scenario and task remains its own
-canonical child element so later dispositions can address it. The rendered
-content still comes from the immutable discovery bundle.
+canonical element so later dispositions can address it. A scenario is owned only
+through its requirement's `scenarios` list, never repeated in section children.
+The host splits exact OpenSpec and Kiro scenario text into condition and response
+fields so the surface can distinguish trigger from outcome without replacing the
+source wording. The drafter supplies exact source text and canonical ownership,
+but format-specific metadata is host-owned. Before lint and rendering, the host
+strips any drafter-supplied claims for those fields and stamps exact parser values:
+Kiro `requirement_refs: string[]` on task prose; BMAD `status: string` on a story
+requirement and `acceptance_criteria: string[]` on task prose; Superpowers
+`task_manifest` file, interface, and verification arrays on a uniquely mapped
+task-group section; `source_cells: string[]` on matched BMAD Tech Stack row and
+Superpowers Architecture or Tech Stack header decisions; and grill `glossary_term`
+term, definition, and avoided-synonym values on the exact glossary-entry prose.
+Every array preserves source order. The surface renders each visible projection once
+at that owner; `source_cells` remains exact source-shape validation metadata because
+the decision already renders its parsed choice. Stated decisions continue to use
+their canonical statement, rationale, alternatives, and evidence fields. The
+rendered content still comes from the immutable discovery bundle.
 
 Requirement coverage is host-owned. After drafting, the host discards any
 coverage fields the drafter supplied, offers only non-artifact patchset hunks
@@ -323,7 +354,12 @@ shows task progress such as `0/N` without fabricated coverage.
 
 `spec_delta` and the round `delta` marker are independent: the first records
 the artifact's added, modified, removed, or renamed state; the second records
-whether the rendered section changed since the prior review generation.
+whether the rendered section changed since the prior review generation. A spec
+artifact has one source-linked capability root. When it contains several delta
+headers, exact operation sections sit beneath that root in source order, and each
+requirement row and its nearest operation section carry the source `spec_delta`.
+The capability card rolls those operations up as ordered unique badges without
+duplicating the capability.
 Source-indexed lint checks each requirement only against its named artifact and
 tracks source order independently per file. Once the drafter selects a
 candidate, lint requires every retained artifact in that candidate in both the
@@ -334,6 +370,12 @@ bounded discovery visible. The prose post-process cannot drop or rewrite a
 source-linked subtree. Source lines resolve against the reviewed file or the
 retained artifact text, and requirement scenario refs resolve only to narrative
 scenario regions.
+
+For Superpowers, the host leaves plan checkbox bytes untouched and overlays task
+completion from a selected progress artifact only when its exact first line binds
+the selected plan path. Only `Task N: complete (...)` completes a group. Fix-round,
+minor, and ruling lines remain visible in the progress region but never count as
+completion, and an unbound or absent ledger leaves the plan's static marks in charge.
 
 ## Reading affordances every board shares
 

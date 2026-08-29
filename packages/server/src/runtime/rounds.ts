@@ -275,6 +275,8 @@ export interface RoundInput {
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** Deterministically discovered Design artifacts; null means discovery succeeded with no spec. */
   readonly designArtifacts?: DesignArtifactSet | null;
+  /** Pinned Design discovery failed; Design settles failed while sibling lenses continue. */
+  readonly designArtifactFailure?: string;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -533,7 +535,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         : async (lens: LensKind, reason: "no-material"): Promise<void> => {
             lanes?.absent(
               lens,
-              reason === "no-material" ? "No spec artifacts were discovered." : reason,
+              reason === "no-material" ? "No Design specification applies to this change." : reason,
             );
             earlyAbsentLenses[lens] = reason;
             await deps.persistGeneration?.({
@@ -557,6 +559,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               ? {}
               : { mapDesignCoverage: createDesignCoverageMapper(claudePort, input.repoRoot) }),
           }),
+      ...(input.designArtifactFailure === undefined
+        ? {}
+        : { designArtifactFailure: input.designArtifactFailure }),
       readPrompt: deps.readPrompt,
       whiteboard: new WhiteboardClient(boards.service),
       boardIdFor,

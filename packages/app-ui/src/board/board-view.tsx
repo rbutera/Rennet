@@ -170,12 +170,12 @@ export function LensBoardView({
         <div data-kind="board-absent" className="text-muted-foreground text-sm">
           <p className="font-medium text-foreground">
             {effectiveLens === "design"
-              ? "No Design specification was found."
+              ? "No Design specification applies to this change."
               : "No source material was found."}
           </p>
           <p>
             {effectiveLens === "design"
-              ? "This generation has no spec artifacts to project into a Design board."
+              ? "There is no applicable specification to project into a Design board for this generation."
               : "This generation has no material to project into the selected board."}
           </p>
         </div>
@@ -189,12 +189,14 @@ export function LensBoardView({
 }
 
 function sourceTarget(board: LensBoard, source: SourceRef): string | undefined {
-  return board.elements.find((element) => {
-    if (element.kind !== "section") return false;
-    return (element.data.sources ?? []).some(
+  const byId = new Map(board.elements.map((element) => [element.id, element]));
+  return board.sections.find(({ ref }) => {
+    const section = byId.get(ref);
+    if (section?.kind !== "section") return false;
+    return (section.data.sources ?? []).some(
       (candidate) => candidate.path === source.path && candidate.candidate === source.candidate,
     );
-  })?.id;
+  })?.ref;
 }
 
 function BoardHeader({ board }: { readonly board: LensBoard }) {
@@ -205,9 +207,29 @@ function BoardHeader({ board }: { readonly board: LensBoard }) {
       {document.stats && document.stats.length > 0 ? (
         <dl data-kind="board-stats" className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
           {document.stats.map((stat) => (
-            <div key={stat.label} className="flex items-baseline gap-1.5">
+            <div
+              key={stat.label}
+              data-kind={
+                board.lens === "design" && stat.label.toLowerCase() === "format"
+                  ? "design-format"
+                  : "board-stat"
+              }
+              className={cn(
+                "flex items-baseline gap-1.5",
+                board.lens === "design" &&
+                  stat.label.toLowerCase() === "format" &&
+                  "rounded-chip border border-line bg-raised px-2 py-1",
+              )}
+            >
               <dt className="text-2xs text-muted-foreground">{stat.label}</dt>
-              <dd className="font-medium text-sm text-foreground">{stat.value}</dd>
+              <dd
+                className={cn(
+                  "font-medium text-sm text-foreground",
+                  board.lens === "design" && stat.label.toLowerCase() === "format" && "font-mono",
+                )}
+              >
+                {stat.value}
+              </dd>
             </div>
           ))}
         </dl>

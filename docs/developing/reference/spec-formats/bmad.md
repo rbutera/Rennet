@@ -196,13 +196,20 @@ What the Design lens can reliably exploit, because BMAD encodes it as structure
 rather than prose:
 
 - **Status pipeline.** The story `Status` is an enumerated choice
-  (`Draft/Approved/InProgress/Review/Done`) — render it as a stage indicator and
-  drive board columns off it directly.
+  (`Draft/Approved/InProgress/Review/Done`). Before lint and rendering, the host
+  strips any drafter-supplied claim and stamps exact `status: string` onto the story
+  requirement. The surface renders it once beside that story.
 - **FR/NFR registry.** PRD requirements are numbered lists with stable `FR`/`NFR`
   prefixes — parse into an addressable requirement table and deep-link `FR6`.
+- **Tech Stack rows.** Before lint and rendering, the host strips any drafter claim
+  and stamps exact source-order `source_cells: string[]` onto the matched decision.
+  The cells validate the source shape; the decision surface already renders the
+  parsed choice, so it does not repeat them as a separate block.
 - **AC → task traceability.** Story tasks carry inline `(AC: n, m)` back-references
-  to numbered acceptance criteria — render the coverage graph and flag any AC no
-  task cites, or any task citing none.
+  to numbered acceptance criteria. Rennet carries those tokens in source order as
+  exact `acceptance_criteria: string[]` on the owning task prose element after
+  stripping any drafter-supplied claim and before lint and rendering. The surface
+  renders the host-owned refs once beneath that task.
 - **Epic → story tree.** `epicFilePattern` + the story filename convention
   (`{epic}.{story}.*`) give an unambiguous two-level tree; group stories under
   epics and show per-epic status rollups from the status field.

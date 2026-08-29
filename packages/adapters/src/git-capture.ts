@@ -1,8 +1,20 @@
-import { createHash } from "node:crypto";
-import { dirname, isAbsolute, posix, resolve } from "node:path";
-import { detectLocus, type Locus, type PatchsetCapturePort, toWindowsView } from "@rennet/core";
+import { createHash, randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, posix, resolve } from "node:path";
+import {
+  detectLocus,
+  type Locus,
+  locusCommand,
+  type PatchsetCapturePort,
+  toWindowsView,
+} from "@rennet/core";
 import type { PatchFile, Patchset, PatchsetIntent } from "@rennet/protocol";
-import { captureReviewedTree as captureReviewedWorkingTree } from "./checkpoint-store";
+import { execa } from "execa";
+import {
+  captureReviewedTree as captureReviewedWorkingTree,
+  checkpointGitCommand,
+} from "./checkpoint-store";
 import {
   DEFAULT_VISIBLE_BYTE_LIMIT,
   execaGitFor,
@@ -13,6 +25,10 @@ import {
   visible,
 } from "./git-range-diff";
 import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
+
+const SUPERPOWERS_PROGRESS_PATHSPEC = ":(glob).superpowers/sdd/*/progress.md";
+const SUPERPOWERS_PROGRESS_PATH = /^\.superpowers\/sdd\/[^/]+\/progress\.md$/;
+const REVIEW_TREE_REF_PREFIX = "refs/rennet/review-trees/";
 
 // The changed-path / numstat / truncation parsing lives in `git-range-diff` so
 // the working-tree capture here and the commit-range capture there parse a diff
@@ -43,6 +59,86 @@ async function succeeds(
     return true;
   } catch {
     return false;
+  }
+}
+
+function augmentationIndexPath(locus: Locus): string {
+  const name = `rennet-superpowers-progress-${randomUUID()}.index`;
+  return locus.kind === "wsl" ? `/tmp/${name}` : join(tmpdir(), name);
+}
+
+async function gitInIndex(
+  locus: Locus,
+  root: string,
+  indexFile: string,
+  arguments_: string[],
+): Promise<string> {
+  const { file, args, cwd, env } = checkpointGitCommand(locus, root, arguments_, indexFile);
+  const result = await execa(file, [...args], {
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(env === undefined ? {} : { env }),
+    shell: false,
+    stripFinalNewline: true,
+  });
+  return result.stdout;
+}
+
+async function removeAugmentationIndex(locus: Locus, indexFile: string): Promise<void> {
+  if (locus.kind === "host") {
+    await rm(indexFile, { force: true });
+    return;
+  }
+  const command = locusCommand(locus, "rm", ["-f", indexFile]);
+  await execa(command.file, [...command.args], { reject: false, shell: false });
+}
+
+/**
+ * Superpowers keeps its execution ledger under ignored scratch state, while the
+ * Design lens needs that one file to render actual task progress. Add only the
+ * exact ledger path family to a second temporary index at capture time. Sibling
+ * briefs, reports, review packages, and all other ignored files remain absent.
+ */
+async function includeIgnoredSuperpowersProgress(options: {
+  readonly run: GitExec;
+  readonly root: string;
+  readonly locus: Locus;
+  readonly reviewedTreeOid: string;
+}): Promise<string> {
+  const ignored = await git(options.run, options.root, [
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "-z",
+    "--",
+    SUPERPOWERS_PROGRESS_PATHSPEC,
+  ]);
+  const paths = ignored
+    .split("\0")
+    .filter((path) => SUPERPOWERS_PROGRESS_PATH.test(path))
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  if (paths.length === 0) return options.reviewedTreeOid;
+
+  const indexFile = augmentationIndexPath(options.locus);
+  try {
+    await gitInIndex(options.locus, options.root, indexFile, [
+      "read-tree",
+      options.reviewedTreeOid,
+    ]);
+    await gitInIndex(options.locus, options.root, indexFile, ["add", "-f", "--", ...paths]);
+    const augmentedTreeOid = await gitInIndex(options.locus, options.root, indexFile, [
+      "write-tree",
+    ]);
+    await git(options.run, options.root, [
+      "-c",
+      "core.logAllRefUpdates=false",
+      "update-ref",
+      `${REVIEW_TREE_REF_PREFIX}${augmentedTreeOid}`,
+      augmentedTreeOid,
+    ]);
+    return augmentedTreeOid;
+  } finally {
+    await removeAugmentationIndex(options.locus, indexFile);
   }
 }
 
@@ -116,10 +212,15 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       (await git(run, gitRoot, ["symbolic-ref", "--short", "-q", "HEAD"], false)).trim() ||
       undefined;
     const { baseRef, baseOid } = await resolveBase(run, gitRoot);
-    const reviewedTreeOid = await (this.effects.captureReviewedTree ?? captureReviewedWorkingTree)(
-      gitRoot,
+    const baseReviewedTreeOid = await (
+      this.effects.captureReviewedTree ?? captureReviewedWorkingTree
+    )(gitRoot, locus);
+    const reviewedTreeOid = await includeIgnoredSuperpowersProgress({
+      run,
+      root: gitRoot,
       locus,
-    );
+      reviewedTreeOid: baseReviewedTreeOid,
+    });
 
     const completeDiff = await git(run, gitRoot, [
       "diff",
@@ -128,14 +229,14 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       "--no-ext-diff",
       "--no-textconv",
       baseOid,
-      reviewedTreeOid,
+      baseReviewedTreeOid,
       "--",
     ]);
     const changedPaths = parseChangedPaths(
-      await git(run, gitRoot, ["diff", "--name-status", "-z", baseOid, reviewedTreeOid, "--"]),
+      await git(run, gitRoot, ["diff", "--name-status", "-z", baseOid, baseReviewedTreeOid, "--"]),
     );
     const counts = parseCounts(
-      await git(run, gitRoot, ["diff", "--numstat", "-z", baseOid, reviewedTreeOid, "--"]),
+      await git(run, gitRoot, ["diff", "--numstat", "-z", baseOid, baseReviewedTreeOid, "--"]),
     );
 
     const files: PatchFile[] = [];
@@ -147,7 +248,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
         "--no-ext-diff",
         "--no-textconv",
         baseOid,
-        reviewedTreeOid,
+        baseReviewedTreeOid,
         "--",
         ...(changedPath.previousPath === undefined ? [] : [changedPath.previousPath]),
         changedPath.path,

@@ -1,4 +1,4 @@
-import { SourceChips, SpecDeltaBadge } from "../design-meta";
+import { DesignSectionMetadata, SourceChips, SpecDeltaBadge } from "../design-meta";
 import type { ElementOf } from "../registry";
 import { BoardChildren } from "./renderers";
 
@@ -23,6 +23,7 @@ export function SectionElement({ element }: { readonly element: ElementOf<"secti
         {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         <SourceChips sources={sources ?? []} className="ml-auto" />
       </div>
+      <DesignSectionMetadata taskManifest={element.data.task_manifest} />
       <BoardChildren ids={children} />
     </section>
   );

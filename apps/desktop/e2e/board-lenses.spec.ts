@@ -208,16 +208,49 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       ),
     ).toBeVisible();
     const stats = board.locator('[data-kind="board-stats"]');
+    await expect(stats.getByText("Requirements", { exact: true })).toBeVisible();
+    await expect(stats.getByText("1", { exact: true })).toBeVisible();
     await expect(stats.getByText("Capabilities", { exact: true })).toBeVisible();
-    await expect(stats.getByText("1 modified", { exact: true })).toBeVisible();
-    await expect(stats.getByText("Tasks", { exact: true })).toBeVisible();
-    await expect(stats.getByText("2/2", { exact: true })).toBeVisible();
+    await expect(stats.getByText("0 new / 1 modified", { exact: true })).toBeVisible();
+    const designSection = board.locator(
+      '[data-kind="board-section"][data-section-id^="design-section:"]',
+    );
+    await expect(designSection).toBeVisible();
+    const designSectionId = `design-section:${fixture.liveGeneration}:design`;
+    await expect(designSection).toHaveAttribute("id", designSectionId);
+    await expect(designSection).toHaveAttribute("data-section-id", designSectionId);
     const artifactSource = board.locator(
       `[data-kind="artifact-chip"][data-source-path="${BOARD_DESIGN_SPEC_PATH}"]`,
     );
     await expect(artifactSource).toBeVisible();
-    await expect(artifactSource).toBeEnabled();
-    await expect(artifactSource).toHaveAttribute("aria-label", "Open widget/spec.md in editor");
+    await expect(artifactSource).toHaveAttribute("href", `#${designSectionId}`);
+    await expect(artifactSource).toHaveAttribute("data-target-id", designSectionId);
+    await expect(artifactSource).toHaveAttribute("aria-label", "Jump to widget/spec.md");
+    await installScrollProbe(page);
+    const beforeArtifactJump = await currentHash(page);
+    const beforeArtifactHistory = await page.evaluate(() => history.length);
+    await artifactSource.click();
+    expect(await currentHash(page)).toBe(beforeArtifactJump);
+    expect(await page.evaluate(() => history.length)).toBe(beforeArtifactHistory);
+    await expect.poll(() => scrollTargets(page)).toContain(designSectionId);
+    const capabilityGrid = board.getByRole("navigation", { name: "Design capabilities" });
+    const capability = capabilityGrid.getByRole("link", { name: "Jump to widget-value" });
+    await expect(capability).toHaveAttribute("href", `#${designSectionId}`);
+    await expect(capability).toHaveAttribute("data-capability", "widget-value");
+    await expect(capability).toHaveAttribute("data-spec-delta", "modified");
+    await expect(capability).toContainText("1 requirement · 1 scenario");
+    await installScrollProbe(page);
+    const beforeCapabilityJump = await currentHash(page);
+    const beforeCapabilityHistory = await page.evaluate(() => history.length);
+    await capability.click();
+    expect(await currentHash(page)).toBe(beforeCapabilityJump);
+    expect(await page.evaluate(() => history.length)).toBe(beforeCapabilityHistory);
+    await expect.poll(() => scrollTargets(page)).toContain(designSectionId);
+    await expect(
+      designSection.locator(
+        `[data-kind="source-chip"][data-source-path="${BOARD_DESIGN_SPEC_PATH}"][data-source-line="6"]`,
+      ),
+    ).toBeVisible();
     await expect(board.locator(`[data-source-path="${BOARD_DESIGN_DECOY_PATH}"]`)).toHaveCount(0);
     await expect(
       board.getByRole("heading", { name: "Expose the reviewed widget value" }),

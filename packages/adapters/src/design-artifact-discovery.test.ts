@@ -161,9 +161,11 @@ const familyCases: readonly FamilyCase[] = [
       ].join("\n"),
       "planning/prd.md": "# Product\n\n## Requirements\n\nFR1: Work.\n",
       "planning/epics/epic-1-foundation.md": "# Epic 1\n",
+      "planning/epics/epic-2-recovery.md": "# Epic 2\n",
       "planning/architecture.md": "# Architecture\n",
       "planning/architecture/tech-stack.md": "# Tech Stack\n",
-      "planning/stories/1.1.story.md": "# Story 1.1\n\n## Status\n\nDraft\n",
+      "planning/stories/1.1.setup-account.md": "# Story 1.1\n\n## Status\n\nDraft\n",
+      "planning/stories/2.3.reset-password.md": "# Story 2.3\n\n## Status\n\nDraft\n",
     },
     expectedCandidates: [
       {
@@ -173,7 +175,17 @@ const familyCases: readonly FamilyCase[] = [
           { path: "planning/architecture.md", role: "architecture" },
           { path: "planning/architecture/tech-stack.md", role: "architecture" },
           { path: "planning/epics/epic-1-foundation.md", role: "epic" },
-          { path: "planning/stories/1.1.story.md", role: "story" },
+          { path: "planning/stories/1.1.setup-account.md", role: "story" },
+        ],
+      },
+      {
+        name: "Story 2.3",
+        artifacts: [
+          { path: "planning/prd.md", role: "prd" },
+          { path: "planning/architecture.md", role: "architecture" },
+          { path: "planning/architecture/tech-stack.md", role: "architecture" },
+          { path: "planning/epics/epic-2-recovery.md", role: "epic" },
+          { path: "planning/stories/2.3.reset-password.md", role: "story" },
         ],
       },
     ],
@@ -304,6 +316,41 @@ describe("discoverDesignArtifacts", () => {
       name: "Authentication design",
       relevance: { kind: "repository-candidate" },
       artifacts: [{ path, role: "design" }],
+    });
+  });
+
+  it("keeps one single-context glossary and all root ADRs in one candidate", async () => {
+    const repo = repository({
+      "src/change.ts": "export const change = true;\n",
+      "CONTEXT.md": [
+        "# Ordering",
+        "",
+        "## Language",
+        "",
+        "**Order**: A customer's request for goods.",
+        "_Avoid_: Purchase",
+      ].join("\n"),
+      "docs/adr/0001-event-store.md": "# Keep an event store\n\nIt preserves history.\n",
+      "docs/adr/0002-stable-identities.md":
+        "# Keep stable identities\n\nThey preserve disposition anchors.\n",
+    });
+
+    const result = await discoverDesignArtifacts({
+      patchset: patchsetOf({ ...repo, paths: ["src/change.ts"], surface: "github-pr" }),
+      git: execaGit,
+    });
+    const candidates = result?.candidates.filter(
+      (candidate) => candidate.format === "grill-with-docs",
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates?.[0]).toMatchObject({
+      name: "Ordering",
+      artifacts: [
+        { path: "CONTEXT.md", role: "context" },
+        { path: "docs/adr/0001-event-store.md", role: "adr" },
+        { path: "docs/adr/0002-stable-identities.md", role: "adr" },
+      ],
     });
   });
 

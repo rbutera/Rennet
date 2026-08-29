@@ -18,6 +18,12 @@ The workflow classifies every request as **spike**, **bounded**, or **architectu
 | Execution ledger | `<repo-root>/.superpowers/sdd/<plan-basename>/progress.md` | `subagent-driven-development` (git-ignored scratch) |
 | Task briefs / reports / review packages | `<repo-root>/.superpowers/sdd/<plan-basename>/` | `subagent-driven-development` scripts |
 
+For a local review, Rennet makes one narrow exception to normal git-ignore handling:
+it copies matching `.superpowers/sdd/*/progress.md` ledgers into the immutable
+reviewed Git tree at capture time. Sibling briefs, reports, review packages, and
+all other ignored files stay out. Later Design discovery reads only that pinned
+tree, so a changing scratch ledger cannot rewrite an existing review.
+
 User preferences override the default `docs/superpowers/specs` and `docs/superpowers/plans` locations, so a renderer must not hard-code them — discover the file, then parse by shape.
 
 Work runs in an isolated git worktree (`using-git-worktrees`): a native worktree tool if the harness has one, else `.worktrees/<branch>` at the repo root, verified git-ignored before creation.
@@ -125,9 +131,18 @@ A task with a `complete` line is DONE; the first task without one is where execu
 What the Design lens can exploit, in descending order of structural reliability:
 
 - **Plan task/step tree.** `### Task N:` headings and `- [ ]` / `- [x]` steps are a machine-parseable outline. Render it as a collapsible phase→task→step tree with live checkbox state.
-- **File-touch lists.** Each task's `**Files:**` block (Create / Modify / Test, with line ranges on Modify) is a per-task change manifest — render it as a file-impact badge set and cross-link to the diff.
-- **Verification status.** `**Step: Run test to verify it fails/passes**` steps with their `Run:` / `Expected:` pairs are the per-task done criteria — render each as a check with its command and expected result.
-- **Interfaces graph.** `**Interfaces:** Consumes / Produces` blocks name the signatures tasks share — a dependency edge between tasks the lens can draw.
-- **Ledger overlay.** Parse `progress.md` to overlay real completion state onto the static plan: which tasks are complete (with commit ranges), which are mid-fix-loop, and the `Ruling:` decisions — the one place controller decisions surface to a human.
+- **Task manifest.** For a task that maps uniquely to one plan group, the host parses
+  its ordered `**Files:**` operations, `**Interfaces:**` directions, and `Run:` /
+  `Expected:` verification pairs. Before lint and rendering, it strips any
+  drafter-supplied claim and stamps
+  `task_manifest: { files: Array<{ operation, value }>; interfaces: Array<{ direction, value }>; verifications: Array<{ run, expected }> }`
+  onto that group section. The surface renders Files, Interfaces, and Verifications
+  once in that order. Ambiguous metadata stays unprojected rather than being attached
+  to the wrong task.
+- **Architecture and Tech Stack headers.** Before lint and rendering, the host strips
+  any drafter claim and stamps exact source-order `source_cells: string[]` onto the
+  matched decision. The cells validate the source shape; the decision already renders
+  its parsed choice, so the surface does not repeat them separately.
+- **Ledger overlay.** The host accepts `progress.md` only when its exact first line is `# SDD ledger — plan: <selected path>`. It overlays only `Task N: complete (...)` onto that candidate's unchanged plan groups. Same-number tasks in another plan cannot collide; fix-round, minor, and `Ruling:` lines stay visible and grounded but do not count as complete. Without a bound ledger, the plan's static checkbox marks remain authoritative.
 - **Spec sections.** The design doc's Architecture / Components / Data flow / Error handling / Testing topics are conventional, not rigid headings, so treat them as a soft outline (heading match with fallback), not a guaranteed schema.
 - **Header key-values.** The plan's `**Goal:** / **Architecture:** / **Tech Stack:** / **Spec:**` lines and `## Global Constraints` are a reliable metadata card; the `**Spec:**` value is a link to render the design doc alongside the plan.

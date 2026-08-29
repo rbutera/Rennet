@@ -1,3 +1,4 @@
+import { DesignGlossaryTerm, DesignTaskMetadata } from "../design-meta";
 import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId } from "./element-context";
@@ -10,13 +11,20 @@ import { useBoardPatchsetId } from "./element-context";
 
 export function ProseElement({ element }: { readonly element: ElementOf<"prose"> }) {
   const patchsetId = useBoardPatchsetId();
+  const prose = (
+    <QuoteHighlightLayer
+      text={element.data.markdown}
+      elementId={element.id}
+      patchsetId={patchsetId}
+      paragraphClassName="text-sm leading-relaxed text-foreground/90"
+    />
+  );
   return (
     <div data-kind="prose" data-element-id={element.id}>
-      <QuoteHighlightLayer
-        text={element.data.markdown}
-        elementId={element.id}
-        patchsetId={patchsetId}
-        paragraphClassName="text-sm leading-relaxed text-foreground/90"
+      <DesignGlossaryTerm value={element.data.glossary_term} fallback={prose} />
+      <DesignTaskMetadata
+        requirementRefs={element.data.requirement_refs}
+        acceptanceCriteria={element.data.acceptance_criteria}
       />
     </div>
   );

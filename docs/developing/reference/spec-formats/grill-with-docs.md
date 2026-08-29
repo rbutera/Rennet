@@ -195,9 +195,12 @@ actually made.
 What the Design lens can rely on, from most to least structured:
 
 - **CONTEXT.md glossary entries as cards.** The `**Term**:` / definition /
-  `_Avoid_: a, b` triple is a rigid, parseable shape — render each term as a
-  card with its definition and its displaced synonyms badged separately. This is
-  the highest-value parse a Markdown viewer cannot do, and the glossary is the
+  `_Avoid_: a, b` triple is a rigid, parseable shape. Rennet gives each entry one
+  owning prose element containing that exact entry. Before lint and rendering, the
+  host strips any drafter-supplied claim and stamps exact
+  `glossary_term: { term, definition, avoid: string[] }` values onto that prose.
+  The surface renders that structure once in place of duplicate raw prose. This is the
+  highest-value parse a Markdown viewer cannot do, and the glossary is the
   skill's primary output.
 - **CONTEXT-MAP relationships as a graph.** In a multi-context repo the
   `## Relationships` edges (`Ordering → Fulfillment`, `Ordering ↔ Billing`) are

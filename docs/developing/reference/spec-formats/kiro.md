@@ -189,9 +189,11 @@ What the Design lens can rely on, from most to least structured:
   response, and colour or badge the two halves. This is the highest-value parse
   a Markdown viewer cannot do.
 - **Task → requirement traceability.** The `_Requirements: a.b, c.d_` bullet is
-  a machine-readable edge from a task to specific acceptance criteria. A lens
-  can link each task to the criterion cards it satisfies, flag criteria with no
-  covering task (coverage gaps), and flag tasks referencing missing criteria.
+  a machine-readable edge from a task to specific acceptance criteria. Rennet
+  parses those values in source order, strips any drafter-supplied claim, and stamps
+  exact `requirement_refs: string[]` onto the owning task prose element before lint
+  and rendering. The surface renders that host-owned projection once beneath the
+  task.
 - **Progress.** Counting `- [x]` vs `- [ ]` in `tasks.md` (respecting the two
   levels) yields a completion bar for free; the decimal numbering gives the
   task hierarchy.

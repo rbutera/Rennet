@@ -50,6 +50,12 @@ describe("GitCaptureAdapter", () => {
       }
       if (command === "rev-parse --verify origin/main^{commit}") return "base\n";
       if (command === "merge-base origin/main HEAD") return "base\n";
+      if (
+        command ===
+        "ls-files --others --ignored --exclude-standard -z -- :(glob).superpowers/sdd/*/progress.md"
+      ) {
+        return "";
+      }
       if (command === "diff --binary --full-index --no-ext-diff --no-textconv base tree --") {
         return "";
       }
@@ -126,6 +132,56 @@ describe("GitCaptureAdapter", () => {
     expect(patchset.rawDiff).toContain("+untracked");
     expect(patchset.rawDiff).not.toContain("ignored\n");
     expect(readFileSync(join(root, "tracked.txt"), "utf8")).toBe("after\n");
+  });
+
+  it("captures only ignored Superpowers progress ledgers in the immutable reviewed tree", async () => {
+    const root = repository();
+    writeFileSync(join(root, ".gitignore"), ".superpowers/\nignored.txt\n");
+    mkdirSync(join(root, ".superpowers", "sdd", "search", "nested"), { recursive: true });
+    mkdirSync(join(root, ".superpowers", "sdd", "billing"), { recursive: true });
+    mkdirSync(join(root, ".superpowers", "other"), { recursive: true });
+    writeFileSync(
+      join(root, ".superpowers", "sdd", "search", "progress.md"),
+      "captured search progress\n",
+    );
+    writeFileSync(
+      join(root, ".superpowers", "sdd", "billing", "progress.md"),
+      "captured billing progress\n",
+    );
+    writeFileSync(join(root, ".superpowers", "sdd", "search", "review.md"), "private review\n");
+    writeFileSync(
+      join(root, ".superpowers", "sdd", "search", "nested", "progress.md"),
+      "nested decoy\n",
+    );
+    writeFileSync(join(root, ".superpowers", "other", "progress.md"), "other decoy\n");
+    writeFileSync(join(root, "ignored.txt"), "unrelated ignored content\n");
+    const statusBefore = git(root, "status", "--porcelain=v1", "-z");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+    const reviewedTree = patchset.repository.reviewedTreeOid;
+    if (reviewedTree === undefined) throw new Error("capture omitted reviewedTreeOid");
+    const treePaths = git(root, "ls-tree", "-r", "--name-only", reviewedTree).trim().split("\n");
+
+    expect(treePaths).toContain(".superpowers/sdd/search/progress.md");
+    expect(treePaths).toContain(".superpowers/sdd/billing/progress.md");
+    expect(treePaths).not.toContain(".superpowers/sdd/search/review.md");
+    expect(treePaths).not.toContain(".superpowers/sdd/search/nested/progress.md");
+    expect(treePaths).not.toContain(".superpowers/other/progress.md");
+    expect(treePaths).not.toContain("ignored.txt");
+    expect(patchset.files.map((file) => file.path)).toEqual([".gitignore"]);
+    expect(patchset.rawDiff).not.toContain("captured search progress");
+    expect(patchset.rawDiff).not.toContain("captured billing progress");
+    expect(patchset.rawDiff).not.toContain("private review");
+    expect(patchset.rawDiff).not.toContain("unrelated ignored content");
+    expect(git(root, "status", "--porcelain=v1", "-z")).toBe(statusBefore);
+
+    writeFileSync(
+      join(root, ".superpowers", "sdd", "search", "progress.md"),
+      "later mutable progress\n",
+    );
+    expect(git(root, "show", `${reviewedTree}:.superpowers/sdd/search/progress.md`)).toBe(
+      "captured search progress\n",
+    );
   });
 
   it("captures the head BRANCH ref (#107) — the ref an own-branch PR opens against", async () => {

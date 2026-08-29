@@ -382,7 +382,8 @@ export interface BoardRegenerationDeps {
    *  citation past the diff. Rejecting/throwing degrades to the diff-derived
    *  inventories rather than failing the regeneration. */
   readonly fileInventory?: (patchset: Patchset) => Promise<TreeInventories>;
-  /** Deterministic spec discovery at the reviewed state; null is a successful no-spec result. */
+  /** Deterministic spec discovery at the reviewed state; null is a successful no-spec result.
+   *  A throw settles Design as failed while the other lenses continue. */
   readonly designArtifactsFor?: (patchset: Patchset) => Promise<DesignArtifactSet | null>;
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
@@ -397,6 +398,29 @@ export interface BoardRegenerationInput {
   readonly asksDispatched: readonly string[];
   /** What the worker turn produced: its commit range, and a patchset id iff HEAD moved. */
   readonly worked: WorkerReturn;
+}
+
+type DesignArtifactDiscovery =
+  | { readonly status: "legacy" }
+  | { readonly status: "available"; readonly artifacts: DesignArtifactSet | null }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+/** Preserve the semantic difference between an old host, a completed pinned read,
+ *  and a pinned read that failed. Only the old host may use legacy repo discovery. */
+async function discoverDesignArtifactsFor(
+  reader: BoardRegenerationDeps["designArtifactsFor"],
+  patchset: Patchset,
+): Promise<DesignArtifactDiscovery> {
+  if (reader === undefined) return { status: "legacy" };
+  try {
+    return { status: "available", artifacts: await reader(patchset) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      status: "unavailable",
+      reason: `Design artifact discovery failed for the pinned reviewed tree: ${detail}`,
+    };
+  }
 }
 
 /**
@@ -442,13 +466,22 @@ export async function runBoardRegeneration(
     } catch {
       tree = undefined;
     }
-    let designArtifacts: DesignArtifactSet | null | undefined;
-    try {
-      designArtifacts = await deps.designArtifactsFor?.(successor);
-    } catch {
-      // Discovery is an input enrichment, not a review gate. Undefined keeps the
-      // drafter's legacy repo-reading path; null alone means discovery proved no spec.
-      designArtifacts = undefined;
+    const designDiscovery = await discoverDesignArtifactsFor(deps.designArtifactsFor, successor);
+    let designArtifactInput: Pick<RoundInput, "designArtifacts" | "designArtifactFailure">;
+    switch (designDiscovery.status) {
+      case "legacy":
+        designArtifactInput = {};
+        break;
+      case "available":
+        designArtifactInput = { designArtifacts: designDiscovery.artifacts };
+        break;
+      case "unavailable":
+        designArtifactInput = { designArtifactFailure: designDiscovery.reason };
+        break;
+      default: {
+        const exhaustive: never = designDiscovery;
+        return exhaustive;
+      }
     }
     const collation = assembleRoundCollation({
       patchset: successor,
@@ -478,7 +511,7 @@ export async function runBoardRegeneration(
         ...(landed ? { patchsetId: successor.id } : {}),
       }),
       onProgress: deps.emit,
-      ...(designArtifacts === undefined ? {} : { designArtifacts }),
+      ...designArtifactInput,
       ...collation,
     });
   } catch (error) {

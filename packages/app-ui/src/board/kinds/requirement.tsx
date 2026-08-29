@@ -2,7 +2,7 @@ import { cn } from "@rennet/ui";
 import { Link2 } from "lucide-react";
 import { Icon } from "../../components/icon";
 import { AnchorReveal } from "../../review";
-import { SourceChips, SpecDeltaBadge } from "../design-meta";
+import { SourceChips, SpecDeltaBadge, StoryStatus } from "../design-meta";
 import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context";
@@ -54,6 +54,17 @@ function CoverageChip({
   );
 }
 
+function scenarioClauses(
+  element: ElementOf<"prose">,
+): { readonly condition: string; readonly response: string } | undefined {
+  const value = (element.data as { scenario_clauses?: unknown }).scenario_clauses;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const clauses = value as Record<string, unknown>;
+  return typeof clauses.condition === "string" && typeof clauses.response === "string"
+    ? { condition: clauses.condition, response: clauses.response }
+    : undefined;
+}
+
 export function RequirementElement({ element }: { readonly element: ElementOf<"requirement"> }) {
   const {
     shall,
@@ -66,6 +77,7 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
     coverage,
     trace,
     tests,
+    status,
   } = element.data;
   const patchsetId = useBoardPatchsetId();
   const citations = useCodeRefs(trace ?? []);
@@ -78,12 +90,13 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
       className="flex flex-col gap-2"
     >
-      {name || capability || specDelta ? (
+      {name || capability || specDelta || status ? (
         <div className="flex flex-wrap items-center gap-2">
           {name ? <h3 className="font-semibold text-base text-foreground">{name}</h3> : null}
           {capability ? (
             <span className="font-mono text-xs text-muted-foreground">{capability}</span>
           ) : null}
+          <StoryStatus status={status} />
           {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         </div>
       ) : null}
@@ -99,11 +112,31 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
           data-kind="requirement-scenarios"
           className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60"
         >
-          {scenarioElements.map((scenario) => (
-            <li key={scenario.id} data-scenario-ref={scenario.id} className="pl-0.5">
-              <BoardElement element={scenario} />
-            </li>
-          ))}
+          {scenarioElements.map((scenario) => {
+            const clauses = scenario.kind === "prose" ? scenarioClauses(scenario) : undefined;
+            return (
+              <li key={scenario.id} data-scenario-ref={scenario.id} className="pl-0.5">
+                {clauses ? (
+                  <dl
+                    data-kind="scenario-clauses"
+                    data-element-id={scenario.id}
+                    className="mt-1 grid gap-x-3 gap-y-1 text-xs sm:grid-cols-[auto_1fr]"
+                  >
+                    <dt className="font-medium text-muted-foreground">Trigger</dt>
+                    <dd data-scenario-clause="condition" className="text-foreground/80">
+                      {clauses.condition}
+                    </dd>
+                    <dt className="font-medium text-muted-foreground">Outcome</dt>
+                    <dd data-scenario-clause="response" className="text-foreground/80">
+                      {clauses.response}
+                    </dd>
+                  </dl>
+                ) : (
+                  <BoardElement element={scenario} />
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       {coverage !== undefined || source !== undefined || (relatedFiles?.length ?? 0) > 0 ? (

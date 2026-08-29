@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 import type { HostElement, LensBoard } from "@rennet/protocol";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
 import { MemoryBridge, refusesSpanRead } from "../test/memory-bridge";
 import { LensBoardView } from "./board-view";
+import { DesignCapabilityGrid } from "./design-structure";
 import { BoardElement, BoardElementsProvider } from "./kinds";
 import { Section } from "./section";
 
@@ -14,7 +15,7 @@ const author = { kind: "lens-agent", id: "lens:design" } as const;
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
 describe("Design board document metadata", () => {
-  it("renders header stats, jumps from the artifact chip, and opens the exact section source", async () => {
+  it("renders header stats, targets the topology source root, and reveals it before scrolling", async () => {
     const board: LensBoard = {
       lens: "design",
       generation: "gen-design",
@@ -24,6 +25,7 @@ describe("Design board document metadata", () => {
         introMarkdown: "The proposal adds observable refresh outcomes.",
         measure: "structured",
         stats: [
+          { label: "Format", value: "OpenSpec" },
           { label: "Capabilities", value: "2 added · 1 modified" },
           { label: "Tasks", value: "11/13" },
         ],
@@ -38,12 +40,28 @@ describe("Design board document metadata", () => {
       sections: [{ ref: "design-source", gist: "Refresh design.", counts: {} }],
       elements: [
         {
+          id: "nested-source-repeat",
+          kind: "section",
+          data: {
+            author,
+            title: "Nested design detail",
+            children: [],
+            sources: [
+              {
+                path: "openspec/changes/refresh/design.md",
+                label: "nested design.md",
+                line: 14,
+              },
+            ],
+          },
+        },
+        {
           id: "design-source",
           kind: "section",
           data: {
             author,
             title: "Design",
-            children: [],
+            children: ["nested-source-repeat"],
             sources: [
               {
                 path: "openspec/changes/refresh/design.md",
@@ -73,10 +91,35 @@ describe("Design board document metadata", () => {
     );
 
     expect(await view.findByText("2 added · 1 modified")).toBeTruthy();
-    expect(view.getByText("11/13")).toBeTruthy();
-    expect(view.getByRole("link", { name: "Jump to design.md" }).getAttribute("href")).toBe(
-      "#design-source",
+    expect(view.container.querySelector('[data-kind="design-format"]')?.textContent).toContain(
+      "OpenSpec",
     );
+    expect(view.getByText("11/13")).toBeTruthy();
+    const artifactJump = view.getByRole("link", { name: "Jump to design.md" });
+    expect(artifactJump.getAttribute("href")).toBe("#design-source");
+    const designSource = view.container.querySelector<HTMLElement>("#design-source");
+    if (designSource === null) throw new Error("Design source section did not render");
+    const sourceScroll = vi.fn();
+    Object.defineProperty(designSource, "scrollIntoView", { value: sourceScroll });
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const animationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
+    history.replaceState(null, "", "#/s/review-design?lens=design");
+    const historyLength = history.length;
+    expect(designSource.getAttribute("data-open")).toBe("false");
+    await view.user.click(artifactJump);
+    expect(location.hash).toBe("#/s/review-design?lens=design");
+    expect(history.length).toBe(historyLength);
+    expect(designSource.getAttribute("data-open")).toBe("true");
+    expect(sourceScroll).not.toHaveBeenCalled();
+    expect(frameCallbacks).toHaveLength(1);
+    frameCallbacks[0]?.(0);
+    expect(sourceScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    animationFrame.mockRestore();
     await view.user.click(view.getByRole("button", { name: "Open design.md in editor" }));
     await waitFor(() =>
       expect(opened).toEqual([
@@ -141,7 +184,7 @@ describe("Design board document metadata", () => {
         data: {
           author,
           title: "Refresh observability",
-          children: ["req-attempt", "req-outcome", "scenario-attempt", "scenario-outcome"],
+          children: ["req-attempt", "req-outcome"],
           spec_delta: "added",
         },
       },
@@ -172,7 +215,14 @@ describe("Design board document metadata", () => {
       {
         id: "scenario-attempt",
         kind: "prose",
-        data: { author, markdown: "WHEN refresh begins THEN an attempt is recorded." },
+        data: {
+          author,
+          markdown: "WHEN refresh begins THEN an attempt is recorded.",
+          scenario_clauses: {
+            condition: "refresh begins",
+            response: "an attempt is recorded.",
+          },
+        },
       },
       {
         id: "scenario-outcome",
@@ -214,6 +264,12 @@ describe("Design board document metadata", () => {
           title: "Tasks",
           children: ["record-type", "field-proof"],
           sources: [{ path: "openspec/changes/refresh/tasks.md" }],
+          task_progress: {
+            kind: "source",
+            format: "openspec",
+            role: "tasks",
+            layout: "grouped",
+          },
         },
       },
       {
@@ -223,6 +279,7 @@ describe("Design board document metadata", () => {
           author,
           title: "1 · Secret-free record type",
           children: ["task-record", "task-export"],
+          task_progress: { kind: "group", state: "static" },
         },
       },
       {
@@ -242,6 +299,7 @@ describe("Design board document metadata", () => {
           author,
           title: "2 · Field proof",
           children: ["task-run", "task-capture"],
+          task_progress: { kind: "group", state: "static" },
         },
       },
       {
@@ -309,14 +367,39 @@ describe("Design board document metadata", () => {
     const added = capabilityGrid?.querySelector<HTMLAnchorElement>(
       '[data-capability="refresh-observability"]',
     );
+    if (added === undefined || added === null) throw new Error("Added capability did not render");
     expect(added?.getAttribute("href")).toBe("#refresh-observability");
     expect(added?.className).toContain("border-l-green-line");
     expect(added?.textContent).toContain("2 requirements · 3 scenarios");
     expect(capabilityGrid?.querySelector('[data-capability="github-auth"]')?.textContent).toContain(
       "1 requirement · 0 scenarios",
     );
+    expect(view.container.querySelectorAll('[data-element-id="scenario-attempt"]')).toHaveLength(1);
+    expect(view.container.querySelector('[data-scenario-clause="condition"]')?.textContent).toBe(
+      "refresh begins",
+    );
+    expect(view.container.querySelector('[data-scenario-clause="response"]')?.textContent).toBe(
+      "an attempt is recorded.",
+    );
+    expect(view.getAllByText("refresh begins")).toHaveLength(1);
+    expect(view.getAllByText("an attempt is recorded.")).toHaveLength(1);
+    expect(
+      view.container.querySelector('[data-element-id="scenario-outcome"]')?.textContent,
+    ).toContain("WHEN refresh succeeds THEN persisted is recorded.");
+
+    const capabilityTarget = view.container.querySelector<HTMLElement>("#refresh-observability");
+    if (capabilityTarget === null) throw new Error("Capability section did not render");
+    const capabilityScroll = vi.fn();
+    Object.defineProperty(capabilityTarget, "scrollIntoView", { value: capabilityScroll });
+    history.replaceState(null, "", "#/s/review-structure?lens=design");
+    const historyLength = history.length;
+    await view.user.click(added);
+    expect(location.hash).toBe("#/s/review-structure?lens=design");
+    expect(history.length).toBe(historyLength);
+    expect(capabilityScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
 
     const progress = view.container.querySelector('[data-kind="task-progress"]');
+    expect(view.container.querySelectorAll('[data-kind="task-progress"]')).toHaveLength(1);
     const bars = progress?.querySelectorAll('[role="progressbar"]');
     expect(bars).toHaveLength(2);
     expect(bars?.[0]?.getAttribute("aria-valuenow")).toBe("2");
@@ -325,9 +408,812 @@ describe("Design board document metadata", () => {
     expect(bars?.[1]?.getAttribute("aria-valuenow")).toBe("1");
     expect(progress?.textContent).toContain("3/4");
   });
+
+  it("shows nested host-derived ledger groups once without rewriting plan checkboxes", async () => {
+    const planSource = { path: "docs/superpowers/plans/2026-08-29-search.md" };
+    const elements: HostElement[] = [
+      {
+        id: "implementation-plan",
+        kind: "section",
+        data: {
+          author,
+          title: "Search Implementation Plan",
+          children: ["plan-source-repeat"],
+          sources: [planSource],
+          task_progress: {
+            kind: "source",
+            format: "superpowers",
+            role: "plan",
+            layout: "grouped",
+          },
+        },
+      },
+      {
+        id: "plan-source-repeat",
+        kind: "section",
+        data: {
+          author,
+          title: "Implementation details",
+          children: ["task-one", "task-two"],
+          sources: [planSource],
+        },
+      },
+      {
+        id: "task-one",
+        kind: "section",
+        data: {
+          author,
+          title: "Task 1: Index records",
+          children: ["step-one"],
+          task_progress: { kind: "group", state: "complete" },
+        },
+      },
+      {
+        id: "step-one",
+        kind: "prose",
+        data: { author, markdown: "- [ ] Write the failing test" },
+      },
+      {
+        id: "task-two",
+        kind: "section",
+        data: {
+          author,
+          title: "Task 2: Query records",
+          children: ["step-two"],
+          task_progress: { kind: "group", state: "incomplete" },
+        },
+      },
+      {
+        id: "step-two",
+        kind: "prose",
+        data: { author, markdown: "- [ ] Write the query test" },
+      },
+    ];
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-superpowers",
+      boardId: "board-superpowers",
+      document: {
+        title: "Search",
+        introMarkdown: "Add indexed search.",
+        measure: "structured",
+      },
+      sections: [{ ref: "implementation-plan", gist: "Implement search.", counts: {} }],
+      elements,
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": ({ generation, lens }) => ({
+              board: generation === board.generation && lens === "design" ? board : null,
+            }),
+          })
+        }
+      >
+        <LensBoardView reviewId="review-superpowers" generation={board.generation} lens="design" />
+      </BridgeProvider>,
+    );
+
+    expect(await view.findByText("Tasks · 1/2")).toBeTruthy();
+    expect(view.container.querySelectorAll('[data-kind="task-progress"]')).toHaveLength(1);
+    expect(
+      view.container.querySelectorAll('[data-kind="task-progress"] [role="progressbar"]'),
+    ).toHaveLength(2);
+    expect(
+      view.getByRole("progressbar", { name: "Task 1: Index records: 1 of 1 tasks complete" }),
+    ).toBeTruthy();
+    expect(
+      view.getByRole("progressbar", { name: "Task 2: Query records: 0 of 1 tasks complete" }),
+    ).toBeTruthy();
+    expect(view.getByText("[ ] Write the failing test")).toBeTruthy();
+    expect(view.getByText("[ ] Write the query test")).toBeTruthy();
+  });
+
+  it("does not turn a source-linked Design checklist into task progress", async () => {
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-design-checklist",
+      boardId: "board-design-checklist",
+      document: {
+        title: "Search design",
+        introMarkdown: "The design records follow-up questions.",
+        measure: "structured",
+      },
+      sections: [{ ref: "design-notes", gist: "Design notes.", counts: {} }],
+      elements: [
+        {
+          id: "design-notes",
+          kind: "section",
+          data: {
+            author,
+            title: "Design",
+            children: ["design-checklist"],
+            sources: [{ path: "docs/superpowers/specs/2026-08-29-search-design.md" }],
+          },
+        },
+        {
+          id: "design-checklist",
+          kind: "prose",
+          data: { author, markdown: "- [ ] Revisit the storage alternative after launch." },
+        },
+      ],
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": ({ generation, lens }) => ({
+              board: generation === board.generation && lens === "design" ? board : null,
+            }),
+          })
+        }
+      >
+        <LensBoardView
+          reviewId="review-design-checklist"
+          generation={board.generation}
+          lens="design"
+        />
+      </BridgeProvider>,
+    );
+
+    await view.user.click(await view.findByRole("button", { name: "Design" }));
+    expect(await view.findByText("[ ] Revisit the storage alternative after launch.")).toBeTruthy();
+    expect(view.container.querySelector('[data-kind="task-progress"]')).toBeNull();
+  });
 });
 
 describe("Design section metadata", () => {
+  it("renders each format's structured metadata once and preserves source order", () => {
+    const elements: HostElement[] = [
+      {
+        id: "kiro-task",
+        kind: "prose",
+        data: {
+          author,
+          markdown: "- [ ] Persist the reviewed tree.",
+          requirement_refs: ["REQ-3.2", "REQ-1.1", "REQ-3.2"],
+        },
+      },
+      {
+        id: "bmad-story",
+        kind: "requirement",
+        data: {
+          author,
+          name: "Review the immutable tree",
+          shall: "The reviewer SHALL see the captured specification.",
+          status: "InProgress",
+        },
+      },
+      {
+        id: "bmad-task",
+        kind: "prose",
+        data: {
+          author,
+          markdown: "- [ ] Render the story metadata.",
+          acceptance_criteria: ["AC-4", "AC-2", "AC-4"],
+        },
+      },
+      {
+        id: "superpowers-task",
+        kind: "section",
+        data: {
+          author,
+          title: "Task 2: Render metadata",
+          children: ["superpowers-step"],
+          task_manifest: {
+            files: [
+              { operation: "Modify", value: "packages/app-ui/src/board/design-meta.tsx" },
+              { operation: "Test", value: "packages/app-ui/src/board/design-surface.dom.test.tsx" },
+            ],
+            interfaces: [
+              { direction: "Produces", value: "DesignSectionMetadata" },
+              { direction: "Consumes", value: "task_manifest" },
+            ],
+            verifications: [
+              { run: "pnpm nx test rennet-app-ui", expected: "metadata tests pass" },
+              { run: "pnpm check", expected: "the full gate passes" },
+            ],
+          },
+        },
+      },
+      {
+        id: "superpowers-step",
+        kind: "prose",
+        data: { author, markdown: "- [ ] Render the manifest once." },
+      },
+      {
+        id: "glossary",
+        kind: "section",
+        data: {
+          author,
+          title: "Glossary",
+          children: ["glossary-review"],
+        },
+      },
+      {
+        id: "glossary-review",
+        kind: "prose",
+        data: {
+          author,
+          markdown:
+            "**Review**: The immutable patchset and its attached judgment. _Avoid_: audit, approval, audit",
+          glossary_term: {
+            term: "Review",
+            definition: "The immutable patchset and its attached judgment.",
+            avoid: ["audit", "approval", "audit"],
+          },
+        },
+      },
+    ];
+    const roots = elements.filter(
+      ({ id }) => id !== "superpowers-step" && id !== "glossary-review",
+    );
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider elements={elements} reviewId="review-format-metadata">
+          {roots.map((element) => (
+            <BoardElement key={element.id} element={element} />
+          ))}
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+
+    expect(view.container.querySelectorAll('[data-kind="requirement-refs"]')).toHaveLength(1);
+    expect(
+      view.container.querySelector('[data-element-id="kiro-task"] [data-kind="requirement-refs"]'),
+    ).toBeTruthy();
+    expect(
+      [...view.container.querySelectorAll("[data-requirement-ref]")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["REQ-3.2", "REQ-1.1", "REQ-3.2"]);
+
+    const status = view.container.querySelector('[data-kind="story-status"]');
+    expect(
+      view.container.querySelector('[data-element-id="bmad-story"] [data-kind="story-status"]'),
+    ).toBe(status);
+    expect(status?.getAttribute("data-status")).toBe("InProgress");
+    expect(view.getAllByText("InProgress")).toHaveLength(1);
+
+    expect(view.container.querySelectorAll('[data-kind="acceptance-criteria"]')).toHaveLength(1);
+    expect(
+      view.container.querySelector(
+        '[data-element-id="bmad-task"] [data-kind="acceptance-criteria"]',
+      ),
+    ).toBeTruthy();
+    expect(
+      [...view.container.querySelectorAll("[data-acceptance-criterion]")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["AC-4", "AC-2", "AC-4"]);
+
+    const manifest = view.container.querySelector('[data-kind="task-manifest"]');
+    expect(view.container.querySelectorAll('[data-kind="task-manifest"]')).toHaveLength(1);
+    expect(
+      view.container.querySelector(
+        '[data-element-id="superpowers-task"] > [data-kind="task-manifest"]',
+      ),
+    ).toBe(manifest);
+    expect(
+      [...(manifest?.querySelectorAll("[data-manifest-part]") ?? [])].map((node) =>
+        node.getAttribute("data-manifest-part"),
+      ),
+    ).toEqual(["files", "interfaces", "verifications"]);
+    expect(
+      [
+        ...(manifest?.querySelectorAll('[data-manifest-part="files"] [data-manifest-entry]') ?? []),
+      ].map((node) => node.textContent),
+    ).toEqual([
+      "Modifypackages/app-ui/src/board/design-meta.tsx",
+      "Testpackages/app-ui/src/board/design-surface.dom.test.tsx",
+    ]);
+    expect(
+      [
+        ...(manifest?.querySelectorAll('[data-manifest-part="interfaces"] [data-manifest-entry]') ??
+          []),
+      ].map((node) => node.textContent),
+    ).toEqual(["ProducesDesignSectionMetadata", "Consumestask_manifest"]);
+    expect(
+      [...(manifest?.querySelectorAll('[data-manifest-part="verifications"] code') ?? [])].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["pnpm nx test rennet-app-ui", "pnpm check"]);
+    expect(view.getAllByText("metadata tests pass")).toHaveLength(1);
+    expect(view.getAllByText("the full gate passes")).toHaveLength(1);
+
+    const glossary = view.container.querySelector('[data-kind="glossary-term"]');
+    expect(view.container.querySelectorAll('[data-kind="glossary-term"]')).toHaveLength(1);
+    expect(
+      view.container.querySelector(
+        '[data-element-id="glossary-review"] > [data-kind="glossary-term"]',
+      ),
+    ).toBe(glossary);
+    expect(
+      view.container.querySelector('[data-element-id="glossary"] > [data-kind="glossary-term"]'),
+    ).toBeNull();
+    expect(view.getAllByText("Review")).toHaveLength(1);
+    expect(view.getAllByText("The immutable patchset and its attached judgment.")).toHaveLength(1);
+    const renderedText = glossary?.textContent ?? "";
+    expect(renderedText.split("Review")).toHaveLength(2);
+    expect(renderedText.split("The immutable patchset and its attached judgment.")).toHaveLength(2);
+    expect(
+      [...(glossary?.querySelectorAll("[data-glossary-avoid]") ?? [])].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["audit", "approval", "audit"]);
+  });
+
+  it("drops malformed format projections instead of presenting partial metadata", () => {
+    const elements: HostElement[] = [
+      {
+        id: "malformed-task",
+        kind: "prose",
+        data: {
+          author,
+          markdown: "- [ ] Keep malformed host data out of the surface.",
+          requirement_refs: ["REQ-1", 2],
+          acceptance_criteria: "AC-1",
+          glossary_term: {
+            term: "Review",
+            definition: "A grounded judgment.",
+            avoid: "approval",
+          },
+        },
+      },
+      {
+        id: "malformed-story",
+        kind: "requirement",
+        data: {
+          author,
+          shall: "The board SHALL ignore malformed story metadata.",
+          status: { value: "Done" },
+        },
+      },
+      {
+        id: "malformed-group",
+        kind: "section",
+        data: {
+          author,
+          title: "Malformed metadata",
+          children: [],
+          task_manifest: {
+            files: [{ operation: "Modify", value: "packages/app-ui" }],
+            interfaces: [{ direction: "Produces" }],
+            verifications: [],
+          },
+        },
+      },
+    ];
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider elements={elements} reviewId="review-malformed-metadata">
+          {elements.map((element) => (
+            <BoardElement key={element.id} element={element} />
+          ))}
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+
+    expect(view.container.querySelector('[data-kind="requirement-refs"]')).toBeNull();
+    expect(view.container.querySelector('[data-kind="acceptance-criteria"]')).toBeNull();
+    expect(view.container.querySelector('[data-kind="story-status"]')).toBeNull();
+    expect(view.container.querySelector('[data-kind="task-manifest"]')).toBeNull();
+    expect(view.container.querySelector('[data-kind="glossary-term"]')).toBeNull();
+    expect(view.getByText("[ ] Keep malformed host data out of the surface.")).toBeTruthy();
+  });
+
+  it("groups BMAD capabilities in topology order and reveals a folded nested target", async () => {
+    const prdSource = { path: "planning/prd.md", candidate: "bmad-product" };
+    const elements: HostElement[] = [
+      {
+        id: "nfr1",
+        kind: "requirement",
+        data: {
+          author,
+          capability: "non-functional",
+          shall: "Session restoration completes within 500 ms.",
+          scenarios: [],
+        },
+      },
+      {
+        id: "non-functional",
+        kind: "section",
+        data: {
+          author,
+          title: "Non Functional Requirements",
+          children: ["nfr1"],
+        },
+      },
+      {
+        id: "fr1",
+        kind: "requirement",
+        data: {
+          author,
+          capability: "functional",
+          shall: "The application restores the last session.",
+          scenarios: [],
+        },
+      },
+      {
+        id: "functional",
+        kind: "section",
+        data: {
+          author,
+          title: "Functional Requirements",
+          children: ["fr1"],
+        },
+      },
+      {
+        id: "prd",
+        kind: "section",
+        data: {
+          author,
+          title: "Product requirements",
+          children: ["functional", "non-functional"],
+          sources: [prdSource],
+        },
+      },
+    ];
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-bmad-capabilities",
+      boardId: "board-bmad-capabilities",
+      document: {
+        title: "Product",
+        introMarkdown: "The product restores sessions within its performance budget.",
+        measure: "structured",
+        stats: [
+          { label: "Format", value: "BMAD" },
+          { label: "Requirements", value: "2" },
+        ],
+        sources: [prdSource],
+      },
+      sections: [{ ref: "prd", gist: "Product requirements.", counts: { requirements: 2 } }],
+      elements,
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": ({ generation, lens }) => ({
+              board: generation === board.generation && lens === "design" ? board : null,
+            }),
+          })
+        }
+      >
+        <LensBoardView reviewId="review-bmad" generation={board.generation} lens="design" />
+      </BridgeProvider>,
+    );
+
+    expect(await view.findByText("Capabilities")).toBeTruthy();
+    const cards = [
+      ...view.container.querySelectorAll<HTMLAnchorElement>(
+        '[data-kind="capability-grid"] [data-capability]',
+      ),
+    ];
+    expect(cards.map((card) => card.getAttribute("data-capability"))).toEqual([
+      "functional",
+      "non-functional",
+    ]);
+    expect(cards.map((card) => card.getAttribute("href"))).toEqual([
+      "#functional",
+      "#non-functional",
+    ]);
+    expect(
+      cards.every(
+        (card) =>
+          card.getAttribute("data-spec-delta") === null &&
+          card.getAttribute("data-spec-deltas") === null &&
+          card.querySelector('[data-kind="spec-delta"]') === null,
+      ),
+    ).toBe(true);
+
+    const root = view.container.querySelector<HTMLElement>("#prd");
+    const target = view.container.querySelector<HTMLElement>("#non-functional");
+    if (root === null || target === null)
+      throw new Error("BMAD capability topology did not render");
+    const targetScroll = vi.fn();
+    Object.defineProperty(target, "scrollIntoView", { value: targetScroll });
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const animationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
+
+    expect(root.getAttribute("data-open")).toBe("false");
+    await view.user.click(cards[1] as HTMLAnchorElement);
+    expect(root.getAttribute("data-open")).toBe("true");
+    expect(targetScroll).not.toHaveBeenCalled();
+    expect(frameCallbacks).toHaveLength(1);
+    frameCallbacks[0]?.(0);
+    expect(targetScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    animationFrame.mockRestore();
+  });
+
+  it("targets a BMAD story capability at its named source root", async () => {
+    const storySource = { path: "docs/stories/1.1.restore-sessions.md", candidate: "bmad-story" };
+    const elements: HostElement[] = [
+      {
+        id: "story-requirement",
+        kind: "requirement",
+        data: {
+          author,
+          capability: "story:1.1",
+          shall: "The application SHALL restore the last session.",
+          scenarios: [],
+        },
+      },
+      {
+        id: "story-requirements",
+        kind: "section",
+        data: {
+          author,
+          title: "Requirements",
+          children: ["story-requirement"],
+        },
+      },
+      {
+        id: "story-details",
+        kind: "section",
+        data: {
+          author,
+          title: "Story",
+          children: ["story-requirements"],
+        },
+      },
+      {
+        id: "story-source",
+        kind: "section",
+        data: {
+          author,
+          title: "Story 1.1: Restore sessions",
+          children: ["story-details"],
+          sources: [storySource],
+        },
+      },
+    ];
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-bmad-story-capability",
+      boardId: "board-bmad-story-capability",
+      document: {
+        title: "Restore sessions",
+        introMarkdown: "Restore the reviewer's last session.",
+        measure: "structured",
+        stats: [{ label: "Format", value: "BMAD" }],
+        sources: [storySource],
+      },
+      sections: [{ ref: "story-source", gist: "Restore sessions.", counts: { requirements: 1 } }],
+      elements,
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": ({ generation, lens }) => ({
+              board: generation === board.generation && lens === "design" ? board : null,
+            }),
+          })
+        }
+      >
+        <LensBoardView reviewId="review-bmad-story" generation={board.generation} lens="design" />
+      </BridgeProvider>,
+    );
+
+    const card = await view.findByRole("link", { name: "Jump to story:1.1" });
+    expect(card.getAttribute("href")).toBe("#story-source");
+    const root = view.container.querySelector<HTMLElement>("#story-source");
+    const nested = view.container.querySelector<HTMLElement>("#story-requirements");
+    if (root === null || nested === null) throw new Error("BMAD story topology did not render");
+    const rootScroll = vi.fn();
+    const nestedScroll = vi.fn();
+    Object.defineProperty(root, "scrollIntoView", { value: rootScroll });
+    Object.defineProperty(nested, "scrollIntoView", { value: nestedScroll });
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const animationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
+
+    expect(root.getAttribute("data-open")).toBe("false");
+    await view.user.click(card);
+    expect(root.getAttribute("data-open")).toBe("true");
+    expect(frameCallbacks).toHaveLength(1);
+    frameCallbacks[0]?.(0);
+    expect(rootScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(nestedScroll).not.toHaveBeenCalled();
+    animationFrame.mockRestore();
+  });
+
+  it("targets a single OpenSpec requirement at its capability root", () => {
+    const elements: HostElement[] = [
+      {
+        id: "session-capability",
+        kind: "section",
+        data: {
+          author,
+          title: "Session",
+          children: ["added-operation"],
+          spec_delta: "added",
+        },
+      },
+      {
+        id: "added-operation",
+        kind: "section",
+        data: {
+          author,
+          title: "ADDED Requirements",
+          children: ["session-requirement"],
+          spec_delta: "added",
+        },
+      },
+      {
+        id: "session-requirement",
+        kind: "requirement",
+        data: {
+          author,
+          capability: "session",
+          shall: "The daemon SHALL preserve the session.",
+          scenarios: [],
+          spec_delta: "added",
+        },
+      },
+    ];
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-single-capability",
+      boardId: "board-single-capability",
+      document: {
+        title: "Session",
+        introMarkdown: "Preserve the session.",
+        measure: "structured",
+        sources: [],
+      },
+      sections: [{ ref: "session-capability", gist: "Preserve sessions.", counts: {} }],
+      elements,
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider
+          elements={elements}
+          reviewId="review-single-capability"
+          boardId={board.boardId}
+        >
+          <DesignCapabilityGrid board={board} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+
+    const card = view.container.querySelector<HTMLAnchorElement>(
+      '[data-kind="capability-grid"] [data-capability="session"]',
+    );
+    expect(card?.getAttribute("href")).toBe("#session-capability");
+  });
+
+  it("renders one mixed-delta capability card with ordered operation badges", () => {
+    const capability: HostElement = {
+      id: "session-capability",
+      kind: "section",
+      data: {
+        author,
+        title: "Session",
+        children: ["modified-operation", "added-operation"],
+      },
+    };
+    const elements: HostElement[] = [
+      capability,
+      {
+        id: "modified-operation",
+        kind: "section",
+        data: {
+          author,
+          title: "MODIFIED Requirements",
+          children: ["modified-requirement"],
+          spec_delta: "modified",
+        },
+      },
+      {
+        id: "modified-requirement",
+        kind: "requirement",
+        data: {
+          author,
+          capability: "session",
+          shall: "The daemon SHALL retain the refreshed session.",
+          scenarios: [],
+          spec_delta: "modified",
+        },
+      },
+      {
+        id: "added-operation",
+        kind: "section",
+        data: {
+          author,
+          title: "ADDED Requirements",
+          children: ["added-requirement"],
+          spec_delta: "added",
+        },
+      },
+      {
+        id: "added-requirement",
+        kind: "requirement",
+        data: {
+          author,
+          capability: "session",
+          shall: "The daemon SHALL report session recovery.",
+          scenarios: [],
+          spec_delta: "added",
+        },
+      },
+    ];
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen-mixed-delta",
+      boardId: "board-mixed-delta",
+      document: {
+        title: "Session",
+        introMarkdown: "The session capability changes in two ways.",
+        measure: "structured",
+        stats: [],
+        sources: [],
+      },
+      sections: [{ ref: capability.id, gist: "Session changes.", counts: {} }],
+      elements,
+      skippedHunks: [],
+    };
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider
+          elements={elements}
+          reviewId="review-mixed-delta"
+          boardId={board.boardId}
+        >
+          <DesignCapabilityGrid board={board} />
+          <BoardElement element={capability} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+
+    const cards = view.container.querySelectorAll(
+      '[data-kind="capability-grid"] [data-capability="session"]',
+    );
+    expect(
+      view.container.querySelectorAll('[data-kind="capability-grid"] [data-capability]'),
+    ).toHaveLength(1);
+    expect(cards).toHaveLength(1);
+    const card = cards.item(0);
+    expect(card.getAttribute("data-spec-delta")).toBeNull();
+    expect(card.getAttribute("data-spec-deltas")).toBe("modified added");
+    expect(card.className).toContain("border-l-green-line");
+    expect(
+      [...card.querySelectorAll('[data-kind="spec-delta"]')].map((badge) =>
+        badge.getAttribute("data-spec-delta"),
+      ),
+    ).toEqual(["modified", "added"]);
+
+    for (const delta of ["modified", "added"] as const) {
+      const operation = view.container.querySelector(`#${delta}-operation`);
+      expect(operation?.getAttribute("data-spec-delta")).toBe(delta);
+      expect(
+        operation?.querySelector(`[data-kind="spec-delta"][data-spec-delta="${delta}"]`),
+      ).toBeTruthy();
+      expect(
+        view.container
+          .querySelector(`[data-element-id="${delta}-requirement"]`)
+          ?.getAttribute("data-spec-delta"),
+      ).toBe(delta);
+    }
+  });
+
   it("keeps source-spec delta treatment independent from the round delta dot", async () => {
     const section: HostElement = {
       id: "refresh-observability",
@@ -382,6 +1268,10 @@ describe("Design requirements", () => {
       data: {
         author,
         markdown: "WHEN refresh begins THEN the daemon records the attempt.",
+        scenario_clauses: {
+          condition: "refresh begins",
+          response: "the daemon records the attempt.",
+        },
       },
     };
     const requirement: HostElement = {
@@ -410,6 +1300,44 @@ describe("Design requirements", () => {
     );
     expect(view.container.querySelector("[data-kind=coverage-chip]")).toBeNull();
     expect(view.container.querySelector('[data-scenario-ref="scenario-proposal"]')).toBeTruthy();
+    expect(view.getByText("Trigger")).toBeTruthy();
+    expect(view.getByText("Outcome")).toBeTruthy();
+    expect(view.getAllByText("refresh begins")).toHaveLength(1);
+    expect(view.getAllByText("the daemon records the attempt.")).toHaveLength(1);
+    expect(view.container.querySelectorAll('[data-element-id="scenario-proposal"]')).toHaveLength(
+      1,
+    );
+  });
+
+  it("renders exact scenario prose once when host clauses are unavailable", () => {
+    const markdown = "WHEN refresh is declined THEN its code is recorded.";
+    const scenario: HostElement = {
+      id: "scenario-fallback",
+      kind: "prose",
+      data: { author, markdown },
+    };
+    const requirement: HostElement = {
+      id: "req-fallback",
+      kind: "requirement",
+      data: {
+        author,
+        shall: "The daemon SHALL record declined refreshes.",
+        scenarios: [scenario.id],
+      },
+    };
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider elements={[requirement, scenario]} reviewId="review-fallback">
+          <BoardElement element={requirement} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+
+    expect(view.getAllByText(markdown)).toHaveLength(1);
+    expect(view.container.querySelectorAll('[data-element-id="scenario-fallback"]')).toHaveLength(
+      1,
+    );
+    expect(view.container.querySelector('[data-kind="scenario-clauses"]')).toBeNull();
   });
 
   it("renders a completed zero-hunk mapping as honestly unimplemented", () => {

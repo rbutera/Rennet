@@ -2,7 +2,12 @@ import type { HostElement, LensBoard, SpecDelta } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { ArrowDown } from "lucide-react";
 import { Icon } from "../components/icon";
-import { SourceChips, SpecDeltaBadge } from "./design-meta";
+import {
+  DesignSectionMetadata,
+  followBoardAnchor,
+  SourceChips,
+  SpecDeltaBadge,
+} from "./design-meta";
 import { useBoardElementIndex } from "./kinds/element-context";
 import { BoardChildren, BoardElement } from "./kinds/renderers";
 import type { ElementOf } from "./registry";
@@ -15,6 +20,7 @@ interface CapabilitySummary {
   readonly slug: string;
   readonly requirements: number;
   readonly scenarios: number;
+  readonly deltas: readonly SpecDelta[];
   readonly delta?: SpecDelta;
 }
 
@@ -43,62 +49,107 @@ function resolveChildren(
   });
 }
 
-function requirementsUnder(
-  section: SectionElement,
+interface PositionedRequirement {
+  readonly requirement: RequirementElement;
+  readonly sectionAncestors: readonly SectionElement[];
+}
+
+function topologyRequirements(
+  board: LensBoard,
   index: ReadonlyMap<string, HostElement>,
-): RequirementElement[] {
-  const requirements: RequirementElement[] = [];
+): PositionedRequirement[] {
+  const requirements: PositionedRequirement[] = [];
   const seen = new Set<string>();
-  const visit = (ids: readonly string[]) => {
-    for (const id of ids) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const element = index.get(id);
-      if (element?.kind === "requirement") requirements.push(element);
-      if (element?.kind === "section") visit(element.data.children);
+  const visit = (section: SectionElement, ancestors: readonly SectionElement[]) => {
+    if (seen.has(section.id)) return;
+    seen.add(section.id);
+    const sectionAncestors = [...ancestors, section];
+    for (const childId of section.data.children) {
+      if (seen.has(childId)) continue;
+      const child = index.get(childId);
+      if (child?.kind === "requirement") {
+        seen.add(child.id);
+        requirements.push({ requirement: child, sectionAncestors });
+      } else if (child?.kind === "section") {
+        visit(child, sectionAncestors);
+      }
     }
   };
-  visit(section.data.children);
+  for (const { ref } of board.sections) {
+    const section = index.get(ref);
+    if (section?.kind === "section") visit(section, []);
+  }
   return requirements;
 }
 
-function sharedRequirementDelta(
-  requirements: readonly RequirementElement[],
-): SpecDelta | undefined {
-  const deltas = new Set(
-    requirements.flatMap((requirement) =>
-      requirement.data.spec_delta === undefined ? [] : [requirement.data.spec_delta],
+function orderedRequirementDeltas(requirements: readonly PositionedRequirement[]): SpecDelta[] {
+  return [
+    ...new Set(
+      requirements.flatMap(({ requirement }) =>
+        requirement.data.spec_delta === undefined ? [] : [requirement.data.spec_delta],
+      ),
     ),
+  ];
+}
+
+function sectionMatchesCapability(section: SectionElement, capability: string): boolean {
+  const title = normalizedLabel(section.data.title);
+  const identity = normalizedLabel(capability);
+  return (
+    title === identity ||
+    title === `${identity} requirements` ||
+    (identity.startsWith("story ") && title.startsWith(`${identity} `))
   );
-  return deltas.size === 1 ? deltas.values().next().value : undefined;
+}
+
+function capabilitySection(
+  capability: string,
+  requirements: readonly PositionedRequirement[],
+): SectionElement | undefined {
+  const first = requirements[0]?.sectionAncestors;
+  if (first === undefined) return undefined;
+  let nearestCommon: SectionElement | undefined;
+  for (let index = first.length - 1; index >= 0; index -= 1) {
+    const candidate = first[index];
+    if (
+      candidate !== undefined &&
+      requirements.every(({ sectionAncestors }) =>
+        sectionAncestors.some((section) => section.id === candidate.id),
+      )
+    ) {
+      nearestCommon ??= candidate;
+      if (sectionMatchesCapability(candidate, capability)) return candidate;
+    }
+  }
+  return nearestCommon;
 }
 
 function capabilitySummaries(board: LensBoard): CapabilitySummary[] {
   const index = new Map(board.elements.map((element) => [element.id, element]));
-  return board.sections.flatMap(({ ref }) => {
-    const section = index.get(ref);
-    if (section?.kind !== "section") return [];
-    const requirements = requirementsUnder(section, index);
-    if (requirements.length === 0) return [];
-    const capabilityNames = new Set(
-      requirements.flatMap((requirement) =>
-        requirement.data.capability === undefined ? [] : [requirement.data.capability],
-      ),
-    );
-    const slug =
-      capabilityNames.size === 1
-        ? (capabilityNames.values().next().value ?? section.data.title)
-        : section.data.title;
+  const grouped = new Map<string, PositionedRequirement[]>();
+  for (const positioned of topologyRequirements(board, index)) {
+    const capability = positioned.requirement.data.capability;
+    if (capability === undefined || capability.length === 0) continue;
+    const requirements = grouped.get(capability) ?? [];
+    requirements.push(positioned);
+    grouped.set(capability, requirements);
+  }
+  return [...grouped].flatMap(([slug, requirements]) => {
+    const section = capabilitySection(slug, requirements);
+    if (section === undefined) return [];
     const scenarioIds = new Set(
-      requirements.flatMap((requirement) => requirement.data.scenarios ?? []),
+      requirements.flatMap(({ requirement }) => requirement.data.scenarios ?? []),
     );
+    const deltas = orderedRequirementDeltas(requirements);
+    const delta = deltas.length === 1 ? deltas[0] : undefined;
     return [
       {
         section,
         slug,
         requirements: requirements.length,
         scenarios: scenarioIds.size,
-        delta: section.data.spec_delta ?? sharedRequirementDelta(requirements),
+        deltas,
+        ...(delta === undefined ? {} : { delta }),
       },
     ];
   });
@@ -122,17 +173,23 @@ export function DesignCapabilityGrid({ board }: { readonly board: LensBoard }) {
             href={`#${capability.section.id}`}
             data-capability={capability.slug}
             {...(capability.delta ? { "data-spec-delta": capability.delta } : {})}
+            {...(capability.deltas.length > 0
+              ? { "data-spec-deltas": capability.deltas.join(" ") }
+              : {})}
             aria-label={`Jump to ${capability.slug}`}
+            onClick={(event) => followBoardAnchor(event, capability.section.id)}
             className={cn(
               "group flex min-w-0 flex-col gap-1 rounded-surface border border-line bg-surface px-3 py-2.5 text-left transition-colors hover:border-line-strong hover:bg-raised focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
-              capability.delta === "added" && "border-l-green-line",
+              capability.deltas.includes("added") && "border-l-green-line",
             )}
           >
             <span className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 flex-1 truncate font-mono font-medium text-sm text-foreground">
                 {capability.slug}
               </span>
-              {capability.delta ? <SpecDeltaBadge delta={capability.delta} /> : null}
+              {capability.deltas.map((delta) => (
+                <SpecDeltaBadge key={delta} delta={delta} />
+              ))}
               <Icon
                 icon={ArrowDown}
                 className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-y-0.5"
@@ -255,17 +312,109 @@ function taskCountForElement(
   return typeof done === "boolean" ? { done: done ? 1 : 0, total: 1 } : { done: 0, total: 0 };
 }
 
+type HostTaskProgress =
+  | {
+      readonly kind: "source";
+      readonly format: string;
+      readonly role: string;
+      readonly layout: "grouped";
+    }
+  | {
+      readonly kind: "source";
+      readonly format: string;
+      readonly role: string;
+      readonly layout: "ungrouped";
+      readonly done: number;
+      readonly total: number;
+    }
+  | { readonly kind: "group"; readonly state: "static" | "complete" | "incomplete" };
+
+function hostTaskProgress(element: SectionElement): HostTaskProgress | undefined {
+  const value = (element.data as { task_progress?: unknown }).task_progress;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const projection = value as Record<string, unknown>;
+  if (
+    projection.kind === "source" &&
+    typeof projection.format === "string" &&
+    typeof projection.role === "string" &&
+    projection.layout === "grouped"
+  ) {
+    return {
+      kind: "source",
+      format: projection.format,
+      role: projection.role,
+      layout: projection.layout,
+    };
+  }
+  if (
+    projection.kind === "source" &&
+    typeof projection.format === "string" &&
+    typeof projection.role === "string" &&
+    projection.layout === "ungrouped" &&
+    typeof projection.done === "number" &&
+    typeof projection.total === "number"
+  ) {
+    return {
+      kind: "source",
+      format: projection.format,
+      role: projection.role,
+      layout: projection.layout,
+      done: projection.done,
+      total: projection.total,
+    };
+  }
+  if (
+    projection.kind === "group" &&
+    (projection.state === "static" ||
+      projection.state === "complete" ||
+      projection.state === "incomplete")
+  ) {
+    return { kind: "group", state: projection.state };
+  }
+  return undefined;
+}
+
+function projectedTaskGroups(
+  section: SectionElement,
+  index: ReadonlyMap<string, HostElement>,
+): SectionElement[] {
+  const groups: SectionElement[] = [];
+  const seen = new Set<string>();
+  const visit = (ids: readonly string[]) => {
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const child = index.get(id);
+      if (child?.kind !== "section") continue;
+      const projection = hostTaskProgress(child);
+      if (projection?.kind === "source") continue;
+      if (projection?.kind === "group") groups.push(child);
+      visit(child.data.children);
+    }
+  };
+  visit(section.data.children);
+  return groups;
+}
+
 function progressForSection(
   section: SectionElement,
   index: ReadonlyMap<string, HostElement>,
 ): TaskGroupProgress[] {
-  const children = resolveChildren(section.data.children, index);
-  const nestedGroups = children.filter(
-    (child): child is SectionElement => child.kind === "section",
-  );
-  const groups = nestedGroups.length > 0 ? nestedGroups : [section];
+  const source = hostTaskProgress(section);
+  if (source?.kind !== "source") return [];
+  const nestedGroups = projectedTaskGroups(section, index);
+  if (nestedGroups.length === 0 && source.layout === "ungrouped") {
+    return source.total > 0
+      ? [{ id: section.id, label: section.data.title, done: source.done, total: source.total }]
+      : [];
+  }
+  const groups = nestedGroups;
   return groups.flatMap((group) => {
-    const count = taskCountForElement(group, index, new Set());
+    const projected = hostTaskProgress(group);
+    const count =
+      projected?.kind === "group" && projected.state !== "static"
+        ? { done: projected.state === "complete" ? 1 : 0, total: 1 }
+        : taskCountForElement(group, index, new Set());
     return count.total > 0
       ? [{ id: group.id, label: group.data.title, done: count.done, total: count.total }]
       : [];
@@ -321,13 +470,6 @@ function TaskProgress({ groups }: { readonly groups: readonly TaskGroupProgress[
   );
 }
 
-function hasTaskSource(section: SectionElement): boolean {
-  if (normalizedLabel(section.data.title).includes("task")) return true;
-  return (section.data.sources ?? []).some((source) =>
-    /(?:^|\/)tasks(?:\.[^/]*)?$/i.test(source.path),
-  );
-}
-
 /** Design-only composition over canonical sections. Other lenses keep BoardChildren. */
 export function DesignSectionBody({ section }: { readonly section: SectionElement }) {
   const index = useBoardElementIndex();
@@ -351,10 +493,11 @@ export function DesignSectionBody({ section }: { readonly section: SectionElemen
     ...(impactSection ? [impactSection.id] : directImpact.map(({ id }) => id)),
   ]);
   const remaining = section.data.children.filter((id) => !consumed.has(id));
-  const taskGroups = hasTaskSource(section) ? progressForSection(section, index) : [];
+  const taskGroups = progressForSection(section, index);
 
   return (
     <>
+      <DesignSectionMetadata taskManifest={section.data.task_manifest} />
       {taskGroups.length > 0 ? <TaskProgress groups={taskGroups} /> : null}
       <BoardChildren ids={remaining} />
       <ProposalSpine

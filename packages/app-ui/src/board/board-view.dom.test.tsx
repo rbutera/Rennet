@@ -73,7 +73,7 @@ const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAtt
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
 describe("LensBoardView — board document, switchers, drill-down", () => {
-  it("renders durable no-spec absence without borrowing another lens board", async () => {
+  it("renders durable inapplicable-spec absence without borrowing another lens board", async () => {
     const { container, findByText } = mount(
       <BridgeProvider
         bridge={
@@ -89,7 +89,12 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
       </BridgeProvider>,
     );
 
-    expect(await findByText("No Design specification was found.")).toBeTruthy();
+    expect(await findByText("No Design specification applies to this change.")).toBeTruthy();
+    expect(
+      await findByText(
+        "There is no applicable specification to project into a Design board for this generation.",
+      ),
+    ).toBeTruthy();
     expect(container.querySelector("[data-kind=board-absent]")).toBeTruthy();
     expect(container.querySelector("article[data-lens]")).toBeNull();
   });

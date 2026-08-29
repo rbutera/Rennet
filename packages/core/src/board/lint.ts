@@ -33,6 +33,14 @@
  */
 
 import type { DraftBoard, DraftElement, HunkId, LensKind, Violation } from "@rennet/protocol";
+import { parseOpenSpecChange } from "../delta/openspec-change";
+import {
+  type DesignSourceFormat,
+  type DesignSourceObligation,
+  type DesignTaskManifest,
+  deriveDesignTaskProgress,
+  parseDesignSourceObligations,
+} from "./design-obligations";
 
 // ── The lint context (plain data the caller assembles) ───────────────────────
 
@@ -151,6 +159,7 @@ export interface LintContext {
     readonly candidate?: string;
     readonly path: string;
     readonly text: string;
+    readonly format?: DesignSourceFormat;
     readonly role?: string;
     readonly truncated?: boolean;
     readonly sourceBytes?: number;
@@ -158,6 +167,8 @@ export interface LintContext {
   /** Candidate identity and paths so one selected source set cannot absorb a neighbouring candidate. */
   readonly artifactCandidates?: readonly {
     readonly id: string;
+    readonly name?: string;
+    readonly format?: DesignSourceFormat;
     readonly paths: readonly string[];
     readonly relevance?: "changed-artifact" | "references-changed-path" | "repository-candidate";
   }[];
@@ -826,7 +837,6 @@ function sourceCandidateKnown(source: unknown, elementRef: string, ctx: LintCont
   if (ctx.artifactCandidates === undefined || ctx.artifactCandidates.length === 0) return [];
   if (typeof source !== "object" || source === null) return [];
   const { path, candidate } = source as { path?: unknown; candidate?: unknown };
-  if (candidate === undefined && ctx.artifactCandidates.length === 1) return [];
   const match =
     typeof candidate === "string"
       ? ctx.artifactCandidates.find((entry) => entry.id === candidate)
@@ -838,10 +848,49 @@ function sourceCandidateKnown(source: unknown, elementRef: string, ctx: LintCont
       elementRef: `${elementRef}/candidate`,
       message:
         candidate === undefined
-          ? "A source shared among multiple discovered candidates names the exact candidate it belongs to."
+          ? "A discovered source names the exact candidate it belongs to."
           : `Source candidate \`${String(candidate)}\` is unknown or does not contain \`${String(path)}\`.`,
     },
   ];
+}
+
+function sourceBearingDesignElements(draft: DraftBoard): readonly {
+  readonly element: DraftElement;
+  readonly source: {
+    readonly path?: unknown;
+    readonly candidate?: unknown;
+    readonly line?: unknown;
+  };
+}[] {
+  return draft.elements.flatMap((element) => {
+    if (element.kind !== "requirement" && element.kind !== "decision") return [];
+    const source = (element.data as { source?: unknown }).source;
+    return typeof source === "object" && source !== null
+      ? [{ element, source: source as { path?: unknown; candidate?: unknown; line?: unknown } }]
+      : [];
+  });
+}
+
+function exactDesignDecisionSource(source: unknown): source is {
+  readonly path: string;
+  readonly candidate: string;
+  readonly line: number;
+} {
+  if (typeof source !== "object" || source === null) return false;
+  const { path, candidate, line } = source as {
+    readonly path?: unknown;
+    readonly candidate?: unknown;
+    readonly line?: unknown;
+  };
+  return (
+    typeof path === "string" &&
+    path.length > 0 &&
+    typeof candidate === "string" &&
+    candidate.length > 0 &&
+    typeof line === "number" &&
+    Number.isInteger(line) &&
+    line > 0
+  );
 }
 
 const designSourcesKnown: Rule = (draft, ctx) => {
@@ -872,12 +921,37 @@ const designSourcesKnown: Rule = (draft, ctx) => {
   };
 
   checkSources(draft.document?.sources, "/document/sources");
+  for (const { element, source } of sourceBearingDesignElements(draft)) {
+    if (element.kind !== "decision") continue;
+    if (ctx.lens === "design" && !exactDesignDecisionSource(source)) {
+      continue;
+    }
+    const path = source.path;
+    if (typeof path !== "string" || !artifactPaths.has(path)) {
+      out.push({
+        ruleId: "design-source-known",
+        elementRef: `${element.id}/source/path`,
+        message: `A sourced Design ${element.kind} names its exact discovered artifact source.`,
+      });
+      continue;
+    }
+    out.push(...sourceCandidateKnown(source, `${element.id}/source`, ctx));
+    out.push(...sourceLineKnown(source, `${element.id}/source`, ctx));
+  }
   for (const element of draft.elements) {
     if (element.kind === "section") {
       checkSources((element.data as { sources?: unknown }).sources, `${element.id}/sources`);
     }
     if (element.kind === "decision" && ctx.lens === "design") {
       const data = element.data as { inferred?: unknown; source?: unknown };
+      if (!exactDesignDecisionSource(data.source)) {
+        out.push({
+          ruleId: "design-source-known",
+          elementRef: `${element.id}/source`,
+          message:
+            "Every Design decision names its exact discovered candidate, artifact path, and positive source line.",
+        });
+      }
       if (data.inferred !== false) {
         out.push({
           ruleId: "design-decision-stated",
@@ -885,21 +959,6 @@ const designSourcesKnown: Rule = (draft, ctx) => {
           message:
             "A decision taken from a Design artifact is explicitly marked `inferred: false`.",
         });
-      }
-      const source = data.source;
-      const path =
-        typeof source === "object" && source !== null
-          ? (source as { path?: unknown }).path
-          : undefined;
-      if (typeof path !== "string" || !artifactPaths.has(path)) {
-        out.push({
-          ruleId: "design-source-known",
-          elementRef: `${element.id}/source/path`,
-          message: "A stated Design decision names its exact discovered artifact source.",
-        });
-      } else {
-        out.push(...sourceCandidateKnown(source, `${element.id}/source`, ctx));
-        out.push(...sourceLineKnown(source, `${element.id}/source`, ctx));
       }
     }
     if (element.kind !== "requirement") continue;
@@ -940,17 +999,13 @@ const designArtifactSetComplete: Rule = (draft, ctx) => {
     return [];
   }
   const documentSourceRefs = draft.document?.sources ?? [];
-  const sectionSourceRefs = draft.elements.flatMap((element) =>
-    element.kind === "section"
-      ? ((element.data as { sources?: readonly { path?: unknown; candidate?: unknown }[] })
-          .sources ?? [])
-      : [],
+  const sections = draft.elements.filter((element) => element.kind === "section");
+  const sectionSourceRefs = sections.flatMap(
+    (element) =>
+      (element.data as { sources?: readonly { path?: unknown; candidate?: unknown }[] }).sources ??
+      [],
   );
-  const requirementSourceRefs = draft.elements.flatMap((element) => {
-    if (element.kind !== "requirement") return [];
-    const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
-    return source === undefined ? [] : [source];
-  });
+  const typedSourceRefs = sourceBearingDesignElements(draft).map(({ source }) => source);
   const documentSources = new Set(
     documentSourceRefs.flatMap((source) => {
       const key = sourceKey(source, ctx);
@@ -963,6 +1018,33 @@ const designArtifactSetComplete: Rule = (draft, ctx) => {
       return key === undefined ? [] : [key];
     }),
   );
+  const sectionSourceKeys = new Map(
+    sections.map((section) => [
+      section.id,
+      new Set(
+        (section.data.sources ?? []).flatMap((source) => {
+          const key = sourceKey(source, ctx);
+          return key === undefined ? [] : [key];
+        }),
+      ),
+    ]),
+  );
+  const parentByChild = new Map<string, string>();
+  for (const element of draft.elements) {
+    for (const child of designStructuralChildren(element)) {
+      if (!parentByChild.has(child)) parentByChild.set(child, element.id);
+    }
+  }
+  const hasLinkedAncestor = (sectionId: string, key: string): boolean => {
+    const visited = new Set<string>();
+    let parent = parentByChild.get(sectionId);
+    while (parent !== undefined && !visited.has(parent)) {
+      visited.add(parent);
+      if (sectionSourceKeys.get(parent)?.has(key) === true) return true;
+      parent = parentByChild.get(parent);
+    }
+    return false;
+  };
   if (documentSources.size === 0) {
     return [
       {
@@ -976,8 +1058,75 @@ const designArtifactSetComplete: Rule = (draft, ctx) => {
   const selectedCandidateIds = new Set(
     documentSourceRefs.map((source) => resolvedCandidateId(source, ctx)).filter(Boolean),
   );
+  if (selectedCandidateIds.size !== 1) {
+    out.push({
+      ruleId: "design-artifact-set-complete",
+      elementRef: "/document/sources",
+      message: "The Design document must select exactly one discovered artifact candidate.",
+    });
+  }
   for (const candidate of ctx.artifactCandidates) {
     if (!selectedCandidateIds.has(candidate.id)) continue;
+    const expectedKeys = candidate.paths.map((path) => `${candidate.id}\u0000${path}`);
+    const actualKeys = documentSourceRefs.flatMap((source) => {
+      const key = sourceKey(source, ctx);
+      return key?.startsWith(`${candidate.id}\u0000`) ? [key] : [];
+    });
+    if (
+      actualKeys.length !== expectedKeys.length ||
+      actualKeys.some((key, index) => key !== expectedKeys[index])
+    ) {
+      out.push({
+        ruleId: "design-artifact-set-complete",
+        elementRef: "/document/sources",
+        message: `Design header sources must list selected candidate \`${candidate.id}\` artifacts exactly once in discovered order.`,
+      });
+    }
+    const firstRegionKeys: string[] = [];
+    const seenRegionKeys = new Set<string>();
+    const firstRegionSectionByKey = new Map<string, string>();
+    for (const element of orderedDesignElements(draft)) {
+      if (element.kind !== "section") continue;
+      for (const source of element.data.sources ?? []) {
+        const key = sourceKey(source, ctx);
+        if (key === undefined || !expectedKeys.includes(key) || seenRegionKeys.has(key)) {
+          continue;
+        }
+        seenRegionKeys.add(key);
+        firstRegionKeys.push(key);
+        firstRegionSectionByKey.set(key, element.id);
+      }
+    }
+    if (
+      firstRegionKeys.length === expectedKeys.length &&
+      firstRegionKeys.some((key, index) => key !== expectedKeys[index])
+    ) {
+      out.push({
+        ruleId: "design-artifact-set-complete",
+        elementRef: "/elements",
+        message: `The first source-linked region for each selected candidate artifact must preserve discovered order.`,
+      });
+    }
+    if (
+      firstRegionKeys.length === expectedKeys.length &&
+      new Set(firstRegionSectionByKey.values()).size !== firstRegionKeys.length
+    ) {
+      out.push({
+        ruleId: "design-artifact-set-complete",
+        elementRef: "/elements",
+        message: `Each selected candidate artifact needs a distinct first named source-linked region.`,
+      });
+    }
+    for (const key of expectedKeys) {
+      const firstRegion = firstRegionSectionByKey.get(key);
+      if (firstRegion !== undefined && parentByChild.has(firstRegion)) {
+        out.push({
+          ruleId: "design-artifact-set-complete",
+          elementRef: ref(firstRegion),
+          message: `The first named source-linked region for \`${key.slice(key.indexOf("\u0000") + 1)}\` must be a top-level board topology root.`,
+        });
+      }
+    }
     for (const path of candidate.paths) {
       const key = `${candidate.id}\u0000${path}`;
       if (!documentSources.has(key)) {
@@ -994,11 +1143,23 @@ const designArtifactSetComplete: Rule = (draft, ctx) => {
           message: `Selected artifact \`${path}\` has no named source-linked section.`,
         });
       }
+      const sourceRoots = sections.filter(
+        (section) =>
+          sectionSourceKeys.get(section.id)?.has(key) === true &&
+          !hasLinkedAncestor(section.id, key),
+      );
+      if (sourceRoots.length > 1) {
+        out.push({
+          ruleId: "design-artifact-set-complete",
+          elementRef: "/elements",
+          message: `Selected artifact \`${path}\` needs one named source-linked root; repeated links must stay nested beneath it.`,
+        });
+      }
     }
   }
   const renderedSources = new Set([
     ...sectionSources,
-    ...requirementSourceRefs.flatMap((source) => {
+    ...typedSourceRefs.flatMap((source) => {
       const value = sourceKey(source, ctx);
       return value === undefined ? [] : [value];
     }),
@@ -1015,115 +1176,122 @@ const designArtifactSetComplete: Rule = (draft, ctx) => {
   return out;
 };
 
-/** Deterministic relevance prevents a complete nearby decoy from validating. */
-const designCandidateRelevant: Rule = (draft, ctx) => {
-  if (ctx.artifactCandidates === undefined) return [];
-  const strong = ctx.artifactCandidates.filter(
-    (candidate) =>
-      candidate.relevance !== undefined && candidate.relevance !== "repository-candidate",
-  );
-  if (strong.length === 0) return [];
-  const selectedIds = new Set(
-    (draft.document?.sources ?? []).map((source) => resolvedCandidateId(source, ctx)),
-  );
-  return ctx.artifactCandidates.flatMap((candidate) =>
-    selectedIds.has(candidate.id) && candidate.relevance === "repository-candidate"
-      ? [
-          {
-            ruleId: "design-candidate-relevant",
-            elementRef: "/document/sources",
-            message: `Candidate \`${candidate.id}\` has no deterministic relation to the change while a changed or path-referencing candidate exists.`,
-          },
-        ]
-      : [],
-  );
-};
-
-type DesignObligationKind = "requirement" | "scenario" | "task";
-interface DesignObligation {
-  readonly kind: DesignObligationKind;
-  readonly text: string;
-  readonly line: number;
-  readonly done?: boolean;
-}
-
 const normalizeDesignText = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-function designObligations(text: string): DesignObligation[] {
-  const lines = text.split(/\r?\n/);
-  const obligations: DesignObligation[] = [];
-  const add = (obligation: DesignObligation): void => {
-    if (obligation.text.length > 0) obligations.push(obligation);
-  };
+function isLooseRecord(value: unknown): value is object {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  let offset = 0;
-  for (const paragraph of text.split(/\r?\n\s*\r?\n/)) {
-    const start = text.indexOf(paragraph, offset);
-    offset = Math.max(offset, start + paragraph.length);
-    if (!/\bSHALL\b/.test(paragraph)) continue;
-    const cleaned = paragraph
-      .split(/\r?\n/)
-      .filter((line) => !/^\s*#{1,6}\s+/.test(line))
-      .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
-      .filter(Boolean)
-      .join(" ");
-    add({
-      kind: "requirement",
-      text: normalizeDesignText(cleaned),
-      line: text.slice(0, Math.max(0, start)).split(/\r?\n/).length,
-    });
-  }
+function hasExactKeys(value: object, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  );
+}
 
-  let inAcceptanceCriteria = false;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
-    if (heading !== null) {
-      inAcceptanceCriteria = /acceptance criteria/i.test(heading[2] ?? "");
-      const scenario = /^#{3,6}\s+Scenario:\s*(.+?)\s*$/i.exec(line);
-      if (scenario !== null) {
-        const parts = [`Scenario: ${scenario[1] ?? ""}`];
-        for (let next = index + 1; next < lines.length; next += 1) {
-          const candidate = lines[next] ?? "";
-          if (/^#{1,6}\s+/.test(candidate)) break;
-          if (candidate.trim().length > 0) parts.push(candidate.trim());
-        }
-        add({ kind: "scenario", text: normalizeDesignText(parts.join(" ")), line: index + 1 });
-      }
-      const task = /^###\s+(Task\s+\d+:\s*.+?)\s*$/i.exec(line);
-      if (task !== null) {
-        add({ kind: "task", text: normalizeDesignText(task[1] ?? ""), line: index + 1 });
-      }
-      continue;
-    }
-    const checkbox = /^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
-    if (checkbox !== null) {
-      add({
-        kind: "task",
-        text: normalizeDesignText(line.trim()),
-        line: index + 1,
-        done: (checkbox[1] ?? "").toLowerCase() === "x",
-      });
-      continue;
-    }
-    if (inAcceptanceCriteria) {
-      const item = /^\s*(?:[-*]|\d+[.)])\s+(.+?)\s*$/.exec(line)?.[1];
-      if (item !== undefined) {
-        add({ kind: "scenario", text: normalizeDesignText(item), line: index + 1 });
-      }
-    }
+function exactOptionalStringList(
+  actual: unknown,
+  expected: readonly string[] | undefined,
+): boolean {
+  if (expected === undefined) return actual === undefined;
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
+}
+
+function exactTaskManifest(actual: unknown, expected: DesignTaskManifest | undefined): boolean {
+  if (expected === undefined) return actual === undefined;
+  if (!isLooseRecord(actual) || !hasExactKeys(actual, ["files", "interfaces", "verifications"])) {
+    return false;
   }
-  return obligations.sort((left, right) => left.line - right.line);
+  const files = Reflect.get(actual, "files");
+  const interfaces = Reflect.get(actual, "interfaces");
+  const verifications = Reflect.get(actual, "verifications");
+  return (
+    Array.isArray(files) &&
+    files.length === expected.files.length &&
+    files.every((value, index) => {
+      const item = expected.files[index];
+      return (
+        item !== undefined &&
+        isLooseRecord(value) &&
+        hasExactKeys(value, ["operation", "value"]) &&
+        Reflect.get(value, "operation") === item.operation &&
+        Reflect.get(value, "value") === item.value
+      );
+    }) &&
+    Array.isArray(interfaces) &&
+    interfaces.length === expected.interfaces.length &&
+    interfaces.every((value, index) => {
+      const item = expected.interfaces[index];
+      return (
+        item !== undefined &&
+        isLooseRecord(value) &&
+        hasExactKeys(value, ["direction", "value"]) &&
+        Reflect.get(value, "direction") === item.direction &&
+        Reflect.get(value, "value") === item.value
+      );
+    }) &&
+    Array.isArray(verifications) &&
+    verifications.length === expected.verifications.length &&
+    verifications.every((value, index) => {
+      const item = expected.verifications[index];
+      return (
+        item !== undefined &&
+        isLooseRecord(value) &&
+        hasExactKeys(value, ["run", "expected"]) &&
+        Reflect.get(value, "run") === item.run &&
+        Reflect.get(value, "expected") === item.expected
+      );
+    })
+  );
+}
+
+function exactGlossaryTerm(
+  actual: unknown,
+  expected: Extract<DesignSourceObligation, { readonly kind: "glossary-term" }>,
+): boolean {
+  return (
+    isLooseRecord(actual) &&
+    hasExactKeys(actual, ["term", "definition", "avoid"]) &&
+    Reflect.get(actual, "term") === expected.term &&
+    Reflect.get(actual, "definition") === expected.definition &&
+    exactOptionalStringList(Reflect.get(actual, "avoid"), expected.avoid)
+  );
+}
+
+function hasRigidGlossaryShape(markdown: unknown): boolean {
+  return (
+    typeof markdown === "string" &&
+    /^\s*(?:[-*+]\s+)?\*\*[^*]+\*\*:\s*\S[\s\S]*\s_Avoid_:\s*\S/i.test(markdown)
+  );
+}
+
+function designStructuralChildren(element: DraftElement): readonly string[] {
+  const children = (element.data as { children?: unknown }).children;
+  const scenarios =
+    element.kind === "requirement"
+      ? (element.data as { scenarios?: unknown }).scenarios
+      : undefined;
+  return [
+    ...(Array.isArray(children)
+      ? children.flatMap((child) => (typeof child === "string" ? [child] : []))
+      : []),
+    ...(Array.isArray(scenarios)
+      ? scenarios.flatMap((scenario) => (typeof scenario === "string" ? [scenario] : []))
+      : []),
+  ];
 }
 
 function orderedDesignElements(draft: DraftBoard): DraftElement[] {
   const byId = new Map(draft.elements.map((element) => [element.id, element]));
   const nested = new Set<string>();
   for (const element of draft.elements) {
-    const children = (element.data as { children?: unknown }).children;
-    if (Array.isArray(children)) {
-      for (const child of children) if (typeof child === "string") nested.add(child);
-    }
+    for (const child of designStructuralChildren(element)) nested.add(child);
   }
   const ordered: DraftElement[] = [];
   const visited = new Set<string>();
@@ -1131,10 +1299,7 @@ function orderedDesignElements(draft: DraftBoard): DraftElement[] {
     if (visited.has(element.id)) return;
     visited.add(element.id);
     ordered.push(element);
-    const children = (element.data as { children?: unknown }).children;
-    if (!Array.isArray(children)) return;
-    for (const child of children) {
-      if (typeof child !== "string") continue;
+    for (const child of designStructuralChildren(element)) {
       const nestedElement = byId.get(child);
       if (nestedElement !== undefined) visit(nestedElement);
     }
@@ -1154,15 +1319,9 @@ function sectionDescendants(section: DraftElement, draft: DraftBoard): DraftElem
     const element = byId.get(id);
     if (element === undefined) return;
     descendants.push(element);
-    const children = (element.data as { children?: unknown }).children;
-    if (Array.isArray(children)) {
-      for (const child of children) if (typeof child === "string") visit(child);
-    }
+    for (const child of designStructuralChildren(element)) visit(child);
   };
-  const children = (section.data as { children?: unknown }).children;
-  if (Array.isArray(children)) {
-    for (const child of children) if (typeof child === "string") visit(child);
-  }
+  for (const child of designStructuralChildren(section)) visit(child);
   return descendants;
 }
 
@@ -1211,6 +1370,14 @@ function designArtifactKey(
   return candidate === undefined ? undefined : `${candidate}\u0000${artifact.path}`;
 }
 
+function designArtifactCapability(artifact: {
+  readonly format?: DesignSourceFormat;
+  readonly path: string;
+}): string | undefined {
+  if (artifact.format !== undefined && artifact.format !== "openspec") return undefined;
+  return /(?:^|\/)specs\/([^/]+)\/spec\.md$/i.exec(artifact.path.replace(/\\/g, "/"))?.[1];
+}
+
 function selectedDesignArtifacts(draft: DraftBoard, ctx: LintContext) {
   const selected = new Set(
     (draft.document?.sources ?? []).flatMap((source) => {
@@ -1230,6 +1397,36 @@ const designArtifactContentComplete: Rule = (draft, ctx) => {
   const ordered = orderedDesignElements(draft);
   const orderIndex = new Map(ordered.map((element, index) => [element.id, index]));
   const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  const parentByChild = new Map<string, string>();
+  for (const element of draft.elements) {
+    for (const child of designStructuralChildren(element)) {
+      if (!parentByChild.has(child)) {
+        parentByChild.set(child, element.id);
+      }
+    }
+  }
+  const nearestSectionParent = (id: string): string | undefined => {
+    const visited = new Set<string>();
+    let parent = parentByChild.get(id);
+    while (parent !== undefined && !visited.has(parent)) {
+      visited.add(parent);
+      if (byId.get(parent)?.kind === "section") return parent;
+      parent = parentByChild.get(parent);
+    }
+    return undefined;
+  };
+  const sectionAncestors = (id: string): DraftElement[] => {
+    const sections: DraftElement[] = [];
+    const visited = new Set<string>();
+    let parent = parentByChild.get(id);
+    while (parent !== undefined && !visited.has(parent)) {
+      visited.add(parent);
+      const element = byId.get(parent);
+      if (element?.kind === "section") sections.push(element);
+      parent = parentByChild.get(parent);
+    }
+    return sections;
+  };
   const out: Violation[] = [];
 
   for (const artifact of selectedDesignArtifacts(draft, ctx)) {
@@ -1252,41 +1449,99 @@ const designArtifactContentComplete: Rule = (draft, ctx) => {
       continue;
     }
 
-    const obligations = designObligations(artifact.text);
-    const requirements = draft.elements.filter((element) => {
+    const obligations = parseDesignSourceObligations({
+      ...(artifact.format === undefined ? {} : { format: artifact.format }),
+      role: artifact.role ?? "",
+      path: artifact.path,
+      text: artifact.text,
+    });
+    const sourceDeltasByCapability = new Map<string, string[]>();
+    const taskManifestsByGroup = new Map<string, DesignTaskManifest | undefined>();
+    for (const obligation of obligations) {
+      if (obligation.kind === "requirement" && obligation.capability !== undefined) {
+        const deltas = sourceDeltasByCapability.get(obligation.capability) ?? [];
+        const delta = /#requirements:(added|modified|removed|renamed)$/.exec(
+          obligation.parentKey,
+        )?.[1];
+        if (delta !== undefined && !deltas.includes(delta)) deltas.push(delta);
+        sourceDeltasByCapability.set(obligation.capability, deltas);
+      }
+      if (obligation.kind === "task") {
+        const known = taskManifestsByGroup.get(obligation.parentKey);
+        if (known === undefined || obligation.manifest !== undefined) {
+          taskManifestsByGroup.set(obligation.parentKey, obligation.manifest);
+        }
+      }
+    }
+    const descendantIds = new Set(descendants.map(({ id }) => id));
+    const sourcedRequirements = draft.elements.filter((element) => {
       if (element.kind !== "requirement") return false;
       const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
       return source !== undefined && sourceKey(source, ctx) === key;
     });
-    const scenarioElements = requirements.flatMap((requirement) => {
-      const scenarios = (requirement.data as { scenarios?: unknown }).scenarios;
-      return Array.isArray(scenarios)
-        ? scenarios.flatMap((id) => {
-            const element = typeof id === "string" ? byId.get(id) : undefined;
-            return element?.kind === "prose" ? [element] : [];
-          })
-        : [];
+    const requirements = sourcedRequirements.filter((element) => descendantIds.has(element.id));
+    const sourcedDecisions = draft.elements.filter((element) => {
+      if (element.kind !== "decision") return false;
+      const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
+      return source !== undefined && sourceKey(source, ctx) === key;
     });
-    const taskElements = descendants.filter((element) => element.kind === "prose");
+    const decisions = sourcedDecisions.filter((element) => descendantIds.has(element.id));
+    const proseElements = descendants.filter((element) => element.kind === "prose");
     const used = new Set<string>();
-    const previousIndex: Partial<Record<DesignObligationKind, number>> = {};
+    const matchedByObligation = new Map<string, DraftElement>();
+    const boardGroupBySourceGroup = new Map<string, string>();
+    const sourceGroupByBoardGroup = new Map<string, string>();
+    const boardCapabilityBySourceCapability = new Map<string, string>();
+    const reportedGroupDeltas = new Set<string>();
+    const reportedCapabilityDeltas = new Set<string>();
+    const reportedCapabilityRoots = new Set<string>();
+    const reportedGroupTitles = new Set<string>();
+    const reportedTaskManifests = new Set<string>();
+    const allowedSectionDeltas = new Map<string, string | undefined>();
+    let previousIndex: number | undefined;
 
     for (const obligation of obligations) {
-      const candidates =
-        obligation.kind === "requirement"
-          ? requirements
-          : obligation.kind === "scenario"
-            ? scenarioElements
-            : taskElements;
+      let candidates: readonly DraftElement[];
+      switch (obligation.kind) {
+        case "requirement":
+          candidates = requirements;
+          break;
+        case "scenario": {
+          const parent = matchedByObligation.get(obligation.parentKey);
+          const scenarios = (parent?.data as { scenarios?: unknown } | undefined)?.scenarios;
+          candidates = Array.isArray(scenarios)
+            ? scenarios.flatMap((id) => {
+                const element = typeof id === "string" ? byId.get(id) : undefined;
+                return element?.kind === "prose" && descendantIds.has(element.id) ? [element] : [];
+              })
+            : [];
+          break;
+        }
+        case "decision":
+          candidates = decisions;
+          break;
+        case "task":
+        case "source-section":
+        case "glossary-term":
+        case "progress-entry":
+          candidates = proseElements;
+          break;
+        default: {
+          const exhaustive: never = obligation;
+          candidates = exhaustive;
+        }
+      }
       const match = candidates.find((element) => {
         if (used.has(element.id)) return false;
-        const data = element.data as { shall?: unknown; markdown?: unknown };
+        const data = element.data as { shall?: unknown; markdown?: unknown; statement?: unknown };
         const text =
           element.kind === "requirement"
             ? data.shall
-            : element.kind === "prose"
-              ? data.markdown
-              : undefined;
+            : element.kind === "decision"
+              ? data.statement
+              : element.kind === "prose"
+                ? data.markdown
+                : undefined;
         return typeof text === "string" && normalizeDesignText(text) === obligation.text;
       });
       if (match === undefined) {
@@ -1298,20 +1553,499 @@ const designArtifactContentComplete: Rule = (draft, ctx) => {
         continue;
       }
       used.add(match.id);
+      matchedByObligation.set(obligation.key, match);
+      if (obligation.kind === "requirement" || obligation.kind === "decision") {
+        const source = (match.data as { source?: { line?: unknown } }).source;
+        if (source?.line !== obligation.line) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "source/line"),
+            message: `${obligation.kind} ${obligation.address} from \`${artifact.path}\` must cite exact source line ${obligation.line}.`,
+          });
+        }
+      }
+      if (obligation.kind === "decision") {
+        const data = match.data as {
+          why?: unknown;
+          alternatives?: unknown;
+          evidence?: unknown;
+          source_cells?: unknown;
+        };
+        const expectedRationale = obligation.rationale ?? "";
+        if (typeof data.why !== "string" || normalizeDesignText(data.why) !== expectedRationale) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "why"),
+            message: `Decision ${obligation.address} from \`${artifact.path}\` must preserve its stated rationale verbatim.`,
+          });
+        }
+        const actualAlternatives = Array.isArray(data.alternatives)
+          ? data.alternatives.flatMap((value) =>
+              typeof value === "string" ? [normalizeDesignText(value)] : [],
+            )
+          : [];
+        const expectedAlternatives = obligation.alternatives ?? [];
+        if (
+          actualAlternatives.length !== expectedAlternatives.length ||
+          actualAlternatives.some((value, index) => value !== expectedAlternatives[index])
+        ) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "alternatives"),
+            message: `Decision ${obligation.address} from \`${artifact.path}\` must preserve only its stated alternatives, in source order.`,
+          });
+        }
+        const actualEvidence = Array.isArray(data.evidence)
+          ? data.evidence.flatMap((id) => {
+              const evidence = typeof id === "string" ? byId.get(id) : undefined;
+              if (evidence?.kind !== "code_ref") return [];
+              const value = evidence.data as {
+                path?: unknown;
+                start_line?: unknown;
+                end_line?: unknown;
+              };
+              return typeof value.path === "string" &&
+                typeof value.start_line === "number" &&
+                typeof value.end_line === "number"
+                ? [
+                    {
+                      path: value.path,
+                      startLine: value.start_line,
+                      endLine: value.end_line,
+                    },
+                  ]
+                : [];
+            })
+          : [];
+        const expectedEvidence = obligation.evidence ?? [];
+        if (
+          actualEvidence.length !== expectedEvidence.length ||
+          actualEvidence.some((value, index) => {
+            const expected = expectedEvidence[index];
+            return (
+              expected === undefined ||
+              value.path !== expected.path ||
+              value.startLine !== expected.startLine ||
+              value.endLine !== expected.endLine
+            );
+          })
+        ) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "evidence"),
+            message: `Decision ${obligation.address} from \`${artifact.path}\` must preserve only its stated evidence anchors, in source order.`,
+          });
+        }
+        if (!exactOptionalStringList(data.source_cells, obligation.sourceCells)) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "source_cells"),
+            message: `Decision ${obligation.address} from \`${artifact.path}\` must preserve its exact ordered source cells.`,
+          });
+        }
+      }
+      if (
+        obligation.kind === "requirement" ||
+        obligation.kind === "task" ||
+        obligation.kind === "glossary-term"
+      ) {
+        const boardGroup = nearestSectionParent(match.id);
+        const knownBoardGroup = boardGroupBySourceGroup.get(obligation.parentKey);
+        const claimedSourceGroup =
+          boardGroup === undefined ? undefined : sourceGroupByBoardGroup.get(boardGroup);
+        if (
+          boardGroup === undefined ||
+          (knownBoardGroup !== undefined && knownBoardGroup !== boardGroup) ||
+          (claimedSourceGroup !== undefined && claimedSourceGroup !== obligation.parentKey)
+        ) {
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(match.id),
+            message: `Task ${obligation.address} from \`${artifact.path}\` must remain in its source task group.`,
+          });
+        } else {
+          boardGroupBySourceGroup.set(obligation.parentKey, boardGroup);
+          sourceGroupByBoardGroup.set(boardGroup, obligation.parentKey);
+        }
+        const expectedGroupTitle =
+          obligation.kind === "requirement" ||
+          obligation.kind === "task" ||
+          obligation.kind === "glossary-term"
+            ? obligation.groupTitle
+            : undefined;
+        const titleKey = `${boardGroup ?? match.id}\u0000${expectedGroupTitle ?? ""}`;
+        const groupTitle =
+          boardGroup === undefined
+            ? undefined
+            : (byId.get(boardGroup)?.data as { title?: unknown } | undefined)?.title;
+        if (
+          expectedGroupTitle !== undefined &&
+          normalizeDesignText(String(groupTitle ?? "")) !==
+            normalizeDesignText(expectedGroupTitle) &&
+          !reportedGroupTitles.has(titleKey)
+        ) {
+          reportedGroupTitles.add(titleKey);
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(boardGroup ?? match.id, "title"),
+            message: `Source group \`${obligation.parentKey}\` must keep exact title \`${expectedGroupTitle}\`.`,
+          });
+        }
+        if (obligation.kind === "task" && !reportedTaskManifests.has(obligation.parentKey)) {
+          reportedTaskManifests.add(obligation.parentKey);
+          const actualManifest =
+            boardGroup === undefined
+              ? undefined
+              : Reflect.get(byId.get(boardGroup)?.data ?? {}, "task_manifest");
+          const expectedManifest = taskManifestsByGroup.get(obligation.parentKey);
+          if (!exactTaskManifest(actualManifest, expectedManifest)) {
+            out.push({
+              ruleId: "design-artifact-content-complete",
+              elementRef: ref(boardGroup ?? match.id, "task_manifest"),
+              message: `Source task group \`${obligation.parentKey}\` must preserve its exact task manifest once on the group section.`,
+            });
+          }
+        }
+      }
+      if (obligation.kind === "task") {
+        const data = match.data as {
+          requirement_refs?: unknown;
+          acceptance_criteria?: unknown;
+          task_manifest?: unknown;
+        };
+        if (!exactOptionalStringList(data.requirement_refs, obligation.requirementRefs)) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "requirement_refs"),
+            message: `Task ${obligation.address} from \`${artifact.path}\` must preserve its exact ordered requirement references.`,
+          });
+        }
+        if (!exactOptionalStringList(data.acceptance_criteria, obligation.acceptanceCriteria)) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "acceptance_criteria"),
+            message: `Task ${obligation.address} from \`${artifact.path}\` must preserve its exact ordered acceptance-criteria references.`,
+          });
+        }
+        if (data.task_manifest !== undefined) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "task_manifest"),
+            message: `Task ${obligation.address} must keep its source manifest on the task-group section, not the step anchor.`,
+          });
+        }
+      }
+      if (obligation.kind === "glossary-term") {
+        const glossary = Reflect.get(match.data, "glossary_term");
+        if (!exactGlossaryTerm(glossary, obligation)) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "glossary_term"),
+            message: `Glossary term ${obligation.address} from \`${artifact.path}\` must preserve its exact term, definition, and ordered avoid list.`,
+          });
+        }
+      }
+      if (obligation.kind === "requirement") {
+        const expectedDelta = /#requirements:(added|modified|removed|renamed)$/.exec(
+          obligation.parentKey,
+        )?.[1];
+        const data = match.data as {
+          capability?: unknown;
+          spec_delta?: unknown;
+          status?: unknown;
+        };
+        if (data.status !== obligation.status) {
+          out.push({
+            ruleId: "design-artifact-content-complete",
+            elementRef: ref(match.id, "status"),
+            message: `Requirement ${obligation.address} from \`${artifact.path}\` must preserve its exact source status.`,
+          });
+        }
+        const actualDelta = data.spec_delta;
+        if (actualDelta !== expectedDelta) {
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(match.id, "spec_delta"),
+            message:
+              expectedDelta === undefined
+                ? `Requirement ${obligation.address} has no source spec delta and must not invent one.`
+                : `Requirement ${obligation.address} must remain in source group \`requirements:${expectedDelta}\` with \`spec_delta: ${expectedDelta}\`.`,
+          });
+        }
+        const boardGroup = nearestSectionParent(match.id);
+        if (boardGroup !== undefined) allowedSectionDeltas.set(boardGroup, expectedDelta);
+        const groupDelta =
+          boardGroup === undefined
+            ? undefined
+            : (byId.get(boardGroup)?.data as { spec_delta?: unknown } | undefined)?.spec_delta;
+        const groupDeltaKey = `${boardGroup ?? match.id}\u0000${expectedDelta ?? "none"}`;
+        if (groupDelta !== expectedDelta && !reportedGroupDeltas.has(groupDeltaKey)) {
+          reportedGroupDeltas.add(groupDeltaKey);
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(boardGroup ?? match.id, "spec_delta"),
+            message:
+              expectedDelta === undefined
+                ? `Containing section for ${obligation.address} has no source spec delta and must not invent one.`
+                : `Capability section for ${obligation.address} must use source delta \`${expectedDelta}\`, not \`${String(groupDelta)}\`.`,
+          });
+        }
+        const expectedCapability = obligation.capability ?? designArtifactCapability(artifact);
+        if (expectedCapability !== undefined && data.capability !== expectedCapability) {
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(match.id, "capability"),
+            message: `Requirement ${obligation.address} must remain on source capability \`${expectedCapability}\`.`,
+          });
+        }
+        const requirementData = match.data as { name?: unknown };
+        if (
+          requirementData.name !== undefined &&
+          (obligation.label === undefined ||
+            normalizeDesignText(String(requirementData.name)) !==
+              normalizeDesignText(obligation.label))
+        ) {
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(match.id, "name"),
+            message: `Requirement ${obligation.address} may use only its exact source label \`${obligation.label ?? ""}\`.`,
+          });
+        }
+        if (obligation.capabilityTitle !== undefined) {
+          const capabilitySection = sectionAncestors(match.id).find(
+            (section) =>
+              normalizeDesignText(String((section.data as { title?: unknown }).title ?? "")) ===
+              normalizeDesignText(obligation.capabilityTitle ?? ""),
+          );
+          if (capabilitySection === undefined) {
+            out.push({
+              ruleId: "design-artifact-content-hierarchy",
+              elementRef: ref(nearestSectionParent(match.id) ?? match.id, "title"),
+              message: `Requirement ${obligation.address} must stay inside source capability/group \`${obligation.capabilityTitle}\`.`,
+            });
+          } else if (obligation.capability !== undefined) {
+            const knownCapabilitySection = boardCapabilityBySourceCapability.get(
+              obligation.capability,
+            );
+            if (
+              knownCapabilitySection !== undefined &&
+              knownCapabilitySection !== capabilitySection.id &&
+              !reportedCapabilityRoots.has(obligation.capability)
+            ) {
+              reportedCapabilityRoots.add(obligation.capability);
+              out.push({
+                ruleId: "design-artifact-content-hierarchy",
+                elementRef: ref(capabilitySection.id),
+                message: `All requirements for source capability \`${obligation.capability}\` must share one exact capability section.`,
+              });
+            }
+            if (knownCapabilitySection === undefined) {
+              boardCapabilityBySourceCapability.set(obligation.capability, capabilitySection.id);
+            }
+            if (!reportedCapabilityDeltas.has(capabilitySection.id)) {
+              reportedCapabilityDeltas.add(capabilitySection.id);
+              const sourceDeltas = sourceDeltasByCapability.get(obligation.capability) ?? [];
+              const expectedRootDelta = sourceDeltas.length === 1 ? sourceDeltas[0] : undefined;
+              allowedSectionDeltas.set(capabilitySection.id, expectedRootDelta);
+              const actualRootDelta = (capabilitySection.data as { spec_delta?: unknown })
+                .spec_delta;
+              if (actualRootDelta !== expectedRootDelta) {
+                out.push({
+                  ruleId: "design-artifact-content-hierarchy",
+                  elementRef: ref(capabilitySection.id, "spec_delta"),
+                  message:
+                    sourceDeltas.length > 1
+                      ? `Capability \`${obligation.capability}\` combines multiple source deltas and must omit scalar \`spec_delta\`.`
+                      : expectedRootDelta === undefined
+                        ? `Capability \`${obligation.capability}\` has no source spec delta and must not invent one.`
+                        : `Capability \`${obligation.capability}\` must use source delta \`${expectedRootDelta}\`.`,
+                });
+              }
+            }
+          }
+        }
+      }
+      if (obligation.kind === "scenario") {
+        const parent = matchedByObligation.get(obligation.parentKey);
+        if (
+          parent === undefined ||
+          nearestSectionParent(parent.id) !== nearestSectionParent(match.id)
+        ) {
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(match.id),
+            message: `Scenario ${obligation.address} from \`${artifact.path}\` must remain with its source requirement.`,
+          });
+        }
+      }
+      if (obligation.kind === "source-section") {
+        const parent = nearestSectionParent(match.id);
+        const title =
+          parent === undefined
+            ? undefined
+            : (byId.get(parent)?.data as { title?: unknown } | undefined)?.title;
+        if (
+          typeof title !== "string" ||
+          normalizeDesignText(title).toLowerCase() !==
+            normalizeDesignText(obligation.heading).toLowerCase()
+        ) {
+          out.push({
+            ruleId: "design-artifact-content-hierarchy",
+            elementRef: ref(match.id),
+            message: `Source section \`${obligation.heading}\` from \`${artifact.path}\` must remain an exact nested section.`,
+          });
+        }
+      }
       const index = orderIndex.get(match.id) ?? Number.MAX_SAFE_INTEGER;
-      const previous = previousIndex[obligation.kind];
-      if (previous !== undefined && index < previous) {
+      if (previousIndex !== undefined && index < previousIndex) {
         out.push({
           ruleId: "design-artifact-content-order",
           elementRef: ref(match.id),
-          message: `${obligation.kind} elements from \`${artifact.path}\` must preserve source order.`,
+          message: `Source obligations from \`${artifact.path}\` must preserve total source order.`,
         });
       }
-      previousIndex[obligation.kind] = index;
+      previousIndex = index;
+    }
+
+    const scannedDeltaSections = new Set<string>();
+    for (const element of [...sections, ...descendants]) {
+      if (element.kind !== "section" || scannedDeltaSections.has(element.id)) continue;
+      scannedDeltaSections.add(element.id);
+      const specDelta = Reflect.get(element.data, "spec_delta");
+      if (specDelta === undefined || allowedSectionDeltas.has(element.id)) continue;
+      out.push({
+        ruleId: "design-artifact-content-hierarchy",
+        elementRef: ref(element.id, "spec_delta"),
+        message: `Section ${element.id} invents spec_delta: ${String(specDelta)} without a matching source capability or operation.`,
+      });
+    }
+
+    const glossaryMatches = new Set(
+      obligations.flatMap((obligation) => {
+        if (obligation.kind !== "glossary-term") return [];
+        const match = matchedByObligation.get(obligation.key);
+        return match === undefined ? [] : [match.id];
+      }),
+    );
+    const hasGlossaryObligations = obligations.some(
+      (obligation) => obligation.kind === "glossary-term",
+    );
+    for (const prose of proseElements) {
+      const unmatchedGlossaryShape =
+        hasGlossaryObligations &&
+        hasRigidGlossaryShape((prose.data as { markdown?: unknown }).markdown);
+      if (
+        !glossaryMatches.has(prose.id) &&
+        (Reflect.get(prose.data, "glossary_term") !== undefined || unmatchedGlossaryShape)
+      ) {
+        out.push({
+          ruleId: "design-artifact-content-complete",
+          elementRef: ref(prose.id, "glossary_term"),
+          message: `Prose \`${prose.id}\` invents glossary structure not present in source artifact \`${artifact.path}\`.`,
+        });
+      }
+    }
+    const mappedTaskGroups = new Set(
+      [...taskManifestsByGroup.keys()].flatMap((sourceGroup) => {
+        const boardGroup = boardGroupBySourceGroup.get(sourceGroup);
+        return boardGroup === undefined ? [] : [boardGroup];
+      }),
+    );
+    const seenManifestSections = new Set<string>();
+    for (const element of [...sections, ...descendants]) {
+      if (
+        element.kind !== "section" ||
+        seenManifestSections.has(element.id) ||
+        mappedTaskGroups.has(element.id)
+      ) {
+        continue;
+      }
+      seenManifestSections.add(element.id);
+      if (Reflect.get(element.data, "task_manifest") === undefined) continue;
+      out.push({
+        ruleId: "design-artifact-content-complete",
+        elementRef: ref(element.id, "task_manifest"),
+        message: `Section \`${element.id}\` duplicates a task manifest outside its uniquely mapped source task group.`,
+      });
+    }
+
+    const extras = new Map<string, { readonly element: DraftElement; readonly kind: string }>();
+    for (const element of sourcedRequirements) {
+      if (!used.has(element.id)) extras.set(element.id, { element, kind: "requirement" });
+      const scenarios = (element.data as { scenarios?: unknown }).scenarios;
+      if (!Array.isArray(scenarios)) continue;
+      for (const scenarioId of scenarios) {
+        const scenario = typeof scenarioId === "string" ? byId.get(scenarioId) : undefined;
+        if (scenario?.kind === "prose" && !used.has(scenario.id)) {
+          extras.set(scenario.id, { element: scenario, kind: "scenario" });
+        }
+      }
+    }
+    for (const element of sourcedDecisions) {
+      if (!used.has(element.id)) extras.set(element.id, { element, kind: "decision" });
+    }
+    const taskBoardGroups = new Set(
+      obligations.flatMap((obligation) => {
+        if (obligation.kind !== "task") return [];
+        const boardGroup = boardGroupBySourceGroup.get(obligation.parentKey);
+        return boardGroup === undefined ? [] : [boardGroup];
+      }),
+    );
+    if (artifact.format === "superpowers" && artifact.role === "plan") {
+      for (const element of descendants) {
+        if (element.kind !== "section") continue;
+        const title = (element.data as { title?: unknown }).title;
+        if (typeof title === "string" && /^Task\s+\d+(?:\.\d+)*\s*:/i.test(title)) {
+          taskBoardGroups.add(element.id);
+        }
+      }
+    }
+    if (artifact.format === "bmad" && artifact.role === "story") {
+      for (const element of [...sections, ...descendants]) {
+        if (element.kind !== "section") continue;
+        const title = (element.data as { title?: unknown }).title;
+        if (title === "Tasks / Subtasks") taskBoardGroups.add(element.id);
+      }
+    }
+    const isInsideTaskGroup = (id: string): boolean => {
+      const visited = new Set<string>();
+      let parent = parentByChild.get(id);
+      while (parent !== undefined && !visited.has(parent)) {
+        if (taskBoardGroups.has(parent)) return true;
+        visited.add(parent);
+        parent = parentByChild.get(parent);
+      }
+      return false;
+    };
+    const taskArtifactOwnsAllCheckboxes = artifact.role === "tasks";
+    if (taskArtifactOwnsAllCheckboxes || taskBoardGroups.size > 0) {
+      for (const element of proseElements) {
+        const markdown = (element.data as { markdown?: unknown }).markdown;
+        if (
+          !used.has(element.id) &&
+          typeof markdown === "string" &&
+          /^\s*[-*+]\s+\[[ xX]\]\s+/.test(markdown) &&
+          (taskArtifactOwnsAllCheckboxes || isInsideTaskGroup(element.id))
+        ) {
+          extras.set(element.id, { element, kind: "task" });
+        }
+      }
+    }
+    if (obligations.some((obligation) => obligation.kind === "progress-entry")) {
+      for (const element of proseElements) {
+        if (!used.has(element.id)) extras.set(element.id, { element, kind: "progress line" });
+      }
+    }
+    for (const { element, kind } of extras.values()) {
+      out.push({
+        ruleId: "design-artifact-content-complete",
+        elementRef: ref(element.id),
+        message: `Rendered ${kind} \`${element.id}\` is not present in source artifact \`${artifact.path}\`.`,
+      });
     }
 
     if (artifact.role === "proposal") {
-      for (const title of ["what changes", "impact"]) {
+      for (const title of ["why", "what changes", "impact"]) {
         const sourceSection = markdownH2Section(artifact.text, title);
         if (sourceSection === undefined) continue;
         const renderedSection = descendants.find(
@@ -1340,24 +2074,39 @@ const designArtifactContentComplete: Rule = (draft, ctx) => {
           });
           continue;
         }
-        if (title !== "what changes") continue;
-        const declaredChanges = topLevelListItems(sourceSection);
-        const renderedChanges = prose.map((element) =>
-          normalizeDesignText(
-            String((element.data as { markdown?: unknown }).markdown ?? "").replace(/^[-*]\s+/, ""),
-          ),
-        );
-        const remaining = [...renderedChanges];
-        for (const change of declaredChanges) {
-          const index = remaining.indexOf(change);
-          if (index !== -1) {
-            remaining.splice(index, 1);
-            continue;
+        if (title === "what changes") {
+          const declaredChanges = topLevelListItems(sourceSection);
+          const renderedChanges = prose.map((element) =>
+            normalizeDesignText(
+              String((element.data as { markdown?: unknown }).markdown ?? "").replace(
+                /^[-*]\s+/,
+                "",
+              ),
+            ),
+          );
+          if (
+            declaredChanges.length !== renderedChanges.length ||
+            declaredChanges.some((change, index) => renderedChanges[index] !== change)
+          ) {
+            out.push({
+              ruleId: "design-artifact-anatomy",
+              elementRef: ref(renderedSection.id),
+              message: `Artifact \`${artifact.path}\` needs the exact ordered What Changes rows.`,
+            });
           }
+          continue;
+        }
+        const declaredProse = normalizeDesignText(sourceSection.join(" "));
+        const renderedProse = normalizeDesignText(
+          prose
+            .map((element) => String((element.data as { markdown?: unknown }).markdown ?? ""))
+            .join(" "),
+        );
+        if (declaredProse !== renderedProse) {
           out.push({
             ruleId: "design-artifact-anatomy",
             elementRef: ref(renderedSection.id),
-            message: `Artifact \`${artifact.path}\` needs one exact What Changes row for: ${change}`,
+            message: `Artifact \`${artifact.path}\` needs its exact declared ${title} prose.`,
           });
         }
       }
@@ -1370,52 +2119,165 @@ const designHeaderComplete: Rule = (draft, ctx) => {
   if (ctx.artifacts === undefined || ctx.artifactCandidates === undefined) return [];
   const artifacts = selectedDesignArtifacts(draft, ctx);
   if (artifacts.length === 0) return [];
-  const selectedKeys = new Set(
+  const artifactObligations = artifacts.map((artifact) => ({
+    artifact,
+    obligations: parseDesignSourceObligations({
+      ...(artifact.format === undefined ? {} : { format: artifact.format }),
+      role: artifact.role ?? "",
+      path: artifact.path,
+      text: artifact.text,
+    }),
+  }));
+  const requirements = artifactObligations.flatMap(({ obligations }) =>
+    obligations.filter((obligation) => obligation.kind === "requirement"),
+  );
+  const taskProgress = deriveDesignTaskProgress(
     artifacts.flatMap((artifact) => {
       const key = designArtifactKey(artifact, ctx);
-      return key === undefined ? [] : [key];
+      if (key === undefined) return [];
+      return [
+        {
+          candidate: key.slice(0, key.indexOf("\u0000")),
+          ...(artifact.format === undefined ? {} : { format: artifact.format }),
+          role: artifact.role ?? "",
+          path: artifact.path,
+          text: artifact.text,
+        },
+      ];
     }),
   );
-  const requirements = draft.elements.filter((element) => {
-    if (element.kind !== "requirement") return false;
-    const source = (element.data as { source?: { path?: unknown; candidate?: unknown } }).source;
-    const key = source === undefined ? undefined : sourceKey(source, ctx);
-    return key !== undefined && selectedKeys.has(key);
-  });
-  const capabilities = new Map<string, string>();
-  for (const requirement of requirements) {
-    const data = requirement.data as { capability?: unknown; spec_delta?: unknown };
-    if (typeof data.capability === "string") {
-      capabilities.set(data.capability, typeof data.spec_delta === "string" ? data.spec_delta : "");
+  const capabilityDeltas = new Map<string, Set<string>>();
+  for (const { artifact, obligations } of artifactObligations) {
+    for (const obligation of obligations) {
+      if (obligation.kind !== "requirement") continue;
+      const delta = /#requirements:(added|modified|removed|renamed)$/.exec(
+        obligation.parentKey,
+      )?.[1];
+      if (delta === undefined) continue;
+      const capability = `${artifact.candidate ?? "legacy"}\u0000${artifact.path}`;
+      const deltas = capabilityDeltas.get(capability) ?? new Set<string>();
+      deltas.add(delta);
+      capabilityDeltas.set(capability, deltas);
     }
   }
-  const tasks = artifacts.flatMap((artifact) =>
-    designObligations(artifact.text).filter((obligation) => obligation.kind === "task"),
+  const proposals = artifacts.filter((artifact) => artifact.role === "proposal");
+  const proposalCapabilities = proposals.map(
+    (artifact) =>
+      parseOpenSpecChange({
+        name: artifact.candidate ?? artifact.path,
+        proposalMd: artifact.text,
+      }).proposal,
   );
-  const expected = new Map<string, string>([
-    ["requirements", String(requirements.length)],
-    [
-      "capabilities",
-      `${[...capabilities.values()].filter((delta) => delta === "added").length} new / ${[...capabilities.values()].filter((delta) => delta === "modified").length} modified`,
-    ],
-  ]);
-  if (tasks.length > 0) {
-    expected.set("tasks", `${tasks.filter((task) => task.done).length}/${tasks.length}`);
+  const newCapabilities =
+    proposals.length > 0
+      ? new Set(
+          proposalCapabilities.flatMap(
+            (proposal) => proposal?.newCapabilities.map(({ name }) => name) ?? [],
+          ),
+        ).size
+      : [...capabilityDeltas.values()].filter(
+          (deltas) => deltas.has("added") && !deltas.has("modified"),
+        ).length;
+  const modifiedCapabilities =
+    proposals.length > 0
+      ? new Set(
+          proposalCapabilities.flatMap(
+            (proposal) => proposal?.modifiedCapabilities.map(({ name }) => name) ?? [],
+          ),
+        ).size
+      : [...capabilityDeltas.values()].filter((deltas) => deltas.has("modified")).length;
+  const expected = new Map<string, string>([["requirements", String(requirements.length)]]);
+  if (newCapabilities > 0 || modifiedCapabilities > 0) {
+    expected.set("capabilities", `${newCapabilities} new / ${modifiedCapabilities} modified`);
   }
-  const actual = new Map(
-    (draft.document?.stats ?? []).map((stat) => [stat.label.toLowerCase(), stat.value]),
+  const selectedCandidateIds = new Set(
+    (draft.document?.sources ?? []).flatMap((source) =>
+      typeof source.candidate === "string" ? [source.candidate] : [],
+    ),
   );
-  return [...expected].flatMap(([label, value]) =>
-    actual.get(label) === value
-      ? []
-      : [
-          {
-            ruleId: "design-header-complete",
-            elementRef: "/document/stats",
-            message: `Design header stat \`${label}\` must be \`${value}\` from the selected artifacts.`,
-          },
-        ],
-  );
+  const selectedCandidate =
+    selectedCandidateIds.size === 1
+      ? ctx.artifactCandidates.find(
+          (candidate) => candidate.id === selectedCandidateIds.values().next().value,
+        )
+      : undefined;
+  if (selectedCandidate?.format !== undefined) {
+    const formatLabels: Readonly<Record<DesignSourceFormat, string>> = {
+      openspec: "OpenSpec",
+      kiro: "Kiro",
+      bmad: "BMAD",
+      superpowers: "Superpowers",
+      "grill-with-docs": "grill-with-docs",
+    };
+    expected.set("format", formatLabels[selectedCandidate.format]);
+  }
+  if (taskProgress.total > 0) {
+    expected.set("tasks", `${taskProgress.done}/${taskProgress.total}`);
+  }
+  const canonicalLabels = new Map([
+    ["requirements", "Requirements"],
+    ["capabilities", "Capabilities"],
+    ["format", "Format"],
+    ["tasks", "Tasks"],
+  ]);
+  const actual = new Map<string, { readonly label: string; readonly value: string }[]>();
+  for (const stat of draft.document?.stats ?? []) {
+    const label = stat.label.toLowerCase();
+    actual.set(label, [...(actual.get(label) ?? []), stat]);
+  }
+  const out: Violation[] = [];
+  for (const [label, value] of expected) {
+    const stats = actual.get(label) ?? [];
+    if (stats.length !== 1) {
+      out.push({
+        ruleId: "design-header-complete",
+        elementRef: "/document/stats",
+        message: `Design header stat \`${label}\` must appear exactly once.`,
+      });
+      continue;
+    }
+    const stat = stats[0];
+    if (stat === undefined) continue;
+    const canonicalLabel = canonicalLabels.get(label);
+    if (stat.label !== canonicalLabel) {
+      out.push({
+        ruleId: "design-header-complete",
+        elementRef: "/document/stats",
+        message: `Design header stat \`${label}\` must use exact label \`${canonicalLabel}\`.`,
+      });
+      continue;
+    }
+    if (stat.value !== value) {
+      out.push({
+        ruleId: "design-header-complete",
+        elementRef: "/document/stats",
+        message: `Design header stat \`${label}\` must be \`${value}\` from the selected artifacts.`,
+      });
+    }
+  }
+  for (const label of actual.keys()) {
+    if (!expected.has(label)) {
+      out.push({
+        ruleId: "design-header-complete",
+        elementRef: "/document/stats",
+        message: `Design header has unexpected stat \`${label}\`; selected artifacts do not support it.`,
+      });
+    }
+  }
+  if (selectedCandidateIds.size === 1) {
+    const expectedTitle = selectedCandidate?.name;
+    if (
+      expectedTitle !== undefined &&
+      normalizeDesignText(draft.document?.title ?? "") !== normalizeDesignText(expectedTitle)
+    ) {
+      out.push({
+        ruleId: "design-header-complete",
+        elementRef: "/document/title",
+        message: `Design header title must be \`${expectedTitle}\` from the selected artifact candidate.`,
+      });
+    }
+  }
+  return out;
 };
 
 const designIncompletenessVisible: Rule = (draft, ctx) => {
@@ -1472,13 +2334,49 @@ const requirementSourceKnown: Rule = (draft, ctx) => {
 /** Requirement scenario refs resolve only to narrative scenario regions. */
 const requirementScenariosNarrative: Rule = (draft) => {
   const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  const sectionChildren = new Set(
+    draft.elements.flatMap((element) => (element.kind === "section" ? element.data.children : [])),
+  );
+  const owners = new Map<string, string>();
   return draft.elements.flatMap((element) => {
     if (element.kind !== "requirement") return [];
     const scenarios = (element.data as { scenarios?: unknown }).scenarios;
     if (!Array.isArray(scenarios)) return [];
     return scenarios.flatMap((scenarioId, index) => {
       const scenario = typeof scenarioId === "string" ? byId.get(scenarioId) : undefined;
-      if (scenario?.kind === "prose") return [];
+      if (scenario?.kind === "prose") {
+        const priorOwner = owners.get(scenario.id);
+        owners.set(scenario.id, element.id);
+        return [
+          ...(sectionChildren.has(scenario.id)
+            ? [
+                {
+                  ruleId: "requirement-scenario-parenting",
+                  elementRef: ref(scenario.id),
+                  message: `Scenario \`${scenario.id}\` is a child only through \`requirement.scenarios\`; do not repeat it in a section \`children\` list.`,
+                },
+              ]
+            : []),
+          ...(priorOwner !== undefined && priorOwner !== element.id
+            ? [
+                {
+                  ruleId: "requirement-scenario-parenting",
+                  elementRef: ref(element.id, `scenarios/${index}`),
+                  message: `Scenario \`${scenario.id}\` already belongs to requirement \`${priorOwner}\`.`,
+                },
+              ]
+            : []),
+          ...(priorOwner === element.id
+            ? [
+                {
+                  ruleId: "requirement-scenario-parenting",
+                  elementRef: ref(element.id, `scenarios/${index}`),
+                  message: `Requirement \`${element.id}\` repeats scenario \`${scenario.id}\`; each source scenario appears exactly once.`,
+                },
+              ]
+            : []),
+        ];
+      }
       return [
         {
           ruleId: "requirement-scenario-narrative",
@@ -1553,9 +2451,7 @@ const requirementOrder: Rule = (draft, ctx) => {
   const byId = new Map(draft.elements.map((element) => [element.id, element]));
   const nested = new Set<string>();
   for (const element of draft.elements) {
-    const children = (element.data as { children?: unknown }).children;
-    if (!Array.isArray(children)) continue;
-    for (const child of children) if (typeof child === "string") nested.add(child);
+    for (const child of designStructuralChildren(element)) nested.add(child);
   }
   const ordered: DraftElement[] = [];
   const visited = new Set<string>();
@@ -1563,10 +2459,7 @@ const requirementOrder: Rule = (draft, ctx) => {
     if (visited.has(element.id)) return;
     visited.add(element.id);
     if (element.kind === "requirement") ordered.push(element);
-    const children = (element.data as { children?: unknown }).children;
-    if (!Array.isArray(children)) return;
-    for (const child of children) {
-      if (typeof child !== "string") continue;
+    for (const child of designStructuralChildren(element)) {
       const target = byId.get(child);
       if (target !== undefined) visit(target);
     }
@@ -1638,7 +2531,6 @@ export const LENS_RULES: readonly Rule[] = [
   decisionGrounded,
   reportCoherent,
   designSourcesKnown,
-  designCandidateRelevant,
   designArtifactSetComplete,
   designArtifactContentComplete,
   designHeaderComplete,

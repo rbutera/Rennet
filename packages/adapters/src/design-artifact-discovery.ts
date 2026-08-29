@@ -400,7 +400,7 @@ async function discoverBmad(state: ReviewedState): Promise<CandidateInput[]> {
       `${entry.path}\n${firstHeading(entry.content) ?? ""}`,
     )?.[1];
   const storyEpicNumber = (entry: DesignArtifact): string | undefined =>
-    /(?:^|\/)(\d+)\.[^./]+(?:\.story)?\.md$/i.exec(entry.path)?.[1];
+    /(?:^|\/)(\d+)\.[^./]+(?:\.[^/]+)?\.md$/i.exec(entry.path)?.[1];
   const usedEpics = new Set<string>();
   const candidates: CandidateInput[] = stories.map((story) => {
     const number = storyEpicNumber(story);
@@ -409,7 +409,7 @@ async function discoverBmad(state: ReviewedState): Promise<CandidateInput[]> {
     for (const epic of matchingEpics) usedEpics.add(epic.path);
     return {
       format: "bmad",
-      name: firstHeading(story.content) ?? basename(story.path, ".story.md"),
+      name: firstHeading(story.content) ?? basename(story.path, ".md"),
       artifacts: sortArtifacts([...shared, ...matchingEpics, story]),
     };
   });
@@ -597,20 +597,17 @@ async function discoverGrillWithDocs(state: ReviewedState): Promise<CandidateInp
       ? await artifact(state, "CONTEXT.md", "context")
       : undefined;
     const rootAdrPaths = state.paths.filter((path) => isAdrUnder(path, ""));
-    for (const path of rootAdrPaths) {
-      const adr = await artifact(state, path, "adr");
-      if (adr === undefined) continue;
+    const loadedAdrs = await Promise.all(rootAdrPaths.map((path) => artifact(state, path, "adr")));
+    const adrs = loadedAdrs.filter((entry) => entry !== undefined);
+    if (context !== undefined || adrs.length > 0) {
       candidates.push({
         format: "grill-with-docs",
-        name: firstHeading(adr.content) ?? basename(path, ".md"),
-        artifacts: sortArtifacts([...(context === undefined ? [] : [context]), adr]),
-      });
-    }
-    if (candidates.length === 0 && context !== undefined) {
-      candidates.push({
-        format: "grill-with-docs",
-        name: firstHeading(context.content) ?? "Project context",
-        artifacts: [context],
+        name:
+          (context === undefined ? undefined : firstHeading(context.content)) ??
+          (adrs[0] === undefined
+            ? "Project context"
+            : (firstHeading(adrs[0].content) ?? basename(adrs[0].path, ".md"))),
+        artifacts: sortArtifacts([...(context === undefined ? [] : [context]), ...adrs]),
       });
     }
   }

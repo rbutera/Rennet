@@ -149,7 +149,7 @@ describe("regeneration lanes render every status honestly — no false green che
         id: "l-absent",
         label: "Design artifacts",
         status: "absent",
-        reason: "No spec artifacts were discovered.",
+        reason: "No Design specification applies to this change.",
       },
       {
         id: "l-failed",
@@ -197,7 +197,7 @@ describe("regeneration lanes render every status honestly — no false green che
     const r = renderGreeting();
     const row = r.container.querySelector('[data-row="l-absent"]');
     expect(row?.getAttribute("data-status")).toBe("absent");
-    expect(row?.textContent).toContain("No spec artifacts were discovered.");
+    expect(row?.textContent).toContain("No Design specification applies to this change.");
     expect(row?.textContent).not.toContain("failed");
   });
 

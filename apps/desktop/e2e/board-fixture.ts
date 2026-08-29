@@ -268,8 +268,8 @@ export async function seedBoardFixture(
                   },
                 ],
                 stats: [
-                  { label: "Capabilities", value: "1 modified" },
-                  { label: "Tasks", value: "2/2" },
+                  { label: "Requirements", value: "1" },
+                  { label: "Capabilities", value: "0 new / 1 modified" },
                 ],
               }
             : {

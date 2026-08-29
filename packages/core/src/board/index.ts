@@ -6,5 +6,6 @@
  * import surface.
  */
 export * from "./compose";
+export * from "./design-obligations";
 export * from "./lint";
 export * from "./validate";
