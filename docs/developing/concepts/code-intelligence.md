@@ -418,27 +418,50 @@ comment. None of that alters what a file **exports**, which is the skeleton its
 worker was fed and what its statements are about.
 
 So the changed set is split before it reaches routing. Each changed path is
-compared across the two snapshots' symbol shards — the exported symbols by name
-and kind, plus the generated-banner bit, with line numbers deliberately excluded
-because everything below an inserted line moves and says nothing about structure.
-A file whose signature is identical is **cosmetic** and routes no worker; anything
-else is **structural** and routes as it always did. A slice re-runs when at least
-one of its changed members is structural, so routing is file-level rather than
-partition-level, and the run reports how many slices it skipped for being
+compared across the two snapshots' per-blob shards on three terms: the exported
+symbols by name and kind, the generated-banner bit, and the **raw import
+specifiers** the file names. Line numbers are deliberately excluded, because
+everything below an inserted line moves and says nothing about structure. A file
+whose signature is identical on all three is **cosmetic** and routes no worker;
+anything else is **structural** and routes as it always did. A slice re-runs when
+at least one of its changed members is structural, so routing is file-level rather
+than partition-level, and the run reports how many slices it skipped for being
 structurally unchanged.
+
+Imports are in the signature because they decide something the export surface
+cannot see. An import-only edit leaves every exported name and kind exactly where
+it was while changing the file's partition membership, its module batch's cut
+edges, and the neighbour map its worker reads — so on exports alone it classified
+cosmetic and routed nothing, and the map went on describing a graph the repository
+had left.
+
+The whole comparison has a precondition: **two comparable snapshots**. A snapshot
+is identified by its fingerprint, not by its base OID — a manifest is stored per
+baseline and overwritten in place, so a re-extraction replaces the view the stored
+statements were learned against while the OID stays put. The pass joins the prior
+snapshot on the fingerprint the knowledge set records; without a match, or without
+a readable prior at all, there is nothing to compare and the whole change is
+structural.
 
 Every "we cannot tell" lands on structural, because a needless turn is the cheap
 error and a skipped one is invisible:
 
 | case | verdict |
 | --- | --- |
+| no readable prior snapshot — never built, corrupt, or evicted past the 32-manifest retention window | *everything* structural |
+| a prior snapshot whose fingerprint is not the learned-against one | *everything* structural |
 | added or deleted | structural |
 | same blob on both sides | cosmetic |
 | a language the symbol extractor does not read | structural |
-| a symbol shard missing or unreadable on either side | structural |
+| a shard missing, unreadable, or about a different blob, on either side | structural |
+| the two sides produced by different extractors | structural |
 | the generated-banner bit moved | structural |
 | a symbol added, removed, renamed, or re-kinded | structural |
-| identical symbols, different lines or bodies | cosmetic |
+| an import specifier added, removed, or re-pointed | structural |
+| identical symbols and imports, different lines or bodies | cosmetic |
+
+The first two rows are whole-run rather than per-file: they are decided once,
+before any path is examined, and every changed path is structural at a stroke.
 
 Which statements re-verify is a separate question from which slices re-run, and
 the split governs only the second. Re-anchoring keys on the blob moving, so a
@@ -466,17 +489,30 @@ Two ceilings, both structural to the approach rather than bugs in it:
   a finer diff.
 - **TypeScript and JavaScript only.** Every other file gets a shard carrying
   `symbols: []`, which is indistinguishable from an unchanged TS file with no
-  exports — so a markdown, JSON, Python or SQL edit is classified structural and
-  re-runs its slice's worker rather than being guessed at.
+  exports, and no import shard at all — so a markdown, JSON, Python or SQL edit is
+  classified structural and re-runs its slice's worker rather than being guessed at.
 
 **Measured on Rennet's last 100 non-merge commits** (457 changed files, using the
-same `structural-ts-v1` extractor the shard family runs): 245 files (54%)
+same `structural-ts-v2` extractor the shard family runs): 245 files (54%)
 classify as cosmetic, and **17 of the 100 commits would route zero slices** — a
-baseline advance for no model turns at all. 114 of those 245 are files with an
+baseline advance for **zero worker turns**. 114 of those 245 are files with an
 empty signature on both sides, 105 of them test files; excluding those, 131 files
 (29%) are real export surfaces that a commit touched without moving. The figure
 counts files and whole commits, not slices: a commit with one structural file
 still runs whichever slices own it.
+
+Two things that figure does not say. It was measured on the export surface alone,
+**before imports joined the signature**, and an import specifier can only move a
+file from cosmetic to structural — so read 54% and 17 as an upper bound on the
+current classifier, not as its output.
+
+And zero *worker* turns is not zero turns. Every statement anchored in an edited
+file is re-anchored and reaches the verify seat flagged, and that residue runs the
+verify turn even when no worker did — only a commit whose changed files carry no
+statements at all runs nothing whatsoever. That turn is not overhead; it is the
+mitigation the exports-only ceiling leans on. A claim about a rewritten private
+helper is exactly what the signature diff cannot see, and the verify seat re-reading
+it is what stops the saving from becoming a stale map.
 
 ## Current scope
 

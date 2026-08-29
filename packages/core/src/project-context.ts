@@ -534,7 +534,7 @@ export interface FileContext {
    * The extractor identity that produced `symbols`, or null when NO symbol shard
    * exists for this blob — the same bit `hasSymbols` reports, never "the list came
    * back empty". Since schema v5 a `.md` or `.json` gets a shard too, so it reads
-   * `structural-ts-v1` with an empty `symbols`: the extractor really did run and
+   * `structural-ts-v2` with an empty `symbols`: the extractor really did run and
    * really did find nothing, which is a different fact from "no shard was emitted".
    * Returning null on an empty list would collapse the two.
    */
@@ -784,7 +784,7 @@ export function queryFileOverview(snapshot: LoadedSnapshot, path: string): FileO
 //
 // Rennet's OWN model-free go-to-definition (repo-map-symbolic-surface, design §5
 // layer b — built on the giants we already have, NOT an LSP or bundled engine).
-// The snapshot's `structural-ts-v1` extractor indexes each file's top-level
+// The snapshot's `structural-ts-v2` extractor indexes each file's top-level
 // EXPORTED declarations (`{name, kind, line}` per blob). This resolves a symbol
 // NAME to its definition SITE(S) by scanning that index: `name → (every exported
 // declaration of that name) → path (via blobOid) + line + owning scope`. An agent

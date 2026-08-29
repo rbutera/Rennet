@@ -566,7 +566,7 @@ export function indexSymbolShards(shards: readonly SymbolShard[]): Map<string, S
   return indexByBlob(shards);
 }
 
-// ── The default deterministic symbol extractor (structural-ts-v1) ─────────────
+// ── The default deterministic symbol extractor (structural-ts-v2) ─────────────
 //
 // A dependency-free, deterministic extractor for TypeScript/JavaScript top-level
 // EXPORTS. It is deliberately shallow and structural — it reads statement-leading
