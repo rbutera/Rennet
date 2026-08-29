@@ -9,7 +9,12 @@ import type {
 import { mintSession } from "@rennet/core";
 import type { SessionModel } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { type SessionCursorStore, SessionTurnLoop, type TurnRow } from "./turn-loop";
+import {
+  type SessionCursorStore,
+  SessionTurnLoop,
+  type TurnLoopDeps,
+  type TurnRow,
+} from "./turn-loop";
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
 
@@ -491,6 +496,57 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     expect(after.threads).toEqual([]);
     expect(after.projectId).toBe("proj");
     expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("fresh-h");
+  });
+
+  it("keeps a vanished resume attempt distinct while its successful retry owns the public turn id", async () => {
+    const store = memoryStore(withStaleCursor());
+    const captured: Parameters<NonNullable<TurnLoopDeps["recordTranscript"]>>[0][] = [];
+    const loop = new SessionTurnLoop({
+      port: fakePort(() => undefined, {
+        outcome: (s) =>
+          s.resume !== undefined
+            ? resumeRefused
+            : {
+                status: "completed",
+                finalText: "ok",
+                harnessSessionId: "fresh-h",
+                lastAssistantMessageAnchor: "fresh-a",
+              },
+      }),
+      store,
+      buildSpec: spec,
+      recordTranscript: (input) => captured.push(input),
+    });
+
+    const result = await loop.runTurn("s1", "hi", { transcriptTurnId: "public-turn" });
+
+    expect(result.contextRebuilt).toBe(true);
+    expect(captured.map(({ turnId }) => turnId)).toEqual([
+      "public-turn::resume-vanished",
+      "public-turn",
+    ]);
+    expect(
+      captured[0]?.events.some(
+        (event) => event.kind === "session.ended" && event.outcome.status === "failed",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the public turn id when a normal resumed turn succeeds", async () => {
+    const store = memoryStore(withStaleCursor());
+    const specs: SessionSpec[] = [];
+    const captured: Parameters<NonNullable<TurnLoopDeps["recordTranscript"]>>[0][] = [];
+    const loop = new SessionTurnLoop({
+      port: fakePort((turnSpec) => specs.push(turnSpec)),
+      store,
+      buildSpec: spec,
+      recordTranscript: (input) => captured.push(input),
+    });
+
+    await loop.runTurn("s1", "hi", { transcriptTurnId: "public-turn" });
+
+    expect(specs[0]?.resume).toEqual({ harnessSessionId: "gone" });
+    expect(captured.map(({ turnId }) => turnId)).toEqual(["public-turn"]);
   });
 
   it("does not rebuild when the resumed turn merely fails transiently (not vanished)", async () => {
