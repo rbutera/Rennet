@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { resolveProject } from "../../routes/project-resolution";
 import { settingsPath } from "../../routes/url";
@@ -36,6 +37,13 @@ export function ProjectsPage() {
     requested,
     activeProjectId,
   );
+
+  useEffect(() => {
+    if (resolved && requested !== resolved.id) {
+      navigate(settingsPath("projects", resolved.id), { replace: true });
+    }
+  }, [navigate, requested, resolved]);
+
   const scoped = scopes.find(({ project }) => project.id === resolved?.id);
 
   if (!scoped) {

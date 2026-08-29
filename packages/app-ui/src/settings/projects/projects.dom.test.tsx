@@ -417,6 +417,46 @@ function liveBridge(): MemoryBridge {
   );
 }
 
+function mountLiveRenamableProject() {
+  let projects = [...PROJECTS];
+  const renames: { projectId: string; name: string }[] = [];
+  const history = memoryHistory("/settings/projects?project=billing");
+  const live = new MemoryBridge(
+    {
+      "projects.list": () => ({ projects: [...projects] }),
+      "project.rename": ({ projectId, name }) => {
+        renames.push({ projectId, name });
+        const current = projects.find((project) => project.id === projectId) ?? null;
+        if (!current) return { project: null, projects: [...projects] };
+        const renamed = { ...current, name };
+        projects = projects.map((project) => (project.id === projectId ? renamed : project));
+        return { project: renamed, projects: [...projects] };
+      },
+      "settings.get": () => ({
+        scheme: "system",
+        schemeProvenance: {
+          layer: "builtin",
+          contributions: [{ layer: "builtin", value: "system", effective: true }],
+        },
+        appearanceMalformed: false,
+        projects: [P1_ROW],
+      }),
+      "harness.detect": () => ({ detected: [] }),
+    },
+    { platform: "darwin", version: "1.0.1" },
+  );
+  const view = mount(
+    <BridgeProvider bridge={live}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <LiveSettingsProjectionProvider>
+          <ProjectsPage />
+        </LiveSettingsProjectionProvider>
+      </Router>
+    </BridgeProvider>,
+  );
+  return { history, renames, view };
+}
+
 function mountLiveProjects() {
   const history = memoryHistory("/settings/projects?project=p1");
   return mount(
@@ -429,6 +469,26 @@ function mountLiveProjects() {
     </BridgeProvider>,
   );
 }
+
+describe("ProjectsPage — stable route identity", () => {
+  it("canonicalizes a name route before rename so the stable project stays selected", async () => {
+    const { history, renames, view } = mountLiveRenamableProject();
+    const name = (await view.findByLabelText("Project name")) as HTMLInputElement;
+    expect(name.value).toBe("billing");
+
+    fireEvent.change(name, { target: { value: "Payments" } });
+    fireEvent.blur(name);
+    await waitFor(() => expect(renames).toEqual([{ projectId: "p2", name: "Payments" }]));
+    await waitFor(() => {
+      expect(history.history).toEqual(["/settings/projects?project=p2"]);
+      expect((view.getByLabelText("Project name") as HTMLInputElement).value).toBe("Payments");
+      expect(view.getByRole("button", { name: "Choose project" }).textContent).toContain(
+        "Payments",
+      );
+    });
+    cleanup();
+  });
+});
 
 describe("ProjectsPage — live projection is honest about the unserved write store", () => {
   it("disables every unbacked editor and discloses the gap (no silent no-op controls)", async () => {
