@@ -33,9 +33,12 @@ import { writeAtomic } from "./knowledge-store";
  * flat directory and {@link KnowledgeJournal.clear} removed that directory whole —
  * so a run promoting at one baseline deleted a concurrently-running run's journal at
  * another, and the second run's completed turns were unrecoverable. Each target gets
- * its own subdirectory, `clear` touches only its own, and stale target directories
- * are swept by AGE on promotion (see {@link STALE_TARGET_AGE_MS}) rather than by
- * guessing which of them is still live.
+ * its own subdirectory ({@link journalTargetDir}, over the target IN FULL — a
+ * directory named for the base OID alone put a re-extraction and a prompt rework at
+ * that same OID in one place, so promoting either deleted the other's completed
+ * turns, which is the original bug at a finer grain), `clear` touches only its own,
+ * and stale target directories are swept by AGE on promotion (see
+ * {@link STALE_TARGET_AGE_MS}) rather than by guessing which of them is still live.
  *
  * ONE GAP, stated rather than defended: nothing here is atomic ACROSS the
  * journal-write / store-rename / journal-clear sequence, so a process death between
@@ -135,6 +138,24 @@ export function journalKey(target: JournalTarget, slice: PartitionSlice): string
   ).slice(0, 32);
 }
 
+/**
+ * The subdirectory name for a target — a hash of ALL THREE fields, for exactly the
+ * reason {@link journalKey} takes all three: `baseOid` alone does not identify what
+ * a result was produced for. Two runs at one OID differing only by
+ * `snapshotFingerprint` or `generator` would share a directory, and the first to
+ * promote would `clear` the other's completed turns away.
+ *
+ * Hashed rather than nested three deep so the sweep in {@link KnowledgeJournal.clear}
+ * stays a single `readdir`; the record inside each file still carries the target in
+ * plain text, so a directory is identifiable by reading one entry.
+ */
+export function journalTargetDir(target: JournalTarget): string {
+  return sha256Hex(`${target.baseOid}\n${target.snapshotFingerprint}\n${target.generator}`).slice(
+    0,
+    32,
+  );
+}
+
 export class KnowledgeJournal {
   constructor(
     private readonly dir: string,
@@ -143,7 +164,7 @@ export class KnowledgeJournal {
 
   /** This target's own directory. Nothing outside it is ever this run's to delete. */
   private dirFor(target: JournalTarget): string {
-    return join(this.dir, target.baseOid);
+    return join(this.dir, journalTargetDir(target));
   }
 
   private pathFor(target: JournalTarget, key: string): string {
@@ -293,9 +314,10 @@ export class KnowledgeJournal {
       // the tail wagging the dog.
     }
     const cutoff = this.now() - STALE_TARGET_AGE_MS;
+    const own = journalTargetDir(target);
     try {
       for (const entry of readdirSync(this.dir, { withFileTypes: true })) {
-        if (!entry.isDirectory() || entry.name === target.baseOid) continue;
+        if (!entry.isDirectory() || entry.name === own) continue;
         const path = join(this.dir, entry.name);
         if (statSync(path).mtimeMs > cutoff) continue;
         rmSync(path, { recursive: true, force: true });

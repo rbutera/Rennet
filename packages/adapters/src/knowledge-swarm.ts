@@ -681,6 +681,14 @@ export async function runKnowledgeSwarmForRepo(
   // Refuse, do not merge: this run's inputs are stale, and the journal is what makes
   // that cheap — it is deliberately NOT cleared, so the retry re-runs no turns and
   // merges against the prior that actually exists.
+  //
+  // ponytail: this NARROWS the race from minutes to microseconds, it does not close
+  // it. The read below and the `save` after it are not one atomic operation, so two
+  // runs finishing inside that read-compare-write window both see an unmoved store
+  // and the last writer wins. Closing it needs the store to do a compare-and-swap on
+  // the prior's identity; that is a store-layer change, and the window it would buy
+  // back is the distance between two adjacent statements. The minutes-wide window
+  // this check does close is the one that was actually losing work.
   if (storeIdentity(deps.knowledgeStore.loadLocal(deps.repoKey)) !== priorIdentity) {
     return {
       status: "failed",

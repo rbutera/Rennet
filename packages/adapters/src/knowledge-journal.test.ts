@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   type JournalTarget,
   journalKey,
+  journalTargetDir,
   KnowledgeJournal,
   STALE_TARGET_AGE_MS,
 } from "./knowledge-journal";
@@ -80,7 +81,7 @@ function result(statements: readonly KnowledgeStatement[]): PartitionWorkerResul
 }
 
 function entryPath(dir: string, target: JournalTarget = TARGET): string {
-  return join(dir, target.baseOid, `${journalKey(target, SLICE)}.json`);
+  return join(dir, journalTargetDir(target), `${journalKey(target, SLICE)}.json`);
 }
 
 describe("KnowledgeJournal", () => {
@@ -224,6 +225,29 @@ describe("KnowledgeJournal", () => {
     expect(journal.read(other, SLICE)).not.toBeNull();
   });
 
+  it("keeps two targets at ONE base OID apart, so clearing either spares the other", () => {
+    // The finer grain of the same bug. Both runs sit at the same git OID and differ
+    // only in what shaped their answers — a re-extraction (`snapshotFingerprint`) or a
+    // prompt rework (`generator`). A directory named for the base OID alone put all
+    // three in one place, so the first to promote deleted the others' completed turns.
+    const dir = scratchDir();
+    const journal = new KnowledgeJournal(dir);
+    const reExtracted: JournalTarget = { ...TARGET, snapshotFingerprint: "fp-2" };
+    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@3" };
+    for (const target of [TARGET, reExtracted, reworked]) {
+      journal.write(target, SLICE, result([statement()]));
+      expect(journal.size(target)).toBe(1);
+    }
+    // Three distinct directories under one base OID — the property, stated as a count
+    // rather than inferred from the survivors below.
+    expect(readdirSync(dir)).toHaveLength(3);
+
+    journal.clear(TARGET);
+    expect(journal.size(TARGET)).toBe(0);
+    expect(journal.size(reExtracted)).toBe(1);
+    expect(journal.size(reworked)).toBe(1);
+  });
+
   it("sweeps a target directory nobody has touched in a day, and spares a fresh one", () => {
     const dir = scratchDir();
     const abandoned: JournalTarget = { ...TARGET, baseOid: "d".repeat(40) };
@@ -235,7 +259,7 @@ describe("KnowledgeJournal", () => {
     const live = new KnowledgeJournal(dir);
     live.write(TARGET, SLICE, result([statement()]));
     live.clear(TARGET);
-    expect(readdirSync(dir)).toEqual([abandoned.baseOid]);
+    expect(readdirSync(dir)).toEqual([journalTargetDir(abandoned)]);
 
     // A day later, the same directory is a dead run's leftovers.
     const later = new KnowledgeJournal(dir, () => Date.now() + STALE_TARGET_AGE_MS + 1_000);

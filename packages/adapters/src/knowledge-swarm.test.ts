@@ -7,6 +7,7 @@ import type {
   HarnessPort,
   HarnessSession,
   LoadedSnapshot,
+  PartitionSlice,
 } from "@rennet/core";
 import {
   KNOWLEDGE_SWARM_GENERATOR_ID,
@@ -17,6 +18,7 @@ import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
+import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
 import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -477,6 +479,26 @@ describe("knowledge swarm — prior-set identity", () => {
         store.save(repoKey, set);
       },
     };
+    // The target this run journals under, and a SEEDED entry for a slice this run
+    // does not execute — an earlier attempt's leftover. It makes the journal's entry
+    // count (3) differ from what this run completed (2), which is the only way the
+    // `journaled` assertion below can tell the two apart.
+    const target: JournalTarget = {
+      baseOid: "oid-1",
+      snapshotFingerprint: "fp-1",
+      generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+    };
+    const journal = new KnowledgeJournal(store.journalDir());
+    const stranger: PartitionSlice = { id: "dir:c", files: [], neighbors: [] };
+    journal.write(target, stranger, {
+      sliceId: stranger.id,
+      status: "ok",
+      statements: [],
+      droppedAnchors: 0,
+      droppedStatements: 0,
+      attempts: 1,
+    });
+    expect(journal.size(target)).toBe(1);
     const outcome = await runKnowledgeSwarmForRepo({
       reader: READER,
       knowledgeStore: racing,
@@ -494,8 +516,17 @@ describe("knowledge swarm — prior-set identity", () => {
     expect(outcome.status).toBe("failed");
     if (outcome.status === "failed") {
       expect(outcome.reason).toContain("superseded");
-      // The journal is deliberately kept, so the retry pays for no turns again.
-      expect(outcome.journaled).toBeGreaterThan(0);
+      // THE DISK, not a counter. "The journal is deliberately kept" is a claim about
+      // what is on the filesystem after the refusal, and a `journaled` number would
+      // read exactly the same whether or not `clear` had run — insert
+      // `journal.clear(target)` before the superseded return and this line reds while
+      // the one below it does not.
+      expect(journal.size(target)).toBe(3);
+      // And the counter is THIS RUN's completed batches (2), not the journal's entry
+      // count (3, seeded above): swap the outcome field back to `journal.size(target)`
+      // and this reds. The distinction matters on a retry, where the journal holds
+      // every earlier attempt's work and this run completed a subset.
+      expect(outcome.journaled).toBe(2);
     }
     expect(saved).toHaveLength(0);
   });
