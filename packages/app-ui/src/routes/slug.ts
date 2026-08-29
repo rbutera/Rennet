@@ -100,6 +100,29 @@ export function useSlugResolution(slug: string): SlugResolution {
   return { status: "pending" };
 }
 
+/**
+ * The PROJECT `/s/:slug` belongs to — read off the session row that names it, which is the
+ * only thing that can answer it. `review.repositoryRoot` cannot: a workspace project holds
+ * several repositories, so a root does not name a project back (AGENTS.md, "a workspace maps
+ * MANY repos to ONE identity").
+ *
+ * Three answers, not two. `undefined` ⇒ still reading, so nothing is claimed either way;
+ * `null` ⇒ the read SETTLED and no project came back — either the list names no row for this
+ * slug (a legacy `/s/<reviewId>` link) or the list could not be read at all. A surface that
+ * collapses `undefined` into `null` narrates a still-loading list as an absence.
+ *
+ * A failed read lands in `null` deliberately: the caller's job is to say "no project to work
+ * from", which is true either way, and inventing a project from the review would be the
+ * repo→project guess this comment starts by ruling out.
+ *
+ * Shares the `session.list` read `useSlugResolution` already runs — same cache key, one fetch.
+ */
+export function useSessionProjectId(slug: string): string | null | undefined {
+  const { data, pending } = useCommand("session.list", {}, { enabled: slug !== "" });
+  if (pending) return undefined;
+  return data?.sessions.find((session) => session.id === slug)?.projectId ?? null;
+}
+
 /** The review id `/s/:slug` is looking at, or `undefined` off a review (a chat-only
  *  session, a pending resolve, or no session route at all). The one place a surface
  *  should ask "which review am I on?" — it never guesses that the slug is a review id,

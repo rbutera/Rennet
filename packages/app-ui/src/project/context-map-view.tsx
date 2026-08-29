@@ -12,7 +12,16 @@ import { newChatPath } from "../routes/url";
 // entries it owns (the ready block and the new-chat header); it lays no new track.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ProjectContextMapView({ projectId }: { readonly projectId: string }) {
+export function ProjectContextMapView({
+  projectId,
+  onBack,
+}: {
+  readonly projectId: string;
+  /** Where Back goes. Omitted ⇒ the project's New Chat, this flow's standing exit. The
+   *  session top-bar's `?view=map` overrides it to the board, because there Back leaving
+   *  for New Chat would drop the reviewer out of the session they were reading. */
+  readonly onBack?: () => void;
+}) {
   const bridge = useBridge();
   const [, navigate] = useLocation();
   return (
@@ -20,7 +29,7 @@ export function ProjectContextMapView({ projectId }: { readonly projectId: strin
       bridge={bridge}
       projectId={projectId}
       showAskRail={false}
-      onBack={() => navigate(newChatPath(projectId))}
+      onBack={onBack ?? (() => navigate(newChatPath(projectId)))}
       // No ask rail here, so "discuss" hands the statement to the project's New Chat,
       // prefilled — a real handoff, not an inert button (finding 9).
       onDiscuss={(statement) => navigate(newChatPath(projectId, discussPrompt(statement)))}

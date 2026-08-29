@@ -13,6 +13,12 @@ Reach the map from **View Context Map** on the ready summary shown when a new
 project finishes indexing, or from the **Map** control in a project's New Chat
 header. It opens as a full view; leaving it lands on that project's New Chat.
 
+**Map** in a session's top bar opens the same map for that session's project,
+without leaving the session. Leaving it there returns to the board rather than to
+New Chat. A review opened by a direct link rather than through one of its
+sessions has no project to map, and the view says so instead of showing the
+board again.
+
 The map generates the first time you add a project. A prefilled questionnaire
 about the project runs alongside that generation and is never a gate: the map
 completes and its exits appear whether or not you answer it. Its answers are
