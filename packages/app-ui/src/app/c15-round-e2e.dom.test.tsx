@@ -27,19 +27,19 @@
 //     file cannot drift from the wire; that the server really emits this walk is proven
 //     server-side in `server/src/runtime/round-progress.test.ts` (3.1/3.3), over a real
 //     `runRound` with only the model seats faked. The two halves meet at the schema.
-//   • The RECORD is the durable one — parsed through `RoundRecordSchema`, carrying the
+//   • The RECORD is the durable one — parsed through `RoundLedgerRecordSchema`, carrying the
 //     `frozenPredecessor` C15 2.2 stamps (distinct from `boardGeneration`), which is what
-//     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open.
-//   • The ONE seam that is not live: `reportBoard`. NO board-fetch-by-id command exists —
-//     `board.read` serves a `(reviewId, generation, lens)` triple and `LensKind` has no
-//     `report` arm, so the live source resolves the report `undefined` on purpose rather
-//     than fabricating a greeting (the honest half of C1, recorded at task 3.2 and in
-//     `docs/developing/concepts/handoff-and-exits.md`). The report's ARRIVAL is live (the
-//     `report` event carries the real drafted board id); only its BODY is handed in here,
-//     through the seam's own read, so the greeting has something to render.
+//     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open. Its exact
+//     report projection is the production `session.rounds` shape, so the live source supplies
+//     the greeting without a fixture-only provider override.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { ComposedHandoffBundle, Review, RoundEvent, RoundRecord } from "@rennet/protocol";
-import { RoundEventSchema, RoundRecordSchema } from "@rennet/protocol";
+import type {
+  ComposedHandoffBundle,
+  Review,
+  RoundEvent,
+  RoundLedgerRecord,
+} from "@rennet/protocol";
+import { RoundEventSchema, RoundLedgerRecordSchema } from "@rennet/protocol";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
@@ -51,7 +51,7 @@ import { ROUTES } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
-import { FIXTURE_REPORT_BOARDS } from "../test/fixtures/rounds";
+import { reportBoardFixture } from "../test/fixtures/rounds";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
 
@@ -132,18 +132,24 @@ const SERVER_ROUND: readonly RoundEvent[] = [
 
 /** The DURABLE record the round wrote (C15 2.2) — the frozen predecessor is a distinct
  *  id from the generation it composed, which is the whole of finding F3. */
-const DURABLE_RECORD: RoundRecord = RoundRecordSchema.parse({
+const DURABLE_RECORD: RoundLedgerRecord = RoundLedgerRecordSchema.parse({
   asksDispatched: ["ask-observability", "ask-network"],
   workerCommitRange: { from: "commit-from", to: "commit-to" },
   mintedPatchsetGeneration: "gen2",
   frozenPredecessor: "gen1",
   boardGeneration: "gen2",
   reportBoard: REPORT_BOARD_ID,
+  run: {
+    startedAt: Date.UTC(2026, 7, 29, 9, 30),
+    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
+  },
+  report: reportBoardFixture,
   // The report's own verified tally (C15 finding 10) — two of this round's outcomes were
   // not `untouched`. Equal to the ask count here by coincidence of the fixture, and the
   // ledger's own tests hold the two apart.
   reworkCount: 2,
-} satisfies RoundRecord);
+} satisfies RoundLedgerRecord);
 
 /** A minimal-but-schema-real `round.dispatch` answer — the command's output shape. The
  *  UI ignores it (dispatch returns void); it exists so the write is a real command
@@ -165,16 +171,9 @@ const dispatchAnswer = (
   dispatched: true,
 });
 
-/** The live source, with the ONE unbound read supplied (see the header). */
 function LiveScope({ children }: { readonly children: ReactNode }) {
   const live = useLiveRoundsSource();
-  return (
-    <RoundsSourceProvider
-      value={{ ...live, reportBoard: (id: string) => FIXTURE_REPORT_BOARDS[id] }}
-    >
-      {children}
-    </RoundsSourceProvider>
-  );
+  return <RoundsSourceProvider value={live}>{children}</RoundsSourceProvider>;
 }
 
 afterEach(() =>

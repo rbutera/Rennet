@@ -58,6 +58,7 @@ import {
   ROUND_NO_REGEN,
   type RoundEvent,
   type RoundRecord,
+  type RoundRunReceipt,
   type SessionModel,
 } from "@rennet/protocol";
 import type { BoardsRuntime } from "../boards/boards-runtime";
@@ -444,6 +445,8 @@ export interface RoundDispatchInput {
   readonly sourcePatchsetId: string;
   /** Exact staged occurrences this dispatch may consume after successful regeneration. */
   readonly askOccurrences: readonly AskOccurrence[];
+  /** Immutable host facts for the durable ledger row created by this dispatch. */
+  readonly run: RoundRunReceipt;
   /** Run the composed work-order WATCHED LIVE (the injected coding-agent turn upstream);
    *  the runtime owns the per-session serialization + recording, never the exec. Returns
    *  the round's result so `dispatchRound` records a `RoundRecord`; a `void` return records
@@ -1012,6 +1015,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             },
             boardGeneration: ROUND_NO_REGEN,
             reportBoard: ROUND_NO_REGEN,
+            run: input.run,
             outcome: result.outcome,
             ...(result.outcome === "completed" ? { regeneration: "pending" as const } : {}),
             diff: result.diff,

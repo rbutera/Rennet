@@ -38,6 +38,7 @@ import type {
   Review,
   RoundEvent,
   RoundRecord,
+  RoundReportBoard,
   SessionTranscriptRow,
   SidebarSession,
   SuccessorAccount,
@@ -582,6 +583,15 @@ export interface DispatchDeps {
    * `ROUND_NO_REGEN` for the generation fields it did not mint.
    */
   readonly roundRecordsForReview?: (reviewId: string) => readonly RoundRecord[];
+  /**
+   * Resolve the exact persisted round-report board named by one ledger row. The board id is
+   * part of the lookup so a later report in the same generation cannot replace an earlier
+   * round's account. Missing or mismatched durable identity returns `undefined`.
+   */
+  readonly reportBoardForReview?: (
+    reviewId: string,
+    reportBoardId: string,
+  ) => Promise<RoundReportBoard | undefined>;
   /**
    * The live round-progress catch-up read for `session.roundEvents` (C15 3.1): the ordered
    * `RoundEvent` log this review's round has emitted so far, from the `RoundProgressHub`.

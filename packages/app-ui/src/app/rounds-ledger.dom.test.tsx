@@ -8,7 +8,7 @@
 //     `GenerationSwitcher` stays hidden (frozen-predecessor reachability is
 //     parked as a B9 `RoundRecord` predecessor-field gap — see proposal F3);
 //   - a `?view=rounds` deep-link with NO completed round falls back to the board.
-import type { Review, RoundRecord } from "@rennet/protocol";
+import type { Review, RoundLedgerRecord, RoundRecord } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -22,6 +22,7 @@ import {
   completedRoundRecord,
   FIXTURE_REPORT_BOARDS,
   fixtureCompletedRoundsSource,
+  reportBoardFixture,
 } from "../test/fixtures/rounds";
 import { MemoryBridge } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
@@ -65,6 +66,10 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     // …and its report renders beneath (the shared RoundReportBoard + its derived tally).
     expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
+    expect(r.container.textContent).toContain("Token refresh exits are now observable");
+    expect(r.container.textContent).toContain(
+      "Every terminal path now leaves a typed record without retaining credentials.",
+    );
   });
 
   it("lists rounds newest-first and renders the selected row's report", async () => {
@@ -87,6 +92,57 @@ describe("the rounds ledger (C09 cluster 6)", () => {
       "true",
     );
     expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
+  });
+
+  it("summarises rows from immutable run facts and each exact report, never ask count", () => {
+    const untouchedReport = {
+      ...reportBoardFixture,
+      boardId: "report-untouched",
+      elements: reportBoardFixture.elements.map((element) =>
+        element.kind === "round_outcome"
+          ? { ...element, data: { ...element.data, status: "untouched" as const } }
+          : element,
+      ),
+    };
+    const older: RoundLedgerRecord = {
+      ...completedRoundRecord,
+      reportBoard: untouchedReport.boardId,
+      report: untouchedReport,
+      run: {
+        startedAt: Date.UTC(2026, 7, 28, 8, 0),
+        sourceTarget: { kind: "detached", head: "0123456789abcdef" },
+        gate: { outcome: "skipped", reason: "not-configured" },
+      },
+    };
+    const newer: RoundLedgerRecord = {
+      ...completedRoundRecord,
+      run: {
+        ...completedRoundRecord.run!,
+        startedAt: Date.UTC(2026, 7, 29, 9, 30),
+      },
+    };
+    const records = [older, newer] as const;
+    const source: RoundsSource = {
+      roundState: () => ({ phase: "absent" }),
+      roundRecords: () => records,
+      reportBoard: (id) => records.find((record) => record.reportBoard === id)?.report,
+    };
+    const { r } = renderWorkspace("/s/s-1?view=rounds", source);
+    const roundOne = r.container.querySelector('[data-round="1"]');
+    const roundTwo = r.container.querySelector('[data-round="2"]');
+
+    expect(roundOne?.querySelector("time")?.getAttribute("dateTime")).toBe(
+      "2026-08-28T08:00:00.000Z",
+    );
+    expect(roundOne?.textContent).toContain("detached at 0123456789ab");
+    expect(roundOne?.textContent).toContain("4 untouched");
+    expect(roundTwo?.querySelector("time")?.getAttribute("dateTime")).toBe(
+      "2026-08-29T09:30:00.000Z",
+    );
+    expect(roundTwo?.textContent).toContain("fix/token-refresh-observability");
+    expect(roundTwo?.textContent).toContain("1 addressed");
+    expect(roundOne?.textContent).not.toContain("2 asks");
+    expect(roundTwo?.textContent).not.toContain("2 asks");
   });
 
   it("a single-generation round opens its own boards and offers NO drill-down (C15 4.4)", async () => {

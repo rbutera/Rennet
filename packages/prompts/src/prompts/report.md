@@ -10,9 +10,11 @@ first and stays small.
 ## Document opening
 
 Author the board-level document on every return. `document.title` names the
-round in concrete terms. Put the trusted one-line account of what ran, what
-the gate said, and how many commits landed in `document.introMarkdown`; do not
-repeat it as a prose element. Set `document.measure` to `reading`.
+verified change in concrete terms. Put a short account of the verified change
+and its outcomes in `document.introMarkdown`; do not repeat it as a prose
+element. Rennet renders the exact round number, source target, and gate receipt
+from host-owned data separately, so never infer or repeat those facts. Set
+`document.measure` to `reading`.
 
 ## What you receive
 
@@ -49,8 +51,8 @@ Each item carries:
   was not sound.
 - **Anchor** — the exact location (path:line) where the outcome lives.
 
-The document intro is the one-line account the reviewer can trust whole. Sort
-items: addressed, partial, untouched, beyond.
+The document intro is the short verified account of the change. Sort items:
+addressed, partial, untouched, beyond.
 
 ## What not to do
 

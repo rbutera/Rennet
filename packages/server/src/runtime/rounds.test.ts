@@ -20,6 +20,7 @@ import {
   LENS_KINDS,
   ROUND_NO_REGEN,
   type RoundEvent,
+  type RoundRunReceipt,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { BoardsRuntime } from "../boards/boards-runtime";
@@ -108,6 +109,12 @@ const PREV_GEN: Generation = {
   status: "live",
 };
 
+const RUN_RECEIPT: RoundRunReceipt = {
+  startedAt: 1,
+  sourceTarget: { kind: "branch", branch: "feat/test" },
+  gate: { outcome: "skipped", reason: "not-configured" },
+};
+
 function baseDeps(over: Partial<RoundsRuntimeDeps> = {}): RoundsRuntimeDeps {
   return {
     resolveClaudePort: async () => fakeClaudePort(),
@@ -137,6 +144,7 @@ const DISPATCH_FIELDS = {
   dispatchId: "dispatch:test",
   sourcePatchsetId: "ps-1",
   askOccurrences: [],
+  run: RUN_RECEIPT,
 } as const;
 
 // ── Pure state machine ──
@@ -871,6 +879,7 @@ describe("createRoundsRuntime", () => {
     );
     await reportOnly.dispatchRound({
       ...identity,
+      run: RUN_RECEIPT,
       session: roundInput().session,
       workOrder: { tasks: [{ asks: [{ id: "t1" }] }] } as unknown as ComposedHandoffBundle,
       runWorkers: async () => ({

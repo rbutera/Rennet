@@ -1,7 +1,12 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Generation, ROUND_NO_REGEN, type RoundRecord } from "@rennet/protocol";
+import {
+  type Generation,
+  ROUND_NO_REGEN,
+  type RoundRecord,
+  type RoundRunReceipt,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { GenerationStore, RoundRecordStore, RoundStoreCorruptError } from "./round-store";
 
@@ -47,6 +52,11 @@ describe("GenerationStore", () => {
 });
 
 const commitRange = { from: "H0", to: "H1" };
+const RUN_RECEIPT: RoundRunReceipt = {
+  startedAt: 1_777_777_777_000,
+  sourceTarget: { kind: "branch", branch: "feat/receipts" },
+  gate: { outcome: "passed", command: "pnpm check", durationMs: 12_500, projectCount: 7 },
+};
 
 /** A dispatch-path placeholder: ran a work-order, regenerated nothing (yet). */
 const dispatchPlaceholder = (dispatchId: string | null = "dispatch-1"): RoundRecord => ({
@@ -61,6 +71,7 @@ const dispatchPlaceholder = (dispatchId: string | null = "dispatch-1"): RoundRec
   workerCommitRange: commitRange,
   boardGeneration: ROUND_NO_REGEN,
   reportBoard: ROUND_NO_REGEN,
+  run: RUN_RECEIPT,
   outcome: "completed",
   regeneration: "pending",
   diff: "--- a\n+++ b",
@@ -103,6 +114,7 @@ describe("RoundRecordStore", () => {
     expect(only?.diff).toBe("--- a\n+++ b");
     expect(only?.outcome).toBe("completed");
     expect(only?.changedPaths).toEqual(["src/a.ts"]);
+    expect(only?.run).toEqual(RUN_RECEIPT);
   });
 
   it("keeps ROUND_NO_REGEN for a dispatch-only round (no regeneration follows)", () => {
@@ -121,6 +133,30 @@ describe("RoundRecordStore", () => {
     expect(records).toHaveLength(1);
     expect(records[0]?.regeneration).toBe("not-needed");
     expect(records[0]?.boardGeneration).toBe(ROUND_NO_REGEN);
+  });
+
+  it("keeps the first immutable run receipt across same-dispatch retries and regeneration", () => {
+    const d = dir();
+    const store = new RoundRecordStore(d);
+    store.record("s-receipt", dispatchPlaceholder());
+    store.record("s-receipt", {
+      ...dispatchPlaceholder(),
+      run: {
+        startedAt: RUN_RECEIPT.startedAt + 1,
+        sourceTarget: { kind: "detached", head: "wrong-head" },
+        gate: { outcome: "skipped", reason: "not-configured" },
+      },
+    });
+    store.record("s-receipt", {
+      ...regenRecord(),
+      run: {
+        startedAt: RUN_RECEIPT.startedAt + 2,
+        sourceTarget: { kind: "branch", branch: "wrong-branch" },
+        gate: { outcome: "skipped", reason: "not-configured" },
+      },
+    });
+
+    expect(new RoundRecordStore(d).read("s-receipt")[0]?.run).toEqual(RUN_RECEIPT);
   });
 
   it("does not reconcile modern dispatches that share a commit range but have different identities", () => {
@@ -172,6 +208,7 @@ describe("RoundRecordStore", () => {
     const reloaded = new RoundRecordStore(d).read("s3");
     expect(reloaded).toHaveLength(2);
     expect(reloaded[0]?.frozenPredecessor).toBe("gen:H0");
+    expect(reloaded[0]?.run).toEqual(RUN_RECEIPT);
     expect(reloaded[1]?.frozenPredecessor).toBeUndefined();
   });
 

@@ -194,7 +194,12 @@ export class RoundRecordStore {
     ) {
       const idx = lastSameDispatchPlaceholderIndex(records, incoming.dispatchId);
       if (idx >= 0) {
-        records[idx] = { ...(records[idx] as RoundRecord), ...incoming };
+        const existing = records[idx] as RoundRecord;
+        records[idx] = {
+          ...existing,
+          ...incoming,
+          ...(existing.run === undefined ? {} : { run: existing.run }),
+        };
         this.write(sessionId, records);
         return;
       }
@@ -213,6 +218,7 @@ export class RoundRecordStore {
           ...(placeholder.changedPaths === undefined
             ? {}
             : { changedPaths: placeholder.changedPaths }),
+          ...(placeholder.run === undefined ? {} : { run: placeholder.run }),
         } satisfies RoundRecord;
         delete reconciled.regeneration;
         records[idx] = reconciled;

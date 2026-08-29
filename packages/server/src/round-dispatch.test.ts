@@ -10,6 +10,7 @@ import type {
   Review,
   RoundEvent,
   RoundRecord,
+  RoundRunReceipt,
   SessionModel,
 } from "@rennet/protocol";
 import { ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
@@ -29,6 +30,12 @@ import {
 // Generation-owned BoardMeta attempt for regeneration.
 
 const REVIEW_ID = "review-1";
+
+const RUN_RECEIPT: RoundRunReceipt = {
+  startedAt: 1,
+  sourceTarget: { kind: "branch", branch: "feat/test" },
+  gate: { outcome: "skipped", reason: "not-configured" },
+};
 
 /** A minimal review whose active patchset carries no files (the work-order needs the asks, not
  *  the diff context, to be exactly one order carrying the staged asks). */
@@ -552,6 +559,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
         dispatchId: input.dispatchId,
         sourcePatchsetId: input.sourcePatchsetId,
         askOccurrences: input.askOccurrences,
+        run: RUN_RECEIPT,
         runWorkers: async () => ({
           outcome: "completed",
           diff: "+changed",
@@ -628,6 +636,7 @@ const SERIAL_DISPATCH = {
   dispatchId: "dispatch:serializer",
   sourcePatchsetId: "ps-1",
   askOccurrences: [],
+  run: RUN_RECEIPT,
 } as const;
 
 describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight per session", () => {
@@ -784,6 +793,7 @@ const ORDER_DISPATCH = {
     { id: "t1", revision: 0 },
     { id: "t2", revision: 1 },
   ],
+  run: RUN_RECEIPT,
 } as const;
 
 describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: record only)", () => {
@@ -817,6 +827,7 @@ describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: r
     // fabricated id — and `mintedPatchsetGeneration` stays absent.
     expect(record.boardGeneration).toBe(ROUND_NO_REGEN);
     expect(record.reportBoard).toBe(ROUND_NO_REGEN);
+    expect(record.run).toEqual(RUN_RECEIPT);
     expect(record.mintedPatchsetGeneration).toBeUndefined();
   });
 

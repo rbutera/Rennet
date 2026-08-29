@@ -5,6 +5,7 @@ import {
   parseCommandOutput,
   type Review,
   ROUND_NO_REGEN,
+  type RoundLedgerRecord,
   type RoundRecord,
   type SessionModel,
   type SessionTrail,
@@ -131,7 +132,7 @@ export function sidebarSessionOf(
  * that parses to nothing gets none either — the ledger then offers no Round-diff control,
  * rather than a control that lands on an empty surface.
  */
-function withRoundDiffFiles(record: RoundRecord): RoundRecord {
+function withRoundDiffFiles(record: RoundRecord): RoundLedgerRecord {
   if (record.diff === undefined || record.diff.trim().length === 0) return record;
   const diffFiles = parseUnifiedDiffFiles(record.diff);
   return diffFiles.length === 0 ? record : { ...record, diffFiles };
@@ -157,7 +158,15 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const input = parseCommandInput(name, rawInput);
       rt.requireReviewById(input.reviewId); // reachability: unknown review is a genuine error
       const records = rt.deps.roundRecordsForReview?.(input.reviewId) ?? [];
-      return parseCommandOutput(name, { records: records.map(withRoundDiffFiles) });
+      const projected = await Promise.all(
+        records.map(async (record) => {
+          const base = withRoundDiffFiles(record);
+          if (record.reportBoard === ROUND_NO_REGEN) return base;
+          const report = await rt.deps.reportBoardForReview?.(input.reviewId, record.reportBoard);
+          return report === undefined ? base : { ...base, report };
+        }),
+      );
+      return parseCommandOutput(name, { records: projected });
     },
     "session.roundEvents": async (rawInput) => {
       const name = "session.roundEvents" as const;

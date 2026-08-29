@@ -388,7 +388,12 @@ something the preview did not describe.
    — a header control beside Map · Diff that exists exactly when a round has
    completed, never a disabled tab. One row per round; each opens that round's
    report, and each round pins its asks, observed worker HEAD range, checkpoint
-   diff, frozen board generation, and the patchset generation it minted. Because
+   diff, frozen board generation, and the patchset generation it minted. Modern
+   rows also pin one immutable run receipt: when the durable operation started,
+   its exact branch or detached HEAD target, and the configured gate's command,
+   duration, and project count (or the fact that no gate was configured). The
+   first dispatch placeholder owns that receipt; retry and regeneration
+   reconciliation cannot rewrite it. Because
    #457 appends the new generation and freezes the old rather than overwriting, that frozen
    generation stays reachable through the generation switcher, so earlier
    reports never vanish.
@@ -453,14 +458,15 @@ older than itself gets no answer to the rounds reads at all; the surfaces say
 that, with the daemon's own reason, rather than showing the empty ledger that
 reads as "no rounds have completed".
 
-The round report is a second, narrower gap of the same kind. Its **arrival** is
-live — the progress channel carries the drafted report board's id the moment the
-report seat lands, which is what gates the regeneration and starts the lanes —
-but there is no command that fetches a board *by id*: the board read serves a
-`(review, generation, lens)` triple, and the report is not a lens. So the
-greeting resolves the report honestly absent rather than inventing one. The
-phase, the lanes, and the reveal are all real; the report body waits on that
-read.
+The round report's **arrival** is live: the progress channel carries the drafted
+report board's id the moment the report seat lands, which gates regeneration and
+starts the lanes. The durable round row pins that same exact id.
+`session.rounds` joins it on read to the persisted report metadata and whiteboard
+state only when board id, session, and generation all match, then embeds the
+report projection on that row. The client resolves the greeting and ledger from
+the exact row naming the requested id. That projection is never written back to
+the round store; an old row or a genuinely missing report remains honestly
+absent.
 
 ### What a round measures itself against
 
