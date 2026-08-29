@@ -89,20 +89,24 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
     await expect(added).toContainText("export const value = 2;");
 
     // Editing the file on disk stales the pinned review, and coming back to the window is what
-    // asks. Both halves are RETRIED rather than done once, because neither is instantaneous and
-    // the daemon short-circuits the ask while its watcher has seen nothing:
-    //   • the save is repeated — a reviewer saves as they work, and the daemon's watcher can
-    //     miss an edit that lands while it is still settling on a freshly-captured root
-    //     (observed: the first save after capture is sometimes not reported — #601).
-    //     Re-saving means the loop under test is the real one, not a lucky first event.
-    //     ⚠️ KNOWN GAP, the price of that retry: this spec can no longer catch "the watcher
-    //     drops the first event", so #601 will not resurface here. It is tracked, not covered.
-    //   • the focus is repeated — the ask fires on window focus, and one focus racing the
-    //     watcher's 250ms debounce would answer "fresh" and never be asked again.
-    // What is NOT retried is the assertion: the notice must appear, or this fails.
+    // asks. The save happens ONCE. #574 re-saved inside the retry to step around #601 (the
+    // watcher losing the first save after a capture); that is fixed, so the workaround is gone
+    // and this is one save again, as a reviewer would make it.
+    //
+    // ⚠️ This spec is NOT a control for #601 and cannot be made into one at this fixture size.
+    // Verified by execution, not by reading: with the #601 fix reverted, this spec still passed.
+    // The defect needs the daemon's watcher to still be walking the tree when the save lands,
+    // and this repository is ONE file — the walk is over in about five milliseconds, long
+    // before the save below. The control that does show the harm drives a 1,000-file repository
+    // through the real daemon: `packages/server/src/freshness-first-save.test.ts`.
+    //
+    // The FOCUS is still retried, and only the focus: the ask fires on a window focus event, and
+    // one focus can land before the daemon's diff has come back. That is a poll for an answer,
+    // not a second attempt at the thing under test. What is NOT retried is the assertion — the
+    // notice must appear, or this fails.
     const stale = page.getByTestId("review-stale");
+    writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
     await expect(async () => {
-      writeRepoFile(repository, "review-me.ts", "export const value = 3;\n");
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await expect(stale).toBeVisible({ timeout: 2_000 });
     }).toPass({ timeout: 60_000 });

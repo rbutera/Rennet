@@ -36,9 +36,13 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const name = "review.capture" as const;
       const input = parseCommandInput(name, rawInput);
       assertAllowedRepository(input.repoPath);
+      // Cleared BEFORE the capture, never after — the rule `checkFreshness` follows below.
+      // On a RE-capture the root is already watched and settled, so an edit landing while
+      // the capture runs is not in the new patchset; clearing afterwards would discard the
+      // watcher's report of it and pin a review that was already behind.
+      deps.setRepositoryDirty(false);
       const review = await service.capture(input.commandId, input.repoPath, input.reviewId);
       allowedRoots.add(review.repositoryRoot);
-      deps.setRepositoryDirty(false);
       deps.startWatching(review.repositoryRoot);
       raiseReviewFinished(review);
       deps.onReviewOpened?.(review);
@@ -116,16 +120,23 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const current = requireReviewById(input.reviewId);
       assertReviewRepository(current, input.repoPath);
       if (!deps.isRepositoryDirty()) return parseCommandOutput(name, { review: current });
-      const review = await service.checkFreshness(input.commandId, input.reviewId, input.repoPath);
+      // Clear BEFORE the diff, never after. A save landing while the diff runs may or
+      // may not be in it, and clearing afterwards discards the watcher's report of it —
+      // the same lost-save defect as #601 with a narrower window. Cleared first, that
+      // save re-marks the tree dirty and the next ask picks it up.
       deps.setRepositoryDirty(false);
+      const review = await service.checkFreshness(input.commandId, input.reviewId, input.repoPath);
       return parseCommandOutput(name, { review });
     },
     "review.regenerate": async (rawInput) => {
       const name = "review.regenerate" as const;
       const input = parseCommandInput(name, rawInput);
       assertAllowedRepository(input.repoPath);
-      const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
+      // Cleared before the recapture for the same reason as `checkFreshness` above: an
+      // edit made while the review regenerates is NOT in the new patchset, so it must
+      // survive as dirty rather than being cleared away by the regeneration that missed it.
       deps.setRepositoryDirty(false);
+      const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
       raiseReviewFinished(review);
       return parseCommandOutput(name, { review });
     },
@@ -561,7 +572,10 @@ export function reviewHandlers(rt: DispatchRuntime) {
       if (turn.status === "failed") {
         // Surface the files the agent changed before erroring (Codex F4) — the working
         // tree was modified even though the turn failed; hiding it defeats totality.
-        deps.setRepositoryDirty(turn.filesTouched.length > 0);
+        // Only ever SETS. An empty `filesTouched` is the harness's account of a turn that
+        // failed, which is exactly when it is least trustworthy; clearing on it would let
+        // that account overwrite what the watcher saw for itself.
+        if (turn.filesTouched.length > 0) deps.setRepositoryDirty(true);
         return parseCommandOutput(name, {
           status: "failed",
           reason: turn.reason,
@@ -596,13 +610,16 @@ export function reviewHandlers(rt: DispatchRuntime) {
           };
         }),
       );
+      // Cleared before the recapture, same rule as `review.capture` and `checkFreshness`:
+      // the coding agent's own writes land during this capture, and a clear afterwards
+      // would swallow whatever arrived after the diff was taken.
+      deps.setRepositoryDirty(false);
       const updated = await service.capture(
         input.commandId,
         review.repositoryRoot,
         review.id,
         handoffTrace,
       );
-      deps.setRepositoryDirty(false);
       // R28 immutability: the pre-handoff patchset must survive byte-identical. Its
       // id is content-addressed over (repository, files, bytes), so the SAME id still
       // present proves the content was never rewritten.

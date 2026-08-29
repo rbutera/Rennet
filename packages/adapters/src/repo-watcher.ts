@@ -8,16 +8,34 @@ export function isWslUncPath(path: string): boolean {
 
 /**
  * Segments never worth watching for review freshness: VCS/internal state
- * (`.git`, `.rennet`) and — critically — the dependency tree (`node_modules`).
+ * (`.git`, `.rennet`), the build-tool cache (`.nx`), and — critically — the
+ * dependency tree (`node_modules`). Every one of these is gitignored, so none
+ * can ever appear in a capture; walking them is pure cost.
+ *
  * On a WSL-UNC (9P) root the watcher POLLS, so descending `node_modules` meant
  * stat-ing tens of thousands of files every interval, and the pnpm `.bin`
  * symlinks even throw spurious EISDIR over the 9P bridge — a flood that both
  * spammed the log and starved the daemon's libuv thread pool (the same pool
- * undici uses for GitHub connects; field bug, lancelot 2026-08-20). None of
- * these trees ever change a review. Matches the segment itself or its contents,
- * in either separator flavour (backslashes on Windows/UNC).
+ * undici uses for GitHub connects; field bug, lancelot 2026-08-20).
+ *
+ * `.nx` was measured on this repository, twice each way, on a checkout that had
+ * been worked in for a while — 4,877 entries and 2.0 GB of build cache:
+ *
+ *   without `.nx` pruned   ready 61,959ms / 63,128ms   4,186 / 4,314 EMFILE errors
+ *   with    `.nx` pruned   ready    834ms /    893ms       0 EMFILE errors
+ *
+ * Seventy times faster, and the descriptor exhaustion disappears. Note WHY that
+ * matters more than the ratio: the cost is a function of accumulated cache, not
+ * of the project. A fresh worktree's `.nx` is 15 entries and the difference there
+ * is ~200ms vs ~136ms — nothing. So this degrades the longer a repository is used,
+ * which is exactly the shape that is invisible in testing and bites in the field.
+ * `.nx` also churns on every `nx` run, which marked the repo dirty for nothing and
+ * forced a real diff on the next freshness ask.
+ *
+ * Matches the segment itself or its contents, in either separator flavour
+ * (backslashes on Windows/UNC).
  */
-const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|node_modules)(?:[/\\]|$)/;
+const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
 
 /** True when a watched path is inside an ignored segment. */
 export function isIgnoredPath(path: string): boolean {
@@ -26,9 +44,19 @@ export function isIgnoredPath(path: string): boolean {
 
 export class RepoWatcher {
   private watcher: FSWatcher | null = null;
-  private timer: NodeJS.Timeout | null = null;
   /** The root the live watcher is on, so a repeat `start` for it is recognised as a no-op. */
   private root: string | null = null;
+  /**
+   * False until chokidar has finished its initial walk of the tree. Nothing that
+   * lands before that walk arms a watch is ever reported — see `setDirty`.
+   */
+  private settled = false;
+  /**
+   * Has the repository changed since the last trustworthy clear? The watcher owns
+   * this rather than the daemon because the watcher is the only thing that knows
+   * whether its own silence means anything (#601).
+   */
+  private dirty = true;
 
   /**
    * Watch a repo root for changes. For a WSL-locus project the root is a
@@ -39,15 +67,15 @@ export class RepoWatcher {
    * (backslashes on Windows/UNC); pruning `node_modules` is what keeps the poll
    * from stat-storming the 9P bridge.
    */
-  start(repositoryRoot: string, onPotentialChange: () => void, locus: Locus = HOST_LOCUS): void {
+  start(repositoryRoot: string, locus: Locus = HOST_LOCUS): void {
     // Re-`start` on the root already being watched is a NO-OP, and that is a correctness fix,
     // not an optimisation. Tearing the watcher down and re-walking the tree opens a window in
     // which `ignoreInitial: true` means every edit that lands is never reported — a review that
     // went stale and never says so, the exact failure freshness exists to prevent. `review.load`
     // calls `startWatching` on every open, so any client that re-reads a review (the #576
     // freshness ask does, on every window focus) would otherwise rebuild the chokidar tree on
-    // each alt-tab. Same root ⇒ keep the live watcher and its already-registered callback; the
-    // callers all pass the same "mark the repository dirty" effect, so there is nothing to swap.
+    // each alt-tab. Same root ⇒ keep the live watcher, its armed watches and its accumulated
+    // dirty flag; a repeat start on a settled root must NOT re-open the warm-up window below.
     if (this.watcher && this.root === repositoryRoot) return;
     void this.close();
     this.root = repositoryRoot;
@@ -61,9 +89,14 @@ export class RepoWatcher {
       ignored: (path) => isIgnoredPath(path),
       ...(locus.kind === "wsl" || wslUncRoot ? { usePolling: true, interval: 500 } : {}),
     });
+    this.watcher.on("ready", () => {
+      this.settled = true;
+    });
+    // Recorded synchronously, with no debounce. The flag is read by a freshness ask
+    // that can arrive at any moment, and a 250ms coalescing window was simply 250ms
+    // in which an edit that HAD been seen still answered "current".
     this.watcher.on("all", () => {
-      if (this.timer) clearTimeout(this.timer);
-      this.timer = setTimeout(onPotentialChange, 250);
+      this.dirty = true;
     });
     // A watcher error MUST NOT kill the daemon: chokidar's FSWatcher is an
     // EventEmitter, and an unhandled "error" event is a process crash — which is
@@ -77,11 +110,57 @@ export class RepoWatcher {
     });
   }
 
+  /** Has the repository changed since the last trustworthy clear? */
+  isDirty(): boolean {
+    return this.dirty;
+  }
+
+  /**
+   * Record, or clear, "the tree has moved since the review was pinned".
+   *
+   * Clearing only STICKS once the initial walk has finished (#601). chokidar arms
+   * its watches file by file as it walks, and `ignoreInitial: true` suppresses
+   * everything it finds on the way — so a save that lands before the walk reaches
+   * that file is not late, it is *lost*, permanently. Measured on this repo: a
+   * write issued in the same tick as `start()` on a 400-file tree was never
+   * reported in 20 of 20 runs, while the walk itself finished in ~14ms. A real
+   * repository is far larger, which is why the daemon was seen answering "current"
+   * nine seconds after an edit.
+   *
+   * So while the walk is in flight the watcher refuses to vouch for the tree, and
+   * the caller falls through to a real diff instead of trusting a silence that
+   * means nothing yet.
+   *
+   * What that costs, measured on this repository rather than guessed: with `.nx`
+   * pruned the walk finishes in 834–893ms, so it is a diff or two. Before `.nx` was
+   * pruned the same walk took 62–63 seconds, and the cost stayed bounded anyway only
+   * because the walk blocks the event loop, which prevents an ask storm rather than
+   * absorbing one. That is not a property to rely on: this stays cheap only while
+   * the ignore list above stays honest about what is not worth walking.
+   *
+   * What it does NOT promise: that every later change is reported. `ready` fires
+   * when chokidar has finished walking, which is not the same as every watch being
+   * armed — measured on this repository before `.nx` was pruned, it fired after
+   * 4,186–4,314 EMFILE failures, and chokidar does not retry a nested failure. So
+   * the guarantee here is exactly "chokidar says it has finished looking", and no
+   * more. That closes the first-save window, which is the defect; descriptor
+   * exhaustion is a different failure and would need its own answer.
+   */
+  setDirty(value: boolean): void {
+    this.dirty = value || !this.settled;
+  }
+
   async close(): Promise<void> {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    await this.watcher?.close();
+    // Release the fields BEFORE awaiting. `start` calls `close` without awaiting and
+    // then synchronously installs the new watcher; nulling after the await would land
+    // in a later microtask and wipe that new watcher out, orphaning a live chokidar
+    // instance and defeating the same-root no-op above — which re-walks the tree on
+    // the next `review.load` and re-opens the very window `setDirty` exists to close.
+    const watcher = this.watcher;
     this.watcher = null;
     this.root = null;
+    this.settled = false;
+    this.dirty = true;
+    await watcher?.close();
   }
 }
