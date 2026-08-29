@@ -1,5 +1,12 @@
-import type { ReattachResult, ReviewAskStreamEvent, TurnStatus } from "@rennet/protocol";
+import type {
+  ReattachResult,
+  ReviewAskStreamEvent,
+  SessionTranscriptRow,
+  TurnStatus,
+  ActivityStep as WireActivityStep,
+} from "@rennet/protocol";
 import type { LucideIcon } from "lucide-react";
+import { Bot, FilePen, FileText, Plug, Search, TerminalSquare, Wrench } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useRoute, useSearch } from "wouter";
 import { commandKey, readCommandId, useCommand, useCommandStream, useMutation } from "../data";
@@ -20,16 +27,22 @@ import { ROUTES, readSessionQuery } from "../routes/url";
 //    (settle) / `ask-interrupted`. Tests drive this through `MemoryBridge.emitAskStream`.
 //
 //  • The HISTORICAL session transcript — the orchestrator's coding turns (thought
-//    blocks, action steps, prose), the `compact_boundary` rows, the harness-reported
-//    context figure — is not read here. `session.transcript` EXISTS in protocol, is
-//    served, and does carry captured coding turns (the session turn loop's transcript
-//    store), but NOTHING IN THIS FILE CALLS IT: the dock's rows come from
-//    `review.reattach` plus the live stream, and the historical half arrives only
-//    through the `SessionTranscriptProjection` context — an OVERRIDE seam a host or a
-//    test supplies. Unprovided, it is honestly empty. The harness CLI remains the
-//    canonical owner of the coding conversation (#466 res. 3); `contextWindow` has no
-//    source at all. The live dock resolves its review from the route
-//    (`useRouteReviewId`), never from that context.
+//    blocks, action steps, prose), the compaction boundaries, the context-rebuilt
+//    markers — reloads via `session.transcript` (useCommand), keyed on the SAME review
+//    the live half is. The turn loop captures every round's harness events and persists
+//    them; this read is what puts them in front of the reviewer. Until it existed the
+//    daemon fsynced coding turns to disk that nothing could ever display.
+//
+//    #466 res. 3 does NOT forbid this. It makes the harness CLI canonical for RESUME —
+//    Rennet persists a `HarnessCursor`, not a conversation — and in the same breath
+//    requires compaction be surfaced honestly, as a boundary row in the turn stream.
+//    A turn stream nobody renders cannot surface anything. The rows are a display
+//    read-model layered over the cursor, not a second source of truth.
+//
+//    `SessionTranscriptProjection` stays as an OVERRIDE seam for a host or a test that
+//    mounts the dock outside a session route: every field is optional, and a field it
+//    does not supply falls through to this read. The live dock resolves its review from
+//    the route (`useRouteReviewId`), never from that context.
 //
 // No filesystem access; imports only `@rennet/protocol` types and `../data`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +132,44 @@ export interface AnchoredThreadRow {
   readonly boardRef: string;
 }
 
-export type TranscriptRow = TurnRow | CompactBoundaryRow | AnchoredThreadRow;
+/** A `context-rebuilt` marker — the harness no longer had the conversation Rennet's cursor
+ *  pointed at, so the turn ran on a fresh session. Dropping it would let the transcript read
+ *  as one unbroken conversation across a real discontinuity. */
+export interface ContextRebuiltRow {
+  readonly kind: "context-rebuilt";
+  readonly id: string;
+  readonly reason: string;
+}
+
+export type TranscriptRow = TurnRow | CompactBoundaryRow | AnchoredThreadRow | ContextRebuiltRow;
+
+// ── The wire transcript → the dock's rows ─────────────────────────────────────
+
+/** The wire's serializable `toolKind` → the icon the dock draws. Protocol never carries a
+ *  component (`ActionStepSchema.toolKind` is the selector), so the mapping lands here. */
+const TOOL_ICONS: Record<Extract<WireActivityStep, { kind: "action" }>["toolKind"], LucideIcon> = {
+  read: FileText,
+  write: FilePen,
+  exec: TerminalSquare,
+  search: Search,
+  mcp: Plug,
+  subagent: Bot,
+  other: Wrench,
+};
+
+function activityStepOf(step: WireActivityStep): ActivityStep {
+  return step.kind === "thought" ? step : { ...step, icon: TOOL_ICONS[step.toolKind] };
+}
+
+/** Project the persisted `session.transcript` rows onto the dock's rows. The only real
+ *  difference is the action step's icon; everything else is the same shape by construction. */
+export function transcriptRowsOf(rows: readonly SessionTranscriptRow[]): TranscriptRow[] {
+  return rows.map((row) => {
+    if (row.kind !== "turn") return row;
+    const { preface, ...rest } = row;
+    return preface === undefined ? rest : { ...rest, preface: preface.map(activityStepOf) };
+  });
+}
 
 /** The dock header's session trail. Honest-minimal: with no projection supplied the
  *  header shows the title alone; a host or test that supplies one fills project/target. */
@@ -144,23 +194,19 @@ export interface SessionTranscriptProjection {
    *  route. Absent in normal use: the dock resolves the live review from the route itself
    *  (`useRouteReviewId`), so this is a deliberate injection point, not the live path. */
   readonly reviewId?: string;
-  /** Historical session rows (coding turns + `compact_boundary` rows). Empty unless a
-   *  host or test supplies them — this file issues no `session.transcript` read. */
-  readonly rows: readonly TranscriptRow[];
-  /** The header trail. Honest-minimal (title only) unless the supplied projection
-   *  carries a project name and target. */
-  readonly trail: ChatTrail;
-  /** The harness-reported context figure, or absent (⇒ meter reads "unknown"). */
+  /** Historical session rows, REPLACING the `session.transcript` read. Absent (the live
+   *  app) ⇒ the dock reads the persisted coding turns from the daemon. */
+  readonly rows?: readonly TranscriptRow[];
+  /** The header trail, replacing the served one. Absent ⇒ the daemon's identity trail. */
+  readonly trail?: ChatTrail;
+  /** The harness-reported context figure, replacing the served one. Absent on BOTH ⇒ the
+   *  meter reads "unknown" — Rennet never estimates a token budget. */
   readonly contextWindow?: ContextWindow;
 }
 
-/** The default projection: no override, no rows, no context figure (honest empty). The
- *  dock resolves its review from the route; the historical session rows and the context
- *  figure stay absent until a harness-transcript read port exists. */
-export const EMPTY_TRANSCRIPT: SessionTranscriptProjection = {
-  rows: [],
-  trail: { title: "New review" },
-};
+/** The default projection: NO override at all. The dock resolves its review from the route
+ *  and its history from `session.transcript`. */
+export const EMPTY_TRANSCRIPT: SessionTranscriptProjection = {};
 
 const SessionTranscriptContext = createContext<SessionTranscriptProjection>(EMPTY_TRANSCRIPT);
 /** Wraps a mount to OVERRIDE the session transcript + review id (hosts and tests that mount
@@ -453,6 +499,17 @@ export function useChatDock(): ChatDockModel {
     enabled: reviewId !== undefined,
   });
 
+  // The HISTORICAL half: the coding turns the session turn loop captured and persisted.
+  // Same review id, separate read — `review.reattach` carries only the ask threads, so
+  // without this the dock renders a conversation with every round the agent actually ran
+  // missing from it. Read-only and idempotent, so no commandId and no invalidation: the
+  // rows are appended by the daemon out of band, and a refetch here would clobber nothing
+  // because it lands in its own cache entry, not reattach's.
+  const transcriptInput = useMemo(() => ({ reviewId: reviewId ?? "" }), [reviewId]);
+  const { data: session } = useCommand("session.transcript", transcriptInput, {
+    enabled: reviewId !== undefined,
+  });
+
   // Per-review live-fold state. `seenSeq` rejects replayed deltas by turn; `buffer` holds
   // stream events that arrive BEFORE the initial reattach settles; `optimistic` holds
   // reviewer echoes sent in that same pre-settle window. All reset when the review (hence the
@@ -543,7 +600,12 @@ export function useChatDock(): ChatDockModel {
     if (row.kind === "turn" && row.status === "streaming") liveIds.current.add(row.id);
   }
 
-  const rows = useMemo(() => [...projection.rows, ...liveRows], [projection.rows, liveRows]);
+  // The served coding turns, unless a host/test override supplied its own rows.
+  const historyRows = useMemo(
+    () => projection.rows ?? transcriptRowsOf(session?.rows ?? []),
+    [projection.rows, session],
+  );
+  const rows = useMemo(() => [...historyRows, ...liveRows], [historyRows, liveRows]);
   const inFlight = liveRows.some((row) => row.kind === "turn" && row.status === "streaming");
 
   const send = useCallback(
@@ -596,8 +658,10 @@ export function useChatDock(): ChatDockModel {
   return {
     rows,
     liveIds: liveIds.current,
-    trail: projection.trail,
-    contextWindow: projection.contextWindow,
+    // The override wins, then the daemon's identity trail, then the honest placeholder for
+    // a dock sitting off a session route (where there is no review to name).
+    trail: projection.trail ?? session?.trail ?? { title: "New review" },
+    contextWindow: projection.contextWindow ?? session?.contextWindow,
     inFlight,
     send,
     ...(draft === null || draft === "" ? {} : { draft }),

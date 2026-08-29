@@ -1,10 +1,16 @@
-import type { Review, RoundRecord, SessionModel } from "@rennet/protocol";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TranscriptStore } from "@rennet/adapters";
+import type { HarnessEvent } from "@rennet/core";
+import type { Review, RoundRecord, SessionModel, SessionTranscript } from "@rennet/protocol";
 import { parseCommandOutput } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createDispatchRuntime, type DispatchDeps } from "./dispatch";
 import { sessionHandlers } from "./dispatch/session";
 import { buildProjectionContext, projectCommandOutput } from "./projection";
 import { resolveRoundSessionId } from "./session/session-entry";
+import { createTranscriptCapture } from "./session/turn-capture";
 
 // The SESSION READ seam (session.transcript + session.rounds). Positive
 // controls: each read returns the REAL projected shape (not a stub error), is dispatch-
@@ -239,6 +245,80 @@ describe("resolveRoundSessionId — slug→session resolution (read side of disp
       repositoryRoot: "/home/dev/other-repo",
     } as unknown as SessionModel;
     expect(resolveRoundSessionId(REVIEW, [elsewhere], PROJECT_ID)).toBe(REVIEW_ID);
+  });
+});
+
+describe("the captured transcript, end to end: capture sink → durable store → dispatch read", () => {
+  // The defect this covers: turns were captured, fsynced, and read by NOBODY, so nothing
+  // downstream of the sink was ever exercised past a hand-built row array. This drives the
+  // REAL sink into the REAL `TranscriptStore` on disk and reads it back through the REAL
+  // `session.transcript` handler — no stub sink, no injected row fixture.
+  const HOST_PATH = "/Volumes/nimbus/dev/acme/src/a.ts";
+
+  async function capturedTranscript(): Promise<SessionTranscript> {
+    const store = new TranscriptStore(mkdtempSync(join(tmpdir(), "rennet-transcript-read-")));
+    const capture = createTranscriptCapture(store);
+    capture({
+      sessionId: "sess-1",
+      cwd: "/Volumes/nimbus/dev/acme",
+      events: [
+        {
+          seq: 0,
+          harness: "claude-code",
+          sessionId: "h1",
+          turnId: "t1",
+          receivedAt: 0,
+          native: null,
+          kind: "tool.started",
+          call: {
+            id: "c1",
+            name: "Read",
+            input: { file_path: HOST_PATH },
+            parentToolCallId: null,
+            kind: "read",
+          },
+        },
+        {
+          seq: 1,
+          harness: "claude-code",
+          sessionId: "h1",
+          turnId: "t1",
+          receivedAt: 0,
+          native: null,
+          kind: "text.message",
+          text: "Renamed the export.",
+          parentToolCallId: null,
+        },
+      ] as unknown as HarnessEvent[],
+    });
+    // The dispatch runtime resolves the session for the review; this fixture's review maps to
+    // the one session the capture wrote under.
+    const handlers = harness({ transcriptRowsForReview: () => store.read("sess-1") });
+    return (await handlers["session.transcript"]({ reviewId: REVIEW_ID })) as SessionTranscript;
+  }
+
+  it("serves the coding turn the sink wrote — the read a client can actually render", async () => {
+    const out = await capturedTranscript();
+    expect(() => parseCommandOutput("session.transcript", out)).not.toThrow();
+    const turn = out.rows.find((row) => row.kind === "turn");
+    if (turn?.kind !== "turn") throw new Error("expected a captured turn row");
+    expect(turn.paragraphs).toEqual(["Renamed the export."]);
+    const action = turn.preface?.find((step) => step.kind === "action");
+    if (action?.kind !== "action") throw new Error("expected an action step");
+    expect(action.label).toBe("Read");
+  });
+
+  it("keeps the host path on disk, and the SAME row loses it on the way to a remote client", async () => {
+    const out = await capturedTranscript();
+    // At rest / to a loopback client: verbatim. This is what the write-time scrub destroyed.
+    expect(JSON.stringify(out)).toContain(HOST_PATH);
+
+    // To a PROJECTED client: gone. Same bytes, one boundary later.
+    const projectedCtx = buildProjectionContext(["/Volumes/nimbus/dev/acme"], "/Volumes/nimbus");
+    const projected = JSON.stringify(projectCommandOutput("session.transcript", out, projectedCtx));
+    expect(projected).not.toContain(HOST_PATH);
+    expect(projected).not.toContain("/Volumes/nimbus");
+    expect(projected).toContain("<acme>/src/a.ts");
   });
 });
 

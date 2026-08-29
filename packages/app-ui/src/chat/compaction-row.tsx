@@ -1,6 +1,6 @@
 import { cn } from "@rennet/ui";
-import { Layers } from "lucide-react";
-import type { CompactBoundaryRow, ContextWindow } from "./chat-data";
+import { Layers, RefreshCw } from "lucide-react";
+import type { CompactBoundaryRow, ContextRebuiltRow, ContextWindow } from "./chat-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CompactionRow + ContextMeter (C07, reconciliation 7, #466). Compaction is rendered
@@ -73,6 +73,32 @@ export function CompactionRow({
         <span aria-hidden="true">·</span>
         <ContextMeter row={row} contextWindow={contextWindow} />
         {row.time && <span className="text-muted-foreground/60">· {row.time}</span>}
+      </span>
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
+ * The `context-rebuilt` marker. The harness no longer had the conversation Rennet's cursor
+ * pointed at, so the turn ran on a fresh session and context was rebuilt from the boards.
+ * Rendered for the same reason the compaction row is: without it the transcript reads as one
+ * unbroken conversation across a real discontinuity, which is the surface claiming something
+ * it cannot know. The reason is the daemon's own words — never paraphrased here.
+ */
+export function ContextRebuiltMarker({ row }: { readonly row: ContextRebuiltRow }) {
+  return (
+    <div
+      className="flex items-center gap-3 text-2xs text-muted-foreground"
+      data-testid="context-rebuilt-row"
+      data-row-id={row.id}
+    >
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+      <span className="flex items-center gap-1.5">
+        <RefreshCw className="size-3 shrink-0" aria-hidden="true" />
+        <span>Context rebuilt</span>
+        <span aria-hidden="true">·</span>
+        <span className="italic">{row.reason}</span>
       </span>
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
     </div>

@@ -15,6 +15,7 @@ export type {
   CodeBlockData,
   CompactBoundaryRow,
   ContentBlock,
+  ContextRebuiltRow,
   ContextWindow,
   ProseBlock,
   SessionTranscriptProjection,
@@ -24,5 +25,10 @@ export type {
   TurnRow,
   TurnStatus,
 } from "./chat-data";
-export { EMPTY_TRANSCRIPT, SessionTranscriptProvider, useSessionTranscript } from "./chat-data";
+export {
+  EMPTY_TRANSCRIPT,
+  SessionTranscriptProvider,
+  transcriptRowsOf,
+  useSessionTranscript,
+} from "./chat-data";
 export { ChatDock } from "./chat-dock";
