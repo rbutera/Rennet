@@ -1241,6 +1241,49 @@ function byPath(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/**
+ * One blob's structural SIGNATURE (context-map rebuild, W4): the whole of what the
+ * `symbols` shard says about it, MINUS line numbers.
+ *
+ * Lines are dropped deliberately. Every symbol below an inserted line moves, so a
+ * signature carrying them would report an unrelated edit at the top of a file as a
+ * change to every export in it — the comparison would answer "different" for almost
+ * every real diff and buy nothing. What a line number is for (locating evidence) is
+ * the anchor's job, and anchors re-stamp through `planReverify` on any blob change.
+ */
+export interface BlobSignature {
+  /** `<kind> <name>` per declared top-level symbol, sorted — an order-free multiset. */
+  readonly symbols: readonly string[];
+  /** The generated-banner bit ({@link SymbolShard.generated}). */
+  readonly generated: boolean;
+}
+
+/**
+ * The signature of ONE blob, decoding exactly one shard — the per-blob read
+ * {@link querySymbolIndex} is the whole-repo version of. Used to compare a file
+ * across two snapshots, where decoding both corpora to answer about a handful of
+ * changed paths would be absurd.
+ *
+ * `null` means CANNOT ANSWER — the manifest has no symbol shard for this blob, or the
+ * loader cannot produce it intact. It never means "no symbols"; a blob the extractor
+ * indexed and found nothing in answers with an empty `symbols` array. A caller that
+ * reads null as "unchanged" would silently skip work, so the distinction is the
+ * whole point of the return type.
+ */
+export function queryBlobSignature(
+  snapshot: LoadedSnapshot,
+  blobOid: string,
+): BlobSignature | null {
+  const digest = snapshot.symbolDigestByBlob.get(blobOid);
+  if (digest === undefined) return null;
+  const shard = loadSymbolShard(snapshot.load, digest);
+  if (shard === undefined) return null;
+  return {
+    symbols: shard.symbols.map((symbol) => `${symbol.kind} ${symbol.name}`).sort(byPath),
+    generated: shard.generated,
+  };
+}
+
 function addAdjacent(index: Map<string, Set<string>>, key: string, value: string): void {
   const set = index.get(key);
   if (set === undefined) index.set(key, new Set([value]));

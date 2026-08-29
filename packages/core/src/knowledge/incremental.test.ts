@@ -1,6 +1,8 @@
-import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
+import type { KnowledgeSet, KnowledgeStatement, SnapshotSymbol } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { dispositionCarrier, planReverify, routeDelta } from "./incremental";
+import type { LoadedSnapshot } from "../project-context";
+import { symbolShardBytes } from "../project-snapshot";
+import { dispositionCarrier, planReverify, routeDelta, structuralChanges } from "./incremental";
 import { coalesceFallbackSlices, type PartitionSlice } from "./partition";
 
 const PARTITIONS: readonly PartitionSlice[] = [
@@ -38,7 +40,177 @@ function set(statements: readonly KnowledgeStatement[]): KnowledgeSet {
   };
 }
 
+// ── Signature-diff fixtures (W4) ─────────────────────────────────────────────
+//
+// A real materialized snapshot in miniature: a `files` inventory, a
+// `blobOid → digest` index, and a loader over content-addressed shard bytes built
+// by the SAME `symbolShardBytes` production uses — so the hash check inside
+// `queryBlobSignature` is genuinely exercised rather than stubbed past.
+
+interface BlobSpec {
+  readonly path: string;
+  readonly blobOid: string;
+  readonly symbols?: readonly SnapshotSymbol[];
+  readonly generated?: boolean;
+  /** Emit no shard for this blob at all (a binary asset, an unindexed blob). */
+  readonly noShard?: boolean;
+  /** Emit a shard whose bytes do not hash to their digest (a damaged store). */
+  readonly damaged?: boolean;
+}
+
+function snapshotOf(blobs: readonly BlobSpec[]): LoadedSnapshot {
+  const shards = new Map<string, string>();
+  const digestByBlob = new Map<string, string>();
+  for (const blob of blobs) {
+    if (blob.noShard) continue;
+    const built = symbolShardBytes({
+      blobOid: blob.blobOid,
+      extractor: "structural-ts-v1",
+      generated: blob.generated ?? false,
+      symbols: [...(blob.symbols ?? [])],
+    });
+    digestByBlob.set(blob.blobOid, built.digest);
+    shards.set(built.digest, blob.damaged ? `${built.bytes} ` : built.bytes);
+  }
+  return {
+    files: blobs.map((blob) => ({ path: blob.path, blobOid: blob.blobOid })),
+    symbolDigestByBlob: digestByBlob,
+    load: (digest: string) => shards.get(digest),
+  } as unknown as LoadedSnapshot;
+}
+
+const fn = (name: string, line: number): SnapshotSymbol => ({ name, kind: "function", line });
+
+describe("structuralChanges — the cosmetic/structural signature diff", () => {
+  it("a body-only edit is cosmetic: the blob moved, the export signature did not", () => {
+    const before = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    const after = snapshotOf([{ path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)] }]);
+    expect(structuralChanges(["src/a.ts"], after, before)).toEqual([]);
+  });
+
+  it("a LINE-ONLY move is cosmetic — the documented decision, not an accident", () => {
+    // Every symbol below an inserted line moves. Treating that as structural would
+    // make an added import at the top of a file re-run the batch, which is most
+    // real diffs.
+    const before = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    const after = snapshotOf([{ path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 41)] }]);
+    expect(structuralChanges(["src/a.ts"], after, before)).toEqual([]);
+  });
+
+  it("an added, removed, renamed or re-kinded export is structural", () => {
+    const base: BlobSpec = { path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] };
+    const before = snapshotOf([base]);
+    const cases: readonly (readonly SnapshotSymbol[])[] = [
+      [fn("run", 3), fn("stop", 9)], // added
+      [], // removed
+      [fn("execute", 3)], // renamed
+      [{ name: "run", kind: "class", line: 3 }], // re-kinded
+    ];
+    for (const symbols of cases) {
+      const after = snapshotOf([{ path: "src/a.ts", blobOid: "b2", symbols }]);
+      expect(structuralChanges(["src/a.ts"], after, before)).toEqual(["src/a.ts"]);
+    }
+    // The control: the same fixture with the signature put back is cosmetic, so the
+    // four verdicts above are about the signature and not about the changed blobOid.
+    const unchanged = snapshotOf([{ path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)] }]);
+    expect(structuralChanges(["src/a.ts"], unchanged, before)).toEqual([]);
+  });
+
+  it("the generated-banner bit moving is structural on its own", () => {
+    const before = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    const after = snapshotOf([
+      { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], generated: true },
+    ]);
+    expect(structuralChanges(["src/a.ts"], after, before)).toEqual(["src/a.ts"]);
+  });
+
+  it("a non-TS/JS edit is structural — the extractor's ceiling, refused not guessed", () => {
+    // Both shards say `symbols: []`, because that is what the family stores for a
+    // file the extractor cannot read. Comparing them would call EVERY markdown and
+    // JSON edit cosmetic. The `.ts` case beside it is the control: identical shard
+    // contents, opposite verdict, and the only difference is the extension.
+    const before = snapshotOf([
+      { path: "docs/a.md", blobOid: "m1" },
+      { path: "src/z.ts", blobOid: "z1" },
+    ]);
+    const after = snapshotOf([
+      { path: "docs/a.md", blobOid: "m2" },
+      { path: "src/z.ts", blobOid: "z2" },
+    ]);
+    expect(structuralChanges(["docs/a.md", "src/z.ts"], after, before)).toEqual(["docs/a.md"]);
+  });
+
+  it("added and deleted paths are structural by definition", () => {
+    const before = snapshotOf([{ path: "src/gone.ts", blobOid: "g1", symbols: [] }]);
+    const after = snapshotOf([{ path: "src/new.ts", blobOid: "n1", symbols: [] }]);
+    expect(structuralChanges(["src/gone.ts", "src/new.ts"], after, before)).toEqual([
+      "src/gone.ts",
+      "src/new.ts",
+    ]);
+  });
+
+  it("an unreadable or absent shard on either side falls back to structural", () => {
+    const healthy = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    for (const broken of [
+      snapshotOf([{ path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)], damaged: true }]),
+      snapshotOf([{ path: "src/a.ts", blobOid: "b2", noShard: true }]),
+    ]) {
+      // Broken on the CURRENT side, then on the PRIOR side: neither direction may
+      // read "cannot answer" as "unchanged".
+      expect(structuralChanges(["src/a.ts"], broken, healthy)).toEqual(["src/a.ts"]);
+      expect(structuralChanges(["src/a.ts"], healthy, broken)).toEqual(["src/a.ts"]);
+    }
+  });
+
+  it("an identical blob on both sides is cosmetic; no prior snapshot means all structural", () => {
+    const snapshot = snapshotOf([{ path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] }]);
+    expect(structuralChanges(["src/a.ts"], snapshot, snapshot)).toEqual([]);
+    // The fail-safe: nothing to compare against ⇒ the changed set passes through whole.
+    expect(structuralChanges(["src/a.ts"], snapshot, null)).toEqual(["src/a.ts"]);
+  });
+});
+
 describe("routeDelta", () => {
+  it("a slice re-runs only for a STRUCTURAL member; a cosmetic-only slice is not routed", () => {
+    // The file-level sharpening, at the seam where it actually takes effect: the same
+    // partitions and the same raw changed set, routed once through the whole diff and
+    // once through its structural subset.
+    const partitions: readonly PartitionSlice[] = [
+      {
+        id: "mod:src/a.ts#aaaaaaaa",
+        files: [
+          { path: "src/a.ts", blobOid: "b2" },
+          { path: "src/b.ts", blobOid: "c2" },
+        ],
+        neighbors: [],
+      },
+      { id: "mod:lib/z.ts#bbbbbbbb", files: [{ path: "lib/z.ts", blobOid: "z2" }], neighbors: [] },
+    ];
+    const before = snapshotOf([
+      { path: "src/a.ts", blobOid: "b1", symbols: [fn("run", 3)] },
+      { path: "src/b.ts", blobOid: "c1", symbols: [fn("helper", 1)] },
+      { path: "lib/z.ts", blobOid: "z1", symbols: [fn("zed", 1)] },
+    ]);
+    const after = snapshotOf([
+      // A body-only edit, and beside it a real export addition in the SAME slice.
+      { path: "src/a.ts", blobOid: "b2", symbols: [fn("run", 3)] },
+      { path: "src/b.ts", blobOid: "c2", symbols: [fn("helper", 1), fn("extra", 8)] },
+      { path: "lib/z.ts", blobOid: "z2", symbols: [fn("zed", 9)] },
+    ]);
+    const changed = ["src/a.ts", "src/b.ts", "lib/z.ts"];
+
+    // Partition-level: both slices re-run, because both own a touched file.
+    expect(routeDelta(partitions, changed).map((slice) => slice.id)).toHaveLength(2);
+
+    // File-level: the mixed slice runs ONCE for its structural member, and the
+    // cosmetic-only slice does not run at all.
+    const structural = structuralChanges(changed, after, before);
+    expect(structural).toEqual(["src/b.ts"]);
+    expect(routeDelta(partitions, structural).map((slice) => slice.id)).toEqual([
+      "mod:src/a.ts#aaaaaaaa",
+    ]);
+  });
+
   it("one changed file re-runs exactly its owning partition", () => {
     const routed = routeDelta(PARTITIONS, ["lib/b.ts"]);
     expect(routed.map((slice) => slice.id)).toEqual(["lib"]);

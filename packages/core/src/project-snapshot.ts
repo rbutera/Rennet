@@ -451,9 +451,24 @@ function extensionOf(path: string): string {
   return dot <= 0 ? "" : base.slice(dot).toLowerCase();
 }
 
+/**
+ * Whether the symbol extractor understands this path's language at all.
+ *
+ * The distinction matters beyond extraction planning, because a shard is emitted for
+ * files the extractor does NOT understand too ({@link structuralFactFiles}) — it
+ * carries `symbols: []` and a real `generated` bit. So "the shard lists no symbols"
+ * is TWO different facts, and only this predicate tells them apart: a `.ts` with no
+ * exports, versus a `.md` the extractor never had anything to say about. A caller
+ * comparing two shards to decide whether a file's structure moved must not read the
+ * second as "nothing changed".
+ */
+export function hasSymbolExtractor(path: string): boolean {
+  return SYMBOL_EXTENSIONS.has(extensionOf(path));
+}
+
 /** The files eligible for symbol extraction (source files the extractor understands). */
 export function eligibleSymbolFiles(files: readonly SnapshotFileEntry[]): SnapshotFileEntry[] {
-  return files.filter((file) => SYMBOL_EXTENSIONS.has(extensionOf(file.path)));
+  return files.filter((file) => hasSymbolExtractor(file.path));
 }
 
 /**
@@ -484,9 +499,7 @@ export function eligibleSymbolFiles(files: readonly SnapshotFileEntry[]): Snapsh
  */
 export function structuralFactFiles(files: readonly SnapshotFileEntry[]): SnapshotFileEntry[] {
   return files.filter(
-    (file) =>
-      SYMBOL_EXTENSIONS.has(extensionOf(file.path)) ||
-      classifyMappingEligibility(file.path) === null,
+    (file) => hasSymbolExtractor(file.path) || classifyMappingEligibility(file.path) === null,
   );
 }
 

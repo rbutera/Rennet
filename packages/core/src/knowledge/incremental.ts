@@ -12,8 +12,99 @@
  */
 
 import type { KnowledgeSet, KnowledgeStatement, KnowledgeStatus } from "@rennet/protocol";
+import { type LoadedSnapshot, queryBlobSignature } from "../project-context";
+import { hasSymbolExtractor } from "../project-snapshot";
 import { type PartitionSlice, partitionIdFamily, sliceFamilies } from "./partition";
 import { fileBlobIndex, knowledgeStatementId } from "./read";
+
+// ── Signature diff: cosmetic vs structural (context-map rebuild, W4) ──────────
+//
+// Content addressing already answers "unchanged" for free, and everything that is
+// left pays a worker turn. Most of what is left is agent-written body churn: a
+// function rewritten, a branch added, a comment fixed. None of that changes what the
+// file EXPORTS, which is the skeleton a worker was fed and what its statements are
+// about, so re-running its batch buys a re-worded version of the same claims.
+//
+// So the changed set is split before it reaches routing. A file whose export
+// signature is identical across the two snapshots is COSMETIC and routes no worker;
+// everything else is STRUCTURAL and routes as before. Statements still re-anchor on
+// EVERY blob change through `planReverify` — this decides which slices spend a model
+// turn, not which statements are re-verified, and the two are deliberately different
+// questions.
+
+/**
+ * Whether one changed path's edit left the file's EXPORT SIGNATURE alone.
+ *
+ * The decision table, and every honest "we cannot tell" in it lands on structural —
+ * a needless turn is the cheap error here, a skipped one is invisible:
+ *
+ * | case                                             | verdict    |
+ * |--------------------------------------------------|------------|
+ * | absent from either snapshot (added, deleted)      | structural |
+ * | same blob on both sides (a mode change, a rename) | cosmetic   |
+ * | the symbol extractor does not read this language  | structural |
+ * | either symbol shard missing or unreadable         | structural |
+ * | the generated-banner bit moved                    | structural |
+ * | a symbol added, removed, renamed, or re-kinded    | structural |
+ * | identical symbols, different lines or bodies      | cosmetic   |
+ *
+ * TWO CEILINGS, both deliberate and both stated because they are invisible from the
+ * outside:
+ *
+ *  1. **Exports only.** `structural-ts-v1` extracts top-level exported declarations,
+ *     so a rewritten private helper reads as cosmetic. That is the right answer for
+ *     what the statements assert — they are anchored claims about the file's surface
+ *     — and the wrong answer for a claim about an internal mechanism, which a worker
+ *     is free to make. The mitigation is not a finer diff: it is that such a claim's
+ *     anchors moved, so `planReverify` re-anchors it and the verify seat sees it
+ *     flagged. What is genuinely lost is the chance to MINT a new statement about an
+ *     internal change, and the answer to that is the next extractor, not this filter.
+ *  2. **TS/JS only.** Every other file gets a shard with `symbols: []`, so comparing
+ *     shards would call every markdown edit cosmetic. {@link hasSymbolExtractor}
+ *     refuses to guess: a `.md`, `.json`, `.py` or `.sql` edit is structural and
+ *     re-runs its slice's worker. Widening this needs extractors, not heuristics.
+ */
+function isCosmetic(
+  path: string,
+  currentBlob: string | undefined,
+  priorBlob: string | undefined,
+  current: LoadedSnapshot,
+  prior: LoadedSnapshot,
+): boolean {
+  if (currentBlob === undefined || priorBlob === undefined) return false;
+  if (currentBlob === priorBlob) return true;
+  if (!hasSymbolExtractor(path)) return false;
+  const now = queryBlobSignature(current, currentBlob);
+  const before = queryBlobSignature(prior, priorBlob);
+  if (now === null || before === null) return false;
+  return (
+    now.generated === before.generated &&
+    now.symbols.length === before.symbols.length &&
+    now.symbols.every((symbol, index) => symbol === before.symbols[index])
+  );
+}
+
+/**
+ * The subset of `changedPaths` whose edit could have moved the map — what
+ * {@link routeDelta} should be given, in place of the raw changed set.
+ *
+ * `prior === null` (no snapshot at the delta base, or one that will not materialize)
+ * returns the changed set UNTOUCHED: with nothing to compare against, every change is
+ * structural. That is the fail-safe direction, and it is the behaviour this pass had
+ * before the signature diff existed.
+ */
+export function structuralChanges(
+  changedPaths: readonly string[],
+  current: LoadedSnapshot,
+  prior: LoadedSnapshot | null,
+): readonly string[] {
+  if (prior === null) return changedPaths;
+  const after = new Map(current.files.map((file) => [file.path, file.blobOid]));
+  const before = new Map(prior.files.map((file) => [file.path, file.blobOid]));
+  return changedPaths.filter(
+    (path) => !isCosmetic(path, after.get(path), before.get(path), current, prior),
+  );
+}
 
 /** Whether a statement cites any of the changed paths (⇒ needs re-adjudication). */
 export function statementIntersectsChange(
@@ -53,7 +144,16 @@ function sliceAnswersTo(slice: PartitionSlice, priorFamily: string): boolean {
 
 /**
  * The partitions that own at least one changed path — the only workers a delta
- * re-runs. A changed path with no CURRENT owner (deleted, ownership moved with the
+ * re-runs.
+ *
+ * ROUTING IS FILE-LEVEL, and that lives in what the caller passes here: `changedPaths`
+ * is the STRUCTURAL subset ({@link structuralChanges}), not the raw diff. A slice
+ * whose only changed member was a body-only edit is therefore never in the result —
+ * not because this function inspects the edit, but because the path never arrives.
+ * Passing the raw changed set is not wrong, it is the old partition-level behaviour:
+ * every slice owning any touched file re-runs.
+ *
+ * A changed path with no CURRENT owner (deleted, ownership moved with the
  * scope graph, or the file is now mapping-ineligible) routes through its PRIOR
  * owner, by TWO independent rules whose results are unioned:
  *
