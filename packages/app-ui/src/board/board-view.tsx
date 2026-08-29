@@ -1,6 +1,7 @@
 import type { LensKind } from "@rennet/protocol";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer } from "../review";
 import { useBoardData, useLensBoards } from "./board-data";
 import { GenerationSwitcher } from "./generation-switcher";
@@ -51,6 +52,24 @@ export function LensBoardView({
 
   const lenses = useLensBoards(reviewId, selectedGeneration);
   const present = lenses.map((l) => l.lens);
+
+  // Drafting takes minutes and the daemon has no board-arrival push, so without this the
+  // boards a capture just kicked would land on disk and the surface would keep saying "no
+  // board for this generation yet" until the window happened to regain focus (the only other
+  // thing that invalidates `board.read`). `useCommand` has no polling, so this is it.
+  //
+  // ponytail: a 5s poll while any lens is still missing, which means a review whose Noise
+  // lens legitimately drafted nothing keeps polling for as long as the board is on screen —
+  // five loopback reads every five seconds, no model spend. Upgrade path: a daemon-side
+  // board-arrival channel (the `roundProgress` push already proves the transport), at which
+  // point this whole effect goes.
+  const refreshBoards = useRefreshCommand("board.read");
+  const awaitingLenses = lenses.length < Object.keys(LENS_LABEL).length;
+  useEffect(() => {
+    if (!awaitingLenses) return;
+    const timer = setInterval(refreshBoards, 5_000);
+    return () => clearInterval(timer);
+  }, [awaitingLenses, refreshBoards]);
 
   // The effective lens: the reviewer's pick if it still has a board this generation,
   // else Flagged (R44's default reading order), else the first present lens. Derived,

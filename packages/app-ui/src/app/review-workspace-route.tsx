@@ -1,4 +1,9 @@
-import { isReviewStale, isWorkingTreeReview, type Review } from "@rennet/protocol";
+import {
+  generationIdForPatchset,
+  isReviewStale,
+  isWorkingTreeReview,
+  type Review,
+} from "@rennet/protocol";
 import { useEffect, useRef } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
@@ -32,9 +37,19 @@ import { useRennetStore } from "../store";
 //
 // The board arrives through `board/board-data.ts`'s seam, which reads the registered
 // `board.read` command (bound in C18) for this review's `(generation, lens)` pairs — a
-// lens the host drafted no board for is honestly absent. Generation identity is still the
-// session projection's to supply (B4/B9): until then the route opens on the one knowable,
-// live generation.
+// lens the host drafted no board for is honestly absent.
+//
+// GENERATION IDENTITY. This used to pass the literal `"live"`, on the reasoning that the
+// session projection would supply the real id later. Nothing was ever stamped `"live"` —
+// the daemon files every board under `generationIdForPatchset(patchset.id)` and
+// `board.read` matches the string EXACTLY — so the default path read `null` for every
+// review, board or no board, and the reviewer's board was unreachable even once drafted.
+// The id is not the session projection's to invent: a generation IS one review of one
+// patchset (`architecture-contracts.md`), so the live generation is the one keyed to the
+// review's ACTIVE patchset, and the shared `generationIdForPatchset` is how both ends spell
+// it. Resolving `"live"` server-side would not have worked either: `board-data.ts` re-checks
+// the answer's `generation` against the one it asked for, so the resolved board would have
+// come back as a cross-wire error.
 //
 // The exit FAB is mounted across the reading views (board/diff) in a `relative` container so its
 // `absolute inset-0` root observes the PANE's width (the 54rem label-drop, C08 cluster 2). It
@@ -50,7 +65,6 @@ import { useRennetStore } from "../store";
 // their own tree while reading; the harm is posting that stale review under their own name.
 // This is INFORMATION, not a gate: nothing is blocked, nothing needs acknowledging, and
 // Regenerate is a plain button running the same `review.regenerate` a round already runs.
-const LIVE_GENERATION = "live";
 
 /**
  * What a freshness answer stales: the review the route renders, and the boards read off it.
@@ -136,8 +150,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     (roundState.phase === "reporting" ||
       roundState.phase === "composing" ||
       roundState.phase === "composed");
+  // A composed round names the generation its reveal lands on; otherwise the live boards are
+  // the ones drafted over the review's active patchset. Both are real ids the daemon stamped.
   const boardGeneration =
-    roundState.phase === "composed" ? roundState.newGeneration : LIVE_GENERATION;
+    roundState.phase === "composed"
+      ? roundState.newGeneration
+      : generationIdForPatchset(review.activePatchsetId);
 
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
   // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired

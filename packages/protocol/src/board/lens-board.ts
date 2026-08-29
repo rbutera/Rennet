@@ -63,3 +63,23 @@ export const LensBoardSchema = z.looseObject({
 export type LensSection = z.infer<typeof LensSectionSchema>;
 export type SkippedHunk = z.infer<typeof SkippedHunkSchema>;
 export type LensBoard = z.infer<typeof LensBoardSchema>;
+
+/**
+ * The generation id for the boards drafted over a patchset.
+ *
+ * A generation is "the boards for one review of one patchset"
+ * (`architecture-contracts.md`), so the patchset id is the whole of its identity — the
+ * daemon mints `generationIdForPatchset(patchset.id)` when it drafts, and a client
+ * addressing the LIVE boards asks for `generationIdForPatchset(review.activePatchsetId)`.
+ * It lives in the protocol because both ends must spell the same string: `board.read`
+ * matches the generation EXACTLY, and the client re-checks the answer's `generation`
+ * against the one it asked for, so a client that guesses the format reads nothing and a
+ * server that resolves a placeholder server-side fails the client's own identity check.
+ *
+ * The placeholder this replaced was the literal `"live"`, which no board was ever stamped
+ * with — so `board.read` answered `null` on the default path for every review that had a
+ * board at all.
+ */
+export function generationIdForPatchset(patchsetId: string): string {
+  return `gen:${patchsetId}`;
+}
