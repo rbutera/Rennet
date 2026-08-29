@@ -2,14 +2,15 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HarnessPort, HarnessSession } from "@rennet/core";
+import type { HarnessPort, HarnessSession, LoadedSnapshot } from "@rennet/core";
 import {
   buildPartitions,
+  KNOWLEDGE_SWARM_GENERATOR_ID,
   PARTITION_WORKER_OUTPUT_SCHEMA,
   partitionsFromSnapshot,
 } from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KnowledgeJournal } from "./knowledge-journal";
+import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
 import { KNOWLEDGE_FILE, KnowledgeStore } from "./knowledge-store";
 import { runKnowledgeSwarmForRepo, snapshotContextFromLoaded } from "./knowledge-swarm";
 import { ProjectContextReader } from "./project-context-reader";
@@ -32,6 +33,15 @@ afterEach(() => {
   for (const dir of scratch.splice(0))
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
+
+/** The journal target a run at this snapshot writes and reads under. */
+function targetOf(snapshot: LoadedSnapshot): JournalTarget {
+  return {
+    baseOid: snapshot.manifest.baseOid,
+    snapshotFingerprint: snapshot.manifest.fingerprint,
+    generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+  };
+}
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -349,9 +359,13 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     const journalDir = knowledgeStore.journalDir(repoKey);
     const storePath = join(store.paths(repoKey).knowledgeDir, KNOWLEDGE_FILE);
 
+    // Every entry under every TARGET directory — the journal is partitioned per
+    // target now, so a flat read of the root would count zero and pass vacuously.
     const journalEntries = (): string[] => {
       try {
-        return readdirSync(journalDir).filter((name) => name.endsWith(".json"));
+        return readdirSync(journalDir, { recursive: true, encoding: "utf8" }).filter((name) =>
+          name.endsWith(".json"),
+        );
       } catch {
         return [];
       }
@@ -467,15 +481,31 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     expect(atOid2.ok).toBe(true);
     if (!atOid2.ok) return;
     for (const slice of partitionsFromSnapshot(atOid2.snapshot)) {
-      expect(journal.read(oid2, slice)).toBeNull();
+      expect(journal.read(targetOf(atOid2.snapshot), slice)).toBeNull();
     }
     // The control: at the baseline they were written FOR, the same entries resolve.
     const atOid1 = reader.loadFresh(repoKey, oid1);
     expect(atOid1.ok).toBe(true);
     if (!atOid1.ok) return;
     const resolved = partitionsFromSnapshot(atOid1.snapshot).filter(
-      (slice) => journal.read(oid1, slice) !== null,
+      (slice) => journal.read(targetOf(atOid1.snapshot), slice) !== null,
     );
     expect(resolved.length).toBeGreaterThan(0);
+
+    // ── And the same refusal for the OTHER two thirds of the target ──────────
+    //
+    // The baseline is one of three things a journal entry is keyed on. A prompt
+    // rework or a re-extraction at an UNCHANGED baseline changes what the worker was
+    // asked, so its old answer is an answer to a different question — and unlike the
+    // baseline case there is nothing else to catch it.
+    const live = targetOf(atOid1.snapshot);
+    const reusable = partitionsFromSnapshot(atOid1.snapshot).filter(
+      (slice) => journal.read(live, slice) !== null,
+    );
+    expect(reusable.length).toBeGreaterThan(0);
+    for (const slice of reusable) {
+      expect(journal.read({ ...live, generator: "knowledge-swarm@1" }, slice)).toBeNull();
+      expect(journal.read({ ...live, snapshotFingerprint: "re-extracted" }, slice)).toBeNull();
+    }
   });
 });

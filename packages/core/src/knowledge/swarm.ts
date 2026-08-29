@@ -31,8 +31,16 @@ import {
 import type { FileEntry, PartitionSlice, SliceImport } from "./partition";
 import { fileBlobIndex } from "./read";
 
-/** The swarm generator identity: bump on any prompt/schema change. */
-export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@1";
+/**
+ * The swarm generator identity: bump on any prompt/schema change.
+ *
+ * `@2` is the context-map rebuild's W3 rework — skeleton-fed worker packets, the
+ * deterministic merge, and a verify seat that sees only the residue. A `@1` set is a
+ * different pipeline's output and is replaced rather than carried, and a `@1`
+ * journal entry is refused rather than reused (it is part of the journal's target
+ * key), so the rework cannot inherit answers to the questions it stopped asking.
+ */
+export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@2";
 
 type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
 

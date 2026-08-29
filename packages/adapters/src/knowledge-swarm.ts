@@ -30,9 +30,9 @@ import type {
   KnowledgeSet,
   KnowledgeStatement,
 } from "@rennet/protocol";
-import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
+import { canonicalize, KNOWLEDGE_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
-import { KnowledgeJournal } from "./knowledge-journal";
+import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
 import type { KnowledgeStore } from "./knowledge-store";
 import type { ProjectContextReader } from "./project-context-reader";
 import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
@@ -82,6 +82,18 @@ export async function changedPathsBetween(
     reject: true,
   });
   return out.split("\0").filter((path) => path.length > 0);
+}
+
+/**
+ * The exact bytes of the stored set, hashed — or `null` for no set at all.
+ *
+ * Content, not `baseOid`: two runs can promote at the same baseline (a re-extraction,
+ * a generator bump) and produce different sets, and comparing baselines would call
+ * that "unchanged". This is only ever compared for EQUALITY with an earlier read of
+ * the same store, so a hash is all of it that needs keeping.
+ */
+function storeIdentity(set: KnowledgeSet | null): string | null {
+  return set === null ? null : sha256Hex(canonicalize(set));
 }
 
 /** The full path inventory at `oid` (for PRIOR-snapshot partition ownership). */
@@ -446,6 +458,11 @@ export async function runKnowledgeSwarmForRepo(
   // fallback for edge-less files and for a snapshot whose shards cannot be read.
   const partitions = partitionsFromSnapshot(gated.snapshot);
   const loaded = deps.knowledgeStore.loadLocal(deps.repoKey);
+  // What the store held when this run decided what to do. Re-read at save time: a
+  // run's whole plan — full or incremental, which slices, what carries — is derived
+  // from this, so a store that moved underneath it makes every one of those
+  // decisions stale. See the refusal at the save below.
+  const priorIdentity = storeIdentity(loaded);
   const priorEligible =
     loaded !== null &&
     loaded.generator === KNOWLEDGE_SWARM_GENERATOR_ID &&
@@ -509,6 +526,13 @@ export async function runKnowledgeSwarmForRepo(
   // starts the next run from zero. Nothing reads it but this fan-out, and it is
   // deleted the moment the whole set reaches the store.
   const journal = new KnowledgeJournal(deps.knowledgeStore.journalDir(deps.repoKey));
+  // The full target, not just the base OID: a re-extraction or a prompt rework at an
+  // unchanged baseline must not answer from the old pipeline's results.
+  const target: JournalTarget = {
+    baseOid: snapshot.baseOid,
+    snapshotFingerprint: snapshot.snapshotFingerprint,
+    generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+  };
   let reusedPartitions = 0;
 
   /** Run one batch, or answer it from the journal. Journals a fresh success. */
@@ -518,7 +542,7 @@ export async function runKnowledgeSwarmForRepo(
     allowReuse: boolean,
   ): Promise<PartitionWorkerResult> => {
     const progress = { kind: "partition", sliceId: slice.id, index: index + 1, total } as const;
-    const journaled = allowReuse ? journal.read(snapshot.baseOid, slice) : null;
+    const journaled = allowReuse ? journal.read(target, slice) : null;
     if (journaled !== null) {
       reusedPartitions += 1;
       deps.onProgress?.({ ...progress, status: "reused", statements: journaled.statements.length });
@@ -531,7 +555,7 @@ export async function runKnowledgeSwarmForRepo(
       provenance,
       runTurn: worker.runTurn,
     });
-    journal.write(snapshot.baseOid, slice, result);
+    journal.write(target, slice, result);
     deps.onProgress?.({
       ...progress,
       status: result.status === "ok" ? "done" : "failed",
@@ -592,7 +616,10 @@ export async function runKnowledgeSwarmForRepo(
       status: "failed",
       reason: `${failedSlices.length} of ${total} partition workers failed after a retry; ${results.length} completed batches are journaled for the next run`,
       failedSlices,
-      journaled: journal.size(),
+      // THIS run's completed batches, which is what the reason line says. The
+      // journal's own entry count would disagree with it the moment a retry ran a
+      // subset of the slices, and it counted every target's entries besides.
+      journaled: results.length,
     };
   }
 
@@ -637,11 +664,37 @@ export async function runKnowledgeSwarmForRepo(
     ...verifyResult.set,
     statements: carrier === null ? statements : statements.map(carrier),
   };
+  // SUPERSEDED CHECK. Everything above was decided from the prior set read at the
+  // top of this run — full or incremental, which slices, which statements carry.
+  // Between that read and here sit every worker turn and the verify seat, minutes
+  // of it, and if another run promoted in that window then this set was computed
+  // against a prior that no longer exists and writing it would silently roll the
+  // store back to an older target.
+  //
+  // WHERE THE RACE COMES FROM, since the obvious answer is wrong: proactive
+  // rehydration IS single-flight per repo (`knowledgeRunning` in
+  // `proactive-rehydration.ts`), so its own baseline advances queue behind each
+  // other. The second runner is the REVIEW-OPEN kick in `live-review-backend.ts`,
+  // which fires whenever a review opens with no local set and knows nothing about
+  // the watcher's flight. Nothing coordinates the two.
+  //
+  // Refuse, do not merge: this run's inputs are stale, and the journal is what makes
+  // that cheap — it is deliberately NOT cleared, so the retry re-runs no turns and
+  // merges against the prior that actually exists.
+  if (storeIdentity(deps.knowledgeStore.loadLocal(deps.repoKey)) !== priorIdentity) {
+    return {
+      status: "failed",
+      reason:
+        "superseded: another run wrote the knowledge store while this one was running, so this set was computed against a prior that no longer exists; every completed batch stays journaled for the retry",
+      journaled: results.length,
+    };
+  }
   // THE one store write, and it happens exactly here: after every batch, the merge
   // and the verify seat have all completed. The set is whole or it is not written.
   deps.knowledgeStore.save(deps.repoKey, set);
-  // Promoted, so the journal has nothing left to protect.
-  journal.clear();
+  // Promoted, so THIS target's journal has nothing left to protect. Another target's
+  // journal is another run's recovery and is never this run's to delete.
+  journal.clear(target);
   return {
     status: "ok",
     set,

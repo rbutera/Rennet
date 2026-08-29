@@ -276,9 +276,11 @@ export {
   knowledgeBackend,
 } from "./knowledge-backend";
 export {
+  type JournalTarget,
   journalKey,
   KNOWLEDGE_JOURNAL_DIR,
   KnowledgeJournal,
+  STALE_TARGET_AGE_MS,
 } from "./knowledge-journal";
 export {
   committedKnowledgeDir,

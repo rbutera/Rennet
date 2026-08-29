@@ -461,4 +461,60 @@ describe("knowledge swarm — prior-set identity", () => {
       expect(outcome.reason).toContain("changed-path resolution failed");
     expect(saved).toHaveLength(0);
   });
+
+  it("refuses to save when another run wrote the store while this one was working", async () => {
+    // Two runs, no coordination between them: the proactive watcher's advance and
+    // the review-open kick. This one reads the store at the top, spends every worker
+    // turn and the verify seat, and by the time it reaches the save another run has
+    // promoted a NEWER set. Writing here would roll the store back to an older
+    // target, silently, with the newer run's work gone.
+    const { saved, store } = makeStore();
+    let stored: KnowledgeSet | null = null;
+    const racing = {
+      ...store,
+      loadLocal: () => stored,
+      save: (repoKey: string, set: KnowledgeSet) => {
+        store.save(repoKey, set);
+      },
+    };
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: racing,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: fakeCodexExecutor([], () => {
+        // The other run lands mid-flight, between this run's read and its save.
+        stored = priorSet({ baseOid: "oid-9" });
+        return workerBody();
+      }),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+    });
+
+    expect(outcome.status).toBe("failed");
+    if (outcome.status === "failed") {
+      expect(outcome.reason).toContain("superseded");
+      // The journal is deliberately kept, so the retry pays for no turns again.
+      expect(outcome.journaled).toBeGreaterThan(0);
+    }
+    expect(saved).toHaveLength(0);
+  });
+
+  it("saves when the store did not move — the superseded check is not a blanket refusal", async () => {
+    // The control for the refusal above. Same fixture, same everything, except that
+    // nothing else writes: a guard that refused unconditionally would pass the test
+    // above and fail this one.
+    const { saved, store } = makeStore();
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: store,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: fakeCodexExecutor([], workerBody),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+    });
+    expect(outcome.status).toBe("ok");
+    expect(saved).toHaveLength(1);
+  });
 });
