@@ -36,7 +36,9 @@ function blob(path: string): string {
 }
 
 /** A materialized snapshot over the fixture. `omitImports` withholds the import shard family. */
-function snapshotOf(options: { omitImports?: boolean } = {}): LoadedSnapshot {
+function snapshotOf(
+  options: { omitImports?: boolean; scopes?: WorkspaceScope[] } = {},
+): LoadedSnapshot {
   const paths = Object.keys(IMPORTS).sort();
   const inputs: SnapshotStructuralInputs = {
     repoKey: "/repo/.git",
@@ -44,7 +46,7 @@ function snapshotOf(options: { omitImports?: boolean } = {}): LoadedSnapshot {
     baseRefResolution: "symbolic-head" as BaseRefResolution,
     baseOid: "oid-fixture",
     files: paths.map((path) => ({ path, blobOid: blob(path), size: 1, mode: "100644" })),
-    scopes: SCOPES,
+    scopes: options.scopes ?? SCOPES,
     edges: [],
     entryPoints: [],
     tests: [],
@@ -212,6 +214,204 @@ describe("selectPacketKnowledge — retrieval scope", () => {
   it("excludes another package's statement — 'repo-level' is not 'everything'", () => {
     expect(ids(selection.statements)).not.toContain(S_OTHER.id);
   });
+
+  // Scope names are NOT unique (`partition.ts` handles duplicates), so the
+  // scope-name route must consider EVERY root carrying the name. Taking the first
+  // match answers for whichever root the table happened to list first — the
+  // many-repos-one-identity failure, one level down.
+  it("a DUPLICATE scope name resolves through the root that really holds the change", () => {
+    const scopes: WorkspaceScope[] = [
+      // The DECOY, named identically and holding nothing that changed. The snapshot
+      // sorts its scope table by root, so `docs` lands FIRST — which is where a
+      // first-match lookup stops, and why this fixture can catch one.
+      { name: "@dup", root: "docs", sourceRoot: "docs", private: true, tags: [] },
+      { name: "@dup", root: "packages/a", sourceRoot: "packages/a/src", private: true, tags: [] },
+    ];
+    // Anchored on the two-hop `distant.ts`, so ONLY the subject rule can admit it.
+    const dup = statement("s9-dup", "@dup", "packages/a/src/distant.ts");
+    const picked = selectPacketKnowledge({
+      set: { ...SET, statements: [...ALL, dup] },
+      snapshot: snapshotOf({ scopes }),
+      changedPaths: CHANGED,
+    });
+    expect(picked.mode).toBe("import-graph");
+    // The table really is ordered decoy-first, so first-match would answer `docs`.
+    expect(picked.statements.length).toBeGreaterThan(0);
+    expect(ids(picked.statements)).toContain(dup.id);
+  });
+
+  // The two subject namespaces are INDEPENDENT, and neither may bypass the other's
+  // rule: a scope NAME resolves through its declared root (never its spelling), and a
+  // path subtree stays a subtree claim even when some scope is named like it.
+  it("the scope-name route gates on the ROOT; the path route stays independent", () => {
+    const scopes: WorkspaceScope[] = [
+      // `@x/a` now roots at packages/b — it no longer holds the change.
+      { name: "@x/a", root: "packages/b", sourceRoot: "packages/b/src", private: true, tags: [] },
+      // ...and a PATH-LIKE scope name, also rooted away from the change.
+      {
+        name: "packages/a",
+        root: "packages/b",
+        sourceRoot: "packages/b/src",
+        private: true,
+        tags: [],
+      },
+    ];
+    const picked = selectPacketKnowledge({
+      set: SET,
+      snapshot: snapshotOf({ scopes }),
+      changedPaths: CHANGED,
+    });
+    // The base fixture admits S_SCOPE through `@x/a`'s root; re-rooted, it must NOT
+    // be admitted — the route is the root, not the name matching something.
+    expect(ids(picked.statements)).not.toContain(S_SCOPE.id);
+    // S_SUBTREE's subject IS the changed file's subtree, so the path route still
+    // admits it — a namesake scope rooted elsewhere does not veto a subtree claim.
+    expect(ids(picked.statements)).toContain(S_SUBTREE.id);
+  });
+});
+
+// ── The graph must cover the CHANGE, not merely exist (Y2) ────────────────────
+//
+// One resolved edge anywhere in the repo is not evidence that the graph can answer
+// about these changed paths. When it cannot, the scope collapses to the changed
+// paths themselves and silently discards the rest of the store — under a `mode`
+// claiming a confident scoped selection. Coverage of the change is the gate.
+
+describe("selectPacketKnowledge — scoped mode requires the graph to cover the change", () => {
+  it("changed paths with NO edges ⇒ projected-full, even though the repo graph has edges", () => {
+    // `packages/b/src/other.ts` imports nothing and nothing imports it, while
+    // `packages/a` is full of resolved edges. The old rule (any edge in the repo)
+    // gave `import-graph` here — control-proven: restore `graph.edges.length > 0`
+    // as the sole gate and this assertion reds.
+    const selection = selectPacketKnowledge({
+      set: SET,
+      snapshot: snapshotOf(),
+      changedPaths: ["packages/b/src/other.ts"],
+    });
+    expect(selection.mode).toBe("projected-full");
+    expect(selection.counts.changedPathsWithEdges).toBe(0);
+    // Present at base, just isolated — which is the distinction the disclosure draws.
+    expect(selection.counts.changedPathsAtBase).toBe(1);
+    // Degradation is toward MORE: nothing was discarded for being out of a scope
+    // that could not be computed.
+    expect(ids(selection.statements)).toContain(S_DISTANT.id);
+  });
+
+  it("an ADDED file the base never carried ⇒ projected-full, and the counts say why", () => {
+    const selection = selectPacketKnowledge({
+      set: SET,
+      snapshot: snapshotOf(),
+      changedPaths: ["packages/a/src/brand-new.ts"],
+    });
+    expect(selection.mode).toBe("projected-full");
+    // The added-file signature: not at base at all, so "no dependencies" was never
+    // the finding — the base could not be asked.
+    expect(selection.counts.changedPaths).toBe(1);
+    expect(selection.counts.changedPathsAtBase).toBe(0);
+    expect(selection.counts.changedPathsWithEdges).toBe(0);
+    expect(selection.note).toContain("0 of 1 changed path(s) carry a resolved import edge");
+    expect(selection.note).toContain("0 of 1 exist at the base snapshot");
+  });
+
+  it("the import shard being unavailable is its own disclosed reason", () => {
+    // A loader that can no longer produce the import shards the manifest names ⇒
+    // `queryImportGraph` refuses, which is a DIFFERENT story from a graph that
+    // resolved and found nothing. Both degrade to the full set; only the note says which.
+    const broken: LoadedSnapshot = { ...snapshotOf(), load: () => undefined };
+    const selection = selectPacketKnowledge({
+      set: SET,
+      snapshot: broken,
+      changedPaths: CHANGED,
+    });
+    expect(selection.mode).toBe("projected-full");
+    expect(selection.note).toContain("import shard unavailable");
+    expect(selection.note).not.toContain("no resolved import edges");
+  });
+
+  it("no import shards at all reads as 'no resolved import edges', not as unavailable", () => {
+    const selection = selectPacketKnowledge({
+      set: SET,
+      snapshot: snapshotOf({ omitImports: true }),
+      changedPaths: CHANGED,
+    });
+    expect(selection.note).toContain("no resolved import edges");
+    expect(selection.note).not.toContain("import shard unavailable");
+  });
+});
+
+// ── Degradation stays monotone UNDER THE CAP (Y4) ─────────────────────────────
+//
+// "Degrade toward more" is a claim about what the drafter is HANDED, not about the
+// pool the cap is taken from. With more statements than the cap, a plain id sort
+// lets low-id irrelevant rows evict every row the scoped mode would have kept, so
+// the wider mode hands over strictly less useful evidence while reporting a wider
+// mode. The unscoped modes therefore order the change-relevant band first.
+
+describe("selectPacketKnowledge — no mode offers less than the scoped mode would", () => {
+  const CAP = 80;
+  // 100 statements about the OTHER package, ids sorted BEFORE the relevant ones —
+  // enough to fill the cap on their own. This is the fixture shape without which
+  // the bug is invisible: under the cap every mode looks monotone.
+  const NOISE: KnowledgeStatement[] = Array.from({ length: 100 }, (_, i) =>
+    statement(
+      `a-noise-${String(i).padStart(3, "0")}`,
+      "packages/b/src/other.ts",
+      "packages/b/src/other.ts",
+    ),
+  );
+  // 20 statements anchored on the changed file — what the scoped mode would offer.
+  const RELEVANT: KnowledgeStatement[] = Array.from({ length: 20 }, (_, i) =>
+    statement(
+      `z-relevant-${String(i).padStart(3, "0")}`,
+      "packages/a/src/changed.ts",
+      "packages/a/src/changed.ts",
+    ),
+  );
+  const BIG: KnowledgeSet = { ...SET, statements: [...NOISE, ...RELEVANT] };
+
+  const scoped = selectPacketKnowledge({
+    set: BIG,
+    snapshot: snapshotOf(),
+    changedPaths: CHANGED,
+    cap: CAP,
+  });
+
+  it("the fixture is big enough for the cap to bite, and the noise sorts first", () => {
+    expect(BIG.statements.length).toBeGreaterThan(CAP);
+    expect(
+      ids(BIG.statements)
+        .slice(0, CAP)
+        .every((id) => id.startsWith("a-noise")),
+    ).toBe(true);
+    expect(scoped.mode).toBe("import-graph");
+    expect(ids(scoped.statements)).toHaveLength(20);
+  });
+
+  it("projected-full offers everything the scoped mode would, cap and all", () => {
+    const full = selectPacketKnowledge({
+      set: BIG,
+      snapshot: snapshotOf({ omitImports: true }),
+      changedPaths: CHANGED,
+      cap: CAP,
+    });
+    expect(full.mode).toBe("projected-full");
+    // Control: order these by id alone and the 80-row cap is filled by `a-noise-*`,
+    // dropping all 20 relevant rows — the wider mode handing over less.
+    for (const id of ids(scoped.statements)) expect(ids(full.statements)).toContain(id);
+    expect(full.statements.length).toBeGreaterThanOrEqual(scoped.statements.length);
+  });
+
+  it("unprojected offers everything the scoped mode would, cap and all", () => {
+    const raw = selectPacketKnowledge({
+      set: BIG,
+      snapshot: null,
+      changedPaths: CHANGED,
+      cap: CAP,
+    });
+    expect(raw.mode).toBe("unprojected");
+    for (const id of ids(scoped.statements)) expect(ids(raw.statements)).toContain(id);
+    expect(raw.statements.length).toBeGreaterThanOrEqual(scoped.statements.length);
+  });
 });
 
 describe("selectPacketKnowledge — the cap discloses what it dropped", () => {
@@ -222,7 +422,7 @@ describe("selectPacketKnowledge — the cap discloses what it dropped", () => {
       changedPaths: CHANGED,
     });
     expect(uncapped.counts.truncated).toBe(0);
-    expect(uncapped.counts.currentInScope).toBeGreaterThan(1);
+    expect(uncapped.counts.currentSelected).toBeGreaterThan(1);
 
     const capped = selectPacketKnowledge({
       set: SET,
@@ -233,8 +433,8 @@ describe("selectPacketKnowledge — the cap discloses what it dropped", () => {
     expect(capped.statements).toHaveLength(1);
     // The in-scope total is unchanged by the cap — the cap hides statements, it
     // never makes the packet claim there were fewer to begin with.
-    expect(capped.counts.currentInScope).toBe(uncapped.counts.currentInScope);
-    expect(capped.counts.truncated).toBe(uncapped.counts.currentInScope - 1);
+    expect(capped.counts.currentSelected).toBe(uncapped.counts.currentSelected);
+    expect(capped.counts.truncated).toBe(uncapped.counts.currentSelected - 1);
   });
 
   it("orders deterministically by statement id, so the cap keeps a stable prefix", () => {
