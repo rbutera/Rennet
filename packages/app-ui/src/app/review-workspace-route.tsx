@@ -52,11 +52,11 @@ const LIVE_GENERATION = "live";
 /**
  * What a freshness answer stales: the review the route renders, and the boards read off it.
  *
- * ⚠️ COUPLED to `routes/slug.ts`, which declares itself the single swap point for how a session
- * resolves and says it moves off `review.load` when B9 lands. `review.load` here must name the
- * read that feeds this route's `review` prop — the moment those two disagree, the notice below
- * silently stops appearing, which is this issue (#576) all over again. `freshness.dom.test.tsx`
- * mounts through `useSlugResolution` for exactly that reason: change the read, and it goes red.
+ * ⚠️ COUPLED to `routes/slug.ts`, the single point that decides how a session resolves and
+ * which command feeds this route's `review` prop (`review.load` today). This list must name
+ * that read — the moment the two disagree, the notice below silently stops appearing, which
+ * is this issue (#576) all over again. `freshness.dom.test.tsx` mounts through
+ * `useSlugResolution` for exactly that reason: change the read, and it goes red.
  */
 const STALED_BY_FRESHNESS = ["review.load", "board.read"] as const;
 
@@ -129,7 +129,8 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
   // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired
   // into the working-tree freshness watcher (the renderer gates that off by patchset source)" —
-  // and `isWorkingTreeReview` is how the renderer tells them apart (wire.ts). Asking
+  // and `isWorkingTreeReview` is how the renderer tells them apart
+  // (`@rennet/protocol`, `src/delta/citations.ts`). Asking
   // anyway would capture THIS CLONE's tree, which can never match a `github-local`/`github-rest`
   // patchset id, so the daemon commits `ReviewInvalidated`, the notice claims a change that never
   // happened, and Regenerate replaces the reviewed PR diff with a local capture — a lie, a

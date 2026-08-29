@@ -10,8 +10,9 @@ import { useRoundPending, useRoundState } from "./rounds-data";
 // The run route (C09 §3) — the live work-order round watched at `/s/:slug/run`. The
 // spike's `run-view.tsx` drove the whole thing off a `setInterval` clock and navigated
 // from an effect that raced itself (autopsy S9). Here the route is a pure read of the
-// machine: `useRoundState` folds real progress (fixtures today, `useCommandStream` at
-// cluster 8), the phase carries the rows to render, and navigation is DERIVED from
+// machine: `useRoundState` folds real progress (the live source's `useCommandStream`
+// over `session.roundEvents` + the push channel; a fixture source in tests), the phase
+// carries the rows to render, and navigation is DERIVED from
 // `runNavigation(state, slug)` — a `<Redirect>` off the current state, never an effect
 // that reads the state its own navigate mutates. There is NO `setTimeout` in this path.
 //

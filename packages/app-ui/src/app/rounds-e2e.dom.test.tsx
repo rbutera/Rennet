@@ -9,10 +9,12 @@
 //   present-never-disabled) → gen2 with delta marks → rounds ledger row + frozen
 //   generation reachable → cold deep-link mid-round reattaches without double-dispatch.
 //
-// It runs the fixture rounds source (the honest stand-in until B9 binds the live runtime,
-// cluster 8) through the same `ReviewWorkspace` + `RunRoute` the app mounts, under the one
-// `RoundsSourceProvider` cluster 7 wired. No `setTimeout` drives anything: a tick + a
-// re-render is the injected input (what `useCommandStream` will do at cluster 8).
+// It runs the FIXTURE rounds source — a test double for the live one, not a stand-in for
+// a missing runtime (cluster 8 landed `useLiveRoundsSource`, and the app binds it) —
+// through the same `ReviewWorkspace` + `RunRoute` the app mounts, under the one
+// `RoundsSourceProvider` cluster 7 wired. So this proves the CHAIN, not the transport.
+// No `setTimeout` drives anything: a tick + a re-render is the injected input, standing
+// in for what `useCommandStream` delivers in the live source.
 import type { RennetBridge, Review } from "@rennet/protocol";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";

@@ -8,10 +8,10 @@ import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES, readSessionQuery } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3),
-// mirroring `shell/sidebar-data.ts` (the B9 gap) and `review/citations.ts` (the B3
-// gap). The dock takes no transcript props; every row it renders, every stream it
-// folds, and every send resolve HERE. Two lifetimes in one file:
+// The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3), the
+// same one-file-per-surface shape as `shell/sidebar-data.ts` and `review/citations.ts`.
+// The dock takes no transcript props; every row it renders, every stream it folds, and
+// every send resolve HERE. Two lifetimes in one file:
 //
 //  • LIVE NOW (dispatch-bound #251): the reviewer's ask travels as `review.ask`
 //    (useMutation); the persisted ask-thread transcript reloads via `review.reattach`
@@ -21,13 +21,15 @@ import { ROUTES, readSessionQuery } from "../routes/url";
 //
 //  • The HISTORICAL session transcript — the orchestrator's coding turns (thought
 //    blocks, action steps, prose), the `compact_boundary` rows, the harness-reported
-//    context figure — is honestly EMPTY. `session.transcript` EXISTS in protocol and is
-//    served, but it answers empty by construction: the harness CLI owns the coding
-//    transcript (#466 res. 3), so Rennet has no server-side coding turns to return until
-//    a harness-transcript read port lands. That is absence, not a stub. The
-//    `SessionTranscriptProjection` context below is an OVERRIDE seam for hosts and tests
-//    that mount the dock outside a session route; the live dock resolves its review
-//    from the route (`useRouteReviewId`).
+//    context figure — is not read here. `session.transcript` EXISTS in protocol, is
+//    served, and does carry captured coding turns (the session turn loop's transcript
+//    store), but NOTHING IN THIS FILE CALLS IT: the dock's rows come from
+//    `review.reattach` plus the live stream, and the historical half arrives only
+//    through the `SessionTranscriptProjection` context — an OVERRIDE seam a host or a
+//    test supplies. Unprovided, it is honestly empty. The harness CLI remains the
+//    canonical owner of the coding conversation (#466 res. 3); `contextWindow` has no
+//    source at all. The live dock resolves its review from the route
+//    (`useRouteReviewId`), never from that context.
 //
 // No filesystem access; imports only `@rennet/protocol` types and `../data`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,8 +121,8 @@ export interface AnchoredThreadRow {
 
 export type TranscriptRow = TurnRow | CompactBoundaryRow | AnchoredThreadRow;
 
-/** The dock header's session trail (reconciliation: honest-minimal until B9). A live
- *  client shows just the title; the projection fills project/target when it lands. */
+/** The dock header's session trail. Honest-minimal: with no projection supplied the
+ *  header shows the title alone; a host or test that supplies one fills project/target. */
 export interface ChatTrail {
   readonly title: string;
   readonly projectName?: string;
@@ -135,16 +137,18 @@ export interface ContextWindow {
   readonly limit: number;
 }
 
-// ── The B9 session-transcript projection (stub context — reconciliation 3) ────
+// ── The session-transcript OVERRIDE context (reconciliation 3) ────────────────
 
 export interface SessionTranscriptProjection {
   /** A review-id OVERRIDE for a host or a test that mounts the dock outside a session
    *  route. Absent in normal use: the dock resolves the live review from the route itself
    *  (`useRouteReviewId`), so this is a deliberate injection point, not the live path. */
   readonly reviewId?: string;
-  /** Historical session rows (coding turns + `compact_boundary` rows). Empty until B9. */
+  /** Historical session rows (coding turns + `compact_boundary` rows). Empty unless a
+   *  host or test supplies them — this file issues no `session.transcript` read. */
   readonly rows: readonly TranscriptRow[];
-  /** The header trail. Honest-minimal (title only) until B9's projection carries the target. */
+  /** The header trail. Honest-minimal (title only) unless the supplied projection
+   *  carries a project name and target. */
   readonly trail: ChatTrail;
   /** The harness-reported context figure, or absent (⇒ meter reads "unknown"). */
   readonly contextWindow?: ContextWindow;

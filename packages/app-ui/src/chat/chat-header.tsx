@@ -5,7 +5,7 @@ import type { ChatTrail } from "./chat-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ChatHeader (C07, ported from the spike). The ONE dock header: the session trail
-// (reusing C3's presentational `shell/trail.tsx`). Honest-minimal until B9: when the
+// (reusing C3's presentational `shell/trail.tsx`). Honest-minimal: when the supplied
 // projection carries no target, `Trail` shows the title alone (reconciliation 2).
 //
 // C20 state 2: with the sidebar collapsed the chat is the leftmost pane, so it owns
