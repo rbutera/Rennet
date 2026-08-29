@@ -60,7 +60,7 @@ function mountApp(path: string, handlers: MemoryBridgeHandlers = {}) {
         },
       ],
     }),
-    "review.load": () => ({ review: REVIEW }),
+    "review.load": () => ({ review: REVIEW, repositoryPresent: true }),
     "project.contextMap": ({ projectId }) => {
       asked.push(projectId);
       // `absent` is a real, typed answer this surface renders in full — enough to prove
