@@ -318,10 +318,13 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusSignalMa
       dependents.delete(file.path);
       if (dependents.size > 0) {
         const n = dependents.size;
+        // Subject AND verb agree: the singular read "1 file import this file" for as
+        // long as nothing consumed the index, so nobody saw it. W5b wires it in.
+        const subject = n === 1 ? "1 file" : `${n} files`;
         const what =
           fanIn.method === "import-edges"
-            ? `${n} file${n === 1 ? "" : "s"} import this file`
-            : `${n} file${n === 1 ? "" : "s"} reference this file's symbols`;
+            ? `${subject} ${n === 1 ? "imports" : "import"} this file`
+            : `${subject} ${n === 1 ? "references" : "reference"} this file's symbols`;
         marks.push(fileMark("fan-in", file.path, `${what}; changes here ripple to them.`));
       }
     }
