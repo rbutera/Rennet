@@ -202,25 +202,26 @@ function appTree(history: ReturnType<typeof memoryHistory>, bridge: MemoryBridge
  * The daemon, as far as this app tree can tell: an append-only round log per review
  * (`RoundProgressHub`'s own semantics — a `dispatched` RESETS it) that both the
  * `session.roundEvents` catch-up read and the `roundProgress` push channel serve, and a
- * `round.dispatch` that — like production — does NOT resolve until the round is over
- * (`create-server.ts` awaits `dispatchRound` and the whole regeneration inside the
- * handler). That latency is load-bearing: everything the reviewer sees between clicking
- * Dispatch and the round settling arrives over the push channel, not the command's reply.
+ * `round.dispatch` that — like production — acknowledges the accepted work order while
+ * the round continues asynchronously. The durable ledger row lands before the terminal
+ * progress receipt; that receipt is what tells the client the row is now ready to read.
  */
 function mountApp(path: string) {
   const dispatched: string[] = [];
   const log: RoundEvent[] = [];
-  let finishRound: (() => void) | undefined;
+  let records: readonly RoundLedgerRecord[] = [];
+  let ledgerReads = 0;
   const bridge = new MemoryBridge({
     ...routeResolutionHandlers,
     "board.read": fixtureBoardRead,
     "session.roundEvents": () => ({ events: [...log] }),
-    "session.rounds": () => ({ records: [DURABLE_RECORD] }),
+    "session.rounds": () => {
+      ledgerReads += 1;
+      return { records: [...records] };
+    },
     "round.dispatch": ({ reviewId }) => {
       dispatched.push(reviewId);
-      return new Promise((resolve) => {
-        finishRound = () => resolve(dispatchAnswer(reviewId));
-      });
+      return dispatchAnswer(reviewId);
     },
   });
   const history = memoryHistory(path);
@@ -231,7 +232,17 @@ function mountApp(path: string) {
     log.push(event);
     act(() => bridge.emitRoundProgress(REVIEW_ID, event));
   };
-  return { r, history, bridge, dispatched, push, finish: () => finishRound?.() };
+  return {
+    r,
+    history,
+    bridge,
+    dispatched,
+    push,
+    persistRound: () => {
+      records = [DURABLE_RECORD];
+    },
+    ledgerReads: () => ledgerReads,
+  };
 }
 
 const evidence: string[] = [];
@@ -252,7 +263,9 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
         body: "guard the boundary",
       }),
     );
-    const { r, history, dispatched, push, finish } = mountApp(`/s/${REVIEW_ID}?view=handoff`);
+    const { r, history, dispatched, push, persistRound, ledgerReads } = mountApp(
+      `/s/${REVIEW_ID}?view=handoff`,
+    );
     const button = r.getByRole("button", { name: "Dispatch Round" });
     expect(button.hasAttribute("disabled")).toBe(false);
     await r.user.click(button);
@@ -296,7 +309,16 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
 
     // ── 5 · VERIFIED COMPLETION RETURNS WITH THE SETTLED ACCOUNT ─────────────
+    const readsBeforeRecord = ledgerReads();
+    persistRound();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Persisting server truth does not invent a client refresh. Only the terminal receipt
+    // below proves that the durable row is ready and changes the live ledger projection.
+    expect(ledgerReads()).toBe(readsBeforeRecord);
     push(SERVER_ROUND[9] as RoundEvent); // composed, generation gen2
+    await waitFor(() => expect(ledgerReads()).toBeGreaterThan(readsBeforeRecord));
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
@@ -350,13 +372,6 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
       expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull(),
     );
     shown("6 · retrospective line + gen-1 drill-down off the durable frozenPredecessor");
-
-    // The round's command finally answers (production resolves it only once the whole
-    // round is over); the invalidated catch-up read refetches the SAME settled log.
-    await act(async () => {
-      finish();
-      await Promise.resolve();
-    });
 
     // The evidence chain, SHOWN — the nine C9 claims walked over one live round.
     console.log(`[c15-e2e]\n  ${evidence.join("\n  ")}`);

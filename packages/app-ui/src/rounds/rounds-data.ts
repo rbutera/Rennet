@@ -264,6 +264,12 @@ export function useLiveRoundsSource(): RoundsSource {
     command: eventsCommand,
     fold: (prev, event) => {
       streamed.current = mergeRoundEvents(streamed.current, [event]);
+      // Terminal is the first safe ledger refresh point: composed and unchanged follow a
+      // durable row, while failed may reveal a recorded partial row or leave it unchanged.
+      // Dispatch acknowledgement happens earlier and can cache an empty ledger.
+      if (event.type === "composed" || event.type === "unchanged" || event.type === "failed") {
+        cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
+      }
       return { events: [...mergeRoundEvents(prev?.events ?? NO_EVENTS, [event])] };
     },
   });
@@ -274,7 +280,7 @@ export function useLiveRoundsSource(): RoundsSource {
     pending: recordsPending,
   } = useCommand("session.rounds", { reviewId: reviewId ?? "" }, { enabled });
   const { mutate } = useMutation("round.dispatch", {
-    invalidates: ["session.rounds", "session.roundEvents"],
+    invalidates: ["session.roundEvents"],
   });
 
   // The reviewer's dispatch INTENT, held here and never written into the event log (review
