@@ -7,10 +7,10 @@
  * (`knowledge/swarm.ts`): the model turn is an INJECTED `runTurn(prompt,
  * attempt)` so the concrete harness call lives in adapters and `core` never
  * imports it. It composes context from the existing pure reads —
- * `queryKnowledge` (`knowledge.ts`) plus `queryProjectMap` / `queryFileContext`
+ * `queryKnowledge` (`knowledge/read.ts`) plus `queryProjectMap` / `queryFileContext`
  * / `querySymbolDefinition` / `queryReferences` (`project-context.ts`) over a
- * materialized snapshot — and returns exactly the shape the orchestrator primer's
- * PROTOCOL_CARD already advertises: `{answer, evidence, confidence, unanswered?}`
+ * materialized snapshot — and returns exactly the wire shape `contextAnswerSchema`
+ * carries (`protocol/src/wire.ts`): `{answer, evidence, confidence, unanswered?}`
  * plus a `cost` report.
  *
  * Three honesty rules are enforced HERE, at synthesis time, not asserted downstream:
