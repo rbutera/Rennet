@@ -177,15 +177,20 @@ const byId = (left: KnowledgeStatement, right: KnowledgeStatement): number =>
 
 /**
  * The comparator the UNSCOPED modes sort by: statements the change touches
- * WITHOUT needing an import graph first, then everything else, id-ordered within
- * each band.
+ * WITHOUT needing an import graph first (0-hop: subject or anchor on a changed
+ * path, or repo-level), then everything else, id-ordered within each band.
  *
- * This is what keeps degradation monotone under the cap. `projected-full` offers
- * a superset of what the scoped mode would offer — but with more statements than
- * the cap, a plain id sort lets low-id irrelevant rows evict every row the scoped
- * mode would have kept, so the "wider" mode hands the drafter strictly less
- * useful evidence. Ordering the 0-hop-relevant band first means the cap can never
- * do that. Still fully deterministic: two bands, each id-sorted.
+ * This is what keeps the 0-HOP band monotone under the cap. `projected-full`
+ * offers a superset of the scoped set — but with more statements than the cap, a
+ * plain id sort lets low-id irrelevant rows evict rows the scoped mode kept, so
+ * the "wider" mode hands the drafter strictly less useful evidence. Banding the
+ * 0-hop-relevant statements first means the cap can never evict THEM.
+ *
+ * The guarantee stops at 0-hop, and that is the honest ceiling: a statement the
+ * scoped mode kept via the 1-HOP import ring is invisible here (no graph, so no
+ * ring), lands in band 1, and CAN be capped out by strictly-more-relevant rows.
+ * Only the 0-hop band is protected, not the whole scoped set. Still fully
+ * deterministic: two bands, each id-sorted.
  */
 function byChangeRelevanceThenId(
   changedPaths: readonly string[],
@@ -213,8 +218,10 @@ function byChangeRelevanceThenId(
  * Degradation is always toward MORE, never silently less: no usable import graph
  * ⇒ the full projected set (`projected-full`); no fresh snapshot ⇒ the stored set
  * unprojected minus rejected (`unprojected`). Either way `mode` and `note` say
- * which answer the packet actually got, and the unscoped modes order the
- * change-relevant statements first so the cap cannot undo the widening.
+ * which answer the packet actually got, and the unscoped modes order the 0-hop
+ * change-relevant statements first so the cap keeps THAT band even under
+ * pressure (the 1-hop ring is unknowable without the graph, so a ring-only
+ * statement can still be capped out — see {@link byChangeRelevanceThenId}).
  *
  * Pure and deterministic: every comparison is code-unit, so the same inputs
  * produce byte-identical output on every host.

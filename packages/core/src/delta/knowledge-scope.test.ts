@@ -345,9 +345,14 @@ describe("selectPacketKnowledge — scoped mode requires the graph to cover the 
 // pool the cap is taken from. With more statements than the cap, a plain id sort
 // lets low-id irrelevant rows evict every row the scoped mode would have kept, so
 // the wider mode hands over strictly less useful evidence while reporting a wider
-// mode. The unscoped modes therefore order the change-relevant band first.
+// mode. The unscoped modes therefore order the 0-hop change-relevant band first.
+//
+// The protection is the 0-HOP band only — statements whose subject or anchor is on
+// a changed path (what these fixtures use). A statement the scoped mode reached via
+// the 1-HOP import ring is invisible to the unscoped modes (no graph, no ring) and
+// CAN be capped out; these tests do not claim otherwise.
 
-describe("selectPacketKnowledge — no mode offers less than the scoped mode would", () => {
+describe("selectPacketKnowledge — the 0-hop change-relevant band survives the cap in every mode", () => {
   const CAP = 80;
   // 100 statements about the OTHER package, ids sorted BEFORE the relevant ones —
   // enough to fill the cap on their own. This is the fixture shape without which
@@ -387,7 +392,7 @@ describe("selectPacketKnowledge — no mode offers less than the scoped mode wou
     expect(ids(scoped.statements)).toHaveLength(20);
   });
 
-  it("projected-full offers everything the scoped mode would, cap and all", () => {
+  it("projected-full keeps the 0-hop band the cap would otherwise evict", () => {
     const full = selectPacketKnowledge({
       set: BIG,
       snapshot: snapshotOf({ omitImports: true }),
@@ -401,7 +406,7 @@ describe("selectPacketKnowledge — no mode offers less than the scoped mode wou
     expect(full.statements.length).toBeGreaterThanOrEqual(scoped.statements.length);
   });
 
-  it("unprojected offers everything the scoped mode would, cap and all", () => {
+  it("unprojected keeps the 0-hop band the cap would otherwise evict", () => {
     const raw = selectPacketKnowledge({
       set: BIG,
       snapshot: null,
