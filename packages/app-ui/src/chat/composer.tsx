@@ -109,6 +109,7 @@ export function Composer({
 }) {
   const codeComments = useRennetStore((s) => s.review.codeComments);
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
+  const focusRevision = useRennetStore((s) => s.ui.chatComposerFocusRevision);
   const { clearCodeComment, removeQuoteComment } = useRennetStore((s) => s.reviewActions);
 
   const [value, setValue] = useState("");
@@ -117,6 +118,13 @@ export function Composer({
   );
   const composingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const seenFocusRevision = useRef(focusRevision);
+
+  useLayoutEffect(() => {
+    if (seenFocusRevision.current === focusRevision) return;
+    seenFocusRevision.current = focusRevision;
+    textareaRef.current?.focus();
+  }, [focusRevision]);
 
   // Seed the box from the mint's opening ask. The dock is mounted ONCE by the layout and
   // never unmounts on navigation, so this cannot be initial state — the ask arrives when

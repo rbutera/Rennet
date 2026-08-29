@@ -161,8 +161,9 @@ visibility files but never stages or commits `.rennet/` content.
 
 ## Review lens contract
 
-Each lens is a board over one immutable patchset. One generation of boards
-covers one `(reviewId, patchsetId)` pair.
+Each lens is a board over one immutable patchset. A generation is one immutable
+board visit over that patchset. A later round may revisit the same content-addressed
+patchset, but it gets a distinct generation id and the earlier visit stays frozen.
 
 ```mermaid
 flowchart TB

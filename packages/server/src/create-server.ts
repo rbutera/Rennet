@@ -131,6 +131,7 @@ import {
   escapePath,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
+  findingDispositionMigrationEvents,
   guardSeatTurn,
   type HandoffTurnOutcome,
   type HarnessPort,
@@ -175,6 +176,7 @@ import type {
   RoundEvent,
   SessionModel,
 } from "@rennet/protocol";
+import { currentGenerationId, ROUND_NO_REGEN } from "@rennet/protocol";
 import { buildAppTools } from "./agent-tools";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
@@ -221,13 +223,17 @@ import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
-import { readPriorGeneration, runBoardRegeneration } from "./runtime/round-collation";
+import {
+  type BoardRegenerationDeps,
+  generationBoardMeta,
+  readPriorGeneration,
+  runBoardRegeneration,
+} from "./runtime/round-collation";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
   type PersistedBoardMeta,
-  type WorkerReturn,
 } from "./runtime/rounds";
 import { resolveCaptureRoot } from "./session/capture-root";
 import {
@@ -351,6 +357,18 @@ export interface RennetServerOptions {
    * way), so a WSL update reports that plainly instead of shipping the wrong file.
    */
   readonly hostBundlePath?: string;
+  /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
+   * composition root carries checkpoint evidence even when HEAD does not move. */
+  readonly runHandoffTurn?: (input: {
+    readonly repoRoot: string;
+    readonly prompt: string;
+    readonly sessionId?: string;
+  }) => Promise<HandoffTurnOutcome>;
+  /** Test observation at the crash commit point, before any PR-draft ripening await. */
+  readonly onRoundPlaceholderCommitted?: (input: {
+    readonly sessionId: string;
+    readonly dispatchId: string;
+  }) => void | Promise<void>;
 }
 
 export interface RennetServer {
@@ -1807,7 +1825,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The write-enabled coding-agent turn (issue #18): brackets a live `claude` write turn
   // with git checkpoints and returns the turn diff. Extracted to a local so BOTH the
   // `review.handoff.run` command and the B11 round dispatch (below) run the same turn.
-  const runHandoffTurn = async ({
+  const runHandoffTurnDefault = async ({
     repoRoot,
     prompt,
     sessionId,
@@ -1859,6 +1877,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       checkpoint: new GitCheckpointStore(repoRoot, locus),
     });
   };
+  const runHandoffTurn = options.runHandoffTurn ?? runHandoffTurnDefault;
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
@@ -1962,7 +1981,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     session: SessionModel,
     recapture: () => Promise<void>,
     emit: (event: RoundEvent) => void,
-  ) => ({
+  ): BoardRegenerationDeps => ({
     recapture,
     reviewNow: () => service.reviewById(review.id) ?? review,
     // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
@@ -2011,6 +2030,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         patchset,
         git: gitForRepo(patchset.repository.root),
       }),
+    readFindingDispositions: () => ({
+      ...askLogStore.readProjection(review.id).findingDispositions,
+    }),
+    persistFindingResolutions: (
+      successorGeneration,
+      successorBoardId,
+      resolutions,
+      findingDispositions,
+    ) => {
+      const events = findingDispositionMigrationEvents({
+        findingDispositions,
+        successorGeneration,
+        successorBoardId,
+        resolutions,
+      });
+      askLogStore.appendMany(review.id, events);
+      if (events.length > 0) {
+        wsListener?.broadcastAskProjection(review.id, askLogStore.readProjection(review.id));
+      }
+    },
     // The REAL prior generation, rebuilt from its two durable halves (the generation
     // record + the board-meta rows' projected boards). Absent ⇒ this session has
     // never drafted over that patchset, so this is honestly a first generation.
@@ -2042,8 +2081,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * only stage BY READING A BOARD. So a captured review never got a board, and could not
    * get one: the first thing a new reviewer saw was an empty board, permanently.
    *
-   * Same machinery as that tail, with no worker to run. `worked` carries no `patchsetId`, so
-   * nothing re-captures, nothing "landed", and `runRound` mints the FIRST generation over the
+   * Same machinery as that tail, with an empty checkpoint result, so nothing re-captures,
+   * nothing "landed", and `runRound` mints the FIRST generation over the
    * patchset the drafters are reading. No successor account exists, so the round-report seat
    * does not run — this is a first read of a change, not a report on a round.
    *
@@ -2078,7 +2117,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         review,
         session,
         // No coding turn ran, so there is nothing to re-capture. `runBoardRegeneration`
-        // only calls this when `worked.patchsetId` is set, which it never is here.
+        // only calls this when checkpoint evidence says the tree changed, which it never does here.
         async () => undefined,
         // No live channel: the round-progress log belongs to ROUNDS. Feeding a capture's
         // drafting into it would put a round the reviewer never dispatched in front of
@@ -2094,7 +2133,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,
         asksDispatched: [],
-        worked: { commitRange: { from: head, to: head } },
+        worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
       },
     );
   }
@@ -2316,10 +2355,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     lensBoardForReview: async (reviewId: string, generation: string, lens: LensKind) => {
       const review = service.reviewById(reviewId);
       if (!review) return undefined;
+      const storedGeneration = generationStore.load(generation);
+      if (
+        storedGeneration === undefined ||
+        !review.patchsets.some((patchset) => patchset.id === storedGeneration.patchsetId)
+      ) {
+        return undefined;
+      }
       const sessionId = sessionIdForReview(review);
-      const meta = boardMetaStore
-        .listForGeneration(sessionId, generation)
-        .find((record) => record.lens === lens);
+      const meta = generationBoardMeta(
+        storedGeneration,
+        boardMetaStore.listForGeneration(sessionId, generation),
+        lens,
+      );
       if (!meta) return undefined;
       const state = await boardsRuntimeFor(review.repositoryRoot).service.getState(meta.boardId);
       return projectLensBoard([...state.values()], {
@@ -2342,7 +2390,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       return stored.absentLenses?.[lens];
     },
-    dispatchRound: async ({ review, workOrder }) => {
+    dispatchRound: async ({ review, workOrder, dispatchId, sourcePatchsetId, askOccurrences }) => {
       // The WRITE half of the session identity, and it lives beside its READ half
       // (`resolveRoundSessionId`, which `sessionIdForReview` calls) rather than here — the two
       // have to agree, and inline in this file they twice did not. Both mints funnel through
@@ -2357,11 +2405,39 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           gitForRepo(review.repositoryRoot),
         )
       ).session;
-      // Captured from the worker run below so the C15 regeneration tail can run
-      // `runRound` over what the worker produced WITHOUT re-running the worker: a
-      // WorkerReturn carrying the commit range, plus a `patchsetId` (the post-turn HEAD)
-      // only when the code actually MOVED — nothing landed ⇒ re-report, no successor mint.
-      let workerReturn: WorkerReturn | undefined;
+      const storedRounds = roundRecordStore.read(session.id);
+      const previousGenerationId = currentGenerationId(storedRounds, sourcePatchsetId);
+      const completedRecord = [...storedRounds]
+        .reverse()
+        .find((record) => record.outcome === "completed" && record.dispatchId === dispatchId);
+      // A real-generation record means this dispatch already finished end to end. The
+      // handler will CAS-clean its still-current asks; neither worker nor regeneration runs.
+      if (
+        completedRecord !== undefined &&
+        (completedRecord.boardGeneration !== ROUND_NO_REGEN ||
+          completedRecord.regeneration !== "pending")
+      ) {
+        return;
+      }
+      // Captured from the worker run below so the C15 regeneration tail can run over
+      // exactly what that turn produced WITHOUT re-running it. The checkpoint diff and
+      // structural path list are the change signal: the handoff contract deliberately
+      // tells the coding turn not to commit, so HEAD normally stays put.
+      let workerReturn:
+        | {
+            readonly commitRange: { readonly from: string; readonly to: string };
+            readonly diff: string;
+            readonly changedPaths: readonly string[];
+          }
+        | undefined =
+        completedRecord?.boardGeneration === ROUND_NO_REGEN &&
+        completedRecord.regeneration === "pending"
+          ? {
+              commitRange: { ...completedRecord.workerCommitRange },
+              diff: completedRecord.diff ?? "",
+              changedPaths: [...(completedRecord.changedPaths ?? [])],
+            }
+          : undefined;
       // ── C15 3.1: the live round-progress channel ──
       // Every event below is a REAL point in this dispatch, not a clock tick: the round
       // starting, the composed work-order being handed over, the coding turn running, the
@@ -2369,7 +2445,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // (report → per-lens lanes → composed) is emitted by `runRound` itself, through the
       // `onProgress` sink threaded below.
       const emit = roundProgress.sinkFor(review.id);
-      const askCount = workOrder.tasks.reduce((n, task) => n + task.asks.length, 0);
+      const dispatchedAsks = workOrder.tasks.flatMap((task) => task.asks);
+      const askCount = dispatchedAsks.length;
       emit({ type: "dispatched" });
       emit({
         type: "prep",
@@ -2382,106 +2459,134 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           },
         ],
       });
-      await roundsRuntime.dispatchRound({
-        session,
-        workOrder,
-        // ONE terminal report for the whole dispatch (C15 3.1): whatever kills the turn —
-        // a failed work order, an unreadable HEAD, a throw nobody predicted — the channel
-        // closes on `failed` instead of leaving the run reading "still working" forever.
-        onProgress: emit,
-        runWorkers: async (order): Promise<DispatchRoundResult> => {
-          emit({
-            type: "worker",
-            rows: [{ id: "turn", label: "Ran the work order", status: "running" }],
+      if (completedRecord === undefined) {
+        await roundsRuntime.dispatchRound({
+          session,
+          workOrder,
+          dispatchId,
+          sourcePatchsetId,
+          askOccurrences,
+          // ONE terminal report for the whole dispatch (C15 3.1): whatever kills the turn —
+          // a failed work order, an unreadable HEAD, a throw nobody predicted — the channel
+          // closes on `failed` instead of leaving the run reading "still working" forever.
+          onProgress: emit,
+          runWorkers: async (order): Promise<DispatchRoundResult> => {
+            emit({
+              type: "worker",
+              rows: [{ id: "turn", label: "Ran the work order", status: "running" }],
+            });
+            // The round's commit range is HEAD before → after the turn (the round commits
+            // its work — the ledger pins those commits; equal when it committed nothing).
+            // Read failure-isolated: an unborn/unreadable HEAD collapses to the "HEAD" marker
+            // rather than an empty (schema-invalid) id.
+            const gitAt = gitForRepo(review.repositoryRoot);
+            const headOid = async (): Promise<string> =>
+              (
+                await gitAt(review.repositoryRoot, ["rev-parse", "HEAD"], { reject: false })
+              ).trim() || "HEAD";
+            const from = await headOid();
+            const outcome = await runHandoffTurn({
+              repoRoot: review.repositoryRoot,
+              prompt: order.prompt,
+              // The round's session: the turn rides the loop, so this round resumes the
+              // conversation the last one left off at and its events land on the session's
+              // transcript. Same id `resolveRoundSessionId` resolves for the reads.
+              sessionId: session.id,
+            });
+            const to = await headOid();
+            // The round result the runtime pins into the ledger. The diff + changed paths are
+            // the checkpoint-measured truth `runHandoffTurn` already returns (it brackets the
+            // write turn with `GitCheckpointStore`); a FAILED turn still carries its partial
+            // diff. The runtime records this record, then REJECTS on a failed outcome so the
+            // dispatch memo evicts and an identical re-dispatch RETRIES (P1 finding 4) — the
+            // failure is recorded, never a memoized failure that suppresses the retry.
+            const result: DispatchRoundResult = {
+              outcome: outcome.status === "failed" ? "failed" : "completed",
+              diff: outcome.turnDiff,
+              changedPaths: [...outcome.filesTouched],
+              workerCommitRange: { from, to },
+            };
+            // The board regeneration input (C15): checkpoint evidence decides whether the
+            // tree moved. HEAD is retained only as the honest observed commit range.
+            workerReturn = {
+              commitRange: { from, to },
+              diff: outcome.turnDiff,
+              changedPaths: [...outcome.filesTouched],
+            };
+            const touched = outcome.filesTouched.length;
+            const changed = `${touched} ${touched === 1 ? "file" : "files"} changed`;
+            emit({
+              type: "worker",
+              rows: [
+                // A settled row carries the state's own field, not one bag of optionals: the
+                // completed turn accounts for itself ("3 files changed"), the failed one
+                // carries a REASON. Reporting the file count as the reason of a failure would
+                // put an account of the work where the explanation belongs.
+                outcome.status === "failed"
+                  ? {
+                      id: "turn",
+                      label: "Ran the work order",
+                      status: "failed",
+                      reason: `The work order failed — ${changed}.`,
+                    }
+                  : { id: "turn", label: "Ran the work order", status: "done", detail: changed },
+              ],
+            });
+            // A failed turn returns its recorded result; the runtime then rejects, and the
+            // ONE terminal report above closes the channel. (Emitting here as well would put
+            // two contradictory terminal rows in a log a late-joining client replays.)
+            if (outcome.status === "failed") return result;
+            return result;
+          },
+        });
+      } else {
+        const touched = workerReturn?.changedPaths.length ?? 0;
+        emit({
+          type: "worker",
+          rows: [
+            {
+              id: "turn",
+              label: "Ran the work order",
+              status: "done",
+              detail: `${touched} ${touched === 1 ? "file" : "files"} changed`,
+            },
+          ],
+        });
+      }
+      await options.onRoundPlaceholderCommitted?.({ sessionId: session.id, dispatchId });
+      if (workerReturn === undefined) {
+        throw new Error("The completed round has no durable worker checkpoint evidence.");
+      }
+      if (workerReturn.changedPaths.length === 0 && workerReturn.diff.trim().length === 0) {
+        await roundsRuntime.finalizeUnchanged({
+          session,
+          asksDispatched: dispatchedAsks.map((ask) => ask.id),
+          dispatchId,
+          sourcePatchsetId,
+          askOccurrences,
+          workerCommitRange: workerReturn.commitRange,
+          onProgress: emit,
+        });
+        return;
+      }
+      // `dispatchRound` fsyncs the completed placeholder before it resolves. Everything
+      // below is restartable garnish or regeneration: a crash here finds the dispatch id
+      // and never runs the coding worker again.
+      emit({ type: "gate" });
+      emit({ type: "committed" });
+      const current = service.reviewById(review.id) ?? review;
+      if (!current.postTarget) {
+        try {
+          await dispatch("publish.compose", {
+            commandId: randomUUID(),
+            reviewId: current.id,
+            mode: "pr",
           });
-          // The round's commit range is HEAD before → after the turn (the round commits
-          // its work — the ledger pins those commits; equal when it committed nothing).
-          // Read failure-isolated: an unborn/unreadable HEAD collapses to the "HEAD" marker
-          // rather than an empty (schema-invalid) id.
-          const gitAt = gitForRepo(review.repositoryRoot);
-          const headOid = async (): Promise<string> =>
-            (await gitAt(review.repositoryRoot, ["rev-parse", "HEAD"], { reject: false })).trim() ||
-            "HEAD";
-          const from = await headOid();
-          const outcome = await runHandoffTurn({
-            repoRoot: review.repositoryRoot,
-            prompt: order.prompt,
-            // The round's session: the turn rides the loop, so this round resumes the
-            // conversation the last one left off at and its events land on the session's
-            // transcript. Same id `resolveRoundSessionId` resolves for the reads.
-            sessionId: session.id,
-          });
-          const to = await headOid();
-          // The round result the runtime pins into the ledger. The diff + changed paths are
-          // the checkpoint-measured truth `runHandoffTurn` already returns (it brackets the
-          // write turn with `GitCheckpointStore`); a FAILED turn still carries its partial
-          // diff. The runtime records this record, then REJECTS on a failed outcome so the
-          // dispatch memo evicts and an identical re-dispatch RETRIES (P1 finding 4) — the
-          // failure is recorded, never a memoized failure that suppresses the retry.
-          const result: DispatchRoundResult = {
-            outcome: outcome.status === "failed" ? "failed" : "completed",
-            diff: outcome.turnDiff,
-            changedPaths: [...outcome.filesTouched],
-            workerCommitRange: { from, to },
-          };
-          // The board regeneration input (C15): the code MOVED iff HEAD advanced on a
-          // completed turn — then a successor generation mints keyed to the new HEAD;
-          // a no-move or failed turn re-reports against the existing generation.
-          workerReturn = {
-            commitRange: { from, to },
-            ...(from !== to && outcome.status !== "failed" ? { patchsetId: to } : {}),
-          };
-          const touched = outcome.filesTouched.length;
-          const changed = `${touched} ${touched === 1 ? "file" : "files"} changed`;
-          emit({
-            type: "worker",
-            rows: [
-              // A settled row carries the state's own field, not one bag of optionals: the
-              // completed turn accounts for itself ("3 files changed"), the failed one
-              // carries a REASON. Reporting the file count as the reason of a failure would
-              // put an account of the work where the explanation belongs.
-              outcome.status === "failed"
-                ? {
-                    id: "turn",
-                    label: "Ran the work order",
-                    status: "failed",
-                    reason: `The work order failed — ${changed}.`,
-                  }
-                : { id: "turn", label: "Ran the work order", status: "done", detail: changed },
-            ],
-          });
-          // A failed turn returns its recorded result; the runtime then rejects, and the
-          // ONE terminal report above closes the channel. (Emitting here as well would put
-          // two contradictory terminal rows in a log a late-joining client replays.)
-          if (outcome.status === "failed") return result;
-          // The gate is the post-turn classification: the checkpoint-measured diff decided
-          // this turn completed rather than failed. The commit point is the round's commit
-          // range being pinned (`from`→`to`) — both are facts already established here, so
-          // the phases the run route walks are the phases that really happened.
-          emit({ type: "gate" });
-          emit({ type: "committed" });
-          // PR-lane RIPENING (B11 cluster 5, task 5.2): an own-branch review's PR draft
-          // re-composes as the round lands. Reload the review by id (finding 4) so the
-          // decision + compose run over the CURRENT persisted state, not the pre-round
-          // closure — `publish.compose` re-reads by id and re-raises publish-ready
-          // (idempotent by derived id; `submitPr`'s push+open-PR is unchanged). A team-PR
-          // review composes a review, not a PR, so it is skipped. Failure-isolated garnish:
-          // a failed re-compose never breaks the landed round.
-          const current = service.reviewById(review.id) ?? review;
-          if (!current.postTarget) {
-            try {
-              await dispatch("publish.compose", {
-                commandId: randomUUID(),
-                reviewId: current.id,
-                mode: "pr",
-              });
-            } catch {
-              // Ripening is garnish on the round; a failed re-compose is swallowed.
-            }
-          }
-          return result;
-        },
-      });
+        } catch {
+          // Ripening is garnish on the round; a failed re-compose is swallowed.
+        }
+      }
+      const roundNumber = roundsRuntime.ledger(session.id).length;
       // ── C15 1.5: the board REGENERATION tail — the rounds loop goes live ──
       // The worker already ran (above); now regenerate the lens boards over what it
       // produced. `runRound` runs its own `runWorkers` first, so we hand it a NO-OP
@@ -2489,35 +2594,49 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // failure-isolated so a regeneration hiccup never unwinds the landed round (the
       // worker, its record, and PR ripening already committed above) — but it always
       // closes the live channel with a terminal event rather than stalling at `committing`.
-      if (workerReturn !== undefined) {
-        await runBoardRegeneration(
-          boardDraftingDeps(
-            review,
-            session,
-            // The same `review.regenerate` the reviewer's own refresh runs — it activates
-            // the successor patchset over the worker's tree and stamps the REAL
-            // `successorAccount` for this round.
-            async () => {
-              await dispatch("review.regenerate", {
-                commandId: randomUUID(),
-                reviewId: review.id,
-                repoPath: review.repositoryRoot,
-              });
-            },
-            // The regeneration half of the live channel (C15 3.1): `runRound` emits the
-            // round-report's arrival, each lens drafter starting and finishing with its
-            // carried/reworked verdict, and the composed generation the reveal lands on.
-            emit,
-          ),
-          {
-            session,
-            repoRoot: review.repositoryRoot,
-            // The PRE-worker patchset — what the boards described before this round.
-            priorPatchsetId: review.activePatchsetId,
-            asksDispatched: workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
-            worked: workerReturn,
+      const regenerated = await runBoardRegeneration(
+        boardDraftingDeps(
+          review,
+          session,
+          // The same `review.regenerate` the reviewer's own refresh runs — it activates
+          // the successor patchset over the worker's tree and stamps the REAL
+          // `successorAccount` for this round.
+          async () => {
+            await dispatch("review.regenerate", {
+              commandId: randomUUID(),
+              reviewId: review.id,
+              repoPath: review.repositoryRoot,
+            });
           },
-        );
+          // The regeneration half of the live channel (C15 3.1): `runRound` emits the
+          // round-report's arrival, each lens drafter starting and finishing with its
+          // carried/reworked verdict, and the composed generation the reveal lands on.
+          emit,
+        ),
+        {
+          session,
+          repoRoot: review.repositoryRoot,
+          // The PRE-worker patchset — what the boards described before this round.
+          priorPatchsetId: sourcePatchsetId,
+          asksDispatched: dispatchedAsks.map((ask) => ask.id),
+          dispatchId,
+          sourcePatchsetId,
+          askOccurrences,
+          round: {
+            number: roundNumber,
+            previousGeneration: previousGenerationId,
+            dispatchedAsks,
+            // Production supplies the exact live overlay through boardDraftingDeps at
+            // the Flagged composition boundary. Keep this fallback inert: reading the
+            // durable log here is outside regeneration's failure boundary and could
+            // otherwise reject an already-completed coding turn.
+            findingDispositions: {},
+          },
+          worked: workerReturn,
+        },
+      );
+      if (!regenerated) {
+        throw new Error("The completed round's board regeneration failed.");
       }
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that

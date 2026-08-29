@@ -109,7 +109,7 @@ describe("round-machine — the pure run state machine", () => {
   // generation were all ignored and the run view watched a live-looking round that never
   // ended — a lie of exactly the kind this surface exists to kill, and one the committed
   // docs ("the surface never locks") assert cannot happen.
-  it("reaches a terminal state when the round drafted no report board", () => {
+  it("ends a completed no-change round without revealing old boards as new", () => {
     const upToCommit: RoundEvent[] = [
       { type: "dispatched" },
       { type: "prep", rows: [] },
@@ -120,15 +120,11 @@ describe("round-machine — the pure run state machine", () => {
     const committing = upToCommit.reduce(advance, initialRoundState);
     expect(committing.phase).toBe("committing");
 
-    // The regeneration ran and composed — it simply never had a report to announce.
-    const composed = advance(advance(committing, { type: "lens", lanes: [] }), {
-      type: "composed",
-      generation: "gen:ps-1",
-    });
-    expect(composed).toEqual({ phase: "composed", newGeneration: "gen:ps-1" });
-    // …and the run view LEAVES: a null navigation is what parks the reviewer forever.
-    expect(runNavigation(composed, SLUG)).not.toBeNull();
-    expect(canRevealNewBoards(composed)).toBe(true);
+    const unchanged = advance(committing, { type: "unchanged" });
+    expect(unchanged).toEqual({ phase: "unchanged" });
+    // The run exits, but old generation boards are never exposed as this round's output.
+    expect(runNavigation(unchanged, SLUG)).not.toBeNull();
+    expect(canRevealNewBoards(unchanged)).toBe(false);
   });
 
   it("a failure moves an in-flight round to failed, but never un-settles a composed one", () => {

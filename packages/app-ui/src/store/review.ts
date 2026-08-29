@@ -1,11 +1,17 @@
-import type { AskProjection, CommandInput } from "@rennet/protocol";
+import {
+  type AskProjection,
+  type CodeRef,
+  type CommandInput,
+  type FindingRef,
+  findingRefKey,
+} from "@rennet/protocol";
 import type { StateCreator } from "zustand";
 import type { RennetState } from "./index";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The `review` slice (C01 §3): the reviewer's interaction state for an open review —
-// staged asks, per-line code comments, quote threads, the focused thread, the retired
-// ledger, a verdict override, and draft-block edits.
+// staged asks, finding dispositions, per-line code comments, quote threads, the focused
+// thread, the retired ledger, a verdict override, and draft-block edits.
 //
 // THE DURABLE ASK LOG IS THE SOURCE OF TRUTH; this slice is its render-side cache. Every
 // mutator that touches durable state writes through the ONE server write path — the
@@ -34,6 +40,8 @@ import type { RennetState } from "./index";
 export type AskWriteCommand =
   | "ask.stage"
   | "ask.unstage"
+  | "ask.dismissFinding"
+  | "ask.restoreFinding"
   | "ask.retire"
   | "ask.restore"
   | "ask.quoteOpen"
@@ -70,12 +78,18 @@ export interface StagedAsk {
   readonly anchor: string;
   readonly type: DispositionKind;
   readonly body: string;
+  /** The diff side for a code anchor; absent preserves legacy right-side behavior. */
+  readonly side?: "LEFT" | "RIGHT";
+  /** The immutable captured code position; `anchor` + `side` are the legacy fallback. */
+  readonly codeRef?: CodeRef;
   /**
    * The quote thread this ask CLAIMS, when it was minted alongside one (prose
    * request-change). Kept distinct from `anchor` (the source provenance) so an exit
    * tally counts the claimed thread once — via this ask — instead of twice.
    */
   readonly threadId?: string;
+  /** The immutable board finding that originated this ask, when applicable. */
+  readonly finding?: FindingRef;
 }
 
 /**
@@ -87,6 +101,38 @@ export interface StagedAsk {
 export interface RetiredEntry {
   readonly ask: StagedAsk;
   readonly reason: string;
+}
+
+export type CodePositionSide = "LEFT" | "RIGHT";
+
+/** The side-qualified position identity shared by staged-ask overlays and exit collation. */
+export interface CodePosition {
+  readonly path: string;
+  readonly line: number;
+  readonly side: CodePositionSide;
+}
+
+/** Resolve canonical provenance first, retaining `anchor` + `side` for older ask logs. */
+export function stagedAskCodePosition(ask: StagedAsk): CodePosition | null {
+  if (ask.codeRef !== undefined) {
+    return {
+      path: ask.codeRef.path,
+      line: ask.codeRef.startLine,
+      side: ask.codeRef.side === "base" ? "LEFT" : "RIGHT",
+    };
+  }
+  const match = /^(.+):(\d+)$/.exec(ask.anchor);
+  if (!match?.[1] || !match[2]) return null;
+  return {
+    path: match[1],
+    line: Number(match[2]),
+    side: ask.side ?? "RIGHT",
+  };
+}
+
+/** Stable identity for a diff position. */
+export function codePositionKey(position: CodePosition): string {
+  return `${position.path}:${position.line}:${position.side}`;
 }
 
 /** One message in a quote thread — the reviewer's, or the orchestrator's reply. */
@@ -134,6 +180,8 @@ function nextQuoteThreadId(threads: Readonly<Record<string, QuoteThread>>): stri
 export interface ReviewState {
   /** Staged asks keyed by ask `id` (identity), NOT anchor — so same-anchor asks coexist. */
   readonly stagedAsks: Readonly<Record<string, StagedAsk>>;
+  /** Reviewer dismissals over immutable finding bytes, keyed by generation + finding id. */
+  readonly findingDispositions: AskProjection["findingDispositions"];
   /** Per-line code comments, keyed path → line → body. */
   readonly codeComments: Readonly<Record<string, Readonly<Record<number, string>>>>;
   /** Quote threads keyed by thread id — the anchored span, its kind, and the exchange. */
@@ -167,6 +215,8 @@ export interface ReviewSlice {
     /** Remove a staged ask by its `id`, and drop any inline edit keyed to that id (so a later
      *  ask staged at the same anchor never inherits it). */
     unstageAsk(id: string): void;
+    dismissFinding(finding: FindingRef): void;
+    restoreFinding(finding: FindingRef): void;
     setCodeComment(path: string, line: number, body: string): void;
     clearCodeComment(path: string, line: number): void;
     /** Mint a quote thread on `anchor` with `text` as the opener; returns the new thread
@@ -195,6 +245,7 @@ export interface ReviewSlice {
 
 const initialReview: ReviewState = {
   stagedAsks: {},
+  findingDispositions: {},
   codeComments: {},
   quoteThreads: {},
   focusedThreadId: null,
@@ -222,6 +273,7 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
           review: {
             ...s.review,
             stagedAsks: projection.stagedAsks,
+            findingDispositions: projection.findingDispositions,
             // JSON object keys are strings, and `obj[10]` and `obj["10"]` address the same
             // value — so the projection's `path → "line" → body` IS this slice's
             // `path → line → body` at runtime (the ask-log contract says so in as many words).
@@ -254,6 +306,26 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
           const draftEdits = { ...s.review.draftEdits };
           delete draftEdits[id];
           return { review: { ...s.review, stagedAsks: rest, draftEdits } };
+        });
+      },
+      dismissFinding: (finding) => {
+        durable("ask.dismissFinding", { finding });
+        set((s) => ({
+          review: {
+            ...s.review,
+            findingDispositions: {
+              ...s.review.findingDispositions,
+              [findingRefKey(finding)]: { finding, disposition: "dismissed" },
+            },
+          },
+        }));
+      },
+      restoreFinding: (finding) => {
+        durable("ask.restoreFinding", { finding });
+        set((s) => {
+          const findingDispositions = { ...s.review.findingDispositions };
+          delete findingDispositions[findingRefKey(finding)];
+          return { review: { ...s.review, findingDispositions } };
         });
       },
       setCodeComment: (path, line, body) => {

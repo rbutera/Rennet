@@ -731,6 +731,7 @@ export function useChatDock(): ChatDockModel {
   // bodies, so a flushed delta appends cleanly.
   useCommandStream({
     channel: "askStream",
+    delivery: "delta",
     subscriptionKey: reviewId,
     command: { name: "review.reattach", input: reattachInput },
     fold: (prev, event) => {

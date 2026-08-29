@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { BoardMetaStore, RoundRecordStore, WhiteboardClient } from "@rennet/adapters";
+import {
+  BoardMetaStore,
+  GenerationStore,
+  RoundRecordStore,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import { WsRennetBridge } from "@rennet/client";
 import {
   generationIdForPatchset,
@@ -153,6 +158,48 @@ function elementsFor(
     ];
   }
 
+  if (lens === "flagged") {
+    const source: HostElement = {
+      id: `flagged-source:${suffix}`,
+      kind: "code_ref",
+      data: {
+        author,
+        patchset_id: patchsetId,
+        path: BOARD_IMPLEMENTATION_PATH,
+        side: "head",
+        start_line: 1,
+        end_line: 1,
+      },
+    };
+    const finding: HostElement = {
+      id: `finding:${suffix}`,
+      kind: "finding",
+      data: {
+        author,
+        severity: "high",
+        concern:
+          "The widget can return the stale value.\n\n**Fix:** Return the reviewed value from the implementation.",
+        code: [source.id],
+        concurrence: [],
+        status: "open",
+      },
+    };
+    return [
+      source,
+      finding,
+      {
+        id: `section:${suffix}`,
+        kind: "section",
+        data: {
+          author,
+          title: `${generation === generationIdForPatchset(patchsetId) ? "Live" : "Frozen"} flagged`,
+          children: [finding.id],
+          delta: "new",
+        },
+      },
+    ];
+  }
+
   const prose: HostElement = {
     id: `prose:${suffix}`,
     kind: "prose",
@@ -237,10 +284,13 @@ export async function seedBoardFixture(
   const whiteboard = new WhiteboardClient(runtime.service);
   const write = whiteboard.apply.bind(whiteboard);
   const meta = new BoardMetaStore(join(userData, "board-meta"));
+  const generations = new GenerationStore(join(userData, "generations"));
 
   for (const generation of [frozenGeneration, liveGeneration]) {
+    const lensBoards: Partial<Record<LensKind, string>> = {};
     for (const lens of LENS_KINDS) {
       const boardId = await runtime.createRennetBoard();
+      lensBoards[lens] = boardId;
       const elements = elementsFor(lens, generation, review.patchsetId);
       const applied = await write(
         boardId,
@@ -285,6 +335,12 @@ export async function seedBoardFixture(
         generation,
       });
     }
+    generations.save({
+      id: generation,
+      patchsetId: review.patchsetId,
+      lensBoards,
+      status: generation === liveGeneration ? "live" : "frozen",
+    });
   }
 
   new RoundRecordStore(join(userData, "rounds")).record(review.sessionId, {

@@ -56,11 +56,13 @@ export type {
   StagedAsk,
 } from "./review";
 export {
+  codePositionKey,
   createReviewSlice,
   selectCodeComment,
   selectCodeComments,
   selectStagedAsk,
   selectStagedAskCount,
+  stagedAskCodePosition,
 } from "./review";
 export type { LaneStatus, RunSlice, RunState } from "./run";
 export { createRunSlice, selectRoundRunning, selectRunningLaneCount } from "./run";

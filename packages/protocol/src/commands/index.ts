@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
+import { FindingRefSchema } from "../board/schema";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
 import {
@@ -1331,6 +1332,14 @@ const definitions = {
     input: z.object({ sessionId: z.string().min(1), id: z.string().min(1) }),
     output: z.object({ receipt: AskEventBodySchema }),
   },
+  "ask.dismissFinding": {
+    input: z.object({ sessionId: z.string().min(1), finding: FindingRefSchema }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
+  "ask.restoreFinding": {
+    input: z.object({ sessionId: z.string().min(1), finding: FindingRefSchema }),
+    output: z.object({ receipt: AskEventBodySchema }),
+  },
   "ask.edit": {
     input: z.object({ sessionId: z.string().min(1), id: z.string().min(1), body: z.string() }),
     output: z.object({ receipt: AskEventBodySchema }),
@@ -1573,7 +1582,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 97 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 102 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *
@@ -1582,7 +1591,7 @@ const AGENT_EXPOSED = new Set<string>([
  * has no result surface. So a row earns `true` only when all four hold:
  *
  * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
- *    (18 of 97 pass; the rest need a review/session/project/span id or a host path).
+ *    (18 of 102 pass; the rest need a review/session/project/span id or a host path).
  * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
  *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
  *    running them from the menu changes nothing a reader would see).

@@ -17,6 +17,7 @@
 // in wherever a bridge went before; it ADDS `state`/`subscribe`/`setPresence`/`replica`.
 
 import type {
+  AskProjection,
   AttentionEventFrame,
   CommandInput,
   CommandName,
@@ -43,6 +44,7 @@ export interface SupervisedBridge {
     listener: (event: ProjectDetailProgressEvent) => void,
   ): () => void;
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /** Subscribe to a review's live round progress (C15 3.1); returns an unsubscribe. */
   onRoundProgress(reviewId: string, listener: (event: RoundEvent) => void): () => void;
   /** Subscribe to daemon attention events (#383 batch). Daemon-wide; returns an unsubscribe. */
@@ -121,6 +123,7 @@ export interface ConnectionSupervisorOptions {
 }
 
 type AskListener = (event: ReviewAskStreamEvent) => void;
+type AskProjectionListener = (projection: AskProjection) => void;
 type ProgressListener = (event: ProjectProcessEvent) => void;
 type DetailProgressListener = (event: ProjectDetailProgressEvent) => void;
 type AttentionListener = (event: AttentionEventFrame) => void;
@@ -154,6 +157,8 @@ export class ConnectionSupervisor implements RennetBridge {
 
   readonly #statusListeners = new Set<(status: ConnectionStatus) => void>();
   readonly #askRegistry = new Map<string, Set<AskListener>>();
+  readonly #askProjectionRegistry = new Map<string, Set<AskProjectionListener>>();
+  readonly #askProjectionVersions = new Map<string, number>();
   readonly #progressRegistry = new Map<string, Set<ProgressListener>>();
   // Bridge-level unsubscribes for the CURRENT bridge, so a consumer unsubscribe detaches
   // the live listener too. Rebuilt on every bridge swap (the old bridge's listeners die
@@ -161,6 +166,7 @@ export class ConnectionSupervisor implements RennetBridge {
   // subscribed to two reviews holds a distinct disposer per review, so unsubscribing it
   // from review A never loses (or wrongly detaches) its live binding on review B.
   #askBridgeUnsub = new Map<string, Map<AskListener, () => void>>();
+  #askProjectionBridgeUnsub = new Map<string, Map<AskProjectionListener, () => void>>();
   #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
   readonly #detailProgressRegistry = new Map<string, Set<DetailProgressListener>>();
   #detailProgressBridgeUnsub = new Map<string, Map<DetailProgressListener, () => void>>();
@@ -277,6 +283,30 @@ export class ConnectionSupervisor implements RennetBridge {
     );
   }
 
+  onAskProjection(reviewId: string, listener: AskProjectionListener): () => void {
+    return this.#register(
+      this.#askProjectionRegistry,
+      this.#askProjectionBridgeUnsub,
+      reviewId,
+      listener,
+      (bridge) => this.#wireAskProjection(bridge, reviewId, listener),
+    );
+  }
+
+  #wireAskProjection(
+    bridge: SupervisedBridge,
+    reviewId: string,
+    listener: AskProjectionListener,
+  ): () => void {
+    return bridge.onAskProjection(reviewId, (projection) => {
+      this.#askProjectionVersions.set(
+        reviewId,
+        (this.#askProjectionVersions.get(reviewId) ?? 0) + 1,
+      );
+      listener(projection);
+    });
+  }
+
   /**
    * Subscribe to a review's live ROUND progress (C15 3.1). Registry-backed like
    * `onAskStream`: a round outlives any single socket, so a reconnect mid-round re-attaches
@@ -358,6 +388,7 @@ export class ConnectionSupervisor implements RennetBridge {
   /** Re-attach every registered listener to a freshly created bridge (the resubscribe). */
   #wireRegistry(bridge: SupervisedBridge): void {
     this.#askBridgeUnsub = new Map();
+    this.#askProjectionBridgeUnsub = new Map();
     this.#progressBridgeUnsub = new Map();
     this.#detailProgressBridgeUnsub = new Map();
     this.#attentionBridgeUnsub = new Map();
@@ -392,6 +423,16 @@ export class ConnectionSupervisor implements RennetBridge {
         mapSet(this.#askBridgeUnsub, reviewId, listener, bridge.onAskStream(reviewId, listener));
       }
     }
+    for (const [reviewId, listeners] of this.#askProjectionRegistry) {
+      for (const listener of listeners) {
+        mapSet(
+          this.#askProjectionBridgeUnsub,
+          reviewId,
+          listener,
+          this.#wireAskProjection(bridge, reviewId, listener),
+        );
+      }
+    }
     for (const [commandId, listeners] of this.#progressRegistry) {
       for (const listener of listeners) {
         mapSet(
@@ -417,6 +458,27 @@ export class ConnectionSupervisor implements RennetBridge {
       void bridge
         .invoke("review.reattach", { commandId: crypto.randomUUID(), reviewId })
         .catch(() => undefined);
+    }
+    for (const reviewId of this.#askProjectionRegistry.keys()) {
+      const version = this.#askProjectionVersions.get(reviewId) ?? 0;
+      const listeners = [...(this.#askProjectionRegistry.get(reviewId) ?? [])];
+      void bridge.invoke("ask.read", { sessionId: reviewId }).then(
+        ({ projection }) => {
+          if (
+            this.#bridge !== bridge ||
+            (this.#askProjectionVersions.get(reviewId) ?? 0) !== version
+          ) {
+            return;
+          }
+          const current = this.#askProjectionRegistry.get(reviewId);
+          if (current === undefined) return;
+          this.#askProjectionVersions.set(reviewId, version + 1);
+          for (const listener of listeners) {
+            if (current.has(listener)) listener(projection);
+          }
+        },
+        () => undefined,
+      );
     }
   }
 

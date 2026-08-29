@@ -16,6 +16,7 @@ import { DiffView } from "./diff-view";
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
 
 const PATH = "packages/core/src/x.ts";
+const PATCHSET_ID = "patchset-live";
 const CODE = "const a = 1\nconst b = 2\nconst c = 3";
 const FILE: PatchFile = {
   path: PATH,
@@ -31,7 +32,7 @@ function mountDiff() {
   const history = memoryHistory("/s/x?view=diff");
   return mount(
     <Router hook={history.hook} searchHook={history.searchHook}>
-      <DiffView files={[FILE]} />
+      <DiffView files={[FILE]} patchsetId={PATCHSET_ID} />
     </Router>,
   );
 }
@@ -70,11 +71,19 @@ describe("diff-line and board-excerpt comments are one object", () => {
     await diff.user.type(diff.getByPlaceholderText("Leave a comment on this line…"), "guard this");
     await diff.user.click(diff.getByText("Request Changes"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[1]).toBe("guard this");
-    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1`]).toEqual({
-      id: `${PATH}:1`,
+    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1:RIGHT`]).toEqual({
+      id: `${PATH}:1:RIGHT`,
       anchor: `${PATH}:1`,
       type: "request-change",
       body: "guard this",
+      side: "RIGHT",
+      codeRef: {
+        patchsetId: PATCHSET_ID,
+        path: PATH,
+        side: "head",
+        startLine: 1,
+        endLine: 1,
+      },
     });
   });
 });

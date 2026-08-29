@@ -4,7 +4,7 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 
 // The recorded registry snapshot (B3 clusters 4+6): the 62 ids absorbed from
 // the pre-B3 definitions table, plus patchset.readSpan (new in cluster 6 — the
-// span-read contract, client asset risk 2), plus the 12 `ask.*` durable-asks
+// span-read contract, client asset risk 2), plus the 14 `ask.*` durable-asks
 // command shapes (B11 cluster 1 — the sole write path onto the ask event log;
 // handlers land in cluster 2), plus review.reviseSpan (B11 cluster 5 — the
 // living-draft span-rework command), plus the two session READS B9/B10 deferred
@@ -39,12 +39,14 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 const ABSORBED_IDS = [
   "app.bootstrap",
   "ask.clearLineComment",
+  "ask.dismissFinding",
   "ask.edit",
   "ask.quoteClose",
   "ask.quoteOpen",
   "ask.quoteReply",
   "ask.read",
   "ask.restore",
+  "ask.restoreFinding",
   "ask.retire",
   "ask.setLineComment",
   "ask.setVerdictOverride",
@@ -163,7 +165,7 @@ const AGENT_INVENTORY = [
 ] as const;
 
 // The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
-// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 97 commands
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 102 commands
 // lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
 // input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
 // an action rather than a UI-driven read, and its output is not the point.
@@ -172,7 +174,7 @@ const MENU_INVENTORY = ["github.disconnect"] as const;
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(100);
+    expect(ABSORBED_IDS).toHaveLength(102);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

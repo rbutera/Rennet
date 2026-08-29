@@ -1,10 +1,11 @@
-import { generationIdForPatchset, type LensKind } from "@rennet/protocol";
+import { currentGenerationId, type LensKind } from "@rennet/protocol";
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
 import { useBoardData, useLensBoards } from "../board/board-data";
+import { countOpenFindings } from "../board/finding-lifecycle";
 import { Icon } from "../components/icon";
 import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
 import { useSlugResolution } from "../routes/slug";
@@ -77,14 +78,21 @@ export function TopBar() {
   const routeQuery = readSessionQuery(searchParams);
   const resolution = useSlugResolution(slug);
   const roundState = useRoundState(slug);
+  const roundRecords = useRoundRecords(slug);
   const review = resolution.status === "review" ? resolution.review : undefined;
   const liveGeneration = review
     ? roundState.phase === "composed"
       ? roundState.newGeneration
-      : generationIdForPatchset(review.activePatchsetId)
+      : currentGenerationId(roundRecords, review.activePatchsetId)
     : "";
   const selectedGeneration = routeQuery.generation ?? liveGeneration;
   const lenses = useLensBoards(review?.id ?? "", selectedGeneration);
+  const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
+  const findingDispositions = useRennetStore((s) => s.review.findingDispositions);
+  const flaggedBoard = lenses.find(({ lens }) => lens === "flagged")?.board;
+  const flaggedOpenCount = flaggedBoard
+    ? countOpenFindings(flaggedBoard, { stagedAsks, findingDispositions })
+    : 0;
   const selectedBoard = useBoardData(review?.id ?? "", selectedGeneration, routeQuery.lens);
   const fallbackLens = lenses[0]?.lens;
   const effectiveLens =
@@ -138,7 +146,6 @@ export function TopBar() {
   // the derived-presence url.ts gates `?view=rounds` on, never a disabled tab. With no
   // completed round it drops from the pill entirely (honest-absent by default, since no
   // rounds runtime is bound yet — Reconciliation 1). Map · Diff are always present.
-  const roundRecords = useRoundRecords(slug);
   // …and ALSO present when the rounds cannot be read at all (review finding 9): dropping the
   // toggle then would hide the disclosure behind an absence that reads as "no rounds", and
   // the reviewer would have no way to reach the reason. Presence still tracks the truth —
@@ -247,6 +254,7 @@ export function TopBar() {
           lenses={lenses}
           selected={query.view === "board" ? effectiveLens : null}
           onSelect={onLens}
+          flaggedOpenCount={flaggedOpenCount}
           className={floating ? cn("pointer-events-auto", chip) : undefined}
         />
       </div>

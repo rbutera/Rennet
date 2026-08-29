@@ -81,5 +81,46 @@ describe("handoff/handoff-data", () => {
       const store = createRennetStore();
       expect(selectLivingDraft(store.getState())).toEqual({ body: [], lineGroups: [] });
     });
+
+    it("uses canonical side-qualified positions before legacy anchors", () => {
+      const store = createRennetStore();
+      const { stageAsk } = store.getState().reviewActions;
+      stageAsk({
+        id: "base",
+        anchor: "src/wrong.ts:999",
+        type: "request-change",
+        body: "base concern",
+        side: "RIGHT",
+        codeRef: {
+          patchsetId: "patchset-1",
+          path: "src/shared.ts",
+          side: "base",
+          startLine: 7,
+          endLine: 9,
+        },
+      });
+      stageAsk({
+        id: "head",
+        anchor: "src/wrong.ts:999",
+        type: "comment",
+        body: "head concern",
+        codeRef: {
+          patchsetId: "patchset-1",
+          path: "src/shared.ts",
+          side: "head",
+          startLine: 7,
+          endLine: 7,
+        },
+      });
+
+      const draft = selectLivingDraft(store.getState());
+      expect(draft.lineGroups).toHaveLength(1);
+      expect(
+        draft.lineGroups[0]?.comments.map(({ path, line, side }) => ({ path, line, side })),
+      ).toEqual([
+        { path: "src/shared.ts", line: 7, side: "LEFT" },
+        { path: "src/shared.ts", line: 7, side: "RIGHT" },
+      ]);
+    });
   });
 });

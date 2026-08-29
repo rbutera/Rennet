@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { GenerationStore, RoundRecordStore } from "@rennet/adapters";
+import type { Review } from "@rennet/protocol";
+import { generationIdForDispatch, generationIdForPatchset, ROUND_NO_REGEN } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
 
@@ -158,5 +161,210 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     // into the machine's real session store. A server given a `dataDir` now lives there.
     expect(existsSync(join(dataDir, "sessions", `${checkoutId}.json`))).toBe(true);
     expect(existsSync(join(home, ".rennet"))).toBe(false);
+  }, 30_000);
+
+  it("recaptures and starts successor drafting from checkpoint diff even when HEAD stays equal", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-equal-head-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-equal-head-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
+    git("init", "-b", "main");
+    writeFileSync(join(repo, "a.txt"), "base\n");
+    git("add", "a.txt");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "base");
+    writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
+    const head = git("rev-parse", "HEAD");
+    let workerCalls = 0;
+    let placeholderObserved = false;
+    let roundDispatchId = "";
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn: async () => {
+        workerCalls += 1;
+        writeFileSync(join(repo, "a.txt"), "base\nreviewed\nworker change\n");
+        return {
+          status: "completed",
+          finalText: "done",
+          turnDiff: "diff --git a/a.txt b/a.txt\n+worker change",
+          filesTouched: ["a.txt"],
+        };
+      },
+      onRoundPlaceholderCommitted: ({ sessionId, dispatchId }) => {
+        roundDispatchId = dispatchId;
+        const record = new RoundRecordStore(join(dataDir, "rounds"))
+          .read(sessionId)
+          .find((candidate) => candidate.dispatchId === dispatchId);
+        expect(record?.outcome).toBe("completed");
+        expect(record?.boardGeneration).toBe(ROUND_NO_REGEN);
+        expect(record?.regeneration).toBe("pending");
+        // This hook runs before create-server enters PR-draft ripening. If placeholder
+        // persistence moves behind that await, the record is absent and this control reds.
+        placeholderObserved = true;
+      },
+    });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: { reviewId?: string } | null };
+    const reviewId = minted.session?.reviewId ?? "";
+    const before = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const priorPatchsetId = before.review.activePatchsetId;
+    await server.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: "equal-head-ask",
+        anchor: "a.txt:2",
+        type: "request-change",
+        body: "make the worker change",
+      },
+    });
+    await server.dispatch("round.dispatch", { reviewId });
+
+    await vi.waitFor(() => expect(placeholderObserved).toBe(true), { timeout: 15_000 });
+    await vi.waitFor(
+      async () => {
+        const loaded = (await server.dispatch("review.load", {
+          commandId: randomUUID(),
+          reviewId,
+        })) as { review: Review };
+        expect(loaded.review.activePatchsetId).not.toBe(priorPatchsetId);
+        const successor = new GenerationStore(join(dataDir, "generations")).load(
+          generationIdForDispatch(loaded.review.activePatchsetId, roundDispatchId),
+        );
+        expect(Object.keys(successor?.draftingBoardIds ?? {}).length).toBeGreaterThan(0);
+      },
+      { timeout: 15_000, interval: 50 },
+    );
+    expect(workerCalls).toBe(1);
+    expect(git("rev-parse", "HEAD")).toBe(head);
+  }, 30_000);
+
+  it("restarts a completed no-code dispatch without invoking the coding worker twice", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-restart-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-restart-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
+    git("init", "-b", "main");
+    writeFileSync(join(repo, "a.txt"), "base\n");
+    git("add", "a.txt");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "base");
+    writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
+
+    let workerCalls = 0;
+    let crashedSessionId: string | undefined;
+    const first = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn: async () => {
+        workerCalls += 1;
+        return { status: "completed", finalText: "done", turnDiff: "", filesTouched: [] };
+      },
+      onRoundPlaceholderCommitted: ({ sessionId }) => {
+        crashedSessionId = sessionId;
+        throw new Error("simulated crash after durable worker commit");
+      },
+    });
+    shutdowns.push(first.shutdown);
+    const added = (await first.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await first.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: { reviewId?: string } | null };
+    const reviewId = minted.session?.reviewId ?? "";
+    const loaded = (await first.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const sourcePatchsetId = loaded.review.activePatchsetId;
+    await first.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: "restart-ask",
+        anchor: "a.txt:2",
+        type: "request-change",
+        body: "run this once",
+      },
+    });
+    await first.dispatch("round.dispatch", { reviewId });
+
+    await vi.waitFor(
+      async () => {
+        expect(crashedSessionId).toBeDefined();
+        const records = new RoundRecordStore(join(dataDir, "rounds")).read(crashedSessionId ?? "");
+        expect(records).toHaveLength(1);
+        expect(records[0]?.regeneration).toBe("pending");
+        const asks = (await first.dispatch("ask.read", { sessionId: reviewId })) as {
+          projection: { stagedAsks: Record<string, unknown> };
+        };
+        expect(asks.projection.stagedAsks["restart-ask"]).toBeDefined();
+      },
+      { timeout: 15_000, interval: 50 },
+    );
+    first.shutdown();
+    // If no-code completion falls through board collation, prior-generation loading reads
+    // this corrupt row and the retry stays pending forever. Empty checkpoint evidence must
+    // terminalize before any knowledge/design/prior-generation context is touched.
+    writeFileSync(
+      join(
+        dataDir,
+        "generations",
+        `${encodeURIComponent(generationIdForPatchset(sourcePatchsetId))}.json`,
+      ),
+      "{corrupt",
+    );
+
+    const restarted = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn: async () => {
+        workerCalls += 1;
+        return { status: "completed", finalText: "duplicate", turnDiff: "", filesTouched: [] };
+      },
+    });
+    shutdowns.push(restarted.shutdown);
+    await restarted.dispatch("round.dispatch", { reviewId });
+
+    await vi.waitFor(
+      async () => {
+        const asks = (await restarted.dispatch("ask.read", { sessionId: reviewId })) as {
+          projection: { stagedAsks: Record<string, unknown> };
+        };
+        expect(asks.projection.stagedAsks["restart-ask"]).toBeUndefined();
+        const records = new RoundRecordStore(join(dataDir, "rounds")).read(crashedSessionId ?? "");
+        expect(records).toHaveLength(1);
+        expect(records[0]?.boardGeneration).toBe(ROUND_NO_REGEN);
+        expect(records[0]?.regeneration).toBe("not-needed");
+      },
+      { timeout: 15_000, interval: 50 },
+    );
+    // Production control: deleting create-server's completed-record lookup calls the
+    // injected coding worker again here, changing this from one to two.
+    expect(workerCalls).toBe(1);
   }, 30_000);
 });

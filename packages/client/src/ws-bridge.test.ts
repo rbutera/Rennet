@@ -226,7 +226,7 @@ describe("WsRennetBridge", () => {
     expect(stub.helloCount).toBe(1); // terminal: no reconnect against the rejected token
   });
 
-  it("routes progress and ask-stream push frames to their keyed listeners", async () => {
+  it("routes progress, ask-stream, and ask-projection frames to their keyed listeners", async () => {
     const stub = await startStub();
     stubs.push(stub);
     const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
@@ -237,8 +237,10 @@ describe("WsRennetBridge", () => {
     });
     const progress: unknown[] = [];
     const asks: unknown[] = [];
+    const projections: unknown[] = [];
     bridge.onProgress("cmd-1", (event) => progress.push(event));
     bridge.onAskStream("rev-1", (event) => asks.push(event));
+    bridge.onAskProjection("rev-1", (projection) => projections.push(projection));
 
     stub.broadcast({
       type: "progressEvent",
@@ -255,9 +257,34 @@ describe("WsRennetBridge", () => {
       reviewId: "rev-1",
       event: { kind: "ask-focus", anchor: "a" },
     });
-    await waitFor(() => progress.length === 1 && asks.length === 1);
+    stub.broadcast({
+      type: "askProjection",
+      sessionId: "rev-1",
+      projection: {
+        stagedAsks: {},
+        findingDispositions: {},
+        lineComments: {},
+        quoteThreads: {},
+        retired: {},
+        verdictOverride: null,
+      },
+    });
+    stub.broadcast({
+      type: "askProjection",
+      sessionId: "other",
+      projection: {
+        stagedAsks: {},
+        findingDispositions: {},
+        lineComments: {},
+        quoteThreads: {},
+        retired: {},
+        verdictOverride: null,
+      },
+    });
+    await waitFor(() => progress.length === 1 && asks.length === 1 && projections.length === 1);
     expect(progress).toEqual([{ kind: "repo-error", repo: "r", message: "m" }]);
     expect(asks).toEqual([{ kind: "ask-focus", anchor: "a" }]);
+    expect(projections).toHaveLength(1);
   });
 
   it("fans attentionEvent frames out to onAttention listeners (#383 batch)", async () => {

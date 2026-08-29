@@ -19,6 +19,7 @@ import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtim
 import {
   assembleRoundCollation,
   type BoardRegenerationDeps,
+  generationBoardMeta,
   runBoardRegeneration,
 } from "./round-collation";
 import { createRoundsRuntime, mintGeneration, type RoundInput } from "./rounds";
@@ -33,6 +34,19 @@ import { createRoundsRuntime, mintGeneration, type RoundInput } from "./rounds";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PATCH = ["@@ -1,2 +1,2 @@", " const a = 1;", "-const b = 2;", "+const b = 3;"].join("\n");
+const WORKER_DIFF = ["diff --git a/src/a.ts b/src/a.ts", "-const b = 2;", "+const b = 3;"].join(
+  "\n",
+);
+const WORKED = {
+  commitRange: { from: "c0", to: "c0" },
+  diff: WORKER_DIFF,
+  changedPaths: ["src/a.ts"],
+} as const;
+const NO_WORK = {
+  commitRange: { from: "c0", to: "c0" },
+  diff: "",
+  changedPaths: [],
+} as const;
 
 function patchset(): Patchset {
   const file: PatchFile = {
@@ -256,6 +270,23 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
   });
 });
 
+describe("Generation-authoritative BoardMeta selection", () => {
+  it("ignores an abandoned recovery board for the same lens", () => {
+    const generation = {
+      id: "gen:ps-post",
+      patchsetId: "ps-post",
+      status: "live",
+      lensBoards: { design: "board:current" },
+    } as const satisfies Generation;
+    const records = [
+      { lens: "design" as const, boardId: "board:abandoned" },
+      { lens: "design" as const, boardId: "board:current" },
+    ];
+
+    expect(generationBoardMeta(generation, records, "design")?.boardId).toBe("board:current");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The POST-REWORK diff (C15 1.5, review finding 1). The boards a round mints must
 // describe the tree the WORKER left, not the one it was handed. The trigger used to
@@ -361,7 +392,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
     const ctx = seen[0]?.lintContextFor("design");
@@ -389,7 +420,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
     const ctx = seen[0]?.reviewDraftLintCtx;
@@ -418,7 +449,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
     // The round still drafted, on the diff-derived universe...
@@ -441,7 +472,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
     expect(seen[0]?.lintContextFor("design").patchsetId).toBe("ps-post");
@@ -494,7 +525,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
 
@@ -515,7 +546,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
 
@@ -539,7 +570,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: ["t-1"],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
 
@@ -547,14 +578,28 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     expect(events.filter((event) => event.type === "failed")).toEqual([]);
   });
 
-  it("hands the drafters the worker's OWN diff, and files it under the successor generation", async () => {
+  it("recaptures uncommitted checkpoint work and hands its exact evidence to the report", async () => {
     const { deps, seen } = reviewHarness();
     await runBoardRegeneration(deps, {
       session,
       repoRoot: "/repo",
       priorPatchsetId: "ps-pre",
       asksDispatched: ["t-1"],
-      worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-pre",
+        dispatchedAsks: [
+          {
+            id: "t-1",
+            path: "src/a.ts",
+            type: "request-change",
+            instruction: "Update the value.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+      },
+      worked: WORKED,
     });
 
     const input = seen[0];
@@ -567,12 +612,20 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     expect(input.deltaPacket.patchset.id).toBe("ps-post");
     // The lint universe the boards are checked against is the same successor patchset.
     expect(input.lintContextFor("design").patchsetId).toBe("ps-post");
-    // The successor account stamped by that re-capture is what makes it a ROUND.
+    // Re-capture still stamps the deterministic successor account when it can.
     expect(input.deltaPacket.successorAccount).toBeDefined();
+    // The coding turn obeyed the product contract and did not commit. Equal HEADs do not
+    // erase the checkpoint-measured work or make the returned round disappear.
+    expect(input.round?.worker).toEqual({
+      outcome: "completed",
+      diff: WORKER_DIFF,
+      changedPaths: ["src/a.ts"],
+      commitRange: { from: "c0", to: "c0" },
+    });
     // The minted generation is keyed to the successor PATCHSET (not the HEAD oid), and it
     // succeeds the generation the pre-worker patchset carried.
     expect(await input.runWorkers()).toEqual({
-      commitRange: { from: "c0", to: "c1" },
+      commitRange: { from: "c0", to: "c0" },
       patchsetId: "ps-post",
     });
     // No prior generation was ever minted for this session, so the round is a first
@@ -580,20 +633,29 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     expect(input.previousGeneration).toBeUndefined();
   });
 
-  it("a turn that moved nothing re-reports against the existing generation, no successor mint", async () => {
+  it("a turn that moved nothing keeps the existing generation without a stale successor account", async () => {
     const { deps, seen } = reviewHarness();
-    await runBoardRegeneration(deps, {
-      session,
-      repoRoot: "/repo",
-      priorPatchsetId: "ps-pre",
-      asksDispatched: [],
-      // No patchsetId ⇒ HEAD never moved ⇒ no re-capture, so the review stays on ps-pre.
-      worked: { commitRange: { from: "c0", to: "c0" } },
-    });
+    const staleReview = {
+      ...deps.reviewNow(),
+      successorAccount: { asks: [], beyondAsks: [] },
+    } as unknown as Review;
+    expect(staleReview.successorAccount).toBeDefined();
+    await runBoardRegeneration(
+      { ...deps, reviewNow: () => staleReview },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        // Empty checkpoint evidence ⇒ no re-capture, so the review stays on ps-pre.
+        worked: NO_WORK,
+      },
+    );
 
     const input = seen[0];
     if (input === undefined) throw new Error("runRound was never called");
     expect(input.deltaPacket.patchset.id).toBe("ps-pre");
+    expect(input.deltaPacket.successorAccount).toBeUndefined();
     expect(await input.runWorkers()).toEqual({ commitRange: { from: "c0", to: "c0" } });
   });
 
@@ -611,7 +673,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
         repoRoot: "/repo",
         priorPatchsetId: "ps-pre",
         asksDispatched: [],
-        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+        worked: WORKED,
       },
     );
     expect(events).toEqual([{ type: "failed", reason: "the re-capture died" }]);

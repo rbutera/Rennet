@@ -60,6 +60,9 @@ export function askHandlers(rt: DispatchRuntime) {
       // Privacy at ingestion (finding 9): a code-anchored ask's path must be repo-relative,
       // so a host path can never enter the durable log and leak through the R19 projection.
       assertCodeAnchorSafe(input.ask.anchor);
+      if (input.ask.codeRef !== undefined) {
+        assertRepoRelative(input.ask.codeRef.path, "a canonical code reference path");
+      }
       return parseCommandOutput(
         name,
         applyWrite(rt, input.sessionId, { kind: "stage", ask: input.ask }),
@@ -71,6 +74,22 @@ export function askHandlers(rt: DispatchRuntime) {
       return parseCommandOutput(
         name,
         applyWrite(rt, input.sessionId, { kind: "unstage", id: input.id }),
+      );
+    },
+    "ask.dismissFinding": async (rawInput) => {
+      const name = "ask.dismissFinding" as const;
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(
+        name,
+        applyWrite(rt, input.sessionId, { kind: "finding-dismiss", finding: input.finding }),
+      );
+    },
+    "ask.restoreFinding": async (rawInput) => {
+      const name = "ask.restoreFinding" as const;
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(
+        name,
+        applyWrite(rt, input.sessionId, { kind: "finding-restore", finding: input.finding }),
       );
     },
     "ask.edit": async (rawInput) => {

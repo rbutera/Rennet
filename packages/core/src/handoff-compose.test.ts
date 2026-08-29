@@ -63,11 +63,74 @@ function emitted(proposal: ComposeProposal): ComposePortResult {
 }
 
 describe("asksFromBundle", () => {
-  it("assigns d0..dN ids in the bundle's deterministic order", () => {
+  it("keeps deterministic d0..dN fallback ids for legacy dispositions", () => {
     const asks = asksFromBundle(bundleOf(THREE_ASKS));
     expect(asks.map((a) => a.id)).toEqual(["d0", "d1", "d2"]);
-    // The ids resolve to concrete asks (path/body carried alongside).
     expect(asks.every((a) => a.path !== "" && typeof a.instruction === "string")).toBe(true);
+  });
+
+  it("preserves a durable ask id and finding reference through composition", async () => {
+    const id = 'finding:["generation-2","board:flagged:generation-2","finding-7"]';
+    const finding = {
+      generation: "generation-2",
+      boardId: "board:flagged:generation-2",
+      findingId: "finding-7",
+    };
+    const bundle = bundleOf([
+      {
+        id,
+        finding,
+        path: "src/auth.ts",
+        type: "request-change",
+        body: "validate the token before use",
+      },
+    ]);
+
+    const asks = asksFromBundle(bundle);
+    expect(asks).toEqual([expect.objectContaining({ id, finding })]);
+    expect(asks[0]?.id).not.toBe("d0");
+
+    const composed = await composeHandoffBundle(
+      bundle,
+      portReturning(emitted({ groups: [{ title: "Fix the finding", dispositionIds: [id] }] })),
+    );
+
+    expect(composed.composed).toBe(true);
+    expect(composed.tasks[0]?.sourceDispositions).toEqual([id]);
+    expect(composed.tasks[0]?.asks).toEqual([expect.objectContaining({ id, finding })]);
+    expect(composed.traceMap).toEqual({ [id]: 0 });
+  });
+
+  it("keeps duplicate caller-provided ids as two independently addressable asks", async () => {
+    const bundle = bundleOf([
+      {
+        id: "ask-7",
+        path: "src/auth.ts",
+        type: "request-change",
+        body: "validate the token before use",
+      },
+      {
+        id: "ask-7",
+        path: "src/user.ts",
+        type: "request-change",
+        body: "return 404 when the user is missing",
+      },
+    ]);
+    const asks = asksFromBundle(bundle);
+    const ids = asks.map((ask) => ask.id);
+
+    expect(ids).toEqual(["ask-7", "d0"]);
+    const composed = await composeHandoffBundle(
+      bundle,
+      portReturning(emitted({ groups: [{ title: "Keep both", dispositionIds: ids }] })),
+    );
+
+    expect(composed.composed).toBe(true);
+    expect(composed.tasks[0]?.asks.map((ask) => ask.instruction)).toEqual([
+      "validate the token before use",
+      "return 404 when the user is missing",
+    ]);
+    expect(composed.traceMap).toEqual({ "ask-7": 0, d0: 0 });
   });
 });
 
@@ -93,6 +156,17 @@ describe("validateComposition", () => {
       ],
     });
     expect(v.ok).toBe(false);
+  });
+
+  it("rejects duplicate ids in the trusted input before indexing asks by id", () => {
+    const duplicateInput = asks.map((ask, index) =>
+      index === 1 ? { ...ask, id: asks[0]?.id ?? "d0" } : ask,
+    );
+    const v = validateComposition(duplicateInput, {
+      groups: [{ title: "t", dispositionIds: ["d0", "d2"] }],
+    });
+
+    expect(v).toEqual({ ok: false, reason: "the input contained duplicate ask id(s): d0" });
   });
 
   it("rejects an invented id", () => {

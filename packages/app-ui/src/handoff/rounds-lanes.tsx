@@ -251,15 +251,17 @@ export function RoundsLanes({
 /** One ask card: intent pill, provenance, the ask text, and — for a code anchor — its reveal. */
 function AskCard({ ask, patchsetId }: { ask: StagedAsk; patchsetId: string }) {
   const lineAnchor = parseLineAnchor(ask.anchor);
-  const codeRef: CodeRef | null = lineAnchor
-    ? {
-        patchsetId,
-        path: lineAnchor.path,
-        side: "head",
-        startLine: lineAnchor.line,
-        endLine: lineAnchor.line,
-      }
-    : null;
+  const codeRef: CodeRef | null =
+    ask.codeRef ??
+    (lineAnchor
+      ? {
+          patchsetId,
+          path: lineAnchor.path,
+          side: ask.side === "LEFT" ? "base" : "head",
+          startLine: lineAnchor.line,
+          endLine: lineAnchor.line,
+        }
+      : null);
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-border px-4 py-3">
       <span className="flex items-center gap-1.5">

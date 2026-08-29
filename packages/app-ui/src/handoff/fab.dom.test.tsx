@@ -89,7 +89,12 @@ describe("ExitFab", () => {
     // `signalActions.launch` — a genuine interaction drives it end to end.
     const r = mount(
       <BridgeProvider bridge={new MemoryBridge({})}>
-        <BoardElementsProvider elements={flaggedBoard.elements}>
+        <BoardElementsProvider
+          elements={flaggedBoard.elements}
+          reviewId="rev-1"
+          generation={flaggedBoard.generation}
+          boardId={flaggedBoard.boardId}
+        >
           {[...new Map(flaggedBoard.elements.map((el) => [el.id, el])).values()].map((el) => (
             <BoardElement key={el.id} element={el} />
           ))}

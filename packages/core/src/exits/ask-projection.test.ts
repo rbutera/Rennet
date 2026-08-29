@@ -15,6 +15,10 @@ function richPrior(): AskProjection {
   return foldAsks([
     { kind: "stage", ask: ask("a1") },
     { kind: "stage", ask: ask("a2", { type: "comment" }) },
+    {
+      kind: "finding-dismiss",
+      finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" },
+    },
     { kind: "retire", id: "a2", reason: "dropped it" },
     {
       kind: "quote-open",
@@ -38,6 +42,17 @@ describe("foldAsks — every event folds", () => {
       { kind: "unstage", id: "a1" },
     ]);
     expect(p).toEqual(emptyAskProjection());
+  });
+
+  it("dismisses and restores a board-attempt-scoped finding without changing board bytes", () => {
+    const finding = { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" };
+    const dismissed = foldAsks([{ kind: "finding-dismiss", finding }]);
+    expect(dismissed.findingDispositions).toEqual({
+      '["gen-1","board:flagged:1","f-1"]': { finding, disposition: "dismissed" },
+    });
+    expect(applyAskEvent(dismissed, { kind: "finding-restore", finding })).toEqual(
+      emptyAskProjection(),
+    );
   });
 
   it("edit replaces only the body of a staged ask", () => {
@@ -143,6 +158,30 @@ describe("receipt-is-undo — applying a receipt returns the exact prior project
       },
     },
     { name: "unstage (existing)", prior: richPrior, event: { kind: "unstage", id: "a1" } },
+    {
+      name: "finding dismiss (new)",
+      prior: richPrior,
+      event: {
+        kind: "finding-dismiss",
+        finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-2" },
+      },
+    },
+    {
+      name: "finding dismiss (existing)",
+      prior: richPrior,
+      event: {
+        kind: "finding-dismiss",
+        finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" },
+      },
+    },
+    {
+      name: "finding restore (existing)",
+      prior: richPrior,
+      event: {
+        kind: "finding-restore",
+        finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" },
+      },
+    },
     {
       name: "edit (existing)",
       prior: richPrior,

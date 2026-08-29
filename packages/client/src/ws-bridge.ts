@@ -8,6 +8,7 @@
 // exact behaviour the desktop app exercises daily.
 
 import type {
+  AskProjection,
   AttentionEventFrame,
   CommandInput,
   CommandName,
@@ -122,6 +123,7 @@ export class WsRennetBridge implements RennetBridge {
   // member's kinds. The public methods below cast their narrower listener in.
   readonly #progressListeners = new Map<string, Set<(event: ProjectProgressEvent) => void>>();
   readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
+  readonly #askProjectionListeners = new Map<string, Set<(projection: AskProjection) => void>>();
   /** Live round-progress listeners, keyed by review id (C15 3.1). */
   readonly #roundListeners = new Map<string, Set<(event: RoundEvent) => void>>();
   /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
@@ -173,6 +175,10 @@ export class WsRennetBridge implements RennetBridge {
 
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {
     return subscribe(this.#askListeners, reviewId, listener);
+  }
+
+  onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void {
+    return subscribe(this.#askProjectionListeners, reviewId, listener);
   }
 
   /**
@@ -453,6 +459,11 @@ export class WsRennetBridge implements RennetBridge {
       case "askStreamEvent": {
         const listeners = this.#askListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
+        return;
+      }
+      case "askProjection": {
+        const listeners = this.#askProjectionListeners.get(frame.sessionId);
+        if (listeners) for (const listener of listeners) listener(frame.projection);
         return;
       }
       case "roundProgress": {

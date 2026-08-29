@@ -112,7 +112,7 @@ export function DiffViewContainer({
   }
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <DiffView files={files} />
+      <DiffView files={files} patchsetId={review.activePatchsetId} />
     </div>
   );
 }

@@ -1,4 +1,10 @@
-import type { RennetState, ReviewState, StagedAsk } from "../store";
+import {
+  codePositionKey,
+  type RennetState,
+  type ReviewState,
+  type StagedAsk,
+  stagedAskCodePosition,
+} from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The derived exit arithmetic (C08 cluster 1, Objective clause 7, Reconciliation 2).
@@ -46,8 +52,11 @@ export const selectExitPipCount = (s: RennetState): number => {
   const claimedThreadIds = new Set(
     asks.map((ask) => ask.threadId).filter((id): id is string => id !== undefined),
   );
-  const claimedLineAnchors = new Set(
-    asks.map((ask) => ask.anchor).filter((anchor) => parseLineAnchor(anchor) !== null),
+  const claimedLinePositions = new Set(
+    asks.flatMap((ask) => {
+      const position = stagedAskCodePosition(ask);
+      return position === null ? [] : [codePositionKey(position)];
+    }),
   );
 
   const threadCount = Object.entries(s.review.quoteThreads).filter(
@@ -57,7 +66,9 @@ export const selectExitPipCount = (s: RennetState): number => {
   let lineCommentCount = 0;
   for (const [path, lines] of Object.entries(s.review.codeComments)) {
     for (const line of Object.keys(lines)) {
-      if (!claimedLineAnchors.has(`${path}:${line}`)) lineCommentCount += 1;
+      if (!claimedLinePositions.has(codePositionKey({ path, line: Number(line), side: "RIGHT" }))) {
+        lineCommentCount += 1;
+      }
     }
   }
 
@@ -124,7 +135,7 @@ export const partitionAsksByAnchor = (
   const body: StagedAsk[] = [];
   const line: StagedAsk[] = [];
   for (const ask of Object.values(asks)) {
-    if (parseLineAnchor(ask.anchor)) line.push(ask);
+    if (stagedAskCodePosition(ask)) line.push(ask);
     else body.push(ask);
   }
   return { body, line };

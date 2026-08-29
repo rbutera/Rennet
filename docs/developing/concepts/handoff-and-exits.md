@@ -67,15 +67,16 @@ it carries a derived working state while a draft rework runs.
 
 ## The durable-asks backend
 
-Asks are **durable host-side, per session**, and there is exactly **one write
-path**: a command appends **one event** to an append-only per-session log, and
-the current ask state is the pure **fold** of that log — never a second stored
-copy.
+Asks are **durable host-side, per session**, and there is exactly **one storage
+write path**: commands append one event to an append-only per-session log, while
+the Flagged composer atomically appends a related migration batch. The current
+ask state is the pure **fold** of that log — never a second stored copy.
 
 ```mermaid
 flowchart LR
   cmd["ask.* command"] -->|appends one event| log[("append-only<br/>AskLog (per session)")]
-  log -->|foldAsks| proj["AskProjection<br/>stagedAsks · lineComments<br/>quoteThreads · retired · verdictOverride"]
+  flagged["Flagged composer"] -->|atomically migrates dismissals| log
+  log -->|foldAsks| proj["AskProjection<br/>stagedAsks · findingDispositions<br/>lineComments · quoteThreads · retired · verdictOverride"]
   cmd -->|returns| receipt["receipt (the inverse event)"]
   proj -->|R19 projection push| client["live clients"]
   proj --> review["publish.compose · review"]
@@ -85,22 +86,40 @@ flowchart LR
 
 - **The log is the only mutation.** `ask.stage` / `edit` / `retire` / `restore`
   / `quoteOpen` / `quoteReply` / `quoteClose` / `setVerdictOverride` /
-  `setLineComment` / `clearLineComment` / `unstage` each append one event; the
-  `ask.*` dispatch handlers are the sole writers. No handler edits a projection
-  in place. `ask.read` is the projection, and reads never write.
-- **Receipt-is-undo.** Every write returns a **receipt** that is the inverse
-  event — applying it restores the prior projection (stage↔unstage, edit↔the
-  prior body, quote-reply↔drop-last, override-set↔the prior value). Undo is
-  just the next append, so it survives reload like any other write.
+  `setLineComment` / `clearLineComment` / `dismissFinding` /
+  `restoreFinding` / `unstage` each append one event. The `ask.*` dispatch
+  handlers are the reviewer-action writers; the one internal writer is Flagged
+  composition, which clones uniquely reattached dismissal state onto successor
+  findings in one atomic batch before the board is written. No path edits a
+  projection in place. `ask.read` is the projection, and reads never write.
+- **Receipt-is-undo.** Every reviewer command returns a **receipt** that is the
+  inverse event — applying it restores the prior projection (stage↔unstage, edit↔the
+  prior body, quote-reply↔drop-last, finding-dismiss↔finding-restore,
+  override-set↔the prior value). Undo is just the next append, so it survives
+  reload like any other write.
 - **Reload survival.** The projection is `foldAsks(read())` over the on-disk
   log; a restarted host reads the same log and folds the identical projection.
-  Staged asks, line comments, quote threads, the retired ledger, and the verdict
-  override all survive a kill. Nothing is client-derived — a reconnecting client
-  reads the current projection, pushed on every append through the R19
-  projection (host paths routed through `toRepoReference`, prose through the
-  blanket scrub; the ask projection adds no new leak).
+  Staged asks, finding dispositions, line comments, quote threads, the retired
+  ledger, and the verdict override all survive a kill. Nothing is
+  client-derived — a reconnecting client reads the current projection, pushed
+  on every append through the R19 projection (host paths routed through
+  `toRepoReference`, prose through the blanket scrub; the ask projection adds
+  no new leak).
 
-The projection is the single source every exit composes from.
+Finding actions use that same projection. A finding's request-change ask
+carries a `FindingRef` and its first captured `CodeRef` (patchset, path, side,
+and full span); the old text anchor and side remain only as a compatibility
+fallback for earlier logs. A dismissal records a finding disposition; restoring
+it removes that disposition. Both use `(generation, Flagged board id, finding
+id)`, so a reused element id in a successor generation or an abandoned draft
+attempt cannot inherit the act. Discuss stores a
+quote thread with the same generation anchor, then sends one anchored turn
+through the live session while the client opens and focuses the existing chat
+dock. The Flagged open count folds the immutable board state together with
+staged finding asks and dispositions.
+
+The projection is the single source every exit and finding overlay composes
+from.
 
 ## Selection is the steering wheel
 
@@ -180,6 +199,13 @@ no diff position either, so it folds into the body the same way; the conversion
 is recorded in a ledger returned to the client rather than happening silently.
 The preview renders exactly this structure, because it is exactly what posts.
 
+Captured provenance is resolved against the review's active patchset before it
+becomes a line comment or work-order anchor. A base-side citation through a
+rename keeps its old-side line and side but uses the changed file's current path.
+A citation from another patchset is not reinterpreted through its old
+`path:line` fallback: it becomes an unanchored review-body note and a file-level
+work-order item instead of pointing at unrelated current code.
+
 ## Verdict and the approving review
 
 The orchestrator proposes the verdict from the reviewer's acts and asks in
@@ -227,7 +253,9 @@ thread, retiring or restoring a draft block, setting the verdict — runs an `as
 command against the review's ask log, whose session identifier **is** the review
 identifier. The renderer's `review` store slice is the render-side cache of that
 projection: `useAskLog` hydrates it from `ask.read` when the review opens and writes
-each mutation through. Nothing an exit reads is client-derived, and a reload keeps the
+each mutation through. The daemon's full-projection push folds into that same read, so a
+server-authored cleanup — including a completed round consuming its exact asks — updates
+an already-open review. Nothing an exit reads is client-derived, and a reload keeps the
 reviewer's work because the daemon holds it.
 
 The exits themselves:
@@ -244,12 +272,14 @@ The exits themselves:
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
   identical re-dispatch retries. Board **regeneration** is the tail of the same
-  dispatch: once the worker turn lands, the round assembles its collation from
-  the active patchset and runs the drafting pipeline for real, minting a new
-  generation and freezing the prior one. It degrades honestly rather than
-  breaking a landed round — no active patchset to regenerate over, or a
-  regeneration that throws, closes the round's progress channel with a terminal
-  failure and leaves the worker's committed work and its record intact.
+  dispatch. Once the worker result is written to the durable dispatch record,
+  the round assembles its collation from the active patchset and runs the
+  drafting pipeline for real, minting a new generation and freezing the prior
+  one. A failure after that commit point — no active patchset to regenerate
+  over, or a regeneration that throws — closes the round's progress channel
+  with a terminal failure and leaves the checkpoint evidence intact for a
+  regeneration-only retry. The worker-to-record interval and durable replay of
+  execution-phase receipts remain outside this restart boundary.
 - **The pull request** — `publish.compose(mode:"pr")` feeds the ask set plus the
   verdict override into the PR body draft, with a **stable derived
   `compositionId`** so an unchanged draft re-raises the *same* publish-ready.
@@ -288,9 +318,10 @@ something the preview did not describe.
    same post-process pass as every draft. It verifies each ask against the
    round's diff rather than taking the worker's word, and classifies the
    outcome: addressed / partial / untouched / beyond the asks, each item
-   anchored. The report is one artifact with two consumers: the reviewer's
-   greeting, and the successor account the lens drafters receive — which is
-   why it must draft before they start.
+   anchored. Each outcome copies the exact id of the ask this round dispatched.
+   The report is one artifact with two consumers: the reviewer's greeting, and
+   the successor account the lens drafters receive — which is why it must draft
+   before they start.
 5. The reviewer reads the report while the lens drafters regenerate in the
    background, their progress live beneath it — one lane per lens, streamed
    from the round's real progress, with the kicker reading *Regenerating the
@@ -308,15 +339,16 @@ something the preview did not describe.
    a terminal failure carrying the drafters' reasons rather than offering a way
    to boards nobody wrote.
 
-   **A round without a report is still a round.** The report seat runs only for
-   a round with a successor account, and the commonest reason there is none is
-   that the coding agent ran and changed nothing. That round still regenerates
-   and still composes; it simply has no greeting to hand back, so it lands the
-   reviewer on the boards it just drafted rather than holding them behind a
-   report that is never coming. A round that *does* name a report which fails to
-   read is the other case, and it still holds the reveal — that report exists,
-   and it is owed.
-6. Each round mints a **new generation** of lens boards, drafted delta-aware:
+   A round that lands a successor patchset supplies explicit round context. The
+   report receives the round number and exact dispatched asks; the host keeps
+   the prior generation and durable finding dispositions for composition. If
+   no report seat resolves or its draft fails, the lens drafters still proceed;
+   the host has no addressed outcomes to compose in that case. A coding turn
+   that changes no code keeps the existing generation and records no report or
+   addressed claim; it terminates as unchanged and consumes only the exact ask
+   occurrences that turn handled. Dispatched intent alone is not evidence that
+   work landed.
+6. A round that lands code mints a **new generation** of lens boards, drafted delta-aware:
    unchanged sections carry forward, and the composition step stamps what it
    touched (`new` / `reworked`; absence = carried). The marks read as unread
    state: touched sections open expanded while carried sections fold to
@@ -325,8 +357,21 @@ something the preview did not describe.
    segment, clears on interaction, and is replaced wholesale next round.
    Generations are append-then-freeze: the prior generation's status moves
    from live to frozen and stays as drill-down while the successor is minted.
+   The successor is one board visit, not a patchset bucket: returning to earlier
+   content mints a fresh generation and never reopens that content's frozen visit.
    Asks, threads, and highlights re-anchor by quote match; casualties land in
    the Detached list.
+   The host applies finding lifecycle after drafting and before it persists the
+   successor boards. Flagged drops only a finding whose dispatched ask the
+   report marks addressed, or one the reviewer dismissed, when that
+   generation-and-board-scoped identity reattaches uniquely. An ambiguous match
+   or a reference to another draft attempt detaches the disposition instead of
+   hiding a different finding. A unique match clones the dismissal onto the
+   successor reference before Flagged is written; the predecessor disposition
+   remains bound to its exact frozen board. Sequence
+   carries its earlier host chapters forward and appends one chronological
+   **Round N · Addressed** chapter from the report's exact addressed asks. This
+   composition produces the new boards; it never rewrites a frozen generation.
    The round's retrospective line counts the reworks the **report** verified
    against the round's own diff, not the asks that went out — a round can
    dispatch five asks and rework nothing, and the number has to be able to say
@@ -335,9 +380,9 @@ something the preview did not describe.
 7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
    — a header control beside Map · Diff that exists exactly when a round has
    completed, never a disabled tab. One row per round; each opens that round's
-   report, and each round pins its asks, worker commits, frozen board
-   generation, and the patchset generation it minted. Because #457 appends the
-   new generation and freezes the old rather than overwriting, that frozen
+   report, and each round pins its asks, observed worker HEAD range, checkpoint
+   diff, frozen board generation, and the patchset generation it minted. Because
+   #457 appends the new generation and freezes the old rather than overwriting, that frozen
    generation stays reachable through the generation switcher, so earlier
    reports never vanish.
    A round's **diff** is its own change, not the review's whole changeset: the
@@ -424,9 +469,10 @@ still returns its diff and changed paths — a crashed worker is not an empty
 round. The round never modifies the patchset under review; that patchset stays
 the baseline the successor is compared against.
 
-The worker runs at the repository root with the harness's default tool set. The
-round commits its work — the rounds ledger pins those commits — while pushing
-and opening the pull request remain the pull-request exit's job.
+The worker runs at the repository root with the harness's default tool set. Its
+checkpoint diff and changed-path list are the work signal even when HEAD stays
+unchanged; the rounds ledger records that evidence and the observed HEAD range.
+Pushing and opening the pull request remain the pull-request exit's job.
 Repositories containing submodules are unsupported
 here — a gitlink can escape the checkpoint diff — and the run fails before it
 starts rather than reporting a diff it cannot trust.

@@ -1,20 +1,20 @@
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../../components/icon";
 import { useFlightBatcher } from "../../handoff/exit-flight";
-import { AnchorReveal } from "../../review";
+import { AnchorReveal, useAnchoredAsk } from "../../review";
 import { useRennetStore } from "../../store";
+import { findingLifecycle } from "../finding-lifecycle";
 import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
-import { useBoardPatchsetId, useCodeRefs } from "./element-context";
+import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from "./element-context";
 
 // `finding` (C05 3.3) — a raised review finding. Folds to its first line (findings
 // carry no title field, only `concern` markdown); a severity chip and the per-model
-// concurrence tally stay visible folded. `status` dims a dismissed/addressed finding.
-// The inline `**Fix:**` is lifted into an actionable callout whose button stages a
-// request-change ask against the finding's first cited position — reading and writing
-// the REAL `review` slice (no `store?.` shim, autopsy S3).
+// concurrence tally stay visible folded. A durable reviewer disposition overlays the
+// frozen board status without changing its bytes. The inline `**Fix:**` is lifted into
+// a callout when present; every finding keeps its actions even without that optional marker.
 
 const SEVERITY_CHIP: Record<"high" | "medium" | "low", string> = {
   high: "bg-danger-soft text-danger",
@@ -31,12 +31,19 @@ function splitFix(concern: string): { body: string; fix: string | null } {
 
 function Concurrence({
   tallies,
+  dimmed,
 }: {
   readonly tallies: readonly { model: string; agree: number; total: number }[];
+  readonly dimmed: boolean;
 }) {
   if (tallies.length === 0) return null;
   return (
-    <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
+    <span
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground",
+        dimmed && "opacity-60",
+      )}
+    >
       {tallies.map((t) => (
         <span key={t.model} title={`${t.model}: ${t.agree} of ${t.total} agree`}>
           {t.model} {t.agree}/{t.total}
@@ -47,32 +54,66 @@ function Concurrence({
 }
 
 export function FindingElement({ element }: { readonly element: ElementOf<"finding"> }) {
-  const { severity, concern, status, code, concurrence } = element.data;
+  const { severity, concern, status: boardStatus, code, concurrence } = element.data;
+  const generation = useBoardGeneration();
+  const boardId = useBoardId();
   const patchsetId = useBoardPatchsetId();
   const citations = useCodeRefs(code);
-  const [open, setOpen] = useState(status === "open");
-  const { stageAsk, unstageAsk } = useRennetStore((s) => s.reviewActions);
+  const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
+  const findingDispositions = useRennetStore((s) => s.review.findingDispositions);
+  const { addQuoteComment, dismissFinding, restoreFinding, stageAsk, unstageAsk } = useRennetStore(
+    (s) => s.reviewActions,
+  );
+  const focusChatComposer = useRennetStore((s) => s.uiActions.focusChatComposer);
+  const sendAnchoredAsk = useAnchoredAsk();
   const flight = useFlightBatcher();
 
   const { body, fix } = splitFix(concern);
+  const actionText = fix ?? body;
   const summary = body.split("\n")[0];
+  const lifecycle = findingLifecycle(element, generation, boardId, {
+    stagedAsks,
+    findingDispositions,
+  });
+  const { askId, dismissedByReviewer, ref, requested: staged, status } = lifecycle;
+  const [open, setOpen] = useState(status === "open");
   const dimmed = status === "dismissed" || status === "addressed";
+
+  useEffect(() => {
+    setOpen(status === "open");
+  }, [status]);
 
   // The ask's source anchor is the finding's first cited position, mirroring C4's
   // `path:line` anchor convention; with no citation it falls back to the element id.
-  const anchor = citations[0] ? `${citations[0].path}:${citations[0].startLine}` : element.id;
-  // The ask IDENTITY is the finding's element id — stable and unique per finding, so toggling is
-  // idempotent (one ask per finding) and two findings citing the same line never collapse.
-  const askId = element.id;
-  const staged = useRennetStore((s) => Boolean(s.review.stagedAsks[askId]));
+  const firstCitation = citations[0];
+  const anchor = firstCitation ? `${firstCitation.path}:${firstCitation.startLine}` : element.id;
+  function toggleDismissal() {
+    if (dismissedByReviewer) {
+      restoreFinding(ref);
+      return;
+    }
+    dismissFinding(ref);
+    setOpen(false);
+  }
+
+  function discussFinding() {
+    const question = fix === null ? "Discuss this finding." : "Discuss this fix.";
+    const threadId = addQuoteComment(actionText, question, "explain", {
+      target: element.id,
+      generation,
+    });
+    focusChatComposer();
+    void sendAnchoredAsk?.({
+      threadId,
+      question,
+      excerpt: actionText,
+      target: element.id,
+      generation,
+    });
+  }
 
   return (
-    <div
-      data-kind="finding"
-      data-status={status}
-      data-element-id={element.id}
-      className={cn(dimmed && "opacity-60")}
-    >
+    <div data-kind="finding" data-status={status} data-element-id={element.id}>
       <h3 className="contents">
         <button
           type="button"
@@ -91,15 +132,21 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             className={cn(
               "mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wide",
               SEVERITY_CHIP[severity],
+              dimmed && "opacity-60",
             )}
           >
             {severity}
           </span>
-          <span className="min-w-0 flex-1 font-semibold text-base text-foreground leading-snug">
+          <span
+            className={cn(
+              "min-w-0 flex-1 font-semibold text-base text-foreground leading-snug",
+              dimmed && "opacity-60",
+            )}
+          >
             {summary}
             {status !== "open" && <span className="sr-only">, {status}</span>}
           </span>
-          <Concurrence tallies={concurrence} />
+          <Concurrence tallies={concurrence} dimmed={dimmed} />
         </button>
       </h3>
       <Collapse open={open}>
@@ -108,18 +155,51 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             text={body}
             elementId={element.id}
             patchsetId={patchsetId}
-            paragraphClassName="text-foreground/90 text-sm leading-relaxed"
+            paragraphClassName={cn(
+              "text-foreground/90 text-sm leading-relaxed",
+              dimmed && "opacity-60",
+            )}
           />
-          {fix && (
-            <div className="mt-1 flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
-              <h4 className="font-semibold text-sm text-foreground">Fix</h4>
-              <QuoteHighlightLayer
-                text={fix}
-                elementId={element.id}
-                patchsetId={patchsetId}
-                paragraphClassName="text-foreground/90 text-sm leading-relaxed"
-              />
-              <div className="flex justify-end pt-0.5">
+          <div
+            className={cn(
+              "flex flex-col gap-1.5",
+              fix && "mt-1 rounded-md border border-border bg-secondary/30 px-3 py-2.5",
+            )}
+          >
+            {fix ? (
+              <>
+                <h4 className={cn("font-semibold text-sm text-foreground", dimmed && "opacity-60")}>
+                  Fix
+                </h4>
+                <QuoteHighlightLayer
+                  text={fix}
+                  elementId={element.id}
+                  patchsetId={patchsetId}
+                  paragraphClassName={cn(
+                    "text-foreground/90 text-sm leading-relaxed",
+                    dimmed && "opacity-60",
+                  )}
+                />
+              </>
+            ) : null}
+            <div className="flex items-center justify-end gap-1.5 pt-0.5">
+              {boardStatus === "open" && (!staged || dismissedByReviewer) ? (
+                <button
+                  type="button"
+                  onClick={toggleDismissal}
+                  className="rounded border border-border px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  {dismissedByReviewer ? "Dismissed · Undo" : "Dismiss"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={discussFinding}
+                className="rounded border border-border px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                Discuss
+              </button>
+              {boardStatus === "open" && (!dismissedByReviewer || staged) ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -127,8 +207,20 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
                       unstageAsk(askId);
                       return;
                     }
-                    stageAsk({ id: askId, anchor, type: "request-change", body: fix });
-                    flight.signal(); // a real staging act flies one bubble to the FAB (never unstage)
+                    stageAsk({
+                      id: askId,
+                      anchor,
+                      type: "request-change",
+                      body: actionText,
+                      finding: ref,
+                      ...(firstCitation === undefined
+                        ? {}
+                        : {
+                            side: firstCitation.side === "base" ? "LEFT" : "RIGHT",
+                            codeRef: firstCitation,
+                          }),
+                    });
+                    flight.signal();
                   }}
                   className={cn(
                     "rounded px-2.5 py-1 text-xs transition-colors",
@@ -139,9 +231,9 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
                 >
                   {staged ? "Staged · Request Change" : "Request This Change"}
                 </button>
-              </div>
+              ) : null}
             </div>
-          )}
+          </div>
           {citations.length > 0 && <AnchorReveal citations={citations} />}
         </div>
       </Collapse>

@@ -9,6 +9,7 @@ import {
 } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort, LintTarget } from "@rennet/core";
 import type {
+  ComposableAsk,
   DraftBoard,
   KnowledgeSet,
   LensLane,
@@ -18,7 +19,7 @@ import type {
   RoundEvent,
   SessionModel,
 } from "@rennet/protocol";
-import { parseDraft, ROUND_NO_REGEN } from "@rennet/protocol";
+import { currentGenerationId, parseDraft } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import {
@@ -376,20 +377,23 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
       }),
       readPrompt,
     });
-    const outcome = await noSeats.runRound({
-      session: { ...session, id: "no-seat-session" } as SessionModel,
-      repoRoot: root,
-      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
-      asksDispatched: [],
-      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-none" }),
-      onProgress: (event) => events.push(event),
-      ...collationFor(),
-    });
+    await expect(
+      noSeats.runRound({
+        session: { ...session, id: "no-seat-session" } as SessionModel,
+        repoRoot: root,
+        previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+        asksDispatched: [],
+        runWorkers: async () => ({
+          commitRange: { from: "c0", to: "c1" },
+          patchsetId: "ps-none",
+        }),
+        onProgress: (event) => events.push(event),
+        ...collationFor(),
+      }),
+    ).rejects.toThrow("drafted no lens boards");
 
-    // Boards are pre-minted before the drafters run, so a real board id here would be an
-    // EMPTY board filed as the round's report.
-    expect(outcome.record.reportBoard).toBe(ROUND_NO_REGEN);
-    expect(outcome.boardGeneration.lensBoards).toEqual({});
+    // No real-generation record is filed for pre-minted empty boards or a report-only result.
+    expect(noSeats.ledger("no-seat-session")).toEqual([]);
     // The round terminates as failed, never `composed` over a regeneration that is not there.
     const terminal = events.at(-1);
     expect(terminal?.type).toBe("failed");
@@ -551,7 +555,11 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
           repoRoot: root,
           priorPatchsetId,
           asksDispatched: [],
-          worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+          worked: {
+            commitRange: { from: "c0", to: "c0" },
+            diff: "diff --git a/src/a.ts b/src/a.ts",
+            changedPaths: ["src/a.ts"],
+          },
         },
       );
 
@@ -579,6 +587,230 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     for (const lens of ["sequence", "decisions", "flagged", "noise"]) {
       expect(verdictOf(settled.lanes, lens)).toBe("carrying-forward");
     }
+  });
+
+  it("revisiting a content-addressed patchset mints a fresh live generation and chapter", async () => {
+    const genStore = new GenerationStore(mkdtempSync(join(tmpdir(), "c15-revisit-gen-")));
+    const metaStore = new BoardMetaStore(mkdtempSync(join(tmpdir(), "c15-revisit-meta-")));
+    const revisitSession = {
+      ...session,
+      id: "revisit-session",
+      reviewId: "rev-revisit",
+    } as SessionModel;
+    const visits = [patchsetAt("ps-0"), patchsetAt("ps-1"), patchsetAt("ps-0")];
+    const firstAsk: ComposableAsk = {
+      id: "ask-round-1",
+      path: "src/a.ts",
+      type: "request-change",
+      instruction: "Apply the first correction.",
+      context: "",
+    };
+    const secondAsk: ComposableAsk = {
+      id: "ask-round-2",
+      path: "src/a.ts",
+      type: "request-change",
+      instruction: "Restore the original implementation deliberately.",
+      context: "",
+    };
+    const asks = [firstAsk, secondAsk] as const;
+    const reportFor = (round: number): DraftBoard => {
+      const ask = asks[round - 1];
+      if (ask === undefined) throw new Error(`no ask fixture for round ${round}`);
+      const parsed = parseDraft({
+        elements: [
+          {
+            id: `outcome-${round}`,
+            kind: "round_outcome",
+            data: {
+              author,
+              status: "addressed",
+              ask: { ref: ask.id, text: ask.instruction },
+              note: `Verified round ${round}.`,
+            },
+          },
+        ],
+      });
+      if (!parsed.ok) throw new Error(`report fixture invalid: ${JSON.stringify(parsed.issues)}`);
+      return parsed.value;
+    };
+
+    let activeVisit = 0;
+    let draftingRound = 0;
+    const runtime = createRoundsRuntime({
+      resolveClaudePort: async () =>
+        fakeClaudePort((lens) =>
+          lens === "report" ? reportFor(draftingRound) : sectioned(`${lens} visit ${activeVisit}`),
+        ),
+      resolveCodexExecutor: async () => null as CodexExecutor | null,
+      boardsRuntimeFor: () => ({
+        service: boards.service,
+        createRennetBoard: boards.createRennetBoard,
+      }),
+      readPrompt,
+      persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+      loadDraftedBoards: (_repo, sessionId, generation) =>
+        metaStore.listForGeneration(sessionId, generation),
+      persistGeneration: (generation) => genStore.save(generation),
+      loadGeneration: (id) => genStore.load(id),
+    });
+    const outcomes: RoundOutcome[] = [];
+    const regenerate = async (input: {
+      readonly priorPatchsetId: string;
+      readonly asksDispatched: readonly string[];
+      readonly dispatchId?: string;
+      readonly round?: {
+        readonly number: number;
+        readonly previousGeneration: string;
+        readonly dispatchedAsks: readonly ComposableAsk[];
+        readonly findingDispositions: Record<string, never>;
+      };
+      readonly changed: boolean;
+    }): Promise<RoundOutcome> => {
+      const before = outcomes.length;
+      const ok = await runBoardRegeneration(
+        {
+          recapture: async () => {
+            activeVisit += 1;
+          },
+          reviewNow: () =>
+            ({
+              id: "rev-revisit",
+              repositoryRoot: root,
+              activePatchsetId: visits[activeVisit]?.id,
+              patchsets: visits.slice(0, activeVisit + 1),
+              dispositions: [],
+              status: "current",
+              successorAccount: { asks: [], beyondAsks: [] },
+            }) as unknown as Review,
+          knowledgeFor: () => ({ set: KNOWLEDGE, snapshot: null }),
+          priorGeneration: (id) =>
+            readPriorGeneration(
+              {
+                loadGeneration: (generationId) => genStore.load(generationId),
+                listBoardMeta: (sessionId, generation) =>
+                  metaStore.listForGeneration(sessionId, generation),
+                boardElements: async (boardId) => [
+                  ...(await boards.service.getState(boardId)).values(),
+                ],
+              },
+              revisitSession.id,
+              id,
+            ),
+          runRound: async (roundInput) => {
+            const outcome = await runtime.runRound(roundInput);
+            outcomes.push(outcome);
+            return outcome;
+          },
+          emit: () => undefined,
+        },
+        {
+          session: revisitSession,
+          repoRoot: root,
+          priorPatchsetId: input.priorPatchsetId,
+          asksDispatched: [...input.asksDispatched],
+          ...(input.dispatchId === undefined ? {} : { dispatchId: input.dispatchId }),
+          ...(input.round === undefined
+            ? {}
+            : {
+                round: {
+                  ...input.round,
+                  previousGeneration: currentGenerationId(
+                    runtime.ledger(revisitSession.id),
+                    input.priorPatchsetId,
+                  ),
+                },
+              }),
+          worked: {
+            commitRange: { from: "same-head", to: "same-head" },
+            diff: input.changed ? "diff --git a/src/a.ts b/src/a.ts" : "",
+            changedPaths: input.changed ? ["src/a.ts"] : [],
+          },
+        },
+      );
+      expect(ok).toBe(true);
+      const outcome = outcomes[before];
+      if (outcome === undefined) throw new Error("regeneration produced no outcome");
+      return outcome;
+    };
+    const readDraft = async (boardId: string): Promise<DraftBoard> => {
+      const parsed = parseDraft({
+        elements: [...(await boards.service.getState(boardId)).values()],
+      });
+      if (!parsed.ok) throw new Error(`persisted board invalid: ${JSON.stringify(parsed.issues)}`);
+      return parsed.value;
+    };
+
+    // Initial P0 is a live first visit, not a round and therefore has no report/chapter.
+    const initial = await regenerate({
+      priorPatchsetId: "ps-0",
+      asksDispatched: [],
+      changed: false,
+    });
+    expect(initial.boardGeneration.id).toBe("gen:ps-0");
+
+    draftingRound = 1;
+    const firstRound = await regenerate({
+      priorPatchsetId: "ps-0",
+      asksDispatched: [firstAsk.id],
+      dispatchId: "dispatch-round-1",
+      round: {
+        number: 1,
+        previousGeneration: initial.boardGeneration.id,
+        dispatchedAsks: [firstAsk],
+        findingDispositions: {},
+      },
+      changed: true,
+    });
+    const frozenFirstVisit = genStore.load(initial.boardGeneration.id);
+    const frozenFirstSequenceId = frozenFirstVisit?.lensBoards.sequence;
+    if (frozenFirstSequenceId === undefined)
+      throw new Error("initial Sequence board was not frozen");
+    const frozenFirstSequence = [
+      ...(await boards.service.getState(frozenFirstSequenceId)).values(),
+    ];
+
+    draftingRound = 2;
+    const secondRound = await regenerate({
+      priorPatchsetId: "ps-1",
+      asksDispatched: [secondAsk.id],
+      dispatchId: "dispatch-round-2",
+      round: {
+        number: 2,
+        previousGeneration: firstRound.boardGeneration.id,
+        dispatchedAsks: [secondAsk],
+        findingDispositions: {},
+      },
+      changed: true,
+    });
+
+    // P0 content returned, but this is a new visit: the old P0 generation stays frozen
+    // byte-for-byte while the current P0 generation is distinct and live.
+    expect(secondRound.boardGeneration.patchsetId).toBe("ps-0");
+    expect(secondRound.boardGeneration.id).not.toBe(initial.boardGeneration.id);
+    expect(secondRound.boardGeneration.status).toBe("live");
+    expect(genStore.load(initial.boardGeneration.id)).toEqual(frozenFirstVisit);
+    expect([...(await boards.service.getState(frozenFirstSequenceId)).values()]).toEqual(
+      frozenFirstSequence,
+    );
+    expect(genStore.load(firstRound.boardGeneration.id)?.status).toBe("frozen");
+
+    // The revisit drafted THIS round's report, then carried Round 1's host chapter and
+    // appended Round 2 after it. Reusing P0's settled evidence fails both assertions.
+    expect(secondRound.record.reportBoard).not.toBe(firstRound.record.reportBoard);
+    const reportElements = (await readDraft(secondRound.record.reportBoard)).elements;
+    expect(reportElements.find((element) => element.kind === "round_outcome")?.data.ask.ref).toBe(
+      "ask-round-2",
+    );
+    const sequenceId = secondRound.boardGeneration.lensBoards.sequence;
+    if (sequenceId === undefined) throw new Error("revisited Sequence board was not drafted");
+    const sequenceElements = (await readDraft(sequenceId)).elements;
+    expect(
+      sequenceElements.flatMap((element) =>
+        element.kind === "section" && element.data.title.startsWith("Round ")
+          ? [element.data.title]
+          : [],
+      ),
+    ).toEqual(["Round 1 · Addressed", "Round 2 · Addressed"]);
   });
 
   it("a FIRST generation carries nothing forward (no prior to carry from)", async () => {

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BoardMetaStore, SessionStore } from "@rennet/adapters";
+import { BoardMetaStore, GenerationStore, SessionStore } from "@rennet/adapters";
 import type {
   CodexExecutor,
   DeltaPacket,
@@ -135,11 +135,13 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
   let root: string;
   let sessionDir: string;
   let metaDir: string;
+  let generationDir: string;
 
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "b09-e2e-"));
     sessionDir = join(root, "sessions");
     metaDir = join(root, "board-meta");
+    generationDir = join(root, "generations");
   });
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -147,6 +149,7 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     // ── HOST 1 boots ──────────────────────────────────────────────────────────
     const store1 = new SessionStore(sessionDir);
     const metaStore1 = new BoardMetaStore(metaDir);
+    const generationStore1 = new GenerationStore(generationDir);
 
     // 1. A row-click mints a session AND claims the target in one act (persisted).
     const entry1 = new SessionEntry({ list: () => store1.list(), save: (s) => store1.save(s) });
@@ -179,6 +182,8 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       readPrompt,
       persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore1.save(meta),
       loadDraftedBoards: (_repo, s, g) => metaStore1.listForGeneration(s, g),
+      persistGeneration: (generation) => generationStore1.save(generation),
+      loadGeneration: (id) => generationStore1.load(id),
     });
 
     const roundInput = {
@@ -234,6 +239,7 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     // ── KILL + RESTART: fresh stores AND a fresh runtime over the SAME dirs ──────
     const store2 = new SessionStore(sessionDir);
     const metaStore2 = new BoardMetaStore(metaDir);
+    const generationStore2 = new GenerationStore(generationDir);
     const boards2 = createBoardsRuntime(root);
 
     // 3. Reattach: the very same row-click reattaches to the persisted session —
@@ -262,6 +268,8 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       readPrompt,
       persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore2.save(meta),
       loadDraftedBoards: (_repo, s, g) => metaStore2.listForGeneration(s, g),
+      persistGeneration: (generation) => generationStore2.save(generation),
+      loadGeneration: (id) => generationStore2.load(id),
     });
     const rejoined = await runtime2.runRound({ ...roundInput, session: rejoin.session });
     expect(mints2.count).toBe(0); // never re-minted — reconstructed from durable evidence

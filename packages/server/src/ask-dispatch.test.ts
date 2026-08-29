@@ -59,6 +59,12 @@ describe("ask.* dispatch — the sole write path (B11 2.3)", () => {
     const ask = { id: "a1", anchor: "src/x.ts:10", type: "request-change" as const, body: "fix" };
 
     await writeAndAssertReversible(store, handlers, "ask.stage", { ask });
+    await writeAndAssertReversible(store, handlers, "ask.dismissFinding", {
+      finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" },
+    });
+    await writeAndAssertReversible(store, handlers, "ask.restoreFinding", {
+      finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" },
+    });
     await writeAndAssertReversible(store, handlers, "ask.edit", { id: "a1", body: "fix it well" });
     await writeAndAssertReversible(store, handlers, "ask.retire", { id: "a1", reason: "dupe" });
     await writeAndAssertReversible(store, handlers, "ask.restore", { id: "a1" });
@@ -130,7 +136,19 @@ describe("ask.* dispatch — the sole write path (B11 2.3)", () => {
     // verdict override — every collection in the projection.
     await handlers["ask.stage"]({
       sessionId: SID,
-      ask: { id: "a1", anchor: "src/x.ts:10", type: "request-change", body: "fix" },
+      ask: {
+        id: "a1",
+        anchor: "src/x.ts:10",
+        type: "request-change",
+        body: "fix",
+        codeRef: {
+          patchsetId: "patchset-1",
+          path: "src/x.ts",
+          side: "base",
+          startLine: 10,
+          endLine: 12,
+        },
+      },
     });
     await handlers["ask.setLineComment"]({
       sessionId: SID,
@@ -144,6 +162,10 @@ describe("ask.* dispatch — the sole write path (B11 2.3)", () => {
       thread: { anchor: "prose", kind: "comment", messages: [{ author: "user", text: "hm" }] },
     });
     await handlers["ask.setVerdictOverride"]({ sessionId: SID, verdict: "APPROVE" });
+    await handlers["ask.dismissFinding"]({
+      sessionId: SID,
+      finding: { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" },
+    });
     const before = store.readProjection(SID);
 
     // Simulated restart: a brand-new store over the SAME directory, nothing carried in memory.
@@ -152,7 +174,16 @@ describe("ask.* dispatch — the sole write path (B11 2.3)", () => {
     expect(reloaded.readProjection(SID)).toEqual(before);
 
     // And the reloaded projection is non-vacuous — every collection rehydrated.
-    expect(before.stagedAsks.a1).toBeDefined();
+    expect(before.stagedAsks.a1?.codeRef).toEqual({
+      patchsetId: "patchset-1",
+      path: "src/x.ts",
+      side: "base",
+      startLine: 10,
+      endLine: 12,
+    });
+    expect(before.findingDispositions['["gen-1","board:flagged:1","f-1"]']?.disposition).toBe(
+      "dismissed",
+    );
     expect(before.lineComments["src/x.ts"]?.["10"]).toBe("nit");
     expect(before.quoteThreads.t1?.messages).toHaveLength(1);
     expect(before.verdictOverride).toBe("APPROVE");

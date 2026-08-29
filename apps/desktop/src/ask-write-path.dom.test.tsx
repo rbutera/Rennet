@@ -54,6 +54,7 @@ Object.defineProperty(globalThis.navigator, "platform", {
 const PATH = "packages/core/src/x.ts";
 const CODE = "const a = 1\nconst b = 2\nconst c = 3";
 const ASK_BODY = "rename the export";
+const ASK_ID = `${PATH}:2:RIGHT`;
 
 /** The teammate PR the Post exit posts to — the one exit that needs a real post target. */
 const POST_TARGET = {
@@ -278,7 +279,7 @@ describe("harm 2 — a dispatched round carries the reviewer's asks", () => {
 describe("harm 3 — a staged ask is revisable", () => {
   it("goes from 'That ask is no longer staged.' to a rework that lands on the durable ask", async () => {
     const reviewId = OWN_REVIEW.id;
-    const askId = `${PATH}:2`;
+    const askId = ASK_ID;
 
     // THE HARM: the ask the reviewer is looking at does not exist as far as the daemon knows.
     const before = (await dispatch("review.reviseSpan", {
@@ -329,7 +330,7 @@ describe("a reload keeps the reviewer's work", () => {
     // The surface rehydrates from `ask.read`: the line reads as commented again, and the
     // staged ask is back in the slice with the body the reviewer typed.
     await vi.waitFor(() => expect(second.getByLabelText("Edit comment on line 2")).toBeTruthy());
-    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:2`]).toMatchObject({
+    expect(useRennetStore.getState().review.stagedAsks[ASK_ID]).toMatchObject({
       anchor: `${PATH}:2`,
       type: "request-change",
       body: ASK_BODY,

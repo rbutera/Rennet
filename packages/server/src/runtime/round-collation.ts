@@ -23,10 +23,14 @@ import {
   selectPacketKnowledge,
 } from "@rennet/core";
 import {
+  type AskOccurrence,
   type DossierItem,
   type DraftBoard,
   type Generation,
+  generationIdForPatchset,
   type KnowledgeSet,
+  LENS_KINDS,
+  type LensKind,
   type PatchFile,
   type Patchset,
   parseDraft,
@@ -35,6 +39,7 @@ import {
   type SessionModel,
   type SuccessorAccount,
 } from "@rennet/protocol";
+import type { LensPipelineDeps, RoundDraftContext } from "./lens-pipeline";
 import type { RoundInput, WorkerReturn } from "./rounds";
 
 /**
@@ -328,6 +333,17 @@ export interface PriorGenerationReaders {
   readonly boardElements: (boardId: string) => Promise<readonly unknown[]>;
 }
 
+/** Select the one BoardMeta row the persisted Generation names for a lens. Recovery
+ *  redrafts deliberately leave abandoned partial rows on disk, so lens alone is not an
+ *  identity and first/last-wins would serve stale work. */
+export function generationBoardMeta<
+  T extends { readonly lens: LintTarget; readonly boardId: string },
+>(generation: Generation, records: readonly T[], lens: LensKind): T | undefined {
+  const boardId = generation.lensBoards[lens];
+  if (boardId === undefined) return undefined;
+  return records.find((record) => record.lens === lens && record.boardId === boardId);
+}
+
 /**
  * Read the REAL prior generation for a session — the record plus the boards it drafted,
  * rebuilt from the whiteboard's projected element state.
@@ -350,9 +366,12 @@ export async function readPriorGeneration(
   const generation = readers.loadGeneration(generationId);
   if (generation === undefined) return undefined;
   const boards = new Map<LintTarget, DraftBoard>();
-  for (const meta of readers.listBoardMeta(sessionId, generationId)) {
+  const records = readers.listBoardMeta(sessionId, generationId);
+  for (const lens of LENS_KINDS) {
+    const meta = generationBoardMeta(generation, records, lens);
+    if (meta === undefined) continue;
     const parsed = parseDraft({ elements: await readers.boardElements(meta.boardId) });
-    if (parsed.ok) boards.set(meta.lens, parsed.value);
+    if (parsed.ok) boards.set(lens, parsed.value);
   }
   return { generation, boards };
 }
@@ -385,6 +404,10 @@ export interface BoardRegenerationDeps {
   /** Deterministic spec discovery at the reviewed state; null is a successful no-spec result.
    *  A throw settles Design as failed while the other lenses continue. */
   readonly designArtifactsFor?: (patchset: Patchset) => Promise<DesignArtifactSet | null>;
+  /** Re-read the reviewer overlay at the exact Flagged composition boundary. */
+  readonly readFindingDispositions?: LensPipelineDeps["readFindingDispositions"];
+  /** Persist reviewer-owned finding reattachments before Flagged is written. */
+  readonly persistFindingResolutions?: LensPipelineDeps["persistFindingResolutions"];
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
   readonly emit: (event: RoundEvent) => void;
@@ -396,8 +419,19 @@ export interface BoardRegenerationInput {
   /** The patchset the boards described BEFORE this round — the generation it succeeds. */
   readonly priorPatchsetId: string;
   readonly asksDispatched: readonly string[];
-  /** What the worker turn produced: its commit range, and a patchset id iff HEAD moved. */
-  readonly worked: WorkerReturn;
+  /** Stable dispatch identity; absent only for askless first-generation drafting. */
+  readonly dispatchId?: string;
+  readonly sourcePatchsetId?: string;
+  readonly askOccurrences?: readonly AskOccurrence[];
+  /** Present only for an actual durable-ask dispatch; absent on first-board drafting. */
+  readonly round?: RoundDraftContext;
+  /** Checkpoint-measured truth from the coding turn. The harness intentionally leaves
+   *  edits uncommitted, so HEAD movement is not a change signal. */
+  readonly worked: {
+    readonly commitRange: WorkerReturn["commitRange"];
+    readonly diff: string;
+    readonly changedPaths: readonly string[];
+  };
 }
 
 type DesignArtifactDiscovery =
@@ -441,18 +475,20 @@ async function discoverDesignArtifactsFor(
 export async function runBoardRegeneration(
   deps: BoardRegenerationDeps,
   input: BoardRegenerationInput,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    if (input.worked.patchsetId !== undefined) await deps.recapture();
+    const workerChangedTree =
+      input.worked.changedPaths.length > 0 || input.worked.diff.trim().length > 0;
+    if (workerChangedTree) await deps.recapture();
     const review = deps.reviewNow();
     const successor = review.patchsets.find((p) => p.id === review.activePatchsetId);
     if (successor === undefined) {
       deps.emit({ type: "failed", reason: "No active patchset to regenerate the boards over." });
-      return;
+      return false;
     }
     // The code MOVED iff the re-captured patchset is a DIFFERENT one. Patchset ids are
     // content-derived, so this is the honest test: a turn that committed no net change
-    // re-reports against the existing generation instead of minting a hollow successor.
+    // keeps the existing generation and has no successor report to draft.
     const landed = successor.id !== input.priorPatchsetId;
     const knowledgeSource = deps.knowledgeFor(successor);
     // The whole-tree citation grounding (W5). Best-effort by design: a tree git
@@ -490,31 +526,67 @@ export async function runBoardRegeneration(
       // Dossier is the related-context tray (a separate producer); an empty dossier is
       // honest — the drafters simply have no tracker items inlined this round.
       dossier: [],
-      ...(review.successorAccount ? { successorAccount: review.successorAccount } : {}),
+      ...(landed && review.successorAccount ? { successorAccount: review.successorAccount } : {}),
       ...(tree === undefined ? {} : { tree }),
     });
     // The lineage this round ACTUALLY has. A prior generation counts only if it was really
     // minted and persisted; otherwise this is a first generation and says so — no
     // synthesized predecessor for the ledger to drill into, and no phantom comparison set.
-    const prior = await deps.priorGeneration(`gen:${input.priorPatchsetId}`);
-    await deps.runRound({
-      session: input.session,
-      repoRoot: input.repoRoot,
-      ...(prior === undefined
-        ? {}
-        : { previousGeneration: prior.generation, previous: prior.boards }),
-      asksDispatched: [...input.asksDispatched],
-      // The successor PATCHSET id keys the minted generation (not the post-turn HEAD oid),
-      // so the generation the boards file under names the diff they actually read.
-      runWorkers: async (): Promise<WorkerReturn> => ({
-        commitRange: input.worked.commitRange,
-        ...(landed ? { patchsetId: successor.id } : {}),
-      }),
-      onProgress: deps.emit,
-      ...designArtifactInput,
-      ...collation,
-    });
+    const prior = await deps.priorGeneration(
+      input.round?.previousGeneration ?? generationIdForPatchset(input.priorPatchsetId),
+    );
+    try {
+      await deps.runRound({
+        session: input.session,
+        repoRoot: input.repoRoot,
+        ...(prior === undefined
+          ? {}
+          : { previousGeneration: prior.generation, previous: prior.boards }),
+        asksDispatched: [...input.asksDispatched],
+        ...(input.dispatchId === undefined ? {} : { dispatchId: input.dispatchId }),
+        ...(input.sourcePatchsetId === undefined
+          ? {}
+          : { sourcePatchsetId: input.sourcePatchsetId }),
+        ...(input.askOccurrences === undefined
+          ? {}
+          : { askOccurrences: [...input.askOccurrences] }),
+        ...(input.round === undefined
+          ? {}
+          : {
+              round: {
+                ...input.round,
+                worker: {
+                  outcome: "completed",
+                  diff: input.worked.diff,
+                  changedPaths: [...input.worked.changedPaths],
+                  commitRange: { ...input.worked.commitRange },
+                },
+              },
+            }),
+        ...(deps.readFindingDispositions === undefined
+          ? {}
+          : { readFindingDispositions: deps.readFindingDispositions }),
+        ...(deps.persistFindingResolutions === undefined
+          ? {}
+          : { persistFindingResolutions: deps.persistFindingResolutions }),
+        // The successor PATCHSET id keys the minted generation (not the post-turn HEAD oid),
+        // so the generation the boards file under names the diff they actually read.
+        runWorkers: async (): Promise<WorkerReturn> => ({
+          commitRange: input.worked.commitRange,
+          ...(landed ? { patchsetId: successor.id } : {}),
+        }),
+        onProgress: deps.emit,
+        ...designArtifactInput,
+        ...collation,
+      });
+    } catch {
+      // `createRoundsRuntime.runRound` already emitted the terminal failure through this
+      // same sink. Return failure to the caller without appending a duplicate event.
+      return false;
+    }
+    return true;
   } catch (error) {
     deps.emit({ type: "failed", reason: error instanceof Error ? error.message : String(error) });
+    return false;
   }
 }

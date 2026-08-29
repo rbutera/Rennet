@@ -17,15 +17,16 @@ repeat it as a prose element. Set `document.measure` to `reading`.
 ## What you receive
 
 - The round's asks, verbatim, each with its intent and code anchor.
-- The round's diff — the worker's commits only, not the whole branch.
-- The worker's transcript and commit messages.
-- The gate result.
-- The prior generation's boards, for the claims the asks trace back to.
+- `round.worker.diff`: the checkpoint-measured change made by this coding turn only,
+  even when the turn correctly left those edits uncommitted.
+- `round.worker.changedPaths`: the structural path list measured by the same checkpoints.
+- The coding turn's completed outcome and observed commit range. An unchanged range is
+  normal and does not mean no work landed.
 
 ## Investigate before you report
 
-The worker's word is a lead, not a finding. For every ask, read the round's
-diff and verify what actually changed at the anchored site before you classify
+The worker's word is a lead, not a finding. For every ask, read
+`round.worker.diff` and verify what actually changed at the anchored site before you classify
 it. An ask reported done that the diff does not support is `untouched` with an
 honest note — the report's whole value is that the reviewer never has to
 re-derive this from the diff themselves.
@@ -40,7 +41,9 @@ Each item carries:
   (the round did not do it; say so plainly), or `beyond` (real work no ask
   requested — a test added, a neighboring fix).
 - **Ask** — the ask it traces to, verbatim enough to recognize; a `beyond`
-  item names the work instead.
+  item names the work instead. Every dispatched ask has a durable `id` in the
+  supplied round context. Copy that exact id into `ask.ref`; never renumber or
+  invent a reference. A `beyond` item uses its own stable descriptive reference.
 - **Note** — what changed and where, a few sentences. For `partial`, the
   remainder is the point. For `beyond`, say why the worker's detour was or
   was not sound.

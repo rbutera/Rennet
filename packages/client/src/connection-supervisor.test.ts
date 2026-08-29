@@ -1,5 +1,6 @@
 import type { AddressInfo } from "node:net";
 import type {
+  AskProjection,
   AttentionEventFrame,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
@@ -29,6 +30,7 @@ class FakeBridge implements SupervisedBridge {
   readonly invokes: Array<{ name: string; input: unknown }> = [];
   readonly sentPresence: Array<Record<string, unknown>> = [];
   readonly askListeners = new Map<string, Set<(e: ReviewAskStreamEvent) => void>>();
+  readonly askProjectionListeners = new Map<string, Set<(e: AskProjection) => void>>();
   readonly progressListeners = new Map<string, Set<(e: ProjectProcessEvent) => void>>();
   readonly attentionListeners = new Set<(e: AttentionEventFrame) => void>();
   invokeImpl: (name: string, input: unknown) => Promise<unknown> = () => Promise.resolve({});
@@ -53,6 +55,9 @@ class FakeBridge implements SupervisedBridge {
   }
   onAskStream(reviewId: string, listener: (e: ReviewAskStreamEvent) => void): () => void {
     return add(this.askListeners, reviewId, listener);
+  }
+  onAskProjection(reviewId: string, listener: (e: AskProjection) => void): () => void {
+    return add(this.askProjectionListeners, reviewId, listener);
   }
   readonly roundListeners = new Map<string, Set<(e: RoundEvent) => void>>();
   onRoundProgress(reviewId: string, listener: (e: RoundEvent) => void): () => void {
@@ -93,6 +98,9 @@ class FakeBridge implements SupervisedBridge {
   }
   emitAsk(reviewId: string, event: ReviewAskStreamEvent): void {
     for (const l of this.askListeners.get(reviewId) ?? []) l(event);
+  }
+  emitAskProjection(reviewId: string, projection: AskProjection): void {
+    for (const listener of this.askProjectionListeners.get(reviewId) ?? []) listener(projection);
   }
   emitAttention(event: AttentionEventFrame): void {
     for (const l of this.attentionListeners) l(event);
@@ -196,6 +204,85 @@ describe("ConnectionSupervisor — reachability", () => {
 });
 
 describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () => {
+  it("re-subscribes to ask projections and reconciles changes missed while offline", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+
+    const received: AskProjection[] = [];
+    supervisor.onAskProjection("rev-1", (projection) => received.push(projection));
+    const projection: AskProjection = {
+      stagedAsks: {},
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+    nth(bridges, 0).emitAskProjection("rev-1", projection);
+    expect(received).toEqual([projection]);
+
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+    nth(bridges, 1).invokeImpl = (name) =>
+      Promise.resolve(name === "ask.read" ? { projection } : {});
+    nth(bridges, 1).goOnline();
+
+    await waitFor(() => received.length === 2);
+    expect(nth(bridges, 1).askProjectionListeners.get("rev-1")?.size).toBe(1);
+    expect(nth(bridges, 1).invokes).toContainEqual({
+      name: "ask.read",
+      input: { sessionId: "rev-1" },
+    });
+  });
+
+  it("does not let an older reconnect read overwrite a newer projection push", async () => {
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+
+    const received: AskProjection[] = [];
+    supervisor.onAskProjection("rev-1", (projection) => received.push(projection));
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+
+    let resolveRead!: (value: { projection: AskProjection }) => void;
+    nth(bridges, 1).invokeImpl = () =>
+      new Promise((resolve) => {
+        resolveRead = resolve as (value: { projection: AskProjection }) => void;
+      });
+    nth(bridges, 1).goOnline();
+    await waitFor(() => nth(bridges, 1).invokes.some((call) => call.name === "ask.read"));
+
+    const current: AskProjection = {
+      stagedAsks: {},
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+    nth(bridges, 1).emitAskProjection("rev-1", current);
+    resolveRead({
+      projection: {
+        ...current,
+        stagedAsks: {
+          consumed: {
+            id: "consumed",
+            anchor: "src/a.ts:1",
+            type: "request-change",
+            body: "stale",
+          },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    expect(received).toEqual([current]);
+  });
+
   it("re-delivers events to the same listener after a reconnect, with no re-subscribe", async () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);

@@ -80,7 +80,7 @@ Everything you raise gathers as an **ask**, carrying provenance back to whatever
 produced it:
 
 - **A finding's fix** — **Request This Change** stages the fix with the
-  finding's own code anchor.
+  finding's captured code citation, including its diff side and full span.
 - **A line of code** — click the `+` in the gutter, write the comment, and
   choose **Request Changes**. On the Diff view these key to new-side line
   numbers, so the ask carries a real diff position.
@@ -90,6 +90,19 @@ produced it:
   it and Rennet records the completed action and receipt, or stage it yourself
   from the board, the line, or the span it belongs to. A suggested action is not
   silently staged.
+
+Each finding keeps its controls together. **Request This Change** stages its
+proposed fix. **Dismiss** removes it from the open set, and **Undo** restores the
+dismissal. **Discuss** quotes the proposed fix — or the concern when the finding
+has no separate fix — into the existing chat dock, opens and focuses that dock,
+and sends one live question anchored to the finding.
+
+Rennet stores those acts with the review and binds them to the finding's board
+generation. They survive reload without attaching to a different generation
+that happens to reuse the same finding id. When the same finding reattaches
+unambiguously after a round, its dismissal carries into the successor while the
+frozen board keeps its own history. The number on the **Flagged** lens is the
+findings still open after staged requests and dismissals are applied.
 
 The count on the **Write Review** button is your staged asks plus the comments
 and threads not yet folded into one. Questions you asked with **Explain** never

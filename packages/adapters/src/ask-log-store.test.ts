@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AskEventBody } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AskLogCorruptError, AskLogStore } from "./ask-log-store";
 
 function tempDir(): string {
@@ -44,6 +44,22 @@ describe("AskLogStore", () => {
     // every prior event is preserved, in order — nothing was rewritten
     expect(log.map((e) => e.seq)).toEqual([0, 1, 2]);
     expect(log[0]).toEqual(e0);
+  });
+
+  it("appendMany stamps a contiguous batch and persists it with one atomic write", () => {
+    const store = new AskLogStore(tempDir());
+    store.append("s1", stage("a0"));
+    const write = vi.spyOn(
+      store as unknown as { write: (sessionId: string, events: unknown[]) => void },
+      "write",
+    );
+
+    const appended = store.appendMany("s1", [stage("a1"), stage("a2")]);
+
+    expect(appended.map((event) => event.seq)).toEqual([1, 2]);
+    expect(appended.every((event) => event.sessionId === "s1")).toBe(true);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(store.read("s1").map((event) => event.seq)).toEqual([0, 1, 2]);
   });
 
   it("survives a simulated restart: a fresh store over the same file reads the same projection", () => {

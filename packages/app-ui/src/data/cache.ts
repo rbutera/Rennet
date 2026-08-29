@@ -95,6 +95,8 @@ interface Entry {
   fetcher?: () => Promise<unknown>;
   /** Bumped by `invalidate`; a fetch that completes at a stale generation refetches. */
   generation: number;
+  /** Bumped by a full-state write so an older read cannot overwrite authoritative state. */
+  authoritativeGeneration: number;
   readonly listeners: Set<() => void>;
 }
 
@@ -104,7 +106,7 @@ export class CommandCache {
   #entry(key: string): Entry {
     let entry = this.#entries.get(key);
     if (!entry) {
-      entry = { snapshot: IDLE, generation: 0, listeners: new Set() };
+      entry = { snapshot: IDLE, generation: 0, authoritativeGeneration: 0, listeners: new Set() };
       this.#entries.set(key, entry);
     }
     return entry;
@@ -165,6 +167,7 @@ export class CommandCache {
     const fetcher = entry.fetcher;
     if (!fetcher) return;
     const generation = entry.generation;
+    const authoritativeGeneration = entry.authoritativeGeneration;
     this.#set(key, {
       data: entry.snapshot.data,
       error: entry.snapshot.error,
@@ -178,7 +181,14 @@ export class CommandCache {
         if (entry.promise !== promise) return; // a newer #fetch owns the entry
         entry.promise = undefined;
         const superseded = entry.generation !== generation;
-        this.#set(key, { data, error: undefined, fetching: false, stale: superseded });
+        const supersededByAuthoritativeWrite =
+          entry.authoritativeGeneration !== authoritativeGeneration;
+        this.#set(key, {
+          data: superseded || supersededByAuthoritativeWrite ? entry.snapshot.data : data,
+          error: undefined,
+          fetching: false,
+          stale: superseded,
+        });
         // Refetch for a READER. An abandoned entry was superseded by its own last
         // unsubscribe; refetching it would spend a round trip on nobody and clear the very
         // staleness that makes the next reopen honest.
@@ -194,11 +204,20 @@ export class CommandCache {
     );
   }
 
-  /** Fold a value into a key (a stream writes its events in here — the read sees ONE entry). */
-  setData(key: string, update: (prev: unknown) => unknown): void {
-    const snap = this.#entry(key).snapshot;
+  /** Fold a value into a key (a stream writes its events in here — the read sees ONE entry).
+   *  Full-state writes may supersede an older in-flight read. Delta writes deliberately do
+   *  not: their consumer must merge the eventual catch-up snapshot with the streamed tail. */
+  setData(
+    key: string,
+    update: (prev: unknown) => unknown,
+    options: { readonly supersedeInFlight?: boolean } = {},
+  ): void {
+    const entry = this.#entry(key);
+    const snap = entry.snapshot;
+    const data = update(snap.data);
+    if (options.supersedeInFlight) entry.authoritativeGeneration += 1;
     this.#set(key, {
-      data: update(snap.data),
+      data,
       error: undefined,
       fetching: snap.fetching,
       stale: false,

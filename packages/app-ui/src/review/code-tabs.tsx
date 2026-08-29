@@ -43,6 +43,8 @@ export function CitationBlock({ citation }: { citation: CodeRef }) {
       path={citation.path}
       startLine={block.startLine}
       highlightLines={block.highlightLines}
+      patchsetId={citation.patchsetId}
+      side={citation.side === "base" ? "LEFT" : "RIGHT"}
     />
   );
 }

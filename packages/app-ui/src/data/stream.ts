@@ -1,4 +1,5 @@
 import type {
+  AskProjection,
   CommandInput,
   CommandName,
   CommandOutput,
@@ -19,6 +20,7 @@ import { commandKey } from "./cache";
 //   • progress               (onProgress, keyed by commandId)        → project.process
 //   • projectDetailProgress  (onProjectDetailProgress, by commandId) → project.detail
 //   • askStream              (onAskStream, keyed by reviewId)        → review.ask
+//   • askProjection          (onAskProjection, keyed by reviewId)    → ask.read
 //   • roundProgress          (onRoundProgress, keyed by reviewId)    → session.roundEvents
 // The daemon-wide channels (onAttention/onUpdateReady) fold into the store, not a read,
 // so they are consumed directly, not through this hook.
@@ -28,6 +30,7 @@ interface ChannelEvent {
   progress: ProjectProcessEvent;
   projectDetailProgress: ProjectDetailProgressEvent;
   askStream: ReviewAskStreamEvent;
+  askProjection: AskProjection;
   roundProgress: RoundEvent;
 }
 type StreamChannelName = keyof ChannelEvent;
@@ -48,6 +51,8 @@ function subscribeChannel<C extends StreamChannelName>(
       );
     case "askStream":
       return bridge.onAskStream?.(subscriptionKey, listener as (e: ReviewAskStreamEvent) => void);
+    case "askProjection":
+      return bridge.onAskProjection?.(subscriptionKey, listener as (e: AskProjection) => void);
     case "roundProgress":
       return bridge.onRoundProgress?.(subscriptionKey, listener as (e: RoundEvent) => void);
     default:
@@ -62,6 +67,8 @@ export interface UseCommandStreamParams<K extends CommandName, C extends StreamC
   readonly subscriptionKey: string | undefined;
   /** The `useCommand` read this stream folds into. */
   readonly command: { readonly name: K; readonly input: CommandInput<K> };
+  /** A snapshot replaces the read; a delta must be merged with the catch-up read by its owner. */
+  readonly delivery: "delta" | "snapshot";
   /** Fold one event into the read's cached data. */
   readonly fold: (prev: CommandOutput<K> | undefined, event: ChannelEvent[C]) => CommandOutput<K>;
 }
@@ -73,13 +80,15 @@ export function useCommandStream<K extends CommandName, C extends StreamChannelN
   const key = commandKey(params.command.name, params.command.input);
   const foldRef = useRef(params.fold);
   foldRef.current = params.fold;
-  const { channel, subscriptionKey } = params;
+  const { channel, delivery, subscriptionKey } = params;
 
   useEffect(() => {
     if (subscriptionKey === undefined) return;
     const unsubscribe = subscribeChannel(bridge, channel, subscriptionKey, (event) => {
-      cache.setData(key, (prev) => foldRef.current(prev as CommandOutput<K> | undefined, event));
+      cache.setData(key, (prev) => foldRef.current(prev as CommandOutput<K> | undefined, event), {
+        supersedeInFlight: delivery === "snapshot",
+      });
     });
     return unsubscribe;
-  }, [bridge, cache, key, channel, subscriptionKey]);
+  }, [bridge, cache, key, channel, subscriptionKey, delivery]);
 }

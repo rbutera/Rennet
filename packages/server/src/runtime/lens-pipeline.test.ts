@@ -10,7 +10,12 @@ import {
   type LintTarget,
   selectPacketKnowledge,
 } from "@rennet/core";
-import type { DraftBoard, KnowledgeStatement, LensKind } from "@rennet/protocol";
+import {
+  type DraftBoard,
+  findingRefKey,
+  type KnowledgeStatement,
+  type LensKind,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import {
@@ -588,6 +593,54 @@ describe("renderDrafterPrompt — what the packet's knowledge field actually sho
     expect(prompt).toContain('"name":"token-refresh"');
     expect(prompt).toContain('"path":"openspec/changes/token-refresh/specs/auth/spec.md"');
     expect(prompt).toContain("The system SHALL refresh the token before classifying an error.");
+  });
+
+  it("inlines the exact durable ask identity and finding reference for a returned round", () => {
+    const prompt = renderDrafterPrompt(
+      "PROMPT_FILE:prompts/report.md",
+      PACKET,
+      undefined,
+      undefined,
+      boardOutputSchema(),
+      {
+        number: 3,
+        previousGeneration: "gen:ps-0",
+        previousFlaggedBoardId: "board:flagged:ps-0",
+        dispatchedAsks: [
+          {
+            id: 'finding:["gen:ps-0","board:flagged:ps-0","finding-auth"]',
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Keep the refresh inside the retry boundary.",
+            context: "",
+            finding: {
+              generation: "gen:ps-0",
+              boardId: "board:flagged:ps-0",
+              findingId: "finding-auth",
+            },
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: "WORKER_ONLY_DIFF",
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "same-head", to: "same-head" },
+        },
+      },
+    );
+
+    expect(prompt).toContain('"number":3');
+    expect(prompt).toContain(
+      '"id":"finding:[\\"gen:ps-0\\",\\"board:flagged:ps-0\\",\\"finding-auth\\"]"',
+    );
+    expect(prompt).toContain(
+      '"finding":{"generation":"gen:ps-0","boardId":"board:flagged:ps-0","findingId":"finding-auth"}',
+    );
+    expect(prompt).toContain('"diff":"WORKER_ONLY_DIFF"');
+    expect(prompt).toContain('"changedPaths":["src/auth.ts"]');
+    expect(prompt).toContain('"commitRange":{"from":"same-head","to":"same-head"}');
+    expect(prompt).not.toContain('"id":"d0"');
   });
 });
 
@@ -2606,6 +2659,327 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // Every LENS drafter prompt carried the round report as input.
     const lensPrompts = captures.filter((c) => c.prompt?.includes("design.md"));
     expect(lensPrompts.every((c) => c.prompt?.includes("roundReport"))).toBe(true);
+  });
+
+  it("composes verified round outcomes into Sequence before the board is persisted", async () => {
+    const applied: Applied[] = [];
+    const hostAuthor = { kind: "orchestrator" as const, id: "rennet:round-composition" };
+    const previousSequence = mkBoard([
+      {
+        id: "rennet:host:round-addressed:1:section",
+        kind: "section",
+        data: {
+          author: hostAuthor,
+          title: "Round 1 · Addressed",
+          children: ["rennet:host:round-addressed:1:0:prose"],
+        },
+      } as DraftBoard["elements"][number],
+      {
+        id: "rennet:host:round-addressed:1:0:prose",
+        kind: "prose",
+        data: { author: hostAuthor, markdown: "**First ask**\n\nFixed." },
+      } as DraftBoard["elements"][number],
+    ]);
+    const report = mkBoard([
+      {
+        id: "outcome-2",
+        kind: "round_outcome",
+        data: {
+          author: { kind: "lens-agent", id: "report-seat" },
+          status: "addressed",
+          ask: { ref: "ask-2", text: "Second ask" },
+          note: "The retry boundary now owns the refresh.",
+        },
+      } as DraftBoard["elements"][number],
+    ]);
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        if (lens === "report") return report;
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      // Legacy reviews can have durable AskLog asks without a reconstructed
+      // successorAccount. The explicit generation lineage still makes this a round.
+      deltaPacket: PACKET,
+      round: {
+        number: 2,
+        previousGeneration: "gen:ps-0",
+        dispatchedAsks: [
+          {
+            id: "ask-2",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Keep the refresh inside the retry boundary.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: "WORKER_ONLY_DIFF",
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "same-head", to: "same-head" },
+        },
+      },
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      previous: new Map([["sequence", previousSequence]]),
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find((outcome) => outcome.lens === "sequence")?.board;
+    const chapters = sequence?.elements.flatMap((element) =>
+      element.kind === "section" && element.id.startsWith("rennet:host:round-addressed:")
+        ? [element.data.title]
+        : [],
+    );
+    expect(chapters).toEqual(["Round 1 · Addressed", "Round 2 · Addressed"]);
+    const persistedSequence = applied.find(({ boardId }) => boardId === "board:sequence");
+    expect(JSON.stringify(persistedSequence?.ops)).toContain("Round 2 · Addressed");
+  });
+
+  it("uses one live disposition snapshot for Flagged composition and persistence", async () => {
+    const applied: Applied[] = [];
+    const persistedResolutionBatches: {
+      readonly currentGeneration: string;
+      readonly currentBoardId: string;
+      readonly resolutions: readonly unknown[];
+      readonly findingDispositions: unknown;
+    }[] = [];
+    const finding = {
+      generation: "gen:ps-0",
+      boardId: "board:flagged:ps-0",
+      findingId: "old-finding",
+    };
+    const liveFindingDispositions = {
+      [findingRefKey(finding)]: { finding, disposition: "dismissed" as const },
+    };
+    const section = (id: string, child: string): DraftBoard["elements"][number] => ({
+      id,
+      kind: "section",
+      data: { author: flaggedAuthor, title: "Findings", children: [child] },
+    });
+    const previousFlagged = mkBoard([
+      section("old-section", "old-finding"),
+      mkFinding("old-finding", "The retry can lose its terminal record.", ["old-code"]),
+      mkCodeRef("old-code", "src/auth.ts", 11, 12),
+    ]);
+    const currentFlagged: DraftBoard = {
+      document: {
+        title: "Retry accounting",
+        introMarkdown: "One finding requires attention.",
+        measure: "reading",
+      },
+      elements: [
+        section("new-section", "new-finding"),
+        mkFinding("new-finding", "The retry can lose its terminal record.", ["new-code"]),
+        mkCodeRef("new-code", "src/auth.ts", 11, 12),
+        mkFinding("orphan-finding", "A flat-pool orphan must not inflate the opening.", [
+          "orphan-code",
+        ]),
+        mkCodeRef("orphan-code", "src/auth.ts", 80, 81),
+      ],
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "flagged") return currentFlagged;
+        if (lens === "report") return cleanBody("report");
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: {
+        ...PACKET,
+        successorAccount: { asks: [], beyondAsks: [] },
+      },
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-0",
+        previousFlaggedBoardId: finding.boardId,
+        dispatchedAsks: [],
+        findingDispositions: {},
+      },
+      hunks: [] as LintHunk[],
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        files: new Map([["src/auth.ts", 200]]),
+      }),
+      previous: new Map<LintTarget, DraftBoard>([["flagged", previousFlagged]]),
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      readFindingDispositions: () => liveFindingDispositions,
+      persistFindingResolutions: (
+        currentGeneration,
+        currentBoardId,
+        resolutions,
+        findingDispositions,
+      ) => {
+        expect(applied.some(({ boardId }) => boardId === "board:flagged")).toBe(false);
+        persistedResolutionBatches.push({
+          currentGeneration,
+          currentBoardId,
+          resolutions,
+          findingDispositions,
+        });
+      },
+    });
+
+    const expectedResolution = {
+      kind: "reattached" as const,
+      finding,
+      currentFindingId: "new-finding",
+      match: "unique-semantic" as const,
+    };
+    const flagged = result.boards.find((outcome) => outcome.lens === "flagged");
+    expect(flagged?.findingResolutions).toEqual([expectedResolution]);
+    expect(result.findingResolutions).toEqual([expectedResolution]);
+    expect(flagged?.board?.elements.some((element) => element.id === "new-finding")).toBe(true);
+    expect(flagged?.board?.elements.some((element) => element.id === "orphan-finding")).toBe(true);
+    const flaggedSection = flagged?.board?.elements.find((element) => element.id === "new-section");
+    expect(flaggedSection?.kind === "section" ? flaggedSection.data.children : []).toEqual([]);
+    expect(flagged?.board?.document?.introMarkdown).toBe("No findings require attention.");
+    expect(persistedResolutionBatches).toEqual([
+      {
+        currentGeneration: "gen:ps-1",
+        currentBoardId: "board:flagged",
+        resolutions: [expectedResolution],
+        findingDispositions: liveFindingDispositions,
+      },
+    ]);
+    expect(persistedResolutionBatches[0]?.findingDispositions).toBe(liveFindingDispositions);
+  });
+
+  it("fails only Flagged before its write when the live disposition read throws", async () => {
+    const applied: Applied[] = [];
+    let persistenceCalls = 0;
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      round: {
+        number: 1,
+        // Same generation: isolate the Flagged failure boundary without drafting a report.
+        previousGeneration: "gen:ps-1",
+        dispatchedAsks: [],
+        findingDispositions: {},
+      },
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      readFindingDispositions: () => {
+        throw new Error("ask log read unavailable");
+      },
+      persistFindingResolutions: () => {
+        persistenceCalls += 1;
+      },
+    });
+
+    const flagged = result.boards.find((outcome) => outcome.lens === "flagged");
+    expect(flagged?.failure).toContain("ask log read unavailable");
+    expect(flagged?.board).toBeUndefined();
+    expect(applied.map(({ boardId }) => boardId)).toEqual([
+      "board:design",
+      "board:sequence",
+      "board:decisions",
+      "board:noise",
+    ]);
+    expect(
+      result.boards
+        .filter((outcome) => outcome.lens !== "flagged")
+        .every((outcome) => outcome.board !== undefined && outcome.failure === undefined),
+    ).toBe(true);
+    expect(persistenceCalls).toBe(0);
+  });
+
+  it("fails Flagged before its write when resolution persistence rejects", async () => {
+    const applied: Applied[] = [];
+    const finding = {
+      generation: "gen:ps-0",
+      boardId: "board:flagged:ps-0",
+      findingId: "finding",
+    };
+    const flaggedBoard = mkBoard([
+      {
+        id: "findings",
+        kind: "section",
+        data: { author: flaggedAuthor, title: "Findings", children: ["finding"] },
+      },
+      mkFinding("finding", "The retry can lose its terminal record.", ["code"]),
+      mkCodeRef("code", "src/auth.ts", 11, 12),
+    ]);
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "flagged") return flaggedBoard;
+        if (lens === "report") return cleanBody("report");
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: {
+        ...PACKET,
+        successorAccount: { asks: [], beyondAsks: [] },
+      },
+      round: {
+        number: 1,
+        previousGeneration: finding.generation,
+        previousFlaggedBoardId: finding.boardId,
+        dispatchedAsks: [],
+        findingDispositions: {
+          [findingRefKey(finding)]: { finding, disposition: "dismissed" },
+        },
+      },
+      hunks: [] as LintHunk[],
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        files: new Map([["src/auth.ts", 200]]),
+      }),
+      previous: new Map<LintTarget, DraftBoard>([["flagged", flaggedBoard]]),
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      persistFindingResolutions: () => {
+        throw new Error("ask log unavailable");
+      },
+    });
+
+    const expectedResolution = {
+      kind: "reattached" as const,
+      finding,
+      currentFindingId: finding.findingId,
+      match: "stable-id" as const,
+    };
+    const flagged = result.boards.find((outcome) => outcome.lens === "flagged");
+    expect(flagged?.failure).toContain("ask log unavailable");
+    expect(flagged?.board).toBeUndefined();
+    expect(flagged?.findingResolutions).toEqual([expectedResolution]);
+    expect(result.findingResolutions).toEqual([expectedResolution]);
+    expect(applied.some(({ boardId }) => boardId === "board:flagged")).toBe(false);
   });
 
   it("does NOT run the round-report on a first generation (no successor account)", async () => {

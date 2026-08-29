@@ -5,7 +5,7 @@
 // `wire.ts` (#376) — two session contracts, one folder seam.
 
 import { z } from "zod";
-import { AskLifecycleSchema, QuoteAnchorSchema } from "../board";
+import { AskLifecycleSchema, generationIdForPatchset, QuoteAnchorSchema } from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
@@ -102,10 +102,10 @@ export const SessionThreadSchema = z.union([
 export type SessionThread = z.infer<typeof SessionThreadSchema>;
 
 /**
- * A generation (#457): the boards for one review of one patchset,
- * append-then-freeze. Live boards are append-only logs; when the code moves,
- * the generation freezes immutable and a successor is minted — the successor
- * account compares N vs N+1.
+ * A generation (#457): one immutable visit to a review's boards over a patchset.
+ * `patchsetId` identifies the content; `id` distinguishes later visits to the same
+ * content. Live boards are append-only logs; when the code moves, the generation
+ * freezes immutable and a successor is minted — the successor account compares N vs N+1.
  */
 export const LensAbsenceReasonSchema = z.enum(["no-material"]);
 export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
@@ -115,6 +115,10 @@ export const GenerationSchema = z.object({
   patchsetId: id,
   /** Per-lens draft boards (L2), keyed by lens; present once drafted. */
   lensBoards: z.partialRecord(z.enum(LENS_KINDS), id),
+  /** Pre-minted ids for the one drafting attempt currently allowed to write BoardMeta. */
+  draftingBoardIds: z.partialRecord(z.enum(LENS_KINDS), id).optional(),
+  /** The current attempt's exact report slot. Presence does not claim the report drafted. */
+  draftingReportBoardId: id.optional(),
   /** Successful per-lens absences, distinct from a board that has not arrived yet. */
   absentLenses: z.partialRecord(z.enum(LENS_KINDS), LensAbsenceReasonSchema).optional(),
   /** The orchestrator-authored composition board (L3), once composed. */
@@ -131,6 +135,14 @@ export type Generation = z.infer<typeof GenerationSchema>;
  */
 export const ROUND_NO_REGEN = "no-regen";
 
+/** One exact staged-ask occurrence. Ask ids are reusable after unstage/restore, so the
+ * event sequence that last staged, restored, or edited the active ask is its revision. */
+export const AskOccurrenceSchema = z.object({
+  id,
+  revision: z.number().int().nonnegative(),
+});
+export type AskOccurrence = z.infer<typeof AskOccurrenceSchema>;
+
 /**
  * The rounds-ledger row (#462's #486 R57 ripple): what one work-order round
  * dispatched and what came back.
@@ -138,9 +150,19 @@ export const ROUND_NO_REGEN = "no-regen";
 export const RoundRecordSchema = z.object({
   /** Thread ids of the asks this round dispatched. */
   asksDispatched: z.array(id),
+  /** Stable identity for this exact dispatch occurrence. Optional for old ledgers. */
+  dispatchId: id.optional(),
+  /** Patchset the work order was built from. Optional for old ledgers. */
+  sourcePatchsetId: id.optional(),
+  /** Exact staged occurrences consumed by a successful round. Optional for old ledgers. */
+  askOccurrences: z.array(AskOccurrenceSchema).optional(),
+  /** Whether board regeneration still has to resume, or this completed turn changed no code. */
+  regeneration: z.enum(["pending", "not-needed"]).optional(),
   workerCommitRange: z.object({ from: id, to: id }),
   /** Generation minted from the worker's commits; absent if nothing landed. */
   mintedPatchsetGeneration: id.optional(),
+  /** Patchset the real board generation describes. Optional for old ledgers. */
+  resultPatchsetId: id.optional(),
   /** The FROZEN predecessor generation this round succeeded — the earlier generation the
    *  rounds ledger's `GenerationSwitcher` drills back to (C15, un-parks C09 finding F3).
    *  Present iff the code moved (a distinct id from `boardGeneration`); absent on a
@@ -178,6 +200,27 @@ export const RoundRecordSchema = z.object({
   changedPaths: z.array(z.string()).optional(),
 });
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
+
+/**
+ * Resolve the generation the default board surface should read.
+ *
+ * A completed real-generation ledger row is the durable current-generation mapping after
+ * a round, including after restart. `ROUND_NO_REGEN` rows changed no boards and are skipped.
+ * With no real row (an initial review, or an old empty ledger), the first visit retains its
+ * content-derived address so old stores and newly captured reviews continue to resolve.
+ */
+export function currentGenerationId(
+  records: readonly RoundRecord[],
+  activePatchsetId: string,
+): string {
+  const initial = generationIdForPatchset(activePatchsetId);
+  const latest = records.findLast((record) => record.boardGeneration !== ROUND_NO_REGEN);
+  if (latest?.resultPatchsetId === activePatchsetId) return latest.boardGeneration;
+  if (latest?.resultPatchsetId === undefined && latest?.boardGeneration === initial) {
+    return latest.boardGeneration;
+  }
+  return initial;
+}
 
 // ── Live round progress (C15 3.1) — the folded-progress wire ─────────────────
 //
@@ -267,6 +310,8 @@ export const RoundEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("report"), reportBoardId: id, seq }),
   z.object({ type: z.literal("lens"), lanes: z.array(LensLaneSchema), seq }),
   z.object({ type: z.literal("composed"), generation: id, seq }),
+  /** The worker completed but its checkpoint was empty, so no generation was regenerated. */
+  z.object({ type: z.literal("unchanged"), seq }),
   z.object({ type: z.literal("failed"), reason: z.string(), seq }),
 ]);
 export type RoundEvent = z.infer<typeof RoundEventSchema>;

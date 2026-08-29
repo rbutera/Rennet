@@ -33,7 +33,9 @@ saw.
 
 ## Append-then-freeze
 
-The boards for one review of one patchset are a **generation**. Inside a
+One visit to a review's boards over one patchset is a **generation**. Patchset
+identity is content identity, not visit identity: returning to the same patchset
+mints a new generation rather than reopening the frozen earlier visit. Inside a
 generation the boards are live append-only logs: re-running a lens appends, and
 board-native data on surviving element ids persists. When the code moves, the
 whole generation freezes immutable and a successor generation is minted. The

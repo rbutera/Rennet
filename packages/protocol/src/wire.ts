@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FindingRefSchema } from "./board/schema";
 import type { CommandInput, CommandName, CommandOutput } from "./commands";
 import type { RenderedHunkOccurrence } from "./delta/citations";
 import { anchorSideSchema, anchorSpanSchema, patchFileSchema } from "./delta/citations";
@@ -16,7 +17,7 @@ import type {
   UiVerification,
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
-import type { AttentionEventFrame, RoundEvent } from "./session";
+import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
 import { SessionTranscriptRowSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
@@ -2351,20 +2352,25 @@ export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 // `unknown[]`). The bundle's `z.ZodType<HandoffBundle>` annotation still catches a
 // task-shape drift through `tasks: z.array(handoffTaskSchema)`.
 export const handoffDispositionSchema = z.object({
+  /** Durable ask identity when this disposition came from the ask log. */
+  id: z.string().min(1).optional(),
   path: z.string().min(1),
   type: dispositionTypeSchema,
   body: z.string(),
   span: anchorSpanSchema.optional(),
   side: anchorSideSchema.optional(),
+  finding: FindingRefSchema.optional(),
 });
 
 const handoffTaskSchema = z.object({
+  id: z.string().min(1),
   path: z.string().min(1),
   type: dispositionTypeSchema,
   instruction: z.string(),
   span: anchorSpanSchema.optional(),
   side: anchorSideSchema.optional(),
   context: z.string(),
+  finding: FindingRefSchema.optional(),
 });
 
 export const handoffBundleSchema = z.object({
@@ -2428,6 +2434,7 @@ const composableAskSchema = z.object({
   side: anchorSideSchema.optional(),
   context: z.string(),
   id: z.string().min(1),
+  finding: FindingRefSchema.optional(),
 });
 
 const composedTaskSchema = z.object({
@@ -2786,9 +2793,9 @@ export type HandoffRunResult = z.infer<typeof handoffRunResultSchema>;
 /**
  * One addressable ask in a bundle — a `HandoffTask` given a stable `id` the
  * composition trace cites (issue #73 maps delta-review results back through it).
- * The id is the ask's ordinal in the mechanical bundle's DETERMINISTIC order, so
- * the same disposition set always yields the same ids; the ask itself rides
- * alongside, so an id always resolves to concrete path/anchor/body.
+ * Durable ask-log ids survive composition unchanged; legacy or colliding inputs
+ * receive a deterministic collision-free `dN` fallback. The ask itself rides
+ * alongside, so an id always resolves to concrete path/anchor/body/finding identity.
  */
 export type ComposableAsk = z.infer<typeof composableAskSchema>;
 /**
@@ -2858,6 +2865,12 @@ export interface RennetBridge {
    * channel omits it, and a subscriber degrades to the command's final resolved value.
    */
   onAskStream?(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /**
+   * Subscribe to the durable ask projection for a review. The server emits the full
+   * projection after every accepted ask-log write, including writes made by a completed
+   * round, so an open renderer reconciles without waiting for a reload.
+   */
+  onAskProjection?(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /**
    * Subscribe to a review's live ROUND progress (C15 3.1), keyed by `reviewId` — a slug
    * IS a review id, so the run route subscribes with the id it already holds, and the

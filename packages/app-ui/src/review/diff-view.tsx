@@ -17,7 +17,12 @@ import { useSearch } from "wouter";
 import { Icon } from "../components/icon";
 import { useFlightBatcher } from "../handoff/exit-flight";
 import { readSessionQuery } from "../routes/url";
-import { selectCodeComments, useRennetStore } from "../store";
+import {
+  codePositionKey,
+  selectCodeComments,
+  stagedAskCodePosition,
+  useRennetStore,
+} from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { fileStats, type Hunk, hunkHeader, numberLines, parsePatch } from "./diff-parse";
 import { LineCommentEditor } from "./line-comment-editor";
@@ -65,6 +70,8 @@ function StatSquares({ additions, deletions }: { additions: number; deletions: n
 
 export interface DiffViewProps {
   readonly files: readonly PatchFile[];
+  /** The active captured patchset. Absent only for legacy/test mounts and historical reads. */
+  readonly patchsetId?: string;
   /**
    * This surface is a HISTORICAL read — its line numbers are not the review's (#571).
    *
@@ -84,7 +91,7 @@ export interface DiffViewProps {
   readonly historical?: boolean;
 }
 
-export function DiffView({ files, historical = false }: DiffViewProps) {
+export function DiffView({ files, patchsetId, historical = false }: DiffViewProps) {
   const [filter, setFilter] = React.useState("");
   const [viewed, setViewed] = React.useState<Record<string, boolean>>({});
   const search = useSearch();
@@ -134,6 +141,7 @@ export function DiffView({ files, historical = false }: DiffViewProps) {
               <DiffFileCard
                 key={file.path}
                 file={file}
+                patchsetId={patchsetId}
                 historical={historical}
                 viewed={!!viewed[file.path]}
                 onViewedChange={(value) => setViewed((prev) => ({ ...prev, [file.path]: value }))}
@@ -241,11 +249,13 @@ function MaybeSelectionLayer({
 
 function DiffFileCard({
   file,
+  patchsetId,
   historical,
   viewed,
   onViewedChange,
 }: {
   file: PatchFile;
+  patchsetId?: string;
   historical: boolean;
   viewed: boolean;
   onViewedChange: (viewed: boolean) => void;
@@ -363,8 +373,15 @@ function DiffFileCard({
           <div className="overflow-x-auto">
             <div className="min-w-max font-mono text-xs leading-[1.7]">
               {hunks.map((hunk, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: hunks are a fixed positional list within the file.
-                <DiffHunkView key={i} hunk={hunk} path={file.path} historical={historical} />
+                <DiffHunkView
+                  // biome-ignore lint/suspicious/noArrayIndexKey: hunks are a fixed positional list within the file.
+                  key={i}
+                  hunk={hunk}
+                  path={file.path}
+                  basePath={file.previousPath ?? file.path}
+                  patchsetId={patchsetId}
+                  historical={historical}
+                />
               ))}
             </div>
           </div>
@@ -377,10 +394,14 @@ function DiffFileCard({
 function DiffHunkView({
   hunk,
   path,
+  basePath,
+  patchsetId,
   historical,
 }: {
   hunk: Hunk;
   path: string;
+  basePath: string;
+  patchsetId?: string;
   historical: boolean;
 }) {
   const comments = useRennetStore(selectCodeComments(path));
@@ -395,20 +416,16 @@ function DiffHunkView({
     () => lines.map((line) => tokenizeDiffLine(line.text, language)),
     [lines, language],
   );
-  // Same contract as CodeBlock: a staged request-change ask (anchor `${path}:${line}`)
-  // reads danger red; a plain comment reads evidence green.
-  const askLines = React.useMemo(() => {
-    const set = new Set<number>();
-    // Match by the ask's `anchor` (its provenance), never the map key (now the ask id, not anchor).
+  const askPositions = React.useMemo(() => {
+    const set = new Set<string>();
     for (const ask of Object.values(stagedAsks)) {
       if (ask.type !== "request-change") continue;
-      const colon = ask.anchor.lastIndexOf(":");
-      if (colon < 0 || ask.anchor.slice(0, colon) !== path) continue;
-      const line = Number.parseInt(ask.anchor.slice(colon + 1), 10);
-      if (!Number.isNaN(line)) set.add(line);
+      if (ask.codeRef !== undefined && ask.codeRef.patchsetId !== patchsetId) continue;
+      const position = stagedAskCodePosition(ask);
+      if (position !== null) set.add(codePositionKey(position));
     }
     return set;
-  }, [stagedAsks, path]);
+  }, [stagedAsks, patchsetId]);
 
   return (
     <div className="[container-type:inline-size]">
@@ -417,13 +434,20 @@ function DiffHunkView({
         <span>{hunkHeader(hunk)}</span>
       </div>
       {lines.map((line, i) => {
+        const rowSide = line.type === "del" ? ("LEFT" as const) : ("RIGHT" as const);
+        const rowLine = rowSide === "LEFT" ? line.oldLine : line.newLine;
+        const rowPath = rowSide === "LEFT" ? basePath : path;
         const commentLine = line.newLine;
         // The marks are read out of the SAME `path:line` keyspace the writes go into, so a
         // historical surface must not read them either: a live-diff comment at `foo.ts:42`
         // would paint line 42 of a past round's diff green over code it was never left on.
         // Wrong content under the right label, in the read direction (#571).
-        const hasComment = !historical && commentLine !== null && comments?.[commentLine] != null;
-        const hasAsk = !historical && commentLine !== null && askLines.has(commentLine);
+        const hasComment =
+          !historical && rowSide === "RIGHT" && rowLine !== null && comments?.[rowLine] != null;
+        const hasAsk =
+          !historical &&
+          rowLine !== null &&
+          askPositions.has(codePositionKey({ path: rowPath, line: rowLine, side: rowSide }));
         const isOpen = commentLine !== null && openLine === commentLine;
         // The row state a test reads (same vocabulary code-block exposes): a staged ask
         // wins (danger red), then a plain comment (evidence green), else the diff line kind.
@@ -432,7 +456,8 @@ function DiffHunkView({
           // biome-ignore lint/suspicious/noArrayIndexKey: hunk rows are a fixed positional list; the index is the line offset.
           <React.Fragment key={i}>
             <div
-              data-line={commentLine ?? ""}
+              data-line={rowLine ?? ""}
+              data-side={rowSide}
               data-line-state={state}
               className={cn(
                 "group flex min-h-[1.7em]",
@@ -530,12 +555,24 @@ function DiffHunkView({
                     // ask stages against `${path}:${line}` — the SAME object a board
                     // excerpt's editor writes (R36).
                     setCodeComment(path, commentLine, text);
-                    // Identity is `path:line` — one request-change per line (re-save replaces it).
+                    const side = "RIGHT" as const;
                     stageAsk({
-                      id: `${path}:${commentLine}`,
+                      id: codePositionKey({ path, line: commentLine, side }),
                       anchor: `${path}:${commentLine}`,
                       type: "request-change",
                       body: text,
+                      side,
+                      ...(patchsetId === undefined
+                        ? {}
+                        : {
+                            codeRef: {
+                              patchsetId,
+                              path,
+                              side: "head",
+                              startLine: commentLine,
+                              endLine: commentLine,
+                            },
+                          }),
                     });
                     flight.signal(); // the staging act flies one bubble to the FAB
                     setOpenLine(null);

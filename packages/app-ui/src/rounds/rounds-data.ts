@@ -281,6 +281,7 @@ export function useLiveRoundsSource(): RoundsSource {
   }
   useCommandStream({
     channel: "roundProgress",
+    delivery: "delta",
     subscriptionKey: reviewId,
     command: eventsCommand,
     fold: (prev, event) => {
@@ -345,9 +346,11 @@ export function useLiveRoundsSource(): RoundsSource {
         // fold this one onto its `composed` state. That is DISCARDING stale data, not
         // asserting a new fact — the log refills from the daemon's own `dispatched`.
         streamed.current = NO_EVENTS;
-        cache.setData(commandKey("session.roundEvents", { reviewId }), () => ({
-          events: [] satisfies RoundEvent[],
-        }));
+        cache.setData(
+          commandKey("session.roundEvents", { reviewId }),
+          () => ({ events: [] satisfies RoundEvent[] }),
+          { supersedeInFlight: true },
+        );
         setIntent({ slug: forSlug, status: "sending" });
         void mutate({ reviewId }).catch((reason: unknown) => {
           setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });

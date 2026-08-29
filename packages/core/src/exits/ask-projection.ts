@@ -11,12 +11,13 @@
 // Record keyed by identity (object equality ignores insertion order) and every
 // mutating kind's receipt restores the exact prior value.
 
-import type { AskEventBody, AskProjection } from "@rennet/protocol";
+import { type AskEventBody, type AskProjection, findingRefKey } from "@rennet/protocol";
 
 /** The empty projection — a fresh review, before any ask event. */
 export function emptyAskProjection(): AskProjection {
   return {
     stagedAsks: {},
+    findingDispositions: {},
     lineComments: {},
     quoteThreads: {},
     retired: {},
@@ -43,6 +44,21 @@ export function applyAskEvent(p: AskProjection, e: AskEventBody): AskProjection 
       return { ...p, stagedAsks: { ...p.stagedAsks, [e.ask.id]: e.ask } };
     case "unstage":
       return { ...p, stagedAsks: without(p.stagedAsks, e.id) };
+    case "finding-dismiss": {
+      const key = findingRefKey(e.finding);
+      return {
+        ...p,
+        findingDispositions: {
+          ...p.findingDispositions,
+          [key]: { finding: e.finding, disposition: "dismissed" },
+        },
+      };
+    }
+    case "finding-restore":
+      return {
+        ...p,
+        findingDispositions: without(p.findingDispositions, findingRefKey(e.finding)),
+      };
     case "edit": {
       const ask = p.stagedAsks[e.id];
       if (!ask) return p;
@@ -138,6 +154,18 @@ export function receiptFor(event: AskEventBody, prior: AskProjection): AskEventB
       // clearing, i.e. an unstage that is itself a no-op).
       const ask = prior.stagedAsks[event.id];
       return ask ? { kind: "stage", ask } : { kind: "unstage", id: event.id };
+    }
+    case "finding-dismiss": {
+      const priorDisposition = prior.findingDispositions[findingRefKey(event.finding)];
+      return priorDisposition
+        ? { kind: "finding-dismiss", finding: priorDisposition.finding }
+        : { kind: "finding-restore", finding: event.finding };
+    }
+    case "finding-restore": {
+      const priorDisposition = prior.findingDispositions[findingRefKey(event.finding)];
+      return priorDisposition
+        ? { kind: "finding-dismiss", finding: priorDisposition.finding }
+        : { kind: "finding-restore", finding: event.finding };
     }
     case "edit": {
       const ask = prior.stagedAsks[event.id];

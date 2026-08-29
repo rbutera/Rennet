@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-import type { AskProjection, CommandInput, ReattachResult } from "@rennet/protocol";
+import {
+  type AskProjection,
+  type CommandInput,
+  type CommandOutput,
+  findingRefKey,
+  type ReattachResult,
+} from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { reviewReattachKey, SessionTranscriptProvider } from "../chat/chat-data";
 import { ChatDock } from "../chat/chat-dock";
@@ -43,9 +49,34 @@ function AskLogBinding({ reviewId }: { readonly reviewId: string }) {
   return null;
 }
 
+const RECONCILE_FINDING = {
+  generation: "gen-2",
+  boardId: "board:flagged:gen-2",
+  findingId: "finding-1",
+} as const;
+
+function DismissFinding() {
+  const dismissFinding = useRennetStore((state) => state.reviewActions.dismissFinding);
+  return (
+    <button type="button" onClick={() => dismissFinding(RECONCILE_FINDING)}>
+      Dismiss finding
+    </button>
+  );
+}
+
+function UnstageAsk({ id }: { readonly id: string }) {
+  const unstageAsk = useRennetStore((state) => state.reviewActions.unstageAsk);
+  return (
+    <button type="button" onClick={() => unstageAsk(id)}>
+      Unstage ask
+    </button>
+  );
+}
+
 function emptyProjection(quoteThreads: AskProjection["quoteThreads"] = {}): AskProjection {
   return {
     stagedAsks: {},
+    findingDispositions: {},
     lineComments: {},
     quoteThreads,
     retired: {},
@@ -58,6 +89,147 @@ beforeEach(() => {
   useRennetStore.getState().reviewActions.resetReview();
 });
 afterEach(cleanup);
+
+describe("useAskLog write reconciliation", () => {
+  it("applies a server-authored projection while the review remains open", async () => {
+    const ask = {
+      id: "round-ask",
+      anchor: "src/a.ts:1",
+      type: "request-change" as const,
+      body: "Fix this in the next round.",
+    };
+    const bridge = new MemoryBridge({
+      "ask.read": () => ({
+        projection: { ...emptyProjection(), stagedAsks: { [ask.id]: ask } },
+      }),
+    });
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <AskLogBinding reviewId="review-1" />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(useRennetStore.getState().review.stagedAsks[ask.id]).toEqual(ask));
+
+    act(() => bridge.emitAskProjection("another-review", emptyProjection()));
+    expect(useRennetStore.getState().review.stagedAsks[ask.id]).toEqual(ask);
+
+    act(() => bridge.emitAskProjection("review-1", emptyProjection()));
+    await waitFor(() =>
+      expect(useRennetStore.getState().review.stagedAsks[ask.id]).toBeUndefined(),
+    );
+  });
+
+  it("applies a cleanup push held behind a local write even when the refresh fails", async () => {
+    const ask = {
+      id: "round-ask",
+      anchor: "src/a.ts:1",
+      type: "request-change" as const,
+      body: "Fix this in the next round.",
+    };
+    let reads = 0;
+    let resolveWrite!: (output: CommandOutput<"ask.dismissFinding">) => void;
+    const pendingWrite = new Promise<CommandOutput<"ask.dismissFinding">>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const bridge = new MemoryBridge({
+      "ask.read": () => {
+        reads += 1;
+        if (reads > 1) throw new Error("refresh unavailable");
+        return { projection: { ...emptyProjection(), stagedAsks: { [ask.id]: ask } } };
+      },
+      "ask.dismissFinding": () => pendingWrite,
+    });
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <AskLogBinding reviewId="review-1" />
+        <DismissFinding />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(useRennetStore.getState().review.stagedAsks[ask.id]).toEqual(ask));
+
+    await act(async () => view.user.click(view.getByText("Dismiss finding")));
+    act(() => bridge.emitAskProjection("review-1", emptyProjection()));
+    expect(useRennetStore.getState().review.stagedAsks[ask.id]).toEqual(ask);
+
+    await act(async () =>
+      resolveWrite({ receipt: { kind: "finding-restore", finding: RECONCILE_FINDING } }),
+    );
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(useRennetStore.getState().review.stagedAsks[ask.id]).toBeUndefined();
+  });
+
+  it("re-reads after a rejected write and removes the optimistic ghost", async () => {
+    let reads = 0;
+    let rejectWrite!: (error: Error) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    const bridge = new MemoryBridge({
+      "ask.read": () => {
+        reads += 1;
+        return { projection: emptyProjection() };
+      },
+      "ask.dismissFinding": () => pendingWrite,
+    });
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <AskLogBinding reviewId="review-1" />
+        <DismissFinding />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(reads).toBe(1));
+
+    await act(async () => view.user.click(view.getByText("Dismiss finding")));
+    const key = findingRefKey(RECONCILE_FINDING);
+    expect(useRennetStore.getState().review.findingDispositions[key]).toBeDefined();
+
+    await act(async () => rejectWrite(new Error("disk full")));
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    await waitFor(() =>
+      expect(useRennetStore.getState().review.findingDispositions[key]).toBeUndefined(),
+    );
+  });
+
+  it("re-reads after a successful write settles and trusts the durable projection", async () => {
+    const ask = {
+      id: "durable-ask",
+      anchor: "src/a.ts:1",
+      type: "request-change" as const,
+      body: "Keep the durable request.",
+    };
+    const projection: AskProjection = {
+      ...emptyProjection(),
+      stagedAsks: { [ask.id]: ask },
+    };
+    let reads = 0;
+    let resolveWrite!: (output: CommandOutput<"ask.unstage">) => void;
+    const pendingWrite = new Promise<CommandOutput<"ask.unstage">>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const bridge = new MemoryBridge({
+      "ask.read": () => {
+        reads += 1;
+        return { projection: { ...projection } };
+      },
+      "ask.unstage": () => pendingWrite,
+    });
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <AskLogBinding reviewId="review-1" />
+        <UnstageAsk id={ask.id} />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(useRennetStore.getState().review.stagedAsks[ask.id]).toEqual(ask));
+
+    await act(async () => view.user.click(view.getByText("Unstage ask")));
+    expect(useRennetStore.getState().review.stagedAsks[ask.id]).toBeUndefined();
+    expect(reads).toBe(1);
+
+    await act(async () => resolveWrite({ receipt: { kind: "stage", ask } }));
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    await waitFor(() => expect(useRennetStore.getState().review.stagedAsks[ask.id]).toEqual(ask));
+  });
+});
 
 describe("ReviewAnchoredAskProvider", () => {
   it("dispatches once on the existing thread and persists the real reply", async () => {

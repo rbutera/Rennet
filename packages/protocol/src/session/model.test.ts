@@ -95,11 +95,17 @@ describe("session/ durable shapes (#466/#457)", () => {
       id: "gen-1",
       patchsetId: "ps-1",
       lensBoards: { design: "board-d", noise: "board-n" },
+      draftingBoardIds: { sequence: "board-next-sequence" },
+      draftingReportBoardId: "board-next-report",
       absentLenses: { flagged: "no-material" },
       compositionBoardId: "board-c",
       status: "frozen",
     };
     expect(GenerationSchema.parse(generation).lensBoards.design).toBe("board-d");
+    expect(GenerationSchema.parse(generation).draftingBoardIds?.sequence).toBe(
+      "board-next-sequence",
+    );
+    expect(GenerationSchema.parse(generation).draftingReportBoardId).toBe("board-next-report");
     expect(GenerationSchema.parse(generation).absentLenses?.flagged).toBe("no-material");
     expect(
       GenerationSchema.safeParse({ ...generation, lensBoards: { spec: "board-s" } }).success,
@@ -112,14 +118,30 @@ describe("session/ durable shapes (#466/#457)", () => {
   it("parses a round record with and without a minted generation", () => {
     const round = {
       asksDispatched: ["th-1"],
+      dispatchId: "dispatch-1",
+      sourcePatchsetId: "ps-1",
+      askOccurrences: [{ id: "th-1", revision: 7 }],
+      regeneration: "pending",
       workerCommitRange: { from: "abc123", to: "def456" },
       mintedPatchsetGeneration: "gen-2",
       boardGeneration: "gen-1",
       reportBoard: "board-r",
     };
     expect(RoundRecordSchema.parse(round).reportBoard).toBe("board-r");
+    expect(RoundRecordSchema.parse(round).askOccurrences).toEqual([{ id: "th-1", revision: 7 }]);
     const unminted = { ...round, mintedPatchsetGeneration: undefined };
     expect(RoundRecordSchema.parse(unminted).mintedPatchsetGeneration).toBeUndefined();
+    const legacy = {
+      asksDispatched: ["th-1"],
+      workerCommitRange: { from: "abc123", to: "def456" },
+      boardGeneration: "gen-1",
+      reportBoard: "board-r",
+    };
+    expect(RoundRecordSchema.parse(legacy).dispatchId).toBeUndefined();
+    expect(
+      RoundRecordSchema.safeParse({ ...round, askOccurrences: [{ id: "th-1", revision: -1 }] })
+        .success,
+    ).toBe(false);
   });
 
   // ── The rework count (review finding 10) ──────────────────────────────────
@@ -182,6 +204,7 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(RoundEventSchema.parse({ type: "dispatched", seq: 4 }).seq).toBe(4);
     expect(RoundEventSchema.parse({ type: "dispatched" }).seq).toBeUndefined();
     expect(RoundEventSchema.safeParse({ type: "dispatched", seq: -1 }).success).toBe(false);
+    expect(RoundEventSchema.parse({ type: "unchanged" })).toEqual({ type: "unchanged" });
   });
 
   it("carries a frozen-predecessor id for a landed round, none for a first-generation round", () => {

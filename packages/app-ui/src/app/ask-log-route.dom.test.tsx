@@ -6,7 +6,7 @@
 // stopped binding the log. This is that seam, and only that: the route hydrates from
 // `ask.read`, and a mutator called on the singleton slice — the same call every staging
 // surface makes — reaches the bridge as the matching `ask.*` command under THIS review's id.
-import type { AskProjection, Review } from "@rennet/protocol";
+import { type AskProjection, findingRefKey, type Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
 import { BridgeProvider } from "../data";
@@ -18,6 +18,11 @@ import { MemoryBridge } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
 
 const REPO = "/home/dev/widget";
+const HELD_FINDING = {
+  generation: "gen:ps-1",
+  boardId: "board:flagged:ps-1",
+  findingId: "finding-held",
+};
 
 function reviewAt(id: string): Review {
   return {
@@ -39,6 +44,9 @@ const HELD: AskProjection = {
       body: "held by the daemon",
     },
   },
+  findingDispositions: {
+    [findingRefKey(HELD_FINDING)]: { finding: HELD_FINDING, disposition: "dismissed" },
+  },
   lineComments: { "src/a.ts": { "4": "held by the daemon" } },
   quoteThreads: {},
   retired: {},
@@ -47,6 +55,7 @@ const HELD: AskProjection = {
 
 const EMPTY: AskProjection = {
   stagedAsks: {},
+  findingDispositions: {},
   lineComments: {},
   quoteThreads: {},
   retired: {},
@@ -94,6 +103,9 @@ describe("the review route binds the durable ask log", () => {
     expect(useRennetStore.getState().review.codeComments["src/a.ts"]?.[4]).toBe(
       "held by the daemon",
     );
+    expect(
+      useRennetStore.getState().review.findingDispositions[findingRefKey(HELD_FINDING)],
+    ).toEqual({ finding: HELD_FINDING, disposition: "dismissed" });
     expect(useRennetStore.getState().review.verdictOverride).toBe("REQUEST_CHANGES");
   });
 

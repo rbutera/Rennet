@@ -7,6 +7,8 @@ import {
   DRAFT_KIND_SCHEMAS,
   DRAFT_OMITTED_KINDS,
   DraftElementSchema,
+  FindingRefSchema,
+  findingRefKey,
   HOST_KIND_SCHEMAS,
   HostBoardSchema,
   HostElementSchema,
@@ -175,6 +177,20 @@ const draftBoard = {
 
 const kindsOf = (union: typeof HostElementSchema): string[] =>
   union.options.map((o) => o.shape.kind.value as string).sort();
+
+describe("finding reference identity", () => {
+  it("requires the draft-attempt board and keys retries separately", () => {
+    const attemptA = { generation: "gen:ps-1", boardId: "board:flagged:a", findingId: "f-1" };
+    const attemptB = { ...attemptA, boardId: "board:flagged:b" };
+
+    expect(FindingRefSchema.safeParse(attemptA).success).toBe(true);
+    expect(
+      FindingRefSchema.safeParse({ generation: attemptA.generation, findingId: attemptA.findingId })
+        .success,
+    ).toBe(false);
+    expect(findingRefKey(attemptA)).not.toBe(findingRefKey(attemptB));
+  });
+});
 
 describe("host board schema (#462)", () => {
   it("parses a fixture exercising every one of the 13 kinds", () => {

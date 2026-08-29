@@ -1,9 +1,15 @@
+import type { CodeRef } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Icon } from "../components/icon";
 import { useFlightBatcher } from "../handoff/exit-flight";
-import { selectCodeComments, useRennetStore } from "../store";
+import {
+  codePositionKey,
+  selectCodeComments,
+  stagedAskCodePosition,
+  useRennetStore,
+} from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { useCodeDestination } from "./code-destination";
 import { LineCommentEditor } from "./line-comment-editor";
@@ -26,6 +32,10 @@ export interface CodeBlockProps {
   readonly startLine?: number;
   /** Absolute line numbers to call out as the lines under discussion (evidence green). */
   readonly highlightLines?: readonly number[];
+  /** Captured patchset identity when this block came from a citation. */
+  readonly patchsetId?: string;
+  /** The diff image this block renders. Code without explicit provenance defaults RIGHT. */
+  readonly side?: "LEFT" | "RIGHT";
   /**
    * The impl↔test counterpart jump (R41, #492), rendered right of Copy. `undefined`
    * uses the route provider, a value overrides it, and `null` suppresses it.
@@ -48,6 +58,8 @@ export function CodeBlock({
   path,
   startLine = 1,
   highlightLines,
+  patchsetId,
+  side = "RIGHT",
   counterpart,
   onOpenPath,
   className,
@@ -71,19 +83,17 @@ export function CodeBlock({
     [code, language],
   );
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines]);
-  // Lines with a staged request-change ask (anchor `${path}:${line}`) read danger red.
+  // Lines with a staged request-change ask at this exact side-qualified position read red.
   const askLines = useMemo(() => {
     const lines = new Set<number>();
-    // Match by the ask's `anchor` (its provenance), never the map key (now the ask id, not anchor).
     for (const ask of Object.values(stagedAsks)) {
       if (ask.type !== "request-change") continue;
-      const colon = ask.anchor.lastIndexOf(":");
-      if (colon < 0 || ask.anchor.slice(0, colon) !== path) continue;
-      const line = Number.parseInt(ask.anchor.slice(colon + 1), 10);
-      if (!Number.isNaN(line)) lines.add(line);
+      if (ask.codeRef !== undefined && ask.codeRef.patchsetId !== patchsetId) continue;
+      const position = stagedAskCodePosition(ask);
+      if (position?.path === path && position.side === side) lines.add(position.line);
     }
     return lines;
-  }, [stagedAsks, path]);
+  }, [stagedAsks, patchsetId, path, side]);
 
   const lineCount = tokenLines.length;
   const endLine = startLine + lineCount - 1;
@@ -156,7 +166,7 @@ export function CodeBlock({
           {tokenLines.map((lineTokens, i) => {
             const lineNumber = startLine + i;
             const isHighlighted = highlightSet.has(lineNumber);
-            const hasComment = comments?.[lineNumber] != null;
+            const hasComment = side === "RIGHT" && comments?.[lineNumber] != null;
             const hasAsk = askLines.has(lineNumber);
             const isOpen = openLine === lineNumber;
             const state = hasAsk
@@ -250,12 +260,24 @@ export function CodeBlock({
                         // A code line is a real diff position: the comment saves AND a
                         // request-change ask stages against `${path}:${line}` (R36).
                         setCodeComment(path, lineNumber, text);
-                        // Identity is `path:line` — one request-change per line (re-save replaces).
+                        const position = { path, line: lineNumber, side };
+                        const codeRef: CodeRef | undefined =
+                          patchsetId === undefined
+                            ? undefined
+                            : {
+                                patchsetId,
+                                path,
+                                side: side === "LEFT" ? "base" : "head",
+                                startLine: lineNumber,
+                                endLine: lineNumber,
+                              };
                         stageAsk({
-                          id: `${path}:${lineNumber}`,
+                          id: codePositionKey(position),
                           anchor: `${path}:${lineNumber}`,
                           type: "request-change",
                           body: text,
+                          side,
+                          ...(codeRef === undefined ? {} : { codeRef }),
                         });
                         flight.signal(); // the staging act flies one bubble to the FAB
                         setOpenLine(null);
