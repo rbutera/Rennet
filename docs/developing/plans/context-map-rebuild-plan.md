@@ -169,6 +169,18 @@ through `queryKnowledge` so invalidated and rejected statements are dropped
 passing). Retrieval sets the floor; exploration has no ceiling: every seat
 gets canvasOps so it can pull more context on demand.
 
+**W5b landed the retrieval half.** `selectPacketKnowledge`
+(`packages/core/src/delta/knowledge-scope.ts`) projects, scopes to the changed
+files' 1-hop import neighbourhood plus repo-level subjects, and caps at 80
+statements per list — with the mode, the store total, the in-scope total and the
+truncation count all disclosed in the packet, so a thinner input always says it
+is thinner. Degradation goes toward more, never silently less: no import graph
+gives the full projected set, no fresh snapshot gives the stored set marked
+explicitly unprojected. The same seam (`assembleRoundCollation`) now feeds
+`fanInIndexFromSnapshot` into the blast radius, so fan-in is an edge-backed
+count rather than a *not assessed* mark whenever the snapshot can answer. The
+exploration half — canvasOps on every seat — is W5a's.
+
 ### Un-hamstringing (same change, not a separate track)
 
 - Widen board-lint citation grounding from `patchset.files` to the full

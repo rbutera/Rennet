@@ -59,20 +59,57 @@ mutates review state.
 
 Lens drafters do not retrieve their primary input through tools.
 `buildDeltaPacket()` in `packages/core/src/delta/` assembles the drafters'
-entire input from durable state: the patchset's file inventory (with typed
+primary input from durable state: the patchset's file inventory (with typed
 mode-change evidence where the diff carries one), the hunk index with stable
 content-derived ids, blast-radius signals, deterministic noise
-pre-classification, test-to-implementation counterpart hints, the knowledge
-set, the bounded dossier, and — on re-review rounds — the successor account.
-The packet is inlined into drafting prompts rather than fetched mid-draft, so
-a drafter's evidence is pinned and reproducible. Facts that need the project
-snapshot stay honestly absent from the packet: fan-in carries an explicit
-not-assessed mark, ownership marks simply do not appear until dispatch
-supplies the rules, and openspec artifacts enter at path grain with the full
-parse running where the artifact text lives. The element differ lives in the
-same folder but feeds lineage carry and the successor account, not the packet
-directly. Raw payloads and follow-up questions stay behind the context tools
-above.
+pre-classification, test-to-implementation counterpart hints, a scoped
+knowledge selection, the bounded dossier, and — on re-review rounds — the
+successor account. The packet is inlined into drafting prompts rather than
+fetched mid-draft, so a drafter's evidence is pinned and reproducible.
+Ownership marks do not appear until dispatch supplies the rules, and openspec
+artifacts enter at path grain with the full parse running where the artifact
+text lives. The element differ lives in the same folder but feeds lineage carry
+and the successor account, not the packet directly. Raw payloads and follow-up
+questions stay behind the context tools above.
+
+The packet is inlined, but it is not a dump. When the composition root can gate
+a fresh project snapshot at the patchset's base OID,
+`assembleRoundCollation()` reads two snapshot-derived facts into it: the
+knowledge selection, and an edge-backed fan-in index for the blast radius.
+
+### The knowledge selection
+
+`selectPacketKnowledge()` chooses which statements a drafter is handed, in
+three steps, each of them disclosed in the packet:
+
+1. **Project.** Statements pass through `queryKnowledge` against the fresh
+   snapshot. A statement whose cited bytes the snapshot changed is carried in
+   `invalidatedPending` — disclosed, never mixed in with current claims. A
+   statement a human rejected is dropped from both lists; offering one back as
+   evidence would re-launder a claim its owner killed.
+2. **Scope.** The changed files plus their one-hop import neighbourhood in both
+   directions — what they import, and what imports them — form the retrieval
+   subgraph. A statement is kept when its subject or any evidence anchor lands
+   in that subgraph, or when it is repo-level: a subject that *contains* a
+   changed file rather than naming one, either as a path subtree
+   (`packages/core`) or as a workspace scope name (`@rennet/core`).
+3. **Cap.** At most 80 statements per list — the same number `context.ask` puts
+   in front of a model in one prompt, because it is the same consumer with the
+   same budget.
+
+Every degradation goes toward more context, never quietly less, and the packet
+says which one it got:
+
+| `mode` | What happened | What the drafter gets |
+|---|---|---|
+| `import-graph` | The snapshot's import graph resolved | The scoped one-hop subset |
+| `projected-full` | No usable import graph | The full projected set |
+| `unprojected` | No fresh snapshot at all | The stored set minus rejected, with invalidation explicitly unchecked |
+
+The packet's counts carry the rest of the honesty: how many statements exist in
+the store, how many the scope matched, how many the cap dropped, and how many
+rejections were honoured. A drafter that wants more than it was handed asks
+`context.ask` — the selection sets a floor, not a ceiling.
 
 ## The related-context dossier
 

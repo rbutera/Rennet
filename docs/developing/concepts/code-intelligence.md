@@ -80,11 +80,16 @@ in the stronger one's shape. `fanInIndexFromSnapshot` builds that index from a
 materialized snapshot, preferring the import graph and falling back to the
 identifier-reference index when the snapshot has no import shards.
 
-**Nothing consumes it yet.** The Delta packet builds its blast radius without a
-fan-in index, so the fan-in signal in a review today is marked *not assessed* — not
-zero, and not a textual count wearing an edge-backed label. Wiring the index into
-the packet is a later wave; until then the capability exists and the review does not
-use it.
+The Delta packet consumes it. When the composition root gates a fresh snapshot at
+the patchset's base OID, `assembleRoundCollation()` builds the index and the blast
+radius counts real dependents; the mark's own wording names the method that
+answered, so a textual count never reads as a proven import edge.
+
+The index is supplied only when the snapshot can genuinely answer the question. An
+`import-edges` index is populated by construction. A `textual` one is withheld when
+the snapshot carries no identifier-occurrence shards, because an empty index would
+answer *zero dependents* for every file and render as "checked, nothing depends on
+this". Without an index the mark stays *not assessed* — never a silent zero.
 
 ## Mapping eligibility
 
