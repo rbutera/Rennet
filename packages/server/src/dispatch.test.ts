@@ -1972,7 +1972,14 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
         body: "preserve the base-side contract",
       },
     ]);
-    expect(composed.bodyNotes).toEqual([{ type: "comment", body: "revisit the frozen concern" }]);
+    expect(composed.bodyNotes).toEqual([
+      {
+        id: "frozen",
+        anchor: "src/current.ts:999",
+        type: "comment",
+        body: "revisit the frozen concern",
+      },
+    ]);
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),

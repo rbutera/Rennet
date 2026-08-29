@@ -10,6 +10,7 @@ import type { Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount } from "../test/dom";
+import type { ReviewDraft } from "./handoff-data";
 import { type PostReceipt, PostReviewLane } from "./post-review-lane";
 import { selectExitPipCount } from "./selectors";
 
@@ -278,5 +279,75 @@ describe("PostReviewLane", () => {
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
     expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
+  });
+
+  it("renders each composed review-body note with its intent and source provenance", () => {
+    const draft = {
+      bodyNotes: [
+        {
+          id: "ask-overall",
+          anchor: "Design · Retry policy",
+          type: "comment",
+          body: "the policy matches its documented boundary",
+        },
+      ],
+      body: [],
+      lineGroups: [],
+      verdict: "COMMENT",
+      proposed: "COMMENT",
+      arithmetic: { requestChanges: 0, comments: 1 },
+      destination: "acme/orbital#7",
+    } as ReviewDraft;
+
+    const r = mount(<PostReviewLane review={review} draft={draft} />);
+
+    expect(r.getByText("Review Notes")).toBeTruthy();
+    expect(r.container.querySelector('[data-slot="badge"]')?.textContent).toBe("Comment");
+    expect(r.getByText("Design · Retry policy")).toBeTruthy();
+    expect(r.getByText("the policy matches its documented boundary")).toBeTruthy();
+  });
+
+  it("labels every composed review-body note with its exact disposition", () => {
+    const bodyNotes = [
+      {
+        id: "ask-approve",
+        anchor: "Source for Approve",
+        type: "approve",
+        body: "Approve body",
+      },
+      {
+        id: "ask-request-change",
+        anchor: "Source for Request Change",
+        type: "request-change",
+        body: "Request Change body",
+      },
+      {
+        id: "ask-comment",
+        anchor: "Source for Comment",
+        type: "comment",
+        body: "Comment body",
+      },
+      {
+        id: "ask-question",
+        anchor: "Source for Question",
+        type: "question",
+        body: "Question body",
+      },
+    ] satisfies ReviewDraft["bodyNotes"];
+    const draft: ReviewDraft = {
+      bodyNotes,
+      body: [],
+      lineGroups: [],
+      verdict: "REQUEST_CHANGES",
+      proposed: "REQUEST_CHANGES",
+      arithmetic: { requestChanges: 1, comments: 3 },
+      destination: "acme/orbital#7",
+    };
+
+    const r = mount(<PostReviewLane review={review} draft={draft} />);
+
+    expect(
+      [...r.container.querySelectorAll('[data-slot="badge"]')].map((badge) => badge.textContent),
+    ).toEqual(["Approve", "Request Change", "Comment", "Question"]);
   });
 });

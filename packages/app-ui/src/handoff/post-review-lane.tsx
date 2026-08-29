@@ -64,11 +64,18 @@ const VERDICT_LABEL: Record<ProposedVerdict, string> = {
   COMMENT: "Comment",
 };
 
+const INTENT_LABEL = {
+  approve: "Approve",
+  "request-change": "Request Change",
+  comment: "Comment",
+  question: "Question",
+} satisfies Record<DispositionKind, string>;
+
 function IntentTag({ type }: { type: DispositionKind }) {
   const requestChange = type === "request-change";
   return (
     <Badge variant={requestChange ? "destructive" : "secondary"} className="shrink-0">
-      {requestChange ? "Request Change" : "Comment"}
+      {INTENT_LABEL[type]}
     </Badge>
   );
 }
@@ -567,7 +574,35 @@ function ComposedReviewPreview({
           </p>
         )}
 
-        {/* Review body: the composed body comments (no line), read-only — these are the bytes. */}
+        {draft.bodyNotes.length > 0 && (
+          <div className="flex flex-col gap-4">
+            <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+              Review Notes
+            </span>
+            {draft.bodyNotes.map((note, index) => (
+              <div
+                key={note.id ?? `${note.anchor ?? "note"}-${index}`}
+                className="flex flex-col gap-1"
+              >
+                <span className="flex items-center gap-1.5">
+                  <IntentTag type={note.type} />
+                  {note.anchor !== undefined && (
+                    <span className="truncate text-2xs text-muted-foreground/80 italic">
+                      {note.anchor}
+                    </span>
+                  )}
+                </span>
+                <RichText
+                  text={note.body}
+                  patchsetId={patchsetId}
+                  paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Review body: the composed file-level comments, read-only — these are the bytes. */}
         <div className="flex flex-col gap-4">
           <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
             Review Body

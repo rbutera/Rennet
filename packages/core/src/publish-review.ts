@@ -97,13 +97,15 @@ export interface ReviewCommentInput {
  * One review-BODY note — the body stratum (B11 P0 finding 2). An ask with no diff position
  * (a prose/quote-of-board ask, or a path-only ask) cannot pin to a line, so it travels in
  * the review BODY rather than vanishing from the posted review (handoff-and-exits.md "The
- * review's two strata"). Carries only the outbound `type` + `body`; the source anchor is
- * provenance and never egresses. `anchor` is optional provenance for a deterministic sort.
+ * review's two strata"). Identity and source provenance travel with the canonical artifact so
+ * the signing surface can account for the note before it leaves.
  */
 export interface ReviewBodyNote {
+  /** Stable ask identity carried onto the signing surface. */
+  readonly id?: string;
   readonly type: DispositionType;
   readonly body: string;
-  /** Source provenance (the prose span / path) — used only to sort deterministically. */
+  /** Source provenance (the prose span / path), visible before signing. */
   readonly anchor?: string;
 }
 
@@ -135,11 +137,18 @@ export function canonicalReviewPayload(
       body: comment.body,
     })),
     // The `bodyNotes` field is OMITTED when empty (B11 finding 2), so a review with only
-    // line comments produces byte-identical bytes to the pre-finding payload — the ui-layer
-    // byte-pin (`reviewCommentsPayload`) stays valid until the client learns to send them.
+    // line comments preserves the pre-finding payload byte-for-byte. Body notes remain an
+    // additive canonical stratum for projected clients that compose them.
     ...(bodyNotes.length === 0
       ? {}
-      : { bodyNotes: bodyNotes.map((note) => ({ type: note.type, body: note.body })) }),
+      : {
+          bodyNotes: bodyNotes.map((note) => ({
+            ...(note.id === undefined ? {} : { id: note.id }),
+            ...(note.anchor === undefined ? {} : { anchor: note.anchor }),
+            type: note.type,
+            body: note.body,
+          })),
+        }),
   });
 }
 
@@ -305,7 +314,7 @@ export function reviewBodyNotesFromProjection(
   const notes: ReviewBodyNote[] = [];
   for (const ask of Object.values(projection.stagedAsks)) {
     if (askCodePosition(ask, activePatchset)) continue;
-    notes.push({ type: ask.type, body: ask.body, anchor: ask.anchor });
+    notes.push({ id: ask.id, type: ask.type, body: ask.body, anchor: ask.anchor });
   }
   return notes.sort((left, right) => {
     const la = left.anchor ?? "";

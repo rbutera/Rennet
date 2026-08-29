@@ -238,10 +238,12 @@ export const reviewCommentSchema = z.object({
  * One review-BODY note — the body stratum (B11 P0 finding 2, handoff-and-exits.md "The
  * review's two strata"). An ask with NO diff position (a prose/quote-of-board ask, or a
  * path-only ask) has no line to pin to, so it travels in the review BODY rather than
- * vanishing. Carries only its intent `type` + outbound `body`; the anchor is provenance
- * and does not egress.
+ * vanishing. `id` is the stable ask identity and `anchor` is the source provenance shown
+ * on the signing surface. Both are optional for compatibility with older projected clients.
  */
 export const reviewBodyNoteSchema = z.object({
+  id: z.string().min(1).optional(),
+  anchor: z.string().optional(),
   type: dispositionTypeSchema,
   body: z.string(),
 });

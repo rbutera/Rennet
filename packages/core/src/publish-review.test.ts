@@ -13,6 +13,7 @@ import {
   forgeTargetKey,
   handoffDispositionsFromProjection,
   markerComment,
+  type ReviewBodyNote,
   type ReviewCommentInput,
   reviewBodyNotesFromProjection,
   reviewCommentsFromDispositions,
@@ -63,6 +64,21 @@ describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", (
       { path: "a", line: 1, side: "RIGHT", type: "comment", body: "hellp" },
     ];
     expect(canonicalReviewPayload(base)).not.toBe(canonicalReviewPayload(flipped));
+  });
+
+  it("binds review-body-note identity and provenance into the canonical bytes", () => {
+    const note = {
+      id: "ask-overall",
+      anchor: "Design · Retry policy",
+      type: "comment",
+      body: "the policy matches its documented boundary",
+    } satisfies ReviewBodyNote;
+
+    const payload = canonicalReviewPayload([], [note]);
+    expect(JSON.parse(payload)).toEqual({ kind: "pr-review", comments: [], bodyNotes: [note] });
+    expect(payload).not.toBe(
+      canonicalReviewPayload([], [{ ...note, anchor: "Design · Failure policy" }]),
+    );
   });
 });
 
@@ -345,6 +361,7 @@ describe("handoffDispositionsFromProjection", () => {
     expect(reviewCommentsFromProjection(projection, activePatchset)).toEqual([]);
     expect(reviewBodyNotesFromProjection(projection, activePatchset)).toEqual([
       {
+        id: "frozen",
         type: "request-change",
         body: "revisit this concern",
         anchor: "src/current.ts:999",
