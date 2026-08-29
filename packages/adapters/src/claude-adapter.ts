@@ -12,6 +12,7 @@ import {
   type HarnessError,
   type HarnessEvent,
   type HarnessHealth,
+  type HarnessInProcessTool,
   type HarnessPort,
   type HarnessSession,
   METERED_API_KEY_SOURCES,
@@ -115,6 +116,8 @@ export interface ClaudeQueryOptions {
    * capability already delivered — do not read it as one.
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
+  /** App-owned tools mounted into this turn by the SDK composition root. */
+  readonly inProcessTools?: readonly HarnessInProcessTool[];
   readonly appendSystemPrompt?: string;
   /**
    * The harness session id to resume (B09 cursor-resume). The composition root
@@ -718,6 +721,7 @@ export class ClaudeAdapter implements HarnessPort {
       // carries it, so every session this harness creates would reach it. Nothing
       // configures it today — no loopback canvasOps server is stood up.
       ...(this.#config.mcpServers === undefined ? {} : { mcpServers: this.#config.mcpServers }),
+      ...(spec.inProcessTools === undefined ? {} : { inProcessTools: spec.inProcessTools }),
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }
         : {}),

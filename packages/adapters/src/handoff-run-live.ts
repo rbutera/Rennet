@@ -51,10 +51,12 @@ export function claudeHandoffRunPort(port: HarnessPort, model?: string): Handoff
         cwd: input.cwd,
         ...(model === undefined ? {} : { model }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
-        // A caller that supplies a delta sink is asking for deltas, so the
-        // partial-message stream is turned on exactly where it is wanted. The
-        // write-handoff caller passes no `onDelta` and its spec is unchanged.
-        ...(input.onDelta === undefined ? {} : { streamPartialText: true }),
+        ...(input.inProcessTools === undefined ? {} : { inProcessTools: input.inProcessTools }),
+        // Both observers consume normalized live frames. The SDK produces those
+        // frames only when partial messages are requested.
+        ...(input.onDelta === undefined && input.onEvent === undefined
+          ? {}
+          : { streamPartialText: true }),
       });
     } catch (error) {
       return {
@@ -65,6 +67,7 @@ export function claudeHandoffRunPort(port: HarnessPort, model?: string): Handoff
     try {
       await session.send({ prompt: input.prompt });
       for await (const event of session.events) {
+        input.onEvent?.(event);
         if (event.kind === "text.delta") input.onDelta?.(event.text);
         if (event.kind === "error") return { status: "failed", reason: event.error.message };
         if (event.kind === "session.ended") {

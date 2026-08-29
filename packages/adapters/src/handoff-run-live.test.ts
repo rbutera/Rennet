@@ -2,6 +2,7 @@ import type {
   HarnessDescriptor,
   HarnessEvent,
   HarnessHealth,
+  HarnessInProcessTool,
   HarnessPort,
   HarnessSession,
   SessionSpec,
@@ -79,6 +80,46 @@ describe("claudeHandoffRunPort", () => {
     const quiet = fakePort(events);
     await claudeHandoffRunPort(quiet.port)({ cwd: "/repo", prompt: "hi" });
     expect(quiet.lastSpec()?.streamPartialText).toBeUndefined();
+  });
+
+  it("forwards app tools and every normalized event in order", async () => {
+    const events: HarnessEvent[] = [
+      { kind: "thinking.delta", text: "considering" } as unknown as HarnessEvent,
+      {
+        kind: "tool.started",
+        toolCallId: "call-1",
+        toolName: "app_ask_stage",
+        toolKind: "other",
+        input: { askId: "ask-1" },
+      } as unknown as HarnessEvent,
+      {
+        kind: "tool.output",
+        toolCallId: "call-1",
+        output: '{"receipt":"once"}',
+        isError: false,
+      } as unknown as HarnessEvent,
+      endedEvent({ status: "completed", finalText: "staged" }),
+    ];
+    const tool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema: {},
+      run: async () => ({ receipt: "once" }),
+    };
+    const fake = fakePort(events);
+    const observed: HarnessEvent[] = [];
+
+    const outcome = await claudeHandoffRunPort(fake.port)({
+      cwd: "/repo",
+      prompt: "stage it",
+      inProcessTools: [tool],
+      onEvent: (event) => observed.push(event),
+    });
+
+    expect(outcome).toEqual({ status: "completed", finalText: "staged" });
+    expect(fake.lastSpec()?.inProcessTools).toEqual([tool]);
+    expect(fake.lastSpec()?.streamPartialText).toBe(true);
+    expect(observed).toEqual(events);
   });
 
   it("creates a session with the FULL default tool surface (no allowedTools narrowing, Bash included)", async () => {

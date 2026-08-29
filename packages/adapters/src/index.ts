@@ -40,9 +40,11 @@ export {
 export {
   type ClaudeHarnessDeps,
   type ClaudeHarnessResult,
+  type ClaudeSdkTooling,
   createClaudeHarness,
   createClaudeQueryFn,
   type LoadClaudeQuery,
+  type LoadClaudeTooling,
   toSdkOptions,
 } from "./claude-query";
 export { type CleanupWorktreeDeps, cleanupWorktree } from "./cleanup-worktree";

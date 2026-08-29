@@ -1,9 +1,10 @@
-import type { HarnessEvent } from "@rennet/core";
+import type { HarnessEvent, HarnessInProcessTool } from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import type { ClaudeQueryOptions } from "./claude-adapter";
 import { ClaudeAdapter } from "./claude-adapter";
 import {
   type ClaudeHarnessDeps,
+  type ClaudeSdkTooling,
   createClaudeHarness,
   createClaudeQueryFn,
   type LoadClaudeQuery,
@@ -243,6 +244,125 @@ describe("createClaudeQueryFn", () => {
     }
     expect(drained).toBe(0);
     expect(loaded).toBe(true); // iterating it does
+  });
+
+  it("mounts one in-process MCP server, preserves HTTP servers, and returns the durable result once", async () => {
+    const capturedParams: CapturedSdkParams[] = [];
+    const capturedTools: Array<{
+      name: string;
+      description: string;
+      inputSchema: unknown;
+      handler: (input: unknown) => Promise<unknown>;
+    }> = [];
+    const tooling: ClaudeSdkTooling = {
+      tool: (name, description, inputSchema, handler) => {
+        const definition = { name, description, inputSchema, handler };
+        capturedTools.push(definition);
+        return definition;
+      },
+      createSdkMcpServer: ({ name, tools }) => ({
+        type: "sdk",
+        name,
+        instance: { tools },
+      }),
+    };
+    let runs = 0;
+    const inputSchema = { safeParse: () => ({ success: true }) };
+    const appTool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema,
+      run: async (input) => {
+        runs += 1;
+        return { receipt: { kind: "unstage", input } };
+      },
+    };
+    const queryFn = createClaudeQueryFn(
+      fakeLoadQuery([], (params) => capturedParams.push(params)),
+      async () => tooling,
+    );
+
+    for await (const frame of queryFn({
+      prompt: "stage it",
+      options: baseOptions({
+        mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
+        inProcessTools: [appTool],
+      }),
+    })) {
+      // Drain the lazy query.
+      void frame;
+    }
+
+    expect(capturedTools).toHaveLength(1);
+    expect(capturedTools[0]).toMatchObject({
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema,
+    });
+    const result = await capturedTools[0]?.handler({ askId: "ask-1" });
+    expect(runs).toBe(1);
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            receipt: { kind: "unstage", input: { askId: "ask-1" } },
+          }),
+        },
+      ],
+    });
+    expect(capturedParams[0]?.options?.mcpServers).toMatchObject({
+      canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
+      "rennet-app": { type: "sdk", name: "rennet-app" },
+    });
+  });
+
+  it("rebuilds the in-process server per turn so removed registry tools disappear", async () => {
+    const capturedParams: CapturedSdkParams[] = [];
+    const tooling: ClaudeSdkTooling = {
+      tool: (name, description, inputSchema, handler) => ({
+        name,
+        description,
+        inputSchema,
+        handler,
+      }),
+      createSdkMcpServer: ({ name, tools }) => ({
+        type: "sdk",
+        name,
+        instance: { tools },
+      }),
+    };
+    const tool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema: {},
+      run: async () => ({ receipt: "once" }),
+    };
+    const queryFn = createClaudeQueryFn(
+      fakeLoadQuery([], (params) => capturedParams.push(params)),
+      async () => tooling,
+    );
+    const http = { canvasops: { url: "http://127.0.0.1:5000/mcp" } };
+
+    for await (const frame of queryFn({
+      prompt: "first",
+      options: baseOptions({ mcpServers: http, inProcessTools: [tool] }),
+    })) {
+      // Drain the first turn.
+      void frame;
+    }
+    for await (const frame of queryFn({
+      prompt: "second",
+      options: baseOptions({ mcpServers: http }),
+    })) {
+      // Drain the next turn after registry removal.
+      void frame;
+    }
+
+    expect(capturedParams[0]?.options?.mcpServers).toHaveProperty("rennet-app");
+    expect(capturedParams[1]?.options?.mcpServers).toEqual({
+      canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
+    });
   });
 });
 

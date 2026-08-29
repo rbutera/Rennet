@@ -2,6 +2,7 @@ import {
   createSeqCounter,
   type EnvelopeContext,
   type HarnessEvent,
+  type HarnessInProcessTool,
   isResumeVanished,
   type SessionOutcome,
 } from "@rennet/core";
@@ -427,6 +428,30 @@ describe("ClaudeAdapter session", () => {
     const session = await adapter.createSession({ cwd: "/repo" });
     await session.send({ prompt: "act" });
     expect(capturedArgs[0]?.options.mcpServers).toBeUndefined();
+  });
+
+  it("carries only the current session's in-process tools into query options", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const tool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema: {},
+      run: async () => ({ receipt: "once" }),
+    };
+
+    const withTool = await adapter.createSession({ cwd: "/repo", inProcessTools: [tool] });
+    await withTool.send({ prompt: "stage it" });
+    const afterRemoval = await adapter.createSession({ cwd: "/repo" });
+    await afterRemoval.send({ prompt: "what remains?" });
+
+    expect(capturedArgs[0]?.options.inProcessTools).toEqual([tool]);
+    expect(capturedArgs[1]?.options.inProcessTools).toBeUndefined();
   });
 
   it("streams text.delta from stream_event frames when the spec asks for partial text", async () => {
