@@ -22,6 +22,7 @@ import {
   routeDelta,
   runMapVerify,
   runPartitionWorker,
+  structuralChanges,
 } from "@rennet/core";
 import type {
   CouncilHarnessId,
@@ -320,6 +321,14 @@ export type KnowledgeSwarmOutcome =
       readonly failedPartitions: number;
       /** Batches answered from the journal instead of a model turn (#581). */
       readonly reusedPartitions: number;
+      /**
+       * Slices the partition-level rule would have re-run and the file-level rule did
+       * not: every changed file they own was a body-only edit (W4). A number, so the
+       * narration can say "N slices unchanged in structure, skipped" rather than
+       * quietly running fewer turns than the changed set implies. Always 0 on a full
+       * run — there is nothing to skip when nothing is carried.
+       */
+      readonly skippedCosmetic: number;
       /** Prior statements carried verbatim (incremental runs only). */
       readonly carried: number;
       readonly verify: MapVerifyResult;
@@ -475,6 +484,7 @@ export async function runKnowledgeSwarmForRepo(
   let slicesToRun: readonly PartitionSlice[] = partitions;
   let carried: readonly KnowledgeStatement[] = [];
   let reverify: readonly KnowledgeStatement[] = [];
+  let skippedCosmetic = 0;
   if (prior) {
     const git = deps.git ?? execaGit;
     let changed: string[];
@@ -498,7 +508,31 @@ export async function runKnowledgeSwarmForRepo(
       ...snapshot,
       files: priorPaths.map((path) => ({ path, blobOid: "" })),
     });
-    slicesToRun = routeDelta(partitions, changed, priorPartitions);
+    // THE SIGNATURE DIFF (W4). Routing is given the STRUCTURAL subset of the changed
+    // set, so a body-only edit costs no worker turn. The prior snapshot is loaded
+    // through the same fail-closed gate; when it will not materialize — never built,
+    // evicted, corrupt — there is nothing to compare against and `structuralChanges`
+    // is handed `null`, which returns the changed set whole. Fewer turns is a saving
+    // only when it is provably the same map; unprovable means run it.
+    const priorSnapshot = deps.reader.loadFresh(deps.repoKey, prior.baseOid);
+    const structural = structuralChanges(
+      changed,
+      gated.snapshot,
+      priorSnapshot.ok ? priorSnapshot.snapshot : null,
+    );
+    slicesToRun = routeDelta(partitions, structural, priorPartitions);
+    // What the partition-level rule would have run, minus what the file-level rule
+    // does — computed, not inferred, because "3 slices ran" and "3 slices ran and 9
+    // were structurally unchanged" are different reports of the same run.
+    skippedCosmetic =
+      structural.length === changed.length
+        ? 0
+        : routeDelta(partitions, changed, priorPartitions).length - slicesToRun.length;
+    // `changed`, NOT `structural`: re-anchoring is driven by blobOids moving, and a
+    // cosmetic edit moves them. A statement citing a body-only edit still gets its
+    // anchors re-stamped and still reaches the verify seat flagged; what it does not
+    // do is re-run its slice's worker. Narrowing this to `structural` would leave
+    // statements anchored to bytes that no longer exist.
     const plan = planReverify(prior, changed, snapshot.files);
     carried = plan.carried;
     // `plan.invalidated` (evidence entirely gone) is deliberately NOT carried and
@@ -710,6 +744,7 @@ export async function runKnowledgeSwarmForRepo(
     totalPartitions: partitions.length,
     failedPartitions: 0,
     reusedPartitions,
+    skippedCosmetic,
     carried: carried.length,
     verify: verifyResult,
   };

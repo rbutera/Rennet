@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
 import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTRACT tests for the real council-routed path (reconciliation 5): the swarm
@@ -51,8 +52,29 @@ const SNAPSHOT = {
   load: () => undefined,
 } as unknown as LoadedSnapshot;
 
+/**
+ * The same two files at the PRIOR baseline, with `a/one.ts` at different bytes.
+ *
+ * A reader that answered the same snapshot for every OID would make the W4 signature
+ * diff see one blobOid on both sides of the delta and call the change cosmetic — a
+ * fixture lying its way into "nothing to do". The prior snapshot has no symbol shards
+ * either (see {@link SNAPSHOT}), so the diff cannot read a signature for either blob
+ * and falls back to structural, which is the honest verdict for "we cannot tell".
+ */
+const PRIOR_SNAPSHOT = {
+  ...SNAPSHOT,
+  manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint: "fp-0" },
+  files: [
+    { path: "a/one.ts", blobOid: "blob-a0" },
+    { path: "b/two.ts", blobOid: "blob-b1" },
+  ],
+} as unknown as LoadedSnapshot;
+
 const READER = {
-  loadFresh: () => ({ ok: true as const, snapshot: SNAPSHOT }),
+  loadFresh: (_repoKey: string, oid: string) => ({
+    ok: true as const,
+    snapshot: oid === "oid-0" ? PRIOR_SNAPSHOT : SNAPSHOT,
+  }),
 };
 
 const scratch: string[] = [];
@@ -441,6 +463,57 @@ describe("knowledge swarm — prior-set identity", () => {
     const carriedStatement = saved[0]?.statements.find((s) => s.id === "prior-b");
     expect(carriedStatement).toEqual(PRIOR_B_STATEMENT);
     if (outcome.status === "ok") expect(outcome.carried).toBe(1);
+  });
+
+  it("an unreadable PRIOR snapshot routes every change; a readable one classifies it", async () => {
+    // The W4 fail-safe at the live seam, with its own control beside it. Both runs see
+    // the same git diff and the same current snapshot. The only difference is whether
+    // the prior snapshot can be read — and it is deliberately a snapshot that says
+    // "cosmetic" (identical blobOids), so a run that could read it spends no turn and
+    // a run that could not must spend one rather than assume.
+    const git: GitExec = async (_root, args) => {
+      if (args[0] === "diff") return "a/one.ts\0";
+      if (args[0] === "ls-tree") return "a/one.ts\0b/two.ts\0";
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    };
+    const run = async (
+      loadFresh: (repoKey: string, oid: string) => LoadFreshResult,
+    ): Promise<{
+      turns: number;
+      outcome: Awaited<ReturnType<typeof runKnowledgeSwarmForRepo>>;
+    }> => {
+      const captures: CodexExecRequest[] = [];
+      const { store } = storeWithPrior(priorSet());
+      const outcome = await runKnowledgeSwarmForRepo({
+        reader: { loadFresh },
+        knowledgeStore: store,
+        claudePort: fakeClaudePort([], verifyBody),
+        codexExecutor: fakeCodexExecutor(captures, workerBody),
+        repoKey: "repo",
+        repoRoot: "/repo",
+        baseOid: "oid-1",
+        git,
+      });
+      return { turns: captures.length, outcome };
+    };
+
+    const refused = await run((_repoKey, oid) =>
+      oid === "oid-0"
+        ? { ok: false as const, failure: { reason: "absent" as const } }
+        : { ok: true as const, snapshot: SNAPSHOT },
+    );
+    expect(refused.turns).toBe(1);
+    if (refused.outcome.status === "ok") expect(refused.outcome.skippedCosmetic).toBe(0);
+
+    // The control: served the identical prior, the same change is cosmetic and costs
+    // nothing — so the turn above is the fail-safe firing, not the diff being inert.
+    const served = await run(() => ({ ok: true as const, snapshot: SNAPSHOT }));
+    expect(served.turns).toBe(0);
+    expect(served.outcome.status).toBe("ok");
+    if (served.outcome.status === "ok") {
+      expect(served.outcome.ranPartitions).toBe(0);
+      expect(served.outcome.skippedCosmetic).toBe(1);
+    }
   });
 
   it("a git failure is a FAILED pass the scheduler retries, never a silent skip", async () => {

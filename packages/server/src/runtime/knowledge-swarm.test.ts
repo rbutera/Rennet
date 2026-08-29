@@ -89,6 +89,7 @@ describe("knowledgeOutcomeLine", () => {
         totalPartitions: 1,
         failedPartitions: 0,
         reusedPartitions: 0,
+        skippedCosmetic: 0,
         carried: 0,
         verify: {
           status: "ok",

@@ -158,6 +158,19 @@ their batch's worker. `routeDelta` sharpens from partition-level to
 file-level routing. Given how much agent-written churn is body-level, this is
 where the steady-state token bill collapses.
 
+**W4 built it and measured it.** The diff compares the two snapshots' symbol
+shards (exported name + kind, plus the generated bit; lines excluded as
+cosmetic by definition), every unanswerable case falls to structural, and
+`routeDelta` is handed the structural subset so a slice re-runs only for a
+structural member. On Rennet's last 100 non-merge commits — 457 changed files —
+54% of files classify cosmetic and **17 of the 100 commits route zero slices**,
+advancing the baseline for no model turns. Two ceilings are stated rather than
+implied: the extractor sees exports only (so an internal-only change reads as
+cosmetic, and a file that exports nothing — most test files — is cosmetic on
+every edit), and it reads TypeScript/JavaScript only (so a markdown or JSON edit
+is structural and pays its slice's turn). Full detail in
+[Code intelligence](../concepts/code-intelligence.md).
+
 ### Consumption
 
 The whole-set inlining into `DeltaPacket`

@@ -382,8 +382,12 @@ keeping the two places apart: the live `knowledge.json` is written once, when th
 set is whole. A partial set never presents as complete, however much of it is
 journaled.
 
-The journal is one directory **per target**, and a promotion clears only its own
-plus any target directory untouched for a day. Two runs can be in flight at once
+The journal is one directory **per target** — named for a hash of the base OID,
+the snapshot fingerprint and the generator id together, not for the OID alone,
+since a re-extraction and a prompt rework at one OID are different questions and
+sharing a directory would let either one's promotion clear the other's completed
+turns. A promotion clears only its own directory, plus any target directory
+untouched for a day. Two runs can be in flight at once
 — the background watcher is single-flight with itself, but the review-open
 knowledge kick is not coordinated with it — and a recursive clear would let the
 first to promote destroy the other's completed turns. For the same reason the
@@ -404,6 +408,68 @@ retains a project's background narration above the screen that shows it, so a
 failure that happened while the reader was elsewhere is still there when they
 open the project — a run is never silently absent, and never visible only to
 whoever was watching.
+
+### Refresh: what a change costs
+
+Content addressing already answers *unchanged* for free — a blob whose OID did not
+move is never re-extracted and never re-mapped. What is left is the changed set,
+and most of it is body churn: a rewritten function, an added branch, a fixed
+comment. None of that alters what a file **exports**, which is the skeleton its
+worker was fed and what its statements are about.
+
+So the changed set is split before it reaches routing. Each changed path is
+compared across the two snapshots' symbol shards — the exported symbols by name
+and kind, plus the generated-banner bit, with line numbers deliberately excluded
+because everything below an inserted line moves and says nothing about structure.
+A file whose signature is identical is **cosmetic** and routes no worker; anything
+else is **structural** and routes as it always did. A slice re-runs when at least
+one of its changed members is structural, so routing is file-level rather than
+partition-level, and the run reports how many slices it skipped for being
+structurally unchanged.
+
+Every "we cannot tell" lands on structural, because a needless turn is the cheap
+error and a skipped one is invisible:
+
+| case | verdict |
+| --- | --- |
+| added or deleted | structural |
+| same blob on both sides | cosmetic |
+| a language the symbol extractor does not read | structural |
+| a symbol shard missing or unreadable on either side | structural |
+| the generated-banner bit moved | structural |
+| a symbol added, removed, renamed, or re-kinded | structural |
+| identical symbols, different lines or bodies | cosmetic |
+
+Statements are unaffected by this split. Re-anchoring still keys on the blob
+moving, so a body-only edit re-stamps every statement anchored in that file and
+sends it to the verify seat flagged. What the split governs is which slices spend
+a **model turn**, not which statements are re-verified — deliberately different
+questions, and conflating them would leave claims anchored to bytes that no longer
+exist.
+
+Two ceilings, both structural to the approach rather than bugs in it:
+
+- **Exports only.** The extractor reads top-level exported declarations, so a
+  rewritten private helper reads as cosmetic — including every edit to a file that
+  exports nothing at all, which is most test files. That is the right answer for
+  what a statement about the file's surface can assert, and the wrong answer for a
+  claim about an internal mechanism. Such a claim's anchors still moved, so it is
+  re-anchored and flagged; what is genuinely lost is the chance to *mint* a new
+  statement about the internal change. Widening that needs a deeper extractor, not
+  a finer diff.
+- **TypeScript and JavaScript only.** Every other file gets a shard carrying
+  `symbols: []`, which is indistinguishable from an unchanged TS file with no
+  exports — so a markdown, JSON, Python or SQL edit is classified structural and
+  re-runs its slice's worker rather than being guessed at.
+
+**Measured on Rennet's last 100 non-merge commits** (457 changed files, using the
+same `structural-ts-v1` extractor the shard family runs): 245 files (54%)
+classify as cosmetic, and **17 of the 100 commits would route zero slices** — a
+baseline advance for no model turns at all. 114 of those 245 are files with an
+empty signature on both sides, 105 of them test files; excluding those, 131 files
+(29%) are real export surfaces that a commit touched without moving. The figure
+counts files and whole commits, not slices: a commit with one structural file
+still runs whichever slices own it.
 
 ## Current scope
 

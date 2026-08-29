@@ -53,7 +53,15 @@ function write(root: string, path: string, content: string): void {
   writeFileSync(full, content);
 }
 
-/** A two-scope workspace repo; commit 2 changes exactly ONE file in `b`. */
+/**
+ * A two-scope workspace repo; commit 2 changes exactly ONE file in `b`.
+ *
+ * That change ADDS AN EXPORT, deliberately. Since the W4 signature diff a value-only
+ * edit (`b = 1` → `b = 2`) is COSMETIC and routes no worker at all, so a fixture like
+ * that would leave every "the owning partition re-ran" assertion below asserting
+ * about a run that ran nothing. The cosmetic case has its own test; this one is the
+ * structural advance.
+ */
 function workspaceRepo(): { root: string; storeDir: string; oid1: string; oid2: string } {
   const root = mkdtempSync(join(tmpdir(), "rennet-swarm-e2e-"));
   const storeDir = mkdtempSync(join(tmpdir(), "rennet-swarm-store-"));
@@ -70,7 +78,7 @@ function workspaceRepo(): { root: string; storeDir: string; oid1: string; oid2: 
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "one");
   const oid1 = git(root, "rev-parse", "HEAD");
-  write(root, "packages/b/src/index.ts", "export const b = 2;\n");
+  write(root, "packages/b/src/index.ts", "export const b = 1;\nexport const bTwo = 2;\n");
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "two");
   const oid2 = git(root, "rev-parse", "HEAD");
@@ -99,8 +107,13 @@ function slicePathsFrom(prompt: string): string[] {
  * schema) answers one statement citing its slice's first file; the verify turn
  * answers no verdicts and no cross-cutting statements. `failFor` makes the
  * worker owning that path throw instead (the partial-failure arm).
+ *
+ * `mintEveryFile` widens the worker to one statement per slice MEMBER. The default
+ * cites only the first, which is enough for coverage and carry, but leaves most files
+ * with no statement at all — so a test that needs to watch a SPECIFIC file's anchors
+ * move has nothing to watch unless that file happened to sort first in its slice.
  */
-function stubPort(workerPrompts: string[], failFor?: string): HarnessPort {
+function stubPort(workerPrompts: string[], failFor?: string, mintEveryFile = false): HarnessPort {
   return {
     createSession: async (options: { outputSchema?: unknown }): Promise<HarnessSession> => {
       const isWorker = options.outputSchema === PARTITION_WORKER_OUTPUT_SCHEMA;
@@ -120,18 +133,17 @@ function stubPort(workerPrompts: string[], failFor?: string): HarnessPort {
               };
               return;
             }
-            const paths = slicePathsFrom(prompt);
+            const all = slicePathsFrom(prompt);
+            const paths = mintEveryFile ? all : all.slice(0, 1);
             const body = isWorker
               ? {
-                  statements: [
-                    {
-                      subject: paths[0] ?? "unknown",
-                      aspect: "purpose",
-                      claim: `stub knowledge about ${paths[0]}`,
-                      confidence: "high",
-                      evidence: [{ path: paths[0] }],
-                    },
-                  ],
+                  statements: (paths.length === 0 ? [undefined] : paths).map((path) => ({
+                    subject: path ?? "unknown",
+                    aspect: "purpose",
+                    claim: `stub knowledge about ${path}`,
+                    confidence: "high",
+                    evidence: [{ path }],
+                  })),
                 }
               : { verdicts: [], crossCutting: [] };
             yield {
@@ -237,7 +249,10 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     expect(carriedChecked).toBeGreaterThan(0);
 
     // ── Run 3: injected partial failure keeps the prior store ───────────────
-    write(root, "packages/a/src/index.ts", "export const a = 3;\n");
+    // Structural again (a new export), so a worker for `a` genuinely runs and the
+    // injected failure has something to fail — a value-only edit here would route
+    // zero slices and the run would succeed with nothing to fail.
+    write(root, "packages/a/src/index.ts", "export const a = 1;\nexport const aThree = 3;\n");
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "three");
     const oid3 = git(root, "rev-parse", "HEAD");
@@ -259,6 +274,163 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     // the BYTES, so a rewrite that happened to reproduce an equal set would still show.
     expect(readFileSync(storePath, "utf8")).toBe(before);
     expect(knowledgeStore.loadLocal(repoKey)).toEqual(run2.set);
+  });
+
+  // ── Refresh sharpening (W4), through the LIVE caller ──────────────────────
+
+  it("a body-only edit costs ZERO worker turns, and its statements still re-anchor", async () => {
+    // The steady-state case the sharpening exists for: an agent rewrites a function
+    // body, the file's exports are exactly what they were, and the batch's worker has
+    // nothing new to say about them. The control is the fourth commit below — the
+    // SAME file, at the same place in the same run, with an export added.
+    const { root, storeDir, oid2 } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid2 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const run1 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([], undefined, true),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(run1.status).toBe("ok");
+    if (run1.status !== "ok") return;
+    const bStatement = run1.set.statements.find((statement) =>
+      statement.evidence.some((anchor) => anchor.path === "packages/b/src/index.ts"),
+    );
+    expect(bStatement).toBeDefined();
+    const priorBlob = bStatement?.evidence[0]?.blobOid;
+    expect(priorBlob).toBeTruthy();
+
+    // A BODY-ONLY edit: same declared exports, different values and a new line.
+    write(
+      root,
+      "packages/b/src/index.ts",
+      "// a comment\nexport const b = 7;\nexport const bTwo = 8;\n",
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "cosmetic");
+    const oid3 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid3 });
+
+    const cosmeticPrompts: string[] = [];
+    const run2 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(cosmeticPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid3,
+    });
+    expect(run2.status).toBe("ok");
+    if (run2.status !== "ok") return;
+    // NO worker turn ran — not "fewer", none — and the outcome says so as a number.
+    expect(cosmeticPrompts).toEqual([]);
+    expect(run2.ranPartitions).toBe(0);
+    expect(run2.skippedCosmetic).toBe(1);
+
+    // …and the reverify channel did its job regardless: the statement about that file
+    // is anchored to the NEW bytes, with the fresh id that follows from them. This is
+    // the half the sharpening must not break — a skipped worker turn is a saving, a
+    // statement left pointing at bytes that no longer exist is a lie.
+    const inventory = reader.loadFresh(repoKey, oid3);
+    expect(inventory.ok).toBe(true);
+    if (!inventory.ok) return;
+    const currentBlob = inventory.snapshot.files.find(
+      (file) => file.path === "packages/b/src/index.ts",
+    )?.blobOid;
+    expect(currentBlob).toBeTruthy();
+    expect(currentBlob).not.toBe(priorBlob);
+    const reAnchored = run2.set.statements.filter((statement) =>
+      statement.evidence.some((anchor) => anchor.path === "packages/b/src/index.ts"),
+    );
+    expect(reAnchored.length).toBeGreaterThan(0);
+    for (const statement of reAnchored)
+      for (const anchor of statement.evidence)
+        if (anchor.path === "packages/b/src/index.ts") expect(anchor.blobOid).toBe(currentBlob);
+    // The stored set is at the new baseline: the advance completed, for free.
+    expect(knowledgeStore.loadLocal(repoKey)?.baseOid).toBe(oid3);
+
+    // ── The control: the SAME file, one export added ────────────────────────
+    write(
+      root,
+      "packages/b/src/index.ts",
+      "// a comment\nexport const b = 7;\nexport const bTwo = 8;\nexport const bThree = 9;\n",
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "structural");
+    const oid4 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid4 });
+
+    const structuralPrompts: string[] = [];
+    const run3 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(structuralPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid4,
+    });
+    expect(run3.status).toBe("ok");
+    if (run3.status !== "ok") return;
+    expect(structuralPrompts).toHaveLength(1);
+    expect(structuralPrompts[0]).toContain("packages/b/src/index.ts");
+    expect(run3.skippedCosmetic).toBe(0);
+  });
+
+  it("a non-TS edit re-runs its slice — the extractor ceiling, at the live caller", async () => {
+    // The honest fallback, end to end: a markdown shard says `symbols: []` on both
+    // sides of the edit, exactly like an unchanged TypeScript file with no exports.
+    // The signature diff refuses to read that as "unchanged" and pays the turn.
+    const { root, storeDir, oid2 } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid2 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const first = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([]),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(first.status).toBe("ok");
+
+    write(root, "README.md", "# t\n\nA sentence the extractor cannot read.\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "docs");
+    const oid3 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid3 });
+
+    const prompts: string[] = [];
+    const run = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid3,
+    });
+    expect(run.status).toBe("ok");
+    if (run.status !== "ok") return;
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("README.md");
+    expect(run.skippedCosmetic).toBe(0);
   });
 
   // ── Cross-tier delta routing, through the LIVE caller ─────────────────────
