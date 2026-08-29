@@ -114,10 +114,14 @@ describe("the rounds ledger (C09 cluster 6)", () => {
         gate: { outcome: "skipped", reason: "not-configured" },
       },
     };
+    const completedRun = completedRoundRecord.run;
+    if (completedRun === undefined) {
+      throw new Error("completed round fixture is missing a run receipt");
+    }
     const newer: RoundLedgerRecord = {
       ...completedRoundRecord,
       run: {
-        ...completedRoundRecord.run!,
+        ...completedRun,
         startedAt: Date.UTC(2026, 7, 29, 9, 30),
       },
     };

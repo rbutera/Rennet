@@ -134,11 +134,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const greetingRecordIndex = roundRecords.findLastIndex(
     (record) => record.reportBoard === reportBoardId,
   );
+  const greetingRecord = greetingRecordIndex < 0 ? undefined : roundRecords[greetingRecordIndex];
   const greetingReceipt =
-    greetingRecordIndex < 0
+    greetingRecord === undefined
       ? undefined
       : {
-          record: roundRecords[greetingRecordIndex]!,
+          record: greetingRecord,
           roundNumber: greetingRecordIndex + 1,
         };
   // A report phase is one that HAS a report to greet with. A round with no successor

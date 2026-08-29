@@ -13,8 +13,7 @@ Author the board-level document on every return. `document.title` names the
 verified change in concrete terms. Put a short account of the verified change
 and its outcomes in `document.introMarkdown`; do not repeat it as a prose
 element. Rennet renders the exact round number, source target, and gate receipt
-from host-owned data separately, so never infer or repeat those facts. Set
-`document.measure` to `reading`.
+from host-owned data separately, so never infer or repeat those facts. Set `document.measure` to `reading`.
 
 ## What you receive
 
