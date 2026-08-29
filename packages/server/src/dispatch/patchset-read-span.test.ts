@@ -171,6 +171,16 @@ describe("patchset.readSpan — served from the captured patchset, over real dis
     ).rejects.toThrow(
       /src\/cheese\.ts line 20 \(head\) is outside the diff this patchset captured/,
     );
+
+    // Both branches of the phrasing, because `test/memory-bridge.ts` documents the
+    // difference between them as its reason for NOT copying the daemon's wording. A
+    // singular span reads "line 20"; a range names the whole span AND the first line that
+    // failed, so a reviewer citing 18–24 learns which end of it fell outside the capture.
+    await expect(
+      dispatch("patchset.readSpan", ref({ startLine: 18, endLine: 24 })),
+    ).rejects.toThrow(
+      "src/cheese.ts lines 18–24 (head) is outside the diff this patchset captured — line 18 was never part of it.",
+    );
   });
 
   it("distinguishes an uncaptured file, a binary file, and an unknown patchset", async () => {
