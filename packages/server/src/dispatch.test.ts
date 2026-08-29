@@ -15,6 +15,7 @@ import {
   type ForgeReviewEvent,
   type ForgeReviewPost,
   type HandoffRunPort,
+  type HarnessEvent,
   type PatchsetCapturePort,
   type ReviewCommentInput,
   type ReviewEvent,
@@ -225,7 +226,9 @@ function harness(
         review: Review;
         question: string;
         onDelta?: (text: string) => void;
-        selection?: { anchor: string; excerpt?: string };
+        onEvent?: (event: HarnessEvent) => void;
+        selection?: { anchor: string; excerpt?: string; target?: string; generation?: string };
+        turnId?: string;
         onFocus?: (anchor: string) => void;
       }) => Promise<AskAnswer>
     >(async () => ({ model: "Orchestrator · Claude", answer: "orchestrator's answer" })),
@@ -2918,6 +2921,135 @@ describe("createDispatch — review.ask token streaming (issue #251)", () => {
     expect(events.every((e) => e.turnId === "tn" && e.threadId === "th")).toBe(true);
     expect(out.primary.answer).toBe("Hello world");
     // The delta events precede the completion.
+    expect(events.at(-1)?.kind).toBe("ask-complete");
+  });
+
+  it("streams and persists the normalized prose-tool-prose order as one stable turn", async () => {
+    const { dispatch, reviewAsk, threadPersistence, review } = await openReview();
+    const event = (seq: number, body: object): HarnessEvent =>
+      ({
+        seq,
+        harness: "claude-code",
+        sessionId: "harness-session",
+        turnId: "native-turn",
+        receivedAt: Date.parse("2026-08-29T10:00:00.000Z") + seq,
+        native: {},
+        ...body,
+      }) as HarnessEvent;
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onEvent }) => {
+      onEvent?.(event(1, { kind: "text.message", text: "Before.", parentToolCallId: null }));
+      onEvent?.(
+        event(2, {
+          kind: "tool.started",
+          call: {
+            id: "tool-1",
+            name: "app_ask_stage",
+            input: { sessionId: "session-1" },
+            parentToolCallId: null,
+            kind: "mcp",
+          },
+        }),
+      );
+      onEvent?.(
+        event(3, {
+          kind: "tool.output",
+          callId: "tool-1",
+          ok: true,
+          output: { receipt: "once" },
+          text: '{"receipt":"once"}',
+        }),
+      );
+      onEvent?.(event(4, { kind: "text.message", text: "After.", parentToolCallId: null }));
+      onEvent?.(
+        event(5, {
+          kind: "session.ended",
+          outcome: { status: "completed", finalText: "Before.\n\nAfter." },
+        }),
+      );
+      return { model: "Orchestrator · Claude", answer: "Before.\n\nAfter." };
+    });
+    const events: ReviewAskStreamEvent[] = [];
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "stage it",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "fragment", label: "stage it", key: "th" },
+      },
+      { emitAskStream: (streamEvent) => events.push(streamEvent) },
+    );
+
+    const states = events.filter((streamEvent) => streamEvent.kind === "ask-state");
+    const last = states.at(-1);
+    if (last?.kind !== "ask-state") throw new Error("expected an ask-state");
+    const turn = last.rows.find((row) => row.kind === "turn");
+    if (turn?.kind !== "turn") throw new Error("expected a turn row");
+    expect(turn.id).toBe("tn::orchestrator");
+    expect(turn.blocks?.map((block) => block.kind)).toEqual(["text", "action", "text"]);
+
+    const messages = threadPersistence.putMessage.mock.calls.map(
+      ([input]) => (input as { message: { id: string; rows?: readonly unknown[] } }).message,
+    );
+    expect(messages.filter((message) => message.id === "tn::orchestrator").at(-1)?.rows).toEqual(
+      last.rows,
+    );
+  });
+
+  it("coalesces delta-heavy activity and forces one complete terminal snapshot", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    const event = (seq: number, body: object): HarnessEvent =>
+      ({
+        seq,
+        harness: "claude-code",
+        sessionId: "harness-session",
+        turnId: "native-turn",
+        receivedAt: Date.parse("2026-08-29T10:00:00.000Z") + seq,
+        native: {},
+        ...body,
+      }) as HarnessEvent;
+    const prose = "x".repeat(50);
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onDelta, onEvent }) => {
+      for (let seq = 1; seq <= 50; seq += 1) {
+        onEvent?.(event(seq, { kind: "thinking.delta", text: "thought " }));
+      }
+      for (let seq = 51; seq <= 100; seq += 1) {
+        onDelta?.("x");
+        onEvent?.(event(seq, { kind: "text.delta", text: "x" }));
+      }
+      onEvent?.(
+        event(101, {
+          kind: "session.ended",
+          outcome: { status: "completed", finalText: prose },
+        }),
+      );
+      return { model: "Orchestrator · Claude", answer: prose };
+    });
+    const events: ReviewAskStreamEvent[] = [];
+
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "show the work",
+        threadId: "th",
+        turnId: "tn",
+      },
+      { emitAskStream: (streamEvent) => events.push(streamEvent) },
+    );
+
+    expect(events.filter((streamEvent) => streamEvent.kind === "ask-delta")).toHaveLength(50);
+    const states = events.filter((streamEvent) => streamEvent.kind === "ask-state");
+    expect(states).toHaveLength(1);
+    const terminalState = states[0];
+    if (terminalState?.kind !== "ask-state") throw new Error("expected an ask-state");
+    const turn = terminalState.rows.find((row) => row.kind === "turn");
+    if (turn?.kind !== "turn") throw new Error("expected a turn row");
+    expect(turn.status).toBe("complete");
+    expect(turn.blocks?.map((block) => block.kind)).toEqual(["thought", "text"]);
     expect(events.at(-1)?.kind).toBe("ask-complete");
   });
 
