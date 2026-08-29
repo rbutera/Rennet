@@ -267,6 +267,13 @@ hunks renders as an honest "unimplemented".
   path and line span. In board prose, backticked terms render monospace and
   `path:line` citations are interactive — clicking one reveals the real
   cited lines inline.
+- A revealed citation is served from the **captured patchset's own patch
+  text** (`patchset.readSpan`), never from the working tree. Two consequences
+  follow. A review whose repository has since moved or been deleted still
+  reveals every citation, because the content was captured. And a patchset
+  carries only its hunks, so a citation into a region the diff never showed
+  cannot be served — the surface says which absence it hit ("outside the diff
+  this patchset captured") rather than rendering an empty block.
 - Multi-site evidence (a decision's excerpts) renders as one tabbed code
   viewer: quiet pill tabs, one visible code block card.
 - A finding is document flow, not a boxed card: severity and claim title,

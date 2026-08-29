@@ -117,6 +117,13 @@ class InMemoryStore implements ReviewStorePort {
   reviewById(reviewId: string): Review | null {
     return this.#byId.get(reviewId) ?? null;
   }
+  patchsetById(patchsetId: string): Patchset | null {
+    for (const review of this.#byId.values()) {
+      const found = review.patchsets.find((patchset) => patchset.id === patchsetId);
+      if (found) return found;
+    }
+    return null;
+  }
   receipt(commandId: string, digest: string): Review | null {
     return this.#receipts.get(`${commandId}:${digest}`) ?? null;
   }

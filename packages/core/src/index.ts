@@ -144,6 +144,19 @@ export interface ReviewStorePort {
   latestReview(repositoryRoot?: string): Review | null;
   /** A specific review by id, independent of which repository is most recent. */
   reviewById(reviewId: string): Review | null;
+  /**
+   * The immutable patchset with this id, from whichever review captured it — or `null`
+   * when this store has never seen it.
+   *
+   * A patchset id addresses a patchset ACROSS reviews, and some callers hold nothing
+   * else: a board `code_ref` element carries `patchset_id` and no review id (`board/`'s
+   * wire shape), so `patchset.readSpan` can only resolve its citation through a lookup
+   * keyed on the patchset alone. Patchsets are immutable, so the answer does not depend
+   * on which review is asked — but it is deliberately NOT derived from "the latest
+   * review": a citation into an older patchset must resolve to that patchset's content,
+   * never to whatever the newest capture happens to hold at the same path.
+   */
+  patchsetById(patchsetId: string): Patchset | null;
   receipt(commandId: string, digest: string): Review | null;
   commit(commandId: string, digest: string, events: ReviewEvent[], result: Review): Review;
 }
@@ -252,23 +265,17 @@ export function isRepoRelativePath(path: string): boolean {
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 /**
- * The exact side-text at a 1-based FILE-LINE span (issue #78). `side` selects
- * the image the span reads: `additions`/`context` → the post-image (new-file)
- * lines; `deletions` → the pre-image (old-file) lines. Walks the unified
- * `@@ -a,b +c,d @@` hunks of `file.patch`, mapping each body line to its file
- * line number on the chosen image, and returns the joined source text of the
- * span's lines (prefix stripped), or `undefined` when any requested line is out
- * of bounds / the side has no such line / the file has no such image. Registrar-
- * independent — it never consults a CodeView occurrence ordinal (#84-clean).
+ * Every line of one image of `file`, keyed by its 1-based FILE line number, read out
+ * of the captured unified diff (`file.patch`) — never a working tree. `additions`/
+ * `context` select the post-image (new-file numbering); `deletions` the pre-image
+ * (old-file numbering). Context lines live in both images and so appear either way.
+ *
+ * The map is SPARSE by construction: a patch carries only its hunks, so a line the
+ * diff never showed simply has no entry. That absence is a fact about the capture,
+ * not a failure — callers report it rather than guessing (`extractSpanText` returns
+ * `undefined`; `patchset.readSpan` says which lines are outside the captured diff).
  */
-export function extractSpanText(
-  file: PatchFile,
-  span: AnchorSpan,
-  side: AnchorSide,
-): string | undefined {
-  const start = span.startLine;
-  const end = span.endLine ?? start;
-  if (start < 1 || end < start) return undefined;
+export function sideLinesByFileLine(file: PatchFile, side: AnchorSide): Map<number, string> {
   // Post-image (additions/context) is keyed by new-file line; pre-image
   // (deletions) by old-file line. Both accumulate context lines, which live in
   // both images.
@@ -301,6 +308,28 @@ export function extractSpanText(
     }
     // Any other line (e.g. "\ No newline at end of file") advances nothing.
   }
+  return byLine;
+}
+
+/**
+ * The exact side-text at a 1-based FILE-LINE span (issue #78). `side` selects
+ * the image the span reads: `additions`/`context` → the post-image (new-file)
+ * lines; `deletions` → the pre-image (old-file) lines. Walks the unified
+ * `@@ -a,b +c,d @@` hunks of `file.patch`, mapping each body line to its file
+ * line number on the chosen image, and returns the joined source text of the
+ * span's lines (prefix stripped), or `undefined` when any requested line is out
+ * of bounds / the side has no such line / the file has no such image. Registrar-
+ * independent — it never consults a CodeView occurrence ordinal (#84-clean).
+ */
+export function extractSpanText(
+  file: PatchFile,
+  span: AnchorSpan,
+  side: AnchorSide,
+): string | undefined {
+  const start = span.startLine;
+  const end = span.endLine ?? start;
+  if (start < 1 || end < start) return undefined;
+  const byLine = sideLinesByFileLine(file, side);
   const out: string[] = [];
   for (let n = start; n <= end; n += 1) {
     const text = byLine.get(n);
@@ -1021,6 +1050,16 @@ export class ReviewService {
    */
   reviewById(reviewId: string): Review | null {
     return this.store.reviewById(reviewId);
+  }
+
+  /**
+   * Read a persisted patchset by id — the pure read behind `patchset.readSpan`, whose
+   * input (a `CodeRef`) names a patchset and no review. Appends nothing; null for an
+   * unknown id. See {@link ReviewStorePort.patchsetById} for why the lookup is keyed on
+   * the patchset rather than resolved through a review.
+   */
+  patchsetById(patchsetId: string): Patchset | null {
+    return this.store.patchsetById(patchsetId);
   }
 
   private requireReview(reviewId: string): Review {

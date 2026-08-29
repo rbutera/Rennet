@@ -115,6 +115,13 @@ export { CoverageMosaicView } from "./components/coverage";
 // `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
 export { DirectoryBrowser } from "./components/directory-browser";
 export { FrontDoor } from "./components/front-door";
+// The data seam's provider. A host mounts app-ui surfaces inside it and every read in
+// the tree resolves through that one bridge; it is exported so a host outside this
+// package (the desktop app, and its integration tests) can supply a real bridge to a
+// single surface without standing up the whole router shell. Only the PROVIDER is
+// public — `useCommand`/`useMutation` stay internal, so no consumer can invoke around
+// the seam.
+export { BridgeProvider } from "./data";
 // The hand-off layer (C08, #489): the review's leaving surfaces — the exit FAB + derived pip,
 // the mode-dispatched hand-off view, and the egress-return / draft types the exits speak. See
 // `handoff/index.ts`.

@@ -11,14 +11,14 @@ import {
   noiseBoard,
   sequenceBoard,
 } from "../../test/fixtures/boards";
-import { MemoryBridge } from "../../test/memory-bridge";
+import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../../test/memory-bridge";
 import { BoardElement, BoardElementsProvider } from "./index";
 
 // Cluster 3's registry, exercised over the cluster-1 fixture boards — their union is
 // arranged to cover every board kind. Each renderer stamps a `data-kind` marker (its
 // distinctive DOM), so rendering the whole set proves the map is total in practice, not
-// just at the type level. Citations hydrate through the span-read seam; an empty
-// MemoryBridge stands in for unbound dispatch, so a code_ref reads the honest error.
+// just at the type level. Citations hydrate through the span-read seam; the stub refuses
+// the way the daemon refuses an uncaptured span, so a code_ref reads that exact reason.
 
 const ALL_BOARDS: readonly LensBoard[] = [
   designBoard,
@@ -49,7 +49,7 @@ beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
 function renderBoard(board: LensBoard) {
   const unique = [...new Map(board.elements.map((el) => [el.id, el])).values()];
   return mount(
-    <BridgeProvider bridge={new MemoryBridge({})}>
+    <BridgeProvider bridge={new MemoryBridge({ "patchset.readSpan": refusesSpanRead })}>
       <BoardElementsProvider elements={board.elements}>
         {unique.map((el) => (
           <BoardElement key={el.id} element={el} />
@@ -73,12 +73,13 @@ describe("board kind renderers over the fixture set", () => {
     for (const kind of BOARD_KINDS) expect(present.has(kind)).toBe(true);
   });
 
-  it("surfaces the honest error line for a code_ref unreadable from the captured patchset", async () => {
+  it("surfaces the daemon's OWN refusal for a code_ref it cannot read", async () => {
     // A decision's evidence renders through CodeTabs, which hydrates its active citation
-    // on mount; with no dispatch handler the seam returns error, rendered as one line.
+    // on mount; a refusing dispatch returns error, and the reviewer reads the reason the
+    // daemon gave rather than a fixed sentence the surface made up.
     const { getAllByText } = renderBoard(designBoard);
     await waitFor(() =>
-      expect(getAllByText(/is not readable from the captured patchset/).length).toBeGreaterThan(0),
+      expect(getAllByText(new RegExp(SPAN_OUTSIDE_CAPTURE)).length).toBeGreaterThan(0),
     );
   });
 

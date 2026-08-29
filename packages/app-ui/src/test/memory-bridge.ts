@@ -178,3 +178,33 @@ export class MemoryBridge implements RennetBridge {
     this.#updateReady.emit(info);
   }
 }
+
+/**
+ * A `patchset.readSpan` that refuses in the same SHAPE as the real daemon — a rejection
+ * carrying a specific, path-bearing reason — for the surfaces that must render an
+ * unreadable citation honestly.
+ *
+ * Shape, deliberately not wording. The daemon says `line 20` for a single-line span and
+ * `lines 20–24` for a range; this always says `lines 20–20`. That divergence is the point,
+ * not an oversight: if this stub reproduced the daemon's sentence exactly, the app-ui tests
+ * and the handler could drift into agreeing with each other, and a wrong sentence would
+ * look verified from both ends. The daemon's actual wording is pinned ONCE, against the
+ * real handler over real dispatch, in `apps/desktop/src/citation-span.integration.test.tsx`.
+ * Here the only claim is the one these surfaces owe: whatever reason the daemon gives, the
+ * reviewer sees THAT reason — so a test asserts this stub's own sentence reaches the DOM.
+ *
+ * Written as a stub that rejects rather than as a MISSING handler, because the two prove
+ * different things. A missing handler makes `MemoryBridge` reject with its own "no handler
+ * for command" text — a fact about the test harness, not about the product — and asserting
+ * a fixed surface line against it let the unbound-dispatch defect (`patchset.readSpan`
+ * throwing in the shipped app for two workstreams) sit behind four green tests that all
+ * read as coverage.
+ */
+export const SPAN_OUTSIDE_CAPTURE = "is outside the diff this patchset captured";
+
+/** The refusing handler itself — hand it to a MemoryBridge as `"patchset.readSpan"`. */
+export const refusesSpanRead: CommandHandler<"patchset.readSpan"> = (input) => {
+  throw new Error(
+    `${input.path} lines ${input.startLine}–${input.endLine} (${input.side}) ${SPAN_OUTSIDE_CAPTURE}.`,
+  );
+};

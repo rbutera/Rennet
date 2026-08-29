@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { foldReview, type ReviewEvent, type ReviewStorePort } from "@rennet/core";
-import type { Review } from "@rennet/protocol";
+import type { Patchset, Review } from "@rennet/protocol";
 
 interface ReceiptRow {
   payload_digest: string;
@@ -58,6 +58,26 @@ export class SqliteReviewStore implements ReviewStorePort {
       review = foldReview(review, event);
     }
     return review;
+  }
+
+  patchsetById(patchsetId: string): Patchset | null {
+    // Read the patchset straight off the event that carried it, rather than folding a
+    // whole review: `ReviewCreated` and `PatchsetActivated` are the only two events that
+    // introduce one, and a patchset is immutable, so the event payload IS the stored
+    // patchset. `ORDER BY seq DESC LIMIT 1` picks a single row when the same patchset was
+    // activated twice (a re-capture that folds to the identical id) — same content either
+    // way. json_extract is SQLite's own JSON1 (built into node:sqlite), so the match is on
+    // the parsed id, never a substring of the payload text.
+    const row = this.database
+      .prepare(
+        `SELECT payload_json FROM events
+         WHERE type IN ('ReviewCreated', 'PatchsetActivated')
+           AND json_extract(payload_json, '$.patchset.id') = ?
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(patchsetId) as { payload_json: string } | undefined;
+    if (!row) return null;
+    return (JSON.parse(row.payload_json) as { patchset: Patchset }).patchset;
   }
 
   receipt(commandId: string, digest: string): Review | null {
