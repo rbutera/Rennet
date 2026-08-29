@@ -436,11 +436,19 @@ function isSuperpowersPlan(content: string): boolean {
 }
 
 function isSuperpowersDesign(content: string): boolean {
-  const topics = ["architecture", "components", "data flow", "error handling", "testing"];
-  const headings = new Set(
-    [...content.matchAll(/^##\s+(.+?)\s*$/gm)].map((match) => (match[1] ?? "").toLowerCase()),
+  const topicPatterns = [
+    /\barchitecture\b|\boverall approach\b/,
+    /\bcomponents?\b|\bboundar(?:y|ies)\b/,
+    /\bdata flow\b|\bdata movement\b/,
+    /\berror(?: handling|s)?\b|\bfailures?\b/,
+    /\btesting\b|\btests?\b|\bverification\b/,
+  ];
+  const headings = [...content.matchAll(/^##\s+(.+?)\s*$/gm)].map((match) =>
+    (match[1] ?? "").toLowerCase(),
   );
-  return topics.filter((topic) => headings.has(topic)).length >= 3;
+  return (
+    topicPatterns.filter((pattern) => headings.some((heading) => pattern.test(heading))).length >= 3
+  );
 }
 
 function superpowersSpecPath(content: string): string | undefined {

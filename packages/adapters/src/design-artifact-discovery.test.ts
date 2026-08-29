@@ -268,6 +268,35 @@ describe("discoverDesignArtifacts", () => {
     ).toEqual(fixture.expectedCandidates);
   });
 
+  it("discovers a standalone Superpowers design in a custom directory by topic shape", async () => {
+    const path = "engineering/designs/2026-08-29-auth-design.md";
+    const repo = repository({
+      "src/change.ts": "export const change = true;\n",
+      [path]: [
+        "# Authentication design",
+        "",
+        "## System architecture",
+        "",
+        "## Component boundaries",
+        "",
+        "## Verification strategy",
+      ].join("\n"),
+    });
+
+    const result = await discoverDesignArtifacts({
+      patchset: patchsetOf({ ...repo, paths: ["src/change.ts"], surface: "github-pr" }),
+      git: execaGit,
+    });
+
+    expect(result?.candidates).toHaveLength(1);
+    expect(result?.candidates[0]).toMatchObject({
+      format: "superpowers",
+      name: "Authentication design",
+      relevance: { kind: "repository-candidate" },
+      artifacts: [{ path, role: "design" }],
+    });
+  });
+
   it("ranks an untouched relevant OpenSpec change ahead of an earlier decoy without discarding either", async () => {
     const repo = repository({
       "src/target.ts": "export const target = 1;\n",
