@@ -12,13 +12,16 @@ type EventInput = HarnessEvent extends infer E
     : never
   : never;
 let seq = 0;
-function ev(partial: EventInput): HarnessEvent {
+function ev(
+  partial: EventInput,
+  envelope: { readonly receivedAt?: number; readonly turnId?: string | null } = {},
+): HarnessEvent {
   return {
     seq: seq++,
     harness: "claude-code",
     sessionId: "s1",
-    turnId: "t1",
-    receivedAt: 0,
+    turnId: envelope.turnId === undefined ? "t1" : envelope.turnId,
+    receivedAt: envelope.receivedAt ?? 0,
     native: null,
     ...partial,
   } as HarnessEvent;
@@ -135,7 +138,9 @@ describe("harnessEventsToRows", () => {
     ]);
     expect(rows.map((r) => r.kind)).toEqual(["turn", "compact-boundary", "turn"]);
     const boundary = rows[1];
-    expect(boundary?.kind === "compact-boundary" && boundary.tokensBefore).toBe(100);
+    if (boundary?.kind !== "compact-boundary") throw new Error("expected a compact boundary");
+    expect(boundary.tokensBefore).toBe(100);
+    expect(boundary.time).toBe("1970-01-01T00:00:00.000Z");
   });
 
   it("honest-empty: no transcript-bearing events project to no rows", () => {
@@ -146,5 +151,172 @@ describe("harnessEventsToRows", () => {
         ev({ kind: "session.ended", outcome: { status: "completed", finalText: "" } }),
       ]),
     ).toEqual([]);
+  });
+
+  it("preserves thought, prose, action, and fenced code in exact event order", () => {
+    const fencedReply = [
+      "The edit is small.",
+      "",
+      '```ts path="packages/core/src/a file.ts"',
+      "export const answer = 42;",
+      "```",
+      "",
+      "The caller stays unchanged.",
+    ].join("\n");
+    const rows = harnessEventsToRows([
+      ev({ kind: "thinking.delta", text: "Read the " }, { receivedAt: 1_000 }),
+      ev({ kind: "thinking.delta", text: "caller." }, { receivedAt: 1_400 }),
+      ev(
+        { kind: "text.message", text: "I found the call site.", parentToolCallId: null },
+        { receivedAt: 2_500 },
+      ),
+      ev(
+        {
+          kind: "tool.started",
+          call: {
+            id: "c-ordered",
+            name: "Read",
+            input: { file_path: "packages/core/src/a file.ts" },
+            parentToolCallId: null,
+            kind: "read",
+          },
+        },
+        { receivedAt: 3_000 },
+      ),
+      ev(
+        {
+          kind: "tool.output",
+          callId: "c-ordered",
+          ok: true,
+          output: null,
+          text: "export const answer = 42;",
+        },
+        { receivedAt: 3_500 },
+      ),
+      ev(
+        { kind: "text.message", text: fencedReply, parentToolCallId: null },
+        { receivedAt: 4_000 },
+      ),
+      ev(
+        { kind: "session.ended", outcome: { status: "completed", finalText: fencedReply } },
+        { receivedAt: 4_500 },
+      ),
+    ]);
+
+    const turn = rows[0];
+    if (turn?.kind !== "turn") throw new Error("expected a turn row");
+    expect(turn.id).toBe("t1");
+    expect(turn.time).toBe("1970-01-01T00:00:01.000Z");
+    expect(turn.blocks?.map((block) => block.kind)).toEqual([
+      "thought",
+      "text",
+      "action",
+      "text",
+      "code",
+      "text",
+    ]);
+    expect(turn.blocks?.[0]).toMatchObject({
+      kind: "thought",
+      seconds: 1.5,
+      text: ["Read the caller."],
+    });
+    expect(turn.blocks?.[2]).toMatchObject({
+      kind: "action",
+      status: "complete",
+      doneDetail: "export const answer = 42;",
+    });
+    expect(turn.blocks?.[4]).toEqual({
+      kind: "code",
+      path: "packages/core/src/a file.ts",
+      lang: "ts",
+      code: "export const answer = 42;",
+    });
+  });
+
+  it("keeps a fenced block with no path and does not invent code metadata", () => {
+    const rows = harnessEventsToRows([
+      ev(
+        {
+          kind: "text.message",
+          text: ["```json", '{"ok":true}', "```"].join("\n"),
+          parentToolCallId: null,
+        },
+        { receivedAt: Number.NaN },
+      ),
+    ]);
+    const turn = rows[0];
+    if (turn?.kind !== "turn") throw new Error("expected a turn row");
+    expect(turn.blocks).toEqual([{ kind: "code", path: "", lang: "json", code: '{"ok":true}' }]);
+    expect(turn.time).toBeUndefined();
+
+    const withBarePath = harnessEventsToRows([
+      ev({
+        kind: "text.message",
+        text: ["```tsx packages/app-ui/src/chat/turn.tsx", "export function Turn() {}", "```"].join(
+          "\n",
+        ),
+        parentToolCallId: null,
+      }),
+    ])[0];
+    expect(withBarePath?.kind === "turn" ? withBarePath.blocks?.[0] : undefined).toEqual({
+      kind: "code",
+      path: "packages/app-ui/src/chat/turn.tsx",
+      lang: "tsx",
+      code: "export function Turn() {}",
+    });
+  });
+
+  it("settles streamed text in place instead of duplicating the final message", () => {
+    const rows = harnessEventsToRows([
+      ev({ kind: "text.delta", text: "Hel" }),
+      ev({ kind: "text.delta", text: "lo" }),
+      ev({ kind: "text.message", text: "Hello", parentToolCallId: null }),
+      ev({ kind: "session.ended", outcome: { status: "completed", finalText: "Hello" } }),
+    ]);
+    const turn = rows[0];
+    expect(turn?.kind === "turn" ? turn.blocks : undefined).toEqual([
+      { kind: "text", text: "Hello" },
+    ]);
+  });
+
+  it("leaves a settled thought duration absent when receivedAt cannot reveal its start", () => {
+    const rows = harnessEventsToRows([
+      ev(
+        { kind: "thinking.message", text: "The harness sent only the settled block." },
+        { receivedAt: 5_000 },
+      ),
+      ev(
+        { kind: "session.ended", outcome: { status: "completed", finalText: "done" } },
+        { receivedAt: 9_000 },
+      ),
+    ]);
+    const turn = rows[0];
+    if (turn?.kind !== "turn") throw new Error("expected a turn row");
+    const thought = turn.blocks?.[0];
+    expect(thought?.kind).toBe("thought");
+    expect(thought).not.toHaveProperty("seconds");
+  });
+
+  it("keeps the turn row id stable and lets the public ask id override the harness id", () => {
+    const delta = ev(
+      { kind: "text.delta", text: "partial" },
+      { receivedAt: 1_000, turnId: "harness-turn-9" },
+    );
+    const ended = ev(
+      { kind: "session.ended", outcome: { status: "completed", finalText: "partial" } },
+      { receivedAt: 2_000, turnId: "harness-turn-9" },
+    );
+
+    expect(harnessEventsToRows([delta])[0]?.id).toBe("harness-turn-9");
+    expect(harnessEventsToRows([delta, ended])[0]?.id).toBe("harness-turn-9");
+    expect(harnessEventsToRows([delta, ended], { turnId: "review-ask-turn-4" })[0]?.id).toBe(
+      "review-ask-turn-4",
+    );
+
+    const withoutHarnessId = ev(
+      { kind: "text.message", text: "fallback", parentToolCallId: null },
+      { turnId: null },
+    );
+    expect(harnessEventsToRows([withoutHarnessId])[0]?.id).toBe(`turn-${withoutHarnessId.seq}`);
   });
 });

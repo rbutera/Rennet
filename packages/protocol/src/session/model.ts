@@ -349,6 +349,19 @@ export const ContentBlockSchema = z.discriminatedUnion("kind", [ProseBlockSchema
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
 
 /**
+ * The lossless display order for a transcript turn. `preface` and `body` remain on the
+ * persisted row for older clients and stored rows; new projectors also write this one stream
+ * so prose between harness activity does not move when the row is reconstructed.
+ */
+export const TranscriptBlockSchema = z.discriminatedUnion("kind", [
+  ThoughtBlockSchema,
+  ActionStepSchema,
+  ProseBlockSchema,
+  CodeBlockSchema,
+]);
+export type TranscriptBlock = z.infer<typeof TranscriptBlockSchema>;
+
+/**
  * A session-transcript row. The harness CLI stays the CANONICAL owner of the conversation —
  * resume still rides the `HarnessCursor` (#466 res. 3), untouched. This is ADDITIVE to that:
  * a DISPLAY read-model projected from the harness events the adapter already normalizes
@@ -370,10 +383,13 @@ export const SessionTranscriptRowSchema = z.discriminatedUnion("kind", [
     lead: z.string().optional(),
     preface: z.array(ActivityStepSchema).optional(),
     body: z.array(ContentBlockSchema).optional(),
+    /** Ordered additive representation; absent on transcript rows persisted before #620. */
+    blocks: z.array(TranscriptBlockSchema).optional(),
   }),
   z.object({
     kind: z.literal("compact-boundary"),
     id,
+    time: z.string().optional(),
     tokensBefore: z.number().int().nonnegative().optional(),
     tokensAfter: z.number().int().nonnegative().optional(),
   }),
