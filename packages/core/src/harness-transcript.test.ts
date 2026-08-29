@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HarnessEvent } from "./harness";
-import { harnessEventsToRows, type ScrubPath } from "./harness-transcript";
+import { harnessEventsToRows } from "./harness-transcript";
 
 // Minimal event builder — stamps the envelope base every HarnessEvent carries. The input type
 // distributes the Omit over each union arm so an object literal matches its own `kind` exactly
@@ -24,49 +24,40 @@ function ev(partial: EventInput): HarnessEvent {
   } as HarnessEvent;
 }
 
-// A scrub that maps a fake host root and the home dir to display tokens — the shape the
-// server's R19 projection has, small enough to prove the choke point without the real ctx.
-const scrub: ScrubPath = (text) =>
-  text
-    .split("/Volumes/ExternalNVMe/home/dev/rennet")
-    .join("<rennet>")
-    .split("/Users/rai")
-    .join("~");
+const REPO = "/Volumes/ExternalNVMe/home/dev/rennet";
+const HOME = "/Users/rai";
 
 describe("harnessEventsToRows", () => {
   it("projects a coding turn: thinking → thought, tool call → action step, prose → body", () => {
-    const rows = harnessEventsToRows(
-      [
-        ev({ kind: "thinking.message", text: "I should read the file first." }),
-        ev({
-          kind: "tool.started",
-          call: {
-            id: "c1",
-            name: "Read",
-            input: { file_path: "/Volumes/ExternalNVMe/home/dev/rennet/src/a.ts" },
-            parentToolCallId: null,
-            kind: "read",
-          },
-        }),
-        ev({
-          kind: "tool.output",
-          callId: "c1",
-          ok: true,
-          output: null,
-          text: "1  export const a = 1;",
-        }),
-        ev({
-          kind: "text.message",
-          text: "Read the file. It exports `a`.",
+    const rows = harnessEventsToRows([
+      ev({ kind: "thinking.message", text: "I should read the file first." }),
+      ev({
+        kind: "tool.started",
+        call: {
+          id: "c1",
+          name: "Read",
+          input: { file_path: `${REPO}/src/a.ts` },
           parentToolCallId: null,
-        }),
-        ev({
-          kind: "session.ended",
-          outcome: { status: "completed", finalText: "Read the file. It exports `a`." },
-        }),
-      ],
-      scrub,
-    );
+          kind: "read",
+        },
+      }),
+      ev({
+        kind: "tool.output",
+        callId: "c1",
+        ok: true,
+        output: null,
+        text: "1  export const a = 1;",
+      }),
+      ev({
+        kind: "text.message",
+        text: "Read the file. It exports `a`.",
+        parentToolCallId: null,
+      }),
+      ev({
+        kind: "session.ended",
+        outcome: { status: "completed", finalText: "Read the file. It exports `a`." },
+      }),
+    ]);
 
     expect(rows).toHaveLength(1);
     const turn = rows[0];
@@ -76,43 +67,46 @@ describe("harnessEventsToRows", () => {
     // thought block
     const thought = turn.preface?.find((s) => s.kind === "thought");
     expect(thought?.kind === "thought" && thought.text).toEqual(["I should read the file first."]);
-    // action step: icon selector + scrubbed arg + settled
+    // action step: icon selector + verbatim arg + settled
     const action = turn.preface?.find((s) => s.kind === "action");
     if (action?.kind !== "action") throw new Error("expected an action step");
     expect(action.toolKind).toBe("read");
     expect(action.status).toBe("complete");
-    expect(action.detail).toBe("<rennet>/src/a.ts"); // R19 scrub: host path → repo-relative
+    // VERBATIM: the argument reads back as the harness used it. The reviewer's own machine
+    // gets the real path; the wire projection is what rewrites it for a remote client.
+    expect(action.detail).toBe(`${REPO}/src/a.ts`);
     // prose
     expect(turn.body?.some((b) => b.kind === "text" && b.text.includes("exports `a`"))).toBe(true);
   });
 
-  it("R19 proof: a smuggled ~/secret host path in ANY tool arg or output is scrubbed", () => {
-    const rows = harnessEventsToRows(
-      [
-        ev({
-          kind: "tool.started",
-          call: {
-            id: "c9",
-            name: "Bash",
-            input: { command: "cat /Users/rai/secret/creds.txt" },
-            parentToolCallId: null,
-            kind: "exec",
-          },
-        }),
-        ev({
-          kind: "tool.output",
-          callId: "c9",
-          ok: true,
-          output: null,
-          text: "opened /Users/rai/secret/creds.txt",
-        }),
-        ev({ kind: "session.ended", outcome: { status: "completed", finalText: "" } }),
-      ],
-      scrub,
-    );
+  it("keeps host paths VERBATIM in every tool arg and output — the store is the user's own", () => {
+    const rows = harnessEventsToRows([
+      ev({
+        kind: "tool.started",
+        call: {
+          id: "c9",
+          name: "Bash",
+          input: { command: `cat ${HOME}/secret/creds.txt` },
+          parentToolCallId: null,
+          kind: "exec",
+        },
+      }),
+      ev({
+        kind: "tool.output",
+        callId: "c9",
+        ok: true,
+        output: null,
+        text: `opened ${HOME}/secret/creds.txt`,
+      }),
+      ev({ kind: "session.ended", outcome: { status: "completed", finalText: "" } }),
+    ]);
+    // The projector has no scrub hook at all now, so this is the whole claim: what the
+    // harness printed is what the row carries. The R19 transport rule lives at the wire
+    // (`projectCommandOutput`), proven in packages/server/src/projection.test.ts and the
+    // remote-surface e2e. Deleting the scrub from `projectCommandOutput` reddens THOSE.
     const serialized = JSON.stringify(rows);
-    expect(serialized).not.toContain("/Users/rai");
-    expect(serialized).toContain("~/secret/creds.txt"); // path survives as a scrubbed reference
+    expect(serialized).toContain(`${HOME}/secret/creds.txt`);
+    expect(serialized).not.toContain("~/secret");
   });
 
   it("a denied tool renders a denied action step", () => {

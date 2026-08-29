@@ -53,7 +53,7 @@ function sink(fail?: Error) {
 describe("createTranscriptCapture — the WRITE side of session.transcript (C07)", () => {
   it("appends the turn's projected rows under the session id", () => {
     const store = sink();
-    const capture = createTranscriptCapture(store, undefined, HOME);
+    const capture = createTranscriptCapture(store);
     capture({
       sessionId: "sess-1",
       cwd: REPO,
@@ -82,9 +82,9 @@ describe("createTranscriptCapture — the WRITE side of session.transcript (C07)
     expect(turn.preface?.[0]).toMatchObject({ kind: "action", label: "Read" });
   });
 
-  it("R19: the repo root, the home dir, and a stray absolute path never reach the store", () => {
+  it("stores host paths VERBATIM — the reviewer's own transcript is not redacted at rest", () => {
     const store = sink();
-    const capture = createTranscriptCapture(store, undefined, HOME);
+    const capture = createTranscriptCapture(store);
     capture({
       sessionId: "sess-1",
       cwd: REPO,
@@ -103,20 +103,25 @@ describe("createTranscriptCapture — the WRITE side of session.transcript (C07)
       ],
     });
 
+    // The harm this replaces: the sink used to run `redactAbsolutePaths(scrubRoots(...))` before
+    // `append`, so the durable log kept `<acme>/src/a.ts`, `~/.zshrc` and `<path>` — a path the
+    // reviewer could no longer click, copy, or grep, on their OWN machine. R19 is a rule about
+    // what crosses the wire to a REMOTE client, and the wire enforces it (projection.test.ts's
+    // `session.transcript` cases + remote-surface-e2e.test.ts). Put the write-time scrub back and
+    // these three assertions go red.
     const serialized = JSON.stringify(store.appended);
-    expect(serialized).not.toContain(REPO);
-    expect(serialized).not.toContain(HOME);
-    expect(serialized).toContain("<acme>/src/a.ts");
-    expect(serialized).toContain("~/.zshrc");
-    // An absolute path under neither root is redacted rather than left whole.
-    expect(serialized).toContain("<path>");
+    expect(serialized).toContain(`${REPO}/src/a.ts`);
+    expect(serialized).toContain(`${HOME}/.zshrc`);
+    expect(serialized).toContain("/etc/hosts/passwd");
+    expect(serialized).not.toContain("<acme>");
+    expect(serialized).not.toContain("<path>");
   });
 
   it("a refused append is surfaced, never raised into the coding turn", () => {
     const refusal = new Error("refusing to append over unread history");
     const store = sink(refusal);
     const seen: unknown[] = [];
-    const capture = createTranscriptCapture(store, (error) => seen.push(error), HOME);
+    const capture = createTranscriptCapture(store, (error) => seen.push(error));
     expect(() =>
       capture({
         sessionId: "sess-1",
@@ -258,7 +263,7 @@ describe("createContextRebuiltEmit — a rebuilt context is never a continuous t
       },
       buildSpec: () => ({ cwd: REPO }),
       emit: createContextRebuiltEmit(store),
-      recordTranscript: createTranscriptCapture(store, undefined, HOME),
+      recordTranscript: createTranscriptCapture(store),
     });
 
     const result = await loop.runTurn("sess-1", "carry on");

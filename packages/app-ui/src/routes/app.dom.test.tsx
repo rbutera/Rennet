@@ -403,6 +403,103 @@ describe("the chat dock resolves its review from the route (F1 cluster 4)", () =
     expect(asks[0]?.anchor?.kind).toBe("fragment");
   });
 
+  it("renders the session's captured CODING TURNS, with NO SessionTranscriptProvider mounted", async () => {
+    // THE OTHER HALF OF THE SAME FIX. The turn loop captures every round's harness events
+    // and fsyncs them; `session.transcript` serves them; and until now NOTHING in the client
+    // called it. The dock's rows came from `review.reattach` alone, so the coding turns the
+    // reviewer is answering for were written to disk and displayed nowhere. No provider is
+    // mounted here, exactly as `layout.tsx` renders `<ChatDock />` bare — the same condition
+    // that made the context-supplied history dead code in the real product.
+    const reads: CommandInput<"session.transcript">[] = [];
+    const HOST_PATH = "/Volumes/nimbus/dev/acme/src/parser.ts";
+    const review = {
+      id: "rev-1",
+      repositoryRoot: "/repo",
+      patchsets: [
+        {
+          id: "ps-1",
+          createdAt: "2026-08-28T00:00:00.000Z",
+          repository: {
+            id: "repo",
+            root: "/repo",
+            commonDir: "/repo/.git",
+            baseRef: "main",
+            baseOid: "b0",
+            headOid: "h0",
+          },
+          files: [],
+          rawDiff: "X",
+          byteLength: 1,
+          truncated: false,
+        },
+      ],
+      activePatchsetId: "ps-1",
+      dispositions: [],
+      status: "current",
+    };
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([{ id: "rev-1", projectId: "proj-1" }]),
+      "review.load": () => ({ review }),
+      "review.reattach": () => ({ threads: [], inFlight: [] }),
+      "session.transcript": (input: CommandInput<"session.transcript">) => {
+        reads.push(input);
+        return {
+          trail: { title: "feat/parser", projectName: "acme", target: "your-branch" as const },
+          rows: [
+            {
+              kind: "turn" as const,
+              id: "turn-1",
+              speaker: "orchestrator" as const,
+              status: "complete" as const,
+              paragraphs: ["Renamed the export in the parser."],
+              preface: [
+                {
+                  kind: "action" as const,
+                  id: "act-1",
+                  label: "Read",
+                  detail: HOST_PATH,
+                  status: "complete" as const,
+                  toolKind: "read" as const,
+                },
+              ],
+            },
+            {
+              kind: "context-rebuilt" as const,
+              id: "rebuilt-1",
+              reason: "the harness no longer had the transcript to resume",
+            },
+          ],
+        };
+      },
+    } as never);
+    const history = memoryHistory("/s/rev-1");
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    // 1. The client ASKS — keyed on the route's review, not on a context override.
+    await waitFor(() => expect(reads.length).toBeGreaterThan(0));
+    expect(reads[0]?.reviewId).toBe("rev-1");
+
+    // 2. The coding turn's prose is on the screen.
+    await screen.findByText("Renamed the export in the parser.");
+
+    // 3. Its tool step is too, with the host path WHOLE — this is a loopback client reading
+    //    its own machine's transcript, and the store no longer redacts it. (A projected
+    //    connection gets it scrubbed at the wire; see packages/server's projection tests.)
+    const transcript = await screen.findByTestId("chat-dock-transcript");
+    expect(transcript.textContent).toContain(`Read · ${HOST_PATH}`);
+
+    // 4. The context-rebuilt marker renders rather than being dropped — a dropped marker
+    //    would let the transcript read as one unbroken conversation across a real break.
+    expect((await screen.findByTestId("context-rebuilt-row")).textContent).toContain(
+      "the harness no longer had the transcript to resume",
+    );
+
+    // 5. The header trail is the DAEMON's, not the placeholder the default projection carried.
+    expect(await screen.findByText("feat/parser")).toBeTruthy();
+  });
+
   it("on a review-less session the dock does NOT invoke review.ask against a phantom review", async () => {
     // POSITIVE CONTROL for the resolution: guessing `reviewId = slug` would point the
     // dock at a review that does not exist and turn silence into "Review not found".

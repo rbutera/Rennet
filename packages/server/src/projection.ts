@@ -340,6 +340,14 @@ export function projectCommandOutput(
       o.repos = (o.repos as Record<string, unknown>[]).map((s) => projectSummary(s, ctx));
     // `repository.choose` returns a top-level host `path` string (nullable).
     if (typeof o.path === "string") o.path = toRepoReference(o.path, ctx);
+    // The display transcript (`session.transcript`) is stored RAW — the capture sink keeps the
+    // reviewer's own host paths on their own disk — so R19 is enforced HERE, the one place it
+    // belongs. Its rows carry arbitrary harness text (a `Bash` command line, a `Read` argument,
+    // model prose), which is exactly the shape a projected `rpcError` gets: known roots and the
+    // home dir substituted, THEN any leftover absolute path redacted. The blanket scrub below
+    // alone would let a `/var/…` or `C:\…` outside every known root cross to a phone.
+    if (command === "session.transcript" && Array.isArray(o.rows))
+      o.rows = (o.rows as unknown[]).map((row) => redactAbsolutePathsDeep(row, ctx));
     projected = o;
   }
   return scrubProjectedValue(projected, ctx);
