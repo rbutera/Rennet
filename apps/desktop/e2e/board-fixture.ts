@@ -12,6 +12,11 @@ import { createBoardsRuntime } from "@rennet/server";
 
 export const BOARD_IMPLEMENTATION_PATH = "src/widget.ts";
 export const BOARD_TEST_PATH = "src/widget.test.ts";
+export const BOARD_DESIGN_SPEC_PATH = "openspec/changes/widget-value/specs/widget/spec.md";
+export const BOARD_DESIGN_DECOY_PATH = "openspec/changes/earlier-widget/specs/widget/spec.md";
+
+export const BOARD_DESIGN_SCENARIO =
+  "WHEN the widget module is read THEN it returns the reviewed value.";
 
 export interface SeededBoardFixture {
   readonly sessionId: string;
@@ -71,6 +76,83 @@ function elementsFor(
     ];
   }
 
+  if (lens === "design") {
+    const implementation: HostElement = {
+      id: `design-implementation:${suffix}`,
+      kind: "code_ref",
+      data: {
+        author,
+        patchset_id: patchsetId,
+        path: BOARD_IMPLEMENTATION_PATH,
+        side: "head",
+        start_line: 1,
+        end_line: 1,
+      },
+    };
+    const test: HostElement = {
+      id: `design-test:${suffix}`,
+      kind: "code_ref",
+      data: {
+        author,
+        patchset_id: patchsetId,
+        path: BOARD_TEST_PATH,
+        side: "head",
+        start_line: 1,
+        end_line: 1,
+      },
+    };
+    const scenario: HostElement = {
+      id: `design-scenario:${suffix}`,
+      kind: "prose",
+      data: { author, markdown: BOARD_DESIGN_SCENARIO },
+    };
+    const requirement: HostElement = {
+      id: `design-requirement:${suffix}`,
+      kind: "requirement",
+      data: {
+        author,
+        name: "Expose the reviewed widget value",
+        capability: "widget-value",
+        shall: "The widget SHALL expose the reviewed value.",
+        scenarios: [scenario.id],
+        related_files: [BOARD_IMPLEMENTATION_PATH, BOARD_TEST_PATH],
+        source: {
+          path: BOARD_DESIGN_SPEC_PATH,
+          label: "widget/spec.md",
+          line: 8,
+        },
+        spec_delta: "modified",
+        coverage: "met",
+        trace: [implementation.id, test.id],
+        tests: 1,
+      },
+    };
+    return [
+      implementation,
+      test,
+      scenario,
+      requirement,
+      {
+        id: `design-section:${suffix}`,
+        kind: "section",
+        data: {
+          author,
+          title: "Widget value",
+          children: [requirement.id],
+          sources: [
+            {
+              path: BOARD_DESIGN_SPEC_PATH,
+              label: "widget/spec.md",
+              line: 6,
+            },
+          ],
+          spec_delta: "modified",
+          delta: "new",
+        },
+      },
+    ];
+  }
+
   const prose: HostElement = {
     id: `prose:${suffix}`,
     kind: "prose",
@@ -121,8 +203,11 @@ async function currentSessionReview(page: Page): Promise<{
     const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
     if (patchset === undefined) throw new Error(`review ${review.id} has no active patchset`);
     const paths = new Set(patchset.files.map((file) => file.path));
-    for (const path of [BOARD_IMPLEMENTATION_PATH, BOARD_TEST_PATH]) {
+    for (const path of [BOARD_IMPLEMENTATION_PATH, BOARD_TEST_PATH, BOARD_DESIGN_SPEC_PATH]) {
       if (!paths.has(path)) throw new Error(`${path} is not in the captured patchset`);
+    }
+    if (paths.has(BOARD_DESIGN_DECOY_PATH)) {
+      throw new Error(`${BOARD_DESIGN_DECOY_PATH} must remain outside the captured patchset`);
     }
     return {
       sessionId,
@@ -168,11 +253,30 @@ export async function seedBoardFixture(
       meta.save({
         lens,
         boardId,
-        document: {
-          title: `${generation === liveGeneration ? "Live" : "Frozen"} ${lens}`,
-          introMarkdown: `Persisted ${lens} evidence for the launched desktop journey.`,
-          measure: lens === "design" ? "structured" : "reading",
-        },
+        document:
+          lens === "design"
+            ? {
+                title: "Widget value specification",
+                introMarkdown:
+                  "Reviewers need the specification and implementation evidence in one reading path.",
+                measure: "structured",
+                sources: [
+                  {
+                    path: BOARD_DESIGN_SPEC_PATH,
+                    label: "widget/spec.md",
+                    line: 1,
+                  },
+                ],
+                stats: [
+                  { label: "Capabilities", value: "1 modified" },
+                  { label: "Tasks", value: "2/2" },
+                ],
+              }
+            : {
+                title: `${generation === liveGeneration ? "Live" : "Frozen"} ${lens}`,
+                introMarkdown: `Persisted ${lens} evidence for the launched desktop journey.`,
+                measure: "reading",
+              },
         skippedHunks: [],
         blemishes: [],
         omissions: [],
