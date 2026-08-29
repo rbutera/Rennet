@@ -3,6 +3,7 @@ import {
   type ContextAskAttempt,
   type ContextAskCost,
   type ContextAskQuery,
+  describeSnapshotGateFailure,
   type HarnessPort,
   type HarnessTurnResult,
   type RunContextAskResult,
@@ -136,7 +137,7 @@ export function contextAskBackend(deps: ContextAskBackendDeps): ContextAskBacken
       if (!gated.ok) {
         return {
           status: "failed",
-          failureReason: `the project snapshot is ${gated.failure.reason}`,
+          failureReason: `the project snapshot is ${describeSnapshotGateFailure(gated.failure)}`,
           cost: preTurnCost,
         };
       }

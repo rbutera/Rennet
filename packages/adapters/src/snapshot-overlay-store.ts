@@ -214,7 +214,15 @@ function shardIsIntact(path: string, digest: string): boolean {
   }
 }
 
-/** Deep-validate the read shape so a malformed overlay degrades to "absent". */
+/**
+ * Deep-validate the read shape so a malformed overlay degrades to "absent".
+ *
+ * EVERY shard-delta array a v3 overlay declares is checked, imports included: a
+ * v3-STAMPED but truncated overlay (schema version present, `importUpserts`
+ * missing) would otherwise pass this guard and then THROW inside `applyShardDelta`
+ * when the merge iterates it — turning "degrade to absent" into a crash on the read
+ * path.
+ */
 function isWellFormedOverlay(value: unknown): value is SnapshotOverlay {
   if (!value || typeof value !== "object") return false;
   const o = value as Partial<SnapshotOverlay>;
@@ -233,6 +241,8 @@ function isWellFormedOverlay(value: unknown): value is SnapshotOverlay {
     Array.isArray(o.symbolUpserts) &&
     Array.isArray(o.symbolTombstones) &&
     Array.isArray(o.referenceUpserts) &&
-    Array.isArray(o.referenceTombstones)
+    Array.isArray(o.referenceTombstones) &&
+    Array.isArray(o.importUpserts) &&
+    Array.isArray(o.importTombstones)
   );
 }

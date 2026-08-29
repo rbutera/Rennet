@@ -274,6 +274,13 @@ export {
   knowledgeBackend,
 } from "./knowledge-backend";
 export {
+  type JournalTarget,
+  journalKey,
+  KNOWLEDGE_JOURNAL_DIR,
+  KnowledgeJournal,
+  STALE_TARGET_AGE_MS,
+} from "./knowledge-journal";
+export {
   committedKnowledgeDir,
   type DiscoverKnowledgeResult,
   KNOWLEDGE_FILE,
@@ -287,6 +294,8 @@ export {
   councilSeatTurn,
   createClaudeSwarmTurn,
   createCodexSwarmTurn,
+  DEFAULT_SWARM_CONCURRENCY,
+  FAILED_BATCH_RETRIES,
   type KnowledgeSwarmDeps,
   type KnowledgeSwarmOutcome,
   type KnowledgeSwarmProgress,

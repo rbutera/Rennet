@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { validateKnowledgeSet } from "@rennet/core";
 import type { KnowledgeSet } from "@rennet/protocol";
 import { canonicalize } from "@rennet/protocol";
+import { KNOWLEDGE_JOURNAL_DIR } from "./knowledge-journal";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 /**
@@ -75,6 +76,16 @@ export class KnowledgeStore {
 
   private localPath(repoKey: string): string {
     return join(this.store.paths(repoKey).knowledgeDir, KNOWLEDGE_FILE);
+  }
+
+  /**
+   * The per-batch journal directory (#581) — SIBLING to `knowledge/`, never inside
+   * it. In-flight work lives here so that a crash or a flaky worker does not throw
+   * away the batches that succeeded, while the live set stays a single atomic write
+   * of a whole set. A reader never looks here.
+   */
+  journalDir(repoKey: string): string {
+    return join(this.store.paths(repoKey).projectDir, KNOWLEDGE_JOURNAL_DIR);
   }
 
   /** The local knowledge set for a repo, or null when absent/unreadable/malformed. */

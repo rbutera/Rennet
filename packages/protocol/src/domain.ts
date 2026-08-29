@@ -1581,8 +1581,20 @@ export interface InvocationBudget {
  * (`manifest.references` + reference shards), a new manifest field the fingerprint
  * covers — so every v1 snapshot is stale under v2 and re-derives (the freshness
  * gate keys on `schemaVersion`), never served with a missing reference dimension.
+ * v3 (context-map rebuild, W1) adds the per-file IMPORT index (`manifest.imports`
+ * + import shards), on the same terms: every v2 snapshot is stale under v3 and
+ * re-derives, rather than being served with a missing import dimension.
+ * v4 (context-map rebuild, W2) adds {@link SymbolShard.generated}: a symbol shard
+ * now records whether the blob opens with a generator's banner. The bump is what
+ * forces re-derivation — a v3 snapshot at the SAME `baseOid` would otherwise pass
+ * the freshness gate carrying shards that cannot answer the question.
+ * v5 widens WHICH blobs get a symbol shard: the family is now emitted for every
+ * path-eligible text blob, not only the ones the TypeScript/JavaScript extractor
+ * understands, so the banner check is inventory-wide. Same shard SHAPE, larger
+ * shard SET — and a v4 snapshot would answer "not generated" for a generated `.py`
+ * it simply never read, which is exactly the stale answer a bump exists to refuse.
  */
-export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 2;
+export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 5;
 
 /** How the pinned default-branch ref was resolved (most-authoritative first). */
 export type BaseRefResolution =
@@ -1711,6 +1723,30 @@ export interface SymbolShard {
   /** The extractor identity, so a future upgrade invalidates old shards honestly. */
   readonly extractor: string;
   readonly symbols: readonly SnapshotSymbol[];
+  /**
+   * Whether the blob opens with a generator's banner ("@generated", "Code generated
+   * by …", "DO NOT EDIT") in its first few lines — the one mapping-eligibility signal
+   * that cannot be read off a path (context-map rebuild, W2).
+   *
+   * It lives on THIS shard rather than in a family of its own because it is the same
+   * kind of fact by the same rules: a pure function of blob content, carrying no path,
+   * derived from the single blob read the generator already performs, and reused
+   * verbatim for an unchanged blob. A separate family would duplicate the manifest
+   * pointer array, the integrity gate and the incremental planner to carry one bit.
+   *
+   * Since v5 the shard family is emitted for every PATH-ELIGIBLE text blob, not only
+   * the ones the TypeScript/JavaScript extractor understands — so a generated `.py`,
+   * `.sql` or `.graphql` with a banner and no path signal IS caught. A blob outside
+   * the extractor's languages carries `symbols: []` and a real `generated` bit.
+   *
+   * Honest scope, what is left: a file the PATH rules already exclude (vendored, a
+   * lockfile, a `dist/` output, a binary extension) is not read for a banner, because
+   * content evidence cannot overturn a verdict the path has already made; and binary
+   * detection is an extension list, so an extensionless binary is read as text and
+   * reports no banner. Both directions are safe — a missed banner keeps a file in the
+   * map rather than dropping one that belongs there.
+   */
+  readonly generated: boolean;
 }
 
 /**
@@ -1743,6 +1779,38 @@ export interface ReferenceShard {
   readonly extractor: string;
   /** Every identifier's occurrences in the blob, sorted by `name`. */
   readonly references: readonly ReferenceOccurrence[];
+}
+
+/**
+ * The per-file IMPORT shard, addressed by `blobOid` and content-addressed as a
+ * PURE FUNCTION OF BLOB CONTENT — it carries no path, exactly like {@link SymbolShard}
+ * and {@link ReferenceShard}. It records the DISTINCT RAW import specifiers the blob
+ * names (`from '…'`, bare `import '…'`, `require(…)`, dynamic `import(…)`), sorted
+ * in code-unit order, with block comments stripped before matching.
+ *
+ * RAW, not resolved, on purpose: resolving a relative specifier needs the IMPORTING
+ * FILE'S PATH, and a path in the shard bytes would break the rename/copy reuse
+ * contract. So the shard stores what the bytes say and resolution to file→file edges
+ * happens at READ time against the `files` inventory and the `scopes` table
+ * (`queryImportGraph` in `@rennet/core`), deterministically.
+ *
+ * Every specifier is kept, including bare EXTERNAL ones (`node:fs`, `react`): the
+ * shard cannot tell external from workspace without the scopes table, and keeping
+ * them costs nothing while leaving later waves the option. The derived edge list is
+ * file→file only, so a specifier that resolves to no tracked file — an npm package,
+ * a node builtin, a broken relative path, an asset the extractor does not index —
+ * contributes NO edge and is silently absent from the graph, never a phantom node.
+ *
+ * Honest scope: TEXTUAL (regex, not a parse), like its two sibling extractors — a
+ * specifier inside a template literal or a line comment is an accepted false
+ * positive, and a computed specifier (`import(variable)`) is invisible.
+ */
+export interface ImportShard {
+  readonly blobOid: string;
+  /** The import-extractor identity, so a future upgrade invalidates old shards honestly. */
+  readonly extractor: string;
+  /** The distinct raw import specifiers in the blob, sorted in code-unit order. */
+  readonly imports: readonly string[];
 }
 
 /** A pointer from the manifest to a content-addressed structural shard. */
@@ -1848,7 +1916,7 @@ export interface ProjectSnapshotManifest {
   readonly baseRefResolution: BaseRefResolution;
   /** The pinned default-branch commit OID. */
   readonly baseOid: string;
-  /** Digest over all canonical manifest content: `{ schemaVersion, repoKey, baseRef, baseRefResolution, baseOid, structural shard digests, symbol shard digests, reference shard digests }`. */
+  /** Digest over all canonical manifest content: `{ schemaVersion, repoKey, baseRef, baseRefResolution, baseOid, structural shard digests, symbol shard digests, reference shard digests, import shard digests }`. */
   readonly fingerprint: string;
   /** The structural shard pointers, keyed by slot. */
   readonly shards: Readonly<Record<StructuralShardSlot, ShardRef>>;
@@ -1861,6 +1929,13 @@ export interface ProjectSnapshotManifest {
    * the integrity gate closed exactly as a symbol shard does.
    */
   readonly references: readonly (readonly [blobOid: string, digest: string])[];
+  /**
+   * Per-file IMPORT shard pointers (the raw import-specifier index, context-map
+   * rebuild W1), sorted by `blobOid`. Always present (empty when nothing was
+   * indexed); the fingerprint covers these digests, so a dropped/tampered import
+   * shard fails the integrity gate closed exactly as a symbol shard does.
+   */
+  readonly imports: readonly (readonly [blobOid: string, digest: string])[];
 }
 
 /** A built shard: its canonical bytes and their content digest. */
@@ -1872,7 +1947,7 @@ export interface BuiltShard {
 /** The full result of a snapshot build: the manifest plus every shard's bytes by digest. */
 export interface BuiltSnapshot {
   readonly manifest: ProjectSnapshotManifest;
-  /** digest → canonical bytes, for every structural, symbol, and reference shard the manifest references. */
+  /** digest → canonical bytes, for every structural, symbol, reference, and import shard the manifest references. */
   readonly shards: ReadonlyMap<string, string>;
 }
 
@@ -2055,8 +2130,15 @@ export interface ContextSendRecord {
  * `referenceTombstones`), mirroring the symbol delta, so a merged non-default-base
  * view reconstructs the target's reference index byte-identically. A v1 overlay is
  * stale under v2 and re-derives.
+ *
+ * v3 adds the IMPORT-shard delta (`importUpserts` / `importTombstones`), the third
+ * per-blob family, on exactly the same terms: the merged view reconstructs the
+ * target's import index byte-identically, so a non-default-base review reads the
+ * same repo-wide import graph a clean build at that OID would produce. A v2 overlay
+ * is stale under v3 and re-derives — it must, because merging it would leave the
+ * import family empty, which reads as "no import edges" rather than "not indexed".
  */
-export const SNAPSHOT_OVERLAY_SCHEMA_VERSION = 2;
+export const SNAPSHOT_OVERLAY_SCHEMA_VERSION = 3;
 
 /**
  * A base+overlay delta pinning a non-default-base review's effective snapshot.
@@ -2114,6 +2196,16 @@ export interface SnapshotOverlay {
    * target — tombstones the merged reference index omits. Sorted.
    */
   readonly referenceTombstones: readonly string[];
+  /**
+   * Per-file IMPORT shard pointers new-or-changed vs the base (overlay-wins),
+   * sorted by `blobOid` — the import-index analogue of `symbolUpserts`.
+   */
+  readonly importUpserts: readonly (readonly [blobOid: string, digest: string])[];
+  /**
+   * blobOids whose import shard is present in the base but ABSENT from the target —
+   * tombstones the merged import index omits. Sorted.
+   */
+  readonly importTombstones: readonly string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -65,14 +65,29 @@ The deterministic layer contains scopes, files, and dependency edges read from
 the repository. The knowledge layer contains model-generated claims with
 evidence.
 
-Generation runs as a partitioned swarm. Rennet slices the repository along its
-detected scopes, light-tier workers read each slice and emit anchored claims,
-and the verification seat confirms hypotheses and adds cross-cutting claims that
-span slices. The partitions are invisible plumbing: the map shows scopes and
-claims, not worker slices. Every in-scope file is read — there is no file cap —
-and the Model Council picks the models for both seats. On a baseline advance,
-only workers whose slice contains changed paths re-run; untouched claims carry
-forward.
+Generation runs as a partitioned swarm. Rennet slices the repository into
+modules — groups of files that import each other, found from the import graph
+rather than from the folder tree — and hands each worker its slice's declared
+symbols, its resolved imports, and the imports that cross into other slices. A
+worker starts from that and reads whatever else it needs. A deterministic pass
+then merges the workers' claims, collapsing duplicates and checking every
+import-shaped claim against the repository's own import index; the verification
+seat sees only what that pass could not settle, and adds the cross-cutting claims
+that span slices. The slices are invisible plumbing: the map shows scopes and
+claims, not worker slices. The Model Council picks the models for both seats. On
+a baseline advance, only workers whose slice contains changed paths re-run;
+untouched claims carry forward.
+
+A run that is interrupted does not start over. Each batch's result is saved as it
+completes, and the next run reuses what is already done — but the stored knowledge
+layer is only replaced when a run finishes whole. A half-finished run never
+presents itself as a complete map.
+
+There is no file cap, but there is a policy exclusion. Lockfiles, vendored trees,
+build output, generated files, and binaries are not sent to a worker: reading them
+costs a turn and teaches nothing. Excluded files stay in the map's file inventory
+with the reason they were excluded, so the map never quietly pretends a file does
+not exist.
 
 Build either layer from the CLI without starting the daemon:
 

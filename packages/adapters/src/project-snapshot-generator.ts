@@ -1,23 +1,31 @@
 import {
   buildSnapshot,
+  DEFAULT_IMPORT_EXTRACTOR_ID,
   DEFAULT_REFERENCE_EXTRACTOR_ID,
   DEFAULT_SYMBOL_EXTRACTOR_ID,
   eligibleSymbolFiles,
+  extractImportShard,
   extractReferenceShard,
   extractSymbolShard,
+  indexImportShards,
   indexReferenceShards,
   indexSymbolShards,
+  planIncrementalImports,
   planIncrementalReferences,
   planIncrementalSymbols,
+  type SnapshotImportExtractor,
   type SnapshotReferenceExtractor,
   type SnapshotStructuralInputs,
   type SnapshotSymbolExtractor,
+  structuralFactFiles,
+  structuralImportExtractor,
   structuralReferenceExtractor,
   structuralTsExtractor,
   verifySnapshotIntegrity,
 } from "@rennet/core";
 import type {
   BuiltSnapshot,
+  ImportShard,
   ProjectSnapshotManifest,
   ReferenceShard,
   SymbolShard,
@@ -73,6 +81,15 @@ export interface GenerateOptions {
    * default). Pass an empty array to force a clean full reference build.
    */
   readonly previousReferences?: readonly ReferenceShard[];
+  /** The import extractor (defaults to the structural import-specifier extractor). */
+  readonly importExtractor?: SnapshotImportExtractor;
+  /** The import-extractor identity, stamped on import shards for honest invalidation. */
+  readonly importExtractorId?: string;
+  /**
+   * A source of previous IMPORT shards to reuse (the store's current snapshot by
+   * default). Pass an empty array to force a clean full import build.
+   */
+  readonly previousImports?: readonly ImportShard[];
   /**
    * An optional sink for live build progress, called once as each real stage
    * begins/completes (see {@link SnapshotBuildStage}). Wired to the desktop app's
@@ -117,6 +134,10 @@ export interface GenerateResult {
   readonly reusedReferenceShards: number;
   /** How many files had their references freshly extracted (the changed closure). */
   readonly extractedReferenceShards: number;
+  /** How many import shards were reused verbatim from the previous snapshot. */
+  readonly reusedImportShards: number;
+  /** How many files had their imports freshly extracted (the changed closure). */
+  readonly extractedImportShards: number;
   /** Total files in the tree at the base OID (the whole snapshot's breadth). */
   readonly fileCount: number;
   /** Total DECLARED SYMBOLS across all shards (not the shard/file count). */
@@ -147,7 +168,14 @@ export class ProjectSnapshotGenerator {
     options: GenerateOptions = {},
   ): Promise<{
     inputs: SnapshotStructuralInputs;
+    /** Files the symbol/reference/import EXTRACTORS understand (TypeScript/JavaScript). */
     eligible: ReturnType<typeof eligibleSymbolFiles>;
+    /**
+     * Files a per-blob structural-facts (symbol) shard is emitted for — the wider set
+     * that carries the inventory-wide generated-banner bit. See
+     * {@link structuralFactFiles}.
+     */
+    structuralFacts: ReturnType<typeof structuralFactFiles>;
     /** The resolved top-level working directory, for OID-addressed blob reads. */
     root: string;
   }> {
@@ -194,7 +222,12 @@ export class ProjectSnapshotGenerator {
       ownership,
       conventions,
     };
-    return { inputs, eligible: eligibleSymbolFiles(files), root: base.root };
+    return {
+      inputs,
+      eligible: eligibleSymbolFiles(files),
+      structuralFacts: structuralFactFiles(files),
+      root: base.root,
+    };
   }
 
   /**
@@ -207,15 +240,23 @@ export class ProjectSnapshotGenerator {
     const extractorId = options.extractorId ?? DEFAULT_SYMBOL_EXTRACTOR_ID;
     const referenceExtractor = options.referenceExtractor ?? structuralReferenceExtractor;
     const referenceExtractorId = options.referenceExtractorId ?? DEFAULT_REFERENCE_EXTRACTOR_ID;
-    const { inputs, eligible, root } = await this.gather(repoRoot, options);
+    const importExtractor = options.importExtractor ?? structuralImportExtractor;
+    const importExtractorId = options.importExtractorId ?? DEFAULT_IMPORT_EXTRACTOR_ID;
+    const { inputs, eligible, structuralFacts, root } = await this.gather(repoRoot, options);
     const git = this.gitFor(repoRoot);
 
     const previousSymbolShards =
       options.previousSymbols ?? this.loadPreviousSymbols(inputs.repoKey);
     const previousReferenceShards =
       options.previousReferences ?? this.loadPreviousReferences(inputs.repoKey);
+    const previousImportShards =
+      options.previousImports ?? this.loadPreviousImports(inputs.repoKey);
+    // Symbol shards ride the WIDER set: they carry the generated-banner bit, which
+    // has to be inventory-wide to catch a generated `.py`. References and imports
+    // stay on the extractor's own languages — indexing every identifier in every
+    // markdown file would be noise, not coverage.
     const plan = planIncrementalSymbols(
-      eligible,
+      structuralFacts,
       indexSymbolShards(previousSymbolShards),
       extractorId,
     );
@@ -224,19 +265,26 @@ export class ProjectSnapshotGenerator {
       indexReferenceShards(previousReferenceShards),
       referenceExtractorId,
     );
+    const importPlan = planIncrementalImports(
+      eligible,
+      indexImportShards(previousImportShards),
+      importExtractorId,
+    );
 
-    // Read each blob's text ONCE for the union of files that need symbol OR reference
-    // extraction, and derive whichever shard(s) are missing from that single read.
-    const symbolToExtract = new Map(plan.toExtract.map((f) => [f.blobOid, f] as const));
-    const referenceToExtract = new Map(refPlan.toExtract.map((f) => [f.blobOid, f] as const));
+    // Read each blob's text ONCE for the union of files that need symbol, reference OR
+    // import extraction, and derive whichever shard(s) are missing from that single read.
+    const symbolToExtract = new Set(plan.toExtract.map((f) => f.blobOid));
+    const referenceToExtract = new Set(refPlan.toExtract.map((f) => f.blobOid));
+    const importToExtract = new Set(importPlan.toExtract.map((f) => f.blobOid));
     const toRead = new Map<string, (typeof plan.toExtract)[number]>();
     for (const file of plan.toExtract) toRead.set(file.blobOid, file);
     for (const file of refPlan.toExtract) toRead.set(file.blobOid, file);
+    for (const file of importPlan.toExtract) toRead.set(file.blobOid, file);
 
     const progress = options.onProgress;
     progress?.({
       stage: "symbols",
-      note: "Extracting symbols & references",
+      note: "Extracting symbols, references & imports",
       detail:
         toRead.size === 0
           ? "reusing cached symbols"
@@ -244,6 +292,7 @@ export class ProjectSnapshotGenerator {
     });
     const extracted: SymbolShard[] = [];
     const extractedReferences: ReferenceShard[] = [];
+    const extractedImports: ImportShard[] = [];
     for (const file of toRead.values()) {
       const text = await readBlobText(root, file.blobOid, git);
       if (symbolToExtract.has(file.blobOid)) {
@@ -254,12 +303,16 @@ export class ProjectSnapshotGenerator {
           extractReferenceShard(file, text, referenceExtractor, referenceExtractorId),
         );
       }
+      if (importToExtract.has(file.blobOid)) {
+        extractedImports.push(extractImportShard(file, text, importExtractor, importExtractorId));
+      }
     }
 
     progress?.({ stage: "build", note: "Building the repo map" });
     const symbolShards = [...plan.reuse, ...extracted];
     const referenceShards = [...refPlan.reuse, ...extractedReferences];
-    const built = buildSnapshot(inputs, symbolShards, referenceShards);
+    const importShards = [...importPlan.reuse, ...extractedImports];
+    const built = buildSnapshot(inputs, symbolShards, referenceShards, importShards);
 
     // Real totals over the built shards — NOT shard COUNTS. `manifest.symbols` is
     // a per-blob pointer array (one entry per file), so its length is a file count;
@@ -278,7 +331,11 @@ export class ProjectSnapshotGenerator {
     const integrity = verifySnapshotIntegrity(built.manifest, (digest) => built.shards.get(digest));
     if (!integrity.ok) {
       throw new Error(
-        `ProjectSnapshot integrity check failed before advance: missing=${integrity.missing.length} mismatched=${integrity.mismatched.length}`,
+        // The refusal, when there is one, is the whole story: a bare
+        // "missing=0 mismatched=0" named nothing at all.
+        integrity.refusal === undefined
+          ? `ProjectSnapshot integrity check failed before advance: missing=${integrity.missing.length} mismatched=${integrity.mismatched.length}`
+          : `ProjectSnapshot integrity check failed before advance: ${integrity.refusal}`,
       );
     }
 
@@ -294,6 +351,8 @@ export class ProjectSnapshotGenerator {
       extractedSymbolShards: plan.toExtract.length,
       reusedReferenceShards: refPlan.reuse.length,
       extractedReferenceShards: refPlan.toExtract.length,
+      reusedImportShards: importPlan.reuse.length,
+      extractedImportShards: importPlan.toExtract.length,
       fileCount: inputs.files.length,
       symbolCount,
       referenceCount,
@@ -314,5 +373,13 @@ export class ProjectSnapshotGenerator {
     const manifest = store.loadManifest(repoKey);
     if (!manifest) return [];
     return store.loadReferenceShards(manifest);
+  }
+
+  private loadPreviousImports(repoKey: string): readonly ImportShard[] {
+    const store = this.deps.store;
+    if (!store) return [];
+    const manifest = store.loadManifest(repoKey);
+    if (!manifest) return [];
+    return store.loadImportShards(manifest);
   }
 }

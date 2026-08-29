@@ -1,17 +1,18 @@
 ---
 title: Code intelligence
-description: How Rennet resolves structural definitions and textual references at the reviewed head OID.
+description: How Rennet resolves structural definitions, textual references, and import edges at the reviewed head OID.
 ---
 
-Rennet's live code-intelligence path answers two review questions: where an
-exported name is declared, and where the same identifier text occurs. It uses the
-deterministic Repo Map rather than a language server.
+Rennet's live code-intelligence path answers three review questions: where an
+exported name is declared, where the same identifier text occurs, and which files
+import which. It uses the deterministic Repo Map rather than a language server.
 
 ## Indexing and lookup
 
-Project processing extracts structural symbols from supported TypeScript and
-JavaScript files and writes textual identifier-reference shards. Both are tied to
-a pinned Git object identity.
+Project processing extracts three per-file shard families from supported
+TypeScript and JavaScript files: structural symbols, textual identifier
+references, and raw import specifiers. All three are tied to a pinned Git object
+identity.
 
 ```mermaid
 flowchart LR
@@ -19,13 +20,16 @@ flowchart LR
   extract["Repo Map extraction"]
   symbols["Structural symbol shards"]
   refs["Textual reference shards"]
+  imports["Raw import-specifier shards"]
   server["Server symbol backend"]
+  graph["Resolved import graph"]
   definition["context.symbol"]
   references["context.references"]
 
   tree --> extract
   extract --> symbols --> server
   extract --> refs --> server
+  extract --> imports --> graph
   server --> definition
   server --> references
 ```
@@ -44,6 +48,195 @@ The symbol inspector combines:
 
 The index uses content-addressed shards, so unchanged repository content can be
 reused without changing its identity.
+
+## The import graph
+
+Import shards record the raw specifiers a file names — `from '…'`, bare
+`import '…'`, `require(…)`, and dynamic `import(…)` — with block comments stripped,
+de-duplicated and sorted. They store specifiers rather than resolved paths, because
+resolving a relative specifier needs the importing file's path, and a path inside
+the shard would break the rename-and-copy reuse the other two families rely on.
+
+Resolution into file-to-file edges happens on read, against the snapshot's own file
+inventory and workspace scope table:
+
+| Specifier | Resolves to |
+|---|---|
+| Relative (`./util`, `../a/b`) | The inventory file it names, trying plain extensions then a directory `index` file |
+| Workspace (`@scope/pkg`, `@scope/pkg/sub`) | A file under the owning scope's root or source root; the most specific scope name wins |
+| Anything else | Nothing. Node builtins, npm packages, and dangling paths contribute no edge |
+
+The graph is file-to-file, so an unresolvable specifier is absent rather than
+present as a node that is not a file. The raw specifier stays in the shard either
+way. The extraction is textual, the same limit the other two families carry: a
+specifier in a template literal or a line comment is recorded, and a computed
+`import(variable)` is invisible.
+
+Fan-in — how many other files depend on a changed file — has two possible sources,
+and the code refuses to confuse them: an edge-backed count says files *import* the
+changed file, a textual count says files *reference its symbols*, and the fan-in
+index is a discriminated union, so the weaker method cannot be handed to a consumer
+in the stronger one's shape. `fanInIndexFromSnapshot` builds that index from a
+materialized snapshot, preferring the import graph and falling back to the
+identifier-reference index when the snapshot has no import shards.
+
+The Delta packet consumes it. When the composition root gates a fresh snapshot at
+the patchset's base OID, `assembleRoundCollation()` builds the index and the blast
+radius counts real dependents; the mark's own wording names the method that
+answered, so a textual count never reads as a proven import edge.
+
+The index is supplied only when the snapshot can genuinely answer the question. An
+`import-edges` index is populated by construction. A `textual` one is withheld
+unless the snapshot carries *both* the symbol and the identifier-occurrence shards,
+because its lookup is a join across them and either half missing answers *zero
+dependents* for every file — rendering as "checked, nothing depends on this".
+Without an index the mark stays *not assessed* — never a silent zero.
+
+Availability is also per file, because a populated index still cannot answer about
+a path the base snapshot never carried. Fan-in is asked at the **base-side** path,
+so a rename is counted where the file used to live; and an added file, or one the
+snapshot's file cap never indexed, gets its own *not assessed* mark rather than a
+zero. The repo-wide assessment stays true either way — this is one file the base
+could not answer for, not the signal going dark.
+
+## Mapping eligibility
+
+Not every tracked file is worth a model's turn. Before the knowledge layer
+batches anything, `classifyInventory` runs the same lockfile, vendored,
+generated, and binary classifiers the changeset decomposer uses over the whole
+snapshot inventory and reports a verdict per file.
+
+| Reason | Signal |
+|---|---|
+| `binary` | A binary file extension |
+| `lockfile` | A dependency lockfile basename (`pnpm-lock.yaml`, `Cargo.lock`, `go.sum`, …) |
+| `vendored` | A `node_modules`, `vendor`, `third_party`, `Pods`, … path segment |
+| `generated-path` | A `dist`/`build`/`generated` segment, a `.min.js`/`.map` name, or a generator convention such as `.pb.go` |
+| `generated-content` | A generator banner — `@generated`, `Code generated by …`, `DO NOT EDIT` — in the file's first ten lines |
+
+An excluded file stays in the inventory. The map remains truthful about what the
+tree holds; only the batcher acts on the verdict, so a reader who asks why
+`dist/bundle.js` has no claims gets `generated-path` rather than silence.
+
+Four of the five reasons are pure functions of the path. The banner check needs
+the file's bytes, so it rides `SymbolShard.generated`, derived where the snapshot
+generator already reads each blob once — an unchanged blob reuses the answer for
+free, exactly like its symbols.
+
+That shard family is emitted for every *path-eligible* text blob, not only the
+ones the TypeScript/JavaScript extractor understands, so a generated `.py`,
+`.sql`, or `.graphql` with a banner and no path signal is caught. A blob outside
+the extractor's languages carries an empty symbol list and a real banner bit,
+which keeps the whole classification in one per-blob family — one manifest
+pointer array, one integrity walk, one incremental planner — instead of a fourth
+family carrying a single bit.
+
+What remains outside the check: a file the path rules already exclude is never
+read for a banner, because content cannot overturn a verdict the path has already
+made; and binary detection is an extension list, so an extensionless binary is
+read as text and reports no banner. Both directions are safe — a missed banner
+keeps a file in the map rather than dropping one that belongs there. The cost is
+blob reads: a clean full build now reads every path-eligible file rather than
+only the source files, which is why the clean build of Rennet below takes tens of
+seconds. An incremental build reads only the changed closure.
+
+## Module batching
+
+The knowledge swarm's slices are shaped by the import graph, not by the directory
+tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
+
+1. **Module batches.** Files with a resolved edge to another eligible file form an
+   undirected weighted graph, and Louvain community detection groups them.
+   Communities over 35 files split into near-equal chunks of their sorted paths;
+   communities under 3 files pool with their scope's other leftovers, up to 25 per
+   pooled batch. Pooling stays inside a workspace scope where the scope has enough
+   leftovers to fill a batch — a small coherent batch reads better than a large
+   incoherent one. Pooling buckets each member individually by its own scope root,
+   so a tiny community that straddles two packages contributes to each package's
+   pool rather than landing wholly in the first member's.
+2. **The directory fallback.** Files with no import edge — documentation, config,
+   assets, an unreferenced leaf — keep the original scope-and-subtree partitioner,
+   and its slices are then *coalesced*: adjacent slices within one workspace scope
+   (or one top-level directory, for unscoped files) merge up to 25 files each. The
+   partitioner alone left a long tail of two- and three-file slices, and every one
+   of them cost a worker turn. Merging is adjacent-only, so a directory is never
+   split across two slices to fill a quota, and a slice already over the cap passes
+   through as it is.
+   The whole eligible inventory takes this tier when the import or symbol shards
+   cannot be read: worse partitions, never a refusal to map. That degraded path is
+   *not* coalesced — there the fallback already runs at a 120-file cap, and merging
+   to 25 would multiply the slice count rather than cut it.
+
+### Measured on Rennet itself
+
+2,428 files, 179 excluded by policy (166 binary, 5 lockfiles, 7 by banner, 1 by
+path), 2,249 eligible, 3,531 resolved import edges.
+
+Those eligible files come out as **105 slices**:
+
+| Tier | Slices | Files | Size |
+|---|---|---|---|
+| Module batches | 51 | 1,154 | median 27, mean 22.6, largest 34 |
+| Directory fallback (coalesced) | 54 | 1,095 | median 21, mean 20.3, largest 113 |
+
+Batching itself takes about 110 ms; the clean full snapshot build that feeds it
+takes roughly 30 seconds, dominated by one blob read per path-eligible file.
+
+#### The five-minute bar is not met yet
+
+105 slices is 105 worker turns. At the last measured 78 s per turn that is 8,190
+seconds of turn time; at the named concurrency of 8 it is **about 17 minutes of
+wall clock**, or 17.6 with the 30-second deterministic build in front of it.
+Dividing turn time by lanes gives wall clock — there is no separate, smaller
+"wall" figure to quote, and the target is five minutes.
+
+Three things could close that gap, and none of them is done:
+
+- **More lanes.** At 78 s/turn the bar needs 28 concurrent workers, or 31 once
+  the build is counted. The 16 GB development host has headroom for 8 alongside
+  the harness processes each lane spawns; the ceiling here is the machine.
+- **Shorter turns.** Workers are fed a symbol skeleton and their slice's own
+  import edges rather than a bare path list, which should cut the turn
+  substantially. It has not been timed against a live harness, so it buys an
+  unknown amount.
+- **Fewer turns.** The scoping seat (deciding that an edge-less file does not
+  deserve a turn at all) is unbuilt.
+
+So the honest statement of this design's cost is **105 turns, ~17 minutes wall at
+concurrency 8**, on a per-turn figure measured against the old, bare-path-list
+prompt. It is arithmetic, not a stopwatch reading, and it is over the bar.
+
+Batching is deterministic end to end. Louvain runs with its randomisation
+disabled, over nodes and edges inserted in sorted order, so the same snapshot
+always yields the same batches in the same order.
+
+A batch's id is `mod:<lexically-first member path>#<hash>`, where the hash covers
+the batch's sorted member paths. It is a pure function of the batch's content, not
+of Louvain's community numbering, which is an artifact of iteration order and
+means nothing across builds. So a rebuild with no changes reproduces every id, and
+a membership change moves only the affected batch's id while every untouched batch
+keeps its own. The path half is the routing family: it survives membership churn
+that leaves the first member alone, which is how a delta recognises a re-formed
+batch as the same neighbourhood.
+
+A coalesced fallback slice follows the same rule with a different first half: the
+hierarchical id of its first constituent, plus `#<hash>` over the merged
+membership. Keeping the hierarchical half means the fallback tier's routing family
+is unchanged by coalescing — a delta reaches a merged slice by the same directory
+prefix it used before. A fallback slice that merged with nothing keeps its bare
+hierarchical id and no hash.
+
+### The neighbor map
+
+Batching cuts edges, and a worker that saw only its own files would read a module
+as if those edges did not exist. Each batch therefore carries, per member, its
+one-hop import neighbours *outside* the batch: the neighbour's path, whether the
+member imports it, is imported by it, or both, and the neighbour's exported symbol
+names joined from the symbol shards.
+
+The list is capped at 50 neighbours per file, keeping the highest-degree ones, and
+records how many were dropped. A hub's neighbourhood is genuinely larger than what
+is shown, and a worker that is told so can go and read the rest.
 
 ## Confidence
 
@@ -76,38 +269,148 @@ of that tree.
 
 Beside the structural index, the Repo Map stores model-generated knowledge
 claims. `packages/core/src/knowledge/` generates them as a partitioned swarm:
-`buildPartitions` slices the snapshot along detected scopes so every in-scope
+[module batching](#module-batching) slices the snapshot so every mapping-eligible
 file lands in exactly one slice, a light `partition-worker` council job emits
-anchored claims per slice, and a heavy `map-verify` seat confirms hypotheses
-against their cited spans and mints cross-cutting claims. Both jobs resolve
-through the [Model Council](./model-council.md) like every other model path.
-Claims that fail anchor resolution are dropped at mint time, so a stored claim
-always cites spans that resolve against the snapshot. On a baseline advance,
-only partitions containing changed paths re-run and untouched claims carry
-forward.
+anchored claims per slice, a deterministic merge pass combines them, and a
+`map-verify` seat handles what the merge could not settle. Both model jobs
+resolve through the [Model Council](./model-council.md) like every other model
+path. Claims that fail anchor resolution are dropped at mint time, so a stored
+claim always cites spans that resolve against the snapshot. On a baseline
+advance, only partitions containing changed paths re-run and untouched claims
+carry forward.
 
-The verify seat reads the swarm's hypotheses in fixed chunks (150 per turn,
-several turns in flight) rather than one prompt over the whole repository: a
-large repository mints thousands of claims, and a single prompt carrying all of
-them exceeds the seat's context window and loses the entire run. The pass is
-all-or-nothing — one failed chunk fails the whole run and leaves the stored set
-untouched, rather than publishing an unadjudicated slice of the repository as if
-the seat had read it — so the chunks still queued behind a failure are abandoned
-instead of spending turns on a verdict already decided.
+### What a worker is given
+
+A worker's prompt is not a path list. Per batch it carries each member file's
+symbol skeleton — declared names, kinds, and 1-based lines, straight from the
+symbol shards — the batch's own resolved import edges, and the neighbor map: the
+edges batching cut, with each neighbour's direction and exported names.
+
+The packet distinguishes three states a file can be in, because they are three
+different facts: a file with symbols shows them; a file the extractor indexed and
+found nothing in says so; a file with no symbol shard at all says *that*. A `.md`
+gets the second line, not an empty structure that could be misread as "this file
+declares nothing worth citing". A fallback slice, which by definition has no
+resolved edges, gets an honest reduced packet rather than a fabricated one — and
+if the import graph could not be read at all, the packet says the graph was
+unreadable rather than reporting no edges.
+
+The worker's working directory is the repository checkout and it is free to read
+any of it. The skeleton is where it starts, not where it stops: reading is
+targeted, not forbidden, and reconstructing a *why* usually needs the source. The
+saving comes from better inputs, not from denying a capable seat its tools. The
+anchor-or-drop rule is unchanged and is what keeps that freedom honest — a
+citation that does not resolve against the slice's own file index is dropped at
+mint.
+
+### The deterministic merge
+
+A script, not a seat, combines the workers' output. It collapses duplicate
+statement ids; collapses the same claim minted over different evidence, keeping
+the better-anchored one (more anchors, then more line spans, then the smaller id
+— deterministic to the bottom, so two runs of one swarm merge identically); and
+checks every import-shaped claim against the authoritative edge shard. A claim
+that asserts an import between two files it *names or cites*, where no resolved
+edge joins any pair of them, is *flagged* — never deleted and never rewritten.
+The import index is textual, so a computed import looks exactly like a false
+claim, and silently editing a model's words would be worse than either. A claim
+whose second endpoint is neither written down nor cited stays a hypothesis: there
+is nothing to cross-check it against, and nothing a seat could adjudicate either.
+
+The merge never mints. Every surviving statement keeps its worker's provenance
+byte for byte.
+
+### What the verify seat is left
+
+The seat receives only the merge's residue:
+
+- **Seams.** A claim on one end of a cut import edge, where another batch also
+  made a claim about the other end. That pair is invisible to either worker. Cut
+  edges are read from the whole import graph, not from the packets' capped
+  neighbour lists, so a hub file's later neighbours are still visible to the
+  merge; and seam coverage is computed before duplicate claims collapse, because
+  two workers on opposite ends of one edge routinely word the same claim
+  identically and the collapse would otherwise erase the far end. A claim
+  carrying a worker *hint* joins them too, since nothing else reads a hint.
+
+  The seam signal is import cut edges and nothing more. Two batches related by
+  something the import graph cannot see — a shared convention, a protocol both
+  ends implement, a runtime registration — produce no seam; the channel for those
+  is the worker's own hint. This is a precise signal over one relation plus a
+  model-supplied escape hatch, not a completeness claim about cross-batch
+  relationships.
+- **Flagged statements.** The edge-shard contradictions above, plus a delta's
+  prior statements whose cited evidence changed — unsettleable by script, because
+  the bytes moved.
+
+Measured on Rennet's 105 slices, over the authoritative edge list the production
+path uses, with a stand-in worker minting a claim for every eligible file (2,250
+claims, denser than a real worker): the residue is 877, 39% of the set. At a more
+realistic density (789 claims) it is 192, 24%. Either is
+two to six chunks where the old shape sent 100% by construction. An empty residue
+runs no turn at all — with no seam and no contradiction there is nothing to
+synthesize from, and a turn over an empty prompt is a seat inventing claims with
+no material.
+
+The residue is still chunked (150 per turn, several in flight) as a ceiling
+rather than an expectation, and the pass is still all-or-nothing: one failed
+chunk fails the run and leaves the stored set untouched, rather than publishing
+an unadjudicated slice of the repository as if the seat had read it.
 
 Chunking bounds what one turn can synthesize, so a final cross-boundary pass
 runs over the chunks' own output: every chunk's cross-cutting claims, plus a
 one-line summary of what each chunk covered, feed a single closing turn that
 mints the claims spanning two chunks. That input is proportional to the number
-of chunks, not the number of statements, which is what keeps it inside the
-context window that the unchunked prompt overflowed. The pass is best-effort —
-if the closing turn fails, the run keeps its chunk-local synthesis rather than
-discarding a good map over a bonus turn.
+of chunks, not the number of statements. The pass is best-effort — if the closing
+turn fails, the run keeps its chunk-local synthesis rather than discarding a good
+map over a bonus turn.
 
 One residual: the closing turn reads the chunks' claims, not their raw
 hypotheses, so a pattern that only becomes visible in two individual hypotheses
 on opposite sides of a boundary can still be missed. Cross-cutting coverage is
 therefore near-repository-wide rather than exhaustive.
+
+### Persistence: the journal
+
+Each completed batch writes its result to a **journal** — a directory beside
+`knowledge/` in the project's reserved store, never inside it, that no reader
+consults. A re-run at the same target reuses those results instead of re-running
+their turns, so a retry pays only for what actually failed. Narration says
+`reused from the journal` rather than `done`, because no turn was spent.
+
+A *target* is the base OID, the snapshot fingerprint, the generator id, the slice
+id, and the slice's exact membership. All five: a re-extraction or a prompt
+rework at an unchanged git OID is a different question, and the old answer is not
+an answer to it. A journaled record also carries a checksum over the worker
+result, and on read every statement id is recomputed from its content, every
+`learnedAgainst` must name this target, and every anchor must resolve against the
+slice's membership at its current blob. Anything that does not survive those
+checks reads as "not journaled", which costs one re-run turn — the cheap side of
+the trade against a damaged statement entering a set.
+
+Every batch runs; failures are retried once after the rest have finished; and if
+a batch still fails the run reports **which** slices failed and how many of this
+run's batches are waiting for the next attempt. The store rule is the point of
+keeping the two places apart: the live `knowledge.json` is written once, when the
+set is whole. A partial set never presents as complete, however much of it is
+journaled.
+
+The journal is one directory **per target** — named for a hash of the base OID,
+the snapshot fingerprint and the generator id together, not for the OID alone,
+since a re-extraction and a prompt rework at one OID are different questions and
+sharing a directory would let either one's promotion clear the other's completed
+turns. A promotion clears only its own directory, plus any target directory
+untouched for a day. Two runs can be in flight at once
+— the background watcher is single-flight with itself, but the review-open
+knowledge kick is not coordinated with it — and a recursive clear would let the
+first to promote destroy the other's completed turns. For the same reason the
+store write re-reads the store's identity first: a run whose prior moved
+underneath it refuses to save, reports **superseded**, and keeps its journal so
+the retry costs no turns.
+
+Worker fan-out runs at a named default concurrency of 8 — a policy, not an
+unrevisited literal, and overridable per run. It is deliberately not adaptive: a
+number that changes with ambient load makes a run's cost unreproducible.
 
 The pass runs in the background and reports its outcome — including the reason
 it skipped or failed — on the project's build timeline, under a progress id
@@ -118,6 +421,111 @@ retains a project's background narration above the screen that shows it, so a
 failure that happened while the reader was elsewhere is still there when they
 open the project — a run is never silently absent, and never visible only to
 whoever was watching.
+
+### Refresh: what a change costs
+
+Content addressing already answers *unchanged* for free — a blob whose OID did not
+move is never re-extracted and never re-mapped. What is left is the changed set,
+and most of it is body churn: a rewritten function, an added branch, a fixed
+comment. None of that alters what a file **exports**, which is the skeleton its
+worker was fed and what its statements are about.
+
+So the changed set is split before it reaches routing. Each changed path is
+compared across the two snapshots' per-blob shards on three terms: the exported
+symbols by name and kind, the generated-banner bit, and the **raw import
+specifiers** the file names. Line numbers are deliberately excluded, because
+everything below an inserted line moves and says nothing about structure. A file
+whose signature is identical on all three is **cosmetic** and routes no worker;
+anything else is **structural** and routes as it always did. A slice re-runs when
+at least one of its changed members is structural, so routing is file-level rather
+than partition-level, and the run reports how many slices it skipped for being
+structurally unchanged.
+
+Imports are in the signature because they decide something the export surface
+cannot see. An import-only edit leaves every exported name and kind exactly where
+it was while changing the file's partition membership, its module batch's cut
+edges, and the neighbour map its worker reads — so on exports alone it classified
+cosmetic and routed nothing, and the map went on describing a graph the repository
+had left.
+
+The whole comparison has a precondition: **two comparable snapshots**. A snapshot
+is identified by its fingerprint, not by its base OID — a manifest is stored per
+baseline and overwritten in place, so a re-extraction replaces the view the stored
+statements were learned against while the OID stays put. The pass joins the prior
+snapshot on the fingerprint the knowledge set records; without a match, or without
+a readable prior at all, there is nothing to compare and the whole change is
+structural.
+
+Every "we cannot tell" lands on structural, because a needless turn is the cheap
+error and a skipped one is invisible:
+
+| case | verdict |
+| --- | --- |
+| no readable prior snapshot — never built, corrupt, or evicted past the 32-manifest retention window | *everything* structural |
+| a prior snapshot whose fingerprint is not the learned-against one | *everything* structural |
+| added or deleted | structural |
+| same blob on both sides | cosmetic |
+| a language the symbol extractor does not read | structural |
+| a shard missing, unreadable, or about a different blob, on either side | structural |
+| the two sides produced by different extractors | structural |
+| the generated-banner bit moved | structural |
+| a symbol added, removed, renamed, or re-kinded | structural |
+| an import specifier added, removed, or re-pointed | structural |
+| identical symbols and imports, different lines or bodies | cosmetic |
+
+The first two rows are whole-run rather than per-file: they are decided once,
+before any path is examined, and every changed path is structural at a stroke.
+
+Which statements re-verify is a separate question from which slices re-run, and
+the split governs only the second. Re-anchoring keys on the blob moving, so a
+body-only edit re-stamps every statement anchored in that file and sends it to the
+verify seat flagged — conflating the two would leave claims anchored to bytes that
+no longer exist.
+
+Re-anchoring is not free of consequence for the statement, though. A moved anchor
+keeps its path and its cited symbol name but **loses its line span**: a cosmetic
+edit is exactly the edit that shifts every line below it, so the old span would
+point at the wrong code under the new blob, and the verify seat renders that span
+as the place to look. So the flagged entry says the span was dropped, and the seat
+re-reads the file rather than trusting a range. Precision is traded for not being
+wrong, and it is recovered the moment a seat looks.
+
+Two ceilings, both structural to the approach rather than bugs in it:
+
+- **Exports only.** The extractor reads top-level exported declarations, so a
+  rewritten private helper reads as cosmetic — including every edit to a file that
+  exports nothing at all, which is most test files. That is the right answer for
+  what a statement about the file's surface can assert, and the wrong answer for a
+  claim about an internal mechanism. Such a claim's anchors still moved, so it is
+  re-anchored and flagged; what is genuinely lost is the chance to *mint* a new
+  statement about the internal change. Widening that needs a deeper extractor, not
+  a finer diff.
+- **TypeScript and JavaScript only.** Every other file gets a shard carrying
+  `symbols: []`, which is indistinguishable from an unchanged TS file with no
+  exports, and no import shard at all — so a markdown, JSON, Python or SQL edit is
+  classified structural and re-runs its slice's worker rather than being guessed at.
+
+**Measured on Rennet's last 100 non-merge commits** (457 changed files, using the
+same `structural-ts-v2` extractor the shard family runs): 245 files (54%)
+classify as cosmetic, and **17 of the 100 commits would route zero slices** — a
+baseline advance for **zero worker turns**. 114 of those 245 are files with an
+empty signature on both sides, 105 of them test files; excluding those, 131 files
+(29%) are real export surfaces that a commit touched without moving. The figure
+counts files and whole commits, not slices: a commit with one structural file
+still runs whichever slices own it.
+
+Two things that figure does not say. It was measured on the export surface alone,
+**before imports joined the signature**, and an import specifier can only move a
+file from cosmetic to structural — so read 54% and 17 as an upper bound on the
+current classifier, not as its output.
+
+And zero *worker* turns is not zero turns. Every statement anchored in an edited
+file is re-anchored and reaches the verify seat flagged, and that residue runs the
+verify turn even when no worker did — only a commit whose changed files carry no
+statements at all runs nothing whatsoever. That turn is not overhead; it is the
+mitigation the exports-only ceiling leans on. A claim about a rewritten private
+helper is exactly what the signature diff cannot see, and the verify seat re-reading
+it is what stops the saving from becoming a stale map.
 
 ## Current scope
 

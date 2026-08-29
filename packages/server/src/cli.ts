@@ -587,8 +587,14 @@ async function enrichMap(input: {
     io.err(`rennet map: knowledge swarm failed: ${outcome.reason}`);
     return 1;
   }
+  // The cosmetic skip is named only when it happened: on a full run it is always 0,
+  // and a permanent ", 0 skipped" reads as a feature that never fires.
+  const skipped =
+    outcome.skippedCosmetic === 0
+      ? ""
+      : `, ${outcome.skippedCosmetic} unchanged in structure and skipped`;
   io.out(
-    `  knowledge: ${outcome.set.statements.length} statements (${outcome.ranPartitions}/${outcome.totalPartitions} partitions ran, ${outcome.carried} carried)`,
+    `  knowledge: ${outcome.set.statements.length} statements (${outcome.ranPartitions}/${outcome.totalPartitions} partitions ran, ${outcome.carried} carried${skipped})`,
   );
   return 0;
 }

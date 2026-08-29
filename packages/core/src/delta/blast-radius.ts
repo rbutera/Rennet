@@ -29,26 +29,58 @@ export interface BlastRadiusSignalMark {
 // Signals: `deletions`, `irreversibility`, `codeowners`, `safety-net` compute from the
 // changeset + ownership. `fan-in` (#200) computes dependent counts when the reference
 // index is supplied (per-file), and stays NOT ASSESSED when it is not — never a silent
-// zero. `contract-surface` waits on exported-API extraction and stays NOT ASSESSED.
+// zero. That absence is checked TWICE: once for the index as a whole, and once PER FILE,
+// because an index the base snapshot populated still cannot answer about a path it never
+// carried. `contract-surface` waits on exported-API extraction and stays NOT ASSESSED.
 // Never churn-heat: the enum has no such member.
 
 /**
- * The identifier-occurrence lookups the FAN-IN signal needs (issue #200 → #35 follow-on).
- * Two pure reads over the project snapshot's symbol + reference indices, injected so the
- * producer stays pure and node-free (the composition root builds this from a LoadedSnapshot).
+ * The dependent lookups the FAN-IN signal needs, injected so the producer stays pure
+ * and node-free (the composition root builds this from a LoadedSnapshot).
  *
  * ⭐ Providing this at all is the ASSESSED signal: the composition supplies it ONLY when
- * the reference index is genuinely POPULATED. When it is absent, fan-in stays a NOT-ASSESSED
+ * the index is genuinely POPULATED. When it is absent, fan-in stays a NOT-ASSESSED
  * mark — never a silent zero. A zero-dependents result must mean "we checked and nothing
  * depends on this", provable, not "the index was missing" (the whole point of the taxonomy:
  * unmeasured must look unmeasured, not clean).
+ *
+ * ⭐ A DISCRIMINATED UNION on `method`, for the same reason `SymbolTier` is one:
+ * the two ways of answering "what depends on this file?" do not claim the same thing,
+ * and the weaker one must not be able to wear the stronger one's clothes.
+ *  - `import-edges` reads the snapshot's resolved file→file import graph, so a
+ *    dependent is a file that genuinely IMPORTS the changed file. It is the honest
+ *    stronger claim.
+ *  - `textual` reads the identifier-occurrence index (#200): a dependent is a file
+ *    where a name the changed file exports merely OCCURS — name-based and unable to
+ *    tell two same-named symbols apart.
+ * There is no arm carrying both surfaces, so a textual fallback CANNOT be handed to a
+ * consumer as an edge-backed answer: it is a compile error, not a convention.
+ *
+ * ⭐ `knowsPath` is on BOTH arms and is REQUIRED, because "is the index populated at
+ * all?" and "can it answer about THIS file?" are different questions and only the
+ * second one is per-file. A file the BASE snapshot does not carry — an added file, a
+ * rename's destination, a path the snapshot's file cap never indexed — gets zero
+ * dependents from every lookup here, which would render as "checked, nothing depends
+ * on this" when the base was never able to answer. Required, not optional, so an
+ * index cannot fall into the old silent-zero behaviour by omitting it.
  */
-export interface FanInIndex {
-  /** Symbol names DEFINED in the given changed file (its exports/declarations). */
-  definedSymbols(path: string): readonly string[];
-  /** Repo-relative paths that REFERENCE the given identifier name (its occurrence sites' files). */
-  referencingFiles(name: string): readonly string[];
-}
+export type FanInIndex =
+  | {
+      readonly method: "import-edges";
+      /** Whether the BASE snapshot carries this path at all (see the note above). */
+      knowsPath(path: string): boolean;
+      /** Repo-relative paths that IMPORT the given file. */
+      importersOf(path: string): readonly string[];
+    }
+  | {
+      readonly method: "textual";
+      /** Whether the BASE snapshot carries this path at all (see the note above). */
+      knowsPath(path: string): boolean;
+      /** Symbol names DEFINED in the given changed file (its exports/declarations). */
+      definedSymbols(path: string): readonly string[];
+      /** Repo-relative paths that REFERENCE the given identifier name (its occurrence sites' files). */
+      referencingFiles(name: string): readonly string[];
+    };
 
 /** The inputs a blast-radius computation reads — the changeset, CODEOWNERS, and (optional) fan-in index. */
 export interface BlastRadiusInput {
@@ -58,7 +90,8 @@ export interface BlastRadiusInput {
   /**
    * The fan-in index (#200). Present ⇒ fan-in is ASSESSED (per-file dependent counts);
    * absent ⇒ fan-in stays a NOT-ASSESSED mark. The composition supplies it only when the
-   * reference index is populated, so absence is honest, never a masked empty.
+   * underlying index is populated, so absence is honest, never a masked empty. Its
+   * `method` says which evidence answered — import edges or textual occurrences.
    */
   readonly fanIn?: FanInIndex;
 }
@@ -277,28 +310,56 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusSignalMa
   }
 
   // 5. FAN-IN (#200 → #35 follow-on) — how many OTHER files depend on each changed file,
-  //    counted from the snapshot's symbol + reference indices. ASSESSED only when the index
-  //    is supplied (the composition supplies it only when populated); otherwise a NOT-
-  //    ASSESSED chip, never a silent zero. A changed file with zero dependents gets no
-  //    mark — "checked, nothing depends on it" — exactly like the other per-file signals.
+  //    from the snapshot's import graph when it has one, and from the symbol + reference
+  //    indices otherwise. ASSESSED only when the index is supplied (the composition supplies
+  //    it only when populated); otherwise a NOT-ASSESSED chip, never a silent zero. A changed
+  //    file with zero dependents gets no mark — "checked, nothing depends on it" — exactly
+  //    like the other per-file signals. The mark's wording states WHICH method answered, so
+  //    a textual count never reads as a proven import edge.
   if (input.fanIn) {
     const fanIn = input.fanIn;
     for (const file of input.files) {
-      const dependents = new Set<string>();
-      for (const name of fanIn.definedSymbols(file.path)) {
-        for (const referencingPath of fanIn.referencingFiles(name)) {
-          if (referencingPath !== file.path) dependents.add(referencingPath);
+      // Fan-in is a question about the BASE, so it is asked at the BASE-side path: a
+      // rename's dependents are the importers of where the file USED to live, and
+      // querying the destination path would answer about a file that did not exist yet.
+      const basePath =
+        file.status === "renamed" && file.previousPath ? file.previousPath : file.path;
+      // ...and the base can only answer about paths it carries. An added file (or one
+      // the snapshot never indexed) returns zero dependents from every lookup, which
+      // would render as "checked, nothing depends on this". The honest answer for THAT
+      // file is not-assessed — the same taxonomy the absent-index chip uses, one grain
+      // finer. Per-file, at mark time; the repo-wide index is still assessed.
+      if (!fanIn.knowsPath(basePath)) {
+        marks.push({
+          target: `rennet:file/${file.path}`,
+          signal: "fan-in",
+          assessed: false,
+          reason: `Fan-in not assessed for this file — ${basePath} is not in the base snapshot (added, or not indexed), so "nothing depends on it" could not be told from "nothing was checked".`,
+        });
+        continue;
+      }
+      const dependents = new Set<string>(
+        fanIn.method === "import-edges" ? fanIn.importersOf(basePath) : [],
+      );
+      if (fanIn.method === "textual") {
+        for (const name of fanIn.definedSymbols(basePath)) {
+          for (const referencingPath of fanIn.referencingFiles(name)) {
+            dependents.add(referencingPath);
+          }
         }
       }
+      dependents.delete(basePath);
+      dependents.delete(file.path);
       if (dependents.size > 0) {
         const n = dependents.size;
-        marks.push(
-          fileMark(
-            "fan-in",
-            file.path,
-            `${n} file${n === 1 ? "" : "s"} reference this file's symbols; changes here ripple to them.`,
-          ),
-        );
+        // Subject AND verb agree: the singular read "1 file import this file" for as
+        // long as nothing consumed the index, so nobody saw it. W5b wires it in.
+        const subject = n === 1 ? "1 file" : `${n} files`;
+        const what =
+          fanIn.method === "import-edges"
+            ? `${subject} ${n === 1 ? "imports" : "import"} this file`
+            : `${subject} ${n === 1 ? "references" : "reference"} this file's symbols`;
+        marks.push(fileMark("fan-in", file.path, `${what}; changes here ripple to them.`));
       }
     }
     // ASSESSED — emitted WHENEVER the index is supplied, independent of whether any
@@ -315,7 +376,10 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusSignalMa
       target: "rennet:review/blast-radius",
       signal: "fan-in",
       assessed: true,
-      reason: "Fan-in assessed from the identifier-occurrence reference index (#200).",
+      reason:
+        fanIn.method === "import-edges"
+          ? "Fan-in assessed from the resolved file-to-file import graph."
+          : "Fan-in assessed from the identifier-occurrence reference index (#200).",
     });
   } else {
     // DEFERRED — surfaced as NOT ASSESSED so its absence never reads as "clear".

@@ -158,6 +158,22 @@ their batch's worker. `routeDelta` sharpens from partition-level to
 file-level routing. Given how much agent-written churn is body-level, this is
 where the steady-state token bill collapses.
 
+**W4 built it and measured it.** The diff compares the two snapshots' per-blob
+shards (exported name + kind, the generated bit, and the raw import specifiers;
+lines excluded as cosmetic by definition), every unanswerable case falls to
+structural, and `routeDelta` is handed the structural subset so a slice re-runs
+only for a structural member. On Rennet's last 100 non-merge commits — 457 changed
+files — 54% of files classify cosmetic and **17 of the 100 commits route zero
+slices**, advancing the baseline for zero *worker* turns. Those figures were
+measured on the export surface before imports joined the signature, so they are an
+upper bound; and zero worker turns is not zero turns, because the statements
+anchored in the edited files still reach the verify seat flagged and run it. Two
+ceilings are stated rather than implied: the extractor sees exports only (so an
+internal-only change reads as cosmetic, and a file that exports nothing — most
+test files — is cosmetic on every edit), and it reads TypeScript/JavaScript only
+(so a markdown or JSON edit is structural and pays its slice's turn). Full detail
+in [Code intelligence](../concepts/code-intelligence.md).
+
 ### Consumption
 
 The whole-set inlining into `DeltaPacket`
@@ -168,6 +184,18 @@ through `queryKnowledge` so invalidated and rejected statements are dropped
 (today's drafting path skips that projection — a defect this plan fixes in
 passing). Retrieval sets the floor; exploration has no ceiling: every seat
 gets canvasOps so it can pull more context on demand.
+
+**W5b landed the retrieval half.** `selectPacketKnowledge`
+(`packages/core/src/delta/knowledge-scope.ts`) projects, scopes to the changed
+files' 1-hop import neighbourhood plus repo-level subjects, and caps at 80
+statements per list — with the mode, the store total, the in-scope total and the
+truncation count all disclosed in the packet, so a thinner input always says it
+is thinner. Degradation goes toward more, never silently less: no import graph
+gives the full projected set, no fresh snapshot gives the stored set marked
+explicitly unprojected. The same seam (`assembleRoundCollation`) now feeds
+`fanInIndexFromSnapshot` into the blast radius, so fan-in is an edge-backed
+count rather than a *not assessed* mark whenever the snapshot can answer. The
+exploration half — canvasOps on every seat — is W5a's.
 
 ### Un-hamstringing (same change, not a separate track)
 
@@ -193,6 +221,32 @@ inputs shrink turns, and the 16 GB host has headroom for 8–16 lanes it never
 had for 52. Any ramp test measures RSS per lane and swap pressure alongside
 throughput — the machine, not the provider, is the ceiling. The concurrency
 default becomes a named, tested policy rather than an unrevisited 4.
+
+**W2 measured it, and the "~50 batches" premise is wrong.** On Rennet at the
+end of W2: 2,420 files, 179 excluded by policy, 2,241 eligible, 3,506 resolved
+import edges — and **201 slices**, not 52. Only 52 are module batches (1,152
+connected files, median 27); the other 149 are directory-fallback slices holding
+the 1,089 edge-less files at a mean of 7.3 each. At 201 turns the arithmetic
+above lands near twenty minutes, roughly four times the bar. Batching itself is
+65 ms and the clean deterministic build is ~35 s, so the cost is entirely in
+turns. W3 owns the reduction: coalescing the fallback tail, and letting the
+scoping seat decide which of those 1,089 files deserve a turn at all.
+
+**W3 measured the coalesce, and the bar is still not met.** Adjacent fallback
+slices now merge within one scope (or one top-level directory) up to 25 files: the
+tail went 149 → **54** slices and the whole run went 201 → **105** slices (51
+module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
+113 ms; the clean build is ~30 s.
+
+105 turns × 78 s is 8,190 s of turn time. At the named concurrency of 8 that is
+**~17 minutes of wall clock** — 17.6 with the build — against a five-minute bar.
+Turn time ÷ lanes *is* the wall clock; there is no smaller figure to quote. To
+clear the bar at 78 s/turn takes ≥28 lanes (≥31 with the build), and the 16 GB
+host has headroom for 8. The two other routes are unfinished: skeleton-fed packets
+should shorten the turn but have never been timed against a live harness, and the
+scoping seat that would decide an edge-less file does not deserve a turn at all is
+still unbuilt (Stage 1 point 4). So the design's honest cost is 105 turns and
+~17 minutes, and closing the gap is outstanding work rather than a solved problem.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

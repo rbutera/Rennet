@@ -4,7 +4,7 @@ Rennet's own source is licensed under FSL-1.1-MIT (see [`LICENSE`](./LICENSE)).
 The production dependencies below ship under their own permissive licences,
 reproduced here to satisfy their attribution and notice requirements.
 
-Generated from the resolved production graph: 778 packages across 18 licence buckets. Regenerate with `pnpm notices`.
+Generated from the resolved production graph: 787 packages across 18 licence buckets. Regenerate with `pnpm notices`.
 
 ## (BSD-3-Clause OR GPL-2.0)
 
@@ -448,6 +448,7 @@ Generated from the resolved production graph: 778 packages across 18 licence buc
 - **estree-util-is-identifier-name** 3.0.0 — https://github.com/syntax-tree/estree-util-is-identifier-name#readme
 - **etag** 1.8.1 — https://github.com/jshttp/etag#readme
 - **event-target-shim** 5.0.1 — https://github.com/mysticatea/event-target-shim
+- **events** 3.3.0 — https://github.com/Gozala/events#readme
 - **eventsource** 3.0.7 — https://github.com/EventSource/eventsource#readme
 - **eventsource-parser** 3.1.0 — https://github.com/rexxars/eventsource-parser#readme
 - **execa** 10.0.0 — https://github.com/sindresorhus/execa#readme
@@ -498,6 +499,11 @@ Generated from the resolved production graph: 778 packages across 18 licence buc
 - **get-stream** 9.0.1 — https://github.com/sindresorhus/get-stream#readme
 - **getenv** 2.0.0 — https://github.com/ctavan/node-getenv
 - **gopd** 1.2.0 — https://github.com/ljharb/gopd#readme
+- **graphology** 0.26.0 — https://github.com/graphology/graphology#readme
+- **graphology-communities-louvain** 2.0.2 — https://github.com/graphology/graphology#readme
+- **graphology-indices** 0.17.0 — https://github.com/graphology/graphology#readme
+- **graphology-types** 0.24.8 — https://github.com/graphology/graphology#readme
+- **graphology-utils** 2.5.2 — https://github.com/graphology/graphology#readme
 - **has-flag** 3.0.0, 4.0.0 — https://github.com/sindresorhus/has-flag#readme
 - **has-symbols** 1.1.0 — https://github.com/ljharb/has-symbols#readme
 - **hasown** 2.0.4 — https://github.com/inspect-js/hasOwn#readme
@@ -617,6 +623,7 @@ Generated from the resolved production graph: 778 packages across 18 licence buc
 - **mimic-fn** 1.2.0 — https://github.com/sindresorhus/mimic-fn#readme
 - **mitt** 3.0.1 — https://github.com/developit/mitt
 - **mkdirp** 1.0.4 — https://github.com/isaacs/node-mkdirp#readme
+- **mnemonist** 0.39.8 — https://github.com/yomguithereal/mnemonist#readme
 - **motion** 13.1.1 — https://github.com/motiondivision/motion#readme
 - **motion-dom** 13.1.1 — https://github.com/motiondivision/motion#readme
 - **motion-utils** 13.0.0 — https://github.com/motiondivision/motion#readme
@@ -632,6 +639,7 @@ Generated from the resolved production graph: 778 packages across 18 licence buc
 - **ob1** 0.83.7 — https://github.com/facebook/metro#readme
 - **object-assign** 4.1.1 — https://github.com/sindresorhus/object-assign#readme
 - **object-inspect** 1.13.4 — https://github.com/inspect-js/object-inspect
+- **obliterator** 2.0.5 — https://github.com/yomguithereal/obliterator#readme
 - **on-finished** 2.3.0, 2.4.1 — https://github.com/jshttp/on-finished#readme
 - **on-headers** 1.1.0 — https://github.com/jshttp/on-headers#readme
 - **onetime** 2.0.1 — https://github.com/sindresorhus/onetime#readme
@@ -642,6 +650,7 @@ Generated from the resolved production graph: 778 packages across 18 licence buc
 - **p-limit** 2.3.0 — https://github.com/sindresorhus/p-limit#readme
 - **p-locate** 4.1.0 — https://github.com/sindresorhus/p-locate#readme
 - **p-try** 2.2.0 — https://github.com/sindresorhus/p-try#readme
+- **pandemonium** 2.4.1 — https://github.com/yomguithereal/pandemonium#readme
 - **parse-entities** 4.0.2 — https://github.com/wooorm/parse-entities#readme
 - **parse-ms** 4.0.0 — https://github.com/sindresorhus/parse-ms#readme
 - **parse-png** 2.1.0 — https://github.com/kevva/parse-png#readme

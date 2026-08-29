@@ -57,7 +57,8 @@ const conventions: ConventionEntry[] = [
 const symbolShards: SymbolShard[] = [
   {
     blobOid: B_A,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [
       { name: "foo", kind: "function", line: 1 },
       { name: "Bar", kind: "class", line: 5 },
@@ -65,7 +66,8 @@ const symbolShards: SymbolShard[] = [
   },
   {
     blobOid: B_MAIN,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [{ name: "main", kind: "function", line: 1 }],
   },
 ];

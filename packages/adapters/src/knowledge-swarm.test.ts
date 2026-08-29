@@ -1,9 +1,13 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   CodexExecRequest,
   CodexExecResult,
   HarnessPort,
   HarnessSession,
   LoadedSnapshot,
+  PartitionSlice,
 } from "@rennet/core";
 import {
   KNOWLEDGE_SWARM_GENERATOR_ID,
@@ -12,9 +16,11 @@ import {
 } from "@rennet/core";
 import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
+import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
 import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTRACT tests for the real council-routed path (reconciliation 5): the swarm
@@ -35,20 +41,76 @@ const SNAPSHOT = {
     { name: "a", root: "a" },
     { name: "b", root: "b" },
   ],
+  // No per-blob shards: the fixture pins the COUNCIL contract, not partitioning, so
+  // it presents a snapshot with an empty (but present, and honestly readable) shard
+  // index. Every file is then edge-less and lands in the directory fallback tier —
+  // the two scope slices this suite expects.
+  entryPoints: [],
+  symbolDigestByBlob: new Map<string, string>(),
+  referenceDigestByBlob: new Map<string, string>(),
+  importDigestByBlob: new Map<string, string>(),
+  load: () => undefined,
+} as unknown as LoadedSnapshot;
+
+/**
+ * The same two files at the PRIOR baseline, with `a/one.ts` at different bytes.
+ *
+ * A reader that answered the same snapshot for every OID would make the W4 signature
+ * diff see one blobOid on both sides of the delta and call the change cosmetic — a
+ * fixture lying its way into "nothing to do". The prior snapshot has no symbol shards
+ * either (see {@link SNAPSHOT}), so the diff cannot read a signature for either blob
+ * and falls back to structural, which is the honest verdict for "we cannot tell".
+ */
+const PRIOR_SNAPSHOT = {
+  ...SNAPSHOT,
+  manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint: "fp-0" },
+  files: [
+    { path: "a/one.ts", blobOid: "blob-a0" },
+    { path: "b/two.ts", blobOid: "blob-b1" },
+  ],
+} as unknown as LoadedSnapshot;
+
+/**
+ * The prior baseline with the CURRENT snapshot's file inventory — so every changed
+ * path has one blobOid on both sides and classifies cosmetic — carrying the
+ * fingerprint the stored set records as the one it was learned against (`fp-0`).
+ *
+ * That fingerprint is not decoration. A manifest at an OID is overwritten in place by
+ * a re-extraction, so a prior loaded by OID alone may be a DIFFERENT view of the same
+ * commit than the statements were learned against, and the swarm refuses to classify
+ * against it. This fixture is the case where the join genuinely holds.
+ */
+const COMPARABLE_PRIOR_SNAPSHOT = {
+  ...SNAPSHOT,
+  manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint: "fp-0" },
 } as unknown as LoadedSnapshot;
 
 const READER = {
-  loadFresh: () => ({ ok: true as const, snapshot: SNAPSHOT }),
+  loadFresh: (_repoKey: string, oid: string) => ({
+    ok: true as const,
+    snapshot: oid === "oid-0" ? PRIOR_SNAPSHOT : SNAPSHOT,
+  }),
 };
+
+const scratch: string[] = [];
+afterEach(() => {
+  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 function makeStore(): {
   saved: KnowledgeSet[];
   store: {
     loadLocal: () => KnowledgeSet | null;
     save: (repoKey: string, set: KnowledgeSet) => void;
+    journalDir: () => string;
   };
 } {
   const saved: KnowledgeSet[] = [];
+  // A real, isolated journal home per fixture: these tests do not exercise the
+  // journal, but they must not share one either — a leaked entry from a sibling
+  // test would answer a batch this one meant to run.
+  const journal = mkdtempSync(join(tmpdir(), "rennet-swarm-journal-"));
+  scratch.push(journal);
   return {
     saved,
     store: {
@@ -56,6 +118,7 @@ function makeStore(): {
       save: (_repoKey, set) => {
         saved.push(set);
       },
+      journalDir: () => journal,
     },
   };
 }
@@ -220,16 +283,21 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       baseOid: "oid-1",
     });
     expect(outcome.status).toBe("failed");
-    if (outcome.status === "failed") expect(outcome.reason).toBe("1 of 2 partition workers failed");
+    if (outcome.status === "failed") {
+      expect(outcome.reason).toContain("1 of 2 partition workers failed after a retry");
+      // WHICH one, by name — a bare count tells an operator nothing about whether
+      // a retry will get further.
+      expect(outcome.failedSlices).toEqual(["b"]);
+    }
     // A set silently missing the failed slice's knowledge must never be saved.
     expect(saved).toHaveLength(0);
   });
 
-  it("abandons the workers queued behind a failure, and never calls them failed", async () => {
-    // The pass is all-or-keep-prior, so the first failed worker already decides
-    // the run. On Rennet itself that is up to 198 further live model turns spent
-    // reaching a verdict the first turn reached. They are abandoned instead —
-    // and reported as `aborted`, because a worker that never ran did not fail.
+  it("runs every batch even after one fails, retries the failure ONCE, and journals the rest", async () => {
+    // This REPLACES the old abandon-the-queue behaviour (#581). Abandoning made
+    // sense only while a failed run threw the survivors' work away; the journal
+    // keeps it, so finishing the run is what makes the next one cheap. `a` fails
+    // both times, `b` must still get its turn, and `b`'s result must be on disk.
     const { saved, store } = makeStore();
     const prompts: string[] = [];
     const progress: { sliceId: string; status: string }[] = [];
@@ -246,7 +314,7 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       repoKey: "repo",
       repoRoot: "/repo",
       baseOid: "oid-1",
-      // One lane, so the `b` worker is genuinely still queued when `a` fails.
+      // One lane, so `b` is genuinely still queued when `a` fails.
       concurrency: 1,
       onProgress: (event) => {
         if (event.kind === "partition" && event.status !== "queued") {
@@ -255,20 +323,24 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       },
     });
 
-    // The `b` worker's turn was never spent — the only turns are `a`'s own
-    // attempt and its one retry.
-    expect(prompts.filter((prompt) => prompt.includes("b/two.ts"))).toHaveLength(0);
-    expect(prompts).toHaveLength(2);
+    // `b` really ran; `a` ran twice (its own in-turn retry, then the run's).
+    expect(prompts.filter((prompt) => prompt.includes("b/two.ts"))).toHaveLength(1);
+    expect(prompts.filter((prompt) => prompt.includes("a/one.ts"))).toHaveLength(4);
+    // ORDER, not membership: `a` fails, `b` still runs, THEN `a` is retried. A set
+    // of `toContain`s would be satisfied by a run that retried before finishing.
     expect(progress).toEqual([
       { sliceId: "a", status: "running" },
       { sliceId: "a", status: "failed" },
-      { sliceId: "b", status: "aborted" },
+      { sliceId: "b", status: "running" },
+      { sliceId: "b", status: "done" },
+      { sliceId: "a", status: "running" },
+      { sliceId: "a", status: "failed" },
     ]);
     expect(outcome.status).toBe("failed");
     if (outcome.status === "failed") {
-      expect(outcome.reason).toBe(
-        "1 of 2 partition workers failed; 1 not run (the pass is all-or-nothing, so they were abandoned)",
-      );
+      expect(outcome.failedSlices).toEqual(["a"]);
+      // `b`'s completed work survives the failed run, ready to be reused.
+      expect(outcome.journaled).toBe(1);
     }
     expect(saved).toHaveLength(0);
   });
@@ -326,13 +398,14 @@ function priorSet(overrides: Partial<KnowledgeSet> = {}): KnowledgeSet {
 
 function storeWithPrior(prior: KnowledgeSet): {
   saved: KnowledgeSet[];
-  store: { loadLocal: () => KnowledgeSet | null; save: (k: string, s: KnowledgeSet) => void };
-} {
-  const saved: KnowledgeSet[] = [];
-  return {
-    saved,
-    store: { loadLocal: () => prior, save: (_k, set) => void saved.push(set) },
+  store: {
+    loadLocal: () => KnowledgeSet | null;
+    save: (k: string, s: KnowledgeSet) => void;
+    journalDir: () => string;
   };
+} {
+  const { saved, store } = makeStore();
+  return { saved, store: { ...store, loadLocal: () => prior } };
 }
 
 describe("knowledge swarm — prior-set identity", () => {
@@ -407,6 +480,115 @@ describe("knowledge swarm — prior-set identity", () => {
     if (outcome.status === "ok") expect(outcome.carried).toBe(1);
   });
 
+  it("an unreadable PRIOR snapshot routes every change; a readable one classifies it", async () => {
+    // The W4 fail-safe at the live seam, with its own control beside it. Both runs see
+    // the same git diff and the same current snapshot. The only difference is whether
+    // the prior snapshot can be read — and it is deliberately a snapshot that says
+    // "cosmetic" (identical blobOids), so a run that could read it spends no turn and
+    // a run that could not must spend one rather than assume.
+    const git: GitExec = async (_root, args) => {
+      if (args[0] === "diff") return "a/one.ts\0";
+      if (args[0] === "ls-tree") return "a/one.ts\0b/two.ts\0";
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    };
+    const run = async (
+      loadFresh: (repoKey: string, oid: string) => LoadFreshResult,
+    ): Promise<{
+      turns: number;
+      outcome: Awaited<ReturnType<typeof runKnowledgeSwarmForRepo>>;
+    }> => {
+      const captures: CodexExecRequest[] = [];
+      const { store } = storeWithPrior(priorSet());
+      const outcome = await runKnowledgeSwarmForRepo({
+        reader: { loadFresh },
+        knowledgeStore: store,
+        claudePort: fakeClaudePort([], verifyBody),
+        codexExecutor: fakeCodexExecutor(captures, workerBody),
+        repoKey: "repo",
+        repoRoot: "/repo",
+        baseOid: "oid-1",
+        git,
+      });
+      return { turns: captures.length, outcome };
+    };
+
+    const refused = await run((_repoKey, oid) =>
+      oid === "oid-0"
+        ? { ok: false as const, failure: { reason: "absent" as const } }
+        : { ok: true as const, snapshot: SNAPSHOT },
+    );
+    expect(refused.turns).toBe(1);
+    if (refused.outcome.status === "ok") expect(refused.outcome.skippedCosmetic).toBe(0);
+
+    // The control: served an identical prior, the same change is cosmetic and costs
+    // nothing — so the turn above is the fail-safe firing, not the diff being inert.
+    // The prior carries the FINGERPRINT the stored set was learned against; serving a
+    // snapshot with identical blobs but another fingerprint is a different refusal,
+    // and it has its own test below.
+    const served = await run((_repoKey, oid) => ({
+      ok: true as const,
+      snapshot:
+        oid === "oid-0"
+          ? (COMPARABLE_PRIOR_SNAPSHOT as unknown as LoadedSnapshot)
+          : (SNAPSHOT as unknown as LoadedSnapshot),
+    }));
+    expect(served.turns).toBe(0);
+    expect(served.outcome.status).toBe("ok");
+    if (served.outcome.status === "ok") {
+      expect(served.outcome.ranPartitions).toBe(0);
+      expect(served.outcome.skippedCosmetic).toBe(1);
+    }
+  });
+
+  it("a prior snapshot whose FINGERPRINT is not the learned-against one routes every change", async () => {
+    // The OID is not the snapshot's identity. A manifest is stored per baseline and
+    // overwritten in place, so a re-extraction at the prior OID — a new symbol or
+    // import extractor, a different inventory — replaces the view the stored
+    // statements were learned against while leaving the OID exactly where it was. A
+    // classification against THAT snapshot answers "did the signature move?" by
+    // comparing two different extractions.
+    //
+    // Both arms below are handed a prior with the SAME blobOids as the current
+    // snapshot, so both would classify the change cosmetic and spend nothing. The only
+    // difference is the fingerprint, and the run that cannot join on it must pay the
+    // turn rather than assume.
+    const git: GitExec = async (_root, args) => {
+      if (args[0] === "diff") return "a/one.ts\0";
+      if (args[0] === "ls-tree") return "a/one.ts\0b/two.ts\0";
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    };
+    const runWithPriorFingerprint = async (fingerprint: string): Promise<number> => {
+      const captures: CodexExecRequest[] = [];
+      const { store } = storeWithPrior(priorSet());
+      const reExtracted = {
+        ...COMPARABLE_PRIOR_SNAPSHOT,
+        manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint },
+      } as unknown as LoadedSnapshot;
+      const outcome = await runKnowledgeSwarmForRepo({
+        reader: {
+          loadFresh: (_repoKey: string, oid: string) => ({
+            ok: true as const,
+            snapshot: oid === "oid-0" ? reExtracted : SNAPSHOT,
+          }),
+        },
+        knowledgeStore: store,
+        claudePort: fakeClaudePort([], verifyBody),
+        codexExecutor: fakeCodexExecutor(captures, workerBody),
+        repoKey: "repo",
+        repoRoot: "/repo",
+        baseOid: "oid-1",
+        git,
+      });
+      expect(outcome.status).toBe("ok");
+      return captures.length;
+    };
+
+    // `fp-0` is what `priorSet()` records; `fp-re-extracted` is the same commit seen
+    // by a later extraction, which the set never learned against.
+    expect(await runWithPriorFingerprint("fp-re-extracted")).toBe(1);
+    expect(await runWithPriorFingerprint("fp-0")).toBe(0);
+  });
+
   it("a git failure is a FAILED pass the scheduler retries, never a silent skip", async () => {
     const git: GitExec = async () => {
       throw new Error("fatal: bad object");
@@ -426,5 +608,90 @@ describe("knowledge swarm — prior-set identity", () => {
     if (outcome.status === "failed")
       expect(outcome.reason).toContain("changed-path resolution failed");
     expect(saved).toHaveLength(0);
+  });
+
+  it("refuses to save when another run wrote the store while this one was working", async () => {
+    // Two runs, no coordination between them: the proactive watcher's advance and
+    // the review-open kick. This one reads the store at the top, spends every worker
+    // turn and the verify seat, and by the time it reaches the save another run has
+    // promoted a NEWER set. Writing here would roll the store back to an older
+    // target, silently, with the newer run's work gone.
+    const { saved, store } = makeStore();
+    let stored: KnowledgeSet | null = null;
+    const racing = {
+      ...store,
+      loadLocal: () => stored,
+      save: (repoKey: string, set: KnowledgeSet) => {
+        store.save(repoKey, set);
+      },
+    };
+    // The target this run journals under, and a SEEDED entry for a slice this run
+    // does not execute — an earlier attempt's leftover. It makes the journal's entry
+    // count (3) differ from what this run completed (2), which is the only way the
+    // `journaled` assertion below can tell the two apart.
+    const target: JournalTarget = {
+      baseOid: "oid-1",
+      snapshotFingerprint: "fp-1",
+      generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+    };
+    const journal = new KnowledgeJournal(store.journalDir());
+    const stranger: PartitionSlice = { id: "dir:c", files: [], neighbors: [] };
+    journal.write(target, stranger, {
+      sliceId: stranger.id,
+      status: "ok",
+      statements: [],
+      droppedAnchors: 0,
+      droppedStatements: 0,
+      attempts: 1,
+    });
+    expect(journal.size(target)).toBe(1);
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: racing,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: fakeCodexExecutor([], () => {
+        // The other run lands mid-flight, between this run's read and its save.
+        stored = priorSet({ baseOid: "oid-9" });
+        return workerBody();
+      }),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+    });
+
+    expect(outcome.status).toBe("failed");
+    if (outcome.status === "failed") {
+      expect(outcome.reason).toContain("superseded");
+      // THE DISK, not a counter. "The journal is deliberately kept" is a claim about
+      // what is on the filesystem after the refusal, and a `journaled` number would
+      // read exactly the same whether or not `clear` had run — insert
+      // `journal.clear(target)` before the superseded return and this line reds while
+      // the one below it does not.
+      expect(journal.size(target)).toBe(3);
+      // And the counter is THIS RUN's completed batches (2), not the journal's entry
+      // count (3, seeded above): swap the outcome field back to `journal.size(target)`
+      // and this reds. The distinction matters on a retry, where the journal holds
+      // every earlier attempt's work and this run completed a subset.
+      expect(outcome.journaled).toBe(2);
+    }
+    expect(saved).toHaveLength(0);
+  });
+
+  it("saves when the store did not move — the superseded check is not a blanket refusal", async () => {
+    // The control for the refusal above. Same fixture, same everything, except that
+    // nothing else writes: a guard that refused unconditionally would pass the test
+    // above and fail this one.
+    const { saved, store } = makeStore();
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: store,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: fakeCodexExecutor([], workerBody),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+    });
+    expect(outcome.status).toBe("ok");
+    expect(saved).toHaveLength(1);
   });
 });

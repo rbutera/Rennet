@@ -280,7 +280,14 @@ function renderConsultedContext(
 
 /** Bound the file/knowledge listing fed into the prompt (context-window economy). */
 const DEFAULT_ASK_MAX_FILES = 400;
-const DEFAULT_ASK_MAX_STATEMENTS = 80;
+/**
+ * The statement budget ONE prompt gets. Exported because the Delta packet's
+ * knowledge selection is the same consumer with the same budget and derives its
+ * cap from this constant rather than restating the number
+ * (`delta/knowledge-scope.ts`); two surfaces disagreeing about what "too much
+ * knowledge for one prompt" means would be a number nobody owns.
+ */
+export const DEFAULT_ASK_MAX_STATEMENTS = 80;
 
 export interface RunContextAskInput {
   /** The materialized snapshot the ask reads over (the anchor-resolution authority). */

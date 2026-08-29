@@ -196,7 +196,8 @@ describe("lookupSymbol", () => {
         overview: {
           path,
           blobOid: "blob",
-          extractor: "structural-ts-v1",
+          extractor: "structural-ts-v2",
+          generated: false,
           hasSymbols: true,
           symbols: [
             { name: "TokenBucket", kind: "class", line: 4 },
@@ -227,7 +228,8 @@ describe("definitionNeighbors", () => {
               overview: {
                 path,
                 blobOid: "b",
-                extractor: "structural-ts-v1",
+                extractor: "structural-ts-v2",
+                generated: false,
                 hasSymbols: true,
                 symbols: [{ name: "sibling", kind: "function", line: 7 }],
               },

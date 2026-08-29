@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { ProjectSnapshotStore } from "@rennet/adapters";
 import type { ProjectProcessEvent } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
-import { createKnowledgeSwarmRuntime, knowledgeOutcomeLine } from "./knowledge-swarm";
+import {
+  createKnowledgeSwarmRuntime,
+  knowledgeOutcomeLine,
+  knowledgeStageLine,
+} from "./knowledge-swarm";
 
 const dirs: string[] = [];
 function tempDir(): string {
@@ -14,6 +18,37 @@ function tempDir(): string {
 }
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("knowledgeStageLine", () => {
+  it("narrates a journal REUSE as reuse, never as a turn that ran", () => {
+    // A batch answered from the journal cost nothing. Reporting it as "done"
+    // alongside the batches that really ran would overstate the run's spend.
+    expect(
+      knowledgeStageLine("rennet", {
+        kind: "partition",
+        sliceId: "mod:src/a.ts#aaaa",
+        index: 2,
+        total: 5,
+        status: "reused",
+        statements: 4,
+      }),
+    ).toMatchObject({
+      note: "Knowledge worker 2/5 reused from the journal",
+      detail: "mod:src/a.ts#aaaa: 4 statements",
+    });
+    // The control: a batch that DID run reads differently.
+    expect(
+      knowledgeStageLine("rennet", {
+        kind: "partition",
+        sliceId: "mod:src/a.ts#aaaa",
+        index: 2,
+        total: 5,
+        status: "done",
+        statements: 4,
+      }),
+    ).toMatchObject({ note: "Knowledge worker 2/5 done" });
+  });
 });
 
 describe("knowledgeOutcomeLine", () => {
@@ -53,6 +88,8 @@ describe("knowledgeOutcomeLine", () => {
         ranPartitions: 1,
         totalPartitions: 1,
         failedPartitions: 0,
+        reusedPartitions: 0,
+        skippedCosmetic: 0,
         carried: 0,
         verify: {
           status: "ok",
@@ -61,6 +98,11 @@ describe("knowledgeOutcomeLine", () => {
           crossCutting: 0,
           droppedAnchors: 0,
           droppedStatements: 0,
+          merged: 0,
+          residue: 0,
+          duplicateIds: 0,
+          duplicateClaims: 0,
+          flagged: 0,
         },
       }),
     ).toBeUndefined();

@@ -1,5 +1,5 @@
 import type { HunkId } from "@rennet/protocol";
-import { isLockfile } from "../decomposition";
+import { isLockfile } from "../file-classification";
 import type { HunkIndex } from "./hunk-index";
 
 /**

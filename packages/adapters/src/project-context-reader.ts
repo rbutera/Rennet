@@ -126,6 +126,9 @@ export class ProjectContextReader {
             reason: "corrupt",
             missing: integrity.missing,
             mismatched: integrity.mismatched,
+            // Carried, not dropped: a `schema-version` refusal is a snapshot from
+            // an older build, which is STALE and needs a rebuild — not damage.
+            ...(integrity.refusal === undefined ? {} : { refusal: integrity.refusal }),
           },
         };
       }
@@ -136,7 +139,12 @@ export class ProjectContextReader {
         // corruption (fail closed) rather than serving a partial map.
         return {
           ok: false,
-          failure: { reason: "corrupt", missing: materialized.slots, mismatched: [] },
+          failure: {
+            reason: "corrupt",
+            missing: materialized.slots,
+            mismatched: [],
+            ...(materialized.reason === "schema-version" ? { refusal: "schema-version" } : {}),
+          },
         };
       }
 

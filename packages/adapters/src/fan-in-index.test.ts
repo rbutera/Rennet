@@ -2,17 +2,18 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fanInIndexFromSnapshot } from "@rennet/core";
+import { fanInIndexFromSnapshot, queryReferences } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 // The reddening PROBE for the blast-radius fan-in signal (#200 → #35 follow-on): prove
-// `fanInIndexFromSnapshot` reads the REAL identifier-occurrence reference index off a
-// materialized snapshot — a symbol defined in one file, and the distinct files that
-// reference it. This is the guard that keeps the signal from silently going vacuous: if
-// the index reader stopped finding references, the assertion below reddens.
+// `fanInIndexFromSnapshot` reads a REAL index off a materialized snapshot — and that it
+// PREFERS the resolved file→file import graph over the textual identifier index when the
+// snapshot carries import shards. This is the guard that keeps the signal from silently
+// going vacuous: if the graph reader stopped resolving edges, the assertions below redden
+// (either by falling back to `textual` or by finding no importers).
 
 const scratch: string[] = [];
 afterEach(() => {
@@ -68,30 +69,44 @@ async function generateBeaconRepo(): Promise<{
   return { store, repoKey: manifest.repoKey, baseOid: manifest.baseOid };
 }
 
-describe("fanInIndexFromSnapshot — reads the real #200 reference index (fan-in probe)", () => {
-  it("resolves a file's defined symbols and the distinct files that reference them", async () => {
+describe("fanInIndexFromSnapshot — prefers the real import graph (fan-in probe)", () => {
+  it("is edge-backed and names the distinct files that IMPORT a changed file", async () => {
     const { store, repoKey, baseOid } = await generateBeaconRepo();
     const gated = new ProjectContextReader(store).loadFresh(repoKey, baseOid);
     expect(gated.ok).toBe(true);
     if (!gated.ok) return;
 
     const index = fanInIndexFromSnapshot(gated.snapshot);
-    // The symbol IS a defined symbol of lib.ts.
-    expect(index.definedSymbols("packages/a/src/lib.ts")).toContain("blastRadiusBeacon");
-    // It is referenced in BOTH use.ts and also.ts (and lib.ts itself, where it is defined).
-    const referencing = index.referencingFiles("blastRadiusBeacon");
-    expect(referencing).toContain("packages/a/src/use.ts");
-    expect(referencing).toContain("packages/a/src/also.ts");
-    // Distinct files only — no path repeated across occurrence lines.
-    expect(new Set(referencing).size).toBe(referencing.length);
+    // The snapshot carries resolvable import edges, so the STRONGER method answers.
+    expect(index.method).toBe("import-edges");
+    if (index.method !== "import-edges") return;
+
+    // lib.ts is imported by BOTH use.ts and also.ts — a proven edge, not a name match.
+    const importers = index.importersOf("packages/a/src/lib.ts");
+    expect(importers).toEqual(["packages/a/src/also.ts", "packages/a/src/use.ts"]);
   });
 
-  it("returns empty for a path with no symbols and a name with no references (fail-soft)", async () => {
+  it("returns empty for a path nothing imports, and for an unknown path (fail-soft)", async () => {
     const { store, repoKey, baseOid } = await generateBeaconRepo();
     const gated = new ProjectContextReader(store).loadFresh(repoKey, baseOid);
     if (!gated.ok) return;
     const index = fanInIndexFromSnapshot(gated.snapshot);
-    expect(index.definedSymbols("packages/a/src/does-not-exist.ts")).toEqual([]);
-    expect(index.referencingFiles("noSuchIdentifierAnywhere")).toEqual([]);
+    if (index.method !== "import-edges") throw new Error("expected an edge-backed index");
+    expect(index.importersOf("packages/a/src/use.ts")).toEqual([]);
+    expect(index.importersOf("packages/a/src/does-not-exist.ts")).toEqual([]);
+  });
+
+  it("still resolves the textual identifier index the graph is layered over", async () => {
+    const { store, repoKey, baseOid } = await generateBeaconRepo();
+    const gated = new ProjectContextReader(store).loadFresh(repoKey, baseOid);
+    if (!gated.ok) return;
+    // The #200 index is independently readable — the import graph replaces the fan-in
+    // METHOD, not the reference index itself.
+    const references = queryReferences(gated.snapshot, { name: "blastRadiusBeacon" });
+    expect(references.ok).toBe(true);
+    if (!references.ok) return;
+    const paths = new Set(references.references.sites.map((site) => site.path));
+    expect(paths).toContain("packages/a/src/use.ts");
+    expect(paths).toContain("packages/a/src/also.ts");
   });
 });

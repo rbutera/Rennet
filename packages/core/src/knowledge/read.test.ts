@@ -32,6 +32,7 @@ function loadedSnapshot(files: readonly SnapshotFileEntry[]): LoadedSnapshot {
     shards: {} as ProjectSnapshotManifest["shards"],
     symbols: [],
     references: [],
+    imports: [],
   };
   return {
     manifest,
@@ -44,6 +45,7 @@ function loadedSnapshot(files: readonly SnapshotFileEntry[]): LoadedSnapshot {
     conventions: [],
     symbolDigestByBlob: new Map(),
     referenceDigestByBlob: new Map(),
+    importDigestByBlob: new Map(),
     load: () => undefined,
   };
 }

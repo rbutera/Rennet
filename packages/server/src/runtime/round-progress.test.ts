@@ -442,7 +442,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
               status: "current",
               successorAccount: { asks: [], beyondAsks: [] },
             }) as unknown as Review,
-          knowledgeFor: () => KNOWLEDGE,
+          knowledgeFor: () => ({ set: KNOWLEDGE, snapshot: null }),
           priorGeneration: (id) =>
             readPriorGeneration(
               {

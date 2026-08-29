@@ -1,11 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HarnessPort, HarnessSession } from "@rennet/core";
-import { buildPartitions, PARTITION_WORKER_OUTPUT_SCHEMA } from "@rennet/core";
+import type { HarnessPort, HarnessSession, LoadedSnapshot } from "@rennet/core";
+import {
+  buildPartitions,
+  KNOWLEDGE_SWARM_GENERATOR_ID,
+  PARTITION_WORKER_OUTPUT_SCHEMA,
+  partitionsFromSnapshot,
+} from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KnowledgeStore } from "./knowledge-store";
+import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
+import { KNOWLEDGE_FILE, KnowledgeStore } from "./knowledge-store";
 import { runKnowledgeSwarmForRepo, snapshotContextFromLoaded } from "./knowledge-swarm";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
@@ -28,6 +34,15 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
+/** The journal target a run at this snapshot writes and reads under. */
+function targetOf(snapshot: LoadedSnapshot): JournalTarget {
+  return {
+    baseOid: snapshot.manifest.baseOid,
+    snapshotFingerprint: snapshot.manifest.fingerprint,
+    generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+  };
+}
+
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 }
@@ -38,7 +53,15 @@ function write(root: string, path: string, content: string): void {
   writeFileSync(full, content);
 }
 
-/** A two-scope workspace repo; commit 2 changes exactly ONE file in `b`. */
+/**
+ * A two-scope workspace repo; commit 2 changes exactly ONE file in `b`.
+ *
+ * That change ADDS AN EXPORT, deliberately. Since the W4 signature diff a value-only
+ * edit (`b = 1` → `b = 2`) is COSMETIC and routes no worker at all, so a fixture like
+ * that would leave every "the owning partition re-ran" assertion below asserting
+ * about a run that ran nothing. The cosmetic case has its own test; this one is the
+ * structural advance.
+ */
 function workspaceRepo(): { root: string; storeDir: string; oid1: string; oid2: string } {
   const root = mkdtempSync(join(tmpdir(), "rennet-swarm-e2e-"));
   const storeDir = mkdtempSync(join(tmpdir(), "rennet-swarm-store-"));
@@ -55,16 +78,24 @@ function workspaceRepo(): { root: string; storeDir: string; oid1: string; oid2: 
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "one");
   const oid1 = git(root, "rev-parse", "HEAD");
-  write(root, "packages/b/src/index.ts", "export const b = 2;\n");
+  write(root, "packages/b/src/index.ts", "export const b = 1;\nexport const bTwo = 2;\n");
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "two");
   const oid2 = git(root, "rev-parse", "HEAD");
   return { root, storeDir, oid1, oid2 };
 }
 
-/** Slice paths as listed in a worker prompt ("- <path>" lines under YOUR SLICE). */
+/**
+ * Slice paths as listed in a worker prompt ("- <path>" lines under YOUR SLICE).
+ *
+ * Bounded at the IMPORTS heading: since W3 the packet's later sections use the same
+ * `- ` bullet for edges and neighbours, and reading to the end of the prompt would
+ * hand this helper `src/a.ts -> src/b.ts` as if it were a file in the slice.
+ */
 function slicePathsFrom(prompt: string): string[] {
-  const sliceBlock = prompt.slice(prompt.indexOf("YOUR SLICE"));
+  const start = prompt.indexOf("YOUR SLICE");
+  const end = prompt.indexOf("IMPORTS WITHIN THIS SLICE");
+  const sliceBlock = prompt.slice(start, end < 0 ? undefined : end);
   return sliceBlock
     .split("\n")
     .filter((line) => line.startsWith("- "))
@@ -76,8 +107,13 @@ function slicePathsFrom(prompt: string): string[] {
  * schema) answers one statement citing its slice's first file; the verify turn
  * answers no verdicts and no cross-cutting statements. `failFor` makes the
  * worker owning that path throw instead (the partial-failure arm).
+ *
+ * `mintEveryFile` widens the worker to one statement per slice MEMBER. The default
+ * cites only the first, which is enough for coverage and carry, but leaves most files
+ * with no statement at all — so a test that needs to watch a SPECIFIC file's anchors
+ * move has nothing to watch unless that file happened to sort first in its slice.
  */
-function stubPort(workerPrompts: string[], failFor?: string): HarnessPort {
+function stubPort(workerPrompts: string[], failFor?: string, mintEveryFile = false): HarnessPort {
   return {
     createSession: async (options: { outputSchema?: unknown }): Promise<HarnessSession> => {
       const isWorker = options.outputSchema === PARTITION_WORKER_OUTPUT_SCHEMA;
@@ -97,18 +133,17 @@ function stubPort(workerPrompts: string[], failFor?: string): HarnessPort {
               };
               return;
             }
-            const paths = slicePathsFrom(prompt);
+            const all = slicePathsFrom(prompt);
+            const paths = mintEveryFile ? all : all.slice(0, 1);
             const body = isWorker
               ? {
-                  statements: [
-                    {
-                      subject: paths[0] ?? "unknown",
-                      aspect: "purpose",
-                      claim: `stub knowledge about ${paths[0]}`,
-                      confidence: "high",
-                      evidence: [{ path: paths[0] }],
-                    },
-                  ],
+                  statements: (paths.length === 0 ? [undefined] : paths).map((path) => ({
+                    subject: path ?? "unknown",
+                    aspect: "purpose",
+                    claim: `stub knowledge about ${path}`,
+                    confidence: "high",
+                    evidence: [{ path }],
+                  })),
                 }
               : { verdicts: [], crossCutting: [] };
             yield {
@@ -164,6 +199,15 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     // One worker turn per partition.
     expect(run1Prompts).toHaveLength(partitions.length);
 
+    // The packet is SKELETON-FED from the real snapshot, not a bare path list: the
+    // TypeScript file shows its declared symbol with a line, and the `.md` — which
+    // the v5 shard family indexes and finds nothing in — says so instead of showing
+    // an empty structure that could be read as "this file declares nothing useful".
+    const tsPacket = run1Prompts.find((prompt) => prompt.includes("packages/a/src/index.ts")) ?? "";
+    expect(tsPacket).toMatch(/^ {4}a \(const\) L1$/m);
+    const mdPacket = run1Prompts.find((prompt) => prompt.includes("README.md")) ?? "";
+    expect(mdPacket).toContain("README.md\n    (indexed; declares no top-level symbols)");
+
     // Every emitted statement's anchors RESOLVE against the snapshot inventory
     // (the mint stamped the authoritative blobOid).
     const inventory = new Map(snapshot.files.map((f) => [f.path, f.blobOid]));
@@ -205,11 +249,16 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     expect(carriedChecked).toBeGreaterThan(0);
 
     // ── Run 3: injected partial failure keeps the prior store ───────────────
-    write(root, "packages/a/src/index.ts", "export const a = 3;\n");
+    // Structural again (a new export), so a worker for `a` genuinely runs and the
+    // injected failure has something to fail — a value-only edit here would route
+    // zero slices and the run would succeed with nothing to fail.
+    write(root, "packages/a/src/index.ts", "export const a = 1;\nexport const aThree = 3;\n");
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "three");
     const oid3 = git(root, "rev-parse", "HEAD");
     await generator.generate(root, { explicitBaseRef: oid3 });
+    const storePath = join(store.paths(repoKey).knowledgeDir, KNOWLEDGE_FILE);
+    const before = readFileSync(storePath, "utf8");
     const run3 = await runKnowledgeSwarmForRepo({
       reader,
       knowledgeStore,
@@ -221,7 +270,515 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     });
     expect(run3.status).toBe("failed");
     if (run3.status === "failed") expect(run3.reason).toContain("partition workers failed");
-    // All-or-keep-prior: the store still serves run 2's set, untouched.
+    // All-or-keep-prior: the store still serves run 2's set, untouched — asserted on
+    // the BYTES, so a rewrite that happened to reproduce an equal set would still show.
+    expect(readFileSync(storePath, "utf8")).toBe(before);
     expect(knowledgeStore.loadLocal(repoKey)).toEqual(run2.set);
+  });
+
+  // ── Refresh sharpening (W4), through the LIVE caller ──────────────────────
+
+  it("a body-only edit costs ZERO worker turns, and its statements still re-anchor", async () => {
+    // The steady-state case the sharpening exists for: an agent rewrites a function
+    // body, the file's exports are exactly what they were, and the batch's worker has
+    // nothing new to say about them. The control is the fourth commit below — the
+    // SAME file, at the same place in the same run, with an export added.
+    const { root, storeDir, oid2 } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid2 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const run1 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([], undefined, true),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(run1.status).toBe("ok");
+    if (run1.status !== "ok") return;
+    const bStatement = run1.set.statements.find((statement) =>
+      statement.evidence.some((anchor) => anchor.path === "packages/b/src/index.ts"),
+    );
+    expect(bStatement).toBeDefined();
+    const priorBlob = bStatement?.evidence[0]?.blobOid;
+    expect(priorBlob).toBeTruthy();
+
+    // A BODY-ONLY edit: same declared exports, different values and a new line.
+    write(
+      root,
+      "packages/b/src/index.ts",
+      "// a comment\nexport const b = 7;\nexport const bTwo = 8;\n",
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "cosmetic");
+    const oid3 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid3 });
+
+    const cosmeticPrompts: string[] = [];
+    const run2 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(cosmeticPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid3,
+    });
+    expect(run2.status).toBe("ok");
+    if (run2.status !== "ok") return;
+    // NO worker turn ran — not "fewer", none — and the outcome says so as a number.
+    expect(cosmeticPrompts).toEqual([]);
+    expect(run2.ranPartitions).toBe(0);
+    expect(run2.skippedCosmetic).toBe(1);
+
+    // …and the reverify channel did its job regardless: the statement about that file
+    // is anchored to the NEW bytes, with the fresh id that follows from them. This is
+    // the half the sharpening must not break — a skipped worker turn is a saving, a
+    // statement left pointing at bytes that no longer exist is a lie.
+    const inventory = reader.loadFresh(repoKey, oid3);
+    expect(inventory.ok).toBe(true);
+    if (!inventory.ok) return;
+    const currentBlob = inventory.snapshot.files.find(
+      (file) => file.path === "packages/b/src/index.ts",
+    )?.blobOid;
+    expect(currentBlob).toBeTruthy();
+    expect(currentBlob).not.toBe(priorBlob);
+    const reAnchored = run2.set.statements.filter((statement) =>
+      statement.evidence.some((anchor) => anchor.path === "packages/b/src/index.ts"),
+    );
+    expect(reAnchored.length).toBeGreaterThan(0);
+    for (const statement of reAnchored)
+      for (const anchor of statement.evidence)
+        if (anchor.path === "packages/b/src/index.ts") expect(anchor.blobOid).toBe(currentBlob);
+    // The stored set is at the new baseline: the advance completed, for free.
+    expect(knowledgeStore.loadLocal(repoKey)?.baseOid).toBe(oid3);
+
+    // ── The control: the SAME file, one export added ────────────────────────
+    write(
+      root,
+      "packages/b/src/index.ts",
+      "// a comment\nexport const b = 7;\nexport const bTwo = 8;\nexport const bThree = 9;\n",
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "structural");
+    const oid4 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid4 });
+
+    const structuralPrompts: string[] = [];
+    const run3 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(structuralPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid4,
+    });
+    expect(run3.status).toBe("ok");
+    if (run3.status !== "ok") return;
+    expect(structuralPrompts).toHaveLength(1);
+    expect(structuralPrompts[0]).toContain("packages/b/src/index.ts");
+    expect(run3.skippedCosmetic).toBe(0);
+  });
+
+  it("an IMPORT-ONLY edit re-runs its slice — the exports did not move, the graph did", async () => {
+    // The case the symbols-only signature could not see. Adding an import leaves every
+    // exported name and kind exactly as it was and shifts every line below it — which
+    // is precisely the shape the diff calls cosmetic — while changing the file's
+    // partition membership, its batch's cut edges and the neighbour map the worker
+    // reads. Classified on exports alone this routed ZERO workers, and the map went on
+    // describing a graph the repository had left.
+    //
+    // The fixture is built here rather than borrowed: `workspaceRepo`'s `b` has no
+    // sibling to import, and adding one would be a second changed path.
+    const root = mkdtempSync(join(tmpdir(), "rennet-swarm-imports-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-swarm-imports-store-"));
+    scratch.push(root, storeDir);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+    write(root, "packages/a/package.json", JSON.stringify({ name: "@t/a", private: true }));
+    write(root, "packages/a/src/index.ts", "export const a = 1;\n");
+    write(root, "packages/a/src/helper.ts", "export const helper = 2;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    const oid1 = git(root, "rev-parse", "HEAD");
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid1 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+    const first = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([], undefined, true),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(first.status).toBe("ok");
+
+    // The edit: ONE import line added. `export const a = 1;` is untouched, so the
+    // symbol shard's `<kind> <name>` list is byte-identical across the two snapshots
+    // and only the imports shard can tell these two blobs apart.
+    write(root, "packages/a/src/index.ts", 'import "./helper.js";\nexport const a = 1;\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "import only");
+    const oid2 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid2 });
+
+    const prompts: string[] = [];
+    const run = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(run.status).toBe("ok");
+    if (run.status !== "ok") return;
+    expect(run.skippedCosmetic).toBe(0);
+    expect(run.ranPartitions).toBeGreaterThan(0);
+    expect(prompts.some((prompt) => prompt.includes("packages/a/src/index.ts"))).toBe(true);
+
+    // ── The control, in-test: a comment ADDED BESIDE the import, so the specifier set
+    // is byte-identical to the commit above and only the lines move. Same file, same
+    // run, same shape of edit — and it routes zero workers. That is what isolates the
+    // verdict above to the imports: it is not "any edit to this file is structural
+    // now", it is this file's import list moving.
+    //
+    // Note the control must KEEP the import: replacing it with a comment would itself
+    // be an import change, which is the assertion above wearing a control's clothes.
+    write(
+      root,
+      "packages/a/src/index.ts",
+      'import "./helper.js";\n// a comment\nexport const a = 1;\n',
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "comment only");
+    const oid3 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid3 });
+
+    const controlPrompts: string[] = [];
+    const control = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(controlPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid3,
+    });
+    expect(control.status).toBe("ok");
+    if (control.status !== "ok") return;
+    expect(controlPrompts).toEqual([]);
+    expect(control.ranPartitions).toBe(0);
+    expect(control.skippedCosmetic).toBeGreaterThan(0);
+  });
+
+  it("a non-TS edit re-runs its slice — the extractor ceiling, at the live caller", async () => {
+    // The honest fallback, end to end: a markdown shard says `symbols: []` on both
+    // sides of the edit, exactly like an unchanged TypeScript file with no exports.
+    // The signature diff refuses to read that as "unchanged" and pays the turn.
+    const { root, storeDir, oid2 } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid2 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const first = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([]),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(first.status).toBe("ok");
+
+    write(root, "README.md", "# t\n\nA sentence the extractor cannot read.\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "docs");
+    const oid3 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid3 });
+
+    const prompts: string[] = [];
+    const run = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid3,
+    });
+    expect(run.status).toBe("ok");
+    if (run.status !== "ok") return;
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("README.md");
+    expect(run.skippedCosmetic).toBe(0);
+  });
+
+  // ── Cross-tier delta routing, through the LIVE caller ─────────────────────
+  //
+  // The regression this pins: the swarm rebuilds PRIOR ownership with the
+  // hierarchical `buildPartitions` ids while the CURRENT set is module batches
+  // (`mod:<path>#<hash>`). Routing an orphaned (deleted) path by id family alone
+  // can never match a module batch, so a deleted connected file used to route
+  // ZERO module workers — the neighbourhood around the deletion was never
+  // re-examined. `routeDelta`'s nearest-surviving-directory rule is what fixes it.
+  it("a DELETED connected file re-runs the module batch holding its surviving neighbours", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-swarm-orphan-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-swarm-orphan-store-"));
+    scratch.push(root, storeDir);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+    write(root, "packages/a/package.json", JSON.stringify({ name: "@t/a", private: true }));
+    write(
+      root,
+      "packages/a/src/index.ts",
+      'import { one } from "./one";\nexport const idx = one;\n',
+    );
+    write(root, "packages/a/src/one.ts", 'import { two } from "./two";\nexport const one = two;\n');
+    write(root, "packages/a/src/two.ts", "export const two = 2;\n");
+    write(root, "packages/b/package.json", JSON.stringify({ name: "@t/b", private: true }));
+    write(root, "packages/b/src/index.ts", "export const b = 1;\n");
+    write(root, "README.md", "# t\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    const oid1 = git(root, "rev-parse", "HEAD");
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid1 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const run1Prompts: string[] = [];
+    const run1 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(run1Prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(run1.status).toBe("ok");
+    // The three connected sources really did batch as a module (not the fallback).
+    const modulePacket =
+      run1Prompts.find((prompt) => prompt.includes("packages/a/src/two.ts")) ?? "";
+    expect(modulePacket).not.toBe("");
+    // …and its packet carries the batch's OWN resolved edges, from the real import
+    // shard — the deterministic front half reaching the worker.
+    expect(modulePacket).toContain("packages/a/src/index.ts -> packages/a/src/one.ts");
+    expect(modulePacket).toContain("packages/a/src/one.ts -> packages/a/src/two.ts");
+
+    // Delete ONE connected file and leave its importer's now-dangling specifier
+    // alone, so the ONLY changed path is the deleted one — which isolates the
+    // orphan-routing rule from ordinary "the changed file's own slice re-runs".
+    rmSync(join(root, "packages/a/src/two.ts"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "delete two");
+    const oid2 = git(root, "rev-parse", "HEAD");
+    await generator.generate(root, { explicitBaseRef: oid2 });
+
+    const run2Prompts: string[] = [];
+    const run2 = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(run2Prompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid2,
+    });
+    expect(run2.status).toBe("ok");
+    // The neighbourhood the deletion sat in re-runs: the module batch holding the
+    // surviving files of `packages/a/src`.
+    expect(run2Prompts.some((prompt) => prompt.includes("packages/a/src/one.ts"))).toBe(true);
+    // …and the unrelated package does NOT.
+    expect(run2Prompts.some((prompt) => prompt.includes("packages/b/src/index.ts"))).toBe(false);
+  });
+
+  // ── The journal lifecycle (#581), against a real store on disk ─────────────
+
+  it("journals completed batches through a failure, reuses them on the re-run, and promotes once", async () => {
+    const { root, storeDir, oid1 } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid1 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+    const journalDir = knowledgeStore.journalDir(repoKey);
+    const storePath = join(store.paths(repoKey).knowledgeDir, KNOWLEDGE_FILE);
+
+    // Every entry under every TARGET directory — the journal is partitioned per
+    // target now, so a flat read of the root would count zero and pass vacuously.
+    const journalEntries = (): string[] => {
+      try {
+        return readdirSync(journalDir, { recursive: true, encoding: "utf8" }).filter((name) =>
+          name.endsWith(".json"),
+        );
+      } catch {
+        return [];
+      }
+    };
+    const storeBytes = (): string | null => {
+      try {
+        return readFileSync(storePath, "utf8");
+      } catch {
+        return null;
+      }
+    };
+
+    // ── Attempt 1: one worker always fails ──────────────────────────────────
+    expect(storeBytes()).toBeNull();
+    const failedPrompts: string[] = [];
+    const failed = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(failedPrompts, "packages/a/src/index.ts"),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(failed.status).toBe("failed");
+    if (failed.status !== "failed") return;
+    expect(failed.failedSlices?.length).toBe(1);
+
+    // THE P1 INVARIANT: a partial set never presents as complete. The live store
+    // was not written at all — not a partial set, not an empty one.
+    expect(storeBytes()).toBeNull();
+    expect(knowledgeStore.loadLocal(repoKey)).toBeNull();
+
+    // …and the batches that DID complete are on disk, outside the store.
+    const gated = reader.loadFresh(repoKey, oid1);
+    expect(gated.ok).toBe(true);
+    if (!gated.ok) return;
+    const totalSlices = partitionsFromSnapshot(gated.snapshot).length;
+    expect(totalSlices).toBeGreaterThan(1);
+    const journaled = journalEntries();
+    expect(journaled).toHaveLength(totalSlices - 1);
+    expect(failed.journaled).toBe(journaled.length);
+    // Every non-failing batch really ran (they were not abandoned behind the failure).
+    expect(failedPrompts.filter((p) => p.includes("packages/b/src/index.ts"))).toHaveLength(1);
+
+    // ── Attempt 2: the same target, nothing failing ─────────────────────────
+    const retryPrompts: string[] = [];
+    const promoted = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort(retryPrompts),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(promoted.status).toBe("ok");
+    if (promoted.status !== "ok") return;
+
+    // Only the batch that failed re-ran; the journaled ones cost no turn.
+    expect(retryPrompts).toHaveLength(1);
+    expect(retryPrompts[0]).toContain("packages/a/src/index.ts");
+    expect(promoted.reusedPartitions).toBe(journaled.length);
+    expect(promoted.ranPartitions).toBe(journaled.length + 1);
+
+    // The whole set reached the store, and it carries the REUSED batches' claims —
+    // reuse is real work recovered, not a skipped batch quietly dropped.
+    const stored = knowledgeStore.loadLocal(repoKey);
+    expect(stored).not.toBeNull();
+    expect(stored?.statements.length).toBe(promoted.set.statements.length);
+    const paths = stored?.statements.flatMap((s) => s.evidence.map((a) => a.path)) ?? [];
+    expect(paths.some((path) => path.startsWith("packages/b/"))).toBe(true);
+
+    // Promoted ⇒ the journal has nothing left to protect.
+    expect(journalEntries()).toHaveLength(0);
+  });
+
+  it("refuses a journal entry from a DIFFERENT baseline", async () => {
+    // Reuse is keyed on baseOid + slice id + membership, and `read` re-checks the
+    // baseline recorded INSIDE the file. Without both, an advance would be served a
+    // batch produced at the baseline before it: a slice whose own files did not
+    // change still had a different packet, because its neighbour map did.
+    //
+    // What this test proves and what it does not: removing EITHER guard alone still
+    // passes, because the other catches it. It reddens when both go. So it pins the
+    // property, not the mechanism — the key alone is not shown to be load-bearing
+    // here, and a future edit that drops it will not be caught by this test.
+    const { root, storeDir, oid1, oid2 } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const built = await generator.generate(root, { explicitBaseRef: oid1 });
+    const reader = new ProjectContextReader(store);
+    const knowledgeStore = new KnowledgeStore(store);
+    const repoKey = built.manifest.repoKey;
+
+    const first = await runKnowledgeSwarmForRepo({
+      reader,
+      knowledgeStore,
+      claudePort: stubPort([], "packages/a/src/index.ts"),
+      codexExecutor: null,
+      repoKey,
+      repoRoot: root,
+      baseOid: oid1,
+    });
+    expect(first.status).toBe("failed");
+    const journalDir = knowledgeStore.journalDir(repoKey);
+    expect(readdirSync(journalDir).length).toBeGreaterThan(0);
+
+    // Advance the baseline. The journal still holds oid1's entries.
+    await generator.generate(root, { explicitBaseRef: oid2 });
+    const journal = new KnowledgeJournal(journalDir);
+    const atOid2 = reader.loadFresh(repoKey, oid2);
+    expect(atOid2.ok).toBe(true);
+    if (!atOid2.ok) return;
+    for (const slice of partitionsFromSnapshot(atOid2.snapshot)) {
+      expect(journal.read(targetOf(atOid2.snapshot), slice)).toBeNull();
+    }
+    // The control: at the baseline they were written FOR, the same entries resolve.
+    const atOid1 = reader.loadFresh(repoKey, oid1);
+    expect(atOid1.ok).toBe(true);
+    if (!atOid1.ok) return;
+    const resolved = partitionsFromSnapshot(atOid1.snapshot).filter(
+      (slice) => journal.read(targetOf(atOid1.snapshot), slice) !== null,
+    );
+    expect(resolved.length).toBeGreaterThan(0);
+
+    // ── And the same refusal for the OTHER two thirds of the target ──────────
+    //
+    // The baseline is one of three things a journal entry is keyed on. A prompt
+    // rework or a re-extraction at an UNCHANGED baseline changes what the worker was
+    // asked, so its old answer is an answer to a different question — and unlike the
+    // baseline case there is nothing else to catch it.
+    const live = targetOf(atOid1.snapshot);
+    const reusable = partitionsFromSnapshot(atOid1.snapshot).filter(
+      (slice) => journal.read(live, slice) !== null,
+    );
+    expect(reusable.length).toBeGreaterThan(0);
+    for (const slice of reusable) {
+      expect(journal.read({ ...live, generator: "knowledge-swarm@1" }, slice)).toBeNull();
+      expect(journal.read({ ...live, snapshotFingerprint: "re-extracted" }, slice)).toBeNull();
+    }
   });
 });

@@ -59,20 +59,88 @@ mutates review state.
 
 Lens drafters do not retrieve their primary input through tools.
 `buildDeltaPacket()` in `packages/core/src/delta/` assembles the drafters'
-entire input from durable state: the patchset's file inventory (with typed
+primary input from durable state: the patchset's file inventory (with typed
 mode-change evidence where the diff carries one), the hunk index with stable
 content-derived ids, blast-radius signals, deterministic noise
-pre-classification, test-to-implementation counterpart hints, the knowledge
-set, the bounded dossier, and — on re-review rounds — the successor account.
-The packet is inlined into drafting prompts rather than fetched mid-draft, so
-a drafter's evidence is pinned and reproducible. Facts that need the project
-snapshot stay honestly absent from the packet: fan-in carries an explicit
-not-assessed mark, ownership marks simply do not appear until dispatch
-supplies the rules, and openspec artifacts enter at path grain with the full
-parse running where the artifact text lives. The element differ lives in the
-same folder but feeds lineage carry and the successor account, not the packet
-directly. Raw payloads and follow-up questions stay behind the context tools
-above.
+pre-classification, test-to-implementation counterpart hints, a scoped
+knowledge selection, the bounded dossier, and — on re-review rounds — the
+successor account. The packet is inlined into drafting prompts rather than
+fetched mid-draft, so a drafter's evidence is pinned and reproducible.
+Ownership marks do not appear until dispatch supplies the rules, and openspec
+artifacts enter at path grain with the full parse running where the artifact
+text lives. The element differ lives in the same folder but feeds lineage carry
+and the successor account, not the packet directly. Raw payloads and follow-up
+questions stay behind the context tools above.
+
+The packet is inlined, but it is not a dump. When the composition root can gate
+a fresh project snapshot at the patchset's base OID,
+`assembleRoundCollation()` reads two snapshot-derived facts into it: the
+knowledge selection, and an edge-backed fan-in index for the blast radius.
+
+### The knowledge selection
+
+`selectPacketKnowledge()` chooses which statements a drafter is handed, in
+three steps, each of them disclosed in the packet:
+
+1. **Project.** Statements pass through `queryKnowledge` against the fresh
+   snapshot. A statement whose cited bytes the snapshot changed is carried in
+   `invalidatedPending` — disclosed, never mixed in with current claims. A
+   statement a human rejected is dropped from both lists; offering one back as
+   evidence would re-launder a claim its owner killed.
+2. **Scope.** The changed files plus their one-hop import neighbourhood in both
+   directions — what they import, and what imports them — form the retrieval
+   subgraph. A statement is kept when its subject or any evidence anchor lands
+   in that subgraph, or when it is repo-level: a subject that *contains* a
+   changed file rather than naming one, either as a path subtree
+   (`packages/core`) or as a workspace scope name (`@rennet/core`). Scope names
+   are not unique, so a name resolves through *every* root that carries it, and
+   through the root rather than the spelling.
+3. **Cap.** At most 80 statements per list — the same number `context.ask` puts
+   in front of a model in one prompt, because it is the same consumer with the
+   same budget.
+
+Scoping requires the graph to answer about **this change**, not merely to
+exist. A graph full of edges elsewhere in the repo that resolves nothing for the
+changed paths — because they were added, or the snapshot never indexed them —
+would collapse the scope to the changed paths themselves and discard the rest of
+the store under a confident `import-graph` label. So coverage of the change is
+the gate, and the packet discloses it per change: how many changed paths carry a
+resolved import edge, and how many exist at the base snapshot at all. Those two
+numbers are what tell *"nothing depends on this"* apart from *"the base was
+never able to answer"*.
+
+Every degradation goes toward more context, never quietly less, and the packet
+says which one it got:
+
+| `mode` | What happened | What the drafter gets |
+|---|---|---|
+| `import-graph` | The import graph resolved **and covers the changed paths** | The scoped one-hop subset |
+| `projected-full` | No import graph, or none that covers the change | The full projected set |
+| `unprojected` | No fresh snapshot at all | The stored set minus rejected, with invalidation explicitly unchecked |
+
+"Toward more" is a claim about what the drafter is handed, not about the pool
+the cap draws from, so the two unscoped modes order the statements that name a
+changed path first. Without that, a plain id sort lets irrelevant low-id rows
+fill the cap and evict everything the scoped mode would have kept — the wider
+mode quietly handing over less.
+
+The packet's counts carry the rest of the honesty: how many statements exist in
+the store, how many were selected, how many the cap dropped, and how many
+rejections were honoured. A drafter that wants more than it was handed asks
+`context.ask` — the selection sets a floor, not a ceiling. In `unprojected` mode
+that escape hatch is narrower and says so: `context.ask` reads the same snapshot,
+so it refuses until the repo map is rebuilt.
+
+### The fan-in signal
+
+The same snapshot answers the blast radius's fan-in question — how many other
+files depend on each changed file. Two availability rules keep a count from
+becoming a claim the base cannot support. The **index** is supplied only when it
+is genuinely populated, so an absent index stays a not-assessed mark rather than
+a repo-wide zero. And each **file** is asked at its base-side path: a rename is
+counted at the path it used to live under, and a path the base snapshot does not
+carry at all — an added file, or one the file cap never indexed — gets its own
+not-assessed mark. A zero here always means "checked, nothing depends on it".
 
 ## The related-context dossier
 

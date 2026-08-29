@@ -106,8 +106,9 @@ export class SnapshotOverlayGenerator {
       const bytes = target.built.shards.get(digest);
       if (bytes !== undefined) deltaBytes.set(digest, bytes);
     }
-    // Reference-shard upserts are genuinely new bytes vs the base too (#200).
-    for (const [, digest] of overlay.referenceUpserts) {
+    // Reference-shard upserts are genuinely new bytes vs the base too (#200), and so
+    // are import-shard upserts.
+    for (const [, digest] of [...overlay.referenceUpserts, ...overlay.importUpserts]) {
       const bytes = target.built.shards.get(digest);
       if (bytes !== undefined) deltaBytes.set(digest, bytes);
     }
@@ -201,12 +202,15 @@ export class SnapshotOverlayReader implements MergedSnapshotSource {
       };
     }
 
-    const merged = mergeOverlay(base, overlay);
     const load = (digest: string): string | undefined =>
       this.deps.overlayStore.loadShard(repoKey, nonDefaultBaseOid, digest) ??
       this.deps.store.loadShard(repoKey, digest);
 
+    // `mergeOverlay` is INSIDE the try: it iterates the overlay's shard-delta arrays,
+    // so an overlay that reached here malformed throws there, and a throw outside the
+    // catch escapes this "never a throw, degrade to a typed failure" boundary.
     try {
+      const merged = mergeOverlay(base, overlay);
       const integrity = verifySnapshotIntegrity(merged, load);
       if (!integrity.ok) {
         return {
@@ -215,6 +219,7 @@ export class SnapshotOverlayReader implements MergedSnapshotSource {
             reason: "corrupt",
             missing: integrity.missing,
             mismatched: integrity.mismatched,
+            ...(integrity.refusal === undefined ? {} : { refusal: integrity.refusal }),
           },
         };
       }
@@ -222,7 +227,12 @@ export class SnapshotOverlayReader implements MergedSnapshotSource {
       if (!materialized.ok) {
         return {
           ok: false,
-          failure: { reason: "corrupt", missing: materialized.slots, mismatched: [] },
+          failure: {
+            reason: "corrupt",
+            missing: materialized.slots,
+            mismatched: [],
+            ...(materialized.reason === "schema-version" ? { refusal: "schema-version" } : {}),
+          },
         };
       }
       return {

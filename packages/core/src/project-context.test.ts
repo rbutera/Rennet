@@ -11,17 +11,20 @@ import type {
   TestEntry,
   WorkspaceScope,
 } from "@rennet/protocol";
-import { sha256Hex } from "@rennet/protocol";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { LoadedSnapshot, ShardLoader } from "./project-context";
 import {
+  fanInIndexFromSnapshot,
   isSafeRepoRelativePath,
   materializeSnapshot,
   queryFileContext,
   queryFileOverview,
+  queryImportGraph,
   queryProjectMap,
   queryReferences,
   querySymbolDefinition,
+  querySymbolIndex,
 } from "./project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "./project-snapshot";
 
@@ -86,7 +89,8 @@ const conventions: ConventionEntry[] = [
 const symbolShards: SymbolShard[] = [
   {
     blobOid: B_A,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [
       { name: "foo", kind: "function", line: 1 },
       { name: "Bar", kind: "class", line: 5 },
@@ -94,7 +98,8 @@ const symbolShards: SymbolShard[] = [
   },
   {
     blobOid: B_M,
-    extractor: "structural-ts-v1",
+    extractor: "structural-ts-v2",
+    generated: false,
     symbols: [{ name: "main", kind: "function", line: 1 }],
   },
 ];
@@ -210,6 +215,81 @@ describe("materializeSnapshot", () => {
   });
 });
 
+describe("loadSymbolShard — a shard that cannot answer `generated` is refused", () => {
+  /** A manifest whose symbol pointer for `B_A` names the given shard bytes. */
+  function withSymbolShardBytes(bytes: string): { snapshot: LoadedSnapshot; digest: string } {
+    const { manifest, load } = build();
+    const digest = sha256Hex(bytes);
+    const swapped: ProjectSnapshotManifest = {
+      ...manifest,
+      symbols: manifest.symbols.map(([blobOid, d]) =>
+        blobOid === B_A ? ([blobOid, digest] as const) : ([blobOid, d] as const),
+      ),
+    };
+    const swappedLoad: ShardLoader = (d) => (d === digest ? bytes : load(d));
+    const result = materializeSnapshot(swapped, swappedLoad);
+    if (!result.ok) throw new Error("materialize failed");
+    return { snapshot: result.snapshot, digest };
+  }
+
+  const body = {
+    blobOid: B_A,
+    extractor: "structural-ts-v1",
+    symbols: [{ name: "foo", kind: "function", line: 1 }],
+  };
+
+  it("refuses a pre-v4 shard rather than reading its absent `generated` as `false`", () => {
+    // The bytes hash to the digest the manifest names, so nothing here is missing or
+    // corrupt — the shard is simply from a schema that never recorded the banner bit.
+    // Coercing it to `false` would answer "this file is not generated" from evidence
+    // that does not exist.
+    const { snapshot, digest } = withSymbolShardBytes(canonicalize(body));
+    const overview = queryFileOverview(snapshot, "packages/core/src/a.ts");
+    expect(overview.ok).toBe(false);
+    if (!overview.ok) expect(overview.reason).toBe("shard-unavailable");
+    expect(querySymbolIndex(snapshot).ok).toBe(false);
+    expect(sha256Hex(canonicalize(body))).toBe(digest);
+  });
+
+  it("the control: the same shard WITH a boolean `generated` decodes", () => {
+    const { snapshot } = withSymbolShardBytes(canonicalize({ ...body, generated: true }));
+    const overview = queryFileOverview(snapshot, "packages/core/src/a.ts");
+    expect(overview.ok).toBe(true);
+    const index = querySymbolIndex(snapshot);
+    expect(index.ok).toBe(true);
+    if (index.ok) expect(index.index.generatedBlobs.has(B_A)).toBe(true);
+  });
+
+  it("refuses a shard whose `symbols` array holds something that is not a symbol", () => {
+    // `Array.isArray` plus a cast said "this shard has symbols" and every reader then
+    // dereferenced `.kind` on it. `symbols: [null]` hash-checks perfectly clean and
+    // THREW — a crash, in five callers, from bytes the fail-closed contract at the top
+    // of the module promises to refuse. Each malformed element below is a different
+    // wrong shape, and each must land on `shard-unavailable`, never on an exception.
+    for (const symbols of [
+      [null],
+      ["run"],
+      [{ name: "run", kind: "function" }], // no line
+      [{ name: 1, kind: "function", line: 1 }], // wrong element types
+      [{ name: "run", kind: "function", line: 1 }, null], // one good, one not
+    ]) {
+      const { snapshot } = withSymbolShardBytes(
+        canonicalize({ ...body, generated: false, symbols }),
+      );
+      const overview = queryFileOverview(snapshot, "packages/core/src/a.ts");
+      expect(overview.ok).toBe(false);
+      if (!overview.ok) expect(overview.reason).toBe("shard-unavailable");
+      expect(querySymbolIndex(snapshot).ok).toBe(false);
+      expect(queryFileContext(snapshot, "packages/core/src/a.ts").ok).toBe(false);
+      expect(querySymbolDefinition(snapshot, { name: "run" }).ok).toBe(false);
+    }
+    // The control: the same shard with a well-formed symbol decodes, so the five
+    // refusals above are about the element shapes and nothing else.
+    const healthy = withSymbolShardBytes(canonicalize({ ...body, generated: false }));
+    expect(queryFileOverview(healthy.snapshot, "packages/core/src/a.ts").ok).toBe(true);
+  });
+});
+
 describe("queryProjectMap", () => {
   it("returns the whole map with the base-ref pin when unscoped", () => {
     const map = queryProjectMap(loaded());
@@ -279,7 +359,7 @@ describe("queryFileContext", () => {
     expect(result.context.scope).toBe("@x/core");
     expect(result.context.isSymlink).toBe(false);
     expect(result.context.hasSymbols).toBe(true);
-    expect(result.context.extractor).toBe("structural-ts-v1");
+    expect(result.context.extractor).toBe("structural-ts-v2");
     expect(result.context.symbols.map((s) => s.name)).toEqual(["foo", "Bar"]);
     expect(result.context.tests).toHaveLength(0);
   });
@@ -354,7 +434,7 @@ describe("queryFileOverview", () => {
     expect(result.overview.path).toBe("packages/core/src/a.ts");
     expect(result.overview.blobOid).toBe(B_A);
     expect(result.overview.hasSymbols).toBe(true);
-    expect(result.overview.extractor).toBe("structural-ts-v1");
+    expect(result.overview.extractor).toBe("structural-ts-v2");
     expect(result.overview.symbols.map((s) => s.name)).toEqual(["foo", "Bar"]);
   });
 
@@ -555,5 +635,349 @@ describe("queryReferences", () => {
     if (result.ok) return;
     expect(result.reason).toBe("shard-unavailable");
     expect(result.digest).toBe(aDigest);
+  });
+});
+
+// ── The repo-wide import graph (context-map rebuild, W1) ──────────────────────
+//
+// Its own fixture tree, because resolution is the whole point here: one file per
+// blob, a directory `index` target, a workspace alias with and without a subpath,
+// a `..` traversal across scopes, and externals that must resolve to nothing.
+
+const IMPORT_TREE: Record<string, string[]> = {
+  // The barrel a bare workspace specifier must land on, via `<sourceRoot>`.
+  "packages/core/src/index.ts": ["./a"],
+  // Directory-index resolution (`./util` ⇒ `./util/index.ts`), plus two externals.
+  "packages/core/src/a.ts": ["./util", "node:fs", "react"],
+  "packages/core/src/util/index.ts": [],
+  // Workspace bare + workspace subpath + a same-scope relative import.
+  "packages/app/src/main.ts": ["@x/core", "@x/core/a", "./helper"],
+  // A relative import that traverses out of the scope.
+  "packages/app/src/helper.ts": ["../../core/src/a"],
+  // A dangling relative specifier: the inventory holds no such file ⇒ no edge.
+  "packages/app/src/orphan.ts": ["./nowhere"],
+  // A bare workspace specifier for a package whose entry is DECLARED, not
+  // positional: `@x/lib` has no `index` file anywhere, only `src/lib.ts`.
+  "packages/app/src/entrypoint-user.ts": ["@x/lib"],
+  "packages/lib/src/lib.ts": [],
+  // A `.mts` file must be reachable as an EXTENSIONLESS target, not just usable as
+  // an edge source.
+  "packages/core/src/native-user.ts": ["./native"],
+  "packages/core/src/native.mts": [],
+  // A SELF-import beside a same-stem sibling: `twin.ts` importing `./twin` names
+  // itself, so it must produce NO edge — never a phantom edge to `twin.tsx`.
+  "packages/core/src/twin.ts": ["./twin"],
+  "packages/core/src/twin.tsx": [],
+  // A package's own ROOT barrel naming its package by ALIAS. `@x/self` probes
+  // `packages/self` (which IS this file, via the index candidate) and must stop
+  // there — falling through to the `<root>/src` base would mint an edge to a
+  // sibling barrel inside the same package.
+  "packages/self/index.ts": ["@x/self"],
+  "packages/self/src/index.ts": [],
+};
+
+const importScopes: WorkspaceScope[] = [
+  {
+    name: "@x/core",
+    root: "packages/core",
+    sourceRoot: "packages/core/src",
+    type: "library",
+    private: true,
+    tags: [],
+  },
+  // No `sourceRoot`: the `<root>/src` fallback must still find its files.
+  { name: "@x/app", root: "packages/app", private: true, tags: [] },
+  // Its entry is DECLARED (`main: ./src/lib.ts`) and there is no `index` to guess.
+  {
+    name: "@x/lib",
+    root: "packages/lib",
+    sourceRoot: "packages/lib/src",
+    type: "library",
+    private: true,
+    tags: [],
+  },
+  // No `sourceRoot`, so the `<root>/src` fallback is the second probed base — the
+  // one a self-naming alias must never fall through to.
+  { name: "@x/self", root: "packages/self", private: true, tags: [] },
+];
+
+const importEntryPoints: EntryPoint[] = [{ scope: "@x/lib", main: "./src/lib.ts", bin: [] }];
+
+function importFixture(overrides: { omitImports?: boolean; omitEntryPoints?: boolean } = {}): {
+  snapshot: LoadedSnapshot;
+  load: ShardLoader;
+} {
+  const paths = Object.keys(IMPORT_TREE).sort();
+  const importInputs: SnapshotStructuralInputs = {
+    repoKey: "/repo/.git",
+    baseRef: "main",
+    baseRefResolution: "symbolic-head" as BaseRefResolution,
+    baseOid: "oid-imports",
+    files: paths.map((path) => ({ path, blobOid: `blob:${path}`, size: 1, mode: "100644" })),
+    scopes: importScopes,
+    edges: [],
+    entryPoints: overrides.omitEntryPoints ? [] : importEntryPoints,
+    tests: [],
+    ownership: [],
+    conventions: [],
+  };
+  const importShards = paths.map((path) => ({
+    blobOid: `blob:${path}`,
+    extractor: "structural-imports-v1",
+    imports: [...(IMPORT_TREE[path] ?? [])].sort(),
+  }));
+  // A symbol + reference shard for one file, so the TEXTUAL fan-in fallback has
+  // something real to find when the import family is withheld.
+  const built = buildSnapshot(
+    importInputs,
+    [
+      {
+        blobOid: "blob:packages/core/src/a.ts",
+        extractor: "structural-ts-v2",
+        generated: false,
+        symbols: [{ name: "alpha", kind: "const", line: 1 }],
+      },
+    ],
+    [
+      {
+        blobOid: "blob:packages/app/src/main.ts",
+        extractor: "structural-refs-v1",
+        references: [{ name: "alpha", lines: [3] }],
+      },
+    ],
+    overrides.omitImports ? [] : importShards,
+  );
+  const load: ShardLoader = (digest) => built.shards.get(digest);
+  const materialized = materializeSnapshot(built.manifest, load);
+  if (!materialized.ok) throw new Error(`materialize failed: ${materialized.slots.join(",")}`);
+  return { snapshot: materialized.snapshot, load };
+}
+
+describe("queryImportGraph — raw specifiers resolved into real file→file edges", () => {
+  it("resolves relative, directory-index, and traversing specifiers", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const pairs = result.graph.edges.map((edge) => [edge.from, edge.to, edge.kind]);
+    expect(pairs).toContainEqual([
+      "packages/core/src/index.ts",
+      "packages/core/src/a.ts",
+      "relative",
+    ]);
+    // `./util` ⇒ the directory's index file.
+    expect(pairs).toContainEqual([
+      "packages/core/src/a.ts",
+      "packages/core/src/util/index.ts",
+      "relative",
+    ]);
+    // `../../core/src/a` crosses out of @x/app and back into @x/core.
+    expect(pairs).toContainEqual([
+      "packages/app/src/helper.ts",
+      "packages/core/src/a.ts",
+      "relative",
+    ]);
+  });
+
+  it("resolves workspace specifiers through the scopes table, bare and with a subpath", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    const pairs = result.graph.edges.map((edge) => [edge.from, edge.to, edge.kind]);
+    // `@x/core` ⇒ the package's source-root barrel, not its directory.
+    expect(pairs).toContainEqual([
+      "packages/app/src/main.ts",
+      "packages/core/src/index.ts",
+      "workspace",
+    ]);
+    // `@x/core/a` ⇒ the subpath under the source root.
+    expect(pairs).toContainEqual([
+      "packages/app/src/main.ts",
+      "packages/core/src/a.ts",
+      "workspace",
+    ]);
+    // A same-scope relative specifier still resolves as `relative`, not `workspace`.
+    expect(pairs).toContainEqual([
+      "packages/app/src/main.ts",
+      "packages/app/src/helper.ts",
+      "relative",
+    ]);
+  });
+
+  it("drops externals and dangling specifiers rather than minting phantom nodes", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    const targets = new Set(result.graph.edges.map((edge) => edge.to));
+    expect(targets.has("node:fs")).toBe(false);
+    expect(targets.has("react")).toBe(false);
+    expect(result.graph.edges.some((edge) => edge.specifier === "react")).toBe(false);
+    expect(result.graph.importsOf("packages/app/src/orphan.ts")).toEqual([]);
+  });
+
+  it("answers per-file adjacency in both directions, distinct and sorted", () => {
+    const result = queryImportGraph(importFixture().snapshot);
+    if (!result.ok) return;
+    expect(result.graph.importersOf("packages/core/src/a.ts")).toEqual([
+      "packages/app/src/helper.ts",
+      "packages/app/src/main.ts",
+      "packages/core/src/index.ts",
+    ]);
+    expect(result.graph.importsOf("packages/app/src/main.ts")).toEqual([
+      "packages/app/src/helper.ts",
+      "packages/core/src/a.ts",
+      "packages/core/src/index.ts",
+    ]);
+    expect(result.graph.importersOf("packages/app/src/main.ts")).toEqual([]);
+  });
+
+  it("is deterministic: the same snapshot yields the same edge order", () => {
+    const first = queryImportGraph(importFixture().snapshot);
+    const second = queryImportGraph(importFixture().snapshot);
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(first.graph.edges).toEqual(second.graph.edges);
+  });
+
+  it("fails closed when a referenced import shard cannot be produced", () => {
+    const { snapshot, load } = importFixture();
+    const digest = snapshot.importDigestByBlob.get("blob:packages/core/src/a.ts");
+    const holed: LoadedSnapshot = {
+      ...snapshot,
+      load: (d) => (d === digest ? undefined : load(d)),
+    };
+    const result = queryImportGraph(holed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+    expect(result.digest).toBe(digest);
+  });
+
+  it("is an honest empty graph when the snapshot carries no import shards", () => {
+    const result = queryImportGraph(importFixture({ omitImports: true }).snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.edges).toEqual([]);
+  });
+
+  it("resolves a bare workspace alias through the scope's DECLARED entry point", () => {
+    // `@x/lib` declares `main: ./src/lib.ts` and has no `index` file anywhere, so the
+    // root/sourceRoot + `index` probe alone cannot find it. Every package that names
+    // a non-index entry is invisible to the graph without this.
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/app/src/entrypoint-user.ts")).toEqual([
+      "packages/lib/src/lib.ts",
+    ]);
+
+    // The positive control: withhold the entryPoints shard and the SAME specifier in
+    // the SAME tree resolves to nothing — so the edge above is the declaration's
+    // doing, not an index probe that would have found it anyway.
+    const without = queryImportGraph(importFixture({ omitEntryPoints: true }).snapshot);
+    expect(without.ok).toBe(true);
+    if (!without.ok) return;
+    expect(without.graph.importsOf("packages/app/src/entrypoint-user.ts")).toEqual([]);
+  });
+
+  it("resolves an extensionless specifier to a `.mts` target", () => {
+    // `.mts`/`.cts` are in the extractor's eligible set, so a `.mts` file can be an
+    // edge SOURCE. Leaving them out of the resolution candidates made it impossible
+    // for one to be an extensionless edge TARGET — an asymmetry with no reason.
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/core/src/native-user.ts")).toEqual([
+      "packages/core/src/native.mts",
+    ]);
+  });
+
+  it("mints NO edge for a self-import, rather than a phantom edge to a sibling", () => {
+    // `twin.ts` importing `./twin` names ITSELF. Skipping past the self-candidate and
+    // continuing down the extension list resolved it to `twin.tsx` — an edge between
+    // two files that have nothing to do with each other.
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/core/src/twin.ts")).toEqual([]);
+    expect(result.graph.importersOf("packages/core/src/twin.tsx")).toEqual([]);
+    expect(result.graph.edges.some((edge) => edge.from === "packages/core/src/twin.ts")).toBe(
+      false,
+    );
+  });
+
+  it("stops a self-naming WORKSPACE ALIAS instead of falling through to the next base", () => {
+    // `packages/self/index.ts` importing bare `@x/self` names ITSELF: the alias's
+    // first probed base is the package root, whose `index.ts` candidate is this very
+    // file. Continuing to the `<root>/src` base resolved it to the sibling barrel
+    // `packages/self/src/index.ts` — a phantom edge minted from a self-reference.
+    const result = queryImportGraph(importFixture().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.graph.importsOf("packages/self/index.ts")).toEqual([]);
+    expect(result.graph.importersOf("packages/self/src/index.ts")).toEqual([]);
+  });
+});
+
+describe("querySymbolIndex — one pass over the symbol family, for batching", () => {
+  function withGenerated(): { snapshot: LoadedSnapshot; load: ShardLoader } {
+    const built = buildSnapshot(inputs, [
+      { ...(symbolShards[0] as SymbolShard), generated: true },
+      symbolShards[1] as SymbolShard,
+    ]);
+    const load: ShardLoader = (digest) => built.shards.get(digest);
+    const materialized = materializeSnapshot(built.manifest, load);
+    if (!materialized.ok) throw new Error("materialize failed");
+    return { snapshot: materialized.snapshot, load };
+  }
+
+  it("reports the generated blobs and each blob's DISTINCT exported names, sorted", () => {
+    const result = querySymbolIndex(withGenerated().snapshot);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect([...result.index.generatedBlobs]).toEqual([B_A]);
+    expect(result.index.exportsByBlob.get(B_A)).toEqual(["Bar", "foo"]);
+    expect(result.index.exportsByBlob.get(B_M)).toEqual(["main"]);
+    // A blob with no symbol shard is simply absent — not an empty-export claim.
+    expect(result.index.exportsByBlob.has(B_JSON)).toBe(false);
+  });
+
+  it("reads an ordinary snapshot as carrying no generated blobs", () => {
+    const result = querySymbolIndex(loaded());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect([...result.index.generatedBlobs]).toEqual([]);
+  });
+
+  it("fails closed on an unloadable shard rather than thinning the index", () => {
+    const { snapshot, load } = withGenerated();
+    const digest = snapshot.symbolDigestByBlob.get(B_A) as string;
+    const holed: LoadedSnapshot = {
+      ...snapshot,
+      load: (d) => (d === digest ? undefined : load(d)),
+    };
+    const result = querySymbolIndex(holed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+    expect(result.digest).toBe(digest);
+  });
+});
+
+describe("fanInIndexFromSnapshot — prefers edges, falls back to text, never confuses them", () => {
+  it("is edge-backed when the import graph resolved", () => {
+    const index = fanInIndexFromSnapshot(importFixture().snapshot);
+    expect(index.method).toBe("import-edges");
+    if (index.method !== "import-edges") return;
+    expect(index.importersOf("packages/core/src/a.ts")).toEqual([
+      "packages/app/src/helper.ts",
+      "packages/app/src/main.ts",
+      "packages/core/src/index.ts",
+    ]);
+  });
+
+  it("falls back to the textual identifier index when there are no import edges", () => {
+    const index = fanInIndexFromSnapshot(importFixture({ omitImports: true }).snapshot);
+    expect(index.method).toBe("textual");
+    if (index.method !== "textual") return;
+    expect(index.definedSymbols("packages/core/src/a.ts")).toEqual(["alpha"]);
+    expect(index.referencingFiles("alpha")).toEqual(["packages/app/src/main.ts"]);
   });
 });

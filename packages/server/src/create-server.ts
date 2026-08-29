@@ -102,6 +102,8 @@ import {
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
   SessionStore,
+  SnapshotOverlayReader,
+  SnapshotOverlayStore,
   SqliteReviewStore,
   saveConventionCatalogue,
   scoutSettingsOffers,
@@ -2294,18 +2296,34 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               });
             },
             reviewNow: () => service.reviewById(review.id) ?? review,
+            // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
+            // this seam hands over the stored set plus the snapshot gated fresh at the
+            // patchset's own base OID, and `assembleRoundCollation` projects (invalidated
+            // disclosed, rejected dropped), scopes to the change's 1-hop import
+            // neighbourhood, and caps — disclosing all three in the packet. A gate refusal
+            // is a null snapshot, which degrades to the unprojected set and SAYS so; it is
+            // never a silently narrower one.
+            //
+            // The reader is the OVERLAY-MERGED one, the same shape the review's own
+            // `context.file`/`context.map` tools are built with: a review on a
+            // non-default base resolves through a warmed overlay, and a bare reader
+            // would refuse it as stale. Without this the packet could degrade to
+            // `unprojected` on a review whose context tools were answering fine —
+            // two readers disagreeing about the same review's snapshot.
             knowledgeFor: (patchset) => {
               const repoKey = repoKeyForRoot(review.repositoryRoot);
-              return (
-                new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? {
-                  schemaVersion: 1,
-                  repoKey,
-                  baseOid: patchset.repository.baseOid,
-                  snapshotFingerprint: "",
-                  generator: "round-regeneration",
-                  statements: [],
-                }
+              const overlayReader = new SnapshotOverlayReader({
+                store: liveSnapshotStore,
+                overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
+              });
+              const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
+                repoKey,
+                patchset.repository.baseOid,
               );
+              return {
+                set: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null,
+                snapshot: gated.ok ? gated.snapshot : null,
+              };
             },
             // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
             // lint resolves citations against every text file at the reviewed head and

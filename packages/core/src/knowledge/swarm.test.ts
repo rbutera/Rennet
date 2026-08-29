@@ -22,6 +22,7 @@ const SLICE: PartitionSlice = {
     { path: "src/a.ts", blobOid: "blob-a" },
     { path: "src/b.ts", blobOid: "blob-b" },
   ],
+  neighbors: [],
 };
 
 const PROVENANCE = { model: "test-model", apiKeySource: null };
@@ -103,6 +104,95 @@ describe("runPartitionWorker", () => {
     expect(result.droppedAnchors).toBe(1);
   });
 
+  // ── The worker PACKET (W3, Stage 2): skeleton, edges, neighbours ───────────
+
+  /** Run one worker purely to capture the prompt it was handed. */
+  async function packetFor(slice: PartitionSlice): Promise<string> {
+    let captured = "";
+    await runPartitionWorker({
+      slice,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async (prompt) => {
+        captured = prompt;
+        return emitted({ statements: [] });
+      },
+    });
+    return captured;
+  }
+
+  it("hands a module batch its skeleton, its own edges, and the edges batching cut", async () => {
+    const packet = await packetFor({
+      id: "mod:src/a.ts#deadbeef",
+      files: [
+        {
+          path: "src/a.ts",
+          blobOid: "blob-a",
+          symbols: [
+            { name: "runPass", kind: "function", line: 12 },
+            { name: "PassOptions", kind: "interface", line: 4 },
+          ],
+        },
+        {
+          path: "src/b.ts",
+          blobOid: "blob-b",
+          symbols: [{ name: "wire", kind: "const", line: 7 }],
+        },
+      ],
+      neighbors: [
+        {
+          path: "src/b.ts",
+          neighbors: [{ path: "lib/c.ts", direction: "imports", symbols: ["helper", "other"] }],
+          truncated: 3,
+        },
+      ],
+      imports: [{ from: "src/a.ts", to: "src/b.ts" }],
+    });
+
+    // The skeleton: names, kinds and lines, per file.
+    expect(packet).toContain("runPass (function) L12");
+    expect(packet).toContain("PassOptions (interface) L4");
+    expect(packet).toContain("wire (const) L7");
+    // The batch's own resolved edges.
+    expect(packet).toContain("IMPORTS WITHIN THIS SLICE (1 resolved edges)");
+    expect(packet).toContain("src/a.ts -> src/b.ts");
+    // The cut edges, with direction, the neighbour's exports, and the truncation.
+    expect(packet).toContain("imports lib/c.ts [exports: helper, other]");
+    expect(packet).toContain("(+3 more, not shown)");
+    // Reading is invited, not forbidden.
+    expect(packet).toContain("FREE to read any of it");
+  });
+
+  it("gives a fallback slice an honest reduced packet: no skeleton is not an empty skeleton", async () => {
+    const packet = await packetFor({
+      id: "dir:docs",
+      files: [
+        // Indexed by the v5 shard family, declares nothing — a real fact.
+        { path: "src/a.ts", blobOid: "blob-a", symbols: [] },
+        // No shard covers this blob at all — a DIFFERENT fact.
+        { path: "src/b.ts", blobOid: "blob-b" },
+      ],
+      neighbors: [],
+      imports: [],
+    });
+    expect(packet).toContain("src/a.ts\n    (indexed; declares no top-level symbols)");
+    expect(packet).toContain("src/b.ts\n    (no symbol index for this file)");
+    expect(packet).toContain("IMPORTS WITHIN THIS SLICE: none.");
+    expect(packet).toContain("NEIGHBOURS OUTSIDE THIS SLICE: none recorded.");
+    // Nothing is fabricated: no edge arrow and no exports list appear anywhere.
+    expect(packet).not.toContain(" -> ");
+    expect(packet).not.toContain("[exports:");
+  });
+
+  it("says the graph was UNREADABLE rather than claiming the slice has no edges", async () => {
+    // The degradation path leaves `imports` absent. Reporting that as "none" would
+    // tell a worker the files are unconnected when nothing ever looked.
+    const packet = await packetFor({ id: "dir:docs", files: SLICE.files, neighbors: [] });
+    expect(packet).toContain("the import graph could not be read");
+    expect(packet).toContain("Absence below is not evidence of absence");
+    expect(packet).not.toContain("IMPORTS WITHIN THIS SLICE: none.");
+  });
+
   it("resolves to an honest failed after exhausted retries", async () => {
     const result = await runPartitionWorker({
       slice: SLICE,
@@ -115,21 +205,77 @@ describe("runPartitionWorker", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The verify seat since W3 sees only the deterministic merge's RESIDUE: the
+// cross-batch seams and the flagged contradictions. So a fixture that wants the
+// seat to see a statement has to put that statement on a SEAM — a cut import
+// edge whose other end another slice also made claims about. That is not test
+// scaffolding around a behaviour change, it IS the behaviour change: a fixture
+// with one slice and no cut edge has nothing for the seat to synthesize, and
+// under the old shape it still burned a turn re-reading everything.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Two slices joined by one cut edge: `src/a.ts` ↔ `lib/c.ts`. */
+const SLICE_A: PartitionSlice = {
+  id: "mod:src/a.ts#aaaa1111",
+  files: [
+    { path: "src/a.ts", blobOid: "blob-a" },
+    { path: "src/b.ts", blobOid: "blob-b" },
+  ],
+  neighbors: [
+    {
+      path: "src/a.ts",
+      neighbors: [{ path: "lib/c.ts", direction: "imports", symbols: ["helper"] }],
+      truncated: 0,
+    },
+  ],
+  imports: [],
+};
+
+const SLICE_B: PartitionSlice = {
+  id: "mod:lib/c.ts#bbbb2222",
+  files: [{ path: "lib/c.ts", blobOid: "blob-c" }],
+  neighbors: [
+    {
+      path: "lib/c.ts",
+      neighbors: [{ path: "src/a.ts", direction: "imported-by", symbols: ["a"] }],
+      truncated: 0,
+    },
+  ],
+  imports: [],
+};
+
+const SEAM_SLICES = [SLICE_A, SLICE_B];
+
+/** A worker over `slice` emitting exactly the raw statements given. */
+function mintOver(slice: PartitionSlice, statements: Record<string, unknown>[]) {
+  return runPartitionWorker({
+    slice,
+    snapshot: SNAPSHOT,
+    provenance: PROVENANCE,
+    runTurn: async () => emitted({ statements }),
+  });
+}
+
+/** The far side of the seam: one claim anchored in `lib/c.ts`, from the other slice. */
+function farSide() {
+  return mintOver(SLICE_B, [
+    {
+      ...rawStatement(),
+      subject: "lib",
+      claim: "c is the helper",
+      evidence: [{ path: "lib/c.ts" }],
+    },
+  ]);
+}
+
 describe("runMapVerify", () => {
   async function workerResults() {
-    const worker = await runPartitionWorker({
-      slice: SLICE,
-      snapshot: SNAPSHOT,
-      provenance: PROVENANCE,
-      runTurn: async () =>
-        emitted({
-          statements: [
-            rawStatement({ hint: "check lib/ too" }),
-            rawStatement({ claim: "b wires the adapters", evidence: [{ path: "src/b.ts" }] }),
-          ],
-        }),
-    });
-    return [worker];
+    const near = await mintOver(SLICE_A, [
+      rawStatement({ hint: "check lib/ too" }),
+      rawStatement({ claim: "b wires the adapters", evidence: [{ path: "src/b.ts" }] }),
+    ]);
+    return [near, await farSide()];
   }
 
   it("flips hypotheses per the seat's verdicts; unverdicted ids stay hypothesis", async () => {
@@ -137,6 +283,7 @@ describe("runMapVerify", () => {
     const [first, second] = results[0]?.statements ?? [];
     const verify = await runMapVerify({
       workerResults: results,
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       runTurn: async () =>
@@ -156,10 +303,59 @@ describe("runMapVerify", () => {
     expect(byId.get(second?.statement.id ?? "")).toBe("hypothesis");
   });
 
+  it("sends the seat the SEAMS only — a settled statement never reaches it", async () => {
+    // `src/b.ts` sits on no cut edge, so its claim is settled by the merge and is
+    // not re-adjudicated. It is still in the set: dropped from the PROMPT, not
+    // from the map.
+    const results = await workerResults();
+    const settled = results[0]?.statements[1]?.statement;
+    let prompt = "";
+    const verify = await runMapVerify({
+      workerResults: results,
+      slices: SEAM_SLICES,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async (text) => {
+        prompt = text;
+        return emitted({ verdicts: [], crossCutting: [] });
+      },
+    });
+    expect(prompt).not.toContain("b wires the adapters");
+    expect(prompt).toContain("src holds the sources"); // the seam statement
+    expect(verify.set?.statements.map((s) => s.id)).toContain(settled?.id);
+    // …and the measurement the redesign exists to move.
+    expect(verify.merged).toBe(3);
+    expect(verify.residue).toBe(2);
+  });
+
+  it("runs NO turn at all when the residue is empty", async () => {
+    // One slice, no cut edge, no contradiction: nothing for a seat to do. The old
+    // shape still spent a turn here, over a prompt carrying every hypothesis.
+    let turns = 0;
+    const worker = await mintOver(SLICE_A, [rawStatement()]);
+    const verify = await runMapVerify({
+      workerResults: [worker],
+      slices: [SLICE_A],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () => {
+        turns += 1;
+        return emitted({ verdicts: [], crossCutting: [] });
+      },
+    });
+    expect(turns).toBe(0);
+    expect(verify.status).toBe("ok");
+    expect(verify.residue).toBe(0);
+    expect(verify.crossCutting).toBe(0);
+    // The worker's statement survives; it was settled, not discarded.
+    expect(verify.set?.statements).toHaveLength(1);
+  });
+
   it("mints anchored cross-cutting statements as hypotheses and discards hints from the set", async () => {
     const results = await workerResults();
     const verify = await runMapVerify({
       workerResults: results,
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       runTurn: async () =>
@@ -188,27 +384,22 @@ describe("runMapVerify", () => {
     expect(verify.droppedStatements).toBe(1);
   });
 
-  it("chunks the seat's prompt so a large swarm never builds one unbounded turn", async () => {
+  it("chunks the seat's prompt so a large residue never builds one unbounded turn", async () => {
     // The shipped bug: every partition's statements went into ONE prompt. On a
     // real repository (199 partitions, ~1900 statements) that turn died with
-    // "Prompt is too long" and the entire run's knowledge was discarded.
-    const worker = await runPartitionWorker({
-      slice: SLICE,
-      snapshot: SNAPSHOT,
-      provenance: PROVENANCE,
-      runTurn: async () =>
-        emitted({
-          statements: Array.from({ length: 7 }, (_, index) =>
-            rawStatement({ claim: `claim number ${index}` }),
-          ),
-        }),
-    });
-    const ids = worker.statements.map((entry) => entry.statement.id);
+    // "Prompt is too long" and the entire run's knowledge was discarded. The
+    // residue is now a fraction of that, and the chunk ceiling still holds.
+    const near = await mintOver(
+      SLICE_A,
+      Array.from({ length: 7 }, (_, index) => rawStatement({ claim: `claim number ${index}` })),
+    );
+    const ids = near.statements.map((entry) => entry.statement.id);
     expect(new Set(ids).size).toBe(7);
 
     const prompts: string[] = [];
     const verify = await runMapVerify({
-      workerResults: [worker],
+      workerResults: [near, await farSide()],
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       chunkSize: 3,
@@ -224,7 +415,8 @@ describe("runMapVerify", () => {
       },
     });
 
-    expect(prompts).toHaveLength(3); // ceil(7 / 3)
+    expect(verify.residue).toBe(8); // seven near-side seams + the far-side one
+    expect(prompts).toHaveLength(3); // ceil(8 / 3)
     for (const prompt of prompts) {
       expect(ids.filter((id) => prompt.includes(id)).length).toBeLessThanOrEqual(3);
     }
@@ -234,24 +426,17 @@ describe("runMapVerify", () => {
     );
     expect(verify.status).toBe("ok");
     expect(verify.confirmed).toBe(7);
-    expect(verify.set?.statements.every((s) => s.status === "confirmed")).toBe(true);
   });
 
   it("a single failed chunk fails the whole pass (never a partial verify)", async () => {
-    const worker = await runPartitionWorker({
-      slice: SLICE,
-      snapshot: SNAPSHOT,
-      provenance: PROVENANCE,
-      runTurn: async () =>
-        emitted({
-          statements: Array.from({ length: 4 }, (_, index) =>
-            rawStatement({ claim: `claim number ${index}` }),
-          ),
-        }),
-    });
+    const near = await mintOver(
+      SLICE_A,
+      Array.from({ length: 4 }, (_, index) => rawStatement({ claim: `claim number ${index}` })),
+    );
     let turn = 0;
     const verify = await runMapVerify({
-      workerResults: [worker],
+      workerResults: [near, await farSide()],
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       chunkSize: 1,
@@ -266,32 +451,22 @@ describe("runMapVerify", () => {
     });
     expect(verify).toMatchObject({ status: "failed", failureReason: "Prompt is too long" });
     expect(verify.set).toBeUndefined();
-    // …and the two chunks still queued behind it never ran: the pass is
-    // all-or-nothing, so once one chunk fails every later turn is spend on a
-    // verdict the first turn already decided.
+    // …and the chunks still queued behind it never ran: the pass is all-or-nothing,
+    // so once one chunk fails every later turn is spend on a decided verdict.
     expect(turn).toBe(2);
   });
 
   it("dedups a statement id BEFORE chunking, so it cannot straddle a boundary", async () => {
-    // Two partitions can mint the same content-addressed id (the delta path also
-    // feeds `prior:reverify` beside a fresh run of the slice that owns it). When
-    // the raw entries were chunked, one id landed in TWO chunks, could come back
-    // with conflicting verdicts, and the later chunk silently overwrote the
-    // earlier one. The duplicate here sits on opposite sides of the boundary.
-    const mint = (statements: Record<string, unknown>[]) =>
-      runPartitionWorker({
-        slice: SLICE,
-        snapshot: SNAPSHOT,
-        provenance: PROVENANCE,
-        runTurn: async () => emitted({ statements }),
-      });
+    // Two workers can mint the same content-addressed id. When the raw entries
+    // were chunked, one id landed in TWO chunks, could come back with conflicting
+    // verdicts, and the later chunk silently overwrote the earlier one.
     const duplicate = rawStatement();
-    const first = await mint([
+    const first = await mintOver(SLICE_A, [
       duplicate,
       rawStatement({ claim: "x one" }),
       rawStatement({ claim: "x two" }),
     ]);
-    const second = await mint([
+    const second = await mintOver(SLICE_A, [
       rawStatement({ claim: "y one" }),
       rawStatement({ claim: "y two" }),
       duplicate,
@@ -302,7 +477,8 @@ describe("runMapVerify", () => {
     const prompts: string[] = [];
     let turn = 0;
     const verify = await runMapVerify({
-      workerResults: [first, second],
+      workerResults: [first, second, await farSide()],
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       chunkSize: 3,
@@ -318,36 +494,28 @@ describe("runMapVerify", () => {
       },
     });
 
-    // Unchunked at 3-per-turn, the six raw entries would straddle: chunk 1
-    // [dup, x1, x2], chunk 2 [y1, y2, dup]. Deduped first, there are five.
+    expect(verify.duplicateIds).toBe(1);
     expect(prompts.filter((prompt) => prompt.includes(`id=${duplicateId}`))).toHaveLength(1);
     expect(verify.status).toBe("ok");
-    expect(verify.set?.statements).toHaveLength(5);
+    expect(verify.set?.statements).toHaveLength(6); // 5 distinct near-side + 1 far-side
     expect(verify.set?.statements.find((s) => s.id === duplicateId)?.status).toBe("confirmed");
-    // No id is adjudicated twice: three confirmed in chunk 1, two rejected in chunk 2.
-    expect(verify.confirmed).toBe(3);
-    expect(verify.rejected).toBe(2);
+    // No id is adjudicated twice.
+    expect(verify.confirmed + verify.rejected).toBe(6);
   });
 
   it("runs a bounded cross-boundary pass over the chunks' own cross-cutting output", async () => {
     // Chunking cost the seat any pattern whose halves landed in different turns.
     // The second pass reads the chunks' OUTPUTS — never their hypotheses — so it
     // can see across the boundary without rebuilding the prompt that overflowed.
-    const worker = await runPartitionWorker({
-      slice: SLICE,
-      snapshot: SNAPSHOT,
-      provenance: PROVENANCE,
-      runTurn: async () =>
-        emitted({
-          statements: Array.from({ length: 4 }, (_, index) =>
-            rawStatement({ claim: `claim number ${index}` }),
-          ),
-        }),
-    });
+    const near = await mintOver(
+      SLICE_A,
+      Array.from({ length: 3 }, (_, index) => rawStatement({ claim: `claim number ${index}` })),
+    );
     const prompts: string[] = [];
     let turn = 0;
     const verify = await runMapVerify({
-      workerResults: [worker],
+      workerResults: [near, await farSide()],
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       chunkSize: 2,
@@ -362,15 +530,16 @@ describe("runMapVerify", () => {
       },
     });
 
-    // Two hypothesis chunks, then exactly one synthesis turn over their output.
+    // Two residue chunks (4 entries at 2 per turn), then exactly one synthesis turn.
+    expect(verify.residue).toBe(4);
     expect(prompts).toHaveLength(3);
     const boundary = prompts[2] ?? "";
     expect(boundary).toContain("CROSS-BOUNDARY");
     expect(boundary).toContain("chunk-local pattern 1");
     expect(boundary).toContain("chunk-local pattern 2");
     // Bounded: it carries a digest LINE per chunk, not the chunks' hypotheses.
-    expect(boundary).toContain("chunk 1: 2 hypotheses");
-    for (const entry of worker.statements) {
+    expect(boundary).toContain("chunk 1: 2 residue entries");
+    for (const entry of near.statements) {
       expect(boundary).not.toContain(entry.statement.claim);
     }
     // Its mint lands in the set beside the chunk-local ones.
@@ -381,15 +550,10 @@ describe("runMapVerify", () => {
   });
 
   it("skips the cross-boundary pass when one chunk already saw everything", async () => {
-    const worker = await runPartitionWorker({
-      slice: SLICE,
-      snapshot: SNAPSHOT,
-      provenance: PROVENANCE,
-      runTurn: async () => emitted({ statements: [rawStatement()] }),
-    });
     let turns = 0;
     const verify = await runMapVerify({
-      workerResults: [worker],
+      workerResults: [await mintOver(SLICE_A, [rawStatement()]), await farSide()],
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       runTurn: async () => {
@@ -402,21 +566,18 @@ describe("runMapVerify", () => {
   });
 
   it("keeps a good run when the cross-boundary pass fails (best-effort, not fatal)", async () => {
-    const worker = await runPartitionWorker({
-      slice: SLICE,
-      snapshot: SNAPSHOT,
-      provenance: PROVENANCE,
-      runTurn: async () =>
-        emitted({
-          statements: [rawStatement(), rawStatement({ claim: "second claim" })],
-        }),
-    });
+    const near = await mintOver(SLICE_A, [
+      rawStatement(),
+      rawStatement({ claim: "second claim" }),
+      rawStatement({ claim: "third claim" }),
+    ]);
     let turn = 0;
     const verify = await runMapVerify({
-      workerResults: [worker],
+      workerResults: [near, await farSide()],
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
-      chunkSize: 1,
+      chunkSize: 2,
       concurrency: 1,
       maxRetries: 0,
       runTurn: async () => {
@@ -426,17 +587,42 @@ describe("runMapVerify", () => {
           : emitted({ verdicts: [], crossCutting: [rawStatement({ claim: `pattern ${turn}` })] });
       },
     });
-    // Both hypothesis chunks succeeded; only the bonus synthesis turn died.
+    // Both residue chunks succeeded; only the bonus synthesis turn died.
+    expect(turn).toBe(3);
     expect(verify.status).toBe("ok");
     expect(verify.crossCutting).toBe(2);
-    expect(verify.set?.statements).toHaveLength(4);
+  });
+
+  it("routes a delta's changed-evidence statements to the seat as flagged", async () => {
+    const near = await mintOver(SLICE_A, [rawStatement()]);
+    const prior = (await mintOver(SLICE_A, [rawStatement({ claim: "an older claim" })]))
+      .statements[0]?.statement;
+    let prompt = "";
+    const verify = await runMapVerify({
+      workerResults: [near],
+      slices: [SLICE_A],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      reverify: prior === undefined ? [] : [prior],
+      runTurn: async (text) => {
+        prompt = text;
+        return emitted({ verdicts: [{ id: prior?.id, verdict: "confirmed" }], crossCutting: [] });
+      },
+    });
+    // The seam-less near-side statement is settled; only the prior one is judged.
+    expect(verify.residue).toBe(1);
+    expect(prompt).toContain("FLAGGED: a prior statement whose cited evidence changed");
+    expect(prompt).not.toContain("src holds the sources");
+    expect(verify.confirmed).toBe(1);
+    expect(verify.set?.statements.find((s) => s.id === prior?.id)?.status).toBe("confirmed");
   });
 
   it("dedups by statement id across workers and cross-cutting re-mints", async () => {
     const results = await workerResults();
     const duplicate = results[0]?.statements[0]?.statement;
     const verify = await runMapVerify({
-      workerResults: [...results, ...results], // same worker result twice ⇒ duplicate ids
+      workerResults: [...results, ...results], // same worker results twice ⇒ duplicate ids
+      slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       runTurn: async () =>

@@ -11,11 +11,15 @@ import {
   buildDeltaPacket,
   type DeltaPacket,
   type DeltaPacketFile,
+  type FanInIndex,
+  fanInIndexFromSnapshot,
   type HunkIndex,
   type LintContext,
   type LintHunk,
   type LintTarget,
+  type LoadedSnapshot,
   type RegisterLintContext,
+  selectPacketKnowledge,
 } from "@rennet/core";
 import {
   type DossierItem,
@@ -204,6 +208,42 @@ export interface RoundCollation {
   readonly reviewDraftLintCtx: RegisterLintContext;
 }
 
+/** Every path the patchset touches — BOTH sides of a rename, since a statement anchored
+ *  on the old path is exactly as relevant as one anchored on the new. */
+function changedPathsOf(patchset: Patchset): string[] {
+  const paths = new Set<string>();
+  for (const file of patchset.files) {
+    paths.add(file.path);
+    if (file.previousPath !== undefined) paths.add(file.previousPath);
+  }
+  return [...paths];
+}
+
+/**
+ * The blast-radius fan-in index for a snapshot, or `undefined` when the snapshot
+ * cannot genuinely answer "what depends on this file?".
+ *
+ * This is the composition side of `fanInIndexFromSnapshot`'s contract: supplying an
+ * index at all is the ASSESSED signal, so it must be supplied only when POPULATED.
+ * The `import-edges` arm is populated by construction (that builder returns it only
+ * when the graph resolved with edges). The `textual` arm is not — over a snapshot
+ * with no identifier-occurrence shards it answers "zero dependents" for every file,
+ * which would render as "checked, nothing depends on this" when nothing was checked.
+ *
+ * The textual arm needs BOTH shard families, because its lookup is a JOIN across
+ * them: `definedSymbols` reads the SYMBOL shards and `referencingFiles` the
+ * REFERENCE shards. With symbols missing, every changed file defines nothing and
+ * every count is zero — the same silent zero reached from the other side — so both
+ * digests are required, not the reference one alone.
+ */
+function packetFanIn(snapshot: LoadedSnapshot): FanInIndex | undefined {
+  const index = fanInIndexFromSnapshot(snapshot);
+  if (index.method === "import-edges") return index;
+  return snapshot.referenceDigestByBlob.size > 0 && snapshot.symbolDigestByBlob.size > 0
+    ? index
+    : undefined;
+}
+
 /**
  * Assemble the collation context `runRound` needs from a patchset + its protocol
  * contracts (C15 task 1.4): thread the ALREADY-BUILT `successorAccount` (stamped on
@@ -211,22 +251,42 @@ export interface RoundCollation {
  * then derive the flat `LintHunk[]` and the per-lens `lintContextFor` off the same
  * packet. When a successor account is present the packet carries it, so the pipeline's
  * `isRound` branch fires (the round-report drafts first); when it is absent the packet
- * is a first-generation (non-round) draft — the honest degrade, never a crash. Pure.
+ * is a first-generation (non-round) draft — the honest degrade, never a crash.
+ *
+ * This is also where the packet meets the SNAPSHOT (context-map rebuild, W5b). Given
+ * one, two things stop being dishonest at once: the knowledge field becomes a
+ * projected, change-scoped, capped selection instead of the whole stored set dumped
+ * unprojected (`selectPacketKnowledge`), and fan-in becomes an edge-backed count
+ * instead of a NOT-ASSESSED mark (`packetFanIn`). Without one, both degrade loudly —
+ * the packet says which mode it got, and never quietly offers less.
+ *
+ * Pure over its inputs; the caller owns loading the snapshot.
  */
 export function assembleRoundCollation(input: {
   patchset: Patchset;
-  knowledge: KnowledgeSet;
+  /** The stored knowledge set, or null when the repo has never been enriched. */
+  knowledge: KnowledgeSet | null;
+  /** The snapshot gated fresh at the patchset's base OID; omitted when the gate refused. */
+  snapshot?: LoadedSnapshot;
   dossier: readonly DossierItem[];
   successorAccount?: SuccessorAccount;
   /** The full head/base tree inventories citations resolve against (W5). Absent ⇒
    *  the diff-derived inventories alone (the honest degrade). */
   tree?: TreeInventories;
 }): RoundCollation {
+  const snapshot = input.snapshot ?? null;
+  const knowledge = selectPacketKnowledge({
+    set: input.knowledge,
+    snapshot,
+    changedPaths: changedPathsOf(input.patchset),
+  });
+  const fanIn = snapshot === null ? undefined : packetFanIn(snapshot);
   const deltaPacket = buildDeltaPacket(
     input.patchset,
-    input.knowledge,
+    knowledge,
     input.dossier,
     input.successorAccount,
+    fanIn,
   );
   const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
   const lintContextFor = buildLintContextFor(input.patchset, hunks, input.tree);
@@ -239,6 +299,16 @@ export function assembleRoundCollation(input: {
 }
 
 // ── The prior generation (C15 2.1/3.3) — the lineage a round actually has ────
+
+/**
+ * What the packet's knowledge field is selected FROM: the stored set and the
+ * snapshot to project and scope it against. Kept as one value because the two are
+ * read for the same patchset and must describe the same base OID.
+ */
+export interface PacketKnowledgeSource {
+  readonly set: KnowledgeSet | null;
+  readonly snapshot: LoadedSnapshot | null;
+}
 
 /** A prior generation and the boards it really drafted — the delta stamps' comparison set. */
 export interface PriorGeneration {
@@ -299,8 +369,10 @@ export interface BoardRegenerationDeps {
   readonly recapture: () => Promise<void>;
   /** The review as it stands NOW. Read AFTER {@link recapture}, never a pre-round closure. */
   readonly reviewNow: () => Review;
-  /** The repo's knowledge set for the drafters' packet, over the patchset they will read. */
-  readonly knowledgeFor: (patchset: Patchset) => KnowledgeSet;
+  /** The repo's knowledge set + gated snapshot for the drafters' packet, over the patchset
+   *  they will read. Both halves are nullable and independently so: a repo can be mapped
+   *  but not yet enriched, and an enriched repo's snapshot can fail the freshness gate. */
+  readonly knowledgeFor: (patchset: Patchset) => PacketKnowledgeSource;
   /** The REAL prior generation + its drafted boards, or `undefined` for a first generation
    *  ({@link readPriorGeneration} over the durable stores in production). */
   readonly priorGeneration: (generationId: string) => Promise<PriorGeneration | undefined>;
@@ -355,6 +427,7 @@ export async function runBoardRegeneration(
     // content-derived, so this is the honest test: a turn that committed no net change
     // re-reports against the existing generation instead of minting a hollow successor.
     const landed = successor.id !== input.priorPatchsetId;
+    const knowledgeSource = deps.knowledgeFor(successor);
     // The whole-tree citation grounding (W5). Best-effort by design: a tree git
     // could not read still drafts — on the diff-derived inventories, the behaviour
     // before this change — rather than sinking the round over a lint input. The
@@ -368,7 +441,8 @@ export async function runBoardRegeneration(
     }
     const collation = assembleRoundCollation({
       patchset: successor,
-      knowledge: deps.knowledgeFor(successor),
+      knowledge: knowledgeSource.set,
+      ...(knowledgeSource.snapshot === null ? {} : { snapshot: knowledgeSource.snapshot }),
       // Dossier is the related-context tray (a separate producer); an empty dossier is
       // honest — the drafters simply have no tracker items inlined this round.
       dossier: [],

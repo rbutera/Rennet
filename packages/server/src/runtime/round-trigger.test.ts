@@ -328,7 +328,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
           } as unknown as Review;
         },
         reviewNow: () => review,
-        knowledgeFor: () => KNOWLEDGE,
+        knowledgeFor: () => ({ set: KNOWLEDGE, snapshot: null }),
         // No generation has ever been minted for this session — an honest first generation.
         priorGeneration: async () => undefined,
         runRound: async (input: RoundInput) => {
