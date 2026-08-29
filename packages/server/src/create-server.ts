@@ -69,6 +69,7 @@ import {
   GITHUB_REQUEST_TIMEOUT_MS,
   GitCaptureAdapter,
   GitCheckpointStore,
+  type GitExec,
   GitHubChangesetSource,
   GitHubForgeAdapter,
   GitHubPrSubmissionAdapter,
@@ -363,6 +364,32 @@ export interface HandoffTurnInput {
    */
   readonly sessionId?: string;
   readonly execution?: HandoffTurnExecution;
+}
+
+export async function captureBranchPatchset(input: {
+  readonly git: GitExec;
+  readonly locus: Locus;
+  readonly repoPath: string;
+  readonly head: string;
+  readonly base: string;
+  readonly resolveProjectSnapshotId: (repositoryRoot: string, baseOid: string) => Promise<string>;
+}): Promise<Patchset> {
+  const gitRoot = (await input.git(input.repoPath, ["rev-parse", "--show-toplevel"])).trim();
+  const root = input.locus.kind === "wsl" ? toWindowsView(gitRoot, input.locus.distro) : gitRoot;
+  const headOid = (
+    await input.git(root, ["rev-parse", "--verify", `${input.head}^{commit}`])
+  ).trim();
+  const baseOid = (await input.git(root, ["merge-base", input.base, headOid])).trim();
+  return captureRangePatchset(input.git, {
+    root,
+    locus: input.locus,
+    baseOid,
+    headOid,
+    baseRef: input.base,
+    headRef: input.head,
+    source: "local-branch",
+    projectSnapshotId: await input.resolveProjectSnapshotId(root, baseOid),
+  });
 }
 
 function detectedLocusForRepo(repoRoot: string): Locus {
@@ -1267,10 +1294,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
     const root = await resolvePrRepoRoot(prRef, repoPath);
     const forge = new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() });
+    const locus = locusForRepo(root);
     const gitInLocus = gitForRepo(root);
     const source = new GitHubChangesetSource({
       forge,
       git: gitInLocus,
+      locus,
       pin: createRefPinner(gitInLocus),
       // The candidate set is the single resolved clone. Identity matching
       // (owner/name vs the repo's remotes) decides whether it is the right clone;
@@ -1376,20 +1405,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     head: string,
     base: string,
   ): Promise<Review> {
+    const locus = locusForRepo(repoPath);
     const git = gitForRepo(repoPath);
-    const root = (await git(repoPath, ["rev-parse", "--show-toplevel"])).trim();
-    const headOid = (await git(root, ["rev-parse", "--verify", `${head}^{commit}`])).trim();
-    // The merge-base, not the base tip: a branch behind its base must show ITS commits,
-    // not the base's arriving backwards as deletions.
-    const baseOid = (await git(root, ["merge-base", base, headOid])).trim();
-    const patchset = await captureRangePatchset(git, {
-      root,
-      baseOid,
-      headOid,
-      baseRef: base,
-      headRef: head,
-      source: "local-branch",
-      projectSnapshotId: await ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
+    const patchset = await captureBranchPatchset({
+      git,
+      locus,
+      repoPath,
+      head,
+      base,
+      resolveProjectSnapshotId: (root, baseOid) =>
+        ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
     });
     return service.createReviewFromPatchset(commandId, patchset);
   }

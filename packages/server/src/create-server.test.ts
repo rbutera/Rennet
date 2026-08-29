@@ -3,11 +3,17 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GenerationStore, RoundOperationStore, RoundRecordStore } from "@rennet/adapters";
+import {
+  GenerationStore,
+  type GitExec,
+  RoundOperationStore,
+  RoundRecordStore,
+} from "@rennet/adapters";
 import type { Review, RoundOperation } from "@rennet/protocol";
 import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  captureBranchPatchset,
   createRennetServer,
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
@@ -15,8 +21,32 @@ import {
 } from "./create-server";
 
 describe("round worker execution context", () => {
-  it("plans and runs a WSL round in the source filesystem, not the Windows data directory", async () => {
-    const sourceRepoRoot = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo";
+  it("carries a distro-native WSL branch capture through the round planner and worker", async () => {
+    const git: GitExec = async (_root, arguments_) => {
+      if (arguments_[0] === "rev-parse" && arguments_[1] === "--show-toplevel") {
+        return "/home/rai/repo\n";
+      }
+      if (arguments_[0] === "rev-parse" && arguments_[1] === "--verify") {
+        return "worker-head\n";
+      }
+      if (arguments_[0] === "rev-parse" && arguments_[1] === "--git-common-dir") {
+        return "/home/rai/repo/.git\n";
+      }
+      if (arguments_[0] === "merge-base") return "base-head\n";
+      if (arguments_[0] === "diff") return "";
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    };
+    const resolveProjectSnapshotId = vi.fn(async () => "snapshot-1");
+    const patchset = await captureBranchPatchset({
+      git,
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+      head: "feat/test",
+      base: "main",
+      resolveProjectSnapshotId,
+    });
+    const sourceRepoRoot = patchset.repository.root;
+    expect(resolveProjectSnapshotId).toHaveBeenCalledWith(sourceRepoRoot, "base-head");
     const prompt = "apply the round";
     const operation: RoundOperation = {
       operationId: "operation-1",
@@ -39,11 +69,7 @@ describe("round worker execution context", () => {
     };
     const planner = createRoundWorkspacePlanner({
       dataDir: "C:\\Users\\rai\\AppData\\Roaming\\Rennet",
-      sourceRepositoryFor: () => ({
-        reviewedTreeOid: "tree-1",
-        headOid: "head-1",
-        commonDir: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git",
-      }),
+      sourceRepositoryFor: () => patchset.repository,
       now: () => 2,
     });
     const workspace = planner(operation);
