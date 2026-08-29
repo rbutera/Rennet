@@ -3,7 +3,8 @@ import { useLocation, useSearch } from "wouter";
 import { ROUTES } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Prior-surface tracking (C10 §1.1, claims 575–576). A takeover (Settings, Archived)
+// Prior-surface tracking (C10 §1.1, claims 575–576). A takeover (Settings, Archived,
+// New Chat)
 // "leaves to the prior surface" — the review board, front door, or wherever the
 // reviewer came from. Rather than a browser pop (which no injected history exposes
 // uniformly — memory history has no `back()`), we record the last NON-takeover
@@ -19,7 +20,9 @@ const FALLBACK_SURFACE = ROUTES.newChat;
 
 /** True when a path is itself a full-view takeover (never a "prior surface"). */
 function isTakeover(path: string): boolean {
-  return path.startsWith("/settings") || path.startsWith("/archived");
+  return (
+    path.startsWith("/settings") || path.startsWith("/archived") || path.startsWith(ROUTES.newChat)
+  );
 }
 
 const PriorSurfaceContext = createContext<{ current: string }>({ current: FALLBACK_SURFACE });

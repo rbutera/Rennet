@@ -55,6 +55,26 @@ function project(id: string, name: string, source = "local"): Project {
   };
 }
 
+function projectStore(seed: readonly Project[], failure?: Error) {
+  let projects = [...seed];
+  const calls: string[] = [];
+  const handlers: MemoryBridgeHandlers = {
+    "projects.list": () => ({ projects: [...projects] }),
+    "project.rename": ({ projectId, name }) => {
+      calls.push(name);
+      if (failure) throw failure;
+      const current = projects.find((candidate) => candidate.id === projectId) ?? null;
+      if (!current) return { project: null, projects: [...projects] };
+      const path = current.openPath || current.path;
+      const parts = path.split(/[/\\]+/).filter(Boolean);
+      const next = { ...current, name: name.trim() || parts.slice(-2).join("/") || path };
+      projects = projects.map((candidate) => (candidate.id === projectId ? next : candidate));
+      return { project: next, projects: [...projects] };
+    },
+  };
+  return { calls, handlers, list: () => [...projects] };
+}
+
 function mountSidebar(opts: {
   projects?: readonly Project[];
   sessions?: readonly SessionSeed[];
@@ -264,6 +284,66 @@ describe("sidebar tree (C03 §3)", () => {
     fireEvent.change(getByLabelText("Session name"), { target: { value: "Renamed" } });
     fireEvent.keyDown(getByLabelText("Session name"), { key: "Enter" });
     await waitFor(() => expect(getByText("Renamed")).toBeTruthy());
+  });
+
+  it("renames a project inline, cancels on Escape, and sends blank to restore its default", async () => {
+    const atlas = { ...project("p1", "atlas"), openPath: "/repos/acme/atlas" };
+    const store = projectStore([atlas]);
+    const { getByText, findByText, getByRole, getByLabelText, history } = mountSidebar({
+      projects: [atlas],
+      sessions: SESSIONS,
+      path: "/s/s1",
+      extraHandlers: store.handlers,
+    });
+    await findByText("atlas");
+
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    const cancelled = getByLabelText("Project name") as HTMLInputElement;
+    expect(cancelled.selectionStart).toBe(0);
+    expect(cancelled.selectionEnd).toBe("atlas".length);
+    fireEvent.change(cancelled, { target: { value: "Discard me" } });
+    fireEvent.keyDown(cancelled, { key: "Escape" });
+    expect(getByText("atlas")).toBeTruthy();
+    expect(store.calls).toEqual([]);
+
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    const committed = getByLabelText("Project name");
+    fireEvent.change(committed, { target: { value: "Atlas Core" } });
+    fireEvent.keyDown(committed, { key: "Enter" });
+    await waitFor(() => expect(getByText("Atlas Core")).toBeTruthy());
+    expect(store.calls).toEqual(["Atlas Core"]);
+    expect(history.history.at(-1)).toBe("/s/s1");
+
+    fireEvent.contextMenu(getByText("Atlas Core"));
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    const emptied = getByLabelText("Project name");
+    fireEvent.change(emptied, { target: { value: "  " } });
+    fireEvent.keyDown(emptied, { key: "Enter" });
+    await waitFor(() => expect(getByText("acme/atlas")).toBeTruthy());
+    expect(store.calls).toEqual(["Atlas Core", ""]);
+    expect(store.list()[0]?.name).toBe("acme/atlas");
+  });
+
+  it("keeps a failed project rename in the editor and names the write failure", async () => {
+    const atlas = project("p1", "atlas");
+    const store = projectStore([atlas], new Error("daemon connection lost"));
+    const { getByText, findByText, getByRole, getByLabelText, findByRole } = mountSidebar({
+      projects: [atlas],
+      extraHandlers: store.handlers,
+    });
+    await findByText("atlas");
+
+    fireEvent.contextMenu(getByText("atlas"));
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    const input = getByLabelText("Project name");
+    fireEvent.change(input, { target: { value: "Atlas Core" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect((await findByRole("alert")).textContent).toContain("daemon connection lost");
+    expect(getByLabelText("Project name")).toBeTruthy();
+    expect(store.list()[0]?.name).toBe("atlas");
   });
 
   it("archives a session, removing its row", async () => {

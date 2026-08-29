@@ -101,6 +101,58 @@ describe("RennetRouterApp", () => {
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p1"));
   });
 
+  it("resolves a project query by unique display name and canonicalizes it to the stable id", async () => {
+    const alpha = project("p1", "alpha");
+    const beta = project("p2", "beta");
+    const remember = vi.fn(() => ({ source: "local" as const, projectId: "p2" }));
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([alpha, beta]),
+      "settings.get": () => settings(),
+      "settings.setLastProject": remember,
+    });
+    const history = memoryHistory("/new-chat?project=beta");
+    const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    expect(await findByText("No open branches or pull requests yet.")).toBeTruthy();
+    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
+    expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
+  });
+
+  it("gives an exact id precedence over another project's matching display name", async () => {
+    const exactId = project("p1", "alpha");
+    const matchingName = project("p2", "p1");
+    const remember = vi.fn(() => ({ source: "local" as const, projectId: "p1" }));
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([exactId, matchingName]),
+      "settings.get": () => settings(),
+      "settings.setLastProject": remember,
+    });
+    const history = memoryHistory("/new-chat?project=p1");
+    const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    expect(await findByText("No open branches or pull requests yet.")).toBeTruthy();
+    await waitFor(() => expect(remember).toHaveBeenCalledOnce());
+    expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p1" });
+    expect(history.history.at(-1)).toBe("/new-chat?project=p1");
+  });
+
+  it("treats duplicate display names as ambiguous and keeps the remembered fallback", async () => {
+    const first = project("p1", "shared");
+    const remembered = project("p2", "shared");
+    const remember = vi.fn(() => ({ source: "local" as const, projectId: "p2" }));
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([first, remembered]),
+      "settings.get": () => settings({ navigation: { lastProjectBySource: { local: "p2" } } }),
+      "settings.setLastProject": remember,
+    });
+    const history = memoryHistory("/new-chat?project=shared");
+    const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    expect(await findByText("No open branches or pull requests yet.")).toBeTruthy();
+    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
+    expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
+  });
+
   it("chat-dock DOM node survives a settings route round-trip (risk 4)", async () => {
     const history = memoryHistory("/new-chat");
     const { getByTestId, findByText } = mount(

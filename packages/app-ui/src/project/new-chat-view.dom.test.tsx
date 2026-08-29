@@ -14,9 +14,12 @@
 import type { CommandInput, Project, ProjectDetail, SidebarSession } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router, useSearch } from "wouter";
+import { CoachProvider, useCoachStore } from "../coach/context";
+import { type CoachStore, createCoachStore } from "../coach/store";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { newChatPath } from "../routes/url";
+import { PriorSurfaceProvider } from "../settings/prior-surface";
 import { cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { NewChatView } from "./new-chat-view";
@@ -175,6 +178,8 @@ function renderView(
   details: Record<string, ProjectDetail>,
   ask?: string,
   store = sessionStore(),
+  priorSurface = { current: newChatPath() },
+  coachStore?: CoachStore,
 ) {
   const history = memoryHistory(newChatPath(id, ask));
   const bridge = new MemoryBridge({
@@ -193,10 +198,23 @@ function renderView(
     return project === "" ? null : <NewChatView projectId={project} />;
   }
 
+  function CoachReadout() {
+    const store = useCoachStore();
+    const active = store((state) => state.active);
+    return <output data-testid="active-coach">{active ?? "none"}</output>;
+  }
+
+  const content = (
+    <PriorSurfaceProvider value={priorSurface}>
+      <Harness />
+      {coachStore ? <CoachReadout /> : null}
+    </PriorSurfaceProvider>
+  );
+
   const view = mount(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <Harness />
+        {coachStore ? <CoachProvider store={coachStore}>{content}</CoachProvider> : content}
       </Router>
     </BridgeProvider>,
   );
@@ -263,8 +281,10 @@ describe("NewChatView", () => {
     await screen.findByText("No open branches or pull requests yet.");
   });
 
-  it("Escape is two-stage: clear the filter, then close", async () => {
-    const { history } = renderView("p1", { p1: detailP1() });
+  it("Escape is two-stage: clear the filter, then return to the prior surface", async () => {
+    const { history } = renderView("p1", { p1: detailP1() }, undefined, sessionStore(), {
+      current: "/s/session-before-new-chat?view=diff",
+    });
     const filter = await screen.findByLabelText("Filter branches and pull requests");
     fireEvent.change(filter, { target: { value: "span" } });
 
@@ -273,9 +293,11 @@ describe("NewChatView", () => {
     expect((filter as HTMLInputElement).value).toBe("");
     expect(history.history.at(-1)).toBe(newChatPath("p1"));
 
-    // Second Escape (empty filter): bubbles to the window handler → closes.
+    // Second Escape (empty filter): bubbles to the window handler → leaves the takeover.
     fireEvent.keyDown(filter, { key: "Escape" });
-    await waitFor(() => expect(history.history.at(-1)).toBe(newChatPath()));
+    await waitFor(() =>
+      expect(history.history.at(-1)).toBe("/s/session-before-new-chat?view=diff"),
+    );
   });
 
   it("the headline picker rewrites the URL", async () => {
@@ -314,8 +336,86 @@ describe("NewChatView", () => {
     expect(within(rowButton(/Teammate span fix/)).queryByText("Teammate PR")).toBeNull();
     // A merged PR reads "Merged".
     expect(within(rowButton(/Old merged work/)).getByText("Merged")).toBeTruthy();
+    // A local target whose served pipeline stage is reviewed reads "Reviewed".
+    expect(within(rowButton(/feat\/local-x/)).getByText("Reviewed")).toBeTruthy();
     // A mine open PR has no derived state → it reads by its kind, "Your PR".
     expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
+  });
+
+  it("shows Needs you ahead of the owner kind when the review state demands attention", async () => {
+    const detail = detailP1();
+    detail.prs = detail.prs.map((pr) =>
+      pr.id === "pr-mine" ? { ...pr, ci: "failing" as const } : pr,
+    );
+    renderView("p1", { p1: detail });
+
+    await screen.findByText("My open change");
+    expect(within(rowButton(/My open change/)).getByText("Needs you")).toBeTruthy();
+    expect(within(rowButton(/My open change/)).queryByText("Your PR")).toBeNull();
+  });
+
+  it("offers the first-run New Chat coach only before any session exists anywhere", async () => {
+    const coach = () =>
+      createCoachStore({ initial: { seen: [], skipAll: false }, persist: () => undefined });
+
+    const emptyCoach = coach();
+    const empty = renderView(
+      "p1",
+      { p1: detailP1() },
+      undefined,
+      sessionStore(),
+      undefined,
+      emptyCoach,
+    );
+    await waitFor(() => expect(empty.getByTestId("active-coach").textContent).toBe("new-chat"));
+    empty.unmount();
+    cleanup();
+
+    const activeCoach = coach();
+    const active = renderView(
+      "p1",
+      { p1: detailP1() },
+      undefined,
+      sessionStore([
+        {
+          id: "s-active",
+          projectId: "p2",
+          title: "Elsewhere",
+          target: "your-branch",
+          createdAt: 1,
+        },
+      ]),
+      undefined,
+      activeCoach,
+    );
+    await waitFor(() => expect(active.getByTestId("active-coach").textContent).toBe("smart-list"));
+    active.unmount();
+    cleanup();
+
+    const archivedCoach = coach();
+    const archived = renderView(
+      "p1",
+      { p1: detailP1() },
+      undefined,
+      sessionStore([
+        {
+          id: "s-archived",
+          projectId: "p2",
+          title: "Archived elsewhere",
+          target: "your-branch",
+          createdAt: 1,
+          archived: true,
+        },
+      ]),
+      undefined,
+      archivedCoach,
+    );
+    await waitFor(() =>
+      expect(archived.getByTestId("active-coach").textContent).toBe("smart-list"),
+    );
+
+    archivedCoach.getState().replay();
+    expect(archived.getByTestId("active-coach").textContent).toBe("smart-list");
   });
 });
 

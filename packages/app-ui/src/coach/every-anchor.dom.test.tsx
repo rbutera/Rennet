@@ -200,6 +200,7 @@ describe("every coach anchor resolves (C13 Cluster 5)", () => {
     const bridge = bridgeWith({
       "projects.list": () => ({ projects: [p1] }),
       "project.detail": () => emptyDetail,
+      "session.list": () => ({ sessions: [] }),
     });
     const { getByTestId } = mount(
       <BridgeProvider bridge={bridge}>

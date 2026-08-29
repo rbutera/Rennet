@@ -108,6 +108,8 @@ project shows that project's branches and pull requests in one list. Local
 branch rows appear immediately; pull-request rows join as each repository
 finishes loading, and the progress names the repository being read rather than
 guessing a percentage. If GitHub is unreachable, local work stays available.
+The back arrow or Escape leaves New Chat for the surface you came from. When the
+filter contains text, the first Escape clears it and the next leaves.
 
 Clicking a row starts the session — it is not a selection you then confirm.
 Rennet mints the session, claims that target, and captures what changed on it in
@@ -143,6 +145,11 @@ teammate authored that PR, and whether its review is waiting on you, are not
 facts the session record carries, so a row states neither rather than guessing;
 those states arrive with the source that can answer them.
 
+The source list does carry those states. A row reads **Needs you** when a review
+request or failing CI needs attention, **Reviewed** once its local review stage
+has completed, and **Merged** after its pull request closes. The state label
+wins over the more general owner label.
+
 Once boards exist the target is locked. Reviewing something else means a new
 session.
 
@@ -151,6 +158,11 @@ rise to a Pinned section at the top of the tree; archived ones move to
 **Archived** at the sidebar's foot. Sessions are records: reopening one restores
 its transcript, its boards, and everything you staged, including generations
 frozen by earlier rounds.
+
+Right-click a project for **Rename**. The name edits in place: Enter saves,
+Escape cancels, and an empty value restores its `org/repo` name. Renaming does
+not move the current route because navigation keeps the project's stable
+identity rather than its display name.
 
 ## Read the boards
 

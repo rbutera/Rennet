@@ -84,7 +84,7 @@ Global settings live in two machine-local files, split by who owns the value:
 | `~/.rennet/client-settings.json` | | Theme pack | affineur, github, one-dark-pro, dracula, catppuccin-mocha | Applies the selected application color pack and restores it across launches. |
 | `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
 | `~/.rennet/client-settings.json` | | Welcome | `{ completedAt: string }` | Prevents the first-run welcome from replaying after setup. Independent of coach marks and project count. |
-| `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** clears it. |
+| `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** or a one-shot `?tour=reset` route clears it through `settings.setCoachmarks`. |
 | `~/.rennet/client-settings.json` | | Navigation | `{ lastProjectBySource: Record<string, string> }` | Remembers the last valid project per source so bare New Chat opens the real project picker directly. |
 | `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
@@ -265,6 +265,11 @@ visibility uses — so a per-project answer beats the host's global one, and an
 emptied field drops the entry and falls back down the ladder. Guidance rules
 write through `settings.setGuidance` into the repository's own
 `.rennet/conventions.json`, the file the review runners read.
+
+Project-scoped routes resolve a `?project=` token by exact stable id first, then
+by an exact display name only when that name identifies one project. A duplicate
+display name is ambiguous and falls through to the remembered real project;
+renaming a project therefore cannot change route identity.
 
 The per-project issue tracker reaches retrieval, not just the surface: the same
 repository rung is what related-context retrieval resolves through, so two

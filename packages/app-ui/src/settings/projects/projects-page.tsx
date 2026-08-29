@@ -1,4 +1,5 @@
 import { useLocation, useSearch } from "wouter";
+import { resolveProject } from "../../routes/project-resolution";
 import { settingsPath } from "../../routes/url";
 import { useActiveRoute, useSidebarTree } from "../../shell/sidebar-data";
 import { GuidanceSection } from "./guidance";
@@ -30,10 +31,12 @@ export function ProjectsPage() {
   const requested = new URLSearchParams(search).get("project");
   const scopes = hosts.flatMap((host) => host.projects.map((project) => ({ project, host })));
   // ?project wins; else the active project (the session in view); else the first project.
-  const scoped =
-    scopes.find((s) => s.project.id === requested) ??
-    scopes.find((s) => s.project.id === activeProjectId) ??
-    scopes[0];
+  const resolved = resolveProject(
+    scopes.map(({ project }) => project),
+    requested,
+    activeProjectId,
+  );
+  const scoped = scopes.find(({ project }) => project.id === resolved?.id);
 
   if (!scoped) {
     return (
