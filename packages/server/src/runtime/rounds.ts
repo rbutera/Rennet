@@ -48,6 +48,7 @@ import {
   type ComposedHandoffBundle,
   type DraftBoard,
   type Generation,
+  generationIdForPatchset,
   LENS_KINDS,
   type LensKind,
   type LensLane,
@@ -319,7 +320,8 @@ export interface RoundsRuntimeDeps {
     repoRoot: string,
   ) => ((prompt: string) => Promise<string> | string) | undefined;
   /** The board-generation id minter, derived from the landed patchset so re-drafting
-   *  the same patchset shares a key and the start guard dedups. Defaults to `gen:<patchset>`. */
+   *  the same patchset shares a key and the start guard dedups. Defaults to the protocol's
+   *  own `generationIdForPatchset` — the spelling the client reads boards by. */
   readonly newGenerationId?: (patchsetId: string) => string;
   /** Persist a minted generation durably (C15 2.1) — called for the live successor (with
    *  its lens board ids recorded) and, when the code moved, the frozen prior. Absent ⇒
@@ -391,7 +393,10 @@ export interface RoundsRuntime {
 }
 
 export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
-  const newGenerationId = deps.newGenerationId ?? ((patchsetId: string) => `gen:${patchsetId}`);
+  // The default is the PROTOCOL's, not a local literal: the client addresses the live
+  // boards by spelling the same id (`generationIdForPatchset(review.activePatchsetId)`),
+  // and `board.read` matches it exactly, so the two spellings have to be one function.
+  const newGenerationId = deps.newGenerationId ?? generationIdForPatchset;
   const guard = new PipelineStartGuard();
   const ledger = new Map<string, RoundRecord[]>();
   // Per-session promise tails — one round in flight per session (the SessionTurnLoop
@@ -608,13 +613,23 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
 
-    const records = ledger.get(input.session.id) ?? [];
-    records.push(record);
-    ledger.set(input.session.id, records);
-    // Reconcile to ONE durable record (C15 2.2): this real-generation record supersedes the
-    // dispatch path's ROUND_NO_REGEN placeholder for the same round (same worker commit
-    // range), keeping the placeholder's checkpoint diff/outcome. Absent store ⇒ in-memory only.
-    deps.recordRound?.(input.session.id, record);
+    // A drafting pass that dispatched NO asks and moved NO code is not a round — it is the
+    // first read of a change, drafted when the review was opened. Recording it would put a
+    // row in the reviewer's round history for work nobody ordered, light up the History pill
+    // and open `?view=rounds` over a coding turn that never ran. Every real round has asks
+    // (`round.dispatch` refuses an empty bundle before the runtime is ever reached), so this
+    // excludes the capture draft and nothing else. The GENERATION is still persisted above:
+    // the boards are real and have to be readable, it is the round row that would be a lie.
+    const isRound = input.asksDispatched.length > 0 || landed;
+    if (isRound) {
+      const records = ledger.get(input.session.id) ?? [];
+      records.push(record);
+      ledger.set(input.session.id, records);
+      // Reconcile to ONE durable record (C15 2.2): this real-generation record supersedes the
+      // dispatch path's ROUND_NO_REGEN placeholder for the same round (same worker commit
+      // range), keeping the placeholder's checkpoint diff/outcome. Absent store ⇒ in-memory only.
+      deps.recordRound?.(input.session.id, record);
+    }
 
     // The round composed (C15 3.1): the terminal event the run machine gates **View the
     // New Boards** on. Emitted with the generation the reveal lands on, so the control
