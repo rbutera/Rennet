@@ -1,6 +1,11 @@
 import { cn } from "@rennet/ui";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { RichText } from "../review";
+import {
+  displayToRawRange,
+  type RawTextRange,
+  RichText,
+  type RichTextDecoration,
+} from "../review/rich-text";
 import { type QuoteThread, useRennetStore } from "../store";
 import { useBoardGeneration } from "./kinds/element-context";
 
@@ -16,11 +21,9 @@ import { useBoardGeneration } from "./kinds/element-context";
 // it never raises an exit count. Overlapping anchors resolve to a readable stack: the
 // covered segment carries every covering thread, all reachable from one popover.
 //
-// ponytail: a paragraph that carries a highlight renders as PLAIN interweaved text —
-// citation chips / code / bold inside that one paragraph are dropped (raw-string
-// slicing, not C4's private tokenizer). Anchor-free paragraphs delegate to `RichText`
-// verbatim (full fidelity), so the corner is confined to the highlighted paragraph.
-// Upgrade path: export C4's tokenizer and interweave through it (spike `findRawRange`).
+// Ranges are located against RichText's display-to-raw map, then handed back to the
+// same renderer as decorations. A highlight therefore keeps citation chips, code spans,
+// bold text, and keyword styling instead of flattening the paragraph to a text node.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A thread paired with its store id — what a highlight span needs to open the exchange. */
@@ -28,6 +31,8 @@ interface KeyedThread {
   readonly id: string;
   readonly thread: QuoteThread;
 }
+
+interface RangedThread extends KeyedThread, RawTextRange {}
 
 /** The tooltip stack: one section per thread covering the clicked span, each with its
  *  exchange and a reply input. `explain` threads read distinctly (a question to the
@@ -163,37 +168,37 @@ function QuoteHighlight({
   );
 }
 
-/** Split one paragraph into atomic segments at every anchor boundary; each segment
- *  carries the threads covering it (a segment under two anchors → both, the readable
- *  stack). First occurrence of each anchor; a non-matching anchor is skipped. */
-function interweave(paragraph: string, matches: readonly KeyedThread[]): ReactNode[] {
-  const ranges = matches
-    .map((m) => ({ ...m, start: paragraph.indexOf(m.thread.anchor) }))
-    .filter((r) => r.start >= 0)
-    .map((r) => ({ ...r, end: r.start + r.thread.anchor.length }));
-  if (ranges.length === 0) return [paragraph];
+function uniqueRawRange(rawText: string, rawQuote: string): RawTextRange | null {
+  if (rawQuote.length === 0) return null;
+  const start = rawText.indexOf(rawQuote);
+  if (start < 0 || rawText.indexOf(rawQuote, start + 1) >= 0) return null;
+  return { start, end: start + rawQuote.length };
+}
 
-  const points = [
-    ...new Set([0, paragraph.length, ...ranges.flatMap((r) => [r.start, r.end])]),
-  ].sort((a, b) => a - b);
-  const nodes: ReactNode[] = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i] ?? 0;
-    const b = points[i + 1] ?? 0;
-    if (b <= a) continue;
-    const covering = ranges.filter((r) => r.start <= a && r.end >= b);
-    const text = paragraph.slice(a, b);
-    if (covering.length === 0) {
-      nodes.push(<span key={a}>{text}</span>);
-    } else {
-      nodes.push(
-        <QuoteHighlight key={a} threads={covering.map(({ id, thread }) => ({ id, thread }))}>
-          {text}
-        </QuoteHighlight>,
-      );
-    }
+function anchorRange(rawText: string, anchor: string): RawTextRange | null {
+  return displayToRawRange(rawText, anchor) ?? uniqueRawRange(rawText, anchor);
+}
+
+/** Convert possibly overlapping thread ranges to disjoint decorated spans. */
+function decorationsFor(ranges: readonly RangedThread[]): RichTextDecoration[] {
+  const points = [...new Set(ranges.flatMap((range) => [range.start, range.end]))].sort(
+    (a, b) => a - b,
+  );
+  const decorations: RichTextDecoration[] = [];
+  for (let index = 0; index < points.length - 1; index++) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (start == null || end == null || end <= start) continue;
+    const covering = ranges.filter((range) => range.start <= start && range.end >= end);
+    if (covering.length === 0) continue;
+    const threads = covering.map(({ id, thread }) => ({ id, thread }));
+    decorations.push({
+      start,
+      end,
+      render: (children) => <QuoteHighlight threads={threads}>{children}</QuoteHighlight>,
+    });
   }
-  return nodes;
+  return decorations;
 }
 
 export interface QuoteHighlightLayerProps {
@@ -210,15 +215,14 @@ export interface QuoteHighlightLayerProps {
 
 /**
  * Render board prose with durable quote highlights. When no thread is anchored on THIS
- * element in THIS generation (the common path), this is `RichText` verbatim — zero
- * overhead, full fidelity. When a thread targets this element, only the paragraph(s)
- * its `anchor` text lands in interweave the highlight; every other paragraph still
- * renders through `RichText`.
+ * element in THIS generation, this is `RichText` verbatim. Matching anchors become
+ * raw-source decorations on that same renderer, so highlighted and unhighlighted prose
+ * use one token pipeline.
  *
  * Matching is scoped by `(elementId, generation)` — the protocol-shaped anchor identity
- * (`quote_target` + board generation, finding 2), NOT bare `text.includes`. The text
- * check only LOCATES the span within this element's markdown once identity has already
- * narrowed the thread to this element; it never widens across elements or generations.
+ * (`quote_target` + board generation, finding 2). Raw-range resolution only locates the
+ * span after identity has narrowed the thread to this element; it never widens across
+ * elements or generations.
  */
 export function QuoteHighlightLayer({
   text,
@@ -230,15 +234,12 @@ export function QuoteHighlightLayer({
 }: QuoteHighlightLayerProps) {
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
   const generation = useBoardGeneration();
-  const matches: KeyedThread[] = Object.entries(quoteThreads)
-    .filter(
-      ([, thread]) =>
-        thread.target === elementId &&
-        thread.generation === generation &&
-        thread.anchor.length > 0 &&
-        text.includes(thread.anchor),
-    )
-    .map(([id, thread]) => ({ id, thread }));
+  const matches: RangedThread[] = Object.entries(quoteThreads).flatMap(([id, thread]) => {
+    if (thread.target !== elementId || thread.generation !== generation) return [];
+    const range = anchorRange(text, thread.anchor);
+    if (!range || /\n\n+/.test(text.slice(range.start, range.end))) return [];
+    return [{ id, thread, ...range }];
+  });
 
   if (matches.length === 0) {
     return (
@@ -252,30 +253,14 @@ export function QuoteHighlightLayer({
     );
   }
 
-  const paragraphs = text.split(/\n\n+/);
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
-      {paragraphs.map((paragraph, index) => {
-        const here = matches.filter((m) => paragraph.includes(m.thread.anchor));
-        if (here.length === 0) {
-          return (
-            <RichText
-              // biome-ignore lint/suspicious/noArrayIndexKey: paragraphs are a stable positional split.
-              key={index}
-              text={paragraph}
-              patchsetId={patchsetId}
-              paragraphClassName={paragraphClassName}
-              keywords={keywords}
-            />
-          );
-        }
-        return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: paragraphs are a stable positional split.
-          <p key={index} className={paragraphClassName}>
-            {interweave(paragraph, here)}
-          </p>
-        );
-      })}
-    </div>
+    <RichText
+      text={text}
+      patchsetId={patchsetId}
+      className={className}
+      paragraphClassName={paragraphClassName}
+      keywords={keywords}
+      decorations={decorationsFor(matches)}
+    />
   );
 }

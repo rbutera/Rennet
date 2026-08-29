@@ -69,6 +69,46 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     expect(hl?.textContent).toBe("costs nothing per token");
   });
 
+  it("maps displayed backtick text to the raw token and keeps the code node", () => {
+    const raw = "Call `decompose()` before dispatch.";
+    seed("decompose()", "Why this call?");
+    const { container } = render(raw);
+    const hl = container.querySelector<HTMLElement>("[data-quote-highlight]");
+
+    expect(hl?.textContent).toBe("decompose()");
+    expect(hl?.querySelector("code")?.textContent).toBe("decompose()");
+    expect(
+      container.querySelector("[data-rich-text-raw]")?.getAttribute("data-rich-text-raw"),
+    ).toBe(raw);
+  });
+
+  it("renders a mapped raw citation as a live citation chip", () => {
+    const raw = "See packages/core/worker.ts:42-43 before dispatch.";
+    seed("packages/core/worker.ts:42-43", "Show the cited code.");
+    const { container } = render(raw);
+    const hl = container.querySelector<HTMLElement>("[data-quote-highlight]");
+    const chip = hl?.querySelector<HTMLButtonElement>("button");
+
+    expect(hl?.textContent).toBe("worker.ts:42-43");
+    expect(chip?.textContent).toBe("worker.ts:42-43");
+    expect(chip?.title).toBe("packages/core/worker.ts:42-43");
+  });
+
+  it("keeps bold tokenization inside a highlighted quote", () => {
+    seed("important", "Why is this important?");
+    const { container } = render("This is **important** context.");
+    const hl = container.querySelector<HTMLElement>("[data-quote-highlight]");
+
+    expect(hl?.querySelector("strong")?.textContent).toBe("important");
+  });
+
+  it("does not guess when the displayed quote appears twice", () => {
+    seed("same", "Which occurrence?");
+    const { container } = render("`same` and same");
+
+    expect(container.querySelector("[data-quote-highlight]")).toBeNull();
+  });
+
   it("clicking a highlight opens the exchange; a reply appends via addQuoteReply", async () => {
     const id = seed("costs nothing per token", "Is this actually free?");
     const { container, user } = render();

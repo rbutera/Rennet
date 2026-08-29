@@ -7,14 +7,16 @@ import { ReferenceChip } from "./reference-chip";
 // ─────────────────────────────────────────────────────────────────────────────
 // The R45 markdown subset, base tier (C4, reconciliation 6/7): a DELIBERATE subset, not
 // a general parser — deliberately NOT react-markdown (reconciliation 5). Citations
-// hydrate inline through the span-read seam. Durable quote highlights (the spike's
-// QuoteHighlight) are left for [ws:C5], which wraps this component's plain-prose output.
+// hydrate inline through the span-read seam. Durable quote highlights reuse this same
+// token pipeline through raw-source decorations instead of flattening rendered prose.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Matches a repo file citation like `packages/x/y.ts:244` or `y.ts:112-113`. */
 const FILE_REF = /^[\w@./-]+\.[a-z]+:\d+(?:-\d+)?$/;
 /** One tokenizer pass: backtick spans, or bare file:line(-line) citations. */
 const TOKEN = /`[^`]+`|[\w@./-]+\.[a-z]+:\d+(?:-\d+)?/g;
+/** The one markdown container this renderer supports. */
+const BOLD = /\*\*[^*]+\*\*/g;
 /** Normative grammar (SHALL, WHEN/THEN, EARS keywords) for spec prose. */
 const SPEC_KEYWORD = /\b(WHEN|THEN|AND|IF|WHILE|WHERE|SHALL NOT|SHALL|MUST NOT|MUST)\b/g;
 
@@ -29,6 +31,143 @@ export function parseRef(ref: string): { path: string; startLine: number; endLin
   return { path, startLine, endLine };
 }
 
+export interface RawTextRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+/** A non-overlapping raw-source range whose children need an inline wrapper. */
+export interface RichTextDecoration extends RawTextRange {
+  readonly render: (children: ReactNode) => ReactNode;
+}
+
+type InlineSegmentKind = "text" | "code" | "citation";
+
+interface InlineSegment extends RawTextRange {
+  readonly kind: InlineSegmentKind;
+  readonly display: string;
+  /** Plain text, code contents, or the full citation path and line range. */
+  readonly value: string;
+  readonly bold: boolean;
+}
+
+function citationLabel(ref: string): string {
+  const slash = ref.lastIndexOf("/");
+  return slash < 0 ? ref : ref.slice(slash + 1);
+}
+
+function tokenizeSegment(text: string, offset: number, bold: boolean): InlineSegment[] {
+  const segments: InlineSegment[] = [];
+  let last = 0;
+  for (const match of text.matchAll(TOKEN)) {
+    const index = match.index;
+    if (index > last) {
+      const value = text.slice(last, index);
+      segments.push({
+        kind: "text",
+        start: offset + last,
+        end: offset + index,
+        display: value,
+        value,
+        bold,
+      });
+    }
+
+    const token = match[0];
+    const inner = token.startsWith("`") ? token.slice(1, -1) : token;
+    const citation = FILE_REF.test(inner);
+    segments.push({
+      kind: citation ? "citation" : "code",
+      start: offset + index,
+      end: offset + index + token.length,
+      display: citation ? citationLabel(inner) : inner,
+      value: inner,
+      bold,
+    });
+    last = index + token.length;
+  }
+
+  if (last < text.length) {
+    const value = text.slice(last);
+    segments.push({
+      kind: "text",
+      start: offset + last,
+      end: offset + text.length,
+      display: value,
+      value,
+      bold,
+    });
+  }
+  return segments;
+}
+
+/** Tokenize raw board prose into the exact text the browser displays and its source span. */
+function inlineSegments(rawText: string, offset = 0): InlineSegment[] {
+  const segments: InlineSegment[] = [];
+  let last = 0;
+  for (const match of rawText.matchAll(BOLD)) {
+    const index = match.index;
+    if (index > last) {
+      segments.push(...tokenizeSegment(rawText.slice(last, index), offset + last, false));
+    }
+    const token = match[0];
+    segments.push(...tokenizeSegment(token.slice(2, -2), offset + index + 2, true));
+    last = index + token.length;
+  }
+  if (last < rawText.length) {
+    segments.push(...tokenizeSegment(rawText.slice(last), offset + last, false));
+  }
+  return segments;
+}
+
+/**
+ * Map one unique display-text quote back to raw board prose. Code and citation display
+ * labels snap to their whole raw token; ordinary and bold text keep exact offsets.
+ * Duplicate display matches and absent text return null rather than guessing.
+ */
+export function displayToRawRange(rawText: string, displayQuote: string): RawTextRange | null {
+  if (displayQuote.length === 0) return null;
+
+  let displayText = "";
+  const segments = inlineSegments(rawText).map((segment) => {
+    const displayStart = displayText.length;
+    displayText += segment.display;
+    return { ...segment, displayStart, displayEnd: displayText.length };
+  });
+  const displayStart = displayText.indexOf(displayQuote);
+  if (displayStart < 0 || displayText.indexOf(displayQuote, displayStart + 1) >= 0) return null;
+
+  const displayEnd = displayStart + displayQuote.length;
+  const first = segments.find(
+    (segment) => displayStart >= segment.displayStart && displayStart < segment.displayEnd,
+  );
+  const last = segments.find(
+    (segment) => displayEnd > segment.displayStart && displayEnd <= segment.displayEnd,
+  );
+  if (!first || !last) return null;
+
+  return {
+    start: first.kind === "text" ? first.start + (displayStart - first.displayStart) : first.start,
+    end: last.kind === "text" ? last.start + (displayEnd - last.displayStart) : last.end,
+  };
+}
+
+interface ParagraphSource {
+  readonly text: string;
+  readonly start: number;
+}
+
+function splitParagraphs(text: string): ParagraphSource[] {
+  const paragraphs: ParagraphSource[] = [];
+  let start = 0;
+  for (const separator of text.matchAll(/\n\n+/g)) {
+    paragraphs.push({ text: text.slice(start, separator.index), start });
+    start = separator.index + separator[0].length;
+  }
+  paragraphs.push({ text: text.slice(start), start });
+  return paragraphs;
+}
+
 export interface RichTextProps {
   readonly text: string;
   /** The captured patchset a `path:line` citation resolves against. */
@@ -37,6 +176,8 @@ export interface RichTextProps {
   readonly paragraphClassName?: string;
   /** Bold the normative spec grammar (SHALL, WHEN/THEN, EARS keywords). */
   readonly keywords?: boolean;
+  /** Non-overlapping raw-source ranges rendered through the normal token pipeline. */
+  readonly decorations?: readonly RichTextDecoration[];
 }
 
 export function RichText({
@@ -45,6 +186,7 @@ export function RichText({
   className,
   paragraphClassName,
   keywords = false,
+  decorations = [],
 }: RichTextProps) {
   const [activeRef, setActiveRef] = useState<string | null>(null);
   // The revealed citation is keyed by paragraph index + ref; when the prose or the
@@ -52,90 +194,116 @@ export function RichText({
   // citation can never render below unrelated replacement text.
   // biome-ignore lint/correctness/useExhaustiveDependencies: text/patchsetId are the invalidation keys; activeRef is intentionally reset, not a dep.
   useEffect(() => setActiveRef(null), [text, patchsetId]);
-  const paragraphs = text.split(/\n\n+/);
+  const paragraphs = splitParagraphs(text);
 
-  function keywordNodes(chunk: string, keyBase: string): ReactNode[] {
-    if (!keywords) return [chunk];
-    // Odd split parts are the captured keyword; even parts are the surrounding text.
-    // A regex split is a stable positional list, so the segment position is the key.
-    return chunk.split(SPEC_KEYWORD).map((part, index) => {
-      const key = `${keyBase}-kw-${index}`;
-      return index % 2 === 1 ? (
-        <span key={key} className="font-semibold tracking-tight text-foreground">
-          {part}
-        </span>
-      ) : (
-        <Fragment key={key}>{part}</Fragment>
-      );
-    });
+  function decorationFor(start: number, end: number): RichTextDecoration | undefined {
+    return decorations.find((decoration) => decoration.start <= start && decoration.end >= end);
   }
 
-  // Run the supported token pipeline (citations, backticks, keywords) over one plain
-  // (already un-bolded) segment. Bold is handled OUTSIDE this, so a chip or code span
-  // wrapped in `**…**` renders inside the <strong>, never with literal ** left around it.
-  function tokenNodes(segment: string, paragraphIndex: number, keyBase: string): ReactNode[] {
-    const nodes: ReactNode[] = [];
-    let last = 0;
-    let match: RegExpExecArray | null;
-    TOKEN.lastIndex = 0;
-    // biome-ignore lint/suspicious/noAssignInExpressions: the canonical single-pass regex tokenizer loop.
-    while ((match = TOKEN.exec(segment)) !== null) {
-      if (match.index > last)
-        nodes.push(...keywordNodes(segment.slice(last, match.index), `${keyBase}-${last}`));
-      const token = match[0];
-      const inner = token.startsWith("`") ? token.slice(1, -1) : token;
-      const isRef = FILE_REF.test(inner);
-      const key = `${keyBase}-${match.index}`;
-      if (isRef) {
-        const refId = `${paragraphIndex}:${inner}`;
-        const parsed = parseRef(inner);
-        nodes.push(
-          <ReferenceChip
-            key={key}
-            path={parsed.path}
-            startLine={parsed.startLine}
-            endLine={parsed.endLine}
-            active={activeRef === refId}
-            title={inner}
-            className="inline-block underline decoration-dotted underline-offset-2"
-            onClick={() => setActiveRef((current) => (current === refId ? null : refId))}
-          />,
-        );
-      } else if (token.startsWith("`")) {
-        nodes.push(
-          <code key={key} className="font-mono text-foreground">
-            {inner}
-          </code>,
-        );
-      } else {
-        nodes.push(token);
-      }
-      last = match.index + token.length;
+  function decorate(children: ReactNode, start: number, end: number, key: string): ReactNode {
+    const decoration = decorationFor(start, end);
+    return <Fragment key={key}>{decoration ? decoration.render(children) : children}</Fragment>;
+  }
+
+  function formatText(value: string, bold: boolean, keyword: boolean): ReactNode {
+    let node: ReactNode = value;
+    if (keyword) {
+      node = <span className="font-semibold tracking-tight text-foreground">{node}</span>;
     }
-    if (last < segment.length)
-      nodes.push(...keywordNodes(segment.slice(last), `${keyBase}-${last}`));
+    if (bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
+    return node;
+  }
+
+  function renderTextRun(
+    value: string,
+    start: number,
+    bold: boolean,
+    keyword: boolean,
+  ): ReactNode[] {
+    const end = start + value.length;
+    const points = [
+      ...new Set([
+        start,
+        end,
+        ...decorations.flatMap((decoration) => [decoration.start, decoration.end]),
+      ]),
+    ]
+      .filter((point) => point >= start && point <= end)
+      .sort((a, b) => a - b);
+
+    const nodes: ReactNode[] = [];
+    for (let index = 0; index < points.length - 1; index++) {
+      const partStart = points[index];
+      const partEnd = points[index + 1];
+      if (partStart == null || partEnd == null || partEnd <= partStart) continue;
+      const part = value.slice(partStart - start, partEnd - start);
+      nodes.push(
+        decorate(formatText(part, bold, keyword), partStart, partEnd, `${partStart}:${partEnd}`),
+      );
+    }
     return nodes;
   }
 
-  // `**bold**` is the one markdown container board prose carries. Split it out FIRST,
-  // then run the token pipeline through both the bold and the plain runs, so a citation
-  // or code span inside the bold is a real chip/code element, not literal ** + a chip.
-  function renderInline(segment: string, paragraphIndex: number, keyOffset: number): ReactNode[] {
-    const parts = segment.split(/(\*\*[^*]+\*\*)/);
-    if (parts.length === 1) return tokenNodes(segment, paragraphIndex, `${keyOffset}`);
-    return parts.flatMap((part, index) => {
-      const key = `${keyOffset}-b-${index}`;
-      return part.startsWith("**") && part.endsWith("**") ? (
-        <strong key={key} className="font-semibold text-foreground">
-          {tokenNodes(part.slice(2, -2), paragraphIndex, key)}
-        </strong>
-      ) : (
-        tokenNodes(part, paragraphIndex, key)
+  function renderTextSegment(segment: InlineSegment): ReactNode[] {
+    if (!keywords) return renderTextRun(segment.value, segment.start, segment.bold, false);
+
+    const nodes: ReactNode[] = [];
+    let last = 0;
+    for (const match of segment.value.matchAll(SPEC_KEYWORD)) {
+      const index = match.index;
+      if (index > last) {
+        nodes.push(
+          ...renderTextRun(
+            segment.value.slice(last, index),
+            segment.start + last,
+            segment.bold,
+            false,
+          ),
+        );
+      }
+      nodes.push(...renderTextRun(match[0], segment.start + index, segment.bold, true));
+      last = index + match[0].length;
+    }
+    if (last < segment.value.length) {
+      nodes.push(
+        ...renderTextRun(segment.value.slice(last), segment.start + last, segment.bold, false),
       );
-    });
+    }
+    return nodes;
   }
 
-  function renderParagraph(paragraph: string, paragraphIndex: number) {
+  function renderTokenSegment(segment: InlineSegment, paragraphIndex: number): ReactNode {
+    let node: ReactNode;
+    if (segment.kind === "citation") {
+      const refId = `${paragraphIndex}:${segment.value}`;
+      const parsed = parseRef(segment.value);
+      node = (
+        <ReferenceChip
+          path={parsed.path}
+          startLine={parsed.startLine}
+          endLine={parsed.endLine}
+          active={activeRef === refId}
+          title={segment.value}
+          className="inline-block underline decoration-dotted underline-offset-2"
+          onClick={() => setActiveRef((current) => (current === refId ? null : refId))}
+        />
+      );
+    } else {
+      node = <code className="font-mono text-foreground">{segment.display}</code>;
+    }
+    if (segment.bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
+    return decorate(node, segment.start, segment.end, `${segment.start}:${segment.end}`);
+  }
+
+  function renderInline(segment: string, paragraphIndex: number, rawOffset: number): ReactNode[] {
+    return inlineSegments(segment, rawOffset).flatMap((source) =>
+      source.kind === "text"
+        ? renderTextSegment(source)
+        : [renderTokenSegment(source, paragraphIndex)],
+    );
+  }
+
+  function renderParagraph(paragraph: ParagraphSource, paragraphIndex: number) {
     const activeInParagraph = activeRef?.startsWith(`${paragraphIndex}:`)
       ? activeRef.slice(activeRef.indexOf(":") + 1)
       : null;
@@ -153,15 +321,21 @@ export function RichText({
     // A block whose lines all start with "- " is a bulleted list (a one-item `- x`
     // paragraph counts); each line keeps the full token pipeline (citations, code,
     // bold, keywords).
-    const lines = paragraph.split("\n");
-    if (lines.every((line) => line.startsWith("- "))) {
+    const lines = paragraph.text.split("\n");
+    let nextLineStart = paragraph.start;
+    const lineSources = lines.map((line) => {
+      const source = { text: line, start: nextLineStart };
+      nextLineStart += line.length + 1;
+      return source;
+    });
+    if (lineSources.every((line) => line.text.startsWith("- "))) {
       return (
         <Fragment key={paragraphIndex}>
           <ul className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60">
-            {lines.map((line, lineIndex) => (
+            {lineSources.map((line, lineIndex) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: bullet lines are a fixed positional list.
               <li key={lineIndex} className={paragraphClassName}>
-                {renderInline(line.slice(2), paragraphIndex, lineIndex * 100000)}
+                {renderInline(line.text.slice(2), paragraphIndex, line.start + 2)}
               </li>
             ))}
           </ul>
@@ -172,13 +346,17 @@ export function RichText({
 
     return (
       <Fragment key={paragraphIndex}>
-        <p className={paragraphClassName}>{renderInline(paragraph, paragraphIndex, 0)}</p>
+        <p className={paragraphClassName}>
+          {renderInline(paragraph.text, paragraphIndex, paragraph.start)}
+        </p>
         {reveal}
       </Fragment>
     );
   }
 
   return (
-    <div className={cn("flex flex-col gap-2", className)}>{paragraphs.map(renderParagraph)}</div>
+    <div data-rich-text-raw={text} className={cn("flex flex-col gap-2", className)}>
+      {paragraphs.map(renderParagraph)}
+    </div>
   );
 }

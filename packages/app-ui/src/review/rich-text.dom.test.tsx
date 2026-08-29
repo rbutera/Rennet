@@ -5,7 +5,7 @@ import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
 import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
-import { RichText } from "./rich-text";
+import { displayToRawRange, RichText } from "./rich-text";
 
 const PS = "ps-1";
 
@@ -24,6 +24,41 @@ function spanBridge() {
 }
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
+
+describe("displayToRawRange", () => {
+  it("keeps plain and bold display text on exact source characters", () => {
+    const raw = "before plain and **bold words** after";
+    const plain = displayToRawRange(raw, "plain");
+    const bold = displayToRawRange(raw, "bold words");
+
+    expect(plain).toEqual({ start: 7, end: 12 });
+    expect(bold).toEqual({ start: 19, end: 29 });
+    expect(plain && raw.slice(plain.start, plain.end)).toBe("plain");
+    expect(bold && raw.slice(bold.start, bold.end)).toBe("bold words");
+  });
+
+  it("snaps a backtick display selection to the full raw token", () => {
+    const raw = "call `decompose()` now";
+    const range = displayToRawRange(raw, "decompose()");
+
+    expect(range).toEqual({ start: 5, end: 18 });
+    expect(range && raw.slice(range.start, range.end)).toBe("`decompose()`");
+  });
+
+  it("snaps a shortened citation label to the full raw citation", () => {
+    const raw = "see packages/core/worker.ts:42-43 here";
+    const range = displayToRawRange(raw, "worker.ts:42-43");
+
+    expect(range).toEqual({ start: 4, end: 33 });
+    expect(range && raw.slice(range.start, range.end)).toBe("packages/core/worker.ts:42-43");
+  });
+
+  it("returns null for ambiguous display text and absent text", () => {
+    expect(displayToRawRange("`same` and same", "same")).toBeNull();
+    expect(displayToRawRange("one phrase", "missing")).toBeNull();
+    expect(displayToRawRange("one phrase", "")).toBeNull();
+  });
+});
 
 describe("RichText — R45 markdown subset (base tier)", () => {
   it("renders bold as a real <strong>, never literal asterisks", () => {
