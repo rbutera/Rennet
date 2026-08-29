@@ -18,15 +18,10 @@
 //     app tree binds (`routes/app.tsx`). Its round state is the `session.roundEvents`
 //     catch-up read with the `roundProgress` push channel folded in, reduced through the
 //     production `advance`. No fixture clock, no tick, no `setTimeout`.
-//   • The EVENTS are the server's. Every one below is emitted verbatim by production —
-//     `create-server.ts`'s dispatch half (`dispatched`/`prep`/`worker`/`gate`/`committed`,
-//     the "Folded the round's asks into one work order" and "Ran the work order" labels)
-//     and `rounds.ts`'s regeneration half (`report`, the per-lens `lens` lanes with the
-//     `LENS_LANE_LABEL` names and the `carrying forward`/`reworked` verdicts, `composed`).
-//     Each is PARSED through protocol's `RoundEventSchema` before it is pushed, so this
-//     file cannot drift from the wire; that the server really emits this walk is proven
-//     server-side in `server/src/runtime/round-progress.test.ts` (3.1/3.3), over a real
-//     `runRound` with only the model seats faked. The two halves meet at the schema.
+//   • The progress prefix is the legacy delta stream retained for compatibility. The
+//     terminal receipt is the current coordinator's production `operation` snapshot.
+//     Each event is parsed through `RoundEventSchema`; the ledger refresh assertion is
+//     therefore pinned to the event shape create-server publishes now.
 //   • The RECORD is the durable one — parsed through `RoundLedgerRecordSchema`, carrying the
 //     `frozenPredecessor` C15 2.2 stamps (distinct from `boardGeneration`), which is what
 //     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open. Its exact
@@ -76,6 +71,34 @@ const routeResolutionHandlers: MemoryBridgeHandlers = {
 };
 
 const REPORT_BOARD_ID = "report-round-1";
+
+const TERMINAL_OPERATION = RoundEventSchema.parse({
+  type: "operation",
+  snapshot: {
+    operationId: "operation-c15",
+    revision: 10,
+    createdAt: Date.UTC(2026, 7, 29, 9, 30),
+    roundNumber: 1,
+    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    askCount: 2,
+    gatePlan: { kind: "configured", command: "pnpm check" },
+    state: {
+      phase: "completed",
+      workspace: { status: "done" },
+      worker: { status: "done", fileCount: 3 },
+      gate: { status: "passed", durationMs: 12_400, projectCount: 7 },
+      commits: { status: "done", count: 1 },
+      result: {
+        kind: "changed",
+        report: {
+          status: "verified",
+          reportBoardId: REPORT_BOARD_ID,
+          generation: "gen2",
+        },
+      },
+    },
+  },
+});
 
 /**
  * The round the server ran, as it really came over the wire. Parsed — not cast —
@@ -127,7 +150,7 @@ const SERVER_ROUND: readonly RoundEvent[] = [
       { id: "noise", label: "Noise", status: "done", verdict: "carrying-forward" },
     ],
   },
-  { type: "composed", generation: "gen2" },
+  TERMINAL_OPERATION,
 ].map((event) => RoundEventSchema.parse(event));
 
 /** The DURABLE record the round wrote (C15 2.2) — the frozen predecessor is a distinct
@@ -317,18 +340,17 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     // Persisting server truth does not invent a client refresh. Only the terminal receipt
     // below proves that the durable row is ready and changes the live ledger projection.
     expect(ledgerReads()).toBe(readsBeforeRecord);
-    push(SERVER_ROUND[9] as RoundEvent); // composed, generation gen2
+    push(SERVER_ROUND[9] as RoundEvent); // durable completed/changed operation, generation gen2
     await waitFor(() => expect(ledgerReads()).toBeGreaterThan(readsBeforeRecord));
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
     const progress = () => r.getByTestId("regeneration-progress");
     expect(progress().textContent).toContain("Regenerated the Boards");
-    const laneText = (id: string) =>
-      r.container.querySelector(`[data-row="${id}"]`)?.textContent ?? "";
-    expect(laneText("design")).toContain("reworked");
-    expect(laneText("design")).not.toContain("carrying forward");
-    expect(laneText("sequence")).toContain("carrying forward");
+    // A complete durable snapshot supersedes the compatibility deltas. It does not carry
+    // per-lens verdicts, so the greeting must not replay rows from the older event shape.
+    expect(r.container.querySelector('[data-row="design"]')).toBeNull();
+    expect(r.container.querySelector('[data-row="sequence"]')).toBeNull();
     // 4.2's post-process and composed receipts are present on the returned surface.
     expect(r.container.querySelector('[data-step="post-process"]')?.textContent).toContain(
       "Cleaning up drafts · post-process pass",

@@ -2616,6 +2616,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 from: operation.state.commits.from,
                 to: operation.state.commits.to,
               },
+              onProgress: (event) => roundProgress.emit(operation.reviewId, event),
             });
           }
           consumeCurrentAskOccurrences(

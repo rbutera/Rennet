@@ -264,10 +264,20 @@ export function useLiveRoundsSource(): RoundsSource {
     command: eventsCommand,
     fold: (prev, event) => {
       streamed.current = mergeRoundEvents(streamed.current, [event]);
-      // Terminal is the first safe ledger refresh point: composed and unchanged follow a
-      // durable row, while failed may reveal a recorded partial row or leave it unchanged.
-      // Dispatch acknowledgement happens earlier and can cache an empty ledger.
-      if (event.type === "composed" || event.type === "unchanged" || event.type === "failed") {
+      // A changed or failed durable terminal snapshot follows every ledger write it can
+      // expose. An unchanged snapshot does not: finalizeUnchanged writes afterward and
+      // emits the legacy unchanged receipt as its post-write commit point.
+      const durableTerminal =
+        event.type === "operation" &&
+        (event.snapshot.state.phase === "failed" ||
+          (event.snapshot.state.phase === "completed" &&
+            event.snapshot.state.result.kind === "changed"));
+      if (
+        durableTerminal ||
+        event.type === "composed" ||
+        event.type === "unchanged" ||
+        event.type === "failed"
+      ) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
       }
       return { events: [...mergeRoundEvents(prev?.events ?? NO_EVENTS, [event])] };

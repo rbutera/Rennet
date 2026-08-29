@@ -832,6 +832,29 @@ describe("createRoundsRuntime", () => {
     expect(frozenPrevious).toBeUndefined();
   });
 
+  it("persists an unchanged round before emitting its terminal receipt", async () => {
+    const order: string[] = [];
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        recordRound: (_sessionId, record) => {
+          order.push(`persisted:${record.regeneration}`);
+        },
+      }),
+    );
+
+    const record = await runtime.finalizeUnchanged({
+      session: { id: "s1", projectId: "p1", threads: [], createdAt: 0 },
+      asksDispatched: ["ask-1"],
+      dispatchId: "dispatch-1",
+      sourcePatchsetId: "patchset-1",
+      workerCommitRange: { from: "commit-1", to: "commit-1" },
+      onProgress: (event) => order.push(event.type),
+    });
+
+    expect(record.regeneration).toBe("not-needed");
+    expect(order).toEqual(["persisted:not-needed", "unchanged"]);
+  });
+
   it("keeps askless first-generation drafting on the no-code path", async () => {
     const captures: { prompt?: string }[] = [];
     const outcome = await createRoundsRuntime(
