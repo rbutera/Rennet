@@ -179,8 +179,13 @@ describe("assembleRoundCollation", () => {
 // both assertions below able to fail: it is a REAL dependent for fan-in to count,
 // and it is the 1-hop ring the knowledge scope is drawn around.
 
-function fixtureSnapshot(options: { omitImports?: boolean } = {}): LoadedSnapshot {
+function fixtureSnapshot(
+  options: { omitImports?: boolean; withOldPath?: boolean } = {},
+): LoadedSnapshot {
   const files = ["src/a.ts", "src/importer.ts", "src/new.ts"];
+  // The rename's BASE side. Present only when a test needs the base to be able to
+  // answer about `src/old.ts` — which is the whole point of the per-file check.
+  if (options.withOldPath) files.push("src/old.ts");
   const inputs: SnapshotStructuralInputs = {
     repoKey: "/repo/.git",
     baseRef: "main",
@@ -202,8 +207,15 @@ function fixtureSnapshot(options: { omitImports?: boolean } = {}): LoadedSnapsho
       ? []
       : [
           { blobOid: "blob:src/a.ts", extractor: "structural-imports-v1", imports: [] },
-          { blobOid: "blob:src/importer.ts", extractor: "structural-imports-v1", imports: ["./a"] },
+          {
+            blobOid: "blob:src/importer.ts",
+            extractor: "structural-imports-v1",
+            imports: options.withOldPath ? ["./a", "./old"] : ["./a"],
+          },
           { blobOid: "blob:src/new.ts", extractor: "structural-imports-v1", imports: [] },
+          ...(options.withOldPath
+            ? [{ blobOid: "blob:src/old.ts", extractor: "structural-imports-v1", imports: [] }]
+            : []),
         ],
   );
   const materialized = materializeSnapshot(built.manifest, (digest) => built.shards.get(digest));
@@ -254,6 +266,88 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
     });
     expect(fanInMark(c)?.assessed).toBe(false);
   });
+
+  it("REFERENCE shards without SYMBOL shards still supply no index — the join needs both", () => {
+    // The textual lookup is a JOIN: `definedSymbols` reads the symbol shards and
+    // `referencingFiles` the reference ones. With references present and symbols
+    // absent, every changed file defines nothing, so every count is zero — the same
+    // silent zero as an empty index, reached from the other side. Control: drop the
+    // `symbolDigestByBlob` term from `packetFanIn` and this reddens to assessed:true.
+    const built = buildSnapshot(
+      {
+        repoKey: "/repo/.git",
+        baseRef: "main",
+        baseRefResolution: "symbolic-head" as BaseRefResolution,
+        baseOid: "0".repeat(40),
+        files: ["src/a.ts"].map((path) => ({
+          path,
+          blobOid: `blob:${path}`,
+          size: 1,
+          mode: "100644",
+        })),
+        scopes: [],
+        edges: [],
+        entryPoints: [],
+        tests: [],
+        ownership: [],
+        conventions: [],
+      },
+      [], // no symbol shards
+      [
+        {
+          blobOid: "blob:src/a.ts",
+          extractor: "structural-references-v1",
+          references: [{ name: "foo", lines: [1] }],
+        },
+      ],
+      [], // no import shards, so the edge-backed arm is unavailable
+    );
+    const materialized = materializeSnapshot(built.manifest, (digest) => built.shards.get(digest));
+    if (!materialized.ok) throw new Error(`materialize failed: ${materialized.slots.join(",")}`);
+    expect(materialized.snapshot.referenceDigestByBlob.size).toBeGreaterThan(0);
+    expect(materialized.snapshot.symbolDigestByBlob.size).toBe(0);
+
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: KNOWLEDGE,
+      snapshot: materialized.snapshot,
+      dossier: [],
+    });
+    expect(fanInMark(c)?.assessed).toBe(false);
+  });
+
+  it("a RENAME is counted at its previous path; a path the base lacks is NOT ASSESSED", () => {
+    const withOld = assembleRoundCollation({
+      patchset: PS,
+      knowledge: KNOWLEDGE,
+      snapshot: fixtureSnapshot({ withOldPath: true }),
+      dossier: [],
+    });
+    const renamed = withOld.deltaPacket.blastRadius.find(
+      (mark) => mark.signal === "fan-in" && mark.target === "rennet:file/src/new.ts",
+    );
+    // `src/importer.ts` imports `./old`, never `./new` — the count can only come from
+    // the base-side path. Marked on the visible (new) element, counted at the old one.
+    expect(renamed?.assessed).toBe(true);
+    expect(renamed?.reason).toBe("1 file imports this file; changes here ripple to them.");
+
+    // CONTROL, same patchset over a base that never carried `src/old.ts`: the honest
+    // answer is not-assessed. A zero here would read as "checked, nothing depends on it".
+    const withoutOld = assembleRoundCollation({
+      patchset: PS,
+      knowledge: KNOWLEDGE,
+      snapshot: fixtureSnapshot(),
+      dossier: [],
+    });
+    const absent = withoutOld.deltaPacket.blastRadius.find(
+      (mark) => mark.signal === "fan-in" && mark.target === "rennet:file/src/new.ts",
+    );
+    expect(absent?.assessed).toBe(false);
+    expect(absent?.reason).toContain("src/old.ts");
+    // The repo-wide index is still assessed — this is per-file availability, not a
+    // whole signal going dark.
+    expect(fanInMark(withoutOld)?.assessed).toBe(true);
+  });
 });
 
 describe("assembleRoundCollation — the packet's knowledge is a selection, not the set", () => {
@@ -291,6 +385,22 @@ describe("assembleRoundCollation — the packet's knowledge is a selection, not 
     expect(c.deltaPacket.knowledge.counts.rejected).toBe(1);
     // The store total is disclosed, so the drafter can see there is more to ask for.
     expect(c.deltaPacket.knowledge.counts.inStore).toBe(2);
+  });
+
+  it("carries BOTH sides of a rename into the scope, so base-anchored knowledge survives", () => {
+    // `src/old.ts` is only ever reachable as the rename's PREVIOUS path: nothing in
+    // the fixture imports or is imported by it from a changed file, so the one-hop
+    // ring cannot pull it in. Drop `previousPath` from the changed-path set and this
+    // statement falls out of scope — the control this assertion rests on.
+    const OLD = statement("k3-old", "src/old.ts", "src/old.ts");
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: { ...SET, statements: [...SET.statements, OLD] },
+      snapshot: fixtureSnapshot({ withOldPath: true }),
+      dossier: [],
+    });
+    expect(c.deltaPacket.knowledge.mode).toBe("import-graph");
+    expect(c.deltaPacket.knowledge.statements.map((s) => s.id)).toContain("k3-old");
   });
 
   it("a repo that was never enriched is an honest empty selection, not a crash", () => {

@@ -106,6 +106,8 @@ import {
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
   SessionStore,
+  SnapshotOverlayReader,
+  SnapshotOverlayStore,
   SqliteReviewStore,
   saveConventionCatalogue,
   scoutSettingsOffers,
@@ -2161,9 +2163,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             // neighbourhood, and caps — disclosing all three in the packet. A gate refusal
             // is a null snapshot, which degrades to the unprojected set and SAYS so; it is
             // never a silently narrower one.
+            //
+            // The reader is the OVERLAY-MERGED one, the same shape the review's own
+            // `context.file`/`context.map` tools are built with: a review on a
+            // non-default base resolves through a warmed overlay, and a bare reader
+            // would refuse it as stale. Without this the packet could degrade to
+            // `unprojected` on a review whose context tools were answering fine —
+            // two readers disagreeing about the same review's snapshot.
             knowledgeFor: (patchset) => {
               const repoKey = repoKeyForRoot(review.repositoryRoot);
-              const gated = new ProjectContextReader(liveSnapshotStore).loadFresh(
+              const overlayReader = new SnapshotOverlayReader({
+                store: liveSnapshotStore,
+                overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
+              });
+              const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
                 repoKey,
                 patchset.repository.baseOid,
               );

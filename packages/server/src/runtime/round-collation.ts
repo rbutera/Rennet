@@ -163,11 +163,19 @@ function changedPathsOf(patchset: Patchset): string[] {
  * when the graph resolved with edges). The `textual` arm is not — over a snapshot
  * with no identifier-occurrence shards it answers "zero dependents" for every file,
  * which would render as "checked, nothing depends on this" when nothing was checked.
+ *
+ * The textual arm needs BOTH shard families, because its lookup is a JOIN across
+ * them: `definedSymbols` reads the SYMBOL shards and `referencingFiles` the
+ * REFERENCE shards. With symbols missing, every changed file defines nothing and
+ * every count is zero — the same silent zero reached from the other side — so both
+ * digests are required, not the reference one alone.
  */
 function packetFanIn(snapshot: LoadedSnapshot): FanInIndex | undefined {
   const index = fanInIndexFromSnapshot(snapshot);
   if (index.method === "import-edges") return index;
-  return snapshot.referenceDigestByBlob.size > 0 ? index : undefined;
+  return snapshot.referenceDigestByBlob.size > 0 && snapshot.symbolDigestByBlob.size > 0
+    ? index
+    : undefined;
 }
 
 /**
