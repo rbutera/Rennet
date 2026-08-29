@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { buildSuccessorAccount } from "../successor-account";
 import { buildDeltaPacket } from "./delta-packet";
+import { selectPacketKnowledge } from "./knowledge-scope";
 
 function file(path: string, patch: string, overrides: Partial<PatchFile> = {}): PatchFile {
   return {
@@ -52,6 +53,11 @@ const KNOWLEDGE: KnowledgeSet = {
   statements: [],
 };
 
+// The packet's knowledge field is a SELECTION, not the stored set. These packet
+// tests are about the other producers, so they carry the honest no-snapshot
+// selection; `knowledge-scope.test.ts` owns the selection rules themselves.
+const SCOPED = selectPacketKnowledge({ set: KNOWLEDGE, snapshot: null, changedPaths: [] });
+
 const DOSSIER: DossierItem[] = [
   {
     id: "gh-1",
@@ -79,7 +85,7 @@ function fullPatchset(): Patchset {
 
 describe("buildDeltaPacket", () => {
   it("assembles every producer's facts from one patchset", () => {
-    const packet = buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER);
+    const packet = buildDeltaPacket(fullPatchset(), SCOPED, DOSSIER);
 
     expect(packet.patchset.id).toBe("ps_delta_packet");
     expect(packet.patchset.files.map((f) => f.path)).toHaveLength(5);
@@ -87,7 +93,7 @@ describe("buildDeltaPacket", () => {
     for (const row of packet.patchset.files) expect(row).not.toHaveProperty("patch");
 
     expect(packet.hunks.hunks.length).toBeGreaterThan(0);
-    expect(packet.knowledge).toEqual(KNOWLEDGE);
+    expect(packet.knowledge).toEqual(SCOPED);
     expect(packet.dossier).toEqual(DOSSIER);
 
     const lockfileHunk = packet.hunks.hunks.find((h) => h.path === "pnpm-lock.yaml");
@@ -111,10 +117,10 @@ describe("buildDeltaPacket", () => {
 
   it("carries the successor-account section iff the argument is supplied", () => {
     const account = buildSuccessorAccount({ asks: [], carried: [], changedPaths: ["src/foo.ts"] });
-    const withAccount = buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER, account);
+    const withAccount = buildDeltaPacket(fullPatchset(), SCOPED, DOSSIER, account);
     expect(withAccount.successorAccount).toEqual(account);
 
-    const withoutAccount = buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER);
+    const withoutAccount = buildDeltaPacket(fullPatchset(), SCOPED, DOSSIER);
     expect("successorAccount" in withoutAccount).toBe(false);
   });
 
@@ -122,19 +128,19 @@ describe("buildDeltaPacket", () => {
     const chmodOnly = ["old mode 100644", "new mode 100755"].join("\n");
     const packet = buildDeltaPacket(
       patchsetOf([file("bin/run.sh", chmodOnly, { additions: 0, deletions: 0 })]),
-      KNOWLEDGE,
+      SCOPED,
       DOSSIER,
     );
     // Zero hunks — without the file-row evidence the change would vanish.
     expect(packet.hunks.hunks).toEqual([]);
     expect(packet.patchset.files[0]?.modeChange).toEqual({ old: "100644", new: "100755" });
     // A hunk-carrying file without mode lines carries none.
-    const plain = buildDeltaPacket(patchsetOf([file("src/foo.ts", PATCH)]), KNOWLEDGE, DOSSIER);
+    const plain = buildDeltaPacket(patchsetOf([file("src/foo.ts", PATCH)]), SCOPED, DOSSIER);
     expect("modeChange" in (plain.patchset.files[0] ?? {})).toBe(false);
   });
 
   it("omits the openspec section when the patchset touches no openspec artifact", () => {
-    const packet = buildDeltaPacket(patchsetOf([file("src/foo.ts", PATCH)]), KNOWLEDGE, DOSSIER);
+    const packet = buildDeltaPacket(patchsetOf([file("src/foo.ts", PATCH)]), SCOPED, DOSSIER);
     expect("openspec" in packet).toBe(false);
   });
 
@@ -146,7 +152,7 @@ describe("buildDeltaPacket", () => {
           previousPath: "openspec/changes/my-change/proposal.md",
         }),
       ]),
-      KNOWLEDGE,
+      SCOPED,
       DOSSIER,
     );
     expect(packet.openspec).toEqual({
@@ -162,7 +168,7 @@ describe("buildDeltaPacket", () => {
           previousPath: "openspec/changes/change-a/tasks.md",
         }),
       ]),
-      KNOWLEDGE,
+      SCOPED,
       DOSSIER,
     );
     expect(packet.openspec?.changes.map((c) => c.name)).toEqual(["change-a", "change-b"]);
@@ -175,7 +181,7 @@ describe("buildDeltaPacket", () => {
         file("openspec/changes/a-change/proposal.md", PATCH),
         file("openspec/changes/Z-change/proposal.md", PATCH),
       ]),
-      KNOWLEDGE,
+      SCOPED,
       DOSSIER,
     );
     // Code-unit order: "Z" (0x5A) < "a" (0x61) < "ä" (0xE4). Locale collation
@@ -188,8 +194,8 @@ describe("buildDeltaPacket", () => {
   });
 
   it("is deterministic: two calls over the same inputs are deep-equal", () => {
-    expect(buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER)).toEqual(
-      buildDeltaPacket(fullPatchset(), KNOWLEDGE, DOSSIER),
+    expect(buildDeltaPacket(fullPatchset(), SCOPED, DOSSIER)).toEqual(
+      buildDeltaPacket(fullPatchset(), SCOPED, DOSSIER),
     );
   });
 });
@@ -203,8 +209,8 @@ describe("e2e (B05 packet): real captured patchset", () => {
   );
 
   it("hunk ids are stable across a re-run", () => {
-    const first = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
-    const second = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    const first = buildDeltaPacket(realPatchset, SCOPED, DOSSIER);
+    const second = buildDeltaPacket(realPatchset, SCOPED, DOSSIER);
     expect(first.hunks.hunks.length).toBeGreaterThan(0);
     expect(second.hunks.hunks.map((h) => h.id)).toEqual(first.hunks.hunks.map((h) => h.id));
     expect(second).toEqual(first);
@@ -216,15 +222,15 @@ describe("e2e (B05 packet): real captured patchset", () => {
       carried: [],
       changedPaths: realPatchset.files.map((f) => f.path),
     });
-    const withPrior = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER, account);
+    const withPrior = buildDeltaPacket(realPatchset, SCOPED, DOSSIER, account);
     expect(withPrior.successorAccount).toEqual(account);
 
-    const firstGeneration = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    const firstGeneration = buildDeltaPacket(realPatchset, SCOPED, DOSSIER);
     expect("successorAccount" in firstGeneration).toBe(false);
   });
 
   it("the real impl+test pair surfaces as a counterpart hint", () => {
-    const packet = buildDeltaPacket(realPatchset, KNOWLEDGE, DOSSIER);
+    const packet = buildDeltaPacket(realPatchset, SCOPED, DOSSIER);
     expect(packet.counterpartHints).toEqual([
       {
         implPath: "packages/server/src/boards/file-board-store.ts",
