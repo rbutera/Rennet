@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
-import type { ComposedHandoffBundle, RoundEvent } from "@rennet/protocol";
+import type { ComposedHandoffBundle, Review, RoundEvent, SidebarSession } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { act, mount, waitFor } from "../test/dom";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { advance, initialRoundState, mergeRoundEvents } from "./round-machine";
 import {
   RoundsSourceProvider,
@@ -27,6 +27,50 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const REVIEW = "rev-live";
+const SESSION = "session-live";
+
+const RESOLVED_REVIEW: Review = {
+  id: REVIEW,
+  repositoryRoot: "/repo",
+  patchsets: [
+    {
+      id: "patchset-1",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      repository: {
+        id: "repo-1",
+        root: "/repo",
+        commonDir: "/repo/.git",
+        baseRef: "main",
+        baseOid: "base",
+        headOid: "head",
+      },
+      files: [],
+      rawDiff: "",
+      byteLength: 0,
+      truncated: false,
+    },
+  ],
+  activePatchsetId: "patchset-1",
+  dispositions: [],
+  status: "current",
+};
+
+const SESSION_ROW: SidebarSession = {
+  id: SESSION,
+  projectId: "project-1",
+  title: "Live review",
+  target: "your-branch",
+  reviewId: REVIEW,
+  createdAt: 0,
+};
+
+const resolutionHandlers: MemoryBridgeHandlers = {
+  "session.list": () => ({ sessions: [SESSION_ROW] }),
+  "review.load": ({ reviewId }) => {
+    if (reviewId !== REVIEW) throw new Error(`unexpected review ${reviewId}`);
+    return { review: RESOLVED_REVIEW, repositoryPresent: true };
+  },
+};
 
 const SERVER_SEQUENCE: readonly RoundEvent[] = [
   { type: "dispatched" },
@@ -117,13 +161,13 @@ const dispatchAnswer = (
   dispatched: true,
 });
 
-function mountLive(bridge: MemoryBridge, path = `/s/${REVIEW}/run`) {
+function mountLive(bridge: MemoryBridge, path = `/s/${REVIEW}/run`, probeSlug: string = REVIEW) {
   const history = memoryHistory(path);
   return mount(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
         <LiveScope>
-          <PhaseProbe slug={REVIEW} />
+          <PhaseProbe slug={probeSlug} />
         </LiveScope>
       </Router>
     </BridgeProvider>,
@@ -131,11 +175,20 @@ function mountLive(bridge: MemoryBridge, path = `/s/${REVIEW}/run`) {
 }
 
 /** A bridge answering the two live reads; the round log starts wherever `seed` says. */
-function liveBridge(seed: readonly RoundEvent[] = []): MemoryBridge {
-  return new MemoryBridge({
-    "session.roundEvents": () => ({ events: [...seed] }),
+function liveBridge(seed: readonly RoundEvent[] = []): {
+  readonly bridge: MemoryBridge;
+  readonly readsStarted: () => boolean;
+} {
+  let readsStarted = false;
+  const bridge = new MemoryBridge({
+    ...resolutionHandlers,
+    "session.roundEvents": () => {
+      readsStarted = true;
+      return { events: [...seed] };
+    },
     "session.rounds": () => ({ records: [] }),
   });
+  return { bridge, readsStarted: () => readsStarted };
 }
 
 describe("the live rounds seam (C15 3.2)", () => {
@@ -153,10 +206,11 @@ describe("the live rounds seam (C15 3.2)", () => {
   });
 
   it("advances on live pushed events — no fixture clock anywhere in the app tree", async () => {
-    const bridge = liveBridge();
+    const { bridge, readsStarted } = liveBridge();
     const { getByText } = mountLive(bridge);
     // Honest-absent before any round: an empty log folds to the absent state.
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
 
     for (const event of SERVER_SEQUENCE) {
       act(() => bridge.emitRoundProgress(REVIEW, event));
@@ -168,7 +222,7 @@ describe("the live rounds seam (C15 3.2)", () => {
   it("a cold mount mid-round folds the catch-up read, not an absent lie", async () => {
     // Everything up to (not including) `composed` already happened before this client
     // existed — a deep-link into a round in flight.
-    const bridge = liveBridge(SERVER_SEQUENCE.slice(0, -1));
+    const { bridge } = liveBridge(SERVER_SEQUENCE.slice(0, -1));
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:composing")).toBeTruthy());
 
@@ -178,17 +232,53 @@ describe("the live rounds seam (C15 3.2)", () => {
   });
 
   it("is honest-absent off a session route (nothing to read, nothing invented)", async () => {
-    const bridge = liveBridge(SERVER_SEQUENCE);
+    const { bridge } = liveBridge(SERVER_SEQUENCE);
     const { getByText } = mountLive(bridge, "/new-chat");
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
   });
 
   it("a second dispatch resets the run — the prior round's composed does not replay", async () => {
-    const bridge = liveBridge(SERVER_SEQUENCE);
+    const { bridge } = liveBridge(SERVER_SEQUENCE);
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:composed/gen:ps-2")).toBeTruthy());
     act(() => bridge.emitRoundProgress(REVIEW, { type: "dispatched" }));
     await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+  });
+
+  it("keys reads, live progress, and dispatch by the review attached to a durable session slug", async () => {
+    const eventReads: string[] = [];
+    const ledgerReads: string[] = [];
+    const dispatches: string[] = [];
+    const bridge = new MemoryBridge({
+      ...resolutionHandlers,
+      "session.roundEvents": ({ reviewId }) => {
+        eventReads.push(reviewId);
+        return { events: [] };
+      },
+      "session.rounds": ({ reviewId }) => {
+        ledgerReads.push(reviewId);
+        return { records: [] };
+      },
+      "round.dispatch": ({ reviewId }) => {
+        dispatches.push(reviewId);
+        return dispatchAnswer(reviewId);
+      },
+    });
+    const { getByText } = mountLive(bridge, `/s/${SESSION}/run`, SESSION);
+
+    await waitFor(() => {
+      expect(eventReads).toEqual([REVIEW]);
+      expect(ledgerReads).toEqual([REVIEW]);
+    });
+
+    act(() => getByText("dispatch").click());
+    await waitFor(() => expect(dispatches).toEqual([REVIEW]));
+
+    act(() => {
+      bridge.emitRoundProgress(REVIEW, { type: "dispatched", seq: 0 });
+      bridge.emitRoundProgress(REVIEW, { type: "prep", rows: [], seq: 1 });
+    });
+    await waitFor(() => expect(getByText("phase:preparing")).toBeTruthy());
   });
 });
 
@@ -199,38 +289,50 @@ describe("the live rounds seam (C15 3.2)", () => {
 // round under way. The intent now says only what is true, and the receipt is what
 // settles it — confirmed by the daemon's own events, or refuted out loud.
 describe("dispatch is an intent until the daemon answers (C15 finding 7)", () => {
-  function bridgeWith(dispatchImpl: (reviewId: string) => Promise<unknown>): MemoryBridge {
-    return new MemoryBridge({
-      "session.roundEvents": () => ({ events: [] }),
+  function bridgeWith(dispatchImpl: (reviewId: string) => Promise<unknown>): {
+    readonly bridge: MemoryBridge;
+    readonly readsStarted: () => boolean;
+  } {
+    let readsStarted = false;
+    const bridge = new MemoryBridge({
+      ...resolutionHandlers,
+      "session.roundEvents": () => {
+        readsStarted = true;
+        return { events: [] };
+      },
       "session.rounds": () => ({ records: [] }),
       "round.dispatch": ((input: { reviewId: string }) => dispatchImpl(input.reviewId)) as never,
     });
+    return { bridge, readsStarted: () => readsStarted };
   }
 
   it("shows the reviewer's INTENT while the daemon has said nothing", async () => {
     // The receipt never settles — the window this covers.
-    const bridge = bridgeWith(() => new Promise(() => undefined));
+    const { bridge, readsStarted } = bridgeWith(() => new Promise(() => undefined));
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
     act(() => getByText("dispatch").click());
     await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
   });
 
   it("a REFUSED dispatch reads as failed with the daemon's reason — never a round under way", async () => {
-    const bridge = bridgeWith(async () => {
+    const { bridge, readsStarted } = bridgeWith(async () => {
       throw new Error("no work order to dispatch");
     });
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
     act(() => getByText("dispatch").click());
     // THE LIE THIS GUARDS: the round never started, so nothing may claim it did.
     await waitFor(() => expect(getByText("phase:failed/no work order to dispatch")).toBeTruthy());
   });
 
   it("the daemon's own events take over from the intent once they arrive", async () => {
-    const bridge = bridgeWith(async (reviewId) => dispatchAnswer(reviewId));
+    const { bridge, readsStarted } = bridgeWith(async (reviewId) => dispatchAnswer(reviewId));
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
     act(() => getByText("dispatch").click());
     await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
     for (const [seq, event] of SERVER_SEQUENCE.entries()) {
@@ -245,6 +347,7 @@ describe("the read and the push merge by seq, neither erasing the other", () => 
   it("a terminal event that lands DURING the catch-up read still settles the round", async () => {
     let answer: ((value: { events: RoundEvent[] }) => void) | undefined;
     const bridge = new MemoryBridge({
+      ...resolutionHandlers,
       // The read hangs until the test releases it — the flight window the race lives in.
       "session.roundEvents": () =>
         new Promise<{ events: RoundEvent[] }>((resolve) => {
@@ -301,7 +404,7 @@ describe("the read and the push merge by seq, neither erasing the other", () => 
 describe("rounds the daemon cannot answer are honestly unavailable, with the reason", () => {
   it("states the daemon's own refusal instead of an empty ledger", async () => {
     // No handlers ⇒ the bridge rejects by name, exactly as an older daemon does.
-    const bridge = new MemoryBridge({});
+    const bridge = new MemoryBridge(resolutionHandlers);
     const { getByText, container } = mountLive(bridge);
     await waitFor(() => expect(container.textContent).toContain("rounds:unavailable/"));
     // The reason is the daemon's, not a Rennet guess about versions.
@@ -312,6 +415,7 @@ describe("rounds the daemon cannot answer are honestly unavailable, with the rea
 
   it("a failing PROGRESS read never hides a ledger the daemon answered", async () => {
     const bridge = new MemoryBridge({
+      ...resolutionHandlers,
       // The live-progress read is refused; the ledger read is not.
       "session.rounds": () => ({ records: [] }),
     });

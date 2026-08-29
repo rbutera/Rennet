@@ -225,6 +225,21 @@ describe("draft board seam (parseDraft)", () => {
     expect(r.ok, r.ok ? "" : JSON.stringify(r.issues, null, 2)).toBe(true);
   });
 
+  it("accepts an authored document while preserving legacy drafts that omit it", () => {
+    const document = {
+      title: "The change in reading order",
+      introMarkdown: "Start with the durable write, then follow its projection.",
+      measure: "reading" as const,
+    };
+    const authored = parseDraft({ ...draftBoard, document });
+    expect(authored.ok).toBe(true);
+    if (authored.ok) expect(authored.value.document).toEqual(document);
+    expect(parseDraft(draftBoard).ok).toBe(true);
+    expect(parseDraft({ ...draftBoard, document: { ...document, measure: "wide" } }).ok).toBe(
+      false,
+    );
+  });
+
   it.each(EXPECTED_DRAFT_OMITTED)(
     "rejects the curation-side kind %s in a draft, returning issues",
     (kind) => {

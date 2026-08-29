@@ -9,16 +9,21 @@ import {
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { LENS_KINDS, ViolationSchema } from "@rennet/protocol";
+import {
+  type BoardDocument,
+  BoardDocumentSchema,
+  LENS_KINDS,
+  ViolationSchema,
+} from "@rennet/protocol";
 import { z } from "zod";
 
 /**
  * The board-meta store (#464 finding 3, B09 cluster 6, reconciliation 5) — the
- * durable home for a board's coverage/validation metadata that the whiteboard
- * event log CANNOT carry: `skippedHunks` (coverage) and the validation
+ * durable home for board-level data that the whiteboard event log CANNOT carry:
+ * the document opening, `skippedHunks` coverage, and validation
  * blemishes/omissions/immutability. `draftToOps` serializes only a board's
- * ELEMENTS; the 13-kind element vocabulary has no element for board-level
- * coverage, so a result reconstructed after a crash would otherwise lose it.
+ * ELEMENTS; the 13-kind element vocabulary has no element for any of these, so
+ * a result reconstructed after a crash would otherwise lose them.
  * The lens pipeline persists each board's meta HERE (its `persistBoardMeta`
  * seam) after the write is accepted and BEFORE arrival is announced, so a
  * reader reconstructing the result never sees an announced board whose coverage
@@ -58,6 +63,8 @@ const OmissionSchema = z.object({
 export const BoardMetaRecordSchema = z.object({
   lens: z.enum(LINT_TARGETS),
   boardId: z.string().min(1),
+  // Optional on read so board metadata written before the document contract remains valid.
+  document: BoardDocumentSchema.optional(),
   skippedHunks: z.array(SkippedHunkSchema),
   blemishes: z.array(ViolationSchema),
   omissions: z.array(OmissionSchema),
@@ -75,6 +82,8 @@ export type BoardMetaRecord = z.infer<typeof BoardMetaRecordSchema>;
 export interface BoardMetaInput {
   readonly lens: (typeof LINT_TARGETS)[number];
   readonly boardId: string;
+  /** New pipeline writes always carry this; optional admits legacy/non-pipeline callers. */
+  readonly document?: BoardDocument;
   readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
   readonly blemishes: readonly z.infer<typeof ViolationSchema>[];
   readonly omissions: readonly {

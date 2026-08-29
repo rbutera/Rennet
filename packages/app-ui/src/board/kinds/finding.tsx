@@ -73,33 +73,35 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
       data-element-id={element.id}
       className={cn(dimmed && "opacity-60")}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-start gap-2 text-left"
-      >
-        <Icon
-          icon={ChevronDown}
-          className={cn(
-            "mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform",
-            !open && "-rotate-90",
-          )}
-        />
-        <span
-          className={cn(
-            "mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wide",
-            SEVERITY_CHIP[severity],
-          )}
+      <h3 className="contents">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex w-full items-start gap-2 text-left"
         >
-          {severity}
-        </span>
-        <span className="min-w-0 flex-1 font-semibold text-foreground text-sm leading-snug">
-          {summary}
-          {status !== "open" && <span className="sr-only">, {status}</span>}
-        </span>
-        <Concurrence tallies={concurrence} />
-      </button>
+          <Icon
+            icon={ChevronDown}
+            className={cn(
+              "mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform",
+              !open && "-rotate-90",
+            )}
+          />
+          <span
+            className={cn(
+              "mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wide",
+              SEVERITY_CHIP[severity],
+            )}
+          >
+            {severity}
+          </span>
+          <span className="min-w-0 flex-1 font-semibold text-base text-foreground leading-snug">
+            {summary}
+            {status !== "open" && <span className="sr-only">, {status}</span>}
+          </span>
+          <Concurrence tallies={concurrence} />
+        </button>
+      </h3>
       <Collapse open={open}>
         <div className="flex flex-col gap-2 pt-1 pl-5">
           <QuoteHighlightLayer
@@ -110,9 +112,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
           />
           {fix && (
             <div className="mt-1 flex flex-col gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2.5">
-              <span className="font-medium text-2xs text-muted-foreground uppercase tracking-wide">
-                Fix
-              </span>
+              <h4 className="font-semibold text-sm text-foreground">Fix</h4>
               <QuoteHighlightLayer
                 text={fix}
                 elementId={element.id}

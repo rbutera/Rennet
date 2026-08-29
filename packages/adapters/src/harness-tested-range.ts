@@ -17,7 +17,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { CapabilityName, ConformanceReport, HarnessId } from "@rennet/core";
 import { compareVersions } from "./harness-discovery";
-import testedRanges from "./harness-tested-range.json";
+import testedRanges from "./harness-tested-range.json" with { type: "json" };
 
 export interface TestedRange {
   readonly min: string;

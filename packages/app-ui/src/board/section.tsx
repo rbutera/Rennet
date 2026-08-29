@@ -1,4 +1,4 @@
-import type { LensSection } from "@rennet/protocol";
+import { DOMAIN_COUNT_KINDS, type DomainCountKind, type LensSection } from "@rennet/protocol";
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
@@ -30,7 +30,45 @@ const DELTA_LABEL: Record<"new" | "reworked", string> = {
   reworked: "reworked this round",
 };
 
-/** The folded fold-line: the one-line gist plus per-kind count chips. */
+const LEGACY_COUNT_KIND: Readonly<Record<string, DomainCountKind | undefined>> = {
+  finding: "findings",
+  decision: "decisions",
+  requirement: "requirements",
+  order_step: "steps",
+  round_outcome: "outcomes",
+  noise_verdict: "groups",
+  code_ref: "files",
+  review_comment: "comments",
+};
+
+const SINGULAR: Readonly<Record<DomainCountKind, string>> = {
+  findings: "finding",
+  decisions: "decision",
+  requirements: "requirement",
+  steps: "step",
+  outcomes: "outcome",
+  groups: "group",
+  files: "file",
+  comments: "comment",
+};
+
+/** Convert current domain counts and legacy raw-kind counts into one stable reading line. */
+export function sectionCountText(counts: LensSection["counts"]): string {
+  const totals = new Map<DomainCountKind, number>();
+  for (const [key, count] of Object.entries(counts)) {
+    const domain = DOMAIN_COUNT_KINDS.includes(key as DomainCountKind)
+      ? (key as DomainCountKind)
+      : LEGACY_COUNT_KIND[key];
+    if (domain !== undefined && count > 0) totals.set(domain, (totals.get(domain) ?? 0) + count);
+  }
+  return DOMAIN_COUNT_KINDS.flatMap((domain) => {
+    const count = totals.get(domain);
+    if (count === undefined) return [];
+    return [`${count} ${count === 1 ? SINGULAR[domain] : domain}`];
+  }).join(" · ");
+}
+
+/** The folded fold-line: a readable gist, then domain-object counts on their own line. */
 function FoldLine({
   gist,
   counts,
@@ -38,19 +76,15 @@ function FoldLine({
   readonly gist: string;
   readonly counts: LensSection["counts"];
 }) {
-  const chips = Object.entries(counts).filter(([, n]) => n > 0);
+  const countText = sectionCountText(counts);
   return (
-    <span className="flex min-w-0 flex-1 items-baseline gap-2">
-      <span className="min-w-0 flex-1 truncate text-muted-foreground text-sm">{gist}</span>
-      {chips.length > 0 && (
-        <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
-          {chips.map(([kind, n]) => (
-            <span key={kind} className="rounded bg-secondary px-1.5 py-0.5">
-              {kind} ×{n}
-            </span>
-          ))}
+    <span className="flex min-w-0 flex-1 flex-col items-start gap-2">
+      <span className="w-full text-muted-foreground text-sm leading-relaxed">{gist}</span>
+      {countText.length > 0 ? (
+        <span data-kind="section-counts" className="text-muted-foreground/70 text-xs">
+          {countText}
         </span>
-      )}
+      ) : null}
     </span>
   );
 }
@@ -86,48 +120,45 @@ export function Section({
 
   return (
     <section
+      id={entry.ref}
       data-kind="board-section"
       data-section-id={entry.ref}
       {...(entry.delta ? { "data-delta": entry.delta } : {})}
       data-open={open}
-      className="flex flex-col"
+      className="flex scroll-mt-16 flex-col gap-4"
     >
-      <button
-        type="button"
-        onClick={interact}
-        aria-expanded={open}
-        className="flex w-full items-baseline gap-2 py-1.5 text-left"
-      >
-        <Icon
-          icon={ChevronDown}
-          className={cn(
-            "mt-1 size-3.5 shrink-0 self-start text-muted-foreground transition-transform",
-            !open && "-rotate-90",
-          )}
-        />
-        <span className="min-w-0 flex-1 font-semibold text-foreground text-sm">{title}</span>
-        {showDot && (
-          <span
-            data-testid="delta-dot"
-            className="mt-1.5 size-2 shrink-0 self-start rounded-full bg-primary"
-          >
-            <span className="sr-only">{DELTA_LABEL[entry.delta as "new" | "reworked"]}</span>
-          </span>
-        )}
-      </button>
-      {!open && (
+      <h2 className="contents">
         <button
           type="button"
           onClick={interact}
-          className="flex w-full pb-1.5 pl-5 text-left"
-          aria-hidden
-          tabIndex={-1}
+          aria-expanded={open}
+          aria-label={entry.delta ? `${title}, ${DELTA_LABEL[entry.delta]}` : title}
+          className="flex w-full items-center gap-2 text-left"
         >
+          <Icon
+            icon={ChevronDown}
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              !open && "-rotate-90",
+            )}
+          />
+          {showDot ? (
+            <span
+              data-testid="delta-dot"
+              aria-hidden="true"
+              className="size-1.5 shrink-0 rounded-full bg-primary"
+            />
+          ) : null}
+          <span className="min-w-0 flex-1 font-medium text-xl text-foreground">{title}</span>
+        </button>
+      </h2>
+      <Collapse open={!open}>
+        <button type="button" onClick={interact} className="flex w-full pl-5 text-left">
           <FoldLine gist={entry.gist} counts={entry.counts} />
         </button>
-      )}
+      </Collapse>
       <Collapse open={open}>
-        <div className="flex flex-col gap-3 pt-1 pb-2 pl-5">
+        <div className="flex flex-col gap-6 pl-5">
           <BoardChildren ids={children} />
         </div>
       </Collapse>

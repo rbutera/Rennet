@@ -78,8 +78,8 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     expect(bar.className).toContain("pointer-events-none");
     expect(bar.className).not.toContain("border-b");
     // Every slot that CARRIES a chip opts back into pointer events (the bar itself is
-    // transparent to them). The centre lens-switcher slot renders nothing in this build,
-    // so it is not styled and not asserted — an empty div proves nothing.
+    // transparent to them). This fixture resolves no review boards, so its centre rail is
+    // honestly empty and is not asserted — an empty div proves nothing.
     for (const slot of [bar.firstElementChild, bar.lastElementChild]) {
       expect(slot?.className).toContain("pointer-events-auto");
       expect(slot?.children.length).toBeGreaterThan(0);

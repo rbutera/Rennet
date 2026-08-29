@@ -69,6 +69,11 @@ The schema declares a closed palette of thirteen kinds: the typed lens outputs
 `annotation`, `message`, `code_ref`, `review_comment`). There is no `custom` kind;
 a genuinely new structured shape becomes a new typed kind.
 
+The board document is a Rennet-owned envelope above those elements. It carries
+an authored title, a Markdown introduction, and the `reading` or `structured`
+measure. `HostBoardSchema` and `DraftBoardSchema` validate it, but it is not a
+fourteenth whiteboard element and does not enter the board event log as an op.
+
 The file keeps two honest layers, matching the kit's own doctrine that authoring
 is convenience and the wire is truth:
 
@@ -83,8 +88,9 @@ is convenience and the wire is truth:
 
 A drift test compiles the authored schema through the kit and re-validates every
 fixture element against the kit's per-kind validator, so changing an attribute's
-wire type breaks the gate. `DraftBoardSchema` is derived from `HostBoardSchema` by
-omitting the curation-only kinds (`message`, `review_comment`), never hand-written.
+wire type breaks the gate. `DraftBoardSchema` is derived from `HostBoardSchema`
+by omitting the curation-only kinds (`message`, `review_comment`), never
+hand-written; both schemas retain the same document envelope.
 
 Three model rules ride in the schema rather than in the protocol: every reference
 is an `element`-typed attribute (there is no protocol-level relation table),
@@ -111,15 +117,22 @@ possibly-applied batch means re-sending `result.ops` verbatim, which the service
 dedups by `op_id`; re-sending the original id-less drafts would mint fresh ids and
 append twice.
 
-## The event log is truth
+## Element state and board metadata
 
-Board state is a projection of an append-only attributed event log. Rennet
-persists that log itself through a `FileBoardStore` rooted at `.rennet/boards/`
-under the review project — local, ignored by default, never staged or committed.
-Each board is a `schema.json` written once at creation plus an append-only
-`log.jsonl` with contiguous sequence numbers. Restart is replay: a fresh process
-over the same directory serves the identical board. See
+The board service's element state is a projection of an append-only attributed
+event log. Rennet persists that log through a `FileBoardStore` rooted at
+`.rennet/boards/` under the review project, local and ignored by default. Each
+board is a `schema.json` written once at creation plus an append-only `log.jsonl`
+with contiguous sequence numbers. Restart is replay: a fresh process over the
+same directory serves the identical element state. See
 [architecture contracts](../concepts/architecture-contracts.md#review-state-and-command-persistence).
+
+The readable board has a second durable half in the daemon's board-meta store.
+It holds the document envelope, skipped-hunk coverage, and validation results
+that the thirteen element kinds cannot carry. The pipeline persists this record
+before announcing the board. `board.read` combines it with the event-log
+projection, so a restart preserves the authored title and introduction rather
+than reconstructing them from section elements.
 
 ### Write and broadcast path
 

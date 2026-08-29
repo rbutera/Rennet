@@ -1,13 +1,15 @@
 // @vitest-environment happy-dom
-import { LENS_KINDS } from "@rennet/protocol";
+import { LENS_KINDS, type LensKind } from "@rennet/protocol";
+import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
 import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
-import { resolveBoard } from "./board-data";
+import { resolveBoard, useLensBoards } from "./board-data";
 import { LensBoardView } from "./board-view";
+import { LensSwitcher } from "./lens-switcher";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cluster 9 (packet verification) — the full-fixture-board-set E2E. Cluster 3's
@@ -23,6 +25,35 @@ import { LensBoardView } from "./board-view";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const GENERATIONS = ["gen0", "gen1", "gen2"] as const;
+
+function BoardHarness({
+  generation,
+  generations,
+  initialLens = "flagged",
+}: {
+  readonly generation: string;
+  readonly generations: readonly string[];
+  readonly initialLens?: LensKind;
+}) {
+  const [selectedGeneration, setSelectedGeneration] = useState(generation);
+  const [lens, setLens] = useState<LensKind>(initialLens);
+  const lenses = useLensBoards("rev-1", selectedGeneration);
+  const available = lenses.map((entry) => entry.lens);
+  const selectedLens = available.includes(lens) ? lens : (available[0] ?? lens);
+  return (
+    <>
+      <LensSwitcher lenses={lenses} selected={selectedLens} onSelect={setLens} />
+      <LensBoardView
+        reviewId="rev-1"
+        generation={generation}
+        selectedGeneration={selectedGeneration}
+        lens={lens}
+        generations={generations}
+        onGenerationSelect={setSelectedGeneration}
+      />
+    </>
+  );
+}
 
 // The registry kinds that render as STANDALONE section children on the real surface.
 // Two registry kinds compose INTO their parents rather than dispatching bare:
@@ -53,7 +84,7 @@ async function renderView(generation: string, generations: readonly string[] = G
         new MemoryBridge({ "board.read": fixtureBoardRead, "patchset.readSpan": refusesSpanRead })
       }
     >
-      <LensBoardView reviewId="rev-1" generation={generation} generations={generations} />
+      <BoardHarness generation={generation} generations={generations} />
     </BridgeProvider>,
   );
   await settled(result.container);
@@ -169,7 +200,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
 
   it("folds: a non-delta lens folds every section to its gist + counts; Flagged opens expanded", async () => {
     const { container, user } = await renderView("gen1");
-    expect(lensOf(container)).toBe("flagged"); // R44 default
+    expect(lensOf(container)).toBe("flagged"); // selected Flagged follows R44's open rule
     expect(
       [...container.querySelectorAll("[data-kind=board-section]")].every(
         (s) => s.getAttribute("data-open") === "true",
@@ -182,8 +213,8 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     const sections = [...container.querySelectorAll("[data-kind=board-section]")];
     expect(sections.length).toBeGreaterThan(0);
     expect(sections.every((s) => s.getAttribute("data-open") === "false")).toBe(true);
-    // Folded ⇒ the gist rollup chips are on screen (per-kind counts).
-    expect(container.querySelector("[data-kind=board-section] .rounded.bg-secondary")).toBeTruthy();
+    // Folded ⇒ the gist rollup names domain objects on its own line.
+    expect(container.querySelector("[data-kind=section-counts]")).toBeTruthy();
   });
 
   it("delta marks: gen2 Flagged opens its delta sections expanded with a gold dot that clears on interaction", async () => {

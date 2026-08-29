@@ -2319,6 +2319,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         lens,
         generation,
         boardId: meta.boardId,
+        document: meta.document,
         skippedHunks: meta.skippedHunks,
       });
     },

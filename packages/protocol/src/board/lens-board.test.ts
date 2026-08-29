@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { LENS_KINDS } from "../manifests";
-import { LensBoardSchema, LensKindSchema } from "./lens-board";
+import {
+  DOMAIN_COUNT_KINDS,
+  fallbackBoardDocument,
+  LensBoardSchema,
+  LensKindSchema,
+  resolveBoardDocument,
+} from "./lens-board";
 import { HOST_KIND_SCHEMAS, HostElementSchema } from "./schema";
 
 const author = { kind: "lens-agent", id: "lens:design" } as const;
@@ -11,6 +17,11 @@ const fixture = {
   lens: "design",
   generation: "gen-1",
   boardId: "board-1",
+  document: {
+    title: "Design · durable refresh observations",
+    introMarkdown: "The specification and implementation agree on one write path.",
+    measure: "structured",
+  },
   sections: [
     {
       ref: "s1",
@@ -60,6 +71,36 @@ describe("LensBoard projection (client asset risk 1)", () => {
   it("parses a full fixture projection", () => {
     const r = LensBoardSchema.safeParse(fixture);
     expect(r.success, r.success ? "" : JSON.stringify(r.error.issues, null, 2)).toBe(true);
+  });
+
+  it("requires a served document and keeps legacy raw count keys readable", () => {
+    expect(LensBoardSchema.safeParse({ ...fixture, document: undefined }).success).toBe(false);
+    expect(LensBoardSchema.safeParse(fixture).success).toBe(true);
+    expect(DOMAIN_COUNT_KINDS).not.toContain("finding");
+  });
+
+  it("completes legacy metadata deterministically without invented intro prose", () => {
+    expect(fallbackBoardDocument("design")).toEqual({
+      title: "Design",
+      introMarkdown: "",
+      measure: "structured",
+    });
+    expect(fallbackBoardDocument("noise")).toEqual({
+      title: "Noise",
+      introMarkdown: "",
+      measure: "reading",
+    });
+    expect(
+      resolveBoardDocument("sequence", {
+        title: "Follow the durable write",
+        introMarkdown: "The reader starts at persistence.",
+        measure: "structured",
+      }),
+    ).toEqual({
+      title: "Follow the durable write",
+      introMarkdown: "The reader starts at persistence.",
+      measure: "reading",
+    });
   });
 
   it("rejects a lens id outside the manifests vocabulary", () => {

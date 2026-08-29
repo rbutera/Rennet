@@ -6,7 +6,7 @@ import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { mount } from "../test/dom";
+import { act, mount } from "../test/dom";
 import { MemoryBridge } from "../test/memory-bridge";
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
@@ -43,13 +43,14 @@ function mountWorkspace(path: string, files: PatchFile[]) {
   const history = memoryHistory(path);
   // This review drafted no boards, so `board.read` answers the honest missing board —
   // the state the default view is expected to render.
-  return mount(
+  const result = mount(
     <BridgeProvider bridge={new MemoryBridge({ "board.read": () => ({ board: null }) })}>
       <Router hook={history.hook} searchHook={history.searchHook}>
         <ReviewWorkspace review={review(files)} />
       </Router>
     </BridgeProvider>,
   );
+  return { ...result, history };
 }
 
 describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
@@ -116,5 +117,26 @@ describe("diff deep-link ?file= (C6 task 4.1)", () => {
   it("does not scroll when no ?file is present", () => {
     mountWorkspace("/s/x?view=diff", [FILE_A, FILE_B]);
     expect(scrollSpy).not.toHaveBeenCalled();
+  });
+
+  it("scrolls again when an already-mounted Diff receives a different ?file", () => {
+    const { container, history } = mountWorkspace(
+      `/s/x?view=diff&file=${encodeURIComponent(FILE_A.path)}`,
+      [FILE_A, FILE_B],
+    );
+    const firstCard = container.querySelector(`[id="diff-${FILE_A.path}"]`);
+    const nextCard = container.querySelector(`[id="diff-${FILE_B.path}"]`);
+    expect(scrollSpy.mock.contexts.at(-1)).toBe(firstCard);
+
+    scrollSpy.mockClear();
+    act(() =>
+      history.navigate(`/s/x?view=diff&file=${encodeURIComponent(FILE_B.path)}`, {
+        replace: true,
+      }),
+    );
+
+    expect(container.querySelector(`[id="diff-${FILE_A.path}"]`)).toBe(firstCard);
+    expect(scrollSpy).toHaveBeenCalledOnce();
+    expect(scrollSpy.mock.contexts[0]).toBe(nextCard);
   });
 });

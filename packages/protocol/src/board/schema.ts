@@ -253,19 +253,30 @@ export const DraftElementSchema = z.discriminatedUnion(
   draftElementMembers as [(typeof draftElementMembers)[number], ...typeof draftElementMembers],
 );
 
+/** The document-level prose and reading measure authored above a board's sections. */
+export const BOARD_MEASURES = ["reading", "structured"] as const;
+export const BoardDocumentSchema = z.object({
+  title: z.string().min(1),
+  introMarkdown: z.string(),
+  measure: z.enum(BOARD_MEASURES),
+});
+
 /**
  * A host board: a document of elements (headless-CMS sense). The block tree and
  * every reference live in `element`-typed attributes on the elements, not in a
  * board-level relation table. Board-level extras pass through.
  */
 export const HostBoardSchema = z.looseObject({
+  document: BoardDocumentSchema.optional(),
   elements: z.array(HostElementSchema),
 });
 /** A draft board — {@link HostBoardSchema} restricted to the draft kinds. */
 export const DraftBoardSchema = z.looseObject({
+  document: BoardDocumentSchema.optional(),
   elements: z.array(DraftElementSchema),
 });
 
+export type BoardDocument = z.infer<typeof BoardDocumentSchema>;
 export type HostElement = z.infer<typeof HostElementSchema>;
 export type DraftElement = z.infer<typeof DraftElementSchema>;
 export type HostBoard = z.infer<typeof HostBoardSchema>;

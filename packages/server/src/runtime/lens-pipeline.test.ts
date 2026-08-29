@@ -211,6 +211,10 @@ describe("boardOutputSchema", () => {
   it("derives a JSON schema from the frozen DraftBoardSchema (never hand-authored)", () => {
     const schema = boardOutputSchema() as Record<string, unknown>;
     expect(schema).toBeTypeOf("object");
+    const encoded = JSON.stringify(schema);
+    expect(encoded).toContain('"document"');
+    expect(encoded).toContain('"introMarkdown"');
+    expect(encoded).toContain('"structured"');
     // Memoized — the same object every call.
     expect(boardOutputSchema()).toBe(schema);
   });
@@ -218,6 +222,56 @@ describe("boardOutputSchema", () => {
 
 describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () => {
   const labels = { a: "Claude", b: "Codex" };
+
+  it("rebuilds the document opening from the final reconciled severity picture", () => {
+    const primaryDocument = {
+      title: "Flagged · primary",
+      introMarkdown: "1 high finding requires attention.",
+      measure: "reading" as const,
+    };
+    const secondaryDocument = {
+      title: "Flagged · secondary",
+      introMarkdown: "1 medium finding requires attention.",
+      measure: "reading" as const,
+    };
+    const primary = {
+      ...mkBoard([
+        mkFinding("f1", "high concern", ["c1"], "high"),
+        mkCodeRef("c1", "src/high.ts", 1, 2),
+      ]),
+      document: primaryDocument,
+    };
+    const secondary = {
+      ...mkBoard([
+        mkFinding("f2", "medium concern", ["c2"], "medium"),
+        mkCodeRef("c2", "src/medium.ts", 3, 4),
+      ]),
+      document: secondaryDocument,
+    };
+
+    expect(reconcileFlaggedBoards(primary, secondary, labels).document).toEqual({
+      title: "Flagged · primary",
+      introMarkdown: "2 findings require attention: 1 high, 1 medium.",
+      measure: "reading",
+    });
+  });
+
+  it("uses a legacy primary's secondary title with a clean reconciled opening", () => {
+    const secondaryDocument = {
+      title: "Flagged · secondary",
+      introMarkdown: "The secondary seat found one open concern.",
+      measure: "reading" as const,
+    };
+
+    expect(
+      reconcileFlaggedBoards(mkBoard([]), { ...mkBoard([]), document: secondaryDocument }, labels)
+        .document,
+    ).toEqual({
+      title: "Flagged · secondary",
+      introMarkdown: "No findings require attention.",
+      measure: "reading",
+    });
+  });
 
   it("collapses a matched pair to the clearer finding with BOTH models concurring", () => {
     const a = mkBoard([mkFinding("f1", "short", ["c1"]), mkCodeRef("c1", "src/auth.ts", 11, 12)]);
@@ -293,6 +347,29 @@ describe("stampSingleSeatConcurrence — the honest single-seat degrade", () => 
     ]);
     const stamped = stampSingleSeatConcurrence(board, "Claude");
     expect(concurrenceOf(stamped, "f1")).toEqual([{ model: "Claude", agree: 1, total: 1 }]);
+    expect(stamped.document).toBeUndefined();
+  });
+
+  it("rebuilds a surviving seat's document from its final severity picture", () => {
+    const board = {
+      ...mkBoard([
+        mkFinding("f1", "high concern", ["c1"], "high"),
+        mkCodeRef("c1", "src/high.ts", 11, 12),
+        mkFinding("f2", "low concern", ["c2"], "low"),
+        mkCodeRef("c2", "src/low.ts", 21, 22),
+      ]),
+      document: {
+        title: "Flagged · surviving seat",
+        introMarkdown: "1 high finding requires attention.",
+        measure: "structured" as const,
+      },
+    };
+
+    expect(stampSingleSeatConcurrence(board, "Codex").document).toEqual({
+      title: "Flagged · surviving seat",
+      introMarkdown: "2 findings require attention: 1 high, 1 low.",
+      measure: "reading",
+    });
   });
 });
 
@@ -623,7 +700,31 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     if (lens === "flagged") return flaggedBody();
     if (lens === "post-process") {
       const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-      return ctx ? (JSON.parse(ctx[1] as string).board as unknown) : { elements: [] };
+      if (!ctx) return { elements: [] };
+      const draft = JSON.parse(ctx[1] as string).board as DraftBoard;
+      // Adversarial editor: it removes authored documents and invents one on a
+      // legacy draft. The runtime must restore/remove the envelope around this pass.
+      return draft.document === undefined
+        ? {
+            ...draft,
+            document: {
+              title: "Invented by the editor",
+              introMarkdown: "This did not come from the drafting seat.",
+              measure: "structured",
+            },
+          }
+        : { ...draft, document: undefined };
+    }
+    if (lens === "sequence") {
+      return {
+        ...cleanBody(lens),
+        document: {
+          title: "Follow the accepted write",
+          introMarkdown: "The walk starts at persistence and ends at the reader.",
+          // Deliberately wrong for Sequence: persistence owns the target measure.
+          measure: "structured",
+        },
+      };
     }
     return cleanBody(lens);
   };
@@ -694,6 +795,16 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       expect(flaggedMeta?.skippedHunks).toEqual([
         { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
       ]);
+      expect(flaggedMeta?.document).toEqual({
+        title: "Flagged",
+        introMarkdown: "",
+        measure: "reading",
+      });
+      expect(meta.find((m) => m.lens === "sequence")?.document).toEqual({
+        title: "Follow the accepted write",
+        introMarkdown: "The walk starts at persistence and ends at the reader.",
+        measure: "reading",
+      });
       // Every accepted board announced its arrival (after cross-lens coverage).
       expect(arrivals.map((a) => a.lens)).toContain("flagged");
     } finally {

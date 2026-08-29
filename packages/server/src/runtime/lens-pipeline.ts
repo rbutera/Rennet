@@ -30,6 +30,7 @@ import {
   renderLayer,
 } from "@rennet/prompts";
 import {
+  type BoardDocument,
   type CouncilJobId,
   type CouncilResolveContext,
   type DraftBoard,
@@ -40,6 +41,8 @@ import {
   LENS_KINDS,
   type LensKind,
   parseDraft,
+  resolveBoardDocument,
+  SEVERITY_LEVELS,
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
@@ -224,6 +227,32 @@ function mergeSkips(boardA: DraftBoard, boardB: DraftBoard): { hunk: string; rea
   return out;
 }
 
+/** Describe a final Flagged finding set while keeping its authored title. */
+function finalizedFlaggedDocument(
+  authored: BoardDocument | undefined,
+  elements: readonly DraftElement[],
+): BoardDocument | undefined {
+  if (authored === undefined) return undefined;
+
+  const severityCounts = { high: 0, medium: 0, low: 0 };
+  let findingCount = 0;
+  for (const element of elements) {
+    if (element.kind !== "finding") continue;
+    findingCount += 1;
+    severityCounts[element.data.severity] += 1;
+  }
+
+  const severityPicture = SEVERITY_LEVELS.filter((severity) => severityCounts[severity] > 0).map(
+    (severity) => `${severityCounts[severity]} ${severity}`,
+  );
+  const introMarkdown =
+    findingCount === 0
+      ? "No findings require attention."
+      : `${findingCount} ${findingCount === 1 ? "finding requires" : "findings require"} attention: ${severityPicture.join(", ")}.`;
+
+  return { ...authored, introMarkdown, measure: "reading" };
+}
+
 /**
  * Namespace every element id in a board (and every INTRA-board reference to it)
  * under `prefix`, so two independently-drafted seats can never share an id. The
@@ -299,8 +328,11 @@ export function reconcileFlaggedBoards(
     placed.add(el.id);
   }
 
+  const document = finalizedFlaggedDocument(boardA.document ?? boardBArg.document, elements);
+
   return {
     ...(boardA as object),
+    ...(document === undefined ? {} : { document }),
     elements,
     skippedHunks: mergeSkips(boardA, boardB),
   } as DraftBoard;
@@ -316,7 +348,12 @@ export function stampSingleSeatConcurrence(board: DraftBoard, label: string): Dr
         } as DraftElement)
       : el,
   );
-  return { ...(board as object), elements } as DraftBoard;
+  const document = finalizedFlaggedDocument(board.document, elements);
+  return {
+    ...(board as object),
+    ...(document === undefined ? {} : { document }),
+    elements,
+  } as DraftBoard;
 }
 
 // ── Composition authoring (C2, cluster 5.4) ──
@@ -452,17 +489,18 @@ export interface BoardArrivalEvent {
 }
 
 /**
- * A board's validation/coverage metadata (finding 3). `draftToOps` serializes only
- * a board's ELEMENTS to the whiteboard event log; its `skippedHunks` (coverage) and
- * the validation `blemishes`/`omissions`/`immutability` are board-level, live only in
- * memory, and the frozen 13-kind vocabulary has no element to carry them. This is the
- * durable home the composition root supplies (a store keyed by `boardId`), persisted
- * BEFORE a board's arrival is announced so a reader reconstructing the result never
- * sees an announced board whose coverage was lost.
+ * A board's document/validation/coverage metadata (finding 3). `draftToOps` serializes
+ * only a board's ELEMENTS to the whiteboard event log; its document opening,
+ * `skippedHunks`, and validation results are board-level, live only in memory, and the
+ * frozen 13-kind vocabulary has no element to carry them. This is the durable home the
+ * composition root supplies (a store keyed by `boardId`), persisted BEFORE a board's
+ * arrival is announced so a reader never reconstructs an incomplete board.
  */
 export interface BoardMeta {
   readonly lens: LintTarget;
   readonly boardId: string;
+  /** Optional only for records reconstructed from before this contract; new writes always set it. */
+  readonly document?: BoardDocument;
   readonly skippedHunks: readonly { hunk: string; reason: string }[];
   readonly blemishes: readonly Violation[];
   readonly omissions: readonly Omission[];
@@ -690,12 +728,33 @@ async function persistBoard(
   await deps.persistBoardMeta?.({
     lens,
     boardId,
+    document: resolveBoardDocument(lens, board.document),
     skippedHunks: boardSkippedHunks(board),
     blemishes: validated.blemishes,
     omissions: validated.omissions,
     immutability: validated.immutability,
   });
   return { ok: true };
+}
+
+/** Keep the document envelope stable across the prose-only post-process pass. */
+function preservePostProcessDocument(before: DraftBoard, edited: unknown): unknown {
+  const parsed = DraftBoardSchema.safeParse(edited);
+  if (!parsed.success) return edited;
+
+  if (before.document === undefined) {
+    const withoutInventedDocument = { ...parsed.data };
+    delete withoutInventedDocument.document;
+    return withoutInventedDocument;
+  }
+
+  return {
+    ...parsed.data,
+    document:
+      parsed.data.document === undefined
+        ? before.document
+        : { ...parsed.data.document, measure: before.document.measure },
+  };
 }
 
 /** Build the `board-post-process` editor seam, or `undefined` when no seat resolves. */
@@ -710,7 +769,7 @@ function buildPostProcess(
     const result = await seat(renderPostProcessPrompt(postProcessText, board), 0);
     // A failed editor turn is identity — the immutability gate has nothing to
     // catch, prose is simply un-polished. Never a block.
-    return bodyOr(result, board);
+    return preservePostProcessDocument(board, bodyOr(result, board));
   };
 }
 

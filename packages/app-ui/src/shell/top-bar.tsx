@@ -1,9 +1,21 @@
+import { generationIdForPatchset, type LensKind } from "@rennet/protocol";
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { ArrowLeft, MessageSquare } from "lucide-react";
+import { useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
+import { LensSwitcher } from "../board";
+import { useBoardData, useLensBoards } from "../board/board-data";
 import { Icon } from "../components/icon";
-import { useRoundRecords, useRoundsUnavailable } from "../rounds/rounds-data";
-import { DEFAULT_VIEW, ROUTES, readSessionQuery, type ViewKind, viewToggle } from "../routes/url";
+import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
+import { useSlugResolution } from "../routes/slug";
+import {
+  DEFAULT_VIEW,
+  ROUTES,
+  readSessionQuery,
+  sessionPath,
+  type ViewKind,
+  viewToggle,
+} from "../routes/url";
 import { useRennetStore } from "../store";
 import { cornerSlotOwner, useMacTrafficLights } from "./corner-slot";
 import { useSidebarTree } from "./sidebar-data";
@@ -61,8 +73,66 @@ export function TopBar() {
     : runParams?.slug
       ? decodeURIComponent(runParams.slug)
       : "";
-  const query = readSessionQuery(new URLSearchParams(search));
-  const current = { lens: query.lens, file: query.file ?? undefined };
+  const searchParams = new URLSearchParams(search);
+  const routeQuery = readSessionQuery(searchParams);
+  const resolution = useSlugResolution(slug);
+  const roundState = useRoundState(slug);
+  const review = resolution.status === "review" ? resolution.review : undefined;
+  const liveGeneration = review
+    ? roundState.phase === "composed"
+      ? roundState.newGeneration
+      : generationIdForPatchset(review.activePatchsetId)
+    : "";
+  const selectedGeneration = routeQuery.generation ?? liveGeneration;
+  const lenses = useLensBoards(review?.id ?? "", selectedGeneration);
+  const selectedBoard = useBoardData(review?.id ?? "", selectedGeneration, routeQuery.lens);
+  const fallbackLens = lenses[0]?.lens;
+  const effectiveLens =
+    selectedBoard.status === "missing" && fallbackLens !== undefined
+      ? fallbackLens
+      : routeQuery.lens;
+  const query = routeQuery;
+  const canonicalFrozenFallback =
+    query.generation !== null &&
+    selectedGeneration !== liveGeneration &&
+    effectiveLens !== query.lens;
+  const current = {
+    lens: canonicalFrozenFallback ? effectiveLens : query.lens,
+    generation: query.generation ?? undefined,
+    file: query.file ?? undefined,
+    round: query.round ?? undefined,
+    ask: query.ask ?? undefined,
+  };
+
+  // A completed frozen generation may not contain the lens named by the prior URL. Missing
+  // is the one state that permits a fallback: malformed or unreadable boards stay selected.
+  // Live generations draft progressively, so their temporary missing answers never rewrite
+  // the request. Replace only a frozen stale address, and never interrupt `/run`.
+  useEffect(() => {
+    if (sessionParams?.slug === undefined || !canonicalFrozenFallback) return;
+    navigate(
+      sessionPath(slug, {
+        view: routeQuery.view,
+        lens: effectiveLens,
+        generation: routeQuery.generation ?? undefined,
+        file: routeQuery.file ?? undefined,
+        round: routeQuery.round ?? undefined,
+        ask: routeQuery.ask ?? undefined,
+      }),
+      { replace: true },
+    );
+  }, [
+    canonicalFrozenFallback,
+    effectiveLens,
+    navigate,
+    routeQuery.ask,
+    routeQuery.file,
+    routeQuery.generation,
+    routeQuery.round,
+    routeQuery.view,
+    sessionParams?.slug,
+    slug,
+  ]);
   const offBoard = query.view !== DEFAULT_VIEW;
   // The History (rounds) toggle is present EXACTLY when a round has completed (C09 §6.2) —
   // the derived-presence url.ts gates `?view=rounds` on, never a disabled tab. With no
@@ -108,6 +178,10 @@ export function TopBar() {
     navigate(path, { replace });
   }
 
+  function onLens(lens: LensKind) {
+    navigate(sessionPath(slug, { ...current, view: "board", lens }), { replace: true });
+  }
+
   // The chip skin. Rai's 2026-08-28 amendment sanctions TRANSLUCENCY AND BLUR for chrome
   // floating over content — and nothing else. DESIGN.md's separate ban on decorative
   // shadows was not amended, so the chips carry a hairline, not a shadow.
@@ -120,7 +194,7 @@ export function TopBar() {
       data-slot="session-top-bar"
       data-floating={floating}
       className={cn(
-        "grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3",
+        "grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 @container",
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-11"
           : "h-14 shrink-0 border-b border-line bg-canvas",
@@ -166,11 +240,16 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* CENTER slot: C3's named lens-switcher slot. It is EMPTY in this build — the real
-        `LensSwitcher` renders inside the board document (`board/board-view.tsx`), not here —
-        so it gets no floating skin. Styling an empty div would only look like coverage.
-        Whoever fills this slot styles it for the floating layer at that point. */}
-      <div data-slot="lens-switcher" className="flex items-center justify-center" />
+      {/* CENTER slot: the available-lens projection for the selected generation. It remains
+          present on non-board views with no active segment; choosing one returns to its board. */}
+      <div data-slot="lens-switcher" className="flex items-center justify-center">
+        <LensSwitcher
+          lenses={lenses}
+          selected={query.view === "board" ? effectiveLens : null}
+          onSelect={onLens}
+          className={floating ? cn("pointer-events-auto", chip) : undefined}
+        />
+      </div>
 
       {/* RIGHT slot: the History · Map · Diff pill. */}
       <div className={cn("flex items-center justify-end", floating && "pointer-events-auto")}>

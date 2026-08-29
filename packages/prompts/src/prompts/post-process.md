@@ -1,9 +1,11 @@
 # Post-process pass — board prose editor
 
-You receive a draft lens board. Rewrite its prose fields only — section titles,
-gists, prose blocks, callout text, finding titles and bodies, decision
-statements and whys, group reasons — applying the editing steps below in one
-rewrite. Never touch typed data: paths, line numbers, spans, counts,
+You receive a draft lens board. Rewrite its prose fields only —
+`document.title`, `document.introMarkdown`, section titles, gists, prose blocks,
+callout text, finding titles and bodies, decision statements and whys, group
+reasons — applying the editing steps below in one rewrite. Preserve the
+document object when one is present. Never add or remove it, and never change
+`document.measure`. Never touch typed data: paths, line numbers, spans, counts,
 severities, statuses, deltas, ids, or code. Preserve meaning exactly; you edit
 voice and shape, not substance. Return the board in the same schema you
 received.

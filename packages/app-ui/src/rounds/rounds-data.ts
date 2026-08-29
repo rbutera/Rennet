@@ -8,6 +8,7 @@ import { createContext, useContext, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
+import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
 import { advance, initialRoundState, mergeRoundEvents, type RoundState } from "./round-machine";
 
@@ -235,8 +236,7 @@ function readFailure(error: unknown): string | undefined {
   return error === undefined || error === null ? undefined : failureText(error);
 }
 
-/** The session slug the current route is on, or `undefined` off a session route — the
- *  review id the round reads key on (`routes/slug.ts`: a slug IS a review id). */
+/** The durable session slug the current route is on, or `undefined` off a session route. */
 function useCurrentSessionSlug(): string | undefined {
   const [onRun, runParams] = useRoute(ROUTES.sessionRun);
   const [onSession, sessionParams] = useRoute(ROUTES.session);
@@ -252,9 +252,14 @@ function useCurrentSessionSlug(): string | undefined {
  */
 export function useLiveRoundsSource(): RoundsSource {
   const slug = useCurrentSessionSlug();
-  const enabled = slug !== undefined;
-  const reviewId = slug ?? "";
-  const eventsCommand = { name: "session.roundEvents" as const, input: { reviewId } };
+  const resolution = useSlugResolution(slug ?? "");
+  const reviewId = reviewIdOf(resolution);
+  const resolvingReview = resolution.status === "pending";
+  const enabled = reviewId !== undefined;
+  const eventsCommand = {
+    name: "session.roundEvents" as const,
+    input: { reviewId: reviewId ?? "" },
+  };
 
   const { cache } = useBridgeContext();
   const { data: eventsData, pending: eventsPending } = useCommand(
@@ -276,7 +281,7 @@ export function useLiveRoundsSource(): RoundsSource {
   }
   useCommandStream({
     channel: "roundProgress",
-    subscriptionKey: slug,
+    subscriptionKey: reviewId,
     command: eventsCommand,
     fold: (prev, event) => {
       streamed.current = mergeRoundEvents(streamed.current, [event]);
@@ -288,7 +293,7 @@ export function useLiveRoundsSource(): RoundsSource {
     data: recordsData,
     error: recordsError,
     pending: recordsPending,
-  } = useCommand("session.rounds", { reviewId }, { enabled });
+  } = useCommand("session.rounds", { reviewId: reviewId ?? "" }, { enabled });
   const { mutate } = useMutation("round.dispatch", {
     invalidates: ["session.rounds", "session.roundEvents"],
   });
@@ -327,25 +332,39 @@ export function useLiveRoundsSource(): RoundsSource {
     return {
       roundState: stateFor,
       roundRecords: (forSlug: string) => (forSlug === slug ? (records ?? NO_RECORDS) : NO_RECORDS),
-      roundPending: (forSlug: string) => forSlug === slug && eventsPending,
+      roundPending: (forSlug: string) => forSlug === slug && (resolvingReview || eventsPending),
       // The LEDGER read's own flight (#571) — keyed on `session.rounds`, not the round-events
       // read above. A cold deep-link to a round diff waits on THIS.
-      roundRecordsPending: (forSlug: string) => forSlug === slug && recordsPending,
+      roundRecordsPending: (forSlug: string) =>
+        forSlug === slug && (resolvingReview || recordsPending),
       roundsUnavailable: (forSlug: string) => (forSlug === slug ? unavailable : undefined),
       reportBoard: () => undefined,
       dispatch: (forSlug: string) => {
+        if (reviewId === undefined) return;
         // A new round starts from nothing: drop the finished round's events rather than
         // fold this one onto its `composed` state. That is DISCARDING stale data, not
         // asserting a new fact — the log refills from the daemon's own `dispatched`.
         streamed.current = NO_EVENTS;
-        cache.setData(commandKey("session.roundEvents", { reviewId: forSlug }), () => ({
+        cache.setData(commandKey("session.roundEvents", { reviewId }), () => ({
           events: [] satisfies RoundEvent[],
         }));
         setIntent({ slug: forSlug, status: "sending" });
-        void mutate({ reviewId: forSlug }).catch((reason: unknown) => {
+        void mutate({ reviewId }).catch((reason: unknown) => {
           setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });
         });
       },
     };
-  }, [events, records, slug, mutate, cache, eventsPending, recordsPending, unavailable, intent]);
+  }, [
+    events,
+    records,
+    slug,
+    reviewId,
+    mutate,
+    cache,
+    eventsPending,
+    recordsPending,
+    resolvingReview,
+    unavailable,
+    intent,
+  ]);
 }

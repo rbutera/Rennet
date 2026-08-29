@@ -4,7 +4,7 @@
 // selection from `?view` and toggles with `viewToggle` (replace — no back-stack
 // entry); the back arrow shows exactly off-board; the trail renders title +
 // `project › target` + needs-you WORDS from the projection.
-import type { Project } from "@rennet/protocol";
+import type { LensBoard, LensKind, Project, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -14,10 +14,11 @@ import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { FIXTURE_BOARDS } from "../test/fixtures/boards";
 import { frontDoorBridge, frontDoorHandlers } from "../test/fixtures/front-door";
 import { fixtureCompletedRoundsSource } from "../test/fixtures/rounds";
 import { type SessionSeed, sessionHandlers } from "../test/fixtures/sessions";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { TopBar } from "./top-bar";
 
 afterEach(() => {
@@ -45,11 +46,12 @@ const SESSIONS: readonly SessionSeed[] = [
   { id: "s2", projectId: "p1", title: "Beta", target: "your-pr", targetState: "needs-you" },
 ];
 
-function mountTopBar(path: string, rounds?: RoundsSource) {
+function mountTopBar(path: string, rounds?: RoundsSource, handlers: MemoryBridgeHandlers = {}) {
   const history = memoryHistory(path);
   const bridge = new MemoryBridge({
     ...frontDoorHandlers([project("p1", "atlas")]),
     ...sessionHandlers(SESSIONS),
+    ...handlers,
   });
   const inner = <TopBar />;
   const utils = mount(
@@ -62,7 +64,130 @@ function mountTopBar(path: string, rounds?: RoundsSource) {
   return { ...utils, history };
 }
 
+const REVIEW = {
+  id: "rv-1",
+  repositoryRoot: "/repos/atlas",
+  status: "current",
+  activePatchsetId: "ps-1",
+  patchsets: [{ id: "ps-1", source: "local-branch", files: [] }],
+} as unknown as Review;
+
+const LIVE_GENERATION = "gen:ps-1";
+const BOARDS_AT_LIVE: Partial<Record<LensKind, LensBoard>> = Object.fromEntries(
+  Object.entries(FIXTURE_BOARDS.gen1 ?? {}).map(([lens, board]) => [
+    lens,
+    { ...board, generation: LIVE_GENERATION },
+  ]),
+);
+
+const lensHandlers: MemoryBridgeHandlers = {
+  "session.list": () => ({
+    sessions: [
+      {
+        id: "s2",
+        projectId: "p1",
+        title: "Beta",
+        target: "your-pr" as const,
+        targetState: "needs-you" as const,
+        reviewId: REVIEW.id,
+        createdAt: 0,
+      },
+    ],
+  }),
+  "review.load": () => ({ review: REVIEW, repositoryPresent: true }),
+  "board.read": ({ generation, lens }) => ({
+    board: generation === LIVE_GENERATION ? (BOARDS_AT_LIVE[lens as LensKind] ?? null) : null,
+  }),
+};
+
 describe("session top-bar (C03 §4)", () => {
+  it("owns the ordered lens rail through the URL and leaves it unselected off-board", async () => {
+    const { container, history, findByLabelText, getByText } = mountTopBar(
+      "/s/s2",
+      undefined,
+      lensHandlers,
+    );
+
+    const flagged = await findByLabelText("Flagged");
+    const rail = container.querySelector('[data-slot="lens-switcher"] [role="tablist"]');
+    expect(
+      [...(rail?.querySelectorAll("[data-lens]") ?? [])].map((tab) =>
+        tab.getAttribute("data-lens"),
+      ),
+    ).toEqual(["design", "sequence", "decisions", "flagged", "noise"]);
+    for (const [lens, label] of [
+      ["design", "Design"],
+      ["sequence", "Sequence"],
+      ["decisions", "Decisions"],
+      ["flagged", "Flagged"],
+      ["noise", "Noise"],
+    ] as const) {
+      const tab = rail?.querySelector<HTMLElement>(`[data-lens=${lens}]`);
+      const visibleLabel = [...(tab?.querySelectorAll("span") ?? [])].find(
+        (span) => span.textContent === label,
+      );
+      expect(tab?.getAttribute("title")).toBe(label);
+      expect(tab?.querySelector("svg")).toBeTruthy();
+      expect(visibleLabel?.className).toContain("hidden");
+      expect(visibleLabel?.className).toContain("@[46rem]:inline");
+    }
+    expect(flagged.getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(await findByLabelText("Design"));
+    expect(history.history.at(-1)).toBe("/s/s2?lens=design");
+
+    fireEvent.click(getByText("Diff"));
+    expect(history.history.at(-1)).toBe("/s/s2?view=diff&lens=design");
+    expect(
+      [...(rail?.querySelectorAll('[role="tab"]') ?? [])].every(
+        (tab) => tab.getAttribute("aria-selected") === "false",
+      ),
+    ).toBe(true);
+
+    fireEvent.click(await findByLabelText("Sequence"));
+    expect(history.history.at(-1)).toBe("/s/s2?lens=sequence");
+  });
+
+  it("keeps a requested live lens while other lenses are still drafting", async () => {
+    const progressiveHandlers: MemoryBridgeHandlers = {
+      ...lensHandlers,
+      "board.read": ({ generation, lens }) => ({
+        board:
+          generation === LIVE_GENERATION && lens === "design"
+            ? (BOARDS_AT_LIVE.design ?? null)
+            : null,
+      }),
+    };
+    const { findByLabelText, history } = mountTopBar("/s/s2", undefined, progressiveHandlers);
+
+    const design = await findByLabelText("Design");
+    await waitFor(() => {
+      expect(design.getAttribute("aria-selected")).toBe("true");
+      expect(history.history.at(-1)).toBe("/s/s2");
+    });
+  });
+
+  it("canonicalizes only after a frozen generation proves the lens absent", async () => {
+    const frozenHandlers: MemoryBridgeHandlers = {
+      ...lensHandlers,
+      "board.read": ({ generation, lens }) => ({
+        board:
+          generation === "gen0" && lens === "design" && BOARDS_AT_LIVE.design
+            ? { ...BOARDS_AT_LIVE.design, generation }
+            : null,
+      }),
+    };
+    const { findByLabelText, history } = mountTopBar(
+      "/s/s2?generation=gen0",
+      undefined,
+      frozenHandlers,
+    );
+
+    const design = await findByLabelText("Design");
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/s2?lens=design&generation=gen0"));
+    expect(design.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("derives the pill selection from ?view", () => {
     const { getByText } = mountTopBar("/s/s2?view=map");
     expect(getByText("Map").closest("button")?.getAttribute("aria-pressed")).toBe("true");

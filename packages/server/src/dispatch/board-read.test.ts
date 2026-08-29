@@ -23,6 +23,11 @@ const DESIGN: LensBoard = {
   lens: "design",
   generation: "gen-1",
   boardId: "b-1",
+  document: {
+    title: "Design",
+    introMarkdown: "One section grounds the review's shape.",
+    measure: "structured",
+  },
   sections: [{ ref: "s", gist: "one section", counts: { prose: 1 } }],
   elements: [
     {

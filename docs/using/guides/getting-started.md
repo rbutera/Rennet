@@ -166,8 +166,13 @@ identity rather than its display name.
 
 ## Read the boards
 
-Each lens is its own board, and the header's centred switcher moves
-between them.
+Each lens is its own board. The session top bar centres the lens rail and keeps
+the boards in the order shown below. The session URL owns the selection:
+Flagged is the address-free default and another lens uses `?lens=`. A completed
+frozen generation without Flagged falls back to its first available board and
+replaces the URL with that honest address. A live generation keeps the requested
+address while its boards arrive. Selecting a lens from History, Map, or Diff
+returns to its board. Reloading the URL opens the same selection.
 
 | Board | Question |
 |---|---|
@@ -177,28 +182,33 @@ between them.
 | Flagged | Where did automated analysis find a problem or a disagreement? |
 | Noise | What remains, and why may it need less attention? |
 
-A board Rennet has nothing for is simply absent from the switcher — reviewing a
-proposal before any code exists gives you Design alone, not four dead segments.
-Flagged carries a red count of findings you have neither dismissed nor acted on.
+A lens rail shows only the boards present in the selected generation. Reviewing
+a proposal before any code exists gives you Design alone, not four disabled
+segments.
 
-A board reads as a document: a title, a short intro, then sections of typed
-content. Sections fold to a one-line gist and unfold to their contents; every
-board opens folded except Flagged, which opens ready to read. Counts on a
-section name what is inside it — findings, steps, decisions, requirements.
+The board drafter writes each title and short intro. Design uses a wider
+structured measure for artifacts. Sequence, Decisions, Flagged, and Noise use a
+narrower reading measure. Sections fold to a one-line gist and unfold to their
+contents; every board opens folded except Flagged, which opens ready to read.
+Folded counts name review objects: findings, decisions, requirements, steps,
+outcomes, groups, files, and comments.
 
 Code is cited, never copied. A code block card carries the file path and the
 exact line range and hydrates the real lines from the captured patchset, so
-numbering cannot drift from the code under review. Clicking the path in its header
-lands you in the Diff view on that file. In prose, a `path:line` citation is a
-chip: click it and the real lines unfold below the paragraph; click again and
-they fold away.
+numbering cannot drift from the code under review. When that path belongs to the
+active captured patchset, clicking it opens Diff on the file and preserves the
+other session query state. A code card adds **View test** or **View
+implementation** when both files are changed paths in that active patchset. An
+unchanged or uncaptured counterpart gets no jump. In prose, a `path:line`
+citation is a chip: click it and the real lines unfold below the paragraph;
+click again and they fold away.
 
 A finding reads as flowing document text, not a boxed card: a severity chip, the
 claim as its title, a concurrence badge reading "concur 2/2" when both review
 seats raised it or naming the single seat when they disagree, then the body and
-the proposed fix as its own callout. The fix carries **Dismiss**, **Discuss**,
-and **Request This Change**. Dismissing dims the finding in place and offers an
-undo — nothing disappears.
+the proposed fix as its own callout. **Request This Change** stages that fix for
+the hand-off; the same control becomes a **Staged · Request Change** receipt and
+unstages it when clicked again.
 
 ### Map and Diff
 
@@ -347,7 +357,10 @@ touched open expanded with a small gold dot; sections that carried forward stay
 folded to their gists. The dot rolls up to that board's segment in the switcher
 and clears for good once you open the section. The previous generation stays
 readable as a folded drill-down, and Sequence grows a "Round N · Addressed"
-chapter at its foot, newest last.
+chapter at its foot, newest last. The selected generation lives in
+`?generation=` in the session URL, so reload, Back, and a direct link return to
+the same frozen board. With no frozen predecessor, the generation control is
+absent.
 
 Once a round has completed, a **History** control joins Map · Diff in the
 header. It lists one row per round with its tally; selecting a round renders its
