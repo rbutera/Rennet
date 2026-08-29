@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   CodexExecRequest,
   CodexExecResult,
@@ -12,7 +15,7 @@ import {
 } from "@rennet/core";
 import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 
@@ -50,14 +53,25 @@ const READER = {
   loadFresh: () => ({ ok: true as const, snapshot: SNAPSHOT }),
 };
 
+const scratch: string[] = [];
+afterEach(() => {
+  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 function makeStore(): {
   saved: KnowledgeSet[];
   store: {
     loadLocal: () => KnowledgeSet | null;
     save: (repoKey: string, set: KnowledgeSet) => void;
+    journalDir: () => string;
   };
 } {
   const saved: KnowledgeSet[] = [];
+  // A real, isolated journal home per fixture: these tests do not exercise the
+  // journal, but they must not share one either — a leaked entry from a sibling
+  // test would answer a batch this one meant to run.
+  const journal = mkdtempSync(join(tmpdir(), "rennet-swarm-journal-"));
+  scratch.push(journal);
   return {
     saved,
     store: {
@@ -65,6 +79,7 @@ function makeStore(): {
       save: (_repoKey, set) => {
         saved.push(set);
       },
+      journalDir: () => journal,
     },
   };
 }
@@ -229,16 +244,21 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       baseOid: "oid-1",
     });
     expect(outcome.status).toBe("failed");
-    if (outcome.status === "failed") expect(outcome.reason).toBe("1 of 2 partition workers failed");
+    if (outcome.status === "failed") {
+      expect(outcome.reason).toContain("1 of 2 partition workers failed after a retry");
+      // WHICH one, by name — a bare count tells an operator nothing about whether
+      // a retry will get further.
+      expect(outcome.failedSlices).toEqual(["b"]);
+    }
     // A set silently missing the failed slice's knowledge must never be saved.
     expect(saved).toHaveLength(0);
   });
 
-  it("abandons the workers queued behind a failure, and never calls them failed", async () => {
-    // The pass is all-or-keep-prior, so the first failed worker already decides
-    // the run. On Rennet itself that is up to 198 further live model turns spent
-    // reaching a verdict the first turn reached. They are abandoned instead —
-    // and reported as `aborted`, because a worker that never ran did not fail.
+  it("runs every batch even after one fails, retries the failure ONCE, and journals the rest", async () => {
+    // This REPLACES the old abandon-the-queue behaviour (#581). Abandoning made
+    // sense only while a failed run threw the survivors' work away; the journal
+    // keeps it, so finishing the run is what makes the next one cheap. `a` fails
+    // both times, `b` must still get its turn, and `b`'s result must be on disk.
     const { saved, store } = makeStore();
     const prompts: string[] = [];
     const progress: { sliceId: string; status: string }[] = [];
@@ -255,7 +275,7 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       repoKey: "repo",
       repoRoot: "/repo",
       baseOid: "oid-1",
-      // One lane, so the `b` worker is genuinely still queued when `a` fails.
+      // One lane, so `b` is genuinely still queued when `a` fails.
       concurrency: 1,
       onProgress: (event) => {
         if (event.kind === "partition" && event.status !== "queued") {
@@ -264,20 +284,24 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       },
     });
 
-    // The `b` worker's turn was never spent — the only turns are `a`'s own
-    // attempt and its one retry.
-    expect(prompts.filter((prompt) => prompt.includes("b/two.ts"))).toHaveLength(0);
-    expect(prompts).toHaveLength(2);
+    // `b` really ran; `a` ran twice (its own in-turn retry, then the run's).
+    expect(prompts.filter((prompt) => prompt.includes("b/two.ts"))).toHaveLength(1);
+    expect(prompts.filter((prompt) => prompt.includes("a/one.ts"))).toHaveLength(4);
+    // ORDER, not membership: `a` fails, `b` still runs, THEN `a` is retried. A set
+    // of `toContain`s would be satisfied by a run that retried before finishing.
     expect(progress).toEqual([
       { sliceId: "a", status: "running" },
       { sliceId: "a", status: "failed" },
-      { sliceId: "b", status: "aborted" },
+      { sliceId: "b", status: "running" },
+      { sliceId: "b", status: "done" },
+      { sliceId: "a", status: "running" },
+      { sliceId: "a", status: "failed" },
     ]);
     expect(outcome.status).toBe("failed");
     if (outcome.status === "failed") {
-      expect(outcome.reason).toBe(
-        "1 of 2 partition workers failed; 1 not run (the pass is all-or-nothing, so they were abandoned)",
-      );
+      expect(outcome.failedSlices).toEqual(["a"]);
+      // `b`'s completed work survives the failed run, ready to be reused.
+      expect(outcome.journaled).toBe(1);
     }
     expect(saved).toHaveLength(0);
   });
@@ -335,13 +359,14 @@ function priorSet(overrides: Partial<KnowledgeSet> = {}): KnowledgeSet {
 
 function storeWithPrior(prior: KnowledgeSet): {
   saved: KnowledgeSet[];
-  store: { loadLocal: () => KnowledgeSet | null; save: (k: string, s: KnowledgeSet) => void };
-} {
-  const saved: KnowledgeSet[] = [];
-  return {
-    saved,
-    store: { loadLocal: () => prior, save: (_k, set) => void saved.push(set) },
+  store: {
+    loadLocal: () => KnowledgeSet | null;
+    save: (k: string, s: KnowledgeSet) => void;
+    journalDir: () => string;
   };
+} {
+  const { saved, store } = makeStore();
+  return { saved, store: { ...store, loadLocal: () => prior } };
 }
 
 describe("knowledge swarm — prior-set identity", () => {

@@ -18,6 +18,7 @@
 import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import type { HarnessTurnResult } from "../harness-run-turn";
+import { mergeWorkerResults } from "./merge";
 import type { KnowledgeProvenanceSeed, KnowledgeSnapshotContext } from "./mint";
 import {
   dedupById,
@@ -27,7 +28,7 @@ import {
   mintStatement,
   parseStatements,
 } from "./mint";
-import type { PartitionSlice } from "./partition";
+import type { FileEntry, PartitionSlice, SliceImport } from "./partition";
 import { fileBlobIndex } from "./read";
 
 /** The swarm generator identity: bump on any prompt/schema change. */
@@ -85,8 +86,67 @@ export interface PartitionWorkerResult {
   readonly attempts: number;
 }
 
+/**
+ * One file's line in the packet: its path, then its declared top-level symbols.
+ *
+ * The three cases are three different facts and the packet says which:
+ *  - symbols present and non-empty → the skeleton, `name (kind) L<line>`;
+ *  - symbols present and EMPTY → indexed, declares nothing (a `.md`, a `.json`);
+ *  - symbols ABSENT → no symbol index covers this file.
+ *
+ * A `.md` has no structure to show, so the packet says it has none. Rendering an
+ * empty symbol list identically to an unindexed one would let a worker read
+ * "nothing here" off a file nothing ever looked at.
+ */
+function renderFileSkeleton(file: FileEntry): string {
+  if (file.symbols === undefined) return `- ${file.path}\n    (no symbol index for this file)`;
+  if (file.symbols.length === 0)
+    return `- ${file.path}\n    (indexed; declares no top-level symbols)`;
+  const symbols = file.symbols
+    .map((symbol) => `    ${symbol.name} (${symbol.kind}) L${symbol.line}`)
+    .join("\n");
+  return `- ${file.path}\n${symbols}`;
+}
+
+/** The slice's own resolved import edges, or the honest reason there are none to show. */
+function renderSliceImports(slice: PartitionSlice): string {
+  if (slice.imports === undefined) {
+    return "\nIMPORTS WITHIN THIS SLICE: the import graph could not be read for this\nrun, so nothing is listed here. Absence below is not evidence of absence.";
+  }
+  if (slice.imports.length === 0) {
+    return "\nIMPORTS WITHIN THIS SLICE: none. No resolved import edge joins any two of\nthese files — that is why they are grouped by location rather than by module.";
+  }
+  const lines = slice.imports.map((edge) => `- ${edge.from} -> ${edge.to}`).join("\n");
+  return `\nIMPORTS WITHIN THIS SLICE (${slice.imports.length} resolved edges):\n${lines}`;
+}
+
+/** The edges batching cut: each member's 1-hop neighbours outside the slice. */
+function renderNeighbors(slice: PartitionSlice): string {
+  if (slice.neighbors.length === 0) {
+    return "\nNEIGHBOURS OUTSIDE THIS SLICE: none recorded.";
+  }
+  const lines = slice.neighbors
+    .map((member) => {
+      const neighbors = member.neighbors
+        .map(
+          (neighbor) =>
+            `    ${neighbor.direction} ${neighbor.path}${
+              neighbor.symbols.length === 0 ? "" : ` [exports: ${neighbor.symbols.join(", ")}]`
+            }`,
+        )
+        .join("\n");
+      const more = member.truncated > 0 ? `\n    (+${member.truncated} more, not shown)` : "";
+      return `- ${member.path}\n${neighbors}${more}`;
+    })
+    .join("\n");
+  return `\nNEIGHBOURS OUTSIDE THIS SLICE (the import edges this partitioning cut —
+'imports' / 'imported-by' / 'both' is from YOUR file's point of view; the
+neighbour itself belongs to another worker's slice, so do not claim things about
+it, but do use it to understand yours):\n${lines}`;
+}
+
 function buildWorkerPrompt(slice: PartitionSlice, snapshot: KnowledgeSnapshotContext): string {
-  const paths = slice.files.map((file) => `- ${file.path}`).join("\n");
+  const skeletons = slice.files.map(renderFileSkeleton).join("\n");
   return [
     KNOWLEDGE_CONTRACT,
     `\nYou are ONE worker in a partitioned swarm; other workers cover the rest of
@@ -95,10 +155,16 @@ You may also emit an optional free-text 'hint' per statement: context a
 cross-slice synthesizer might need (a suspicion that a pattern continues
 elsewhere, a coupling you cannot see the other end of). Hints are discarded
 after synthesis — never facts, never stored.`,
-    `\nYOUR SLICE (${slice.files.length} files at base ${snapshot.baseOid.slice(0, 12)}):\n${paths}`,
-    `\nYour working directory is the repository checkout. READ the slice files
-themselves before making claims — evidence means the code you actually read,
-never a guess from a filename.`,
+    `\nYOUR SLICE (${slice.files.length} files at base ${snapshot.baseOid.slice(0, 12)}),
+with each file's declared top-level symbols:\n${skeletons}`,
+    renderSliceImports(slice),
+    renderNeighbors(slice),
+    `\nHOW TO WORK: everything above is deterministic — extracted from the
+repository, not guessed — so start there and let it tell you where to look. Your
+working directory IS the repository checkout and you are FREE to read any of it;
+reading is targeted, not forbidden. Read the source when the skeleton cannot
+answer your question, which is most of the time for a WHY. What you must not do
+is claim from a filename: evidence means code you actually read.`,
     "\nEmit the knowledge statements for this slice.",
   ].join("\n");
 }
@@ -191,27 +257,44 @@ export const MAP_VERIFY_OUTPUT_SCHEMA = {
 
 export interface MapVerifyInput {
   readonly workerResults: readonly PartitionWorkerResult[];
+  /** The slices the workers ran, for the merge pass's seam detection. */
+  readonly slices?: readonly PartitionSlice[];
+  /** The authoritative repo-wide import edges, when the graph was readable. */
+  readonly importEdges?: readonly SliceImport[];
+  /** A delta's prior statements whose cited evidence changed — judgment, not mechanics. */
+  readonly reverify?: readonly KnowledgeStatement[];
   readonly snapshot: KnowledgeSnapshotContext;
   readonly provenance: KnowledgeProvenanceSeed;
   readonly runTurn: RunTurn;
   readonly maxRetries?: number;
-  /** Hypotheses per verify turn. Default `MAP_VERIFY_CHUNK_SIZE`. */
+  /** Residue entries per verify turn. Default `MAP_VERIFY_CHUNK_SIZE`. */
   readonly chunkSize?: number;
-  /** Concurrent verify turns. Default 4 (the swarm's worker default). */
+  /** Concurrent verify turns. Default {@link MAP_VERIFY_CONCURRENCY}. */
   readonly concurrency?: number;
 }
 
 /**
- * Hypotheses per verify turn. The seat used to receive EVERY partition's
- * statements in one prompt, which on a real repository (Rennet itself: 199
- * partitions, ~1900 statements) exceeded the harness context window — the seat
- * died with "Prompt is too long" and the whole run's statements were discarded.
- * 150 renders to roughly 12k tokens of hypothesis list, well inside any seat.
+ * Residue entries per verify turn. A ceiling, not the expected size: since W3 the
+ * seat receives only the deterministic pass's RESIDUE (cross-batch seams and flagged
+ * contradictions), not every hypothesis the swarm minted, so on a real repository
+ * the residue is normally one chunk or two.
  *
- * Chunking bounds what one turn can synthesize, so `runCrossBoundarySynthesis`
- * runs a second pass over the chunks' OUTPUTS to reach across the boundaries.
+ * The number is inherited from the shape that broke: the seat used to receive EVERY
+ * partition's statements in one prompt — Rennet itself, 199 partitions, ~1,900
+ * statements — which exceeded the harness context window, died with "Prompt is too
+ * long", and discarded the whole run. 150 renders to roughly 12k tokens, well inside
+ * any seat, and remains the hard bound if a repository ever produces a residue that
+ * large.
  */
 export const MAP_VERIFY_CHUNK_SIZE = 150;
+
+/**
+ * Concurrent verify turns. Lower than the worker fan-out
+ * (`DEFAULT_SWARM_CONCURRENCY`) on purpose: a verify turn re-reads cited spans and
+ * carries a larger prompt, and there are only ever a handful of them now that the
+ * seat sees the residue rather than the whole set.
+ */
+export const MAP_VERIFY_CONCURRENCY = 4;
 
 /** Run `tasks` with at most `limit` in flight (order of completion is irrelevant). */
 export async function boundedAll<T>(
@@ -235,7 +318,7 @@ export async function boundedAll<T>(
 export interface MapVerifyResult {
   readonly status: "ok" | "failed";
   readonly failureReason?: string;
-  /** The synthesized set, present on `ok`: verified worker statements + cross-cutting mints, deduped. */
+  /** The synthesized set, present on `ok`: merged worker statements + cross-cutting mints, deduped. */
   readonly set?: KnowledgeSet;
   /** How many hypotheses the seat confirmed / rejected (rejected stay in the set as recorded state). */
   readonly confirmed: number;
@@ -244,6 +327,16 @@ export interface MapVerifyResult {
   readonly crossCutting: number;
   readonly droppedAnchors: number;
   readonly droppedStatements: number;
+  /**
+   * What the deterministic pass did, and how much of it the seat had to see.
+   * `residue / merged` is the measurement the W3 redesign exists to move: it used to
+   * be 1.0 by construction, which is the ratio that overflowed the seat.
+   */
+  readonly merged: number;
+  readonly residue: number;
+  readonly duplicateIds: number;
+  readonly duplicateClaims: number;
+  readonly flagged: number;
 }
 
 function renderHypothesis(entry: WorkerStatement): string {
@@ -260,36 +353,62 @@ function renderHypothesis(entry: WorkerStatement): string {
   return `- id=${s.id}\n  [${s.aspect}/${s.confidence}] ${s.subject}: ${s.claim}\n  evidence: ${anchors}${hint}`;
 }
 
+/** One residue entry: a seam candidate, or a flagged statement with its reason. */
+type ResidueEntry = { readonly entry: WorkerStatement; readonly flagReason?: string };
+
+function renderResidue(residue: ResidueEntry): string {
+  const base = renderHypothesis(residue.entry);
+  return residue.flagReason === undefined ? base : `${base}\n  FLAGGED: ${residue.flagReason}`;
+}
+
 function buildVerifyPrompt(
-  entries: readonly WorkerStatement[],
+  entries: readonly ResidueEntry[],
   snapshot: KnowledgeSnapshotContext,
 ): string {
+  const flagged = entries.filter((residue) => residue.flagReason !== undefined).length;
+  const seams = entries.length - flagged;
   return [
     KNOWLEDGE_CONTRACT,
-    `\nYou are the VERIFY/SYNTHESIS seat over a partitioned worker swarm. Below are
-the workers' hypothesis statements with their evidence anchors (and discardable
-worker hints). For EACH hypothesis: re-read ONLY the cited spans (the anchors
-bound your reading — this is not a repository re-read) and give a verdict:
-'confirmed' when the cited code supports the claim, 'rejected' when it does
-not. Then mint the CROSS-CUTTING statements no single worker could see
-(patterns spanning slices), obeying the same evidence rules — cite only paths
-from the file inventory you have seen in the cited spans.`,
-    `\nHYPOTHESES (base ${snapshot.baseOid.slice(0, 12)}):\n${entries.map(renderHypothesis).join("\n")}`,
+    `\nYou are the VERIFY/SYNTHESIS seat over a partitioned worker swarm. A
+deterministic merge pass has ALREADY run: it collapsed duplicate claims, checked
+every import-shaped claim against the repository's own import index, and dropped
+what would not anchor. You are NOT being asked to re-adjudicate the swarm — most
+of its statements are settled and are not shown to you. What is below is the
+residue that a script cannot settle.
+
+Two kinds, and they want different things from you:
+
+1. SEAM statements (${seams} below, unflagged). These sit on an import edge that
+   the partitioning CUT, and the file on the other side of that edge carries
+   claims from a DIFFERENT worker. No single worker could see both halves. Read
+   them together and mint the CROSS-CUTTING statements that only exist when they
+   are read together. Do not restate a claim already listed — it is already
+   recorded. Leave these unverdicted unless you positively disprove one.
+
+2. FLAGGED statements (${flagged} below, each with a FLAGGED: line). The script
+   found something it could not settle and needs your judgment. Re-read the cited
+   spans and give a verdict: 'confirmed' when the cited code supports the claim,
+   'rejected' when it does not.
+
+Your working directory is the repository checkout; the anchors below tell you
+where to look first, and you may read further when that is what it takes to know.
+Mint only what you can anchor to a path in the inventory you have actually read.`,
+    `\nRESIDUE (base ${snapshot.baseOid.slice(0, 12)}):\n${entries.map(renderResidue).join("\n")}`,
     "\nEmit your verdicts and cross-cutting statements.",
   ].join("\n");
 }
 
 /** One line per chunk: what it covered, without repeating a single hypothesis. */
 function chunkDigest(
-  entries: readonly WorkerStatement[],
+  entries: readonly ResidueEntry[],
   result: VerifyChunkOk,
   index: number,
 ): string {
   const confirmed = result.verdicts.filter((v) => v.verdict === "confirmed").length;
-  const subjects = [...new Set(entries.map((entry) => entry.statement.subject))];
+  const subjects = [...new Set(entries.map((residue) => residue.entry.statement.subject))];
   const shown = subjects.slice(0, CROSS_BOUNDARY_SUBJECTS_PER_CHUNK);
   const more = subjects.length - shown.length;
-  return `- chunk ${index + 1}: ${entries.length} hypotheses, ${confirmed} confirmed, ${
+  return `- chunk ${index + 1}: ${entries.length} residue entries, ${confirmed} confirmed, ${
     result.verdicts.length - confirmed
   } rejected; subjects: ${shown.join(", ")}${more > 0 ? ` (+${more} more)` : ""}`;
 }
@@ -328,12 +447,29 @@ empty 'verdicts' array — this seat mints, it does not re-adjudicate.`,
 }
 
 /**
- * Run the verify/synthesis seat: flips each worker hypothesis to `confirmed` or
- * `rejected` per the seat's span-bounded re-read (an id without a verdict stays
- * an honest `hypothesis`), mints the seat's cross-cutting statements through
- * the same honesty contract (they enter as hypotheses — nothing has verified
- * them), dedups by statement id, and returns the `KnowledgeSet`. Human confirm
- * remains an optional override elsewhere — never a gate here.
+ * Merge the workers' outputs deterministically, then run the verify/synthesis seat
+ * over WHAT IS LEFT.
+ *
+ * The merge ({@link mergeWorkerResults}) is a script: it collapses duplicate ids and
+ * duplicate claims, and checks import-shaped claims against the authoritative edge
+ * shard. What survives keeps the WORKER's provenance, untouched — the merge does not
+ * mint, so nothing in it can claim to have been model-verified when it was not.
+ *
+ * The seat then receives only the RESIDUE: the cross-batch seams (a claim on one end
+ * of a cut import edge whose other end another batch also claimed) and the flagged
+ * contradictions. It does not re-adjudicate settled statements. That is the whole
+ * structural change: the old seat's input was every hypothesis the swarm minted, and
+ * on a real repository that prompt did not fit in any context window.
+ *
+ * An EMPTY residue runs no turn at all. With no seam and no contradiction there is
+ * nothing for the seat to synthesize from, and a turn over an empty prompt is a seat
+ * inventing claims with no material — the exact failure the anchor rules exist to
+ * stop. `crossCutting: 0` is then the honest answer, not a skipped step.
+ *
+ * Verdicts flip a statement to `confirmed` / `rejected`; an id without a verdict
+ * stays an honest `hypothesis`. Cross-cutting mints carry the VERIFY seat's
+ * provenance and enter as hypotheses — nothing has verified them. Human confirm
+ * remains an optional override elsewhere, never a gate here.
  */
 export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResult> {
   const {
@@ -343,31 +479,71 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
     runTurn,
     maxRetries = 1,
     chunkSize = MAP_VERIFY_CHUNK_SIZE,
-    concurrency = 4,
+    concurrency = MAP_VERIFY_CONCURRENCY,
   } = input;
   const generator = provenance.generator ?? KNOWLEDGE_SWARM_GENERATOR_ID;
   const filesByPath = fileBlobIndex(snapshot.files);
-  // Dedupe BEFORE chunking, not just into `byId`: the same statement id can be
-  // minted by two partitions (the delta path also feeds `prior:reverify`
-  // alongside a fresh run of the slice that owns it). Chunking the raw entries
-  // put one id in two chunks, which could return conflicting verdicts — and the
-  // later chunk's verdict silently overwrote the earlier one.
-  const entriesById = new Map<string, WorkerStatement>();
-  for (const result of workerResults)
-    for (const entry of result.statements)
-      if (!entriesById.has(entry.statement.id)) entriesById.set(entry.statement.id, entry);
-  const entries = [...entriesById.values()];
-  const byId = new Map(entries.map((entry) => [entry.statement.id, entry.statement]));
+  const merge = mergeWorkerResults({
+    workerResults,
+    slices: input.slices ?? [],
+    snapshot,
+    ...(input.importEdges === undefined ? {} : { importEdges: input.importEdges }),
+    ...(input.reverify === undefined ? {} : { reverify: input.reverify }),
+  });
+  const byId = new Map(merge.statements.map((statement) => [statement.id, statement]));
   const tally: MintTally = { droppedAnchors: 0, droppedStatements: 0 };
 
-  // One prompt per chunk: the seat's context is finite and the whole swarm's
-  // statements do not fit in it. An empty swarm still runs one turn — the seat
-  // can mint cross-cutting statements with no hypotheses to adjudicate.
-  const chunks: (readonly WorkerStatement[])[] = [];
-  for (let start = 0; start < entries.length; start += Math.max(1, chunkSize)) {
-    chunks.push(entries.slice(start, start + Math.max(1, chunkSize)));
+  // The residue, deduped by id: a statement can be BOTH a seam and flagged, and
+  // sending it twice would let two chunks return conflicting verdicts on one id —
+  // whichever landed later silently overwriting the other.
+  const residueById = new Map<string, ResidueEntry>();
+  for (const entry of merge.seams) residueById.set(entry.statement.id, { entry });
+  for (const flag of merge.flagged) {
+    residueById.set(flag.statement.id, {
+      entry: {
+        statement: flag.statement,
+        ...(flag.hint === undefined ? {} : { hint: flag.hint }),
+      },
+      flagReason: flag.reason,
+    });
   }
-  if (chunks.length === 0) chunks.push([]);
+  const residue = [...residueById.values()];
+
+  const counts = {
+    merged: merge.statements.length,
+    residue: residue.length,
+    duplicateIds: merge.duplicateIds,
+    duplicateClaims: merge.duplicateClaims,
+    flagged: merge.flagged.length,
+  } as const;
+
+  if (residue.length === 0) {
+    return {
+      status: "ok",
+      set: {
+        schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+        repoKey: snapshot.repoKey,
+        baseOid: snapshot.baseOid,
+        snapshotFingerprint: snapshot.snapshotFingerprint,
+        generator,
+        statements: dedupById(merge.statements),
+      },
+      confirmed: 0,
+      rejected: 0,
+      crossCutting: 0,
+      droppedAnchors: 0,
+      droppedStatements: 0,
+      ...counts,
+    };
+  }
+
+  // One prompt per chunk. `chunkSize` is a ceiling the residue is not expected to
+  // reach; it stays because a repository that DOES produce a large residue must not
+  // rediscover the unbounded prompt.
+  const chunks: ResidueEntry[][] = [];
+  for (let start = 0; start < residue.length; start += Math.max(1, chunkSize)) {
+    chunks.push(residue.slice(start, start + Math.max(1, chunkSize)));
+  }
 
   // The pass is all-or-nothing, so once one chunk has failed the verdict is
   // already decided and every chunk still queued is discarded model spend.
@@ -404,6 +580,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
         crossCutting: 0,
         droppedAnchors: tally.droppedAnchors,
         droppedStatements: tally.droppedStatements,
+        ...counts,
       };
     }
     okChunks.push(result);
@@ -425,8 +602,8 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
   // landed in different turns, and the map lost it silently. This turn reaches
   // across those boundaries.
   //
-  // BOUNDED BY CONSTRUCTION — do not "improve" this into a pass over the raw
-  // hypotheses, which is exactly the unbounded prompt that killed whole runs.
+  // BOUNDED BY CONSTRUCTION — do not "improve" this into a pass over the merged
+  // statements, which is exactly the unbounded prompt that killed whole runs.
   // Its input is the chunks' OUTPUTS: O(chunks) digest lines plus the handful of
   // cross-cutting claims each turn minted, never the ~1900 statements. The
   // `chunkSize` slice is a hard ceiling on top of that, so this prompt cannot
@@ -472,6 +649,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
     crossCutting: crossCutting.length,
     droppedAnchors: tally.droppedAnchors,
     droppedStatements: tally.droppedStatements,
+    ...counts,
   };
 }
 

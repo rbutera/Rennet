@@ -1,3 +1,4 @@
+import type { SnapshotSymbol } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import { UndirectedGraph } from "graphology";
 import louvain from "graphology-communities-louvain";
@@ -79,6 +80,24 @@ export const NEIGHBOR_CAP = 50;
 export interface FileEntry {
   readonly path: string;
   readonly blobOid: string;
+  /**
+   * The file's declared top-level symbols — the SKELETON a mapping worker reads
+   * before it reads any source (W3, Stage 2). Present and EMPTY for a file the
+   * symbol extractor indexed and found nothing in (a `.md`, a `.json`); ABSENT
+   * when no symbol shard covers the blob, or when the slice was not built from a
+   * snapshot at all (routing-only partitions, test fixtures).
+   *
+   * The distinction is the packet's honesty: "indexed, declares nothing" and "not
+   * indexed" are different facts about a file, and a worker told the second one
+   * knows to go and read.
+   */
+  readonly symbols?: readonly SnapshotSymbol[];
+}
+
+/** One resolved import edge BETWEEN two members of the same slice. */
+export interface SliceImport {
+  readonly from: string;
+  readonly to: string;
 }
 
 /** One cross-batch import neighbour of a batch member. */
@@ -145,10 +164,22 @@ export interface PartitionSlice {
    *  - on the DEGRADATION path ({@link partitionsFromSnapshot} with an unreadable
    *    import or symbol shard), the whole eligible inventory goes through
    *    {@link buildPartitions}, so an empty list means the graph could not be read —
-   *    not that the file is edge-less. The slice ids say which case it is: a run with
-   *    no `mod:` slice at all is the degraded one.
+   *    not that the file is edge-less.
+   *
+   * {@link imports} is the machine-readable answer to which case it is.
    */
   readonly neighbors: readonly MemberNeighbors[];
+  /**
+   * The resolved import edges joining two MEMBERS of this slice, sorted by
+   * `(from, to)`. Together with {@link neighbors} (the edges batching cut) this is
+   * the whole of what the import graph says about the slice.
+   *
+   * PRESENT AND EMPTY means the graph was read and joins nothing here — the truth
+   * about a fallback slice of documentation. ABSENT means the graph could not be
+   * read at all, which is the degradation path, and a worker packet built from an
+   * absent list says so rather than claiming the files are unconnected.
+   */
+  readonly imports?: readonly SliceImport[];
 }
 
 function byString(a: string, b: string): number {
@@ -522,6 +553,7 @@ export function buildModuleBatches(input: ModuleBatchInput): readonly PartitionS
         id: moduleBatchId(members.map((f) => f.path)),
         files: members,
         neighbors: neighborMap(members, adjacency, outgoing, input.exportsOf),
+        imports: withinBatchImports(members, outgoing),
       });
     }
   }
@@ -529,13 +561,28 @@ export function buildModuleBatches(input: ModuleBatchInput): readonly PartitionS
 
   // The isolated tail follows every module batch, coalesced so an edge-less file
   // does not cost a worker turn per handful (see {@link FALLBACK_COALESCE_CAP}).
-  return [
-    ...slices,
-    ...coalesceFallbackSlices(
-      buildPartitions({ files: isolated, scopes: input.scopes }),
-      input.scopes,
-    ),
-  ];
+  // `imports: []` is stamped on it deliberately: the graph WAS read, and it says
+  // these files join nothing — which is exactly why they are here.
+  const fallback = coalesceFallbackSlices(
+    buildPartitions({ files: isolated, scopes: input.scopes }),
+    input.scopes,
+  ).map((slice) => ({ ...slice, imports: [] as readonly SliceImport[] }));
+  return [...slices, ...fallback];
+}
+
+/** The resolved edges joining two members of one batch, sorted by `(from, to)`. */
+function withinBatchImports(
+  members: readonly FileEntry[],
+  outgoing: ReadonlyMap<string, ReadonlySet<string>>,
+): readonly SliceImport[] {
+  const inBatch = new Set(members.map((file) => file.path));
+  const out: SliceImport[] = [];
+  for (const member of members) {
+    for (const to of [...(outgoing.get(member.path) ?? [])].sort(byString)) {
+      if (inBatch.has(to)) out.push({ from: member.path, to });
+    }
+  }
+  return out.sort((a, b) => byString(a.from, b.from) || byString(a.to, b.to));
 }
 
 /** Run Louvain, then split the oversized communities and pool the tiny ones. */
@@ -716,17 +763,25 @@ export function partitionsFromSnapshot(snapshot: LoadedSnapshot): readonly Parti
 
   const graph = queryImportGraph(snapshot);
   if (!graph.ok || !symbols.ok) {
+    // Degradation: no skeletons and no `imports` list, because neither is known.
+    // The absent fields are what tells a worker packet to say so.
     return buildPartitions({ files: eligible, scopes: snapshot.scopes });
   }
 
   const blobByPath = new Map(snapshot.files.map((file) => [file.path, file.blobOid] as const));
+  const index = symbols.index;
   return buildModuleBatches({
-    files: eligible,
+    // Each eligible file carries its own skeleton, so the worker packet is built
+    // from the slice alone. `symbols` stays ABSENT for a blob with no shard.
+    files: eligible.map((file) => {
+      const declared = index.symbolsByBlob.get(file.blobOid);
+      return declared === undefined ? file : { ...file, symbols: declared };
+    }),
     scopes: snapshot.scopes,
     graph: graph.graph,
     exportsOf: (path) => {
       const blobOid = blobByPath.get(path);
-      return blobOid === undefined ? [] : (symbols.index.exportsByBlob.get(blobOid) ?? []);
+      return blobOid === undefined ? [] : (index.exportsByBlob.get(blobOid) ?? []);
     },
   });
 }

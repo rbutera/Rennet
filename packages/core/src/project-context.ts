@@ -1196,6 +1196,15 @@ export interface SymbolIndex {
   readonly generatedBlobs: ReadonlySet<string>;
   /** `blobOid → the DISTINCT names the blob exports`, sorted. Absent for an unindexed blob. */
   readonly exportsByBlob: ReadonlyMap<string, readonly string[]>;
+  /**
+   * `blobOid → the blob's declared top-level symbols` (name, kind, 1-based line), in
+   * the shard's own order. This is the SKELETON the mapping workers are fed instead
+   * of a bare path list. Absent for a blob with no shard; PRESENT AND EMPTY for a
+   * blob the extractor indexed and found nothing in — the same distinction
+   * {@link FileOverview.extractor} draws, and the reason a `.md` in a worker packet
+   * can honestly say "indexed, no symbols" rather than inventing structure.
+   */
+  readonly symbolsByBlob: ReadonlyMap<string, readonly SnapshotSymbol[]>;
 }
 
 export type SymbolIndexResult =
@@ -1215,6 +1224,7 @@ export type SymbolIndexResult =
 export function querySymbolIndex(snapshot: LoadedSnapshot): SymbolIndexResult {
   const generatedBlobs = new Set<string>();
   const exportsByBlob = new Map<string, readonly string[]>();
+  const symbolsByBlob = new Map<string, readonly SnapshotSymbol[]>();
   // The MATERIALIZED index, not `manifest.symbols`: `materializeSnapshot` already
   // built it and guaranteed its shape, and the two are the same pointers.
   for (const [blobOid, digest] of snapshot.symbolDigestByBlob) {
@@ -1222,8 +1232,9 @@ export function querySymbolIndex(snapshot: LoadedSnapshot): SymbolIndexResult {
     if (shard === undefined) return { ok: false, reason: "shard-unavailable", digest };
     if (shard.generated) generatedBlobs.add(blobOid);
     exportsByBlob.set(blobOid, [...new Set(shard.symbols.map((s) => s.name))].sort(byPath));
+    symbolsByBlob.set(blobOid, shard.symbols);
   }
-  return { ok: true, index: { generatedBlobs, exportsByBlob } };
+  return { ok: true, index: { generatedBlobs, exportsByBlob, symbolsByBlob } };
 }
 
 function byPath(left: string, right: string): number {

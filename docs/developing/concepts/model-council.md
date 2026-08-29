@@ -27,10 +27,12 @@ composition, comment refinement, orchestration, adjudication, and knowledge
 generation.
 
 Knowledge generation runs two council jobs: `partition-worker`, a light batched
-job that reads one [module batch](./code-intelligence.md#module-batching) and
-emits anchored claims, and `map-verify`,
-a heavy seat that confirms hypotheses against their cited spans and mints
-cross-cutting claims.
+job that reads one [module batch](./code-intelligence.md#module-batching) —
+skeleton, resolved edges, and neighbour map — and emits anchored claims, and
+`map-verify`, a heavier seat that runs *after* a deterministic merge pass and
+sees only what a script could not settle: the cross-batch seams and the flagged
+contradictions. It does not re-adjudicate the swarm, and it runs no turn at all
+when that residue is empty.
 
 The lens drafting pipeline runs five: `lens-draft` (the drafting seat for the
 Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —

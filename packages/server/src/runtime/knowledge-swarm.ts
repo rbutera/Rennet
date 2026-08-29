@@ -73,9 +73,10 @@ export function knowledgeStageLine(
       ...(detail === undefined ? {} : { detail }),
     };
   }
-  // `aborted` is narrated as what it is: the worker never ran, because an
-  // earlier one failed and the pass is all-or-nothing. Calling that "failed"
-  // would report a failure for work that was never attempted.
+  // `reused` is narrated as what it is: the batch was answered from the journal
+  // (#581) and cost no model turn. Calling that "done" would report spend that
+  // did not happen, which is the same class of lie as reporting a failure for a
+  // worker that never ran.
   const verb =
     event.status === "queued"
       ? "queued"
@@ -83,8 +84,8 @@ export function knowledgeStageLine(
         ? "running"
         : event.status === "done"
           ? "done"
-          : event.status === "aborted"
-            ? "not run"
+          : event.status === "reused"
+            ? "reused from the journal"
             : "failed";
   return {
     kind: "stage",

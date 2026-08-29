@@ -249,36 +249,117 @@ Beside the structural index, the Repo Map stores model-generated knowledge
 claims. `packages/core/src/knowledge/` generates them as a partitioned swarm:
 [module batching](#module-batching) slices the snapshot so every mapping-eligible
 file lands in exactly one slice, a light `partition-worker` council job emits
-anchored claims per slice, and a heavy `map-verify` seat confirms hypotheses
-against their cited spans and mints cross-cutting claims. Both jobs resolve
-through the [Model Council](./model-council.md) like every other model path.
-Claims that fail anchor resolution are dropped at mint time, so a stored claim
-always cites spans that resolve against the snapshot. On a baseline advance,
-only partitions containing changed paths re-run and untouched claims carry
-forward.
+anchored claims per slice, a deterministic merge pass combines them, and a
+`map-verify` seat handles what the merge could not settle. Both model jobs
+resolve through the [Model Council](./model-council.md) like every other model
+path. Claims that fail anchor resolution are dropped at mint time, so a stored
+claim always cites spans that resolve against the snapshot. On a baseline
+advance, only partitions containing changed paths re-run and untouched claims
+carry forward.
 
-The verify seat reads the swarm's hypotheses in fixed chunks (150 per turn,
-several turns in flight) rather than one prompt over the whole repository: a
-large repository mints thousands of claims, and a single prompt carrying all of
-them exceeds the seat's context window and loses the entire run. The pass is
-all-or-nothing — one failed chunk fails the whole run and leaves the stored set
-untouched, rather than publishing an unadjudicated slice of the repository as if
-the seat had read it — so the chunks still queued behind a failure are abandoned
-instead of spending turns on a verdict already decided.
+### What a worker is given
+
+A worker's prompt is not a path list. Per batch it carries each member file's
+symbol skeleton — declared names, kinds, and 1-based lines, straight from the
+symbol shards — the batch's own resolved import edges, and the neighbor map: the
+edges batching cut, with each neighbour's direction and exported names.
+
+The packet distinguishes three states a file can be in, because they are three
+different facts: a file with symbols shows them; a file the extractor indexed and
+found nothing in says so; a file with no symbol shard at all says *that*. A `.md`
+gets the second line, not an empty structure that could be misread as "this file
+declares nothing worth citing". A fallback slice, which by definition has no
+resolved edges, gets an honest reduced packet rather than a fabricated one — and
+if the import graph could not be read at all, the packet says the graph was
+unreadable rather than reporting no edges.
+
+The worker's working directory is the repository checkout and it is free to read
+any of it. The skeleton is where it starts, not where it stops: reading is
+targeted, not forbidden, and reconstructing a *why* usually needs the source. The
+saving comes from better inputs, not from denying a capable seat its tools. The
+anchor-or-drop rule is unchanged and is what keeps that freedom honest — a
+citation that does not resolve against the slice's own file index is dropped at
+mint.
+
+### The deterministic merge
+
+A script, not a seat, combines the workers' output. It collapses duplicate
+statement ids; collapses the same claim minted over different evidence, keeping
+the better-anchored one (more anchors, then more line spans, then the smaller id
+— deterministic to the bottom, so two runs of one swarm merge identically); and
+checks every import-shaped claim against the authoritative edge shard. A claim
+that names two indexed files and asserts an import between them, where no
+resolved edge joins any pair it names, is *flagged* — never deleted and never
+rewritten. The import index is textual, so a computed import looks exactly like a
+false claim, and silently editing a model's words would be worse than either.
+
+The merge never mints. Every surviving statement keeps its worker's provenance
+byte for byte.
+
+### What the verify seat is left
+
+The seat used to receive every hypothesis the swarm minted. On Rennet that was
+~1,900 statements in one prompt, which is the prompt that died with "Prompt is
+too long" and discarded whole runs. It now receives only the merge's residue:
+
+- **Seams.** A claim on one end of a cut import edge, where another batch also
+  made a claim about the other end. That pair is invisible to either worker and
+  is the whole of the cross-batch synthesis job. A claim carrying a worker *hint*
+  joins them too, since nothing else reads a hint.
+- **Flagged statements.** The edge-shard contradictions above, plus a delta's
+  prior statements whose cited evidence changed — unsettleable by script, because
+  the bytes moved.
+
+Measured on Rennet's 105 slices with a stand-in worker minting a claim for every
+eligible file (2,249 claims, denser than a real worker): the residue is 874, 39%
+of the set. At a more realistic density (793 claims) it is 218, 27%. Either is
+two to six chunks where the old shape sent 100% by construction. An empty residue
+runs no turn at all — with no seam and no contradiction there is nothing to
+synthesize from, and a turn over an empty prompt is a seat inventing claims with
+no material.
+
+The residue is still chunked (150 per turn, several in flight) as a ceiling
+rather than an expectation, and the pass is still all-or-nothing: one failed
+chunk fails the run and leaves the stored set untouched, rather than publishing
+an unadjudicated slice of the repository as if the seat had read it.
 
 Chunking bounds what one turn can synthesize, so a final cross-boundary pass
 runs over the chunks' own output: every chunk's cross-cutting claims, plus a
 one-line summary of what each chunk covered, feed a single closing turn that
 mints the claims spanning two chunks. That input is proportional to the number
-of chunks, not the number of statements, which is what keeps it inside the
-context window that the unchunked prompt overflowed. The pass is best-effort —
-if the closing turn fails, the run keeps its chunk-local synthesis rather than
-discarding a good map over a bonus turn.
+of chunks, not the number of statements. The pass is best-effort — if the closing
+turn fails, the run keeps its chunk-local synthesis rather than discarding a good
+map over a bonus turn.
 
 One residual: the closing turn reads the chunks' claims, not their raw
 hypotheses, so a pattern that only becomes visible in two individual hypotheses
 on opposite sides of a boundary can still be missed. Cross-cutting coverage is
 therefore near-repository-wide rather than exhaustive.
+
+### Persistence: the journal
+
+The run used to have exactly one store write, after the verify seat returned. One
+flaky worker out of two hundred threw away the other hundred and ninety-nine
+turns, and a crash left nothing anywhere.
+
+Each completed batch now writes its result to a **journal** — a directory beside
+`knowledge/` in the project's reserved store, never inside it, that no reader
+consults. A re-run at the same target (base OID, slice id, and the slice's exact
+membership) reuses those results instead of re-running their turns, so a retry
+pays only for what actually failed. Narration says `reused from the journal`
+rather than `done`, because no turn was spent.
+
+A failed batch no longer abandons the queue. Every batch runs, failures are
+retried once after the rest have finished, and if a batch still fails the run
+reports **which** slices failed and how many completed results are waiting for
+the next attempt. The store rule is unchanged and is the point of keeping the two
+places apart: the live `knowledge.json` is written once, when the set is whole. A
+partial set never presents as complete, however much of it is journaled. Only a
+successful promotion clears the journal.
+
+Worker fan-out runs at a named default concurrency of 8 — a policy, not an
+unrevisited literal, and overridable per run. It is deliberately not adaptive: a
+number that changes with ambient load makes a run's cost unreproducible.
 
 The pass runs in the background and reports its outcome — including the reason
 it skipped or failed — on the project's build timeline, under a progress id
