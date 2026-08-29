@@ -18,6 +18,7 @@ import {
   type LintHunk,
   type LintTarget,
   type LoadedSnapshot,
+  type RegisterLintContext,
   selectPacketKnowledge,
 } from "@rennet/core";
 import {
@@ -113,19 +114,73 @@ function baseFileInventory(files: readonly PatchFile[]): Map<string, number> {
 }
 
 /**
+ * The FULL tree inventories at the review commit — `path → line count` for every
+ * text file at head, and the same at base. Read from git by the composition root
+ * ({@link BoardRegenerationDeps.fileInventory}); absent when git could not answer.
+ */
+export interface TreeInventories {
+  readonly head: ReadonlyMap<string, number>;
+  readonly base: ReadonlyMap<string, number>;
+}
+
+/**
+ * The HEAD-side inventory every citation in this round resolves against — the
+ * diff-derived counts widened by the whole-tree read. Shared by the lens boards
+ * and the composed review draft, because they cite the same commit.
+ */
+function mergedHeadInventory(
+  patchset: Patchset,
+  tree: TreeInventories | undefined,
+): Map<string, number> {
+  return mergeByMax(headFileInventory(patchset.files), tree?.head);
+}
+
+/** Union two line-count inventories, keeping the HIGHER count for a shared path. */
+function mergeByMax(
+  diff: ReadonlyMap<string, number>,
+  tree: ReadonlyMap<string, number> | undefined,
+): Map<string, number> {
+  const merged = new Map(diff);
+  for (const [path, lines] of tree ?? []) {
+    merged.set(path, Math.max(lines, merged.get(path) ?? 0));
+  }
+  return merged;
+}
+
+/**
  * Build the per-lens `lintContextFor` the round pipeline calls once per board. The
  * hunk list + file inventories + patchsetId are the SAME for every lens (a board
  * of any lens may cite or skip any patchset hunk — `ctx.hunks` gates skip
  * resolution and taught/skipped coherence, not a per-lens partition); only
  * `ctx.lens` varies. `scaffoldGlobs` is left to the lint default. Pure — returns a
  * `(lens) => LintContext` closure over the derived universe.
+ *
+ * W5 — grounding is the WHOLE TREE, not the diff. Drafters are free to read past
+ * the changed files, and a drafter that does so cites what it read. Grounding the
+ * `citation-resolves` rule on `patchset.files` alone made every such citation
+ * unresolvable, so the pipeline DELETED correct work with no signal to the seat
+ * that wrote it. `tree`, when the caller could read it, is the real inventory at
+ * the review commit: it carries a file's true line count, where the patch can only
+ * bound the extent its own hunks reach. The diff-derived maps stay underneath as
+ * the honest degrade when git could not answer, and they still cover a file the
+ * tree read skipped (a patch text git calls binary). Citations must still
+ * RESOLVE — this widens where they may point, never whether they must land.
+ *
+ * The two are merged by MAX, never by override. For a file both know, the tree is
+ * usually the larger and the citation ceiling rises to the real end of the file.
+ * But a working-tree review's patch describes UNCOMMITTED content while the tree
+ * read is pinned to the commit, so the tree can be the SHORTER of the two — taking
+ * it would reject a citation inside the change's own hunk, which is the very thing
+ * that always resolved before. Max cannot regress: every citation lint accepts
+ * today is still accepted.
  */
 export function buildLintContextFor(
   patchset: Patchset,
   hunks: readonly LintHunk[],
+  tree?: TreeInventories,
 ): (lens: LintTarget) => LintContext {
-  const files = new Map(headFileInventory(patchset.files));
-  const baseFiles = new Map(baseFileInventory(patchset.files));
+  const files = mergedHeadInventory(patchset, tree);
+  const baseFiles = mergeByMax(baseFileInventory(patchset.files), tree?.base);
   return (lens: LintTarget): LintContext => ({
     lens,
     hunks,
@@ -135,11 +190,22 @@ export function buildLintContextFor(
   });
 }
 
-/** The three per-round pipeline inputs `runRound`'s `RoundInput` carries. */
+/** The per-round pipeline inputs `runRound`'s `RoundInput` carries. */
 export interface RoundCollation {
   readonly deltaPacket: DeltaPacket;
   readonly hunks: readonly LintHunk[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /**
+   * The composed review draft's citation grounding — the SAME head inventory the
+   * lens boards resolve against.
+   *
+   * Without it the composition lint falls back to an EMPTY inventory, and every
+   * real `path:line` in the draft reports "does not resolve: no such file at the
+   * review commit". That violation is visible-never-blocking, so nothing is deleted
+   * — but the surface the reviewer actually reads is then papered with false
+   * ungrounded marks. It is the same grounding bug the lens boards had, one layer up.
+   */
+  readonly reviewDraftLintCtx: RegisterLintContext;
 }
 
 /** Every path the patchset touches — BOTH sides of a rename, since a statement anchored
@@ -204,6 +270,9 @@ export function assembleRoundCollation(input: {
   snapshot?: LoadedSnapshot;
   dossier: readonly DossierItem[];
   successorAccount?: SuccessorAccount;
+  /** The full head/base tree inventories citations resolve against (W5). Absent ⇒
+   *  the diff-derived inventories alone (the honest degrade). */
+  tree?: TreeInventories;
 }): RoundCollation {
   const snapshot = input.snapshot ?? null;
   const knowledge = selectPacketKnowledge({
@@ -220,8 +289,13 @@ export function assembleRoundCollation(input: {
     fanIn,
   );
   const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
-  const lintContextFor = buildLintContextFor(input.patchset, hunks);
-  return { deltaPacket, hunks, lintContextFor };
+  const lintContextFor = buildLintContextFor(input.patchset, hunks, input.tree);
+  return {
+    deltaPacket,
+    hunks,
+    lintContextFor,
+    reviewDraftLintCtx: { files: mergedHeadInventory(input.patchset, input.tree) },
+  };
 }
 
 // ── The prior generation (C15 2.1/3.3) — the lineage a round actually has ────
@@ -302,6 +376,11 @@ export interface BoardRegenerationDeps {
   /** The REAL prior generation + its drafted boards, or `undefined` for a first generation
    *  ({@link readPriorGeneration} over the durable stores in production). */
   readonly priorGeneration: (generationId: string) => Promise<PriorGeneration | undefined>;
+  /** The FULL head/base tree inventories at the review commit, for citation grounding
+   *  (W5). A drafter is free to read past the diff, so lint must be able to resolve a
+   *  citation past the diff. Rejecting/throwing degrades to the diff-derived
+   *  inventories rather than failing the regeneration. */
+  readonly fileInventory?: (patchset: Patchset) => Promise<TreeInventories>;
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
   readonly emit: (event: RoundEvent) => void;
@@ -349,6 +428,17 @@ export async function runBoardRegeneration(
     // re-reports against the existing generation instead of minting a hollow successor.
     const landed = successor.id !== input.priorPatchsetId;
     const knowledgeSource = deps.knowledgeFor(successor);
+    // The whole-tree citation grounding (W5). Best-effort by design: a tree git
+    // could not read still drafts — on the diff-derived inventories, the behaviour
+    // before this change — rather than sinking the round over a lint input. The
+    // try/catch covers a synchronous throw as well as a rejection, so a broken
+    // reader degrades instead of reaching the outer handler and failing the round.
+    let tree: TreeInventories | undefined;
+    try {
+      tree = await deps.fileInventory?.(successor);
+    } catch {
+      tree = undefined;
+    }
     const collation = assembleRoundCollation({
       patchset: successor,
       knowledge: knowledgeSource.set,
@@ -357,6 +447,7 @@ export async function runBoardRegeneration(
       // honest — the drafters simply have no tracker items inlined this round.
       dossier: [],
       ...(review.successorAccount ? { successorAccount: review.successorAccount } : {}),
+      ...(tree === undefined ? {} : { tree }),
     });
     // The lineage this round ACTUALLY has. A prior generation counts only if it was really
     // minted and persisted; otherwise this is a first generation and says so — no

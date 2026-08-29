@@ -130,7 +130,7 @@ describe("createCodexExecutor (app-server)", () => {
     const { effects, spawns, turnStarts } = fakeExecEffects({
       finalText: '{"readingOrder":["c1"],"rationale":"x"}',
     });
-    const executor = createCodexExecutor(effects);
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     const result = await executor({
       model: "gpt-5.6-luna",
       effort: "low",
@@ -152,14 +152,14 @@ describe("createCodexExecutor (app-server)", () => {
 
   it("passes NO outputSchema turn param for a free-form docType", async () => {
     const { effects, turnStarts } = fakeExecEffects({ finalText: "{}" });
-    const executor = createCodexExecutor(effects);
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     await executor({ model: "m", effort: "low", prompt: "p" });
     expect(turnStarts[0]?.outputSchema).toBeUndefined();
   });
 
   it("sanitizes the outputSchema (additionalProperties {} → false) on the turn", async () => {
     const { effects, turnStarts } = fakeExecEffects({ finalText: "{}" });
-    const executor = createCodexExecutor(effects);
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     await executor({
       model: "m",
       effort: "low",
@@ -181,6 +181,7 @@ describe("createCodexExecutor (app-server)", () => {
     const measurements: string[] = [];
     const { effects } = fakeExecEffects({ finalText: "{}", usage });
     const executor = createCodexExecutor(effects, {
+      repoRoot: "/repo",
       onUsageMeasurement: (m) => measurements.push(m.status),
     });
     const result = await executor({ model: "m", effort: "low", prompt: "p" });
@@ -200,6 +201,7 @@ describe("createCodexExecutor (app-server)", () => {
     const measurements: string[] = [];
     const { effects } = fakeExecEffects({ finalText: "{}" });
     const executor = createCodexExecutor(effects, {
+      repoRoot: "/repo",
       onUsageMeasurement: (m) => measurements.push(m.status),
     });
     const result = await executor({ model: "m", effort: "low", prompt: "p" });
@@ -209,7 +211,7 @@ describe("createCodexExecutor (app-server)", () => {
 
   it("surfaces the discovered harness version when configured", async () => {
     const { effects } = fakeExecEffects({ finalText: "{}" });
-    const executor = createCodexExecutor(effects, { harnessVersion: "0.146.0" });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo", harnessVersion: "0.146.0" });
     const result = await executor({ model: "m", effort: "low", prompt: "p" });
     expect(result.harnessVersion).toBe("0.146.0");
   });
@@ -218,7 +220,7 @@ describe("createCodexExecutor (app-server)", () => {
     const { effects } = fakeExecEffects({
       finalText: '{"findings":[{"findingId":"f1","summary":"x","verification":null}]}',
     });
-    const executor = createCodexExecutor(effects);
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     const result = await executor({ model: "m", effort: "low", prompt: "p" });
     expect(result.output).toEqual({ findings: [{ findingId: "f1", summary: "x" }] });
   });
@@ -227,6 +229,7 @@ describe("createCodexExecutor (app-server)", () => {
     const seen: { status: string; reason?: string }[] = [];
     const { effects } = fakeExecEffects({ status: "failed", errorMessage: "invalid_json_schema" });
     const executor = createCodexExecutor(effects, {
+      repoRoot: "/repo",
       onUsageMeasurement: (m) =>
         seen.push({ status: m.status, ...(m.reason ? { reason: m.reason } : {}) }),
     });
@@ -241,6 +244,7 @@ describe("createCodexExecutor (app-server)", () => {
     const seen: string[] = [];
     const { effects } = fakeExecEffects({ finalText: "not json at all" });
     const executor = createCodexExecutor(effects, {
+      repoRoot: "/repo",
       onUsageMeasurement: (m) => seen.push(m.reason ?? m.status),
     });
     await expect(executor({ model: "m", effort: "low", prompt: "p" })).rejects.toThrow(
@@ -251,7 +255,7 @@ describe("createCodexExecutor (app-server)", () => {
 
   it("throws when the turn completes with no final message", async () => {
     const { effects } = fakeExecEffects({ finalText: null });
-    const executor = createCodexExecutor(effects);
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     await expect(executor({ model: "m", effort: "low", prompt: "p" })).rejects.toThrow(
       /no final message/,
     );
@@ -259,21 +263,66 @@ describe("createCodexExecutor (app-server)", () => {
 
   it("throws on a pre-terminal process exit", async () => {
     const { effects } = fakeExecEffects({ exitBeforeTurn: true });
-    const executor = createCodexExecutor(effects);
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     await expect(executor({ model: "m", effort: "low", prompt: "p" })).rejects.toThrow(/exited/);
   });
 
   it("wsl locus routes the spawn through wsl.exe -e codex app-server with a distro cwd", async () => {
     const { effects, spawns, turnStarts } = fakeExecEffects({ finalText: "{}" });
-    const executor = createCodexExecutor(effects, { locus: { kind: "wsl", distro: "Ubuntu" } });
+    const executor = createCodexExecutor(effects, {
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      repoRoot: "/home/rai/repo",
+    });
     await executor({ model: "m", effort: "low", prompt: "p" });
     const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("wsl.exe");
     expect(call.args.slice(0, 2)).toEqual(["-d", "Ubuntu"]);
     expect(call.args[call.args.indexOf("-e") + 1]).toBe("codex");
     expect(call.args[call.args.indexOf("-e") + 2]).toBe("app-server");
-    // The utility turn runs in a distro-native temp cwd.
-    expect(turnStarts[0]?.cwd).toBe("/tmp");
+    // The turn runs in the DISTRO-NATIVE repo root, not a host path and not a temp dir.
+    expect(turnStarts[0]?.cwd).toBe("/home/rai/repo");
+  });
+
+  // ── W5: the seat sees the repository it is reasoning about ──────────────────
+  // Delta digest, refine-comment and draft-PR-body all reason about a change, and
+  // the Claude legs of those same council-routed jobs already run at the repo root.
+  // A Codex leg dropped in an empty temp dir was blind purely because of which model
+  // the council picked.
+
+  it("roots a utility turn at the bound repository by default", async () => {
+    const { effects, spawns, turnStarts } = fakeExecEffects({ finalText: "{}" });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+    await executor({ model: "m", effort: "low", prompt: "p" });
+    expect(turnStarts[0]?.cwd).toBe("/repo");
+    expect((spawns[0] as SpawnCall).cwd).toBe("/repo");
+  });
+
+  it("still honours an explicit cwd — a caller with a different tree in mind wins", async () => {
+    const { effects, turnStarts } = fakeExecEffects({ finalText: "{}" });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+    await executor({ model: "m", effort: "low", prompt: "p", cwd: "/elsewhere" });
+    expect(turnStarts[0]?.cwd).toBe("/elsewhere");
+  });
+
+  // ── W5: the MCP table is no longer wiped with nothing put back ──────────────
+
+  it("sends no mcp_servers override when Rennet has none to pin (user MCP survives)", async () => {
+    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+    await executor({ model: "m", effort: "low", prompt: "p" });
+    expect((spawns[0] as SpawnCall).args).toEqual(["app-server"]);
+  });
+
+  it("pins Rennet's loopback servers when it has them", async () => {
+    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const executor = createCodexExecutor(effects, {
+      repoRoot: "/repo",
+      mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
+    });
+    await executor({ model: "m", effort: "low", prompt: "p" });
+    expect((spawns[0] as SpawnCall).args).toContain(
+      'mcp_servers={canvasops={url="http://127.0.0.1:5000/mcp"}}',
+    );
   });
 });
 

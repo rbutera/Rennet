@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { CommandInput, CommandName, CommandOutput } from "./commands";
 import type { RenderedHunkOccurrence } from "./delta/citations";
-import { anchorSideSchema, anchorSpanSchema } from "./delta/citations";
+import { anchorSideSchema, anchorSpanSchema, patchFileSchema } from "./delta/citations";
 import type {
   CiSignal,
   CouncilEffort,
@@ -17,8 +17,6 @@ import type {
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import type { AttentionEventFrame, RoundEvent } from "./session";
-
-const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -56,17 +54,7 @@ export const patchsetSchema = z.object({
   id: z.string().min(1),
   createdAt: z.iso.datetime(),
   repository: repositoryProvenanceSchema,
-  files: z.array(
-    z.object({
-      path: z.string(),
-      previousPath: z.string().optional(),
-      status: fileChangeStatusSchema,
-      additions: z.number().int().nonnegative().nullable(),
-      deletions: z.number().int().nonnegative().nullable(),
-      binary: z.boolean(),
-      patch: z.string(),
-    }),
-  ),
+  files: z.array(patchFileSchema),
   rawDiff: z.string(),
   byteLength: z.number().int().nonnegative(),
   truncated: z.boolean(),
@@ -76,7 +64,7 @@ export const patchsetSchema = z.object({
   // from `degraded`/`degradationReason`. Absent ⇒ `local` (additive; identity
   // ignores it). Without these here, zod strips them and every PR review looks
   // like a local capture.
-  source: z.enum(["local", "github-local", "github-rest"]).optional(),
+  source: z.enum(["local", "local-branch", "github-local", "github-rest"]).optional(),
   degraded: z.boolean().optional(),
   degradationReason: z.string().optional(),
   // #144: the ProjectSnapshot the changeset was computed against, and #136: the
@@ -731,14 +719,16 @@ export const projectDetailSchema = z.object({
   prs: z.array(pullRequestSchema),
   /**
    * A >1000 upstream truncation, surfaced so a partial surface never renders as
-   * complete (the SSO partial-results banner). The fixture sets it false today; the
-   * live GraphQL loop sets it from the explicit truncation state later.
+   * complete (the SSO partial-results banner). The live source ORs it across the
+   * per-repo PR fetches (`adapters/src/project-detail-source.ts`); the fixture and the
+   * no-PR-source degrade both report false.
    */
   truncated: z.boolean(),
   /**
    * Why GitHub auth is unavailable. Absent (undefined) when auth resolved and PRs
-   * were fetched. Present when the PR source was not wired — a missing token renders
-   * as an honest hint, never as "zero PRs".
+   * were fetched. Present when the PR source could not answer — no token wired, or a
+   * post-auth network outage — so a missing token renders as an honest hint, never as
+   * "zero PRs".
    */
   authUnavailable: z
     .enum(["not-connected", "token-invalid", "insufficient-scope", "network"])
@@ -2039,6 +2029,33 @@ export const sidebarSessionSchema = z.object({
   pinned: z.boolean().optional(),
   /** Archived (soft-deleted, the only release); absent reads as live. */
   archived: z.boolean().optional(),
+  /**
+   * The target this session CLAIMED at mint (C21) — a branch and, when the row was a pull
+   * request, its number. A branch and its PR are ONE claimed thing (#466 res. 11), so New
+   * Chat hides every row matching either half while the claim holds. Absent for a
+   * no-target session (the "talk about the project" mint), which claims nothing and
+   * therefore hides nothing. Archive is the only release, so an archived session's rows
+   * come back — the surface reads that off `archived`, not off a second field.
+   */
+  claim: z
+    .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
+    .optional(),
+  /**
+   * The `owner/name` the session was minted for (`SessionModel.repository`, #580). It rides
+   * to the client because the claim alone cannot say WHICH repo it claimed: a workspace
+   * project holds several, so New Chat hiding on branch alone would hide repo-b's `main` for
+   * a session that claimed repo-a's. An identity, never a host path (R19) — `repositoryRoot`
+   * deliberately stays server-side. Absent for a session minted without one, which still
+   * hides its row exactly as before.
+   */
+  repository: z.string().min(1).optional(),
+  /**
+   * The review this session holds (`SessionModel.reviewId`, 1:0..1 — referenced, never
+   * absorbed). New Chat's row click captures the target's change and attaches it here, so
+   * `/s/<sessionId>` resolves to the review workspace rather than the chat-only surface.
+   * Absent for a session nothing has been captured for yet — honestly, there is no diff.
+   */
+  reviewId: z.string().min(1).optional(),
   /** When the session was minted (epoch ms) — the client renders the relative line. */
   createdAt: z.number(),
 });

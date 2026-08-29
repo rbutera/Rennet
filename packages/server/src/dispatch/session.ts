@@ -1,8 +1,10 @@
 import { basename } from "node:path";
+import { parseUnifiedDiffFiles } from "@rennet/adapters";
 import {
   parseCommandInput,
   parseCommandOutput,
   type Review,
+  type RoundRecord,
   type SessionModel,
   type SessionTrail,
   type SidebarSession,
@@ -10,9 +12,8 @@ import {
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /**
- * The client-facing SESSION READ dispatch layer B9 (the runtime) and B11 (the round WRITE)
- * deferred — the seam that unblocks C07's chat dock and C09's rounds ledger off their
- * MemoryBridge/honest-absent stubs.
+ * The client-facing SESSION dispatch layer — the seam C07's chat dock and C09's rounds
+ * ledger read through, off their old MemoryBridge/honest-absent stubs.
  *
  *   • `session.transcript` (C07): the chat dock's read. The harness CLI stays the canonical
  *     conversation owner (#466 res. 3; Rennet persists only the `HarnessCursor` for resume) —
@@ -28,11 +29,19 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  *     serve real rows and persist every edit, so a rename, a pin, or an archive survives
  *     reload. Restore is un-archive (the boolean), not a fourth command.
  *
+ *   • `session.mint` (C21): the New Chat front door's WRITE. A row click mints a durable
+ *     session AND claims its target in one act, through the same `SessionEntry` the round
+ *     dispatch already mints with — so a target claimed from New Chat and a target claimed
+ *     by a dispatched round are the SAME session, never two. Mint-or-reattach: a second
+ *     click on a claimed target returns the session owning it. No branch ⇒ a no-target
+ *     session (the "talk about the project" row), which claims nothing.
+ *
  *   • `session.rounds` (C09): the rounds-ledger read. Projects the live rounds runtime's
  *     `RoundRecord[]` for the review's session (resolved read-only from the ask-log/target
- *     claim). Empty until a round RECORDS (`runRound`); the dispatch WRITE (B11) runs the
- *     workers but the record wiring is a separate deferred piece — so the read honestly
- *     returns `[]` today and real rows once a round records.
+ *     claim). A session that has dispatched no round is honestly `[]`; from the first round
+ *     onward it carries real rows, because BOTH `runRound` and `dispatchRound` record a
+ *     `RoundRecord` — the dispatch-only one stamped `ROUND_NO_REGEN` for the generation it
+ *     did not mint, superseded in the durable ledger when the regeneration lands.
  */
 
 /**
@@ -71,8 +80,42 @@ export function sidebarSessionOf(session: SessionModel): SidebarSession {
     target: session.claim?.prNumber === undefined ? "your-branch" : "your-pr",
     ...(session.pinned ? { pinned: true } : {}),
     ...(session.archivedAt === undefined ? {} : { archived: true }),
+    // The claimed target, verbatim off the record (C21) — New Chat hides every row matching
+    // either half of it while the claim holds. A no-target session carries none, so it hides
+    // nothing; archive is still the only release, read off `archived`.
+    ...(session.claim === undefined ? {} : { claim: session.claim }),
+    // Which repo the claim is IN (#580). `repositoryRoot` is a host path and stays here;
+    // this is the `owner/name` identity, and New Chat needs it to keep the row-hide
+    // repo-precise across a workspace project's several repositories.
+    ...(session.repository === undefined ? {} : { repository: session.repository }),
+    // The attached review (#587): the front door captures the clicked target's change and
+    // binds it here, so `/s/<sessionId>` resolves to the review workspace. Absent means
+    // nothing has been captured for this session — honestly, there is no diff.
+    ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
     createdAt: session.createdAt,
   };
+}
+
+/**
+ * A ledger record with its ROUND DIFF split per file (#571). `RoundRecord.diff` is the
+ * checkpoint-measured working-tree diff of the round's coding turn — the change the round
+ * actually made — and the durable store deliberately keeps it across the regeneration that
+ * supersedes the dispatch placeholder. So the round diff is derivable from what is already
+ * stored; nothing needs a per-round patchset projection.
+ *
+ * Split HERE, at the one read seam, through the SAME hardened parser the degraded REST
+ * changeset source uses (`parseUnifiedDiffFiles` — it owns the #310 in-hunk-header trap and
+ * the same-path type-change coalescing), so the round diff and a PR diff are parsed by one
+ * grammar. Derived on read and never persisted: the durable ledger keeps one copy.
+ *
+ * A round with no captured diff (a regeneration-only round) gets NO `diffFiles`, and a diff
+ * that parses to nothing gets none either — the ledger then offers no Round-diff control,
+ * rather than a control that lands on an empty surface.
+ */
+function withRoundDiffFiles(record: RoundRecord): RoundRecord {
+  if (record.diff === undefined || record.diff.trim().length === 0) return record;
+  const diffFiles = parseUnifiedDiffFiles(record.diff);
+  return diffFiles.length === 0 ? record : { ...record, diffFiles };
 }
 
 export function sessionHandlers(rt: DispatchRuntime) {
@@ -94,7 +137,7 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const input = parseCommandInput(name, rawInput);
       rt.requireReviewById(input.reviewId); // reachability: unknown review is a genuine error
       const records = rt.deps.roundRecordsForReview?.(input.reviewId) ?? [];
-      return parseCommandOutput(name, { records: [...records] });
+      return parseCommandOutput(name, { records: records.map(withRoundDiffFiles) });
     },
     "session.roundEvents": async (rawInput) => {
       const name = "session.roundEvents" as const;
@@ -113,6 +156,34 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // The sidebar's rows, straight off the durable session store. No store wired ⇒ an
       // honest empty sidebar: the capability is present, the rows are simply not there.
       return parseCommandOutput(name, { sessions: [...(rt.deps.sessions?.list() ?? [])] });
+    },
+    "session.mint": async (rawInput) => {
+      const name = "session.mint" as const;
+      // The New Chat front door (C21, #587). Starting a session is ONE host-owned act —
+      // capture, mint, claim, attach — because the client cannot make that sequence
+      // atomic and cannot resolve which repo of a workspace the row named. No store
+      // wired ⇒ `session: null`: nothing was started, said in the same honest language
+      // the sibling writes use, never a fabricated row the client would navigate into.
+      const input = parseCommandInput(name, rawInput);
+      const started = await rt.deps.sessions?.start({
+        projectId: input.projectId,
+        commandId: input.commandId,
+        ...(input.branch === undefined
+          ? {}
+          : {
+              target: {
+                branch: input.branch,
+                ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
+                // The row's `owner/name` (#580): a workspace's two `main` branches are two
+                // targets, not one — and it is what resolves the capture to the right repo.
+                ...(input.repository === undefined ? {} : { repository: input.repository }),
+              },
+            }),
+      });
+      return parseCommandOutput(name, {
+        session: started?.session ?? null,
+        reattached: started?.reattached ?? false,
+      });
     },
     "session.rename": async (rawInput) => {
       const name = "session.rename" as const;

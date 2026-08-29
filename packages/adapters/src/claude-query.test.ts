@@ -50,6 +50,23 @@ async function drain(session: { events: AsyncIterable<HarnessEvent> }): Promise<
 }
 
 describe("toSdkOptions", () => {
+  // W5: a Claude seat had no way to reach canvasOps at all while the Codex leg of the
+  // same council-routed job could. This is the missing surface, and it is ADDITIVE.
+  it("translates mcpServers into the SDK's HTTP server config", () => {
+    const sdk = toSdkOptions(
+      baseOptions({ mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } } }),
+    ) as Record<string, unknown>;
+    expect(sdk.mcpServers).toEqual({
+      canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
+    });
+    // Never strict: the user's own configured servers stay reachable alongside ours.
+    expect("strictMcpConfig" in sdk).toBe(false);
+  });
+
+  it("omits mcpServers entirely when Rennet has none", () => {
+    expect("mcpServers" in (toSdkOptions(baseOptions()) as Record<string, unknown>)).toBe(false);
+  });
+
   it("translates outputSchema into the SDK json_schema outputFormat", () => {
     const schema = { type: "object", properties: { ok: { type: "boolean" } } };
     const sdk = toSdkOptions(baseOptions({ outputSchema: schema })) as Record<string, unknown>;
@@ -58,6 +75,19 @@ describe("toSdkOptions", () => {
     // being constrained (the real turn is the backstop, but this catches it hermetically).
     expect(sdk.outputFormat).toEqual({ type: "json_schema", schema });
     expect("outputSchema" in sdk).toBe(false);
+  });
+
+  it("omits includePartialMessages unless the caller asked for partial frames", () => {
+    // The SDK emits NO `stream_event` frames unless this is set, so the adapter's
+    // text.delta mapping has no source. Opt-in (F1 Decision 4): pipeline turns keep
+    // their exact current frame volume.
+    const off = toSdkOptions(baseOptions()) as Record<string, unknown>;
+    expect("includePartialMessages" in off).toBe(false);
+    const on = toSdkOptions(baseOptions({ includePartialMessages: true })) as Record<
+      string,
+      unknown
+    >;
+    expect(on.includePartialMessages).toBe(true);
   });
 
   it("maps ephemeral to the SDK's persistSession: false, and omits it otherwise (#585)", () => {

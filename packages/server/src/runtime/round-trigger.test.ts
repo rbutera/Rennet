@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CodexExecutor, HarnessPort } from "@rennet/core";
+import { type CodexExecutor, type HarnessPort, lintReviewDraft } from "@rennet/core";
 import type {
   DraftBoard,
   Generation,
@@ -15,7 +15,11 @@ import type {
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
-import { assembleRoundCollation, runBoardRegeneration } from "./round-collation";
+import {
+  assembleRoundCollation,
+  type BoardRegenerationDeps,
+  runBoardRegeneration,
+} from "./round-collation";
 import { createRoundsRuntime, mintGeneration, type RoundInput } from "./rounds";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,6 +339,113 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
       },
     };
   }
+
+  // W5 -- the whole-tree citation grounding is best-effort. `fileInventory` reads git,
+  // and a repo git cannot answer (a tree with no text files makes `git grep` exit 1)
+  // must leave the boards drafting on the diff-derived inventories, which is the
+  // behaviour before W5 -- never sink a landed round over a lint input.
+
+  it("uses the tree inventory for citation grounding when the reader answers", async () => {
+    const { deps, seen } = reviewHarness();
+    await runBoardRegeneration(
+      {
+        ...deps,
+        fileInventory: async () => ({
+          head: new Map([["src/untouched.ts", 400]]),
+          base: new Map([["src/untouched.ts", 380]]),
+        }),
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      },
+    );
+    const ctx = seen[0]?.lintContextFor("design");
+    expect(ctx?.files.get("src/untouched.ts")).toBe(400);
+    expect(ctx?.baseFiles?.get("src/untouched.ts")).toBe(380);
+  });
+
+  // W5 finding 2 — the composed review draft is the surface the reviewer READS, and it
+  // was linted against an empty inventory: no composition root ever supplied
+  // `reviewDraftLintCtx`, so every real `path:line` in the draft came back "does not
+  // resolve". Visible-never-blocking, so nothing was deleted — the draft was just
+  // papered with false ungrounded marks. It must carry the boards' own head inventory.
+  it("grounds the composed review draft on the same head inventory as the boards", async () => {
+    const { deps, seen } = reviewHarness();
+    await runBoardRegeneration(
+      {
+        ...deps,
+        fileInventory: async () => ({
+          head: new Map([["src/untouched.ts", 400]]),
+          base: new Map(),
+        }),
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      },
+    );
+    const ctx = seen[0]?.reviewDraftLintCtx;
+    if (ctx === undefined) throw new Error("the round carried no review-draft lint context");
+    expect(ctx.files).toEqual(seen[0]?.lintContextFor("design").files);
+
+    const prose = "The refresh guard at src/untouched.ts:200 is correct.";
+    expect(lintReviewDraft(prose, ctx)).toEqual([]);
+    // POSITIVE CONTROL: the `{ files: new Map() }` default this used to fall back to.
+    expect(lintReviewDraft(prose, { files: new Map() }).map((v) => v.ruleId)).toEqual([
+      "citation-resolves",
+    ]);
+  });
+
+  it("degrades to the diff-derived inventories when the tree read REJECTS", async () => {
+    const { deps, seen, events } = reviewHarness();
+    await runBoardRegeneration(
+      {
+        ...deps,
+        fileInventory: async () => {
+          throw new Error("fatal: no text files in the tree");
+        },
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      },
+    );
+    // The round still drafted, on the diff-derived universe...
+    expect(seen[0]?.lintContextFor("design").patchsetId).toBe("ps-post");
+    // ...and the failure never reached the terminal handler.
+    expect(events.filter((e) => e.type === "failed")).toEqual([]);
+  });
+
+  it("degrades when the tree reader throws SYNCHRONOUSLY, not just on a rejection", async () => {
+    const { deps, seen, events } = reviewHarness();
+    await runBoardRegeneration(
+      {
+        ...deps,
+        fileInventory: (() => {
+          throw new Error("boom before the promise exists");
+        }) as unknown as NonNullable<BoardRegenerationDeps["fileInventory"]>,
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: { commitRange: { from: "c0", to: "c1" }, patchsetId: "c1" },
+      },
+    );
+    expect(seen[0]?.lintContextFor("design").patchsetId).toBe("ps-post");
+    expect(events.filter((e) => e.type === "failed")).toEqual([]);
+  });
 
   it("hands the drafters the worker's OWN diff, and files it under the successor generation", async () => {
     const { deps, seen } = reviewHarness();

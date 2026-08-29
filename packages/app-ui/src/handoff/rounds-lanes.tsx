@@ -86,6 +86,8 @@ export interface RoundsLanesProps {
    * the Open-PR CTA is present but disabled (honest); nothing another human sees leaves without it.
    */
   readonly onOpenPr?: () => Promise<PrReceipt>;
+  /** Why the daemon composed no pull request, in its own words — stated, never a silent absence. */
+  readonly unavailable?: string;
   /**
    * Selection-steer Revise, bound to B11's `review.reviseSpan` (cluster 8). Absent ⇒ the Rework
    * control is disabled and the panel says so — never a pretend run.
@@ -93,7 +95,14 @@ export interface RoundsLanesProps {
   readonly onRevise?: ReviseSpan;
 }
 
-export function RoundsLanes({ review, pr, onDispatch, onOpenPr, onRevise }: RoundsLanesProps) {
+export function RoundsLanes({
+  review,
+  pr,
+  onDispatch,
+  onOpenPr,
+  onRevise,
+  unavailable,
+}: RoundsLanesProps) {
   const patchsetId = review.activePatchsetId;
 
   // Subscribe to the stable `stagedAsks` map (it changes only on a real mutation) and memoize the
@@ -203,8 +212,10 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr, onRevise }: Roun
           <p className="text-sm text-muted-foreground">Nothing staged yet.</p>
         )}
 
-        {/* Dispatch Round: inert while nothing is staged (R37), and inert until C9 wires the round
-            run (`onDispatch`) — a live button with no handler would be a dead click that lies. */}
+        {/* Dispatch Round: inert while nothing is staged (R37), and inert when no round run is
+            wired (`onDispatch`) — a live button with no handler would be a dead click that lies.
+            The shipping tree DOES wire it (`routes/app.tsx` → `LiveRoundsScope`), so absent
+            `onDispatch` means a mount with no rounds source, not a permanently dead exit. */}
         <button
           ref={dispatchRef}
           type="button"
@@ -214,6 +225,13 @@ export function RoundsLanes({ review, pr, onDispatch, onOpenPr, onRevise }: Roun
         >
           Dispatch Round
         </button>
+
+        {/* The daemon refused to compose the pull request (a detached HEAD, a review that should
+            post as a review instead). Without this the lane just never became the PR and said
+            nothing about why — a silent dead end, not honest absence. A statement, not a gate. */}
+        {unavailable !== undefined && (
+          <p className="text-xs text-muted-foreground">{unavailable}</p>
+        )}
 
         {/* The destination, held quietly until the changes are gone. */}
         {pr && (

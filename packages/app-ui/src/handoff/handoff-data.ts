@@ -8,11 +8,12 @@ import { type ProposedVerdict, parseLineAnchor, partitionAsksByAnchor } from "./
 // render. Mirrors C3's `sidebar-data.ts`, C4's `citations.ts`, C5's `board-data.ts`:
 // no mode or draft shape is invented at a call site; every hand-off path goes through here.
 //
-// THE SWAP (cluster 8): the living-draft source is composed from the store's staged asks
-// TODAY. When B11's continuously-redrafted durable composition projection lands (and the
-// registered `publish.compose` read), THIS is the only file that changes — the lanes keep
-// reading `selectLivingDraft`. That is the seam's whole reason to exist. The span-rework
-// half of that swap is DONE: `reviseDraftSpan` below now fires B11's `review.reviseSpan`.
+// THE SWAP (cluster 8) is still OUTSTANDING: the living-draft source is composed from the
+// store's staged asks, in-memory, so it does not survive a reload. B11 landed its durable
+// half — the ask log and `publish.compose` are registered and served — but nothing here
+// reads them yet. When it does, THIS is the only file that changes; the lanes keep reading
+// `selectLivingDraft`. That is the seam's whole reason to exist. The span-rework half of
+// the swap IS done: `reviseDraftSpan` below fires the served `review.reviseSpan`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The hand-off entry mode a review dispatches on (Objective clause 3). */

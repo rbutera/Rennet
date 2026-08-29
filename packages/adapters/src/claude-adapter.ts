@@ -99,6 +99,22 @@ export interface ClaudeQueryOptions {
    * read back by `normalizeClaudeFrame`.
    */
   readonly outputSchema?: unknown;
+  /**
+   * Loopback MCP servers (canvasOps@2) the seat may call, as `name → { url }` —
+   * the same contract the Codex and OMP adapters carry. The composition root
+   * (`createClaudeQueryFn`) translates each into the SDK's HTTP server config.
+   *
+   * W5 — a Claude seat has NO way to reach canvasOps at all while the Codex and OMP
+   * adapters carry the surface. This closes that asymmetry in the ADAPTER, and it is
+   * additive: the SDK's `strictMcpConfig` is deliberately never set, so the user's
+   * own configured servers stay reachable alongside Rennet's.
+   *
+   * INERT UNTIL A SERVER EXISTS. Nothing in `packages/server` stands a loopback
+   * canvasOps@2 server up, so no composition root supplies this yet and no live seat
+   * gains a tool from it today. It is a surface waiting on that server, not a
+   * capability already delivered — do not read it as one.
+   */
+  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly appendSystemPrompt?: string;
   /**
    * The harness session id to resume (B09 cursor-resume). The composition root
@@ -106,6 +122,12 @@ export interface ClaudeQueryOptions {
    * `claude` continues that conversation. Absent ⇒ a fresh session.
    */
   readonly resume?: string;
+  /**
+   * Ask the SDK for partial-message frames (`stream_event`), the source of every
+   * `text.delta` / `thinking.delta` this adapter maps. The SDK emits NONE unless
+   * asked, so without this a turn settles in one lump. Absent ⇒ settled frames only.
+   */
+  readonly includePartialMessages?: boolean;
   /**
    * #585: the session is Rennet's internal one-shot work, not the user's. The
    * composition root maps this to the SDK's `persistSession: false`, so the turn
@@ -539,6 +561,9 @@ export interface ClaudeAdapterConfig {
   /** Base environment the child inherits (the SDK replaces the child env wholesale). */
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly testedRange?: { readonly min: string; readonly maxTested: string };
+  /** Loopback MCP servers applied to every session (W5). No composition root supplies
+   *  this yet — see {@link ClaudeQueryOptions.mcpServers}. */
+  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
 }
 
 class ClaudeSession implements HarnessSession {
@@ -689,6 +714,10 @@ export class ClaudeAdapter implements HarnessPort {
       ...(spec.model === undefined ? {} : { model: spec.model }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
+      // The MCP surface (W5), configured on the adapter exactly as the Codex adapter
+      // carries it, so every session this harness creates would reach it. Nothing
+      // configures it today — no loopback canvasOps server is stood up.
+      ...(this.#config.mcpServers === undefined ? {} : { mcpServers: this.#config.mcpServers }),
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }
         : {}),
@@ -696,6 +725,10 @@ export class ClaudeAdapter implements HarnessPort {
       // fresh `claude` process continues the prior conversation (the CLI owns the
       // transcript; Rennet persists only this pointer). Absent ⇒ a fresh session.
       ...(spec.resume === undefined ? {} : { resume: spec.resume.harnessSessionId }),
+      // Partial-message streaming (F1): the source of `text.delta`/`thinking.delta`.
+      ...(spec.streamPartialText === undefined
+        ? {}
+        : { includePartialMessages: spec.streamPartialText }),
       ...(spec.ephemeral === undefined ? {} : { ephemeral: spec.ephemeral }),
     };
   }

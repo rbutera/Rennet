@@ -109,8 +109,34 @@ branch rows appear immediately; pull-request rows join as each repository
 finishes loading, and the progress names the repository being read rather than
 guessing a percentage. If GitHub is unreachable, local work stays available.
 
-Start a row and the session claims that target. A claimed target leaves the
-list, so two sessions can never fight over one branch. Sessions nest under their
+Clicking a row starts the session — it is not a selection you then confirm.
+Rennet mints the session, claims that target, and captures what changed on it in
+one act, then takes you into it. Anything already typed in the composer travels
+with you as the opening ask, waiting in the chat box rather than being sent for
+you.
+
+What gets captured depends on the row. A pull-request row opens that pull
+request's diff. The pinned **Current Checkout** row captures your working tree,
+uncommitted edits included. A local branch row captures that branch's own
+commits — everything since it left the project's primary branch — **without
+checking it out**. Nothing on disk moves, and you can review a branch you are not
+standing on.
+
+That difference matters once you are reading. A working-tree capture is watched:
+edit the repository and the review says it went stale, and offers to regenerate.
+A branch or pull-request review is a snapshot of fixed commits, so it is not
+watched and never claims to have gone stale — there is nothing for it to drift
+against.
+
+A branch with no commits of its own — already merged, or identical to its base —
+opens as an empty review. That is the honest answer rather than a click that
+appears to do nothing.
+
+A claimed target leaves the list, so two sessions can never fight over one
+branch; clicking the same target again returns you to the session that owns it
+rather than starting a second. The pinned **Current Checkout** row is the
+exception: it starts a session about the project as a whole, claims nothing, and
+so never leaves the list. Sessions nest under their
 project in the sidebar, each leading with the target icon its claim proves — a
 branch glyph, or a pull-request glyph once the session claims a PR. Whether a
 teammate authored that PR, and whether its review is waiting on you, are not
@@ -192,9 +218,12 @@ comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
 **Say it in chat.** The chat column beside the surface is one continuous
-conversation with the orchestrator that travels with you across every board.
-Ask it something, tell it what you have concluded, and it stages the result and
-narrates the receipt in the transcript.
+conversation with the orchestrator that travels with you across every board. Ask
+it about the change and it runs a real turn on your own `claude` — grounded in
+this review's diff, able to read the repository — and streams the answer back as
+it arrives. The exchange persists, so it is still there after a reload. Chat
+answers; it does not yet stage asks for you. Stage those from the board, a line,
+or a highlighted span.
 
 ## Stage asks
 

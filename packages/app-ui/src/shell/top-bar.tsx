@@ -82,7 +82,8 @@ export function TopBar() {
   // handoff select none (value = []), never the "" sentinel (S6).
   const pillValue = PILL.some((p) => p.view === query.view) ? [query.view] : [];
 
-  // Resolve the trail from the active session row (empty until B9 — then just the slug).
+  // Resolve the trail from the active session row; a slug in no row falls back to the
+  // slug alone rather than inventing a project or a target.
   const activeSession = hosts
     .flatMap((h) => h.projects)
     .flatMap((project) => project.sessions.map((session) => ({ session, project })))

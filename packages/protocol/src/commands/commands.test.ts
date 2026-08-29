@@ -30,7 +30,9 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // (C18 — the C12 cluster-7 write both the sidebar row and the Settings identity field call,
 // where an emptied name restores the org/repo fallback) and the four session commands the
 // sidebar honest-empty projection was waiting on (session.list plus rename/setPinned/
-// archive, each persisted so it survives reload). A
+// archive, each persisted so it survives reload), plus session.mint (C21 — the New Chat
+// front door: a row click mints a durable session AND claims its target in one act, the
+// server path C12's cluster 7 was gated on and never came back for). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row — and with its row in docs/developing/reference/command-menu-exposure.md,
 // which carries a menu-exposure verdict for every command in this list.
@@ -115,6 +117,7 @@ const ABSORBED_IDS = [
   "round.dispatch",
   "session.archive",
   "session.list",
+  "session.mint",
   "session.rename",
   "session.roundEvents",
   "session.rounds",
@@ -140,8 +143,8 @@ const ABSORBED_IDS = [
 // unexposed; no navigate command exists yet). Mirrors AGENT_EXPOSED in index.ts so an
 // exposure edit is deliberate.
 // `repository.choose` + `project.discover` are the add-project prerequisites (the
-// tool cannot fabricate a DiscoveryResult); `navigate` stays out until C11 (a
-// client-locus row would force a host dispatch handler). Kept sorted — the invariant
+// tool cannot fabricate a DiscoveryResult); `navigate` stays out (a client-locus row
+// would force a host dispatch handler, and C11 shipped the menu without one). Kept sorted — the invariant
 // test compares against the alphabetically sorted list of agent-exposed ids.
 const AGENT_INVENTORY = [
   "project.discover",
@@ -159,7 +162,7 @@ const AGENT_INVENTORY = [
 ] as const;
 
 // The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
-// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 95 commands
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 97 commands
 // lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
 // input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
 // an action rather than a UI-driven read, and its output is not the point.
@@ -168,7 +171,7 @@ const MENU_INVENTORY = ["github.disconnect"] as const;
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(99);
+    expect(ABSORBED_IDS).toHaveLength(100);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

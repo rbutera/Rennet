@@ -53,7 +53,8 @@ export function parseDeepLink(url: string): LinkTarget | null {
  * The expo-router href for a target under a specific daemon. `ask` lands on the live turn screen
  * (the ask is answered there, wireframe 22) and `publish` on the publish preview (wireframe 23) —
  * both M2 surfaces. `handoff` lands on the digest (its dedicated surface is secondary per the
- * ideation doc; the review is fully readable there — no dead link, no lie).
+ * ideation doc). The digest is a real screen that states what it does and does not carry — while
+ * the Board rebuild has not reached mobile it says so rather than offering a read that dead-ends.
  */
 export function routeHref(daemonId: string, target: LinkTarget): string {
   const base = `/daemon/${encodeURIComponent(daemonId)}`;

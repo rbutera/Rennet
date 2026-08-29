@@ -33,6 +33,12 @@ export {
   removeDaemonFile,
   writeDaemonFile,
 } from "./daemon-file";
+// The command router itself, exported for the same reason `startWsListener` below is: the
+// app layer is the only one that may hold BOTH a real dispatch and a real client/renderer,
+// so a seam that spans them (a code citation resolving from the daemon into a rendered
+// CodeBlock) can only be proven there. Production still composes it through
+// `createRennetServer`; nothing else should call this directly.
+export { createDispatch, type DispatchDeps } from "./dispatch";
 export {
   type DaemonVerdict,
   findHealthyDaemon,

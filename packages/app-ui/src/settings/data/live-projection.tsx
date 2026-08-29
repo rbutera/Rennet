@@ -32,7 +32,7 @@ import type { Layered } from "./provenance";
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE settings projection (C10 §10.1, the fold wiring). This seam is the one
 // place a projection read binds to a landed backend instead of resolving honest-empty.
-// After the B10 + B7 + C16 + C17 folds, FOUR projection fields have a served backend:
+// After the B10 + B7 + C16 + C17 folds, these have a served backend:
 //
 //   • hosts ← `settings.get.daemonHosts` (the enumeration + each host's label) joined
 //     by `source` with `daemon.status` (C17 cluster 2), which asks each host's daemon
@@ -89,11 +89,14 @@ import type { Layered } from "./provenance";
 //     answer, never a hand-recomputed one); the `settings.get` read is invalidated so
 //     the reload settles on disk truth.
 //
-// Every OTHER field stays EMPTY on purpose — the backend does not exist even post-fold,
-// so honest-empty is the truthful answer, not a stub. Each named in the cluster-10 report:
+// Two fields stay EMPTY on purpose — no backend serves them, so honest-empty is the
+// truthful answer, not a stub. Named in the cluster-10 report:
 //   – projectCount / sessionCount on a host card: `daemonHosts` enumerates hosts but
 //     carries no per-host counts, so the Remove confirmation names none rather than a
 //     fabricated blast radius.
+// `nameByProject` is also left empty, deliberately: the project name is read back off
+// `projects.list` after `project.rename`, so a second copy here would be the stale one.
+// `renameHost` and `removeHost` also keep the default no-op: no command backs either.
 //
 // The per-project PREFS are served now (C18 group A): glyphByProject / worktreeByProject /
 // trackerByProject / guidanceByProject read `settings.get`'s resolved `prefs`, and their

@@ -1,4 +1,9 @@
-import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet/protocol";
+import {
+  commandIdFor,
+  type ProcessedRepoSummary,
+  type Project,
+  type ProjectProcessEvent,
+} from "@rennet/protocol";
 import { Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, Loader2, MapIcon, MessageSquarePlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -29,14 +34,12 @@ import { selectBackgroundEvents, useRennetStore } from "../../store";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One stable protocol-valid commandId per project, so a remount re-attaches to the
- *  main-owned live run (leaving early never cancels it) instead of minting a fresh one. */
-const processCommandIds = new Map<string, string>();
+ *  main-owned live run (leaving early never cancels it) instead of minting a fresh one.
+ *  DERIVED, not memoized (#588): a module-level map is per-module, so the two surfaces
+ *  that start this run each held their own and minted DIFFERENT ids for the same project.
+ *  `commandIdFor` is a pure hash of the key — one id, from every caller, with no state. */
 function processCommandId(projectId: string): string {
-  const existing = processCommandIds.get(projectId);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  processCommandIds.set(projectId, created);
-  return created;
+  return commandIdFor(`project.process:${projectId}`);
 }
 
 type Provenance = "detected" | "guessed";
@@ -349,23 +352,32 @@ function CompletionBlock({
   const failedRepos = summaries.filter((repo) => !repo.ok);
 
   // The honest state: a failed/partial run, or an ok run whose map didn't materialise.
+  // `pending` is its OWN state, not a lean toward readiness: while `project.contextMap`
+  // is still in flight `contextMap` is undefined, so nothing reads as unavailable — and
+  // claiming "Context Map Ready" there asserts a map we have not yet been told exists,
+  // then retracts it when an absent map lands. The block says what it knows and waits.
   const state =
     outcome === "failed"
       ? "failed"
       : outcome === "partial"
         ? "partial"
-        : mapUnavailable
-          ? "unavailable"
-          : "ready";
+        : contextMap == null
+          ? "pending"
+          : mapUnavailable
+            ? "unavailable"
+            : "ready";
   const heading =
     state === "ready"
       ? "Context Map Ready"
       : state === "partial"
         ? "Context map built — some repositories didn't index"
-        : state === "unavailable"
-          ? "Indexing finished — the context map isn't ready yet"
-          : "Indexing failed";
-  const tone = state === "ready" ? "text-green" : "text-danger";
+        : state === "pending"
+          ? "Indexing finished — reading the context map"
+          : state === "unavailable"
+            ? "Indexing finished — the context map isn't ready yet"
+            : "Indexing failed";
+  const tone =
+    state === "ready" ? "text-green" : state === "pending" ? "text-ink-faint" : "text-danger";
   const hasMap = state === "ready" || state === "partial";
 
   return (
@@ -426,9 +438,11 @@ function ProvenanceChip({ provenance }: { provenance: Provenance }) {
  * Settings → Projects. Escape inside a field blurs it (and stops the view's Escape), never
  * leaving the view. The logo/mark is cosmetic and never enters agent context.
  *
- * ponytail: edits live in component state only. There is no project-config WRITE command in
- * the protocol yet (Settings → Projects is C10), so "Looks right" does NOT claim it saved —
- * it dismisses the card and points the reviewer at Settings, where the real edit will land.
+ * ponytail: edits live in component state only. This card writes nothing. A project-config
+ * WRITE now exists for part of it — `settings.setProjectValue` (C18 group A) covers the
+ * tracker and worktree keys, though not branch / gate / logo — and this card does not use
+ * it. So "Looks right" does NOT claim it saved: it dismisses the card and points the
+ * reviewer at Settings → Projects, where the served edit does land.
  */
 function ScoutQuestionnaire({
   answers,

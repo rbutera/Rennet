@@ -246,7 +246,57 @@ describe("FirstRunWelcome", () => {
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=rennet"));
   });
 
-  it("blocks review setup with a friendly install path, then rechecks detection", async () => {
+  it("mounts no shell, so adding a project mid-welcome paints no coach mark", async () => {
+    // The regression control for D7. Coach marks are ARMED here (no `seen`, no
+    // skipAll) — the opposite of the rest of this file — and the project is added
+    // FROM the wizard, which invalidates `projects.list`. Against the old code that
+    // is the exact failing shape: the shell sat mounted in a `display:none` underlay,
+    // the freshly non-empty list rendered `NewChatView` inside it, its `new-chat`
+    // anchor registered, the store elected "Start Here", and the coachmark — a portal
+    // to `document.body`, outside the underlay and outside its `inert` — painted its
+    // spotlight and card over the wizard. Unmounting the shell removes the anchor.
+    const history = memoryHistory("/new-chat");
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "settings.get": () => ({ ...freshSettings(), coachmarks: undefined }),
+        })}
+        history={history}
+      />,
+    );
+    await advanceToReviewSetup();
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    const add = await screen.findByRole("button", { name: "Add" });
+    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(add);
+    // The wizard advances to its own last stage — it is still the only thing on screen.
+    await screen.findByRole("button", { name: "Start a new chat" });
+    expect(screen.queryByTestId("chat-dock-slot")).toBeNull();
+    // Every coach mark paints as a Popover card; none is here, by name or by slot.
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull();
+    expect(screen.queryByText("Start Here")).toBeNull();
+    expect(screen.queryByText("Ready to Go")).toBeNull();
+  });
+
+  // Named for what the reviewer can DO, not for a restriction that holds. The title this
+  // replaced — "blocks review setup with a friendly install path" — read as a courtesy and
+  // pinned a first-run trap for a whole release; the name did the reviewer's thinking.
+  //
+  // Every clause below maps to an assertion in the body, deliberately: "discloses" to the
+  // copy and the install link, "Continue still live" to the enabled check, "picks up one
+  // they install" to the recheck. An earlier draft of this title said the reviewer could
+  // "continue" — which this body never does, it only proves the button is there and
+  // enabled. That is the same overclaim as the title being replaced, one release later.
+  // The proof that Continue actually WORKS is the sibling ZERO-harnesses test, which
+  // clicks through to the app; a button existing is not a button working.
+  it("discloses the missing harness with Continue still live, then picks up one they install", async () => {
+    // What the DAEMON would answer right now, not "answer differently on the Nth call".
+    // The count of reads before the click is not the point and is not this test's business:
+    // the tree the welcome mounts into re-parents on first run, and a re-mounted reader
+    // re-reads by design (harness detection changes while a surface is closed — that is
+    // exactly what "Check again" exists for). Keyed on installed-or-not, the assertion is
+    // about the button: one click, one fresh read, and the surface moves on.
+    let installed = false;
     let checks = 0;
     mount(
       <RennetRouterApp
@@ -258,7 +308,7 @@ describe("FirstRunWelcome", () => {
                 {
                   source: "local",
                   asked: true,
-                  detected: checks === 1 ? [] : [{ id: "codex", version: "0.38.0", enabled: true }],
+                  detected: installed ? [{ id: "codex", version: "0.38.0", enabled: true }] : [],
                 },
               ],
             };
@@ -269,13 +319,64 @@ describe("FirstRunWelcome", () => {
     );
     await advanceToReviewSetup();
     expect(screen.getByText("Rennet couldn’t detect Claude Code or Codex.")).toBeTruthy();
+    // The consequence sentence is what REPLACED the gate, so it is load-bearing and pinned
+    // here. Letting someone through while silently dropping this is worse than the gate was:
+    // they land in the app with no idea why review turns never run.
+    expect(screen.getByText(/can’t run review turns until one is installed/)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Installation guide/ }).getAttribute("href")).toContain(
       "install-a-coding-harness",
     );
-    expect(screen.queryByRole("button", { name: /^Continue$/ })).toBeNull();
+    // Rule Zero: the missing harness is DISCLOSED, never enforced. Continue stays live and
+    // enabled, so an empty machine is told what it is missing and then let through.
+    const proceed = screen.getByRole("button", { name: /^Continue$/ });
+    expect((proceed as HTMLButtonElement).disabled).toBe(false);
+
+    // The reviewer goes and installs one, then asks Rennet to look again.
+    const before = checks;
+    installed = true;
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await screen.findByText("Codex will orchestrate reviews.");
-    expect(checks).toBe(2);
+    expect(checks).toBe(before + 1);
     expect(screen.getByRole("button", { name: /^Continue$/ })).toBeTruthy();
+  });
+
+  it("reaches the app on a machine with ZERO harnesses installed", async () => {
+    // The harm control for the Rule Zero regression: someone installs Rennet BEFORE any
+    // coding harness. `ids.length` used to decide whether a Continue button existed at all,
+    // so this reviewer could not finish the welcome, could not add a project, and could not
+    // reach the app — ever. This drives that exact machine to New Chat. A fixture with a
+    // harness detected cannot see this bug, which is why the old test never did.
+    const enabled = vi.fn(() => ({ disabled: [] }));
+    const role = vi.fn(() => ({ reviewRoles: [...ROLES] }));
+    const history = memoryHistory("/new-chat");
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "harness.hosts": () => ({ hosts: [{ source: "local", asked: true, detected: [] }] }),
+          "harness.setEnabled": enabled,
+          "settings.setRoleAssignment": role,
+        })}
+        history={history}
+      />,
+    );
+    await advanceToReviewSetup();
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+
+    await screen.findByText("Add the code you’re responsible for.");
+    const add = await screen.findByRole("button", { name: "Add" });
+    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(add);
+
+    // Ready tells the truth about the empty machine instead of inventing an orchestrator.
+    await screen.findByRole("button", { name: "Start a new chat" });
+    expect(screen.getByText("None installed")).toBeTruthy();
+    expect(screen.getByText("No harness yet")).toBeTruthy();
+    expect(screen.getByText(/Rennet can’t run review turns yet/)).toBeTruthy();
+    // Nothing was enabled and no role was assigned, because nothing was detected.
+    expect(enabled).not.toHaveBeenCalled();
+    expect(role).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=rennet"));
   });
 });

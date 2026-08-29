@@ -72,11 +72,9 @@ export {
   CODEX_EXEC_BIN,
   type CodexAvailability,
   type CodexExecEffects,
-  type CodexUtilityAdapterDeps,
   type CodexVersionProbe,
   type CreateCodexExecutorOptions,
   createCodexExecutor,
-  createCodexUtilityAdapter,
   defaultCodexExecEffects,
   defaultCodexVersionProbe,
   discoverCodexAvailability,
@@ -410,6 +408,10 @@ export {
   defaultProjectDetailSourceDeps,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
+  // The repo's stable `owner/name` (else its durable common-dir alias). Exported because
+  // the host must answer WHICH repo of a workspace a New Chat row named (#587), and this
+  // is the same identity the row itself was built from — a second derivation would drift.
+  repositoryIdentity,
 } from "./project-detail-source";
 export {
   defaultProjectDiscoveryDeps,
@@ -452,6 +454,7 @@ export {
 export { ensureProjectSnapshotPin, projectSnapshotPinResolver } from "./project-snapshot-pin";
 export {
   listTree,
+  listTreeLineCounts,
   matchesGlob,
   parseWorkspaceGlobs,
   type ResolvedBase,
@@ -459,6 +462,7 @@ export {
   readConventions,
   readOwnership,
   readTests,
+  readTreeLineCounts,
   readWorkspaceStructure,
   resolveBaseRef,
   type WorkspaceStructure,

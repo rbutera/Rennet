@@ -1,7 +1,8 @@
 // The settings data seam (C10 §2) — the single resolution point every settings page
-// reads and writes through. Two lifetimes behind one barrel: the LIVE `settings.*`
-// commands (`live.ts`), and the B10-absent PROJECTIONS (`projections.tsx`) that resolve
-// through a context until the engine lands. `settings-data.ts` (the spike fixture) has
+// reads and writes through. Two routes behind one barrel: the direct `settings.*`
+// command hooks (`live.ts`), and the PROJECTION (`projections.tsx`) that resolves
+// through a context — bound to real commands by `live-projection.tsx` in the app, and
+// to a stateful fixture in tests. `settings-data.ts` (the spike fixture) has
 // no successor here (reconciliation 8) — data lives behind a MemoryBridge or the
 // projection provider, never an importable fixture module.
 
@@ -33,4 +34,4 @@ export {
   useSettingsProjection,
   type WorktreeSettings,
 } from "./projections";
-export { type Layered, toProvenance } from "./provenance";
+export type { Layered } from "./provenance";

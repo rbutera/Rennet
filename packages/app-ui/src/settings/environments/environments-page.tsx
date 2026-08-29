@@ -17,7 +17,7 @@ import { HostCard } from "./host-card";
 //
 // Every host — this machine and each paired one — comes from the projection, which
 // C17 binds to the real per-host detection (`settings.get.daemonHosts` enumerated,
-// `daemon.status` probed, `forge.detect` / `harness.hosts` folded per host). The
+// `daemon.status` probed, `forge.hosts` / `harness.hosts` folded per host). The
 // bridge-synthesised local card below is the fallback for the ZERO-projection case
 // only: before the reads resolve, or when they fail, the one host still honestly
 // knowable is this machine (its platform and running app version come straight from

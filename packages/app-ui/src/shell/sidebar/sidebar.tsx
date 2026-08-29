@@ -36,7 +36,6 @@ import {
   ChevronDown,
   CircleHelp,
   FolderPlus,
-  Layers,
   Loader2,
   Map as MapIcon,
   MessageSquarePlus,
@@ -66,6 +65,8 @@ import {
   sessionPath,
   settingsPath,
 } from "../../routes/url";
+import { ProjectIcon } from "../../settings/assets/project-icon";
+import { useSettingsProjection } from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { CornerSlot, useMacTrafficLights } from "../corner-slot";
 import {
@@ -90,9 +91,8 @@ import { TargetIcon } from "./target-icon";
 //
 // One persistent `<aside>` animates 256px panel ↔ 0; collapsed means hidden (C20),
 // and the one collapse/expand toggle rides the corner slot wherever it mounts.
-// Sessions are B9's
-// projection — until it lands the live client shows an honest empty state and the
-// row/mutation proofs run over the projection context (reconciliation 2).
+// Sessions come from the served `session.list` read (`sidebar-data.ts`), which B9
+// landed — the rows below are live, not an honest-empty placeholder waiting on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DOCS_URL = "https://docs.rennet.dev";
@@ -238,6 +238,7 @@ function NewChatPicker({
   readonly onNewProject: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { glyphByProject } = useSettingsProjection();
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={trigger as ReactElement} />
@@ -256,7 +257,10 @@ function NewChatPicker({
                     onPick(project.id);
                   }}
                 >
-                  <Icon icon={Layers} className="size-3.5 text-ink-soft" />
+                  <ProjectIcon
+                    icon={glyphByProject[project.id]}
+                    className="size-3.5 text-ink-soft"
+                  />
                   <span>{project.name}</span>
                 </CommandItem>
               ))}
@@ -470,6 +474,7 @@ function SidebarTree() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
   const projection = useSidebarSessionProjection();
+  const { glyphByProject } = useSettingsProjection();
   const removeProject = useRemoveProject();
   const { activeSlug, activeProjectId, standingIn } = useActiveRoute();
 
@@ -565,7 +570,10 @@ function SidebarTree() {
                           !expanded && "-rotate-90",
                         )}
                       />
-                      <Icon icon={Layers} className="size-3.5 shrink-0 text-ink-faint" />
+                      <ProjectIcon
+                        icon={glyphByProject[project.id]}
+                        className="size-3.5 shrink-0 text-ink-faint"
+                      />
                       <span className="flex-1 truncate">{project.name}</span>
                       {project.indexing ? (
                         <span className="flex items-center gap-1 text-2xs text-ink-faint">
@@ -614,9 +622,11 @@ function SidebarTree() {
                       <Icon icon={MapIcon} />
                       View Context Map
                     </ContextMenuItem>
-                    {/* Project rename is omitted until B9 supplies the real rename
-                        seam — an inert editor that snaps the name back is worse than
-                        no action (a live no-op lies about what happened). */}
+                    {/* No rename item here. The seam exists and is served —
+                        `project.rename` is registered, dispatched, and bound by
+                        `sidebar-data.ts`'s `renameProject` — but nothing in this menu
+                        calls it, so the project name is renamed from Settings →
+                        Projects. Tracked on #572 (F3). */}
                     <ContextMenuItem onClick={() => navigate(projectSettingsPath(project.id))}>
                       <Icon icon={Settings2} />
                       Project Settings
@@ -731,7 +741,7 @@ export function Sidebar() {
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
           {/* Header — state 1's corner slot: lights → wordmark → toggle (C20).
-              The 76px light reserve, the `navigation-titlebar` drag rule and the
+              The 81px light reserve, the `navigation-titlebar` drag rule and the
               collapse toggle all live in `CornerSlot` now; the lockup is the real
               scheme-swapped vector artwork (never a font), dropped 16px → 14px on
               darwin so it still clears the toggle inside the 256px panel (#557). */}

@@ -17,10 +17,10 @@ import { MemoryBridge, type MemoryBridgeHandlers } from "../memory-bridge";
 // bridge context (the fence test keeps that true); this is not an importable data
 // module a surface could reach.
 //
-// The B10-absent projections (environments, detection, mappings, glyphs, worktree,
-// tracker) do NOT ride these commands — they resolve through the `SettingsProjection`
-// context (no new dispatch binding in C10, reconciliation 5). This fixture serves only
-// the eight commands that exist on `main`.
+// The PROJECTED reads (environments, detection, mappings, glyphs, worktree, tracker)
+// do NOT ride these commands — they resolve through the `SettingsProjection` context,
+// which the app binds to real commands in `live-projection.tsx` and a test binds to a
+// stateful fixture. This fixture serves only the eight `settings.*` commands.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Provenance for a value resolved from the global rung over the builtin default. */

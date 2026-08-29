@@ -98,7 +98,7 @@ describe("#585 live positive control", () => {
     "codex: the shipped utility executor writes no rollout",
     async () => {
       const before = countCodex();
-      const executor = createCodexExecutor();
+      const executor = createCodexExecutor(undefined, { repoRoot: process.cwd() });
       const out = await executor({
         prompt: 'Emit {"ok": true}.',
         model: "gpt-5.6-luna",

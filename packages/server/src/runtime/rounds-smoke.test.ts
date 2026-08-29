@@ -169,6 +169,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
             ...(codexProbe.chosen.runtimePath === undefined
               ? {}
               : { runtimePath: codexProbe.chosen.runtimePath }),
+            repoRoot,
           })
         : null;
       console.log(
@@ -236,6 +237,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
         deltaPacket,
         hunks,
         lintContextFor,
+        reviewDraftLintCtx: { files: new Map([["src/greet.ts", 3]]) },
       });
       const elapsedMs = Date.now() - started;
 

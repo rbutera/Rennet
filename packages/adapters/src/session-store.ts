@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addThread, archive } from "@rennet/core";
+import { addThread, archive, attachReview } from "@rennet/core";
 import { type SessionModel, SessionModelSchema, type SessionThread } from "@rennet/protocol";
 
 /**
@@ -166,6 +166,22 @@ export class SessionStore {
     const next = { ...session };
     if (pinned) next.pinned = true;
     else delete next.pinned;
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Attach a captured review to a session (#587) — the 1:0..1 reference the session model
+   * declares. A session that ALREADY holds a review keeps it and is returned untouched: a
+   * session attaches at most one review (`core`'s `attachReview` refuses a second), and the
+   * New Chat front door only captures for a session with none, so re-pointing here would
+   * only ever be a race rewriting history. `undefined` if the session is absent.
+   */
+  attachReview(sessionId: string, reviewId: string): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    if (session.reviewId !== undefined) return session;
+    const next = attachReview(session, reviewId);
     this.save(next);
     return next;
   }

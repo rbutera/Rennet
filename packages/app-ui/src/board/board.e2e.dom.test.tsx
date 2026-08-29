@@ -5,7 +5,7 @@ import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
 import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
 import { resolveBoard } from "./board-data";
 import { LensBoardView } from "./board-view";
 
@@ -44,11 +44,15 @@ const CONTENT_KINDS = [
 ] as const;
 
 async function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
-  // Boards arrive over the real `board.read` command; nothing else is stubbed, so board
-  // citations read the honest error the document renders around (Reconciliation 2),
-  // exactly as the live seam behaves for a span outside the captured patchset.
+  // Boards arrive over the real `board.read` command. The span read REFUSES the way the
+  // daemon refuses a span outside the captured diff, so this asserts the document renders
+  // around a citation's honest refusal — not around a harness artefact.
   const result = mount(
-    <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+    <BridgeProvider
+      bridge={
+        new MemoryBridge({ "board.read": fixtureBoardRead, "patchset.readSpan": refusesSpanRead })
+      }
+    >
       <LensBoardView reviewId="rev-1" generation={generation} generations={generations} />
     </BridgeProvider>,
   );
@@ -99,9 +103,9 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(seen.has("board-section")).toBe(true);
   });
 
-  it("code_ref content flows to the real surface through its citation UI (honest error while unbound)", async () => {
+  it("code_ref content flows to the real surface through its citation UI (refusal relayed)", async () => {
     // code_ref never dispatches as a bare child; it composes into decision evidence
-    // (CodeTabs) / annotation (AnchorReveal). With dispatch unbound the seam reads the
+    // (CodeTabs) / annotation (AnchorReveal). With the span read refusing, the seam reads the
     // honest error line — proof the code_ref → AnchorReveal → CodeBlock path is live on
     // the real surface, not just in the isolated pool test.
     const { container, user } = await renderView("gen1");
@@ -115,9 +119,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
         ).length,
       ).toBeGreaterThan(0),
     );
-    await waitFor(() =>
-      expect(container.textContent).toMatch(/is not readable from the captured patchset/),
-    );
+    await waitFor(() => expect(container.textContent).toMatch(new RegExp(SPAN_OUTSIDE_CAPTURE)));
   });
 
   it("every fixture board round-trips THROUGH the seam (resolveBoard), identity and all", () => {

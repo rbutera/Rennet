@@ -74,11 +74,9 @@ device-flow fallback stores one credential as a single file named
 permissions. Anyone who can read that file can act as you on GitHub until you
 disconnect.
 
-| Platform | Location |
-| --- | --- |
-| macOS | `~/Library/Application Support/Rennet/github-token` |
-| Windows | `%APPDATA%\Rennet\github-token` |
-| Linux | `~/.config/Rennet/github-token` |
+Rennet keeps all of its state in one directory, `~/.rennet`, on every platform,
+so the credential is at `~/.rennet/github-token`. Pass `--data-dir` (or set
+`RENNET_USER_DATA`) to put it somewhere else.
 
 On Windows with a WSL project, the daemon runs inside the distro and keeps the
 token there. See [Windows and WSL](./windows-and-wsl.md).

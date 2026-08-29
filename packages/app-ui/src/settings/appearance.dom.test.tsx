@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 //
 // C10 §6.2/§6.4 — the Appearance page's Theme Pack + Code Theme rows over the app-global
-// `useThemePref`. Both are live-applying pill rows with NO protocol command (B10-absent
-// client prefs): picking a pack stamps `data-rn-theme` on the document root and picking a
+// `useThemePref`. Both are live-applying pill rows with NO protocol command (client-only
+// prefs): picking a pack stamps `data-rn-theme` on the document root and picking a
 // code theme stamps `data-rn-code-theme`, INDEPENDENTLY — the CSS packs wired into
 // `@rennet/theme/theme.css` re-bind every --rn-* token off those attributes. The default
 // pack (Affineur's Bench) and the default code theme ("Follow theme") CLEAR their

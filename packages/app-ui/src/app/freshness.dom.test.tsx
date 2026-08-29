@@ -24,7 +24,7 @@ const REPO = "/home/dev/widget";
 /** A review whose active patchset carries `source` — the provenance the route gates on. */
 function reviewAt(
   status: "current" | "invalid",
-  source: "local" | "github-local" | "github-rest" = "local",
+  source: "local" | "local-branch" | "github-local" | "github-rest" = "local",
 ): Review {
   return {
     id: "rv-1",
@@ -100,8 +100,15 @@ describe("invalidation UX (#576)", () => {
   // `ReviewInvalidated`, claim a change that never happened, and let Regenerate REPLACE the PR
   // diff with a local capture. `repositoryDirty` is one global flag, so this is reachable by
   // editing any watched repo and then opening a PR review.
-  for (const source of ["github-local", "github-rest"] as const) {
-    it(`never asks freshness for a ${source} PR snapshot, and never calls it stale`, async () => {
+  // …and `local-branch` (#587) is the same fact for a LOCAL branch. New Chat's branch row
+  // captures `merge-base(primary, branch)...branch` over pinned OIDs without checking the
+  // branch out, so it is every bit as much a snapshot as a PR's. It is spelled distinctly
+  // from `local` for exactly this line: `local` means the WORKING-TREE capture, and had the
+  // branch range borrowed that word, the route would ask freshness for it, the daemon would
+  // answer against this clone's tree, the ids could never match, and Regenerate would
+  // replace the reviewed range with a working-tree capture.
+  for (const source of ["github-local", "github-rest", "local-branch"] as const) {
+    it(`never asks freshness for a ${source} snapshot, and never calls it stale`, async () => {
       // `invalid` is the worst case on purpose: even a review already carrying that status must
       // not be narrated as "the repository changed" when it is not a working-tree capture.
       const { r, asked } = mountWorkspace(reviewAt("invalid", source));
@@ -121,8 +128,8 @@ describe("invalidation UX (#576)", () => {
 // Review finding C. The three cases above hand `review` in as a prop, so they prove "the ask
 // fires" and "an invalid prop renders" — never that the ANSWER reaches the surface. This one
 // closes the loop through `useSlugResolution`, the module that owns how a session resolves and
-// that declares it will move off `review.load` at B9. If `STALED_BY_FRESHNESS` ever stops naming
-// the read that feeds the prop, the banner silently stops appearing — and this test goes red.
+// which command feeds the prop. If `STALED_BY_FRESHNESS` ever stops naming that read, the
+// banner silently stops appearing — and this test goes red.
 describe("invalidation UX — the answer reaches the surface (#576, coupled to routes/slug.ts)", () => {
   it("stales the session read, so the notice renders off the REFRESHED status", async () => {
     let status: "current" | "invalid" = "current";

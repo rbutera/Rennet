@@ -1,8 +1,15 @@
 // Review · delta digest (issue #383 M1, wireframe 21 screen 1). The entry point to a review:
-// the delta digest leads, and the canvas entries take the user one tap deeper — never a
+// the delta digest leads, and the acting surfaces take the user one tap deeper — never a
 // desktop referral. Landing here reports focus and clears the review's attention (clear-on-
 // view). The full-count breakdown is a thinner cut in M1 than the wireframe illustration (the
-// counts come from several projected shapes); the digest prose + canvas entries are wired.
+// counts come from several projected shapes); the digest prose + the act entries are wired.
+//
+// "Read the review" carries NO cards while the Board rebuild (B2, #489, Q10) has not reached
+// mobile: `canvas.tsx` and `finding.tsx` are placeholders, so a card promising "every cohort,
+// finding, and hunk" was a dead control that only admitted its emptiness AFTER the tap. The house
+// rule is absent-not-disabled — a capability that does not exist is absent, not greyed out and
+// never a click that lies — so the controls are gone and the fact is stated in their place.
+// `src/lib/dead-controls.test.ts` fails if a card here ever routes to a placeholder again.
 
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { type ReactNode, useEffect, useState } from "react";
@@ -69,20 +76,9 @@ export default function Digest(): ReactNode {
         </Card>
 
         <SectionLabel>Read the review</SectionLabel>
-        <Card onPress={() => router.push(`${base}/canvas`)}>
-          <Text style={{ color: t.text, fontSize: type.body, fontWeight: "600" }}>
-            Full sequence canvas
-          </Text>
-          <Text style={{ color: t.muted, fontSize: type.control, marginTop: 2 }}>
-            every cohort, finding, and hunk in reading order
-          </Text>
-        </Card>
-        <Card onPress={() => router.push(`${base}/finding`)}>
-          <Text style={{ color: t.text, fontSize: type.body, fontWeight: "600" }}>Findings</Text>
-          <Text style={{ color: t.muted, fontSize: type.control, marginTop: 2 }}>
-            open one at a time — agree, disagree, discuss
-          </Text>
-        </Card>
+        <Text style={{ color: t.muted, fontSize: type.control }}>
+          The board is being rebuilt — cohorts, findings and hunks are not on mobile yet.
+        </Text>
 
         <SectionLabel>Act</SectionLabel>
         <Card onPress={() => router.push(`${base}/turn`)}>

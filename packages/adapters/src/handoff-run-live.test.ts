@@ -57,6 +57,30 @@ function fakePort(events: HarnessEvent[]): {
 }
 
 describe("claudeHandoffRunPort", () => {
+  it("delivers text deltas to onDelta in order and asks for partial text only then", async () => {
+    const events: HarnessEvent[] = [
+      { kind: "text.delta", text: "Hel" } as unknown as HarnessEvent,
+      { kind: "text.delta", text: "lo" } as unknown as HarnessEvent,
+      endedEvent({ status: "completed", finalText: "Hello" }),
+    ];
+    const streamed = fakePort(events);
+    const seen: string[] = [];
+    const outcome = await claudeHandoffRunPort(streamed.port)({
+      cwd: "/repo",
+      prompt: "hi",
+      onDelta: (text) => seen.push(text),
+    });
+    expect(seen).toEqual(["Hel", "lo"]);
+    expect(outcome).toEqual({ status: "completed", finalText: "Hello" });
+    expect(streamed.lastSpec()?.streamPartialText).toBe(true);
+
+    // Positive control: the write-handoff path passes NO onDelta, so its spec is
+    // byte-identical to before — partial streaming stays off and no delta is asked for.
+    const quiet = fakePort(events);
+    await claudeHandoffRunPort(quiet.port)({ cwd: "/repo", prompt: "hi" });
+    expect(quiet.lastSpec()?.streamPartialText).toBeUndefined();
+  });
+
   it("creates a session with the FULL default tool surface (no allowedTools narrowing, Bash included)", async () => {
     const { port, lastSpec } = fakePort([endedEvent({ status: "completed", finalText: "did it" })]);
     await claudeHandoffRunPort(port)({ cwd: "/repo", prompt: "do the thing" });

@@ -246,7 +246,7 @@ describe("ensureWslDaemon (Group 3 orchestrator)", () => {
 describe("WSL secret store is distro-native (Group 4)", () => {
   it("spawns the WSL daemon with a distro-native --data-dir (its token store), never the host dir", async () => {
     const home = "/home/u";
-    const hostDataDir = "/Users/rai/Library/Application Support/Rennet";
+    const hostDataDir = "/Users/rai/.rennet";
     const state: FakeState = {
       home,
       node: "/usr/bin/node",

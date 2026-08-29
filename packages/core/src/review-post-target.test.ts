@@ -77,6 +77,7 @@ function storeOf(initial: Review | null): ReviewStorePort {
   return {
     latestReview: () => current,
     reviewById: (id) => (id !== null && current?.id === id ? current : null),
+    patchsetById: (id) => current?.patchsets.find((patchset) => patchset.id === id) ?? null,
     receipt: (commandId, digest) => receipts.get(`${commandId} ${digest}`) ?? null,
     commit: (commandId, digest, _events, result) => {
       current = result;

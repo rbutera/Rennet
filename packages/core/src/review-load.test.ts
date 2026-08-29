@@ -56,6 +56,8 @@ function storeOf(reviews: Review[]): ReviewStorePort {
   return {
     latestReview: () => reviews[reviews.length - 1] ?? null,
     reviewById: (id) => byId.get(id) ?? null,
+    patchsetById: (id) =>
+      reviews.flatMap((review) => review.patchsets).find((patchset) => patchset.id === id) ?? null,
     receipt: () => null,
     commit: (_c, _d, _e, result) => result,
   };

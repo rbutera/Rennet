@@ -40,10 +40,18 @@ export interface SessionQuery {
   readonly view?: ViewKind;
   readonly lens?: LensKind;
   readonly file?: string;
-  /** The round's diff identity (its generation id) — set on the ledger's Round-diff link so
-   *  `?view=diff` resolves the round's IMMUTABLE diff, not whatever `activePatchsetId` points
-   *  at now (finding 2). Absent ⇒ the live review diff. */
+  /** WHICH round's diff `?view=diff` shows — the round's 1-based number in the session's
+   *  oldest→newest ledger, set on the ledger's Round-diff link. The round NUMBER, not its
+   *  generation id: a dispatch round that regenerated nothing carries `ROUND_NO_REGEN` as its
+   *  generation, so several rounds share one id and a generation cannot name a round back
+   *  (#571). Absent ⇒ the live review diff, off `activePatchsetId`. */
   readonly round?: string;
+  /** The reviewer's typed opening ask, handed over from New Chat's composer when a row
+   *  click minted the session (C21) — the same `?ask=` grammar `newChatPath` already
+   *  carries out of the context map. Carrying it in the URL is what keeps a click from
+   *  silently eating what the reviewer just typed; the chat surface reads it as the
+   *  opening turn. Absent ⇒ the session opens with nothing said. */
+  readonly ask?: string;
 }
 
 function queryString(entries: Array<[string, string | undefined]>): string {
@@ -62,6 +70,7 @@ export function sessionPath(slug: string, query: SessionQuery = {}): string {
     ["lens", query.lens && query.lens !== DEFAULT_LENS ? query.lens : undefined],
     ["file", query.file],
     ["round", query.round],
+    ["ask", query.ask],
   ])}`;
 }
 
@@ -121,8 +130,10 @@ export interface ParsedSessionQuery {
   readonly view: ViewKind;
   readonly lens: LensKind;
   readonly file: string | null;
-  /** The requested round's diff identity (its generation id), or null for the live diff. */
+  /** The requested round's 1-based ledger number, or null for the live review diff. */
   readonly round: string | null;
+  /** The opening ask New Chat's composer handed over on the mint (C21), or null. */
+  readonly ask: string | null;
 }
 
 /** Read the whole session query grammar with fallbacks applied. */
@@ -135,6 +146,7 @@ export function readSessionQuery(
     lens: parseLens(search.get("lens"), availableLenses),
     file: search.get("file"),
     round: search.get("round"),
+    ask: search.get("ask"),
   };
 }
 

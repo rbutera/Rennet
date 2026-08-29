@@ -17,14 +17,10 @@
  * subscription (shared `~/.codex` auth home).
  */
 
-import { tmpdir } from "node:os";
 import {
   type CodexExecRequest,
   type CodexExecResult,
   type CodexExecutor,
-  type CodexUtilityPort,
-  type CodexUtilitySeed,
-  createCodexUtilityPort,
   HOST_LOCUS,
   type Locus,
   locusCommand,
@@ -169,6 +165,22 @@ export interface CreateCodexExecutorOptions {
   /** The project's execution locus. For a WSL locus the spawn routes through the
    *  distro via `locusCommand`; host composition spawns the binary directly. */
   readonly locus?: Locus;
+  /**
+   * The locus-native checkout every turn from this executor roots at. REQUIRED:
+   * Rennet reviews git repositories, so a utility seat always has one, and the
+   * composition root binds one executor per review (`codexExecutorForRepo`). There
+   * is no no-repo utility call and no temp-dir fallback (W5) — the repo root used
+   * to be handed to the composition seam and dropped one frame later, which is how
+   * a Codex seat ended up reasoning about a change from an empty directory while
+   * the Claude leg of the same job ran in the checkout.
+   */
+  readonly repoRoot: string;
+  /**
+   * Loopback MCP servers (canvasOps@2) to pin for the turn, as a FULL-TABLE
+   * override. Absent ⇒ no `mcp_servers` override at all, so the seat keeps the
+   * user's own configured servers rather than being handed an empty table.
+   */
+  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
 }
 
 /**
@@ -179,7 +191,7 @@ export interface CreateCodexExecutorOptions {
  */
 export function createCodexExecutor(
   effects: CodexExecEffects = defaultCodexExecEffects,
-  options: CreateCodexExecutorOptions = {},
+  options: CreateCodexExecutorOptions,
 ): CodexExecutor {
   const bin = options.bin ?? CODEX_EXEC_BIN;
   const locus = options.locus ?? HOST_LOCUS;
@@ -195,12 +207,16 @@ export function createCodexExecutor(
         matched: 0,
       });
     };
-    // Default utility call: no repo interaction, plain temp cwd — no scratch
-    // files, no git-repo requirement (the whole turn rides stdio). A caller that
-    // NEEDS the agent reading real files (the knowledge swarm's seats) passes a
-    // locus-native `cwd` and the turn roots there instead.
-    const cwd = req.cwd ?? (locus.kind === "wsl" ? "/tmp" : tmpdir());
-    const args = buildAppServerArgs();
+    // W5 — a utility seat roots at the REPOSITORY it is reasoning about. Delta
+    // digest, refine-comment and draft-PR-body are all reading a change, and the
+    // Claude legs of those same council-routed jobs already get the repo root; a
+    // Codex leg dropped into an empty temp dir was blind for no reason other than
+    // which model the council picked. Rennet reviews git repos, so there is no
+    // no-repo case to serve and no temp fallback to keep — `req.cwd` remains only
+    // as a NARROWING override for a caller that means a specific other checkout
+    // (the swarm's evidence-reading seats).
+    const cwd = req.cwd ?? options.repoRoot;
+    const args = buildAppServerArgs(options.mcpServers);
     const program = runtimePath ?? bin;
     const programArgs = runtimePath === undefined ? args : [bin, ...args];
     const cmd = locusCommand(locus, program, programArgs, cwd);
@@ -285,31 +301,6 @@ export function createCodexExecutor(
       ...(options.harnessVersion === undefined ? {} : { harnessVersion: options.harnessVersion }),
     };
   };
-}
-
-// ── Composition root ──────────────────────────────────────────────────────────
-
-export interface CodexUtilityAdapterDeps {
-  /** Defaults to the real `createCodexExecutor()`. Injectable for tests. */
-  readonly executor?: CodexExecutor;
-  readonly seed?: CodexUtilitySeed;
-  readonly mintDocId?: () => string;
-  readonly newRunId?: () => string;
-}
-
-/**
- * Compose a runnable CodexUtilityPort wired to the real `codex app-server`
- * executor. This is the seat boundary the Model Council resolver names: a resolved
- * Codex seat executes light-tier RSP emission through this port.
- */
-export function createCodexUtilityAdapter(deps: CodexUtilityAdapterDeps = {}): CodexUtilityPort {
-  const executor = deps.executor ?? createCodexExecutor();
-  return createCodexUtilityPort({
-    executor,
-    ...(deps.seed === undefined ? {} : { seed: deps.seed }),
-    ...(deps.mintDocId === undefined ? {} : { mintDocId: deps.mintDocId }),
-    ...(deps.newRunId === undefined ? {} : { newRunId: deps.newRunId }),
-  });
 }
 
 // ── Codex availability probe (issue #69, bead workspace-sglle) ─────────────────

@@ -2,8 +2,8 @@
 // seam: the live run route, the report-as-greeting, the rounds ledger, and the report
 // board rendered through the widened C5 registry. Mounted by `routes/app.tsx` (the run
 // route) and `review-workspace-route.tsx` (greeting + ledger); re-exported from
-// `app-ui/src/index.ts` so the app shell can bind the live `RoundsSourceProvider` when
-// B9/B11 lands (cluster 8) without reaching into deep module paths.
+// `app-ui/src/index.ts` so the app shell binds the live rounds source (cluster 8,
+// `useLiveRoundsSource`) without reaching into deep module paths.
 //
 // The public surface is exactly the packet's list: the four surfaces, the report
 // registry types (C9 widens C5's registry), and the rounds seam — its provider, its

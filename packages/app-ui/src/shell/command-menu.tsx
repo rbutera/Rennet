@@ -49,8 +49,9 @@ export function CommandMenu() {
    *  cannot run says so — it never closes on a rejected invoke and calls that success. */
   const [failure, setFailure] = useState<string | null>(null);
 
-  // Sessions ride the SAME projection the sidebar tree reads (empty until B9); projects
-  // are real today. Registry entries come from the one `@rennet/protocol` table.
+  // Sessions ride the SAME projection the sidebar tree reads (served off `session.list`);
+  // projects come from `projects.list`. Registry entries come from the one
+  // `@rennet/protocol` table.
   const { hosts } = useSidebarTree();
   const entries = useMemo(() => buildMenuEntries({ hosts, registry: commands }), [hosts]);
   const groups = useMemo(

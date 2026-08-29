@@ -4,6 +4,7 @@ import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { detectLocus, listWslDistros } from "@rennet/core";
+import { defaultDataDir } from "@rennet/server";
 import {
   app,
   BrowserWindow,
@@ -215,7 +216,7 @@ async function createWindow(wsPort: number): Promise<void> {
     // asserted by construction, not measured. Rai's manual check on a shipped build is
     // the outstanding proof; do not tune this value blind before then. win32/linux
     // keep the native frame (titlebar, snap, drag) above the web content.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e0d0c" : "#fbfaf7",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#fbfaf7",
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
     // Version in the native titlebar (visible on the win32 native frame; macOS shows
     // it in the standard titlebar too). `page-title-updated` is suppressed below so
@@ -336,7 +337,14 @@ app.whenReady().then(async () => {
   // effects it used to receive from the shell (net→global fetch; the repo dialog moves to
   // the renderer picker forwarded as `repository.choose`'s `path`). Persistence is unchanged:
   // the daemon opens the same rennet.sqlite / projects.json / threads under `dataDir`.
-  const dataDir = app.getPath("userData");
+  //
+  // `dataDir` is `~/.rennet`, NOT Electron's `userData`. Every store honours `dataDir` now,
+  // so passing `userData` here would relocate all twelve into
+  // `~/Library/Application Support/@rennet/desktop` — a directory that has only ever held an
+  // empty `rennet.sqlite`, while the real state lived in `~/.rennet` all along. The daemon is
+  // plain Node spawned detached and `rennet serve` runs the same code, so its data root must
+  // not depend on whether Electron started it. `RENNET_USER_DATA` still overrides.
+  const dataDir = process.env.RENNET_USER_DATA ?? defaultDataDir();
   let wsPort: number;
   try {
     wsPort = await ensureDaemon(dataDir);

@@ -33,8 +33,7 @@ import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
  *
  * Node-free at module scope (like `forge-port.ts`): no `node:*`, no filesystem, no
  * process, so a mobile or third-party client can import it. The one digest it needs
- * is `sha256Hex` from `@rennet/protocol` (the portable, node-free SHA-256), exactly
- * as `orchestrator-primer.ts` already does.
+ * is `sha256Hex` from `@rennet/protocol` (the portable, node-free SHA-256).
  */
 
 /**

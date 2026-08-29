@@ -26,6 +26,24 @@ target keeps its claim. **Archive is the only release**, a soft delete: nothing
 else frees a claimed target, so one target has one session, and it persists
 across restarts from its cursor rather than being re-minted per review.
 
+A session is keyed by **the project it belongs to and the repository its work
+runs in**. The project is the sidebar's grouping key, and both ways a session
+comes into being — a New-chat row click and a round dispatched on a review
+nobody entered — mint through the same mechanism on that same key, so a session
+a round created appears under its project like any other. The repository root
+rides alongside it because a workspace project holds several repositories: the
+project alone cannot say which one a round ran in, and without the repository
+two repositories sharing a branch name would collapse into a single rounds
+ledger. A New-chat row cannot know a repository's path, so it names the
+repository by its `owner/name` identity instead — the same composite the smart
+list already dedupes on — and two `main` branches in one workspace stay two
+targets rather than one. A round dispatched on that target reads the same
+`owner/name` back from the repository it is about to run in, so it joins the
+session the click created instead of starting a second one beside it. A
+detached HEAD has no branch to claim, so its session is keyed by the
+review instead — and it is persisted like every other, because a session the
+store does not hold is a session no surface can read back.
+
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a
 prose-quote thread, and Explain all ride one mechanism.
@@ -109,6 +127,14 @@ lanes depend on the entry mode:
   drafted description, Open Pull Request. Primacy flips with the state;
   nothing explains the flip.
 - **Retrospective** — no exits.
+
+When the daemon **refuses to compose** an exit — a comment carrying a path that
+would post outside the repository, a detached HEAD with no branch to open a pull
+request from — the lane states that reason where the exit would have been and
+carries on. There is nothing to dismiss and nothing to retry past: a refusal is a
+fact about this review, not a step in a ceremony. What it replaces is worse than
+the refusal itself, which is a Post Review that renders dead with no account of
+why, or a Changes surface that simply never becomes the pull request.
 
 ## Living drafts
 
@@ -301,8 +327,28 @@ something the preview did not describe.
    report, and each round pins its asks, worker commits, frozen board
    generation, and the patchset generation it minted. Because #457 appends the
    new generation and freezes the old rather than overwriting, that frozen
-   generation stays reachable through the generation switcher and its diff
-   through `?view=diff`, so earlier reports and diffs never vanish.
+   generation stays reachable through the generation switcher, so earlier
+   reports never vanish.
+   A round's **diff** is its own change, not the review's whole changeset: the
+   checkpoint that brackets the round's coding turn measures it, the round
+   record carries it, and the durable ledger keeps it when the regeneration
+   record supersedes the dispatch placeholder — so an earlier round's diff is
+   immutable, and a later round never rewrites it. **Round diff** opens it at
+   `?view=diff&round=<round number>`. The round *number*, not its generation id:
+   a round that dispatched a work order without regenerating boards carries the
+   no-regeneration marker as its generation, so several rounds share one
+   generation id and a generation cannot name a round back.
+   A round that captured no diff of its own offers **no Round diff control at
+   all**, the same absent-not-disabled rule the ledger tab itself follows.
+   A past round's diff is **read-only**, and that is a correctness property, not
+   a restraint. A line comment and a request-change ask are both keyed on
+   `path:line`, and that keyspace belongs to the review's *active* patchset — but
+   a round's diff is measured checkpoint-to-checkpoint, so the same coordinates
+   name different code. Writing under them would surface a comment on the live
+   diff over code nobody read, and would silently replace a live-diff ask staged
+   at the same line. So the round surface carries no comment gutter and no
+   selection toolbar, and does not paint the review's marks either — the read
+   direction of the same mismatch.
 8. Repeat until nothing is left to ask. The surface becomes the pull
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane

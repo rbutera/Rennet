@@ -133,6 +133,18 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
       append: options.appendSystemPrompt,
     };
   }
+  // W5: the adapter's `name → { url }` contract (shared with the Codex and OMP
+  // adapters) becomes the SDK's HTTP server config. `strictMcpConfig` is
+  // deliberately NOT set — Rennet adds canvasOps to whatever the user already
+  // configured, it never replaces their table.
+  if (options.mcpServers !== undefined) {
+    sdkOptions.mcpServers = Object.fromEntries(
+      Object.entries(options.mcpServers).map(([name, server]) => [
+        name,
+        { type: "http" as const, url: server.url },
+      ]),
+    );
+  }
   if (options.outputSchema !== undefined) {
     sdkOptions.outputFormat = {
       type: "json_schema",
@@ -142,6 +154,11 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   // Cursor-resume (B09): the adapter's `resume` (a harness session id) is the
   // SDK's `resume` option — loads that conversation's history and continues it.
   if (options.resume !== undefined) sdkOptions.resume = options.resume;
+  // Partial-message streaming (F1): without this the SDK emits no `stream_event`
+  // frames at all, so the adapter's `text.delta` mapping has nothing to map.
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
+  }
   // #585: a one-shot utility turn is not the user's work. `persistSession: false`
   // keeps it out of `~/.claude/projects/` entirely (sdk.d.ts 0.3.223). Safe to set
   // here: Rennet never passes the SDK's `sessionStore`, which is the one option it
@@ -174,6 +191,10 @@ export interface ClaudeHarnessDeps {
   readonly loadQuery?: LoadClaudeQuery;
   /** Base environment the spawned `claude` inherits (the SDK replaces the child env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Loopback MCP servers every session of this harness may call (W5) — the Claude
+   *  counterpart of `CodexAdapterConfig.mcpServers`. Unsupplied in production: no
+   *  loopback canvasOps server exists to point it at yet. */
+  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   /** Host-local cwd for the Windows `wsl.exe` child; injectable for tests. */
   readonly hostTransportCwd?: string;
   /**
@@ -258,6 +279,7 @@ export async function createClaudeHarness(
     version: discovery.chosen.version,
     queryFn: createClaudeQueryFn(deps.loadQuery),
     ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.mcpServers === undefined ? {} : { mcpServers: deps.mcpServers }),
   });
   return { adapter, discovery };
 }

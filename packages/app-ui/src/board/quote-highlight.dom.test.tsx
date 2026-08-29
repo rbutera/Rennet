@@ -11,8 +11,8 @@ import { QuoteHighlightLayer } from "./quote-highlight";
 
 // Cluster 5 (durable quote highlights). Threads live on the real `review` slice; the
 // layer reads them and highlights the anchored span over prose — durable because it is
-// store-driven, not local. Mounted over an empty MemoryBridge (RichText's citation seam
-// is unbound; the test prose carries no citations, so no span read fires).
+// store-driven, not local. Mounted over an empty MemoryBridge: the test prose carries no
+// citations, so no span read fires and no `patchset.readSpan` handler is needed.
 
 const PROSE =
   "The adapter authenticates with the user's subscription and costs nothing per token.\n\nA separate paragraph with untouched prose.";

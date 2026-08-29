@@ -1,14 +1,17 @@
 import type { ReattachResult, ReviewAskStreamEvent, TurnStatus } from "@rennet/protocol";
 import type { LucideIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
-import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
+import { useRoute, useSearch } from "wouter";
+import { commandKey, readCommandId, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
+import { reviewIdOf, useSlugResolution } from "../routes/slug";
+import { ROUTES, readSessionQuery } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3),
-// mirroring `shell/sidebar-data.ts` (the B9 gap) and `review/citations.ts` (the B3
-// gap). The dock takes no transcript props; every row it renders, every stream it
-// folds, and every send resolve HERE. Two lifetimes in one file:
+// The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3), the
+// same one-file-per-surface shape as `shell/sidebar-data.ts` and `review/citations.ts`.
+// The dock takes no transcript props; every row it renders, every stream it folds, and
+// every send resolve HERE. Two lifetimes in one file:
 //
 //  • LIVE NOW (dispatch-bound #251): the reviewer's ask travels as `review.ask`
 //    (useMutation); the persisted ask-thread transcript reloads via `review.reattach`
@@ -16,17 +19,17 @@ import { useBridgeContext } from "../data/bridge";
 //    (useCommandStream), reducing `ask-delta` (append, seq-guarded) / `ask-complete`
 //    (settle) / `ask-interrupted`. Tests drive this through `MemoryBridge.emitAskStream`.
 //
-//  • B9-GATED (stubbed): the full historical SESSION transcript — the orchestrator's
-//    coding turns (thought blocks, action steps, prose), the `compact_boundary` rows,
-//    the harness-reported context figure, and the session trail — is B9's projection
-//    (#466: the harness CLI owns transcript/compaction). Protocol carries no
-//    `session.transcript` read yet. Until B9 lands the LIVE client shows an honest
-//    EMPTY transcript (`EMPTY_TRANSCRIPT`, no invented turns, no fabricated number),
-//    and tests supply it through the `SessionTranscriptProjection` CONTEXT below —
-//    which also injects the `reviewId` the live half keys on (today the tests inject
-//    it; cluster 7 resolves it from the real route). When B9 lands, this context read
-//    becomes `useCommand("session.transcript")` and the context is deleted — THIS is
-//    the only file that changes.
+//  • The HISTORICAL session transcript — the orchestrator's coding turns (thought
+//    blocks, action steps, prose), the `compact_boundary` rows, the harness-reported
+//    context figure — is not read here. `session.transcript` EXISTS in protocol, is
+//    served, and does carry captured coding turns (the session turn loop's transcript
+//    store), but NOTHING IN THIS FILE CALLS IT: the dock's rows come from
+//    `review.reattach` plus the live stream, and the historical half arrives only
+//    through the `SessionTranscriptProjection` context — an OVERRIDE seam a host or a
+//    test supplies. Unprovided, it is honestly empty. The harness CLI remains the
+//    canonical owner of the coding conversation (#466 res. 3); `contextWindow` has no
+//    source at all. The live dock resolves its review from the route
+//    (`useRouteReviewId`), never from that context.
 //
 // No filesystem access; imports only `@rennet/protocol` types and `../data`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,8 +121,8 @@ export interface AnchoredThreadRow {
 
 export type TranscriptRow = TurnRow | CompactBoundaryRow | AnchoredThreadRow;
 
-/** The dock header's session trail (reconciliation: honest-minimal until B9). A live
- *  client shows just the title; the projection fills project/target when it lands. */
+/** The dock header's session trail. Honest-minimal: with no projection supplied the
+ *  header shows the title alone; a host or test that supplies one fills project/target. */
 export interface ChatTrail {
   readonly title: string;
   readonly projectName?: string;
@@ -134,30 +137,35 @@ export interface ContextWindow {
   readonly limit: number;
 }
 
-// ── The B9 session-transcript projection (stub context — reconciliation 3) ────
+// ── The session-transcript OVERRIDE context (reconciliation 3) ────────────────
 
 export interface SessionTranscriptProjection {
-  /** The live session's review id — the `review.reattach` read + `onAskStream` key. Absent
-   *  in the honest-empty live client (no session bound yet); tests inject it. Cluster 7
-   *  resolves it from the real route instead. */
+  /** A review-id OVERRIDE for a host or a test that mounts the dock outside a session
+   *  route. Absent in normal use: the dock resolves the live review from the route itself
+   *  (`useRouteReviewId`), so this is a deliberate injection point, not the live path. */
   readonly reviewId?: string;
-  /** Historical session rows (coding turns + `compact_boundary` rows). Empty until B9. */
+  /** Historical session rows (coding turns + `compact_boundary` rows). Empty unless a
+   *  host or test supplies them — this file issues no `session.transcript` read. */
   readonly rows: readonly TranscriptRow[];
-  /** The header trail. Honest-minimal (title only) until B9's projection carries the target. */
+  /** The header trail. Honest-minimal (title only) unless the supplied projection
+   *  carries a project name and target. */
   readonly trail: ChatTrail;
   /** The harness-reported context figure, or absent (⇒ meter reads "unknown"). */
   readonly contextWindow?: ContextWindow;
 }
 
-/** The live client's projection: no session, no rows, no context figure (honest empty).
- *  Everything above works against this; only cluster 7 swaps it for the real read. */
+/** The default projection: no override, no rows, no context figure (honest empty). The
+ *  dock resolves its review from the route; the historical session rows and the context
+ *  figure stay absent until a harness-transcript read port exists. */
 export const EMPTY_TRANSCRIPT: SessionTranscriptProjection = {
   rows: [],
   trail: { title: "New review" },
 };
 
 const SessionTranscriptContext = createContext<SessionTranscriptProjection>(EMPTY_TRANSCRIPT);
-/** Wraps a mount to supply the session transcript + reviewId (tests until B9; deleted when B9 lands). */
+/** Wraps a mount to OVERRIDE the session transcript + review id (hosts and tests that mount
+ *  the dock outside a session route). The live app mounts the dock bare and resolves the
+ *  review from the route. */
 export const SessionTranscriptProvider = SessionTranscriptContext.Provider;
 export function useSessionTranscript(): SessionTranscriptProjection {
   return useContext(SessionTranscriptContext);
@@ -212,6 +220,11 @@ export function reattachToRows(result: ReattachResult): TurnRow[] {
 }
 
 const EMPTY_REATTACH: ReattachResult = { threads: [], inFlight: [] };
+
+/** How much of the question is carried as the anchor's label. The anchor exists to key
+ *  persistence, not to duplicate the message, so a long question is clipped rather than
+ *  stored twice — the full text is the turn body. */
+const ANCHOR_LABEL_CEILING = 120;
 
 /**
  * Fold one ask-stream event into the `review.reattach` read (reconciliation 3). The
@@ -345,7 +358,7 @@ function appendMessage(
 // ── The dock's resolved model (the single hook the dock reads) ────────────────
 
 export interface ChatDockModel {
-  /** The full ordered transcript: session rows (B9-stubbed) then the live ask turns. */
+  /** The full ordered transcript: session rows then the live ask turns. */
   readonly rows: readonly TranscriptRow[];
   /** Turn ids that arrived live this mount — they animate; records replay instantly. */
   readonly liveIds: ReadonlySet<string>;
@@ -356,17 +369,64 @@ export interface ChatDockModel {
   readonly inFlight: boolean;
   /** Send the reviewer's question — fires `review.ask` and folds its stream (no staging: C8). */
   send(message: string): void;
+  /**
+   * Why the dock cannot send right now, or absent when it can. `review.ask` is keyed on a
+   * review, so a session with none (a freshly minted chat-only session) has nothing to ask
+   * ABOUT. The composer must say so rather than accept a question and drop it — an enabled
+   * box that silently eats input is the exact failure this dock is being repaired for.
+   */
+  readonly unavailable?: string;
+  /**
+   * The opening ask handed over on the mint (`/s/:slug?ask=…`, C21). New Chat's composer
+   * cannot send — the session does not exist until the click mints it — so the typed
+   * question rides the URL instead of being swallowed. The composer seeds itself from
+   * this so the reviewer lands looking at their own words, ready to send. Absent when the
+   * route carries no ask.
+   */
+  readonly draft?: string;
 }
 
 /**
- * Resolve the whole dock model. The session half comes from the projection context
- * (B9-stubbed); the live half is the real `review.reattach` read with the ask stream
- * folded into it. `send` fires `review.ask`; the daemon streams the reply back over
- * `onAskStream`, which the fold above grows into a streaming turn and settles.
+ * The review the dock is looking at, resolved from the ROUTE — the fix for a dock that
+ * accepted a question and did nothing with it.
+ *
+ * The dock is mounted once by the layout, outside the outlet, so it cannot be handed a
+ * review as a prop; it has to ask where it is. `/s/:slug` and `/s/:slug/run` are the two
+ * routes that name a session (the same pair the layout gates the dock's visibility on).
+ * Off both, there is no review and the dock is honestly empty.
+ *
+ * `useSlugResolution` — not the raw slug — is what answers, because the slug is a SESSION
+ * id and a session may have no review attached. Guessing `reviewId = slug` would point
+ * every read at a review that does not exist on a chat-only session and turn silence into
+ * a "Review not found" error. `reviewIdOf` returns a review id only when one really
+ * resolved. The read is shared: `useSlugResolution` keys `review.load` on a slug-derived
+ * commandId, so the route screen and this hook hit ONE cache entry, not two fetches.
+ */
+function useRouteReviewId(): string | undefined {
+  const [onSession, sessionParams] = useRoute(ROUTES.session);
+  const [, runParams] = useRoute(ROUTES.sessionRun);
+  const raw = (onSession ? sessionParams?.slug : runParams?.slug) ?? "";
+  const slug = raw === "" ? "" : decodeURIComponent(raw);
+  return reviewIdOf(useSlugResolution(slug));
+}
+
+/**
+ * Resolve the whole dock model. The review is resolved from the route (above); the live
+ * half is the real `review.reattach` read with the ask stream folded into it. `send`
+ * fires `review.ask`; the daemon streams the reply back over `onAskStream`, which the
+ * fold above grows into a streaming turn and settles.
  */
 export function useChatDock(): ChatDockModel {
   const projection = useSessionTranscript();
-  const reviewId = projection.reviewId;
+  // The LIVE review id comes from the route: `/s/:slug` resolves the slug to a review
+  // (or to a review-less chat-only session, which yields `undefined` — the dock then
+  // stays honestly empty rather than reading a review that does not exist). The context
+  // value stays an OVERRIDE so existing host/test mounts keep working unchanged.
+  const routeReviewId = useRouteReviewId();
+  const reviewId = projection.reviewId ?? routeReviewId;
+  // The mint's opening ask (`?ask=`), read through the same query grammar the rest of
+  // the session route uses — never re-parsed by hand here.
+  const draft = readSessionQuery(new URLSearchParams(useSearch())).ask;
   // chat-data is the dock's single data-resolution point (see this file's header). It folds
   // THREE things into the one `review.reattach` entry the transcript reads: live deltas
   // (useCommandStream, below), the reviewer's optimistic echo, and the buffered pre-settle
@@ -375,9 +435,16 @@ export function useChatDock(): ChatDockModel {
   const { cache } = useBridgeContext();
 
   // A deterministic, stable commandId per review — `review.reattach` is idempotent, so no
-  // uuid churn is needed (unlike a progress-correlated command). A fresh review key remints it.
+  // uuid churn is needed (unlike a progress-correlated command). A fresh review key remints
+  // it. It must nonetheless be a UUID: the wire's `commandIdSchema` is `z.uuid()`, so the
+  // readable `reattach-${reviewId}` this used to send was rejected by the daemon and the
+  // dock's own read came back an error on the real app — the transcript was empty because
+  // it was never served, not because nothing was persisted.
   const reattachInput = useMemo(
-    () => ({ commandId: reviewId ? `reattach-${reviewId}` : "reattach", reviewId: reviewId ?? "" }),
+    () => ({
+      commandId: readCommandId(`review.reattach:${reviewId ?? ""}`),
+      reviewId: reviewId ?? "",
+    }),
     [reviewId],
   );
   const reattachKey = useMemo(() => commandKey("review.reattach", reattachInput), [reattachInput]);
@@ -488,12 +555,17 @@ export function useChatDock(): ChatDockModel {
       // Fix #1: optimistic user-turn echo. The ask stream yields ONLY orchestrator turns and
       // send() deliberately does not refetch reattach (that would clobber folded deltas), so
       // without this the reviewer's own message would never render this mount. We append the
-      // "you" turn into the SAME reattach entry the transcript reads, under a distinct id (the
-      // daemon persists the orchestrator turn under `turnId`), so it renders instantly and in
-      // order — the user bubble ahead of the streaming reply. When the authoritative transcript
-      // later supplies the persisted "you" message, `appendMessage`'s id-guard keeps it from
-      // doubling. If reattach has not settled yet, the settle-flush applies the echo afterwards.
-      const echo = { threadId, id: `you-${turnId}`, body: text };
+      // "you" turn into the SAME reattach entry the transcript reads, so it renders instantly
+      // and in order — the user bubble ahead of the streaming reply. If reattach has not
+      // settled yet, the settle-flush applies the echo afterwards.
+      //
+      // The id is the DAEMON'S id for this same message, byte for byte (`dispatch/review.ts`
+      // persists the reviewer's turn as `${turnId}::you`) — not a client-side `you-${turnId}`.
+      // `appendMessage`'s guard dedupes by id, and two ids for one message defeat it: when the
+      // reattach snapshot already carries the persisted turn (an ask sent while the initial
+      // read is still in flight, then flushed onto it), the reviewer's own message rendered
+      // TWICE. Agreeing on the id is what makes the guard able to do its job.
+      const echo = { threadId, id: `${turnId}::you`, body: text };
       if (settledRef.current) foldEcho(echo);
       else optimistic.current.push(echo);
       // One ask, dispatch-bound (#251): the daemon persists the reviewer's turn under these
@@ -506,6 +578,16 @@ export function useChatDock(): ChatDockModel {
         threadId,
         turnId,
         turnBody: text,
+        // Dispatch persists a turn ONLY when the ask carries an anchor
+        // (`dispatch/review.ts`), so without this the answer is lost on reload and
+        // `review.reattach` — this hook's own read — comes back empty. A chat turn
+        // hangs on the message, not on code, which is exactly what the wire schema's
+        // `fragment` kind is for: no `path`, keyed by the thread. No protocol change.
+        anchor: {
+          kind: "fragment",
+          label: text.slice(0, ANCHOR_LABEL_CEILING),
+          key: threadId,
+        },
       });
     },
     [ask, foldEcho, reviewId],
@@ -518,5 +600,12 @@ export function useChatDock(): ChatDockModel {
     contextWindow: projection.contextWindow,
     inFlight,
     send,
+    ...(draft === null || draft === "" ? {} : { draft }),
+    ...(reviewId === undefined
+      ? {
+          unavailable:
+            "No review is captured for this session yet, so there is no change to ask about.",
+        }
+      : {}),
   };
 }

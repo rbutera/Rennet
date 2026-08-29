@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { AskLifecycleSchema, QuoteAnchorSchema } from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
-import { codeRefSchema } from "../delta/citations";
+import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
 
 const id = z.string().min(1);
@@ -35,6 +35,24 @@ export const ClaimSchema = z.object({
   prNumber: z.number().int().positive().optional(),
 });
 export type Claim = z.infer<typeof ClaimSchema>;
+
+/**
+ * Does a claim own this target? A branch and its PR are ONE claimed thing, so a match on
+ * EITHER half is a match: a row resolving to the PR is owned by a session that claimed the
+ * branch, and vice versa.
+ *
+ * It lives in protocol because BOTH ends decide with it and they must not drift — the host
+ * reattaches a New-chat entry to the session already claiming its target (`SessionEntry`),
+ * and the client hides the rows a live claim owns (New Chat). Two copies of this rule would
+ * eventually disagree, and the visible symptom would be a row that mints a second session.
+ */
+export function claimMatchesTarget(
+  claim: Claim,
+  target: { readonly branch: string; readonly prNumber?: number },
+): boolean {
+  if (claim.branch === target.branch) return true;
+  return claim.prNumber !== undefined && claim.prNumber === target.prNumber;
+}
 
 /**
  * A thread anchor (#466 res. 7): a code-line citation or a prose quote. One
@@ -142,6 +160,15 @@ export const RoundRecordSchema = z.object({
   /** The round's working-tree diff, captured via GitCheckpointStore — present on a
    *  dispatch round, failed rounds included (their partial edits are on disk regardless). */
   diff: z.string().optional(),
+  /**
+   * The same diff split per file, for the ROUND DIFF surface (#571). DERIVED at the
+   * `session.rounds` read from {@link diff} through the one hardened unified-diff parser
+   * (`parseUnifiedDiffFiles`, `@rennet/adapters`) — never written by a round and never
+   * persisted, so the durable ledger keeps exactly one copy of the round's diff. Present
+   * iff `diff` is present and parses to at least one file; absent ⇒ the round captured no
+   * diff, and the ledger offers no Round-diff control at all.
+   */
+  diffFiles: z.array(patchFileSchema).optional(),
   /** The paths the round changed (structural, from the checkpoint's path list). */
   changedPaths: z.array(z.string()).optional(),
 });
@@ -371,6 +398,28 @@ export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
 export const SessionModelSchema = z.object({
   id,
   projectId: id,
+  /**
+   * The repository root the session's work actually runs in (#580). `projectId` is the
+   * SIDEBAR GROUPING key — a `Project.id` — and a workspace project holds MANY repos, so
+   * that mapping is many-to-one and NOT invertible: the project id alone cannot say which
+   * repo a round ran in. This is where the session keeps it, so per-repo rounds in one
+   * workspace never collapse into a single ledger. Absent until something that KNOWS the
+   * root stamps it (a round dispatch does; a New Chat row click does not know which repo
+   * of a workspace it named), and a later dispatch stamps it in place.
+   */
+  repositoryRoot: z.string().min(1).optional(),
+  /**
+   * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
+   * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
+   * origin remote, else the durable common-dir alias), so it crosses the wire freely where
+   * `repositoryRoot` never could.
+   *
+   * It exists because a New Chat row knows this and cannot know the root: without it, two repos
+   * in one workspace that both have a `main` branch mint ONE session and clicking one row hands
+   * you the other's chat. Absent ⇒ the caller did not name a repository, and matching behaves
+   * exactly as it did before this field existed.
+   */
+  repository: z.string().min(1).optional(),
   claim: ClaimSchema.optional(),
   reviewId: id.optional(),
   harnessCursor: HarnessCursorSchema.optional(),

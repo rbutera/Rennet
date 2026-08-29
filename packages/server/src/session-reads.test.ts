@@ -6,7 +6,7 @@ import { sessionHandlers } from "./dispatch/session";
 import { buildProjectionContext, projectCommandOutput } from "./projection";
 import { resolveRoundSessionId } from "./session/session-entry";
 
-// The B9/B10-deferred SESSION READ seam (session.transcript + session.rounds). Positive
+// The SESSION READ seam (session.transcript + session.rounds). Positive
 // controls: each read returns the REAL projected shape (not a stub error), is dispatch-
 // reachable, session.rounds projects a seeded ledger's real records (and is empty unseeded),
 // the slug→session resolution lines up with dispatchRound's mint, and a host path smuggled
@@ -120,24 +120,102 @@ describe("session.rounds — the rounds ledger read (C09)", () => {
     })) as { records: RoundRecord[] };
     expect(out.records).toEqual([]);
   });
+
+  // ── The ROUND DIFF the ledger's control needs (#571) ────────────────────────
+  //
+  // The defect this replaces: the ledger rendered a live "Round diff" button that landed on
+  // "isn't wired yet", blaming a per-round patchset projection that does not exist. It never
+  // needed one. `RoundRecord.diff` is the checkpoint-measured diff of the round's own coding
+  // turn, written by the dispatch path and PRESERVED by `RoundRecordStore.record` when the
+  // regeneration record supersedes the placeholder — so it is already stored, already durable,
+  // and already on this read. All the read had to do was split it per file.
+  const ROUND_DIFF = [
+    "diff --git a/packages/core/src/rennet.ts b/packages/core/src/rennet.ts",
+    "index 1111111..2222222 100644",
+    "--- a/packages/core/src/rennet.ts",
+    "+++ b/packages/core/src/rennet.ts",
+    "@@ -1,2 +1,2 @@",
+    " const curd = true;",
+    "-const whey = 1;",
+    "+const whey = 2;",
+    "diff --git a/packages/core/src/added.ts b/packages/core/src/added.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/packages/core/src/added.ts",
+    "@@ -0,0 +1,1 @@",
+    "+export const added = true;",
+    "",
+  ].join("\n");
+
+  it("splits the round's captured diff into per-file patches the diff surface renders", async () => {
+    const dispatched: RoundRecord = { ...RECORD, outcome: "completed", diff: ROUND_DIFF };
+    const out = (await harness({ roundRecordsForReview: () => [dispatched] })["session.rounds"]({
+      reviewId: REVIEW_ID,
+    })) as { records: RoundRecord[] };
+    const files = out.records[0]?.diffFiles;
+    // Both files, code-unit sorted, with their status and counts read off the diff itself.
+    expect(files?.map((f) => f.path)).toEqual([
+      "packages/core/src/added.ts",
+      "packages/core/src/rennet.ts",
+    ]);
+    expect(files?.[0]?.status).toBe("added");
+    expect(files?.[1]?.status).toBe("modified");
+    expect(files?.[1]?.additions).toBe(1);
+    expect(files?.[1]?.deletions).toBe(1);
+    // The patch text is the file's own block — what `parsePatch` turns into hunks.
+    expect(files?.[1]?.patch).toContain("+const whey = 2;");
+    expect(files?.[1]?.patch).not.toContain("added.ts");
+    // …and the whole thing still validates as the registered output shape.
+    expect(() => parseCommandOutput("session.rounds", out)).not.toThrow();
+  });
+
+  it("leaves the raw diff on the record — the split is additive, not a swap", async () => {
+    const dispatched: RoundRecord = { ...RECORD, diff: ROUND_DIFF };
+    const out = (await harness({ roundRecordsForReview: () => [dispatched] })["session.rounds"]({
+      reviewId: REVIEW_ID,
+    })) as { records: RoundRecord[] };
+    expect(out.records[0]?.diff).toBe(ROUND_DIFF);
+  });
+
+  // Absent-not-empty: a regeneration-only round captured no diff, and the read says so by
+  // omission rather than by an empty array that reads as "this round changed nothing". The
+  // ledger keys its control off exactly this, so an empty array here would put the dead
+  // button back — with a diff surface showing zero files behind it.
+  it("a round that captured NO diff gets no diffFiles at all", async () => {
+    const out = (await harness({ roundRecordsForReview: () => [RECORD] })["session.rounds"]({
+      reviewId: REVIEW_ID,
+    })) as { records: RoundRecord[] };
+    expect(out.records[0]?.diff).toBeUndefined();
+    expect(out.records[0]).not.toHaveProperty("diffFiles");
+  });
+
+  it("an empty-string diff is not a file list — it gets no diffFiles either", async () => {
+    const empty: RoundRecord = { ...RECORD, diff: "" };
+    const out = (await harness({ roundRecordsForReview: () => [empty] })["session.rounds"]({
+      reviewId: REVIEW_ID,
+    })) as { records: RoundRecord[] };
+    expect(out.records[0]).not.toHaveProperty("diffFiles");
+  });
 });
 
 describe("resolveRoundSessionId — slug→session resolution (read side of dispatchRound's mint)", () => {
+  // The project key both mints converge on (#580) — a `Project.id`, never a path.
+  const PROJECT_ID = "3f2a1c94-0000-4000-8000-abcdefabcdef";
   const claim = { branch: "feat/seam" };
   const claimingSession = {
     id: "session-abc",
-    projectId: "/home/dev/acme",
+    projectId: PROJECT_ID,
     claim,
     threads: [],
     createdAt: 1,
   } as unknown as SessionModel;
 
   it("resolves the session claiming the review's target (branch)", () => {
-    expect(resolveRoundSessionId(REVIEW, [claimingSession])).toBe("session-abc");
+    expect(resolveRoundSessionId(REVIEW, [claimingSession], PROJECT_ID)).toBe("session-abc");
   });
 
   it("falls back to the review id when no session claims the target yet", () => {
-    expect(resolveRoundSessionId(REVIEW, [])).toBe(REVIEW_ID);
+    expect(resolveRoundSessionId(REVIEW, [], PROJECT_ID)).toBe(REVIEW_ID);
   });
 
   it("falls back to the review id for a detached HEAD (no branch to claim)", () => {
@@ -145,12 +223,22 @@ describe("resolveRoundSessionId — slug→session resolution (read side of disp
       ...REVIEW,
       patchsets: [{ id: "ps-1", repository: {} }],
     } as unknown as Review;
-    expect(resolveRoundSessionId(detached, [claimingSession])).toBe(REVIEW_ID);
+    expect(resolveRoundSessionId(detached, [claimingSession], PROJECT_ID)).toBe(REVIEW_ID);
   });
 
   it("does not cross-attach a claiming session in another project", () => {
-    const otherProject = { ...claimingSession, projectId: "/home/dev/other" } as SessionModel;
-    expect(resolveRoundSessionId(REVIEW, [otherProject])).toBe(REVIEW_ID);
+    const otherProject = { ...claimingSession, projectId: "other-project-id" } as SessionModel;
+    expect(resolveRoundSessionId(REVIEW, [otherProject], PROJECT_ID)).toBe(REVIEW_ID);
+  });
+
+  it("does not cross-attach a session stamped for a DIFFERENT repo in the same project", () => {
+    // The cardinality trap: a workspace maps N repo roots to ONE `Project.id`, so the
+    // project key alone cannot separate repo-a's rounds from repo-b's.
+    const elsewhere = {
+      ...claimingSession,
+      repositoryRoot: "/home/dev/other-repo",
+    } as unknown as SessionModel;
+    expect(resolveRoundSessionId(REVIEW, [elsewhere], PROJECT_ID)).toBe(REVIEW_ID);
   });
 });
 

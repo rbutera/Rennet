@@ -36,9 +36,9 @@ export interface ParsedPrRef {
 
 /**
  * Parse a PR reference: a GitHub PR URL (`https://github.com/owner/repo/pull/123`) or the short
- * form `owner/repo#123`. Returns null for anything that is not a PR ref (the field then stays
- * disabled rather than starting a review on garbage). `review.openPr` accepts both forms, so the
- * original trimmed input is passed through as `ref`.
+ * form `owner/repo#123`. Returns null for anything that is not a PR ref. Callers must not treat
+ * null as "do nothing" — go through `planOpenPr`, which turns it into a stated reason.
+ * `review.openPr` accepts both forms, so the original trimmed input is passed through as `ref`.
  */
 export function parsePrRef(input: string): ParsedPrRef | null {
   const trimmed = input.trim();
@@ -87,6 +87,40 @@ export function matchProjectRepoKey(
     (p) => p.repo.displayName.toLowerCase() === wanted || p.name.toLowerCase() === wanted,
   );
   return byName.length === 1 ? byName[0]?.repo.repoKey : undefined;
+}
+
+/** What a press of Open does. Exactly two outcomes — there is no silent third. */
+export type OpenPrPlan =
+  | { readonly kind: "open"; readonly ref: string; readonly repoKey: string }
+  | { readonly kind: "failed"; readonly reason: string };
+
+/**
+ * Decide what pressing Open does with whatever is in the link field. TOTAL by construction: every
+ * input yields either an `open` the screen can invoke or a `failed` reason the screen renders.
+ *
+ * This exists because the screen used to open with `if (!connection || !parsed) return;` — an
+ * always-enabled primary button that, on an empty or unparseable link, did literally nothing: no
+ * dispatch, no failure, no toast. A control that cannot act must say why; making the decision total
+ * here means the screen has no branch left in which it can stay silent.
+ */
+export function planOpenPr(link: string, projects: readonly KickoffProject[]): OpenPrPlan {
+  const parsed = parsePrRef(link);
+  if (!parsed) {
+    return {
+      kind: "failed",
+      reason: link.trim()
+        ? "That is not a pull request link. Paste a GitHub PR URL, or owner/repo#123."
+        : "Paste a pull request link first — a GitHub PR URL, or owner/repo#123.",
+    };
+  }
+  const repoKey = matchProjectRepoKey(projects, parsed);
+  if (!repoKey) {
+    return {
+      kind: "failed",
+      reason: `No paired project owns ${parsed.owner}/${parsed.repo}. Add it on your desktop first.`,
+    };
+  }
+  return { kind: "open", ref: parsed.ref, repoKey };
 }
 
 /** The kickoff lifecycle the screen renders (wireframe 20 progress → the new review appears). */

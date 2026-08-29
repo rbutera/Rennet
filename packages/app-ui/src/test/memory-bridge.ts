@@ -10,6 +10,7 @@ import type {
   RoundEvent,
   UpdateReadyInfo,
 } from "@rennet/protocol";
+import { parseCommandInput } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MemoryBridge — the in-memory RennetBridge for tests and fixtures (C01, #489).
@@ -107,6 +108,14 @@ export class MemoryBridge implements RennetBridge {
   }
 
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>> {
+    // PARSE EVERY INVOCATION against the real wire schema, before anything else. The daemon
+    // parses; a stub that does not is a stub that answers commands the wire would reject, and
+    // the whole suite then agrees with a client that cannot talk to the daemon. That is exactly
+    // how `load-${slug}` / `reattach-${reviewId}` — ids `commandIdSchema` (z.uuid()) refuses —
+    // shipped a dead chat dock and a dead `/s/:slug` past a green test run (F1 6.2). Throwing
+    // synchronously is deliberate: a client-side wire violation is a defect in the CALLER, not a
+    // command outcome a surface should get to render an error state for.
+    parseCommandInput(name, input);
     const handler = this.#handlers[name] as CommandHandler<K> | undefined;
     if (!handler) {
       return Promise.reject(new Error(`MemoryBridge: no handler for command "${name}"`));
@@ -169,3 +178,33 @@ export class MemoryBridge implements RennetBridge {
     this.#updateReady.emit(info);
   }
 }
+
+/**
+ * A `patchset.readSpan` that refuses in the same SHAPE as the real daemon — a rejection
+ * carrying a specific, path-bearing reason — for the surfaces that must render an
+ * unreadable citation honestly.
+ *
+ * Shape, deliberately not wording. The daemon says `line 20` for a single-line span and
+ * `lines 20–24` for a range; this always says `lines 20–20`. That divergence is the point,
+ * not an oversight: if this stub reproduced the daemon's sentence exactly, the app-ui tests
+ * and the handler could drift into agreeing with each other, and a wrong sentence would
+ * look verified from both ends. The daemon's actual wording is pinned ONCE, against the
+ * real handler over real dispatch, in `apps/desktop/src/citation-span.integration.test.tsx`.
+ * Here the only claim is the one these surfaces owe: whatever reason the daemon gives, the
+ * reviewer sees THAT reason — so a test asserts this stub's own sentence reaches the DOM.
+ *
+ * Written as a stub that rejects rather than as a MISSING handler, because the two prove
+ * different things. A missing handler makes `MemoryBridge` reject with its own "no handler
+ * for command" text — a fact about the test harness, not about the product — and asserting
+ * a fixed surface line against it let the unbound-dispatch defect (`patchset.readSpan`
+ * throwing in the shipped app for two workstreams) sit behind four green tests that all
+ * read as coverage.
+ */
+export const SPAN_OUTSIDE_CAPTURE = "is outside the diff this patchset captured";
+
+/** The refusing handler itself — hand it to a MemoryBridge as `"patchset.readSpan"`. */
+export const refusesSpanRead: CommandHandler<"patchset.readSpan"> = (input) => {
+  throw new Error(
+    `${input.path} lines ${input.startLine}–${input.endLine} (${input.side}) ${SPAN_OUTSIDE_CAPTURE}.`,
+  );
+};

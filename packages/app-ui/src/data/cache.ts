@@ -1,9 +1,11 @@
 import type { CommandInput, CommandName } from "@rennet/protocol";
+import { commandIdFor } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command cache (C01 §2). react-query was evaluated against the dependency
 // standard and REJECTED: the need is three hooks over a keyed store (dedupe an
-// in-flight fetch, a stale flag on invalidate, per-key subscribers), and
+// in-flight fetch, a stale flag on invalidate, a stale flag when the last reader
+// leaves so a reopened surface re-reads, per-key subscribers), and
 // react-query's surface (refetch-on-focus, garbage collection, retries, devtools,
 // infinite queries) far exceeds that and would need configuring-off. The owned
 // engine below is ~120 lines, browser-safe, fully under our control, and — crucially
@@ -31,6 +33,43 @@ function stableStringify(value: unknown): string {
 /** The cache key for a command read: the command name, then its canonically serialized input. */
 export function commandKey<K extends CommandName>(name: K, input: CommandInput<K>): string {
   return `${name}${SEP}${stableStringify(input)}`;
+}
+
+/**
+ * One stable, protocol-valid `commandId` per read key — see `commandIdFor` in protocol,
+ * which owns the derivation next to the `z.uuid()` schema that judges it.
+ *
+ * Two constraints meet here and a hand-written id satisfies neither. The wire REJECTS a
+ * readable id like `load-${slug}` — that is exactly how every `/s/:slug` rendered
+ * "Couldn't open this review" and the chat dock read an empty transcript on the real app
+ * (found driving it, F1 6.2). And a read's cache key includes its whole input, so the id
+ * must be STABLE per key or a re-render remints the entry and two readers of one thing
+ * fetch twice.
+ *
+ * Derived, not allocated: the session route screen and the chat dock get the SAME id for
+ * the same review because they hash the same key — the property `slug.ts` and
+ * `chat-data.ts` both document. It replaces a module-level Map that was mutated during
+ * render and grew without bound; a pure function has neither problem.
+ */
+export function readCommandId(key: string): string {
+  return commandIdFor(key);
+}
+
+/**
+ * Commands whose answer CANNOT change for a given input, so a cached entry stays good
+ * forever and a reader who leaves and comes back may be served it without a re-read.
+ *
+ * This is the one exception to "an unwatched entry has gone stale" below, and it is not a
+ * performance preference — it is the immutable-patchset contract stated in code. A patchset
+ * is fixed at capture; a span of one reads the same bytes today and next week, so refetching
+ * it on every re-open of an evidence card spends a round trip to be told the same thing.
+ * Everything NOT listed here is assumed to move while the surface is closed, because the
+ * cost of being wrong that way is a surface quietly showing a past that reads as the present.
+ */
+const IMMUTABLE_READS: ReadonlySet<string> = new Set(["patchset.readSpan"]);
+
+function isImmutableRead(key: string): boolean {
+  return IMMUTABLE_READS.has(key.slice(0, key.indexOf(SEP)));
 }
 
 /** The immutable snapshot a reader sees for one key. `fetching` is the in-flight flag; a
@@ -88,6 +127,19 @@ export class CommandCache {
     entry.listeners.add(listener);
     return () => {
       entry.listeners.delete(listener);
+      if (entry.listeners.size > 0 || isImmutableRead(key)) return;
+      // NOBODY IS WATCHING THIS KEY ANY MORE, and the server keeps moving without us. A
+      // reader that comes back — a reviewer who leaves `/s/:slug` and returns — must be
+      // shown what the daemon holds NOW, not the snapshot from when they left. Without
+      // this the reattach entry survives with the same stable key, `ensure` sees fresh
+      // data and skips the read entirely, and the transcript silently omits every message
+      // that arrived while the route was closed. Only a full reload recovered it.
+      //
+      // Stale rather than dropped, so the reopen shows the old rows through the refetch
+      // instead of flashing empty. The generation bump carries the same verdict to a fetch
+      // that is still in flight: its completion cannot clear a staleness it never saw.
+      entry.generation += 1;
+      entry.snapshot = { ...entry.snapshot, stale: true };
     };
   }
 
@@ -127,14 +179,17 @@ export class CommandCache {
         entry.promise = undefined;
         const superseded = entry.generation !== generation;
         this.#set(key, { data, error: undefined, fetching: false, stale: superseded });
-        if (superseded) this.#fetch(key, entry);
+        // Refetch for a READER. An abandoned entry was superseded by its own last
+        // unsubscribe; refetching it would spend a round trip on nobody and clear the very
+        // staleness that makes the next reopen honest.
+        if (superseded && entry.listeners.size > 0) this.#fetch(key, entry);
       },
       (error: unknown) => {
         if (entry.promise !== promise) return;
         entry.promise = undefined;
         const superseded = entry.generation !== generation;
         this.#set(key, { data: entry.snapshot.data, error, fetching: false, stale: superseded });
-        if (superseded) this.#fetch(key, entry);
+        if (superseded && entry.listeners.size > 0) this.#fetch(key, entry);
       },
     );
   }

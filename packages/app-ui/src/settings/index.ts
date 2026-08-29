@@ -10,7 +10,6 @@ export {
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
-  toProvenance,
   useSettingsProjection,
   useSettingsView,
 } from "./data";

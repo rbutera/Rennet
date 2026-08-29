@@ -517,8 +517,8 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "fs.listDir.output.result.entries.path",
   ]),
   ...classified("repo-relative", [
-    // The unbound span-read row (B3, #489): a CodeRef citation's path is
-    // repo-relative within the captured patchset.
+    // The span-read row (B3, #489): a CodeRef citation's path is repo-relative
+    // within the captured patchset.
     "patchset.readSpan.input.path",
     "review.setDisposition.input.path",
     "publish.review.input.comments.path",
@@ -586,6 +586,11 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // repo-relative path (`codeRefSchema`'s own field, the same one `review.setDisposition`
     // carries) — never a host-absolute path, so no remote projection translates it.
     "board.read.output.board.elements.data.path",
+    // The round diff (#571): the ledger read splits `RoundRecord.diff` — a `git diff` run
+    // INSIDE the repo — into per-file patches, so each `path` is the `diff --git a/… b/…`
+    // header's repo-relative path, exactly like a patchset's `files.path` above. Never
+    // host-absolute, so no remote projection translates it.
+    "session.rounds.output.records.diffFiles.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

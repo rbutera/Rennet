@@ -1,4 +1,4 @@
-import type { Review } from "@rennet/protocol";
+import { isReviewStale, isWorkingTreeReview, type Review } from "@rennet/protocol";
 import { useEffect, useRef } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
@@ -13,6 +13,7 @@ import {
   useReportBoard,
   useRoundDispatch,
   useRoundRecords,
+  useRoundRecordsPending,
   useRoundState,
   useRoundsUnavailable,
 } from "../rounds/rounds-data";
@@ -51,25 +52,16 @@ const LIVE_GENERATION = "live";
 /**
  * What a freshness answer stales: the review the route renders, and the boards read off it.
  *
- * ⚠️ COUPLED to `routes/slug.ts`, which declares itself the single swap point for how a session
- * resolves and says it moves off `review.load` when B9 lands. `review.load` here must name the
- * read that feeds this route's `review` prop — the moment those two disagree, the notice below
- * silently stops appearing, which is this issue (#576) all over again. `freshness.dom.test.tsx`
- * mounts through `useSlugResolution` for exactly that reason: change the read, and it goes red.
+ * ⚠️ COUPLED to `routes/slug.ts`, the single point that decides how a session resolves and
+ * which command feeds this route's `review` prop (`review.load` today). This list must name
+ * that read — the moment the two disagree, the notice below silently stops appearing, which
+ * is this issue (#576) all over again. `freshness.dom.test.tsx` mounts through
+ * `useSlugResolution` for exactly that reason: change the read, and it goes red.
  */
 const STALED_BY_FRESHNESS = ["review.load", "board.read"] as const;
 
 /** Fire-and-forget: `useMutation` already holds the fault; this only settles the rejection. */
 const held = () => undefined;
-
-/**
- * The provenance of the patchset on screen — `local` (a working-tree capture, watchable for
- * freshness) vs a `github-*` PR snapshot pinned to the pull request's OIDs. Absent ⇒ `local`,
- * the default `wire.ts` declares, which also keeps a partial test fixture on the honest path.
- */
-function patchsetSource(review: Review): string {
-  return review.patchsets?.find((p) => p.id === review.activePatchsetId)?.source ?? "local";
-}
 
 export function ReviewWorkspace({ review }: { review: Review }) {
   const [, navigate] = useLocation();
@@ -112,6 +104,9 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // to: rendering "no rounds have completed" over a daemon that never answered would be a
   // claim nobody established. The reason is stated where the ledger would have been.
   const roundsUnavailable = useRoundsUnavailable(slug);
+  // The LEDGER read's own flight (#571) — the round-diff deep-link waits on this, not on the
+  // round-events read `useRoundPending` reports.
+  const roundRecordsPending = useRoundRecordsPending(slug);
   const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
   const reportBoardId = ("reportBoardId" in roundState ? roundState.reportBoardId : "") ?? "";
@@ -134,14 +129,15 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
   // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired
   // into the working-tree freshness watcher (the renderer gates that off by patchset source)" —
-  // and `patchsetSource` is how the renderer is supposed to tell them apart (wire.ts). Asking
+  // and `isWorkingTreeReview` is how the renderer tells them apart
+  // (`@rennet/protocol`, `src/delta/citations.ts`). Asking
   // anyway would capture THIS CLONE's tree, which can never match a `github-local`/`github-rest`
   // patchset id, so the daemon commits `ReviewInvalidated`, the notice claims a change that never
   // happened, and Regenerate replaces the reviewed PR diff with a local capture — a lie, a
   // persisted write, and the destruction of the artifact under review. It is reachable, not
   // theoretical: `repositoryDirty` is ONE global flag, so an edit in any watched repo arms it and
   // the next PR review to mount collects the answer.
-  const fromWorkingTree = patchsetSource(review) === "local";
+  const fromWorkingTree = isWorkingTreeReview(review);
   // Ask whether this review went stale — on mount, and again on every window focus, which is
   // exactly when the reviewer comes back from editing their own tree. The daemon short-circuits
   // when its watcher saw nothing, so a focus is cheap. Both writes stale `review.load`, so the
@@ -165,12 +161,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     window.addEventListener("focus", ask);
     return () => window.removeEventListener("focus", ask);
   }, [checkFreshness, reviewId, repoPath, fromWorkingTree]);
-  // The staleness expression mobile already computes — a COPY of
-  // `apps/mobile/src/lib/projection.ts`, not a shared helper, so the pointer home is the only
-  // thing keeping the two honest. Mobile's reachability half is dropped (a desktop window IS its
-  // daemon connection) and the working-tree gate is added, because a PR snapshot that somehow
-  // carries `invalid` must not be narrated as "the repository changed".
-  const stale = fromWorkingTree && review.status === "invalid";
+  // The staleness rule, now a SHARED predicate (`@rennet/protocol`) rather than a copy with a
+  // pointer home — the pointer did not hold: mobile's copy was missing the working-tree gate
+  // entirely and narrated pinned PR snapshots as stale (#600). A PR snapshot that somehow carries
+  // `invalid` must not be narrated as "the repository changed", on either client. Mobile ORs its
+  // reachability half on top; a desktop window IS its daemon connection, so this is the whole rule.
+  const stale = isReviewStale(review);
 
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
@@ -217,7 +213,13 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
-        <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
+        <DiffViewContainer
+          review={review}
+          records={roundRecords}
+          recordsPending={roundRecordsPending}
+          {...(roundsUnavailable === undefined ? {} : { recordsUnavailable: roundsUnavailable })}
+          round={query.round ?? undefined}
+        />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {view === "rounds" && roundsUnavailable !== undefined ? (
@@ -336,9 +338,11 @@ function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
 //
 // Dispatch wiring (C09 cluster 4): `onDispatch` closes C8's seam — reset the run slice at the
 // dispatch act (NOT on the run route's cold reattach), fire the rounds seam's `dispatch(slug)`,
-// then take over the live run route. Over the honest-absent source `dispatch` is undefined ⇒
-// `onDispatch` stays undefined ⇒ C8's Dispatch button stays disabled (the truth today, no fake
-// enablement). No dead click that lies.
+// then take over the live run route. The app tree supplies the LIVE source (`routes/app.tsx`'s
+// `LiveRoundsScope`, C15 3.2), whose `dispatch` is unconditional — so on the shipping path
+// `onDispatch` IS wired and the button goes live the moment an ask stages. `dispatch` is absent
+// only under the honest-absent default (a tree with no rounds scope, i.e. unit mounts), and there
+// the button stays disabled rather than offering a dead click that lies.
 function HandoffMount({
   review,
   slug,
@@ -368,6 +372,7 @@ function HandoffMount({
       onDispatch={onDispatch}
       onOpenPr={exits.onOpenPr}
       onRevise={exits.onRevise}
+      unavailable={exits.unavailable}
     />
   );
 }

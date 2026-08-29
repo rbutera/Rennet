@@ -86,7 +86,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...noiseHandlers(rt),
     ...openspecHandlers(rt),
     ...pairingHandlers(rt),
-    ...patchsetHandlers(),
+    ...patchsetHandlers(rt),
     ...projectHandlers(rt),
     ...projectsHandlers(rt),
     ...publishHandlers(rt),

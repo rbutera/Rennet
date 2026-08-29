@@ -24,8 +24,8 @@ import {
   BoardMetaStore,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
-  CodexAdapter,
   type CodexAvailability,
+  captureRangePatchset,
   claudeHandoffRunPort,
   cleanupWorktree,
   contextAskBackend,
@@ -34,8 +34,6 @@ import {
   createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
-  createCodexTurnTransport,
-  createCodexUtilityAdapter,
   createCoverageTurn,
   createDaemonSettingsStore,
   createGitHubOctokit,
@@ -44,18 +42,14 @@ import {
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
   type DiscoveryDeps,
-  defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
-  defaultCodexTransportEffects,
-  defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
   defaultForgeDetectionDeps,
   defaultFsListDirDeps,
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
-  deriveCodexImplementedEvidence,
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
@@ -95,9 +89,11 @@ import {
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
+  readTreeLineCounts,
   refreshGitHubCredential,
   repoHasSubmodules,
   repoKeyOf,
+  repositoryIdentity,
   resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
@@ -123,7 +119,6 @@ import {
   buildOfferedManifest,
   buildReviewCanvases,
   type CodexExecutor,
-  type CodexUtilityPort,
   classifyUiSurface,
   createHarnessRunTurn,
   createInvocationBudget,
@@ -142,6 +137,7 @@ import {
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
+  mintSession,
   queryKnowledge,
   queryProjectMap,
   ReviewService,
@@ -168,6 +164,7 @@ import type {
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
+  Project,
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
@@ -207,7 +204,12 @@ import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
-import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import {
+  CODEX_ASK_LABEL,
+  createLiveCodexAsk,
+  createLiveOrchestratorAsk,
+  createLiveReviewAskPorts,
+} from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
@@ -222,7 +224,12 @@ import {
   type PersistedBoardMeta,
   type WorkerReturn,
 } from "./runtime/rounds";
-import { resolveRoundSessionId, SessionEntry } from "./session/session-entry";
+import {
+  enterRoundSession,
+  projectIdForRepoRoot,
+  resolveRoundSessionId,
+  SessionEntry,
+} from "./session/session-entry";
 import {
   createContextRebuiltEmit,
   createTranscriptCapture,
@@ -396,7 +403,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     openPath: options.openPath ?? (async () => false),
   });
-  const liveSnapshotStore = snapshotStoreFor();
+  const liveSnapshotStore = snapshotStoreFor(join(dataDir, "projects"));
   const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
 
   /**
@@ -495,11 +502,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // a silent single-seat masquerading as a dual-model run.
   interface CodexResolution {
     readonly availability: CodexAvailability;
-    readonly port: CodexUtilityPort | null;
-    readonly executor: CodexExecutor | null;
-    readonly agenticPort:
-      | ((mcpServers: Readonly<Record<string, { readonly url: string }>>) => HarnessPort)
-      | null;
+    /**
+     * Build the utility executor for one repository (W5). Per-repo, not per-locus:
+     * a utility seat roots at the checkout it is reasoning about, exactly as the
+     * Claude legs of the same council-routed jobs do. Discovery stays memoized per
+     * locus; only this closure is applied per review. Null ⇒ no codex resolved.
+     */
+    readonly makeExecutor: ((repoRoot: string) => CodexExecutor) | null;
     /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
     readonly binPath: string | null;
     /** The resolved codex version, stamped as harness provenance, or null. */
@@ -507,10 +516,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
   // Memoized PER LOCUS (add-windows-support / #334), like the Claude harness: the host
   // resolution is shared as before; a WSL-locus project discovers and runs the DISTRO's
-  // own `codex` (distro discovery deps, locus-wrapped executor + transport, distro-side
-  // scratch). The utility executor and agentic transport carry the locus so every spawn
-  // enters the distro through `locusCommand` — a WSL review is dual-harness rather than
-  // degrading to single-Claude.
+  // own `codex` (distro discovery deps, locus-wrapped executor, distro-side scratch).
+  // The utility executor carries the locus so every spawn enters the distro through
+  // `locusCommand` — a WSL review is dual-harness rather than degrading to
+  // single-Claude. (The agentic transport this once also built went with the dead
+  // `agenticPort`, F1: the orchestrator is Claude.)
   const codexResolutions = new Map<string, Promise<CodexResolution>>();
   function getCodexResolution(locus: Locus): Promise<CodexResolution> {
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
@@ -521,9 +531,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (env.RENNET_DISABLE_HARNESS === "1") {
           return {
             availability: { available: false, version: null },
-            port: null,
-            executor: null,
-            agenticPort: null,
+            makeExecutor: null,
             binPath: null,
             version: null,
           };
@@ -541,38 +549,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (!chosen) {
           return {
             availability: { available: false, version: null },
-            port: null,
-            executor: null,
-            agenticPort: null,
+            makeExecutor: null,
             binPath: null,
             version: null,
           };
         }
-        const executor = createCodexExecutor(defaultCodexExecEffects, {
-          bin: chosen.path,
-          harnessVersion: chosen.version,
-          ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
-          ...(locus.kind === "wsl" ? { locus } : {}),
-        });
-        const transport = createCodexTurnTransport(
-          chosen.path,
-          defaultCodexTransportEffects,
-          locus,
-          chosen.runtimePath,
-        );
-        const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
+        const makeExecutor = (repoRoot: string): CodexExecutor =>
+          createCodexExecutor(defaultCodexExecEffects, {
+            bin: chosen.path,
+            harnessVersion: chosen.version,
+            ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
+            ...(locus.kind === "wsl" ? { locus } : {}),
+            repoRoot,
+          });
         return {
           availability: { available: true, version: chosen.version },
-          port: createCodexUtilityAdapter({ executor }),
-          executor,
-          agenticPort: (mcpServers) =>
-            new CodexAdapter({
-              binaryPath: chosen.path,
-              transport,
-              version: chosen.version,
-              ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
-              mcpServers,
-            }),
+          makeExecutor,
           binPath: chosen.path,
           version: chosen.version,
         };
@@ -589,9 +581,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
   }
+  /** The utility executor for a repo, ROOTED AT THAT CHECKOUT (W5) — locus-native, so a
+   *  WSL project's seat gets the distro path the distro's codex can actually open. */
   async function codexExecutorForRepo(repoRoot: string): Promise<CodexExecutor | null> {
-    const { locus } = locusContextForRepo(repoRoot);
-    return (await getCodexResolution(locus)).executor;
+    const { locus, distroCwd } = locusContextForRepo(repoRoot);
+    const { makeExecutor } = await getCodexResolution(locus);
+    return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -1020,7 +1015,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
   };
 
-  let repositoryDirty = false;
   const allowedRoots = new Set<string>();
   // Proactive Repo Map rehydration (#143/#243): keeps each built project's structural
   // snapshot and model-backed knowledge warm as its reference branch advances.
@@ -1178,6 +1172,73 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
+   * Review a local BRANCH (#587) — the New Chat row click's engine. The reviewer clicks
+   * `feat/x`; we resolve its head OID and `git merge-base <base> <head>`, then take the
+   * `base...head` range through the SAME `captureRangePatchset` the PR source uses.
+   *
+   * Nothing is checked out and the working tree is never touched, so — exactly like a PR
+   * review — this is a SNAPSHOT of pinned OIDs. That is why the source is `local-branch`
+   * and not `local`: `local` means the working-tree capture, and the renderer keys its
+   * freshness watcher and Regenerate on exactly that. Calling a branch range `local` would
+   * hand Regenerate a licence to replace the reviewed range with a capture of this clone's
+   * tree — a lie and a destroyed artifact, the same trap `review.openPr` documents.
+   *
+   * `headRef` is carried into provenance, so the round path's read-only session lookup
+   * resolves this review onto the session that claimed the branch.
+   *
+   * A branch with no unique commits (already merged, or identical to base) has
+   * `merge-base == head`, so the range is empty and the review is honestly empty — never
+   * a failed click.
+   */
+  /**
+   * WHICH repo of a project a row's `owner/name` names (#587). A workspace maps MANY repo
+   * roots to ONE project identity and the mapping is not invertible, so `Project.openPath`
+   * — "the repo, or the FIRST included repo" — answers the wrong question for every row
+   * that is not the first repo's. The row carries an identity and never a path (R19), so
+   * the resolution has to happen here, where the included roots are known.
+   *
+   * `undefined` when nothing matches: a caller falls back to the project path, which is the
+   * pre-existing behaviour and correct for a single-repo project.
+   */
+  async function repoRootForIdentity(
+    project: Project | undefined,
+    identity: string,
+  ): Promise<string | undefined> {
+    if (!project) return undefined;
+    const roots = [
+      ...new Set([...(project.includedRepoPaths ?? []), project.openPath, project.path]),
+    ].filter((root) => root.length > 0);
+    for (const root of roots) {
+      if ((await repositoryIdentity(gitForRepo(root), root)) === identity) return root;
+    }
+    return undefined;
+  }
+
+  async function captureBranch(
+    commandId: string,
+    repoPath: string,
+    head: string,
+    base: string,
+  ): Promise<Review> {
+    const git = gitForRepo(repoPath);
+    const root = (await git(repoPath, ["rev-parse", "--show-toplevel"])).trim();
+    const headOid = (await git(root, ["rev-parse", "--verify", `${head}^{commit}`])).trim();
+    // The merge-base, not the base tip: a branch behind its base must show ITS commits,
+    // not the base's arriving backwards as deletions.
+    const baseOid = (await git(root, ["merge-base", base, headOid])).trim();
+    const patchset = await captureRangePatchset(git, {
+      root,
+      baseOid,
+      headOid,
+      baseRef: base,
+      headRef: head,
+      source: "local-branch",
+      projectSnapshotId: await ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
+    });
+    return service.createReviewFromPatchset(commandId, patchset);
+  }
+
+  /**
    * Source the per-project convention / anti-pattern catalogue (#180) for a review
    * from `<repositoryRoot>/.rennet/conventions.json`. Honest degradation: an absent,
    * unreadable, empty, or all-malformed file yields `undefined` and every lens runs
@@ -1246,11 +1307,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const ciAssignment = resolveAssignment("ci-failure-classification", {
       availability: { installed },
     });
+    // The Codex leg roots at the repository, like the Claude leg right below it (W5).
+    const codexUtilityExecutor = codexResolution.makeExecutor?.(distroCwd ?? review.repositoryRoot);
     const ciRefinementTurn =
       ciAssignment.kind !== "model"
         ? undefined
-        : ciAssignment.harness === "codex" && codexResolution.executor
-          ? createCodexCiRefinementTurn(codexResolution.executor, {
+        : ciAssignment.harness === "codex" && codexUtilityExecutor
+          ? createCodexCiRefinementTurn(codexUtilityExecutor, {
               model: ciAssignment.model,
               effort: ciAssignment.effort,
             })
@@ -1609,8 +1672,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // listener bind) in `daemon-settings.json`. A legacy `config.json` v1 blob is
   // migrated mechanically into the two on first construction — one-way, idempotent,
   // lossless. Both are sibling to the project snapshot store; neither is a repo fact.
-  const clientSettingsPath = defaultClientSettingsPath();
-  const daemonSettingsPath = defaultDaemonSettingsPath();
+  const clientSettingsPath = join(dataDir, "client-settings.json");
+  const daemonSettingsPath = join(dataDir, "daemon-settings.json");
   migrateLegacyGlobalConfig({
     legacyPath: defaultGlobalConfigPath(),
     clientPath: clientSettingsPath,
@@ -1621,11 +1684,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The device pairing store (issue #380): server-side secret store for remote
   // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
   // `pairing.*` commands (below) and the WS listener's handshake token check.
-  const pairingStore = new PairingStore();
+  const pairingStore = new PairingStore(join(dataDir, "devices.json"));
   // The push-token store (issue #383 M1): one row per paired device, keyed by device id,
   // in `~/.rennet/push-tokens.sqlite`. Shared between `device.registerPush` (set/delete),
   // the attention planner (list + dead-token cleanup), and revoke (delete stops pushes).
-  const pushTokenStore = new PushTokenStore();
+  const pushTokenStore = new PushTokenStore(join(dataDir, "push-tokens.sqlite"));
   // Which reviews have a model turn in flight (#383 batch) — the real source of projected
   // `attention.running`, marked by dispatch and read by the projection context below.
   const inFlightReviews = new InFlightReviews();
@@ -1673,17 +1736,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
   // (reload persisted threads, crash-recovered) and persistence (write a streaming
   // placeholder that recovers as interrupted if this process dies mid-answer).
-  const threadStore = new FileThreadStore();
+  const threadStore = new FileThreadStore(join(dataDir, "threads"));
   // B11: the durable ask-log store (~/.rennet/asks), sibling to the thread store.
   // Backs the `ask.*` write path (the sole writers) and the reload-survival read
   // a reconnecting client rehydrates from (`ask.read`).
-  const askLogStore = new AskLogStore();
+  const askLogStore = new AskLogStore(join(dataDir, "asks"));
   // The durable session store (B09) — the cursor the turn loop resumes from and the rows
   // the sidebar lists both live here.
-  const sessionStore = new SessionStore();
+  const sessionStore = new SessionStore(join(dataDir, "sessions"));
   // The display-transcript store (issue-set B): the durable read-model behind
   // `session.transcript`. The turn loop's `recordTranscript` sink (below) is its only writer.
-  const transcriptStore = new TranscriptStore();
+  const transcriptStore = new TranscriptStore(join(dataDir, "transcripts"));
   // ── The session turn loop, instantiated (B09 cluster 2's loop, wired here) ───────────────
   //
   // Every coding turn a round dispatches now runs THROUGH the loop. TWO of the loop's
@@ -1812,16 +1875,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // `BoardMetaStore` is the crash-boundary idempotency the `runRound` regeneration consults
   // (persist before arrival, load on restart); prompts read from the on-disk `@rennet/prompts`
   // src. `composeTurn` is omitted (optional — the lens boards are the surface until the
-  // authoring turn is wired). The round DISPATCH exercises only the per-session serializer;
-  // the full board regeneration `runRound` drives lands when its lens-pipeline collation
-  // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
-  const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
+  // authoring turn is wired). The lens-pipeline collation context IS bridged now (C15
+  // cluster 1, `runtime/round-collation.ts`): the dispatch runs the coding turn behind the
+  // per-session serializer and then hands what the worker produced to `runRound` for the
+  // full board regeneration, so the dispatch still never runs an empty pipeline.
+  const boardMetaStore = new BoardMetaStore(join(dataDir, "board-meta"));
   // Durable generation ledger (C15 2.1): the frozen prior + live successor a round mints,
   // so gen-1 survives a restart as a drill-down the rounds switcher opens by id.
-  const generationStore = new GenerationStore(join(homedir(), ".rennet", "generations"));
+  const generationStore = new GenerationStore(join(dataDir, "generations"));
   // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
   // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
-  const roundRecordStore = new RoundRecordStore(join(homedir(), ".rennet", "rounds"));
+  const roundRecordStore = new RoundRecordStore(join(dataDir, "rounds"));
   // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,
   // pushed to live sockets as it grows and read back by a client that joins mid-round. The
   // WS listener is late-bound (assigned below), exactly as the board/ask fan-outs are.
@@ -1839,6 +1903,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
   })();
   const sessionEntry = new SessionEntry(sessionStore);
+  // The ONE key both session mints converge on (#580): the `Project.id` the sidebar groups by,
+  // resolved from a review's repo root through the stored projects. `projectStore.list()` is read
+  // per call, not captured, so a project added after boot is covered at once.
+  const projectIdOf = (repoRoot: string): string =>
+    projectIdForRepoRoot(repoRoot, projectStore.list());
+  // The read side of that convergence, in ONE place so the four session-keyed durable reads
+  // (rounds ledger, transcript, board idempotency, and the per-session round lock the dispatch
+  // takes) cannot drift apart. Get this out of step with the mint below and `session.rounds`,
+  // `session.transcript` and `board.read` all go honest-empty at once.
+  const sessionIdForReview = (review: Review): string =>
+    resolveRoundSessionId(review, sessionStore.list(), projectIdOf(review.repositoryRoot));
   const roundsRuntime = createRoundsRuntime({
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
@@ -1923,18 +1998,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The round exit (B11 cluster 4): run the composed work-order as ONE coding-agent turn,
     // serialized per session behind any round already in flight for the review's target. The
     // session is SessionEntry's mint-or-reattach for that target (a stable id per target, so
-    // two dispatches of one review serialize together), keyed by the review's repo root; a
-    // detached HEAD (no branch to claim) falls back to a review-id session. A failure-isolated
+    // two dispatches of one review serialize together), keyed by the review's PROJECT id with
+    // its repo root stamped on (#580); a detached HEAD (no branch to claim) persists a
+    // review-id session through the same store (#573). A failure-isolated
     // post-commit kick (the swarm/scout precedent): the turn runs behind the command, and its
     // rejection never surfaces — `round.dispatch` already returned the composed work-order.
-    // The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): project the live
-    // rounds runtime's ledger for the review's session, resolved READ-ONLY (the read side of
-    // dispatchRound's mint below — same target-claim derivation, never minting). An unknown
-    // review or a session with no recorded round ⇒ an honest empty ledger.
+    // The rounds-ledger read for `session.rounds`: project the live rounds runtime's ledger
+    // for the review's session, resolved READ-ONLY (the read side of dispatchRound's mint
+    // below — same target-claim derivation, never minting). An unknown review or a session
+    // with no recorded round ⇒ an honest empty ledger.
     roundRecordsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (!review) return [];
-      return roundsRuntime.ledger(resolveRoundSessionId(review, sessionStore.list()));
+      return roundsRuntime.ledger(sessionIdForReview(review));
     },
     // The display-transcript read for `session.transcript` (issue-set B): the coding-turn rows
     // the turn loop captured and persisted for this review's session, resolved READ-ONLY via the
@@ -1945,7 +2021,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     transcriptRowsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (!review) return [];
-      return transcriptStore.read(resolveRoundSessionId(review, sessionStore.list()));
+      return transcriptStore.read(sessionIdForReview(review));
     },
     // The live round-progress catch-up read (C15 3.1). Keyed by review id — the same id the
     // run route's slug carries — so a cold `/s/:slug/run` mount folds the round already in
@@ -1957,6 +2033,70 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // pin, and an archive all survive reload; restore is un-archive.
     sessions: {
       list: () => sessionStore.list().map(sidebarSessionOf),
+      // The New Chat front door (C21, #587): starting a session is ONE act — capture what
+      // changed on the clicked target, mint, claim, attach — and the HOST owns all of it.
+      //
+      // Two things the client structurally cannot do, which is why this is not a renderer
+      // sequence. It cannot make the steps atomic: a capture that rejects after the mint
+      // would leave a claim standing over a review-less session, and the claim hides the
+      // very row that would retry it. And it cannot resolve WHICH repo a row belongs to,
+      // because `LocalWork` carries an `owner/name` identity and no path (R19) while
+      // `Project.openPath` is "the repo, or the FIRST included repo".
+      //
+      // So: resolve the repo from the row's identity, capture, and only THEN mint. A
+      // rejected capture has claimed nothing and the row stays clickable.
+      start: async ({ projectId, commandId, target }) => {
+        const project = projectStore.list().find((entry) => entry.id === projectId);
+        // The repo this row named. Absent target (the Current Checkout row) is the project
+        // as a whole, which is exactly what `openPath` means; a target resolves through its
+        // identity, falling back to the project path when nothing matches (a single-repo
+        // project, or a row whose identity predates the field).
+        const projectRoot = project?.openPath || project?.path || "";
+        const root =
+          target?.repository === undefined
+            ? projectRoot
+            : ((await repoRootForIdentity(project, target.repository)) ?? projectRoot);
+        // Cleared before the capture, not after (the `checkFreshness` rule): this front
+        // door is reachable on an ALREADY-OPEN project, whose root is watched and settled,
+        // so an edit made while the capture runs must survive as dirty.
+        if (target === undefined) watcher.setDirty(false);
+        // Capture BEFORE the mint, so a rejection claims nothing.
+        const review = await (target === undefined
+          ? service.capture(commandId, root)
+          : target.prNumber === undefined
+            ? captureBranch(commandId, root, target.branch, project?.primaryBranch ?? "HEAD")
+            : openPullRequest(
+                commandId,
+                `${target.repository ?? ""}#${target.prNumber}`,
+                root,
+                false,
+              ));
+        allowedRoots.add(review.repositoryRoot);
+        if (target === undefined) {
+          // The working-tree capture is the one that IS watched for freshness — the branch
+          // and PR ranges are pinned snapshots and stay off the watcher deliberately.
+          watcher.start(review.repositoryRoot, locusForRepo(review.repositoryRoot));
+        }
+        // The claim-less checkout session still stamps its repo root, so its rounds stay in
+        // that repo's ledger; `reviewId` (attached below) is what resolves them back to it.
+        const entered =
+          target === undefined
+            ? {
+                session: {
+                  ...mintSession(projectId),
+                  repositoryRoot: review.repositoryRoot,
+                },
+                reattached: false,
+              }
+            : sessionEntry.enter(projectId, target, review.repositoryRoot, review.id);
+        if (!entered.reattached) sessionStore.save(entered.session);
+        // Attach, and REPORT WHAT THE STORE HOLDS. `attachReview` keeps an existing review
+        // (a session attaches at most one), so a session already bound to another review
+        // comes back carrying THAT one and the client lands where the diff actually is —
+        // rather than being told this capture succeeded when nothing points at it.
+        const bound = sessionStore.attachReview(entered.session.id, review.id) ?? entered.session;
+        return { session: sidebarSessionOf(bound), reattached: entered.reattached };
+      },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
         return session && sidebarSessionOf(session);
@@ -1982,7 +2122,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     lensBoardForReview: async (reviewId: string, generation: string, lens: LensKind) => {
       const review = service.reviewById(reviewId);
       if (!review) return undefined;
-      const sessionId = resolveRoundSessionId(review, sessionStore.list());
+      const sessionId = sessionIdForReview(review);
       const meta = boardMetaStore
         .listForGeneration(sessionId, generation)
         .find((record) => record.lens === lens);
@@ -1996,20 +2136,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
     },
     dispatchRound: async ({ review, workOrder }) => {
-      const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
-      const branch = activePatchset?.repository.headRef;
-      const session =
-        branch !== undefined
-          ? sessionEntry.enter(review.repositoryRoot, {
-              branch,
-              ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
-            }).session
-          : {
-              id: review.id,
-              projectId: review.repositoryRoot,
-              threads: [],
-              createdAt: Date.now(),
-            };
+      // The WRITE half of the session identity, and it lives beside its READ half
+      // (`resolveRoundSessionId`, which `sessionIdForReview` calls) rather than here — the two
+      // have to agree, and inline in this file they twice did not. Both mints funnel through
+      // `SessionEntry` keyed on the PROJECT id (#580); the repo root, the review id and the
+      // repo's `owner/name` all ride along, so a workspace's per-repo rounds stay in their own
+      // ledgers and the read side resolves this exact session back.
+      const session = (
+        await enterRoundSession(
+          sessionEntry,
+          projectIdOf(review.repositoryRoot),
+          review,
+          gitForRepo(review.repositoryRoot),
+        )
+      ).session;
       // Captured from the worker run below so the C15 regeneration tail can run
       // `runRound` over what the worker produced WITHOUT re-running the worker: a
       // WorkerReturn carrying the commit range, plus a `patchsetId` (the post-turn HEAD)
@@ -2185,6 +2325,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 snapshot: gated.ok ? gated.snapshot : null,
               };
             },
+            // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
+            // lint resolves citations against every text file at the reviewed head and
+            // base, not only the changed ones. Two `git grep -c` passes over the repo's
+            // own git (locus-aware), ~80 ms on a 2.4k-file tree; a side git could not
+            // read comes back empty and degrades to the diff on that side alone.
+            fileInventory: (patchset) =>
+              readTreeLineCounts(
+                patchset.repository.root,
+                patchset.repository.headOid,
+                patchset.repository.baseOid,
+                gitForRepo(patchset.repository.root),
+              ),
             // The REAL prior generation, rebuilt from its two durable halves (the generation
             // record + the board-meta rows' projected boards). Absent ⇒ this session has
             // never regenerated, so the round is honestly a first generation.
@@ -2240,18 +2392,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }),
     chooseRepository,
     openPullRequest,
-    startWatching: (root: string) =>
-      watcher.start(
-        root,
-        () => {
-          repositoryDirty = true;
-        },
-        locusForRepo(root),
-      ),
-    isRepositoryDirty: () => repositoryDirty,
-    setRepositoryDirty: (value: boolean) => {
-      repositoryDirty = value;
-    },
+    captureBranch,
+    startWatching: (root: string) => watcher.start(root, locusForRepo(root)),
+    isRepositoryDirty: () => watcher.isDirty(),
+    setRepositoryDirty: (value: boolean) => watcher.setDirty(value),
     // The front door (issue #29): the persisted projects list, read-only discovery
     // over the chosen path, and the ambient harness detection. MAIN derives the
     // stored project shape from the confirmed discovery so the renderer cannot
@@ -2308,10 +2452,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     detectForges,
     github: githubAccount,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
-    // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
-    // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
-    // when auth is unavailable → the local-only list). An unknown projectId degrades
-    // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
+    // is real worktrees/branches with dirty/ahead/behind from git; the live GitHub
+    // OPEN-PR set rides the same boundary through the auth-ladder PR source (absent
+    // when auth is unavailable → the local-only list, with `authUnavailable` naming the
+    // reason). An unknown projectId degrades to an empty detail (fail-safe, mirroring
+    // the project store) rather than throwing.
     projectDetail: async (projectId, prStates, localOnly, emit) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {
@@ -2490,11 +2635,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // question reaches. The core `askReview` router (invoked in dispatch) still owns
     // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are
     // now the REAL invocation behind that law (replacing `reviewAskFixturePorts()`):
-    //   • askOrchestrator drives the live `claude` turn over the in-process
-    //     canvasOps@2 MCP server (`orchestratorTurn`) — the orchestrator reads the
-    //     review through context.map/file/novelty and answers. The pipeline it turns
-    //     over is a DETERMINISTIC-FLOOR build (no lens/model turns): the ask's model
-    //     spend is the one orchestrator turn, not a fresh lens review.
+    //   • askOrchestrator runs ONE capable `claude` turn at the review's repository
+    //     root, grounded in the active patchset's diff and free to read the repo.
+    //     The ask's model spend is that single turn, not a fresh lens review.
     //   • askCodex shells one `codex exec` over the diff + question (gated on the
     //     honestly-probed `codex` availability; an absent binary yields a legible
     //     "unavailable" answer, never a crash, so a "both" ask still returns the
@@ -2539,22 +2682,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         line,
         locus: locusForRepo(review.repositoryRoot),
       }),
+    // review.ask — BOTH live legs (F1, #570). The orchestrator runs ONE capable
+    // `claude` turn at the review's repository root through the same
+    // `claudeHandoffRunPort` the write handoff uses (no second drain loop, no
+    // checkpoint bracket — an ask has no diff to measure), streaming its text
+    // deltas out through dispatch. No harness ⇒ an honest line naming `claude`.
     reviewAsk: createLiveReviewAskPorts({
+      askOrchestrator: createLiveOrchestratorAsk({
+        resolveRunPort: async (repoRoot) => {
+          const adapter = await claudeAdapterForRepo(repoRoot);
+          return adapter ? claudeHandoffRunPort(adapter) : null;
+        },
+      }),
       askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the
         // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a
         // WSL project asks the distro's codex. A null executor means no codex resolved
         // — surface that honestly rather than shelling a bad `codex`.
-        const { locus } = locusContextForRepo(review.repositoryRoot);
-        const codex = await getCodexResolution(locus);
-        if (codex.executor === null) {
+        const executor = await codexExecutorForRepo(review.repositoryRoot);
+        if (executor === null) {
           return {
             model: CODEX_ASK_LABEL,
             answer: "Codex is not installed, so no second opinion is available.",
           };
         }
         // Thread the quit-abort controller (#251 criterion 4) → execa's cancelSignal.
-        return createLiveCodexAsk({ executor: codex.executor })({
+        return createLiveCodexAsk({ executor })({
           review,
           question,
           ...(abortController ? { abortController } : {}),

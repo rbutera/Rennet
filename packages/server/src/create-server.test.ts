@@ -1,7 +1,9 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
 
 // Pins design D4 (no module-level singletons — two servers in one process do not
@@ -45,4 +47,116 @@ describe("createRennetServer — instance isolation + shutdown (#377)", () => {
     }).not.toThrow();
     expect(() => b.shutdown()).not.toThrow();
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The round dispatch's session, executed through the REAL server.
+//
+// `dispatchRound` is a closure in the composition root, so nothing had ever run its
+// call site — which is why it silently lost the review id and the repository. This
+// drives it end to end over a real git repo: add a project, start Current Checkout,
+// stage an ask, dispatch. The round's coding turn fails for want of a harness, and
+// that is fine — the session derivation runs first and is what is asserted.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("round.dispatch mints onto the session the reads answer (the call site, run)", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    vi.unstubAllEnvs();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("takes the Current Checkout session rather than minting a second row beside it", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-site-"));
+    // HOME is redirected as a BACKSTOP, not as the mechanism: every store honours `dataDir`
+    // now, so nothing should reach it. The assertion at the end proves that rather than
+    // assuming it — this test is the reason we know the stores used to escape.
+    const home = mkdtempSync(join(tmpdir(), "rennet-round-home-"));
+    vi.stubEnv("HOME", home);
+    // The project is added under a SYMLINK to the repo, and git reports the resolved path —
+    // so `Project.path` and `review.repositoryRoot` are two spellings of one directory. That
+    // is the shape a single-path fixture cannot contain: without it `projectIdForRepoRoot`
+    // misses, `projectIdOf` falls back to the raw path, and the round mints a second session
+    // filed under a project id no sidebar row has. Built explicitly rather than relying on
+    // macOS resolving `/var/folders`, so it bites on Linux too.
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-repo-")));
+    const linkDir = mkdtempSync(join(tmpdir(), "rennet-round-link-"));
+    const repoLink = join(linkDir, "repo");
+    symlinkSync(repo, repoLink);
+    dirs.push(dataDir, home, repo, linkDir);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
+    git("init", "-b", "main");
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    git("add", "a.txt");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "x");
+    // An uncommitted edit, so the working-tree capture has a real range to review.
+    writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repoLink,
+        kind: "repo",
+        repos: [{ name: "repo", path: repoLink, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+
+    // The Current Checkout front door: no branch ⇒ a claim-LESS session, root-stamped,
+    // holding the review. The only arm that can ever find it again is the holder arm.
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: { id: string; reviewId?: string } | null };
+    expect(minted.session).not.toBeNull();
+    const checkoutId = minted.session?.id ?? "";
+    const reviewId = minted.session?.reviewId ?? "";
+    expect(reviewId).not.toBe(""); // the front door captured and ATTACHED
+    expect(checkoutId).not.toBe(reviewId); // a randomUUID id, never the review's id
+
+    // One addressed ask, so the bundle is non-empty and the round really dispatches.
+    await server.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: { id: randomUUID(), anchor: "the round", type: "request-change", body: "do the thing" },
+    });
+    const dispatched = (await server.dispatch("round.dispatch", { reviewId })) as {
+      dispatched: boolean;
+    };
+    expect(dispatched.dispatched).toBe(true);
+
+    // The kick runs BEHIND the command, so wait on a point that is downstream of the
+    // session derivation: `dispatchRound` emits its first progress event only after
+    // `enterRoundSession` has resolved. Waiting on a SEQUENCE, not a sleep.
+    await vi.waitFor(
+      async () => {
+        const events = (await server.dispatch("session.roundEvents", { reviewId })) as {
+          events: unknown[];
+        };
+        expect(events.events.length).toBeGreaterThan(0);
+      },
+      { timeout: 15_000, interval: 50 },
+    );
+
+    // The assertion: the store holds ONE session, and it is the one the click made.
+    // A call site that drops the review id mints a second row here.
+    const listed = (await server.dispatch("session.list", {})) as {
+      sessions: { id: string; projectId: string }[];
+    };
+    expect(listed.sessions.map((s) => s.id)).toEqual([checkoutId]);
+    // And it is filed under the PROJECT, not under a path — the round resolved the symlinked
+    // project path onto the review's resolved root rather than falling through to it.
+    expect(listed.sessions[0]?.projectId).toBe(added.project.id);
+
+    // HERMETIC: the session the round just wrote lives under THIS server's `dataDir`, and the
+    // redirected home is untouched. Nine of the twelve stores used to ignore `dataDir` and
+    // write to `~/.rennet` from anywhere — which is how an earlier run of this very test wrote
+    // into the machine's real session store. A server given a `dataDir` now lives there.
+    expect(existsSync(join(dataDir, "sessions", `${checkoutId}.json`))).toBe(true);
+    expect(existsSync(join(home, ".rennet"))).toBe(false);
+  }, 30_000);
 });

@@ -24,13 +24,15 @@ import { parseRemoteIdentity } from "./worktree-discovery";
  * `for-each-ref`, `status --porcelain`, `rev-list`, `config`) and never mutates the
  * index or working tree.
  *
- * SCOPE (B1): local git only. `prs` is returned empty and `truncated` false; the
- * live GitHub PR set (B2), CI + dedupe fidelity (B3), and live clean-up (B4) extend
- * this same module behind the unchanged command boundary.
+ * SCOPE: the local half is always real git. The remote half is live — an injected
+ * `prSource` fans out over the project's forge repos and fills `prs` + `truncated`;
+ * with no source wired (or GitHub auth unavailable) `prs` stays empty, `truncated`
+ * false, and `authUnavailable` names the reason. CI + dedupe fidelity and live
+ * clean-up extend this same module behind the unchanged command boundary.
  *
  * ── Contract notes the sibling waves depend on ───────────────────────────────
- *  • `repository` identity is `owner/name` (from the origin remote). B2 MUST emit the
- *    SAME `owner/name` identity for each PullRequest so the renderer's composite
+ *  • `repository` identity is `owner/name` (from the origin remote). The PR source emits
+ *    the SAME `owner/name` identity for each PullRequest so the renderer's composite
  *    `(repository, branch)` dedupe folds a local branch into its PR row. This is an
  *    EXACT string match (see `smart-list.ts` `compositeKey`), so the two halves must
  *    agree byte-for-byte. When there is NO forge remote the identity falls back to the
@@ -40,9 +42,9 @@ import { parseRemoteIdentity } from "./worktree-discovery";
  *  • Ownership: local work is the viewer's by definition ("you edit what you own"),
  *    so every LocalWork.author is set to the viewer login — matching the shipped
  *    fixture semantics and `smart-list.ts` (`local.author === viewer` ⇒ mine). The
- *    viewer login is the local git identity here (no GitHub call in B1); B2 replaces
- *    it with the real GitHub login from `resolveGitHubAuth`, and because author is
- *    pinned to the viewer, that swap keeps local work reading as "mine".
+ *    viewer login is the local git identity when no PR source answers; with one wired
+ *    it is the real GitHub login from `prSource.resolveViewer`, and because author is
+ *    pinned to the viewer, that resolution keeps local work reading as "mine".
  *  • `stage` is "captured" for every live local: without rennet's own review/PR
  *    tracking there is no local signal for "reviewed"/"prd" yet. Real stage lands
  *    when the review state is consulted (a follow-up).
@@ -59,8 +61,8 @@ export interface ProjectDetailSourceDeps {
    */
   resolveRepoRoots(project: Project): Promise<readonly string[]>;
   /**
-   * The live remote-PR half (B2). Absent → `prs` stays empty and the surface is the
-   * B1 local-only list (also the honest degrade when GitHub auth is unavailable: no
+   * The live remote-PR half. Absent → `prs` stays empty and the surface is the
+   * local-only list (also the honest degrade when GitHub auth is unavailable: no
    * token ⇒ no source is wired here, never a failed fetch rendered as "zero PRs").
    */
   prSource?: ProjectPrSource;
@@ -80,7 +82,7 @@ function firstLine(output: string): string {
  * RepoRecord alias `realpath(git-common-dir)` (R19). NEVER the directory basename —
  * that is the path-name guess `worktree-discovery.ts` explicitly forbids.
  */
-async function repositoryIdentity(git: GitExec, root: string): Promise<string> {
+export async function repositoryIdentity(git: GitExec, root: string): Promise<string> {
   const url = firstLine(await git(root, ["remote", "get-url", "origin"], { reject: false }));
   const identity = url ? parseRemoteIdentity(url) : null;
   if (identity) return `${identity.owner}/${identity.name}`;
