@@ -44,7 +44,10 @@ export class RoundProgressHub {
     const seq = this.#nextSeq.get(reviewId) ?? 0;
     this.#nextSeq.set(reviewId, seq + 1);
     const sequenced: RoundEvent = { ...event, seq };
-    const log = event.type === "dispatched" ? [] : (this.#logs.get(reviewId) ?? []);
+    const log =
+      event.type === "dispatched" || (event.type === "operation" && event.snapshot.revision === 0)
+        ? []
+        : (this.#logs.get(reviewId) ?? []);
     log.push(sequenced);
     if (log.length > MAX_EVENTS_PER_REVIEW) log.splice(0, log.length - MAX_EVENTS_PER_REVIEW);
     this.#logs.set(reviewId, log);

@@ -3,7 +3,13 @@ import { Check, Loader2, Minus } from "lucide-react";
 import { useEffect } from "react";
 import { Redirect } from "wouter";
 import { useRennetStore } from "../store";
-import { type LaneRow, type RoundState, type RowStatus, runNavigation } from "./round-machine";
+import {
+  type LaneRow,
+  type RoundState,
+  type RowStatus,
+  roundTargetLabel,
+  runNavigation,
+} from "./round-machine";
 import { useRoundPending, useRoundState } from "./rounds-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,31 +108,11 @@ function LaneList({ title, rows }: { readonly title: string; readonly rows: read
   );
 }
 
-/** The gate + commit tail, DERIVED from the phase (the folded `gate`/`committed` events).
- *  The report-drafting tail lives on the greeting surface — `reporting` redirects there. */
-function tailRows(phase: RoundState["phase"]): readonly LaneRow[] {
-  // The gate's command belongs to its LABEL, not to a settled row's account of itself:
-  // "pnpm check" is what the step is, true at every status, and the `done` arm's `detail`
-  // is reserved for what the step actually found.
-  return [
-    {
-      id: "gate",
-      label: "Ran the gate · pnpm check",
-      status: phase === "gating" ? "running" : phase === "committing" ? "done" : "queued",
-    },
-    {
-      id: "commit",
-      label: "Committed the round",
-      status: phase === "committing" ? "running" : "queued",
-    },
-  ];
-}
-
 /** The live in-flight run body — prep lines, the worker lane list, and the gate/commit
- *  tail, all from the machine's current phase. Never reached for the terminal/absent
- *  phases (those redirect) — only `dispatching…committing` and `failed`. */
+ *  tail, all from durable receipts. Legacy events can still render their prep and worker
+ *  rows, but never gain client-authored gate, commit, or report success claims. */
 function LiveRun({ state }: { readonly state: RoundState }) {
-  if (state.phase === "failed") {
+  if (state.phase === "failed" && !("operation" in state)) {
     return (
       <section
         data-screen="session-run"
@@ -142,6 +128,12 @@ function LiveRun({ state }: { readonly state: RoundState }) {
 
   const prep = "prep" in state ? state.prep : NO_ROWS;
   const worker = "worker" in state ? state.worker : NO_ROWS;
+  const tail = "tail" in state ? state.tail : NO_ROWS;
+  const operation = "operation" in state ? state.operation : undefined;
+  const header =
+    operation === undefined
+      ? "Running the round"
+      : `Round ${operation.roundNumber} · ${roundTargetLabel(operation.sourceTarget)}`;
 
   return (
     <section
@@ -150,7 +142,7 @@ function LiveRun({ state }: { readonly state: RoundState }) {
       className="min-h-0 flex-1 overflow-y-auto"
     >
       <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[11vh]">
-        <span className="font-display text-sm font-medium text-foreground">Running the round</span>
+        <span className="font-display text-sm font-medium text-foreground">{header}</span>
 
         {prep.length > 0 && (
           <div className="flex flex-col gap-1.5">
@@ -162,12 +154,18 @@ function LiveRun({ state }: { readonly state: RoundState }) {
 
         {worker.length > 0 && <LaneList title="Round Worker" rows={worker} />}
 
-        {worker.length > 0 && (
+        {tail.length > 0 && (
           <div className="flex flex-col gap-1.5">
-            {tailRows(state.phase).map((row) => (
+            {tail.map((row) => (
               <StepLine key={row.id} row={row} />
             ))}
           </div>
+        )}
+
+        {state.phase === "failed" && (
+          <p role="alert" className="text-sm text-destructive">
+            {state.reason}
+          </p>
         )}
       </div>
     </section>
@@ -188,12 +186,9 @@ export function RunRoute({ slug }: { readonly slug: string }) {
   const nav = runNavigation(state, slug);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
 
-  // Greeting continuity across the route change (§3.2): the report phases hand off to the
-  // board surface, where the report IS the greeting (cluster 5). Arm it here — the run
-  // route is where that transition is observed. Race-free: this writes only
-  // `greetingArmed`, which navigation never reads (nav is derived purely from `state`).
-  const entersGreeting =
-    state.phase === "reporting" || state.phase === "composing" || state.phase === "composed";
+  // The greeting arms only when the durable operation reports terminal completion. A
+  // drafted report is still being verified and keeps ownership of the run route.
+  const entersGreeting = state.phase === "composed";
   useEffect(() => {
     if (entersGreeting) armGreeting(true);
   }, [entersGreeting, armGreeting]);

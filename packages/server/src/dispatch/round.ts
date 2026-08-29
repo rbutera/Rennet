@@ -10,6 +10,8 @@ import {
   type AskOccurrence,
   type AskProjection,
   type ComposedHandoffBundle,
+  type HandoffBundle,
+  type Patchset,
   parseCommandInput,
   parseCommandOutput,
   ROUND_NO_REGEN,
@@ -22,6 +24,8 @@ interface ActiveAskState {
   readonly projection: AskProjection;
   readonly revisions: ReadonlyMap<string, number>;
 }
+
+type AskDrainDeps = Pick<DispatchRuntime["deps"], "askLog" | "broadcastAskProjection">;
 
 /** Fold the durable log while tracking the event sequence that created or last changed
  * each currently staged occurrence. An ask id can be restored or staged again; the id
@@ -81,6 +85,36 @@ function dispatchIdentity(
   return sha256Hex(JSON.stringify({ reviewId, sourcePatchsetId, askOccurrences }));
 }
 
+export interface ActiveRoundDraft {
+  readonly bundle: HandoffBundle;
+  readonly askOccurrences: readonly AskOccurrence[];
+  readonly dispatchId: string;
+}
+
+/** Re-fold the living draft after a durable operation drains. This is deliberately
+ * model-free: callers may author the returned bundle only after its exact occurrence
+ * snapshot and dispatch identity have been fixed. */
+export function activeRoundDraft(
+  events: readonly AskEvent[],
+  reviewId: string,
+  patchset: Patchset,
+): ActiveRoundDraft | undefined {
+  const state = activeAskState(events);
+  const bundle = buildHandoffBundle({
+    reviewId,
+    patchset,
+    dispositions: handoffDispositionsFromProjection(state.projection, patchset),
+  });
+  const floor = mechanicalComposition(bundle);
+  if (floor.tasks.length === 0) return undefined;
+  const askOccurrences = occurrencesFor(floor, state.revisions);
+  return {
+    bundle,
+    askOccurrences,
+    dispatchId: dispatchIdentity(reviewId, patchset.id, askOccurrences),
+  };
+}
+
 function projectionForRecordedOccurrences(
   events: readonly AskEvent[],
   state: ActiveAskState,
@@ -110,6 +144,15 @@ function projectionForRecordedOccurrences(
     throw new Error("Round dispatch cannot reconstruct every recorded ask occurrence.");
   }
   return { ...state.projection, stagedAsks };
+}
+
+/** Rebuild the exact ask bytes one durable operation dispatched, even when the living
+ * draft has since edited or restored the same ids. */
+export function projectionForAskOccurrences(
+  events: readonly AskEvent[],
+  askOccurrences: readonly AskOccurrence[],
+): AskProjection {
+  return projectionForRecordedOccurrences(events, activeAskState(events), askOccurrences);
 }
 
 function completedTerminalOccurrences(
@@ -154,24 +197,8 @@ export function roundHandlers(rt: DispatchRuntime) {
   // Model-authored work-order bytes never enter the key.
   const inFlight = new Map<string, Promise<ComposedHandoffBundle>>();
 
-  const consumeCurrent = (reviewId: string, occurrences: readonly AskOccurrence[]): boolean => {
-    const state = activeAskState(deps.askLog.read(reviewId));
-    const seen = new Set<string>();
-    const ids = occurrences.flatMap((occurrence) => {
-      if (seen.has(occurrence.id) || state.revisions.get(occurrence.id) !== occurrence.revision) {
-        return [];
-      }
-      seen.add(occurrence.id);
-      return [occurrence.id];
-    });
-    if (ids.length === 0) return false;
-    deps.askLog.appendMany(
-      reviewId,
-      ids.map((id) => ({ kind: "unstage" as const, id })),
-    );
-    deps.broadcastAskProjection?.(reviewId, deps.askLog.readProjection(reviewId));
-    return true;
-  };
+  const consumeCurrent = (reviewId: string, occurrences: readonly AskOccurrence[]): boolean =>
+    consumeCurrentAskOccurrences(deps, reviewId, occurrences);
 
   return {
     "round.dispatch": async (rawInput) => {
@@ -247,6 +274,15 @@ export function roundHandlers(rt: DispatchRuntime) {
         : occurrencesFor(mechanicalComposition(bundle), askState.revisions);
       const key =
         resumable?.dispatchId ?? dispatchIdentity(review.id, sourcePatchsetId, askOccurrences);
+      // The durable whole-round owner gets first refusal BEFORE the optional model composer.
+      // A second dispatch while A is active records only "run again"; B's ask snapshot and
+      // authored work order are rebuilt after A's exact occurrences drain.
+      if (await deps.queueRoundIfActive?.({ review, dispatchId: key })) {
+        return parseCommandOutput(name, {
+          workOrder: mechanicalComposition(bundle),
+          dispatched: true,
+        });
+      }
       let run = inFlight.get(key);
       if (run === undefined) {
         run = (async () => {
@@ -271,7 +307,11 @@ export function roundHandlers(rt: DispatchRuntime) {
           });
           if (kicked !== undefined) {
             void kicked
-              .then(() => consumeCurrent(review.id, askOccurrences))
+              .then((outcome) => {
+                if (outcome?.askDrain !== "coordinator") {
+                  consumeCurrent(review.id, askOccurrences);
+                }
+              })
               .catch(() => inFlight.delete(key));
           }
           return workOrder;
@@ -283,6 +323,31 @@ export function roundHandlers(rt: DispatchRuntime) {
       return parseCommandOutput(name, { workOrder: await run, dispatched: true });
     },
   } satisfies Record<string, CommandHandler>;
+}
+
+/** CAS-consume only the exact staged occurrences a completed durable operation owns.
+ * Edits/restores made while it ran have a different revision and remain staged. */
+export function consumeCurrentAskOccurrences(
+  deps: AskDrainDeps,
+  reviewId: string,
+  occurrences: readonly AskOccurrence[],
+): boolean {
+  const state = activeAskState(deps.askLog.read(reviewId));
+  const seen = new Set<string>();
+  const ids = occurrences.flatMap((occurrence) => {
+    if (seen.has(occurrence.id) || state.revisions.get(occurrence.id) !== occurrence.revision) {
+      return [];
+    }
+    seen.add(occurrence.id);
+    return [occurrence.id];
+  });
+  if (ids.length === 0) return false;
+  deps.askLog.appendMany(
+    reviewId,
+    ids.map((id) => ({ kind: "unstage" as const, id })),
+  );
+  deps.broadcastAskProjection?.(reviewId, deps.askLog.readProjection(reviewId));
+  return true;
 }
 
 /**

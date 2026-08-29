@@ -40,7 +40,7 @@ import {
   type SuccessorAccount,
 } from "@rennet/protocol";
 import type { LensPipelineDeps, RoundDraftContext } from "./lens-pipeline";
-import type { RoundInput, WorkerReturn } from "./rounds";
+import type { RoundDraftPlan, RoundInput, WorkerReturn } from "./rounds";
 
 /**
  * Map a patchset's `IndexedHunk`s (whose spans are `{ new: {start,lines}, old:
@@ -416,6 +416,11 @@ export interface BoardRegenerationDeps {
 export interface BoardRegenerationInput {
   readonly session: SessionModel;
   readonly repoRoot: string;
+  /** Board and generation ids reserved by the durable operation before drafting. */
+  readonly draftPlan?: RoundDraftPlan;
+  /** The coordinator already activated the exact successor patchset while reserving
+   * the durable report/generation ids. Legacy callers leave this absent. */
+  readonly recaptured?: boolean;
   /** The patchset the boards described BEFORE this round — the generation it succeeds. */
   readonly priorPatchsetId: string;
   readonly asksDispatched: readonly string[];
@@ -479,7 +484,7 @@ export async function runBoardRegeneration(
   try {
     const workerChangedTree =
       input.worked.changedPaths.length > 0 || input.worked.diff.trim().length > 0;
-    if (workerChangedTree) await deps.recapture();
+    if (workerChangedTree && input.recaptured !== true) await deps.recapture();
     const review = deps.reviewNow();
     const successor = review.patchsets.find((p) => p.id === review.activePatchsetId);
     if (successor === undefined) {
@@ -539,6 +544,7 @@ export async function runBoardRegeneration(
       await deps.runRound({
         session: input.session,
         repoRoot: input.repoRoot,
+        ...(input.draftPlan === undefined ? {} : { draftPlan: input.draftPlan }),
         ...(prior === undefined
           ? {}
           : { previousGeneration: prior.generation, previous: prior.boards }),

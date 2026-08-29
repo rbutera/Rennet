@@ -99,14 +99,14 @@ export function compactAge(createdAt: number, now: number = Date.now()): string 
   return `${Math.floor(days / 7)}w`;
 }
 
-/** One served row → the sidebar's row. `slug` is the session id (id-as-slug until #466
- *  durable identity, per slug.ts); `time` is derived here, never sent over the wire. */
+/** One served row → the sidebar's row. A durable completed-round receipt replaces the
+ * age line; before any round returns, age remains the honest fallback. */
 function toSidebarSession(row: WireSidebarSession): SidebarSession {
   return {
     id: row.id,
     slug: row.id,
     title: row.title,
-    time: compactAge(row.createdAt),
+    time: row.subtitle ?? compactAge(row.createdAt),
     target: row.target,
     ...(row.targetState ? { targetState: row.targetState } : {}),
     ...(row.unread ? { unread: true } : {}),

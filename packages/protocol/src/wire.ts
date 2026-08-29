@@ -2037,6 +2037,9 @@ export const sidebarSessionSchema = z.object({
   projectId: z.string().min(1),
   /** The reviewer's chosen title, else the claimed branch, else "New review". */
   title: z.string().min(1),
+  /** Latest completed round receipt, derived server-side from the durable round ledger.
+   * Absent before this session has returned a round. */
+  subtitle: z.string().min(1).optional(),
   target: z.enum(["your-branch", "your-pr"]),
   /**
    * Where the target stands (needs-you / merged / reviewed) and whether the row carries

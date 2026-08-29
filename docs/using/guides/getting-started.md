@@ -334,7 +334,12 @@ flowchart LR
 Dispatching moves you to the run, live: the detached worktree created, the
 round's asks applied, the worker's activity as a table of steps, your project's
 gate command running and resolving, the commits, and finally the round report
-being drafted.
+being drafted and verified. Closing and reopening the run, or following its
+direct link on another launch, reattaches to the latest saved receipt without
+dispatching the work again. The run stays put through report verification and
+returns to the boards only after verified completion; a failed round remains on
+the run with its failure. The session row then reads *Round N is back*, using
+the completed round's saved ledger number.
 
 The **round report** is what greets you when the round returns. It states what
 the round did, where it ran, and how the gate came back, then lists one item per

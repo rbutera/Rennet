@@ -4,6 +4,7 @@ import {
   parseCommandInput,
   parseCommandOutput,
   type Review,
+  ROUND_NO_REGEN,
   type RoundRecord,
   type SessionModel,
   type SessionTrail,
@@ -70,9 +71,24 @@ export function sessionTrailForReview(review: Review): SessionTrail {
  * review" placeholder for a session that has claimed nothing yet. `target` distinguishes
  * only what the claim can prove — a PR number means `your-pr`, its absence means
  * `your-branch`; a teammate's PR is not knowable from the session record, so it is never
- * guessed. `targetState` and unread activity are likewise absent rather than invented.
+ * guessed. `subtitle` is projected only from the latest terminal completed row in the
+ * durable rounds ledger. `targetState` and unread activity are likewise absent rather than
+ * invented.
  */
-export function sidebarSessionOf(session: SessionModel): SidebarSession {
+function latestCompletedRoundNumber(records: readonly RoundRecord[]): number | undefined {
+  const index = records.findLastIndex(
+    (record) =>
+      record.outcome === "completed" &&
+      (record.boardGeneration !== ROUND_NO_REGEN || record.regeneration !== "pending"),
+  );
+  return index < 0 ? undefined : index + 1;
+}
+
+export function sidebarSessionOf(
+  session: SessionModel,
+  roundRecords: readonly RoundRecord[] = [],
+): SidebarSession {
+  const completedRoundNumber = latestCompletedRoundNumber(roundRecords);
   return {
     id: session.id,
     projectId: session.projectId,
@@ -92,6 +108,9 @@ export function sidebarSessionOf(session: SessionModel): SidebarSession {
     // binds it here, so `/s/<sessionId>` resolves to the review workspace. Absent means
     // nothing has been captured for this session — honestly, there is no diff.
     ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
+    ...(completedRoundNumber === undefined
+      ? {}
+      : { subtitle: `Round ${completedRoundNumber} is back` }),
     createdAt: session.createdAt,
   };
 }

@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   constants as fsConstants,
+  mkdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
@@ -75,6 +76,7 @@ import {
   gitForRepoFactory,
   isGitHubNetworkError,
   KnowledgeStore,
+  landRoundChanges,
   listDir,
   loadConventionCatalogue,
   loadProjectDetail,
@@ -85,20 +87,26 @@ import {
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   parseGitHubPrRef,
+  prepareRoundWorkspace,
   prWorktreePath,
   RepoWatcher,
+  RoundOperationConflictError,
+  RoundOperationStore,
   RoundRecordStore,
   readOpenSpecChange,
   readSetupLogTail,
   readSetupStatus,
   readTreeLineCounts,
   refreshGitHubCredential,
+  releaseRoundSourceCommit,
+  removeRoundWorktree,
   repoHasSubmodules,
   repoKeyOf,
   repositoryIdentity,
   resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
+  runConfiguredRoundGate,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
   runPrWorktreeSetup,
@@ -109,6 +117,7 @@ import {
   SqliteReviewStore,
   saveConventionCatalogue,
   scoutSettingsOffers,
+  settleRoundCommits,
   snapshotStoreFor,
   TranscriptStore,
   validateGitHubToken,
@@ -118,6 +127,7 @@ import {
 } from "@rennet/adapters";
 import {
   attachRiskCrossCheck,
+  buildHandoffBundle,
   buildOfferedManifest,
   buildReviewCanvases,
   type CodexExecutor,
@@ -137,9 +147,11 @@ import {
   type HarnessPort,
   type HarnessTurnResult,
   HOST_LOCUS,
+  handoffDispositionsFromProjection,
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
+  mechanicalComposition,
   mintSession,
   queryKnowledge,
   queryProjectMap,
@@ -174,14 +186,25 @@ import type {
   ProjectSource,
   Review,
   RoundEvent,
+  RoundOperation,
   SessionModel,
 } from "@rennet/protocol";
-import { currentGenerationId, ROUND_NO_REGEN } from "@rennet/protocol";
+import {
+  currentGenerationId,
+  isRoundOperationTerminal,
+  roundOperationProgressSnapshot,
+  sha256Hex,
+} from "@rennet/protocol";
 import { buildAppTools } from "./agent-tools";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";
+import {
+  activeRoundDraft,
+  consumeCurrentAskOccurrences,
+  projectionForAskOccurrences,
+} from "./dispatch/round";
 import { sidebarSessionOf } from "./dispatch/session";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { stampBlockingStates } from "./flagged-blocking-states";
@@ -229,6 +252,7 @@ import {
   readPriorGeneration,
   runBoardRegeneration,
 } from "./runtime/round-collation";
+import { createRoundExecutionCoordinator } from "./runtime/round-execution";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
@@ -1912,6 +1936,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
   // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
   const roundRecordStore = new RoundRecordStore(join(dataDir, "rounds"));
+  const sidebarSessionFor = (session: SessionModel) =>
+    sidebarSessionOf(session, roundRecordStore.read(session.id));
   // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,
   // pushed to live sockets as it grows and read back by a client that joins mid-round. The
   // WS listener is late-bound (assigned below), exactly as the board/ask fan-outs are.
@@ -2071,6 +2097,414 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     emit,
   });
 
+  const roundOperationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+  const roundWorktreeRoot = join(dataDir, "round-worktrees");
+  mkdirSync(roundWorktreeRoot, { recursive: true });
+  const composeRoundBundle = createLiveComposeBundle({
+    claudePort: claudeAdapterForRepo,
+    codexExecutor: codexExecutorForRepo,
+  });
+
+  // Bound after the round coordinator because its ports dispatch report regeneration.
+  // eslint-disable-next-line prefer-const
+  let dispatch: ReturnType<typeof createDispatch>;
+
+  const activePatchsetFor = (review: Review): Patchset => {
+    const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
+    if (patchset === undefined) {
+      throw new Error(`Review ${review.id} has no active patchset.`);
+    }
+    return patchset;
+  };
+
+  const sourcePatchsetFor = (operation: RoundOperation): Patchset => {
+    const review = service.reviewById(operation.reviewId);
+    const patchset = review?.patchsets.find(
+      (candidate) => candidate.id === operation.sourcePatchsetId,
+    );
+    if (patchset === undefined) {
+      throw new Error(`Round ${operation.operationId} lost its source patchset.`);
+    }
+    return patchset;
+  };
+
+  const sessionForOperation = (operation: RoundOperation): SessionModel => {
+    const session = sessionStore.load(operation.sessionId);
+    if (session === undefined) {
+      throw new Error(`Round ${operation.operationId} lost its session.`);
+    }
+    return session;
+  };
+
+  const exactWorkOrderFor = (operation: RoundOperation) => {
+    const patchset = sourcePatchsetFor(operation);
+    const projection = projectionForAskOccurrences(
+      askLogStore.read(operation.reviewId),
+      operation.askOccurrences,
+    );
+    return mechanicalComposition(
+      buildHandoffBundle({
+        reviewId: operation.reviewId,
+        patchset,
+        dispositions: handoffDispositionsFromProjection(projection, patchset),
+      }),
+    );
+  };
+
+  const createRoundOperation = (input: {
+    readonly session: SessionModel;
+    readonly review: Review;
+    readonly workOrder: { readonly prompt: string };
+    readonly dispatchId: string;
+    readonly sourcePatchsetId: string;
+    readonly askOccurrences: readonly RoundOperation["askOccurrences"][number][];
+  }): RoundOperation => {
+    const patchset = input.review.patchsets.find(
+      (candidate) => candidate.id === input.sourcePatchsetId,
+    );
+    if (patchset === undefined) {
+      throw new Error(
+        `Review ${input.review.id} lost dispatch patchset ${input.sourcePatchsetId}.`,
+      );
+    }
+    const gateCommand = scoutSettingsOffers(
+      snapshotStore,
+      repoKeyForRoot(input.review.repositoryRoot),
+    ).gateCommand?.trim();
+    const createdAt = Date.now();
+    return {
+      operationId: randomUUID(),
+      sessionId: input.session.id,
+      reviewId: input.review.id,
+      dispatchId: input.dispatchId,
+      sourcePatchsetId: input.sourcePatchsetId,
+      askOccurrences: [...input.askOccurrences],
+      roundNumber: roundRecordStore.read(input.session.id).length + 1,
+      sourceTarget:
+        patchset.repository.headRef === undefined
+          ? { kind: "detached", head: patchset.repository.headOid }
+          : { kind: "branch", branch: patchset.repository.headRef },
+      repoRoot: input.review.repositoryRoot,
+      workOrderPrompt: input.workOrder.prompt,
+      workOrderDigest: sha256Hex(input.workOrder.prompt),
+      gatePlan:
+        gateCommand === undefined || gateCommand.length === 0
+          ? { kind: "absent" }
+          : { kind: "configured", command: gateCommand },
+      revision: 0,
+      rerunRequested: false,
+      createdAt,
+      updatedAt: createdAt,
+      state: { phase: "claimed" },
+    };
+  };
+
+  const publishRoundOperation = (operation: RoundOperation): void => {
+    roundProgress.emit(operation.reviewId, {
+      type: "operation",
+      snapshot: roundOperationProgressSnapshot(operation),
+    });
+  };
+
+  const coordinator = createRoundExecutionCoordinator({
+    store: roundOperationStore,
+    ports: {
+      planWorkspace: (operation) => {
+        const patchset = sourcePatchsetFor(operation);
+        return {
+          kind: "detached-worktree",
+          worktreePath: join(roundWorktreeRoot, sha256Hex(operation.operationId).slice(0, 32)),
+          sourceTreeOid:
+            patchset.repository.reviewedTreeOid ?? `${patchset.repository.headOid}^{tree}`,
+          sourceParentHead: patchset.repository.headOid,
+          startedAt: Date.now(),
+        };
+      },
+      prepareWorkspace: ({ operation, attempt }) =>
+        prepareRoundWorkspace({
+          git: gitForRepo(operation.repoRoot),
+          locus: locusForRepo(operation.repoRoot),
+          repoRoot: operation.repoRoot,
+          operationId: operation.operationId,
+          attempt,
+        }),
+      planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
+      runWorker: async ({ operation, attempt }) => {
+        if (operation.state.phase !== "worker-running") {
+          throw new Error("Round worker started outside its durable running phase.");
+        }
+        const outcome = await runHandoffTurn({
+          repoRoot: operation.state.workspace.worktreePath,
+          prompt: operation.workOrderPrompt,
+          sessionId: operation.sessionId,
+        });
+        const completedAt = Date.now();
+        const evidence = {
+          ...attempt,
+          completedAt,
+          diff: outcome.turnDiff,
+          changedPaths: [...outcome.filesTouched],
+        };
+        return outcome.status === "failed"
+          ? {
+              ...evidence,
+              outcome: "failed" as const,
+              termination: { kind: "error" as const, reason: outcome.reason },
+            }
+          : { ...evidence, outcome: "completed" as const };
+      },
+      planGate: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
+      runGate: async ({ operation, attempt }) => {
+        if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
+          throw new Error("Configured round gate started without a durable gate plan.");
+        }
+        const result = await runConfiguredRoundGate({
+          locus: locusForRepo(operation.repoRoot),
+          cwd: operation.state.workspace.worktreePath,
+          command: operation.gatePlan.command,
+          executionId: attempt.executionId,
+          startedAt: attempt.startedAt,
+        });
+        const common = {
+          executionId: result.executionId,
+          startedAt: result.startedAt,
+          completedAt: result.completedAt,
+          ...(result.projectCount === undefined ? {} : { projectCount: result.projectCount }),
+        };
+        return result.outcome === "passed"
+          ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
+          : { ...common, outcome: "failed" as const, termination: result.termination };
+      },
+      planCommit: (operation) => {
+        if (operation.state.phase !== "gate-settled") {
+          throw new Error("Round commit planned before its gate settled.");
+        }
+        return {
+          executionId: randomUUID(),
+          baseHead: operation.state.workspace.sourceHead,
+          startedAt: Date.now(),
+        };
+      },
+      settleCommits: async ({ operation, attempt }) => {
+        if (operation.state.phase !== "committing") {
+          throw new Error("Round commit effect started outside its durable commit phase.");
+        }
+        const git = gitForRepo(operation.repoRoot);
+        const receipt = await settleRoundCommits({
+          git,
+          worktreePath: operation.state.workspace.worktreePath,
+          executionId: attempt.executionId,
+          baseHead: attempt.baseHead,
+          startedAt: attempt.startedAt,
+        });
+        await landRoundChanges({
+          git,
+          locus: locusForRepo(operation.repoRoot),
+          sourceRoot: operation.repoRoot,
+          worktreePath: operation.state.workspace.worktreePath,
+          baselineCommit: attempt.baseHead,
+        });
+        const workOrder = exactWorkOrderFor(operation);
+        const worker = operation.state.worker;
+        await roundsRuntime.dispatchRound({
+          session: sessionForOperation(operation),
+          workOrder,
+          dispatchId: operation.dispatchId,
+          sourcePatchsetId: operation.sourcePatchsetId,
+          askOccurrences: operation.askOccurrences,
+          runWorkers: async (): Promise<DispatchRoundResult> => ({
+            outcome: "completed",
+            diff: worker.diff,
+            changedPaths: [...worker.changedPaths],
+            workerCommitRange: { from: receipt.from, to: receipt.to },
+          }),
+        });
+        await options.onRoundPlaceholderCommitted?.({
+          sessionId: operation.sessionId,
+          dispatchId: operation.dispatchId,
+        });
+        return receipt;
+      },
+      prepareReport: (operation) => {
+        const idFor = (target: string): string =>
+          `round-${sha256Hex(`${operation.operationId}:${target}`).slice(0, 32)}`;
+        const boardIds = {
+          design: idFor("design"),
+          sequence: idFor("sequence"),
+          decisions: idFor("decisions"),
+          flagged: idFor("flagged"),
+          noise: idFor("noise"),
+          report: idFor("report"),
+        };
+        return {
+          executionId: randomUUID(),
+          reportBoardId: boardIds.report,
+          generation: idFor("generation"),
+          boardIds,
+          startedAt: Date.now(),
+        };
+      },
+      draftReport: async ({ operation, attempt }) => {
+        if (operation.state.phase !== "report-drafting") {
+          throw new Error("Round report started outside its durable drafting phase.");
+        }
+        await dispatch("review.regenerate", {
+          commandId: randomUUID(),
+          reviewId: operation.reviewId,
+          repoPath: operation.repoRoot,
+        });
+        const review = service.reviewById(operation.reviewId);
+        if (review === null) throw new Error("Round recapture did not return its review.");
+        const session = sessionForOperation(operation);
+        const workOrder = exactWorkOrderFor(operation);
+        const previousGeneration = currentGenerationId(
+          roundRecordStore.read(session.id),
+          operation.sourcePatchsetId,
+        );
+        const regenerated = await runBoardRegeneration(
+          boardDraftingDeps(
+            review,
+            session,
+            async () => undefined,
+            () => undefined,
+          ),
+          {
+            session,
+            repoRoot: operation.repoRoot,
+            priorPatchsetId: operation.sourcePatchsetId,
+            asksDispatched: operation.askOccurrences.map((occurrence) => occurrence.id),
+            dispatchId: operation.dispatchId,
+            sourcePatchsetId: operation.sourcePatchsetId,
+            askOccurrences: operation.askOccurrences,
+            round: {
+              number: operation.roundNumber,
+              previousGeneration,
+              dispatchedAsks: workOrder.tasks.flatMap((task) => task.asks),
+              findingDispositions: {},
+            },
+            worked: {
+              commitRange: {
+                from: operation.state.commits.from,
+                to: operation.state.commits.to,
+              },
+              diff: operation.state.worker.diff,
+              changedPaths: operation.state.worker.changedPaths,
+            },
+            draftPlan: { generation: attempt.generation, boardIds: attempt.boardIds },
+            recaptured: true,
+          },
+        );
+        const record = roundRecordStore
+          .read(session.id)
+          .findLast((candidate) => candidate.dispatchId === operation.dispatchId);
+        if (
+          !regenerated ||
+          record?.boardGeneration !== attempt.generation ||
+          record.reportBoard !== attempt.reportBoardId
+        ) {
+          throw new Error("Round regeneration did not persist its preplanned report.");
+        }
+        return { ...attempt, draftedAt: Date.now() };
+      },
+      planReportVerification: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
+      verifyReport: async ({ operation, report, attempt }) => {
+        const elements = [
+          ...(
+            await boardsRuntimeFor(operation.repoRoot).service.getState(report.reportBoardId)
+          ).values(),
+        ];
+        const reportedAskIds = new Set<string>();
+        for (const element of elements) {
+          if (element.kind !== "round_outcome") continue;
+          const data = element.data as {
+            readonly status?: unknown;
+            readonly ask?: { readonly ref?: unknown };
+          };
+          if (data.status !== "beyond" && typeof data.ask?.ref === "string") {
+            reportedAskIds.add(data.ask.ref);
+          }
+        }
+        const missing = operation.askOccurrences
+          .map((occurrence) => occurrence.id)
+          .filter((id) => !reportedAskIds.has(id));
+        if (missing.length > 0) {
+          throw new Error(`Round report omitted dispatched asks: ${missing.join(", ")}`);
+        }
+        return {
+          ...report,
+          verificationExecutionId: attempt.executionId,
+          verificationStartedAt: attempt.startedAt,
+          verifiedAt: Date.now(),
+        };
+      },
+      publish: publishRoundOperation,
+      drainTerminal: async ({ operation }) => {
+        if (operation.state.phase === "completed") {
+          const session = sessionForOperation(operation);
+          if (operation.state.result.kind === "unchanged") {
+            await roundsRuntime.finalizeUnchanged({
+              session,
+              asksDispatched: operation.askOccurrences.map((occurrence) => occurrence.id),
+              dispatchId: operation.dispatchId,
+              sourcePatchsetId: operation.sourcePatchsetId,
+              askOccurrences: operation.askOccurrences,
+              workerCommitRange: {
+                from: operation.state.commits.from,
+                to: operation.state.commits.to,
+              },
+            });
+          }
+          consumeCurrentAskOccurrences(
+            {
+              askLog: askLogStore,
+              broadcastAskProjection: (reviewId, projection) =>
+                wsListener?.broadcastAskProjection(reviewId, projection),
+            },
+            operation.reviewId,
+            operation.askOccurrences,
+          );
+          await removeRoundWorktree({
+            git: gitForRepo(operation.repoRoot),
+            locus: locusForRepo(operation.repoRoot),
+            repoRoot: operation.repoRoot,
+            worktreePath: operation.state.workspace.worktreePath,
+            sourceHead: operation.state.workspace.sourceHead,
+          });
+          await releaseRoundSourceCommit({
+            git: gitForRepo(operation.repoRoot),
+            repoRoot: operation.repoRoot,
+            operationId: operation.operationId,
+            commit: operation.state.workspace.sourceHead,
+          });
+        }
+        if (!operation.rerunRequested) return { kind: "retain" };
+        const review = service.reviewById(operation.reviewId);
+        if (review === null) throw new Error("Queued round lost its review.");
+        const draft = activeRoundDraft(
+          askLogStore.read(review.id),
+          review.id,
+          activePatchsetFor(review),
+        );
+        if (draft === undefined) return { kind: "clear-queued" };
+        const workOrder = await composeRoundBundle({
+          bundle: draft.bundle,
+          repoRoot: review.repositoryRoot,
+        });
+        return {
+          kind: "replace",
+          operation: createRoundOperation({
+            session: sessionForOperation(operation),
+            review,
+            workOrder,
+            dispatchId: draft.dispatchId,
+            sourcePatchsetId: draft.bundle.patchsetId,
+            askOccurrences: draft.askOccurrences,
+          }),
+        };
+      },
+    },
+  });
+
   /**
    * Draft the FIRST generation's boards over a review the reviewer just opened.
    *
@@ -2145,7 +2579,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     void draftBoardsForReview(review).catch(() => undefined);
   };
 
-  const dispatch = createDispatch({
+  dispatch = createDispatch({
     service,
     allowedRoots,
     askLog: askLogStore,
@@ -2249,13 +2683,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The live round-progress catch-up read (C15 3.1). Keyed by review id — the same id the
     // run route's slug carries — so a cold `/s/:slug/run` mount folds the round already in
     // flight instead of showing an absent one. Honest-empty until a round dispatches.
-    roundEventsForReview: (reviewId: string) => roundProgress.read(reviewId),
+    roundEventsForReview: (reviewId: string) => {
+      const review = service.reviewById(reviewId);
+      if (review === null) return [];
+      const operation = roundOperationStore.read(sessionIdForReview(review));
+      return operation === undefined
+        ? roundProgress.read(reviewId)
+        : [{ type: "operation", snapshot: roundOperationProgressSnapshot(operation) }];
+    },
     // The sidebar's sessions (C03 cluster 2, bound in C18), served from the SAME durable
     // session store the round dispatch mints into — so a session the reviewer worked in is
     // the session the sidebar lists. Every write persists through the store, so a rename, a
     // pin, and an archive all survive reload; restore is un-archive.
     sessions: {
-      list: () => sessionStore.list().map(sidebarSessionOf),
+      list: () => sessionStore.list().map(sidebarSessionFor),
       // The New Chat front door (C21, #587): starting a session is ONE act — capture what
       // changed on the clicked target, mint, claim, attach — and the HOST owns all of it.
       //
@@ -2328,21 +2769,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // front door the shipping app has. Kicked AFTER the attach, so the session the
         // boards file under is the one the row just bound the review to.
         kickBoardDrafting(review);
-        return { session: sidebarSessionOf(bound), reattached: entered.reattached };
+        return { session: sidebarSessionFor(bound), reattached: entered.reattached };
       },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
-        return session && sidebarSessionOf(session);
+        return session && sidebarSessionFor(session);
       },
       setPinned: (sessionId, pinned) => {
         const session = sessionStore.setPinned(sessionId, pinned);
-        return session && sidebarSessionOf(session);
+        return session && sidebarSessionFor(session);
       },
       setArchived: (sessionId, archived) => {
         const session = archived
           ? sessionStore.archive(sessionId)
           : sessionStore.restore(sessionId);
-        return session && sidebarSessionOf(session);
+        return session && sidebarSessionFor(session);
       },
     },
     // The lens-board read for `board.read` (C05 cluster 8, C18): the board this review's
@@ -2390,13 +2831,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       return stored.absentLenses?.[lens];
     },
-    dispatchRound: async ({ review, workOrder, dispatchId, sourcePatchsetId, askOccurrences }) => {
-      // The WRITE half of the session identity, and it lives beside its READ half
-      // (`resolveRoundSessionId`, which `sessionIdForReview` calls) rather than here — the two
-      // have to agree, and inline in this file they twice did not. Both mints funnel through
-      // `SessionEntry` keyed on the PROJECT id (#580); the repo root, the review id and the
-      // repo's `owner/name` all ride along, so a workspace's per-repo rounds stay in their own
-      // ledgers and the read side resolves this exact session back.
+    queueRoundIfActive: async ({ review, dispatchId }) => {
       const session = (
         await enterRoundSession(
           sessionEntry,
@@ -2405,239 +2840,44 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           gitForRepo(review.repositoryRoot),
         )
       ).session;
-      const storedRounds = roundRecordStore.read(session.id);
-      const previousGenerationId = currentGenerationId(storedRounds, sourcePatchsetId);
-      const completedRecord = [...storedRounds]
-        .reverse()
-        .find((record) => record.outcome === "completed" && record.dispatchId === dispatchId);
-      // A real-generation record means this dispatch already finished end to end. The
-      // handler will CAS-clean its still-current asks; neither worker nor regeneration runs.
-      if (
-        completedRecord !== undefined &&
-        (completedRecord.boardGeneration !== ROUND_NO_REGEN ||
-          completedRecord.regeneration !== "pending")
-      ) {
-        return;
+      for (;;) {
+        const active = roundOperationStore.read(session.id);
+        if (active === undefined || isRoundOperationTerminal(active)) return false;
+        if (active.dispatchId === dispatchId || active.rerunRequested) return true;
+        try {
+          publishRoundOperation(
+            roundOperationStore.requestRerun({
+              sessionId: active.sessionId,
+              operationId: active.operationId,
+              revision: active.revision,
+            }),
+          );
+          return true;
+        } catch (error) {
+          if (!(error instanceof RoundOperationConflictError)) throw error;
+        }
       }
-      // Captured from the worker run below so the C15 regeneration tail can run over
-      // exactly what that turn produced WITHOUT re-running it. The checkpoint diff and
-      // structural path list are the change signal: the handoff contract deliberately
-      // tells the coding turn not to commit, so HEAD normally stays put.
-      let workerReturn:
-        | {
-            readonly commitRange: { readonly from: string; readonly to: string };
-            readonly diff: string;
-            readonly changedPaths: readonly string[];
-          }
-        | undefined =
-        completedRecord?.boardGeneration === ROUND_NO_REGEN &&
-        completedRecord.regeneration === "pending"
-          ? {
-              commitRange: { ...completedRecord.workerCommitRange },
-              diff: completedRecord.diff ?? "",
-              changedPaths: [...(completedRecord.changedPaths ?? [])],
-            }
-          : undefined;
-      // ── C15 3.1: the live round-progress channel ──
-      // Every event below is a REAL point in this dispatch, not a clock tick: the round
-      // starting, the composed work-order being handed over, the coding turn running, the
-      // turn's outcome being classified, its commits being pinned. The regeneration half
-      // (report → per-lens lanes → composed) is emitted by `runRound` itself, through the
-      // `onProgress` sink threaded below.
-      const emit = roundProgress.sinkFor(review.id);
-      const dispatchedAsks = workOrder.tasks.flatMap((task) => task.asks);
-      const askCount = dispatchedAsks.length;
-      emit({ type: "dispatched" });
-      emit({
-        type: "prep",
-        rows: [
-          {
-            id: "asks",
-            label: "Folded the round's asks into one work order",
-            status: "done",
-            detail: `${askCount} ${askCount === 1 ? "ask" : "asks"}`,
-          },
-        ],
-      });
-      if (completedRecord === undefined) {
-        await roundsRuntime.dispatchRound({
+    },
+    dispatchRound: async ({ review, workOrder, dispatchId, sourcePatchsetId, askOccurrences }) => {
+      const session = (
+        await enterRoundSession(
+          sessionEntry,
+          projectIdOf(review.repositoryRoot),
+          review,
+          gitForRepo(review.repositoryRoot),
+        )
+      ).session;
+      await coordinator.submit(
+        createRoundOperation({
           session,
+          review,
           workOrder,
           dispatchId,
           sourcePatchsetId,
           askOccurrences,
-          // ONE terminal report for the whole dispatch (C15 3.1): whatever kills the turn —
-          // a failed work order, an unreadable HEAD, a throw nobody predicted — the channel
-          // closes on `failed` instead of leaving the run reading "still working" forever.
-          onProgress: emit,
-          runWorkers: async (order): Promise<DispatchRoundResult> => {
-            emit({
-              type: "worker",
-              rows: [{ id: "turn", label: "Ran the work order", status: "running" }],
-            });
-            // The round's commit range is HEAD before → after the turn (the round commits
-            // its work — the ledger pins those commits; equal when it committed nothing).
-            // Read failure-isolated: an unborn/unreadable HEAD collapses to the "HEAD" marker
-            // rather than an empty (schema-invalid) id.
-            const gitAt = gitForRepo(review.repositoryRoot);
-            const headOid = async (): Promise<string> =>
-              (
-                await gitAt(review.repositoryRoot, ["rev-parse", "HEAD"], { reject: false })
-              ).trim() || "HEAD";
-            const from = await headOid();
-            const outcome = await runHandoffTurn({
-              repoRoot: review.repositoryRoot,
-              prompt: order.prompt,
-              // The round's session: the turn rides the loop, so this round resumes the
-              // conversation the last one left off at and its events land on the session's
-              // transcript. Same id `resolveRoundSessionId` resolves for the reads.
-              sessionId: session.id,
-            });
-            const to = await headOid();
-            // The round result the runtime pins into the ledger. The diff + changed paths are
-            // the checkpoint-measured truth `runHandoffTurn` already returns (it brackets the
-            // write turn with `GitCheckpointStore`); a FAILED turn still carries its partial
-            // diff. The runtime records this record, then REJECTS on a failed outcome so the
-            // dispatch memo evicts and an identical re-dispatch RETRIES (P1 finding 4) — the
-            // failure is recorded, never a memoized failure that suppresses the retry.
-            const result: DispatchRoundResult = {
-              outcome: outcome.status === "failed" ? "failed" : "completed",
-              diff: outcome.turnDiff,
-              changedPaths: [...outcome.filesTouched],
-              workerCommitRange: { from, to },
-            };
-            // The board regeneration input (C15): checkpoint evidence decides whether the
-            // tree moved. HEAD is retained only as the honest observed commit range.
-            workerReturn = {
-              commitRange: { from, to },
-              diff: outcome.turnDiff,
-              changedPaths: [...outcome.filesTouched],
-            };
-            const touched = outcome.filesTouched.length;
-            const changed = `${touched} ${touched === 1 ? "file" : "files"} changed`;
-            emit({
-              type: "worker",
-              rows: [
-                // A settled row carries the state's own field, not one bag of optionals: the
-                // completed turn accounts for itself ("3 files changed"), the failed one
-                // carries a REASON. Reporting the file count as the reason of a failure would
-                // put an account of the work where the explanation belongs.
-                outcome.status === "failed"
-                  ? {
-                      id: "turn",
-                      label: "Ran the work order",
-                      status: "failed",
-                      reason: `The work order failed — ${changed}.`,
-                    }
-                  : { id: "turn", label: "Ran the work order", status: "done", detail: changed },
-              ],
-            });
-            // A failed turn returns its recorded result; the runtime then rejects, and the
-            // ONE terminal report above closes the channel. (Emitting here as well would put
-            // two contradictory terminal rows in a log a late-joining client replays.)
-            if (outcome.status === "failed") return result;
-            return result;
-          },
-        });
-      } else {
-        const touched = workerReturn?.changedPaths.length ?? 0;
-        emit({
-          type: "worker",
-          rows: [
-            {
-              id: "turn",
-              label: "Ran the work order",
-              status: "done",
-              detail: `${touched} ${touched === 1 ? "file" : "files"} changed`,
-            },
-          ],
-        });
-      }
-      await options.onRoundPlaceholderCommitted?.({ sessionId: session.id, dispatchId });
-      if (workerReturn === undefined) {
-        throw new Error("The completed round has no durable worker checkpoint evidence.");
-      }
-      if (workerReturn.changedPaths.length === 0 && workerReturn.diff.trim().length === 0) {
-        await roundsRuntime.finalizeUnchanged({
-          session,
-          asksDispatched: dispatchedAsks.map((ask) => ask.id),
-          dispatchId,
-          sourcePatchsetId,
-          askOccurrences,
-          workerCommitRange: workerReturn.commitRange,
-          onProgress: emit,
-        });
-        return;
-      }
-      // `dispatchRound` fsyncs the completed placeholder before it resolves. Everything
-      // below is restartable garnish or regeneration: a crash here finds the dispatch id
-      // and never runs the coding worker again.
-      emit({ type: "gate" });
-      emit({ type: "committed" });
-      const current = service.reviewById(review.id) ?? review;
-      if (!current.postTarget) {
-        try {
-          await dispatch("publish.compose", {
-            commandId: randomUUID(),
-            reviewId: current.id,
-            mode: "pr",
-          });
-        } catch {
-          // Ripening is garnish on the round; a failed re-compose is swallowed.
-        }
-      }
-      const roundNumber = roundsRuntime.ledger(session.id).length;
-      // ── C15 1.5: the board REGENERATION tail — the rounds loop goes live ──
-      // The worker already ran (above); now regenerate the lens boards over what it
-      // produced. `runRound` runs its own `runWorkers` first, so we hand it a NO-OP
-      // that returns the captured `workerReturn` (never a second worker turn). The tail is
-      // failure-isolated so a regeneration hiccup never unwinds the landed round (the
-      // worker, its record, and PR ripening already committed above) — but it always
-      // closes the live channel with a terminal event rather than stalling at `committing`.
-      const regenerated = await runBoardRegeneration(
-        boardDraftingDeps(
-          review,
-          session,
-          // The same `review.regenerate` the reviewer's own refresh runs — it activates
-          // the successor patchset over the worker's tree and stamps the REAL
-          // `successorAccount` for this round.
-          async () => {
-            await dispatch("review.regenerate", {
-              commandId: randomUUID(),
-              reviewId: review.id,
-              repoPath: review.repositoryRoot,
-            });
-          },
-          // The regeneration half of the live channel (C15 3.1): `runRound` emits the
-          // round-report's arrival, each lens drafter starting and finishing with its
-          // carried/reworked verdict, and the composed generation the reveal lands on.
-          emit,
-        ),
-        {
-          session,
-          repoRoot: review.repositoryRoot,
-          // The PRE-worker patchset — what the boards described before this round.
-          priorPatchsetId: sourcePatchsetId,
-          asksDispatched: dispatchedAsks.map((ask) => ask.id),
-          dispatchId,
-          sourcePatchsetId,
-          askOccurrences,
-          round: {
-            number: roundNumber,
-            previousGeneration: previousGenerationId,
-            dispatchedAsks,
-            // Production supplies the exact live overlay through boardDraftingDeps at
-            // the Flagged composition boundary. Keep this fallback inert: reading the
-            // durable log here is outside regeneration's failure boundary and could
-            // otherwise reject an already-completed coding turn.
-            findingDispositions: {},
-          },
-          worked: workerReturn,
-        },
+        }),
       );
-      if (!regenerated) {
-        throw new Error("The completed round's board regeneration failed.");
-      }
+      return { askDrain: "coordinator" };
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that
     // reworks one staged ask's body per the reviewer's instruction, on WHICHEVER seat the
@@ -3053,10 +3293,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // the mechanical bundle. Council-routed over the SAME probes the refiner uses
     // (claude adapter + codex executor); one batched turn, exec-free (read-only). No
     // seat installed ⇒ the core router returns the mechanical floor.
-    composeBundle: createLiveComposeBundle({
-      claudePort: claudeAdapterForRepo,
-      codexExecutor: codexExecutorForRepo,
-    }),
+    composeBundle: composeRoundBundle,
     // The settings surface (wireframe #15): the config ladder over the REAL stores.
     // `get` resolves the global appearance layer (`~/.rennet/config.json`) plus every
     // project's repo-scope visibility/promotion (its `~/.rennet/projects/<key>/
@@ -3211,6 +3448,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     uiDist: options.uiDist,
   });
 
+  void coordinator.recover().catch((error) => {
+    console.error("Durable round recovery failed", error);
+  });
+
   let didShutdown = false;
   const shutdown = (): void => {
     // An in-flight device-flow poll must not outlive the server.
@@ -3226,6 +3467,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     rehydration?.closeAll();
     store?.close();
     pushTokenStore.close();
+    roundOperationStore.close();
     void wsListener?.close();
   };
   return {

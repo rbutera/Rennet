@@ -47,6 +47,14 @@ describe("boards runtime", () => {
     expect(project(events).elements.get("p2")?.data.markdown).toBe("Second.");
   });
 
+  it("adopts a caller-owned board id across a fresh runtime", async () => {
+    const boardId = await runtime.createRennetBoard("round-op-1-report");
+    expect(boardId).toBe("round-op-1-report");
+
+    const reborn = createBoardsRuntime(projectRoot);
+    await expect(reborn.createRennetBoard("round-op-1-report")).resolves.toBe("round-op-1-report");
+  });
+
   it("rejects a batch with a host-schema-invalid op wholly and appends nothing", async () => {
     const boardId = await runtime.createRennetBoard();
     const bad: Op = {

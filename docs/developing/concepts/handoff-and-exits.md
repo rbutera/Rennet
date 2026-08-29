@@ -309,10 +309,15 @@ something the preview did not describe.
    receipt is what promotes it, and a refused dispatch reads as the refusal it
    was, carrying the daemon's reason — a round that never started never reads as
    one under way. Dispatch takes over a dedicated run view (`/s/:slug/run`)
-   that streams the prep, worker, and gate/commit lines as the round advances.
-   The view is deep-linkable and cold: opening it mid-round reattaches to the
-   live progress and never re-dispatches, and when the round reaches its report
-   phase the view hands back to the board surface where the report greets.
+   that reads the durable operation receipt as the prep, worker, gate, commit,
+   report-drafting, and report-verification phases settle. The view is
+   deep-linkable and cold: opening it mid-round reattaches to the newest durable
+   receipt and never re-dispatches. It stays on the run through report drafting
+   and verification, and hands back to the board surface only after the durable
+   operation records verified terminal completion (including a verified
+   unchanged round). A terminal failure stays on the run with its failure
+   receipt. Once a round has returned, the session row carries the durable
+   ledger ordinal as *Round N is back*.
 4. On completion the **round report** drafts first — its own seat on its own
    prompt (`packages/prompts`, `src/prompts/report.md`), through the
    same post-process pass as every draft. It verifies each ask against the
