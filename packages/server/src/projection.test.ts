@@ -747,6 +747,12 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // header's repo-relative path, exactly like a patchset's `files.path` above. Never
     // host-absolute, so no remote projection translates it.
     "session.rounds.output.records.diffFiles.path",
+    // The exact round-report projection embeds the same repo-relative code refs and source
+    // chips as `board.read`; it is joined into the ledger by durable board id, not rewritten.
+    "session.rounds.output.records.report.elements.data.path",
+    "session.rounds.output.records.report.document.sources.path",
+    "session.rounds.output.records.report.elements.data.source.path",
+    "session.rounds.output.records.report.elements.data.sources.path",
   ]),
   ...classified("opaque", [
     "project.detail.output.locals.id",

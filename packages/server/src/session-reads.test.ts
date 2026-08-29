@@ -3,8 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TranscriptStore } from "@rennet/adapters";
 import type { HarnessEvent } from "@rennet/core";
-import type { Review, RoundRecord, SessionModel, SessionTranscript } from "@rennet/protocol";
-import { parseCommandOutput } from "@rennet/protocol";
+import type {
+  Review,
+  RoundLedgerRecord,
+  RoundRecord,
+  SessionModel,
+  SessionTranscript,
+} from "@rennet/protocol";
+import { parseCommandOutput, ROUND_NO_REGEN, RoundReportBoardSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createDispatchRuntime, type DispatchDeps } from "./dispatch";
 import { sessionHandlers } from "./dispatch/session";
@@ -111,6 +117,39 @@ describe("session.rounds — the rounds ledger read (C09)", () => {
     boardGeneration: "gen:ps-2",
     reportBoard: "board-9",
   };
+  const REPORT = RoundReportBoardSchema.parse({
+    lens: "report",
+    generation: RECORD.boardGeneration,
+    boardId: RECORD.reportBoard,
+    document: {
+      title: "The retry boundary now settles",
+      introMarkdown: "The staged request was addressed.",
+      measure: "reading",
+    },
+    sections: [{ ref: "outcomes", gist: "One ask addressed.", counts: { outcomes: 1 } }],
+    elements: [
+      {
+        id: "outcomes",
+        kind: "section",
+        data: {
+          author: { kind: "lens-agent", id: "report-seat" },
+          title: "Outcomes",
+          children: ["outcome-1"],
+        },
+      },
+      {
+        id: "outcome-1",
+        kind: "round_outcome",
+        data: {
+          author: { kind: "lens-agent", id: "report-seat" },
+          status: "addressed",
+          ask: { ref: "ask-1", text: "Cap the retry loop." },
+          note: "The loop now stops at the configured cap.",
+        },
+      },
+    ],
+    skippedHunks: [],
+  });
 
   it("projects the live runtime's REAL records when the ledger is seeded", async () => {
     const out = (await harness({ roundRecordsForReview: () => [RECORD] })["session.rounds"]({
@@ -118,6 +157,40 @@ describe("session.rounds — the rounds ledger read (C09)", () => {
     })) as { records: RoundRecord[] };
     expect(out.records).toEqual([RECORD]);
     expect(() => parseCommandOutput("session.rounds", out)).not.toThrow();
+  });
+
+  it("enriches each row from the exact report board id named by that row", async () => {
+    const lookups: [string, string][] = [];
+    const out = (await harness({
+      roundRecordsForReview: () => [RECORD],
+      reportBoardForReview: async (reviewId, reportBoardId) => {
+        lookups.push([reviewId, reportBoardId]);
+        return REPORT;
+      },
+    })["session.rounds"]({ reviewId: REVIEW_ID })) as { records: RoundLedgerRecord[] };
+
+    expect(lookups).toEqual([[REVIEW_ID, RECORD.reportBoard]]);
+    expect(out.records[0]?.report).toEqual(REPORT);
+    expect(() => parseCommandOutput("session.rounds", out)).not.toThrow();
+  });
+
+  it("does not attempt a report lookup for an honest no-report row", async () => {
+    let lookedUp = false;
+    const noReport = {
+      ...RECORD,
+      boardGeneration: ROUND_NO_REGEN,
+      reportBoard: ROUND_NO_REGEN,
+    };
+    const out = (await harness({
+      roundRecordsForReview: () => [noReport],
+      reportBoardForReview: async () => {
+        lookedUp = true;
+        return REPORT;
+      },
+    })["session.rounds"]({ reviewId: REVIEW_ID })) as { records: RoundLedgerRecord[] };
+
+    expect(lookedUp).toBe(false);
+    expect(out.records[0]?.report).toBeUndefined();
   });
 
   it("returns an honest empty ledger when nothing recorded (empty-until-runRound)", async () => {

@@ -5,6 +5,10 @@ import {
   type LensBoard,
   LensBoardSchema,
   type LensKind,
+  ROUND_NO_REGEN,
+  type RoundRecord,
+  type RoundReportBoard,
+  RoundReportBoardSchema,
   resolveBoardDocument,
 } from "@rennet/protocol";
 
@@ -39,10 +43,27 @@ interface StateElement {
 }
 
 /** The board-level facts the event log cannot carry, from the board-meta record. */
-export interface LensBoardIdentity {
-  readonly lens: LensKind;
+interface BoardIdentity {
+  readonly lens: LensKind | "report";
   readonly generation: string;
   readonly boardId: string;
+  readonly document?: BoardDocument;
+  readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
+}
+
+export interface LensBoardIdentity extends BoardIdentity {
+  readonly lens: LensKind;
+}
+
+export interface RoundReportBoardIdentity extends BoardIdentity {
+  readonly lens: "report";
+}
+
+interface StoredRoundReportMeta {
+  readonly lens: string;
+  readonly boardId: string;
+  readonly session?: string;
+  readonly generation?: string;
   readonly document?: BoardDocument;
   readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
 }
@@ -84,10 +105,7 @@ function nestedIds(elements: readonly StateElement[]): ReadonlySet<string> {
  * longer satisfy the host vocabulary THROWS rather than serving a half-board, so
  * the client reads an honest failure instead of a silently pruned document.
  */
-export function projectLensBoard(
-  elements: readonly StateElement[],
-  identity: LensBoardIdentity,
-): LensBoard {
+function projectBoard(elements: readonly StateElement[], identity: BoardIdentity) {
   const byId = new Map(elements.map((el) => [el.id, el]));
   const nested = nestedIds(elements);
   const sections = elements
@@ -117,7 +135,7 @@ export function projectLensBoard(
         ...(delta === "new" || delta === "reworked" ? { delta } : {}),
       };
     });
-  return LensBoardSchema.parse({
+  return {
     lens: identity.lens,
     generation: identity.generation,
     boardId: identity.boardId,
@@ -125,5 +143,61 @@ export function projectLensBoard(
     sections,
     elements,
     skippedHunks: identity.skippedHunks.map((s) => ({ hunk: s.hunk, reason: s.reason })),
+  };
+}
+
+export function projectLensBoard(
+  elements: readonly StateElement[],
+  identity: LensBoardIdentity,
+): LensBoard {
+  return LensBoardSchema.parse(projectBoard(elements, identity));
+}
+
+/** Project the exact persisted report board named by a durable rounds-ledger row. */
+export function projectRoundReportBoard(
+  elements: readonly StateElement[],
+  identity: RoundReportBoardIdentity,
+): RoundReportBoard {
+  return RoundReportBoardSchema.parse(projectBoard(elements, identity));
+}
+
+/**
+ * Read the exact report projection named by one durable ledger row. Identity is checked
+ * before board state is touched, so another session, generation, or board kind can never
+ * be rendered under the row's receipt.
+ */
+export async function readRoundReportBoardForRecord(
+  input: {
+    readonly record: RoundRecord;
+    readonly sessionId: string;
+    readonly reportBoardId: string;
+  },
+  deps: {
+    readonly loadMeta: (boardId: string) => StoredRoundReportMeta | undefined;
+    readonly readElements: (boardId: string) => Promise<readonly StateElement[]>;
+  },
+): Promise<RoundReportBoard | undefined> {
+  if (
+    input.record.reportBoard !== input.reportBoardId ||
+    input.record.boardGeneration === ROUND_NO_REGEN
+  ) {
+    return undefined;
+  }
+  const meta = deps.loadMeta(input.reportBoardId);
+  if (
+    meta === undefined ||
+    meta.lens !== "report" ||
+    meta.boardId !== input.reportBoardId ||
+    meta.session !== input.sessionId ||
+    meta.generation !== input.record.boardGeneration
+  ) {
+    return undefined;
+  }
+  return projectRoundReportBoard(await deps.readElements(input.reportBoardId), {
+    lens: "report",
+    generation: input.record.boardGeneration,
+    boardId: input.reportBoardId,
+    document: meta.document,
+    skippedHunks: meta.skippedHunks,
   });
 }

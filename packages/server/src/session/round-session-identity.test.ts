@@ -135,6 +135,11 @@ async function recordARound(session: SessionModel): Promise<void> {
     dispatchId: "dispatch-1",
     sourcePatchsetId: "ps-1",
     askOccurrences: [{ id: "ask-1", revision: 0 }],
+    run: {
+      startedAt: 1,
+      sourceTarget: { kind: "branch", branch: "feat/test" },
+      gate: { outcome: "skipped", reason: "not-configured" },
+    },
     runWorkers: async () => ({
       outcome: "completed" as const,
       diff: "diff --git a/a b/a",

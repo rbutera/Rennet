@@ -3,9 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WhiteboardClient } from "@rennet/adapters";
 import type { DraftBoard } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
-import { projectLensBoard } from "./lens-board-read";
+import {
+  projectLensBoard,
+  projectRoundReportBoard,
+  readRoundReportBoardForRecord,
+} from "./lens-board-read";
 import { draftToOps } from "./lens-pipeline";
 
 // The lens-board read, proven over the REAL substrate: a board is written exactly as
@@ -156,5 +160,108 @@ describe("projectLensBoard — the persisted board, read back", () => {
     expect(read.sections[0]?.gist).toBe("Untitled Work");
     expect(read.sections[0]?.counts).toEqual({});
     expect(read.document).toEqual({ title: "Noise", introMarkdown: "", measure: "reading" });
+  });
+
+  it("projects a persisted report with report identity and its round outcomes intact", async () => {
+    const report: DraftBoard = {
+      document: {
+        title: "Round 2 changed the retry boundary",
+        introMarkdown: "The worker addressed the staged retry request.",
+        measure: "reading",
+      },
+      elements: [
+        {
+          id: "outcomes",
+          kind: "section",
+          data: { author, title: "Outcomes", children: ["outcome-1"] },
+        },
+        {
+          id: "outcome-1",
+          kind: "round_outcome",
+          data: {
+            author,
+            status: "addressed",
+            ask: { ref: "ask-1", text: "Cap the retry loop." },
+            note: "The loop now stops at the configured cap.",
+          },
+        },
+      ],
+    };
+    const runtime = createBoardsRuntime(mkdtempSync(join(tmpdir(), "rennet-report-read-")));
+    const boardId = await runtime.createRennetBoard();
+    const result = await new WhiteboardClient(runtime.service).apply(
+      boardId,
+      draftToOps(report),
+      "report-seat",
+    );
+    expect(result.response.ok).toBe(true);
+
+    const state = await runtime.service.getState(boardId);
+    const read = projectRoundReportBoard([...state.values()], {
+      lens: "report",
+      generation: "gen-2",
+      boardId,
+      document: report.document,
+      skippedHunks: [],
+    });
+    expect(read.lens).toBe("report");
+    expect(read.document).toEqual(report.document);
+    expect(read.sections).toEqual([{ ref: "outcomes", gist: "Outcomes", counts: { outcomes: 1 } }]);
+    expect(read.elements.find((element) => element.kind === "round_outcome")).toMatchObject({
+      id: "outcome-1",
+      data: { status: "addressed" },
+    });
+  });
+
+  it.each([
+    ["missing metadata", undefined],
+    [
+      "another session",
+      {
+        lens: "report",
+        boardId: "report-1",
+        session: "session-elsewhere",
+        generation: "gen-2",
+        skippedHunks: [],
+      },
+    ],
+    [
+      "another generation",
+      {
+        lens: "report",
+        boardId: "report-1",
+        session: "session-1",
+        generation: "gen-elsewhere",
+        skippedHunks: [],
+      },
+    ],
+    [
+      "a non-report lens",
+      {
+        lens: "design",
+        boardId: "report-1",
+        session: "session-1",
+        generation: "gen-2",
+        skippedHunks: [],
+      },
+    ],
+  ])("omits the report projection for %s", async (_case, meta) => {
+    const readElements = vi.fn(async () => []);
+    const report = await readRoundReportBoardForRecord(
+      {
+        record: {
+          asksDispatched: ["ask-1"],
+          workerCommitRange: { from: "c0", to: "c1" },
+          boardGeneration: "gen-2",
+          reportBoard: "report-1",
+        },
+        sessionId: "session-1",
+        reportBoardId: "report-1",
+      },
+      { loadMeta: () => meta, readElements },
+    );
+
+    expect(report).toBeUndefined();
+    expect(readElements).not.toHaveBeenCalled();
   });
 });

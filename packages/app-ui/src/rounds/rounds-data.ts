@@ -1,8 +1,8 @@
 import {
-  type LensBoard,
-  LensBoardSchema,
   type RoundEvent,
-  type RoundRecord,
+  type RoundLedgerRecord,
+  type RoundReportBoard,
+  RoundReportBoardSchema,
 } from "@rennet/protocol";
 import { createContext, useContext, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
@@ -16,8 +16,8 @@ import { advance, initialRoundState, mergeRoundEvents, type RoundState } from ".
 // The rounds-data seam (C09 §1.2) — the SINGLE point every rounds surface resolves its
 // three reads through, mirroring C05's `board/board-data.ts` exactly. The client never
 // invents round shape locally: the live {@link RoundState}, the completed
-// {@link RoundRecord}s, and the report board each arrive through a {@link RoundsSource}
-// on context, and the report board is parsed against `LensBoardSchema` before any
+// {@link RoundLedgerRecord}s, and the report board each arrive through a {@link RoundsSource}
+// on context, and the report board is parsed against `RoundReportBoardSchema` before any
 // surface renders it.
 //
 // The rounds runtime IS registered and bound (`round.dispatch`, `session.roundEvents`,
@@ -27,14 +27,11 @@ import { advance, initialRoundState, mergeRoundEvents, type RoundState } from ".
 // report) so a subtree mounted without a rounds scope says so rather than pretending. Tests
 // and dev hand a fixture {@link RoundsSource} to {@link RoundsSourceProvider}; the fixtures
 // live behind the import fence (`test/fixtures/rounds/`), never imported by a surface.
-//
-// `reportBoard` is the one read still honestly absent everywhere: no board-fetch command
-// exists in the protocol to resolve it (see the LIVE SEAM BODY note).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A shared frozen empty ledger — a STABLE reference, so the honest-absent source does
  *  not hand back a fresh array per render (the Zustand/re-render trap C09 warns of). */
-const NO_RECORDS: readonly RoundRecord[] = Object.freeze([]);
+const NO_RECORDS: readonly RoundLedgerRecord[] = Object.freeze([]);
 
 /** The same stable-reference discipline for an empty progress log. */
 const NO_EVENTS: readonly RoundEvent[] = Object.freeze([]);
@@ -51,7 +48,7 @@ export interface RoundsSource {
   /** The live round machine state for a session (honest-absent by default). */
   readonly roundState: (slug: string) => RoundState;
   /** The session's completed rounds, oldest→newest (empty when none). */
-  readonly roundRecords: (slug: string) => readonly RoundRecord[];
+  readonly roundRecords: (slug: string) => readonly RoundLedgerRecord[];
   /** Raw report-board data by id, or `undefined` when the id resolves nothing. */
   readonly reportBoard: (reportBoardId: string) => unknown;
   /** Dispatch a work-order round for `slug`; absent ⇒ no live runtime, button disabled. */
@@ -104,50 +101,36 @@ const RoundsSourceContext = createContext<RoundsSource>(ABSENT_ROUNDS_SOURCE);
 export const RoundsSourceProvider = RoundsSourceContext.Provider;
 
 /**
- * The resolution of a report-board request. A report board is a `LensBoard` fetched by
- * id, so — unlike a lens board — it carries `round_outcome` items (its whole point) and
- * is NOT identity-checked against a `(generation, lens)` pair. `valid`: shape passed
- * `LensBoardSchema`. `missing`: the source has no board for this id. `invalid`: the
+ * The resolution of a report-board request. A report is joined into the rounds ledger by
+ * its durable board id. `valid`: shape passed `RoundReportBoardSchema`. `missing`: the
+ * source has no board for this id. `invalid`: the
  * source answered with something the schema rejected — an honest error, never "no round".
  */
 export type ReportBoardResolution =
-  | { readonly status: "valid"; readonly board: LensBoard }
+  | { readonly status: "valid"; readonly board: RoundReportBoard }
   | { readonly status: "missing" }
   | { readonly status: "invalid"; readonly detail: unknown };
 
 /**
- * Parse raw report-board data against `LensBoardSchema` — the pure core of the report read,
+ * Parse raw report-board data against `RoundReportBoardSchema` — the pure core of the report read,
  * validated at the RUNTIME boundary (finding 4). The client never trusts report shape it did
  * not validate: a shape failure resolves `invalid` (rendered distinctly), separate from
- * `missing`. Two further runtime checks past the schema, because `LensBoardSchema` is a
- * structural shape and admits data outside the report's rendering domain:
+ * `missing`. One further runtime check past the schema binds the response to the requested id:
  *
  *   - IDENTITY: the resolved board's `boardId` must equal the `expectedId` requested. A source
  *     that answers the wrong board (a cross-wire) is `invalid`, not silently rendered AS the
  *     selected report. (Unlike a lens board, a report is fetched by id, so id — not
  *     `(generation, lens)` — is the identity to check.)
- *   - REPORT DOMAIN: the report renders every lens kind PLUS `round_outcome`, but NOT
- *     `review_comment` — the one `HostKind` outside `ReportKind` (`BOARD_EXCLUDED_KINDS` minus
- *     `round_outcome`; `board/registry.ts`). A schema-valid board carrying a `review_comment`
- *     element parses fine but THROWS in `ReportElement` (`assertExcludedKind`); reject it here
- *     as `invalid` data so the render boundary never crashes.
  */
 export function resolveReportBoard(raw: unknown, expectedId: string): ReportBoardResolution {
   if (raw === undefined) return { status: "missing" };
-  const parsed = LensBoardSchema.safeParse(raw);
+  const parsed = RoundReportBoardSchema.safeParse(raw);
   if (!parsed.success) return { status: "invalid", detail: parsed.error };
   const board = parsed.data;
   if (board.boardId !== expectedId) {
     return {
       status: "invalid",
       detail: `report id mismatch: expected ${expectedId}, got ${board.boardId}`,
-    };
-  }
-  const excluded = board.elements.find((el) => el.kind === "review_comment");
-  if (excluded !== undefined) {
-    return {
-      status: "invalid",
-      detail: `report board carries a non-report kind: ${excluded.kind}`,
     };
   }
   return { status: "valid", board };
@@ -171,7 +154,7 @@ export function useRoundsUnavailable(slug: string): string | undefined {
 }
 
 /** The session's completed rounds, oldest→newest — empty (stable ref) by default. */
-export function useRoundRecords(slug: string): readonly RoundRecord[] {
+export function useRoundRecords(slug: string): readonly RoundLedgerRecord[] {
   return useContext(RoundsSourceContext).roundRecords(slug);
 }
 
@@ -182,8 +165,7 @@ export function useRoundRecordsPending(slug: string): boolean {
   return useContext(RoundsSourceContext).roundRecordsPending?.(slug) ?? false;
 }
 
-/** Resolve a report `LensBoard` by id, validated against `LensBoardSchema` plus the identity
- *  and report-domain checks (finding 4) — the requested id IS the expected id. */
+/** Resolve a report board by id, validated against its report-specific schema and identity. */
 export function useReportBoard(reportBoardId: string): ReportBoardResolution {
   return resolveReportBoard(
     useContext(RoundsSourceContext).reportBoard(reportBoardId),
@@ -206,13 +188,9 @@ export function useRoundDispatch(): ((slug: string) => void) | undefined {
 //     push channel folded into the SAME cache entry (`useCommandStream`), then reduced
 //     through `advance`. The rows advance on REAL events — the fixture clock is gone
 //     from the app tree (the fixtures stay, for tests).
-//   • `roundRecords` — the `session.rounds` ledger read.
+//   • `roundRecords` — the `session.rounds` ledger read, including exact report projections.
+//   • `reportBoard` — the report embedded on the exact ledger record naming that board id.
 //   • `dispatch` — the `round.dispatch` write, so the round exit actually kicks a round.
-//
-// `reportBoard` stays honestly absent: NO board-fetch command exists in the protocol
-// (`commands/index.ts` registers none — it is B4/B10's declared job, and `board-data.ts`
-// records the same gap for the lens boards). A source cannot invent a board it has no way
-// to read, so the report resolves `missing` rather than a fabricated greeting.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -286,6 +264,22 @@ export function useLiveRoundsSource(): RoundsSource {
     command: eventsCommand,
     fold: (prev, event) => {
       streamed.current = mergeRoundEvents(streamed.current, [event]);
+      // A changed or failed durable terminal snapshot follows every ledger write it can
+      // expose. An unchanged snapshot does not: finalizeUnchanged writes afterward and
+      // emits the legacy unchanged receipt as its post-write commit point.
+      const durableTerminal =
+        event.type === "operation" &&
+        (event.snapshot.state.phase === "failed" ||
+          (event.snapshot.state.phase === "completed" &&
+            event.snapshot.state.result.kind === "changed"));
+      if (
+        durableTerminal ||
+        event.type === "composed" ||
+        event.type === "unchanged" ||
+        event.type === "failed"
+      ) {
+        cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
+      }
       return { events: [...mergeRoundEvents(prev?.events ?? NO_EVENTS, [event])] };
     },
   });
@@ -296,7 +290,7 @@ export function useLiveRoundsSource(): RoundsSource {
     pending: recordsPending,
   } = useCommand("session.rounds", { reviewId: reviewId ?? "" }, { enabled });
   const { mutate } = useMutation("round.dispatch", {
-    invalidates: ["session.rounds", "session.roundEvents"],
+    invalidates: ["session.roundEvents"],
   });
 
   // The reviewer's dispatch INTENT, held here and never written into the event log (review
@@ -339,7 +333,8 @@ export function useLiveRoundsSource(): RoundsSource {
       roundRecordsPending: (forSlug: string) =>
         forSlug === slug && (resolvingReview || recordsPending),
       roundsUnavailable: (forSlug: string) => (forSlug === slug ? unavailable : undefined),
-      reportBoard: () => undefined,
+      reportBoard: (reportBoardId: string) =>
+        records?.findLast((record) => record.reportBoard === reportBoardId)?.report,
       dispatch: (forSlug: string) => {
         if (reviewId === undefined) return;
         // A new round starts from nothing: drop the finished round's events rather than

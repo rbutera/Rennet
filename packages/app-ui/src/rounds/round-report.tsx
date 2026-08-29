@@ -1,12 +1,18 @@
-import type { LensBoard, LensSection } from "@rennet/protocol";
-import { BoardElementsProvider, useElement, useElements } from "../board/kinds/element-context";
+import type { LensSection, RoundReportBoard as RoundReportBoardModel } from "@rennet/protocol";
+import {
+  BoardElementsProvider,
+  useBoardPatchsetId,
+  useElement,
+  useElements,
+} from "../board/kinds/element-context";
+import { RichText } from "../review";
 import { ReportElement } from "./report-registry";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The round report body (C09 2.3, Objective "round report as the greeting") — the
 // shared body the greeting (cluster 5) and the ledger (cluster 6) both mount.
 //
-// A report is a `LensBoard` (Reconciliation 3): a prose greeting plus `round_outcome`
+// A report is a `RoundReportBoard`: a prose greeting plus `round_outcome`
 // items. It renders through the SAME element pool the lens board uses
 // (`BoardElementsProvider` — the citation join), dispatching each element through the
 // report registry (`ReportElement`), never a bespoke document. The status tally is
@@ -23,7 +29,7 @@ const STATUS_ORDER = ["addressed", "partial", "untouched", "beyond"] as const;
 const NO_CHILDREN: readonly string[] = Object.freeze([]);
 
 /** Tally the round's outcomes by status, in display order — DERIVED, never stored. */
-function outcomeTally(board: LensBoard): string {
+export function roundOutcomeTally(board: RoundReportBoardModel): string {
   const counts = new Map<string, number>();
   for (const el of board.elements) {
     if (el.kind === "round_outcome") {
@@ -33,6 +39,23 @@ function outcomeTally(board: LensBoard): string {
   return STATUS_ORDER.filter((s) => counts.has(s))
     .map((s) => `${counts.get(s)} ${s}`)
     .join(" · ");
+}
+
+function ReportDocument({ board }: { readonly board: RoundReportBoardModel }) {
+  const patchsetId = useBoardPatchsetId();
+  return (
+    <header className="flex flex-col gap-3">
+      <h1 className="font-display text-foreground text-xl leading-snug">{board.document.title}</h1>
+      {board.document.introMarkdown.trim().length > 0 && (
+        <RichText
+          text={board.document.introMarkdown}
+          patchsetId={patchsetId}
+          className="max-w-[640px]"
+          paragraphClassName="text-base leading-relaxed text-foreground/85"
+        />
+      )}
+    </header>
+  );
 }
 
 /** One report section: its title over its children, each child through the report
@@ -55,9 +78,9 @@ function ReportSection({ entry }: { readonly entry: LensSection }) {
   );
 }
 
-/** Render a report `LensBoard` (greeting + `round_outcome` items) through the report
+/** Render a report board (greeting + `round_outcome` items) through the report
  *  registry, headed by the derived status tally. The shared report body. */
-export function RoundReportBoard({ board }: { readonly board: LensBoard }) {
+export function RoundReportBoard({ board }: { readonly board: RoundReportBoardModel }) {
   return (
     <BoardElementsProvider
       elements={board.elements}
@@ -69,8 +92,9 @@ export function RoundReportBoard({ board }: { readonly board: LensBoard }) {
         data-board-id={board.boardId}
         className="flex flex-col gap-5"
       >
+        <ReportDocument board={board} />
         <p data-testid="report-tally" className="text-muted-foreground text-sm">
-          {outcomeTally(board)}
+          {roundOutcomeTally(board)}
         </p>
         {board.sections.map((entry) => (
           <ReportSection key={entry.ref} entry={entry} />

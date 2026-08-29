@@ -23,6 +23,7 @@ import { useRennetStore } from "../store";
 import { act, mount } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import {
+  completedRoundRecord,
   createTimelineRoundsSource,
   FIXTURE_ROUND_COMPLETE_TICK,
   reportBoardFixture,
@@ -69,10 +70,50 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
     // The report board fills the surface (the greeting leads, not the plain lens board).
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
+    expect(r.container.textContent).toContain("Token refresh exits are now observable");
     // Regeneration streams beneath — still re-drafting (composing, lens rows running).
     expect(r.getByTestId("regeneration-progress").textContent).toContain("re-drafting");
     // …and the reveal is ABSENT before composed (never a disabled teaser waiting to enable).
     expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+  });
+
+  it("states the exact run target and passed gate from the host receipt", () => {
+    const r = mount(
+      <RoundGreeting
+        board={reportBoardFixture}
+        state={{ phase: "reporting", reportBoardId: reportBoardFixture.boardId }}
+        receipt={{ record: completedRoundRecord, roundNumber: 1 }}
+        onReveal={() => undefined}
+      />,
+    );
+    const summary = r.getByTestId("round-run-receipt");
+    expect(summary.textContent).toContain("Round 1 ran 2 asks on fix/token-refresh-observability.");
+    expect(summary.textContent).toContain("Passed pnpm check in 12 s across 7 projects.");
+  });
+
+  it("states an absent configured gate without inventing a command", () => {
+    const r = mount(
+      <RoundGreeting
+        board={reportBoardFixture}
+        state={{ phase: "reporting", reportBoardId: reportBoardFixture.boardId }}
+        receipt={{
+          roundNumber: 2,
+          record: {
+            ...completedRoundRecord,
+            run: {
+              startedAt: 1,
+              sourceTarget: { kind: "detached", head: "0123456789abcdef" },
+              gate: { outcome: "skipped", reason: "not-configured" },
+            },
+          },
+        }}
+        onReveal={() => undefined}
+      />,
+    );
+    const summary = r.getByTestId("round-run-receipt");
+    expect(summary.textContent).toContain("Round 2 ran 2 asks on detached at 0123456789ab.");
+    expect(summary.textContent).toContain("No project gate was configured.");
+    expect(summary.querySelector("code")).toBeNull();
   });
 
   it("View the New Boards is ABSENT before composed and PRESENT (never disabled) at composed", () => {

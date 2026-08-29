@@ -130,7 +130,7 @@ describe("rounds-data seam — the single rounds resolution point", () => {
       };
       const res = resolveReportBoard(withComment, "report-with-comment"); // id matches — kind is why
       expect(res.status).toBe("invalid");
-      if (res.status === "invalid") expect(String(res.detail)).toContain("review_comment");
+      if (res.status === "invalid") expect(String(res.detail)).toContain("review comments");
     });
   });
 

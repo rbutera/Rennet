@@ -1,9 +1,9 @@
-import type { HostElement, LensBoard, RoundRecord } from "@rennet/protocol";
+import type { HostElement, RoundLedgerRecord, RoundReportBoard } from "@rennet/protocol";
 import { board, codeRef, prose, section } from "../boards/helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The completed-round fixtures (C09 task 1.3) — the spike's `round-report.tsx` reborn
-// as protocol shape. A round report is NOT a bespoke component: it is a `LensBoard`
+// as protocol shape. A round report is NOT a bespoke component: it is a `RoundReportBoard`
 // (Reconciliation 3) whose elements are a prose greeting plus `round_outcome` items,
 // rendered through the report registry (cluster 2). `round_outcome` is excluded from a
 // LENS board's registry, so it lives only here, on the report surface.
@@ -41,58 +41,60 @@ export function roundOutcome(
 
 /**
  * The round-1 report board — the greeting prose over four outcomes (one of each status),
- * the `addressed` one carrying a `code_ref`. A `LensBoard`; it validates against
- * `LensBoardSchema` (proven in the seam test). Its id is what {@link completedRoundRecord}
+ * the `addressed` one carrying a `code_ref`. Its id is what {@link completedRoundRecord}
  * points at.
  */
-export const reportBoardFixture: LensBoard = board("design", "gen1", "report-round-1", [
-  section(
-    "greeting",
-    "Round 1 · fix/token-refresh-observability",
-    "The worker applied two asks; here is what moved.",
-    [
+export const reportBoardFixture: RoundReportBoard = {
+  ...board("design", "gen2", "report-round-1", [
+    section("greeting", "What changed", "The refresh path now records every terminal outcome.", [
       prose(
         "greeting-prose",
-        "You dispatched two asks against the token-refresh path. Both landed: the refresh layer now writes a terminal record on every exit, and the post-send failure is reported as unknown. One staged ask about the retry cap went untouched — it needs a decision before a worker can act on it.",
+        "The refresh layer now writes a terminal record on every exit, and the post-send failure is reported as unknown.",
       ),
-    ],
-  ),
-  section(
-    "outcomes",
-    "Outcomes",
-    "1 addressed · 1 partial · 1 untouched · 1 beyond",
-    [
-      roundOutcome("ro-observability", {
-        status: "addressed",
-        ask: {
-          ref: "ask-observability",
-          text: "Log every refresh exit without leaking the token.",
-        },
-        note: "The refresh layer emits a typed record on each exit; no field can hold a credential.",
-        codeRef: "ro-cr-observability",
-      }),
-      roundOutcome("ro-network", {
-        status: "partial",
-        ask: { ref: "ask-network", text: "Report the post-send failure honestly." },
-        note: "The failure is reported as unknown, but the copy still reads as a hard error.",
-      }),
-      roundOutcome("ro-retry", {
-        status: "untouched",
-        ask: { ref: "ask-retry", text: "Cap the retry loop." },
-        note: "Left untouched — the cap needs a decision before a worker can act on it.",
-      }),
-      roundOutcome("ro-tests", {
-        status: "beyond",
-        ask: { ref: "ask-tests", text: "Tighten the tests." },
-        note: "The worker went beyond the ask and covered the persistence-failure exit too.",
-      }),
-    ],
-    { refs: [codeRef("ro-cr-observability", "packages/adapters/src/github-auth.ts", 53, 63)] },
-  ),
-]);
+    ]),
+    section(
+      "outcomes",
+      "Outcomes",
+      "1 addressed · 1 partial · 1 untouched · 1 beyond",
+      [
+        roundOutcome("ro-observability", {
+          status: "addressed",
+          ask: {
+            ref: "ask-observability",
+            text: "Log every refresh exit without leaking the token.",
+          },
+          note: "The refresh layer emits a typed record on each exit; no field can hold a credential.",
+          codeRef: "ro-cr-observability",
+        }),
+        roundOutcome("ro-network", {
+          status: "partial",
+          ask: { ref: "ask-network", text: "Report the post-send failure honestly." },
+          note: "The failure is reported as unknown, but the copy still reads as a hard error.",
+        }),
+        roundOutcome("ro-retry", {
+          status: "untouched",
+          ask: { ref: "ask-retry", text: "Cap the retry loop." },
+          note: "Left untouched — the cap needs a decision before a worker can act on it.",
+        }),
+        roundOutcome("ro-tests", {
+          status: "beyond",
+          ask: { ref: "ask-tests", text: "Tighten the tests." },
+          note: "The worker went beyond the ask and covered the persistence-failure exit too.",
+        }),
+      ],
+      { refs: [codeRef("ro-cr-observability", "packages/adapters/src/github-auth.ts", 53, 63)] },
+    ),
+  ]),
+  lens: "report",
+  document: {
+    title: "Token refresh exits are now observable",
+    introMarkdown: "Every terminal path now leaves a typed record without retaining credentials.",
+    measure: "reading",
+  },
+};
 
 /** A map of report boards by id — what the fixture source's `reportBoard` read resolves. */
-export const FIXTURE_REPORT_BOARDS: Readonly<Record<string, LensBoard>> = {
+export const FIXTURE_REPORT_BOARDS: Readonly<Record<string, RoundReportBoard>> = {
   [reportBoardFixture.boardId]: reportBoardFixture,
 };
 
@@ -110,10 +112,16 @@ export const FIXTURE_REPORT_BOARDS: Readonly<Record<string, LensBoard>> = {
  * frozen-generation reachability through the switcher is parked pending a B9 `RoundRecord`
  * predecessor field (see the C09 ledger, F3).
  */
-export const completedRoundRecord: RoundRecord = {
+export const completedRoundRecord: RoundLedgerRecord = {
   asksDispatched: ["ask-observability", "ask-network"],
   workerCommitRange: { from: "commit-from", to: "commit-to" },
   mintedPatchsetGeneration: "gen2",
   boardGeneration: "gen2",
   reportBoard: "report-round-1",
+  run: {
+    startedAt: Date.UTC(2026, 7, 29, 9, 30),
+    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
+  },
+  report: reportBoardFixture,
 };

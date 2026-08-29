@@ -5,6 +5,7 @@ import {
   fallbackBoardDocument,
   LensBoardSchema,
   LensKindSchema,
+  RoundReportBoardSchema,
   resolveBoardDocument,
 } from "./lens-board";
 import { HOST_KIND_SCHEMAS, HostElementSchema } from "./schema";
@@ -133,5 +134,43 @@ describe("LensBoard projection (client asset risk 1)", () => {
       elements: [{ id: "x", kind: "custom", data: { author } }],
     };
     expect(LensBoardSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("gives report projections their own identity and excludes human review comments", () => {
+    const report = {
+      ...fixture,
+      lens: "report",
+      document: { ...fixture.document, measure: "reading" },
+    };
+    expect(RoundReportBoardSchema.safeParse(report).success).toBe(true);
+    expect(LensBoardSchema.safeParse(report).success).toBe(false);
+
+    const withReviewComment = {
+      ...report,
+      elements: [
+        ...report.elements,
+        {
+          id: "review-1",
+          kind: "review_comment",
+          data: {
+            author: { kind: "human", id: "reviewer" },
+            body: "Ship it.",
+            code_ref: "cr1",
+            status: "draft",
+            covers: [],
+          },
+        },
+      ],
+    };
+    const result = RoundReportBoardSchema.safeParse(withReviewComment);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["elements", report.elements.length, "kind"],
+          message: "round reports cannot contain review comments",
+        }),
+      );
+    }
   });
 });

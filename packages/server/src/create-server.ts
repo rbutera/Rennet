@@ -188,6 +188,7 @@ import type {
   Review,
   RoundEvent,
   RoundOperation,
+  RoundRunReceipt,
   SessionModel,
 } from "@rennet/protocol";
 import {
@@ -244,7 +245,7 @@ import {
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
-import { projectLensBoard } from "./runtime/lens-board-read";
+import { projectLensBoard, readRoundReportBoardForRecord } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime } from "./runtime/project-scout";
 import {
@@ -2443,12 +2444,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const workOrder = exactWorkOrderFor(operation);
         const worker = operation.state.worker;
         const commits = operation.state.commits;
+        const gate: RoundRunReceipt["gate"] =
+          operation.state.gate.outcome === "skipped"
+            ? { outcome: "skipped", reason: "not-configured" }
+            : operation.gatePlan.kind === "configured"
+              ? {
+                  outcome: "passed",
+                  command: operation.gatePlan.command,
+                  durationMs: Math.max(
+                    0,
+                    operation.state.gate.completedAt - operation.state.gate.startedAt,
+                  ),
+                  ...(operation.state.gate.projectCount === undefined
+                    ? {}
+                    : { projectCount: operation.state.gate.projectCount }),
+                }
+              : (() => {
+                  throw new Error("A passed round gate has no configured command.");
+                })();
         await roundsRuntime.dispatchRound({
           session: sessionForOperation(operation),
           workOrder,
           dispatchId: operation.dispatchId,
           sourcePatchsetId: operation.sourcePatchsetId,
           askOccurrences: operation.askOccurrences,
+          run: {
+            startedAt: operation.createdAt,
+            sourceTarget: operation.sourceTarget,
+            gate,
+          },
           runWorkers: async (): Promise<DispatchRoundResult> => ({
             outcome: "completed",
             diff: worker.diff,
@@ -2592,6 +2616,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 from: operation.state.commits.from,
                 to: operation.state.commits.to,
               },
+              onProgress: (event) => roundProgress.emit(operation.reviewId, event),
             });
           }
           consumeCurrentAskOccurrences(
@@ -2807,6 +2832,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const review = service.reviewById(reviewId);
       if (!review) return [];
       return roundsRuntime.ledger(sessionIdForReview(review));
+    },
+    reportBoardForReview: async (reviewId: string, reportBoardId: string) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return undefined;
+      const sessionId = sessionIdForReview(review);
+      const record = roundsRuntime
+        .ledger(sessionId)
+        .findLast((candidate) => candidate.reportBoard === reportBoardId);
+      if (record === undefined) return undefined;
+      return readRoundReportBoardForRecord(
+        { record, sessionId, reportBoardId },
+        {
+          loadMeta: (boardId) => boardMetaStore.load(boardId),
+          readElements: async (boardId) => [
+            ...(await boardsRuntimeFor(review.repositoryRoot).service.getState(boardId)).values(),
+          ],
+        },
+      );
     },
     // The display-transcript read for `session.transcript` (issue-set B): the coding-turn rows
     // the turn loop captured and persisted for this review's session, resolved READ-ONLY via the
