@@ -5,8 +5,8 @@ import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
 
 // `annotation` (C05 3.1) — prose anchored to cited code. The `code_ref` attribute is
 // an element id resolved through the board pool to its CodeRef, revealed on click via
-// C4's `AnchorReveal` (span-read seam, honest error while unbound); the body is
-// markdown through `RichText`.
+// C4's `AnchorReveal` (span-read seam — the daemon serves the span, or names the
+// absence it hit); the body is markdown through `RichText`.
 
 export function AnnotationElement({ element }: { readonly element: ElementOf<"annotation"> }) {
   const patchsetId = useBoardPatchsetId();

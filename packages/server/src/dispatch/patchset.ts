@@ -77,6 +77,17 @@ export function patchsetHandlers(rt: DispatchRuntime) {
         throw new Error(`${ref.path} is binary — the capture holds no text to cite.`);
       }
 
+      // A file that was ADDED has no pre-image and one that was DELETED has no post-image,
+      // so the whole side is missing rather than one span of it. Said plainly here, because
+      // the per-line message below ("outside the diff this patchset captured") would be
+      // true and useless — it reads as "cite a different line" when no line will ever work.
+      if (ref.side === "base" && file.status === "added") {
+        throw new Error(`${ref.path} was added in this patchset — it has no base side to cite.`);
+      }
+      if (ref.side === "head" && file.status === "deleted") {
+        throw new Error(`${ref.path} was deleted in this patchset — it has no head side to cite.`);
+      }
+
       // `base` reads the pre-image, `head` the post-image. Context lines belong to both,
       // so `additions` (rather than `context`) is the right post-image selector here.
       const side: AnchorSide = ref.side === "base" ? "deletions" : "additions";

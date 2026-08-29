@@ -38,6 +38,7 @@ function realDiff(): string {
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src/cheese.ts"), `${BASE.join("\n")}\n`);
   writeFileSync(join(root, "src/old-name.ts"), "export const rennet = 1;\n");
+  writeFileSync(join(root, "src/gone.ts"), "export const removedEntirely = true;\n");
   writeFileSync(join(root, "assets.bin"), Buffer.from([0, 1, 2, 3, 0, 255]));
   git(root, "add", "-A");
   git(root, "commit", "-qm", "base");
@@ -50,6 +51,11 @@ function realDiff(): string {
   writeFileSync(join(root, "src/cheese.ts"), `${edited.join("\n")}\n`);
   writeFileSync(join(root, "src/new-name.ts"), "export const rennet = 2;\n");
   rmSync(join(root, "src/old-name.ts"));
+  writeFileSync(
+    join(root, "src/added.ts"),
+    "export function brandNew(): number {\n  return 7;\n}\n",
+  );
+  rmSync(join(root, "src/gone.ts"));
   writeFileSync(join(root, "assets.bin"), Buffer.from([9, 9, 9, 9, 9, 9]));
   git(root, "add", "-A");
   return git(root, "diff", "--cached", "-M", "--no-color");
@@ -178,6 +184,38 @@ describe("patchset.readSpan — served from the captured patchset, over real dis
     await expect(dispatch("patchset.readSpan", ref({ patchsetId: "ps-nope" }))).rejects.toThrow(
       /patchset ps-nope, which is not in this Rennet's store/,
     );
+  });
+
+  it("says a side does not EXIST, rather than blaming the span, for an add or a delete", async () => {
+    // An added file has no pre-image and a deleted file has no post-image. The per-line
+    // message ("outside the diff this patchset captured") would be literally true for
+    // every line and would read as "cite a different line" — when no line can ever work.
+    // Guard the fixture first: git must have recorded these as add/delete, not paired
+    // them into a rename, or the test would pass for the wrong reason.
+    expect(files.find((file) => file.path === "src/added.ts")?.status).toBe("added");
+    expect(files.find((file) => file.path === "src/gone.ts")?.status).toBe("deleted");
+
+    const dispatch = await realDispatch();
+    await expect(
+      dispatch(
+        "patchset.readSpan",
+        ref({ path: "src/added.ts", side: "base", startLine: 1, endLine: 1 }),
+      ),
+    ).rejects.toThrow("src/added.ts was added in this patchset — it has no base side to cite.");
+    await expect(
+      dispatch(
+        "patchset.readSpan",
+        ref({ path: "src/gone.ts", side: "head", startLine: 1, endLine: 1 }),
+      ),
+    ).rejects.toThrow("src/gone.ts was deleted in this patchset — it has no head side to cite.");
+
+    // The side that DOES exist still reads normally — the guard refuses a missing image,
+    // not the file.
+    const added = (await dispatch(
+      "patchset.readSpan",
+      ref({ path: "src/added.ts", side: "head", startLine: 2, endLine: 2 }),
+    )) as Span;
+    expect(added.lines).toEqual(["  return 7;"]);
   });
 
   it("resolves a renamed file from EITHER of its two paths", async () => {

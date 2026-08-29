@@ -565,10 +565,10 @@ const definitions = {
   "patchset.readSpan": {
     // Read a cited span from the CAPTURED patchset — never a working tree
     // (client asset risk 2, #489). Registered in B3 so Track C freezes against
-    // the shape (proposal reconciliation 8). STILL UNBOUND: B4 and B10 have both
-    // landed and neither bound dispatch, so `dispatch/patchset.ts` throws for every
-    // call and every live citation surfaces that error. The shape below is frozen
-    // and correct; the patchset-backed reader behind it does not exist yet.
+    // the shape (proposal reconciliation 8); B4 and B10 both left it unbound, and
+    // `dispatch/patchset.ts` binds it now. The reader serves the span from the
+    // patchset's own patch text, so a citation resolves with the repository gone —
+    // and a span outside the captured diff is refused BY NAME, never faked.
     input: codeRefSchema,
     output: z.object({
       /** The cited span's lines, in order, from the captured patch text. */
