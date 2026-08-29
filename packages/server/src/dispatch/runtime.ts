@@ -567,7 +567,12 @@ export interface DispatchDeps {
     dispatchId: string;
     sourcePatchsetId: string;
     askOccurrences: readonly AskOccurrence[];
-  }) => Promise<void>;
+    // biome-ignore lint/suspicious/noConfusingVoidType: legacy compositions return void
+  }) => Promise<void | { readonly askDrain: "coordinator" }>;
+  /** Before the model composer runs, coalesce an exact re-dispatch or mark one queued
+   * behind the session's durable operation. `true` means the active operation owns it,
+   * so this command returns the mechanical preview without composing or starting work. */
+  readonly queueRoundIfActive?: (input: { review: Review; dispatchId: string }) => Promise<boolean>;
   /**
    * The rounds-ledger read for `session.rounds`: the `RoundRecord[]` the live rounds runtime
    * recorded for this review's session, resolved read-only (the READ side of `dispatchRound`'s

@@ -1,9 +1,14 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileProjectStore, SessionStore } from "@rennet/adapters";
+import { FileProjectStore, RoundRecordStore, SessionStore } from "@rennet/adapters";
 import { mintSession } from "@rennet/core";
-import type { SessionModel, SidebarSession } from "@rennet/protocol";
+import {
+  ROUND_NO_REGEN,
+  type RoundRecord,
+  type SessionModel,
+  type SidebarSession,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { SessionEntry } from "../session/session-entry";
 import { projectHandlers } from "./project";
@@ -24,12 +29,15 @@ function sessionsDir(): string {
  *  so "read it back through a new store" is a genuine reload, not a cached answer. */
 function sessionDispatch(dir: string) {
   const store = new SessionStore(dir);
+  const rounds = new RoundRecordStore(join(dir, "rounds"));
+  const sidebarSessionFor = (session: SessionModel) =>
+    sidebarSessionOf(session, rounds.read(session.id));
   let captured = 0;
   const entry = new SessionEntry(store);
   const rt = createDispatchRuntime({
     service: { reviewById: () => undefined },
     sessions: {
-      list: () => store.list().map(sidebarSessionOf),
+      list: () => store.list().map(sidebarSessionFor),
       // The composition root's own start, verbatim in SHAPE (create-server.ts) — so the
       // front door this test drives is the front door the app runs. The capture the real
       // root performs is stubbed to a fixed review id: this suite is about the claim and
@@ -52,23 +60,23 @@ function sessionDispatch(dir: string) {
             : entry.enter(projectId, target, undefined, reviewId);
         if (!entered.reattached) store.save(entered.session);
         const bound = store.attachReview(entered.session.id, reviewId) ?? entered.session;
-        return { session: sidebarSessionOf(bound), reattached: entered.reattached };
+        return { session: sidebarSessionFor(bound), reattached: entered.reattached };
       },
       rename: (id: string, title: string) => {
         const session = store.rename(id, title);
-        return session && sidebarSessionOf(session);
+        return session && sidebarSessionFor(session);
       },
       setPinned: (id: string, pinned: boolean) => {
         const session = store.setPinned(id, pinned);
-        return session && sidebarSessionOf(session);
+        return session && sidebarSessionFor(session);
       },
       setArchived: (id: string, archived: boolean) => {
         const session = archived ? store.archive(id) : store.restore(id);
-        return session && sidebarSessionOf(session);
+        return session && sidebarSessionFor(session);
       },
     },
   } as unknown as DispatchDeps);
-  return { handlers: sessionHandlers(rt), store };
+  return { handlers: sessionHandlers(rt), rounds, store };
 }
 
 const seed = (id: string, branch?: string): SessionModel => ({
@@ -77,6 +85,20 @@ const seed = (id: string, branch?: string): SessionModel => ({
   threads: [],
   createdAt: 1,
   ...(branch === undefined ? {} : { claim: { branch } }),
+});
+
+const roundRecord = (
+  id: string,
+  outcome: "completed" | "failed",
+  regeneration?: "pending" | "not-needed",
+): RoundRecord => ({
+  asksDispatched: [`ask-${id}`],
+  dispatchId: `dispatch-${id}`,
+  workerCommitRange: { from: `from-${id}`, to: `to-${id}` },
+  boardGeneration: regeneration === undefined ? `generation-${id}` : ROUND_NO_REGEN,
+  reportBoard: regeneration === undefined ? `report-${id}` : ROUND_NO_REGEN,
+  outcome,
+  ...(regeneration === undefined ? {} : { regeneration }),
 });
 
 type Rows = { sessions: { id: string; title: string; pinned?: boolean; archived?: boolean }[] };
@@ -131,6 +153,55 @@ describe("session.list + the sidebar's session writes (C18)", () => {
     expect(await handlers["session.rename"]({ sessionId: "nope", title: "x" })).toEqual({
       session: null,
     });
+  });
+
+  it("projects the latest durably completed round on list, start, and update rows", async () => {
+    const dir = sessionsDir();
+    const first = sessionDispatch(dir);
+    first.store.save(seed("s1", "feat/seam"));
+    first.rounds.record("s1", roundRecord("failed", "failed"));
+    first.rounds.record("s1", roundRecord("completed", "completed"));
+    first.rounds.record("s1", roundRecord("pending", "completed", "pending"));
+
+    const listed = (await sessionDispatch(dir).handlers["session.list"]({})) as {
+      sessions: SidebarSession[];
+    };
+    expect(listed.sessions[0]?.subtitle).toBe("Round 2 is back");
+
+    const started = (await sessionDispatch(dir).handlers["session.mint"]({
+      projectId: "p1",
+      commandId: "11111111-1111-4111-8111-111111111111",
+      branch: "feat/seam",
+    })) as Minted;
+    expect(started.reattached).toBe(true);
+    expect(started.session?.subtitle).toBe("Round 2 is back");
+
+    const renamed = (await sessionDispatch(dir).handlers["session.rename"]({
+      sessionId: "s1",
+      title: "Round-tripped",
+    })) as { session: SidebarSession | null };
+    expect(renamed.session?.subtitle).toBe("Round 2 is back");
+
+    const pinned = (await sessionDispatch(dir).handlers["session.setPinned"]({
+      sessionId: "s1",
+      pinned: true,
+    })) as { session: SidebarSession | null };
+    expect(pinned.session?.subtitle).toBe("Round 2 is back");
+
+    const archived = (await sessionDispatch(dir).handlers["session.archive"]({
+      sessionId: "s1",
+      archived: true,
+    })) as { session: SidebarSession | null };
+    expect(archived.session?.subtitle).toBe("Round 2 is back");
+  });
+
+  it("does not turn a failed or pending ledger row into a returned-round subtitle", () => {
+    expect(
+      sidebarSessionOf(seed("s1"), [
+        roundRecord("failed", "failed"),
+        roundRecord("pending", "completed", "pending"),
+      ]).subtitle,
+    ).toBeUndefined();
   });
 });
 

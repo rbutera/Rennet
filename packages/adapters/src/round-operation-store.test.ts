@@ -29,11 +29,13 @@ const RACE_WAIT_CELL = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER
 const workspaceAttempt: RoundWorkspaceAttempt = {
   kind: "detached-worktree",
   worktreePath: "/round-worktree",
-  sourceHead: "abc123",
+  sourceTreeOid: "tree123",
+  sourceParentHead: "abc123",
   startedAt: 2,
 };
 const workspace: RoundWorkspaceReceipt = {
   ...workspaceAttempt,
+  sourceHead: "abc123",
   preparedAt: 3,
 };
 
@@ -475,6 +477,14 @@ if (RACE_ROLE !== undefined) {
               executionId: "report-1",
               reportBoardId: "board-1",
               generation: "generation-1",
+              boardIds: {
+                design: "design-1",
+                sequence: "sequence-1",
+                decisions: "decisions-1",
+                flagged: "flagged-1",
+                noise: "noise-1",
+                report: "board-1",
+              },
               startedAt: 9,
             },
           },

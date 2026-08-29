@@ -283,45 +283,41 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     expect(run()?.getAttribute("data-phase")).toBe("committing");
     shown("2 · run route walked working → gating → committing on real events (no clock)");
 
-    // ── 3 · THE REPORT GREETS WHILE THE DRAFTERS REGENERATE ──────────────────
-    push(SERVER_ROUND[6] as RoundEvent); // report arrives → the run hands off to the board
+    // ── 3 · THE RUN HOLDS THROUGH REPORT AND REGENERATION ─────────────────────
+    push(SERVER_ROUND[6] as RoundEvent);
     push(SERVER_ROUND[7] as RoundEvent); // the first lens lane starts
+    expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
+    expect(run()?.getAttribute("data-phase")).toBe("composing");
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    shown("3 · report and regeneration held the run route; reveal absent");
+
+    // ── 4 · SETTLED LANES STILL DO NOT NAVIGATE EARLY ────────────────────────
+    push(SERVER_ROUND[8] as RoundEvent); // every lane settles with its real verdict
+    expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
+
+    // ── 5 · VERIFIED COMPLETION RETURNS WITH THE SETTLED ACCOUNT ─────────────
+    push(SERVER_ROUND[9] as RoundEvent); // composed, generation gen2
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
-    // The report is READABLE (its tally rendered) while the lanes still run.
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
     const progress = () => r.getByTestId("regeneration-progress");
-    expect(progress().textContent).toContain("re-drafting");
-    // C15 4.1 — the ruled kicker, verbatim, WHILE running.
-    expect(progress().textContent).toContain("Regenerating the Boards");
-    expect(r.container.textContent).not.toContain("Re-drafting the boards");
-    // The reveal is ABSENT before composition — never a disabled teaser.
-    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
-    shown('3 · report greets, kicker reads "Regenerating the Boards", reveal absent');
-
-    // ── 4 · THE CARRY-FORWARD LANES REACH THE EYE (C15 3.3) ──────────────────
-    push(SERVER_ROUND[8] as RoundEvent); // every lane settles with its real verdict
+    expect(progress().textContent).toContain("Regenerated the Boards");
     const laneText = (id: string) =>
       r.container.querySelector(`[data-row="${id}"]`)?.textContent ?? "";
     expect(laneText("design")).toContain("reworked");
     expect(laneText("design")).not.toContain("carrying forward");
     expect(laneText("sequence")).toContain("carrying forward");
-    // 4.2's post-process step appears only now that every lane settled — not pre-rendered.
+    // 4.2's post-process and composed receipts are present on the returned surface.
     expect(r.container.querySelector('[data-step="post-process"]')?.textContent).toContain(
       "Cleaning up drafts · post-process pass",
     );
-    expect(r.container.querySelector('[data-step="composed"]')).toBeNull();
-    shown("4 · design reworked / sequence carrying forward; post-process step appeared");
-
-    // ── 5 · VIEW THE NEW BOARDS AT REAL COMPOSITION ──────────────────────────
-    push(SERVER_ROUND[9] as RoundEvent); // composed, generation gen2
-    // C15 4.1 — the kicker's other half, at composition.
-    expect(progress().textContent).toContain("Regenerated the Boards");
-    expect(progress().textContent).not.toContain("Regenerating the Boards");
-    // C15 4.2 — the composed line names the REAL minted generation.
     expect(r.container.querySelector('[data-step="composed"]')?.textContent).toContain(
       "Composed generation gen2",
     );
+    shown("4 · completion returned with settled regeneration receipts");
+
+    // ── 6 · VIEW THE NEW BOARDS ──────────────────────────────────────────────
     const reveal = r.getByTestId("reveal-new-boards");
     expect(reveal.hasAttribute("disabled")).toBe(false); // present, never disabled
     await r.user.click(reveal);

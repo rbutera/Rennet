@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GenerationStore, RoundRecordStore } from "@rennet/adapters";
+import { GenerationStore, RoundOperationStore, RoundRecordStore } from "@rennet/adapters";
 import type { Review } from "@rennet/protocol";
-import { generationIdForDispatch, generationIdForPatchset, ROUND_NO_REGEN } from "@rennet/protocol";
+import { generationIdForPatchset, ROUND_NO_REGEN } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
 
@@ -90,6 +90,8 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     dirs.push(dataDir, home, repo, linkDir);
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
     git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
     writeFileSync(join(repo, "a.txt"), "one\n");
     git("add", "a.txt");
     git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "x");
@@ -169,20 +171,22 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     dirs.push(dataDir, repo);
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
     git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
     writeFileSync(join(repo, "a.txt"), "base\n");
     git("add", "a.txt");
-    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "base");
+    git("commit", "-m", "base");
     writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
     const head = git("rev-parse", "HEAD");
     let workerCalls = 0;
     let placeholderObserved = false;
-    let roundDispatchId = "";
+    let roundSessionId = "";
     const server = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async () => {
+      runHandoffTurn: async ({ repoRoot }) => {
         workerCalls += 1;
-        writeFileSync(join(repo, "a.txt"), "base\nreviewed\nworker change\n");
+        writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
         return {
           status: "completed",
           finalText: "done",
@@ -191,7 +195,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         };
       },
       onRoundPlaceholderCommitted: ({ sessionId, dispatchId }) => {
-        roundDispatchId = dispatchId;
+        roundSessionId = sessionId;
         const record = new RoundRecordStore(join(dataDir, "rounds"))
           .read(sessionId)
           .find((candidate) => candidate.dispatchId === dispatchId);
@@ -244,9 +248,20 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           reviewId,
         })) as { review: Review };
         expect(loaded.review.activePatchsetId).not.toBe(priorPatchsetId);
-        const successor = new GenerationStore(join(dataDir, "generations")).load(
-          generationIdForDispatch(loaded.review.activePatchsetId, roundDispatchId),
-        );
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const operation = operationStore.read(roundSessionId);
+        operationStore.close();
+        const report =
+          operation?.state.phase === "report-drafting"
+            ? operation.state.report
+            : operation?.state.phase === "failed" &&
+                operation.state.failure.at === "report-drafting"
+              ? operation.state.failure.report
+              : undefined;
+        const successor =
+          report === undefined
+            ? undefined
+            : new GenerationStore(join(dataDir, "generations")).load(report.generation);
         expect(Object.keys(successor?.draftingBoardIds ?? {}).length).toBeGreaterThan(0);
       },
       { timeout: 15_000, interval: 50 },
@@ -261,9 +276,11 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     dirs.push(dataDir, repo);
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
     git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
     writeFileSync(join(repo, "a.txt"), "base\n");
     git("add", "a.txt");
-    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "base");
+    git("commit", "-m", "base");
     writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
 
     let workerCalls = 0;
@@ -277,7 +294,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
       onRoundPlaceholderCommitted: ({ sessionId }) => {
         crashedSessionId = sessionId;
-        throw new Error("simulated crash after durable worker commit");
+        return new Promise<void>(() => undefined);
       },
     });
     shutdowns.push(first.shutdown);

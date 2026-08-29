@@ -150,7 +150,8 @@ function sameWorkspaceAttempt(left: RoundWorkspaceAttempt, right: RoundWorkspace
   return (
     left.kind === right.kind &&
     left.worktreePath === right.worktreePath &&
-    left.sourceHead === right.sourceHead &&
+    left.sourceTreeOid === right.sourceTreeOid &&
+    left.sourceParentHead === right.sourceParentHead &&
     left.startedAt === right.startedAt
   );
 }
@@ -493,6 +494,29 @@ export class RoundOperationStore {
         )
         .run(expectedTerminal.sessionId, expectedTerminal.operationId, expectedTerminal.revision);
     });
+  }
+
+  /** Clear a terminal row after the coordinator has re-folded the live ask log and found
+   * no replacement work. Unlike {@link clear}, a queued rerun is allowed here because the
+   * caller has just proven that the queue drained to empty. */
+  clearAfterDrain(expectedTerminal: RoundOperationExpectation): void {
+    this.transaction(() => {
+      const current = this.requireExact(expectedTerminal);
+      if (!isRoundOperationTerminal(current)) {
+        throw new RoundOperationConflictError(expectedTerminal, "active operation is not terminal");
+      }
+      this.database
+        .prepare(
+          `DELETE FROM round_operations
+           WHERE session_id = ? AND operation_id = ? AND revision = ?`,
+        )
+        .run(expectedTerminal.sessionId, expectedTerminal.operationId, expectedTerminal.revision);
+    });
+  }
+
+  /** Release the SQLite handle during daemon shutdown. */
+  close(): void {
+    this.database.close();
   }
 
   private write(operation: RoundOperation): RoundOperation {

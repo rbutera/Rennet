@@ -1,4 +1,9 @@
-import type { LaneRow, LensLane, RoundEvent } from "@rennet/protocol";
+import type {
+  LaneRow,
+  LensLane,
+  RoundEvent,
+  RoundOperationProgressSnapshot,
+} from "@rennet/protocol";
 import { type Navigation, sessionPath } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +37,7 @@ export type { LaneRow, LaneVerdict, LensLane, RoundEvent, RowStatus } from "@ren
  * terminal and carries its reason. There is no stored progress fraction or navigation
  * target — both are DERIVED ({@link runProgressFraction}, {@link runNavigation}).
  */
-export type RoundState =
+type LegacyRoundState =
   | { readonly phase: "absent" }
   | { readonly phase: "dispatching" }
   | { readonly phase: "preparing"; readonly prep: readonly LaneRow[] }
@@ -75,11 +80,402 @@ export type RoundState =
   | { readonly phase: "unchanged" }
   | { readonly phase: "failed"; readonly reason: string };
 
+/** Operation identity and public run facts carried across every durable progress phase. */
+export type RoundRunIdentity = Omit<RoundOperationProgressSnapshot, "state">;
+
+interface DurableRoundRows {
+  readonly operation: RoundRunIdentity;
+  readonly prep: readonly LaneRow[];
+  readonly worker: readonly LaneRow[];
+  readonly tail: readonly LaneRow[];
+}
+
+type DurableRoundState =
+  | (DurableRoundRows & {
+      readonly phase:
+        | "dispatching"
+        | "preparing"
+        | "working"
+        | "gating"
+        | "committing"
+        | "reporting"
+        | "verifying";
+    })
+  | (DurableRoundRows & {
+      readonly phase: "composed";
+      readonly reportBoardId: string;
+      readonly newGeneration: string;
+      readonly lanes?: readonly LensLane[];
+    })
+  | (DurableRoundRows & { readonly phase: "unchanged" })
+  | (DurableRoundRows & { readonly phase: "failed"; readonly reason: string });
+
+export type RoundState = LegacyRoundState | DurableRoundState;
+
 /** The phase discriminants, in progress order. */
 export type RoundPhase = RoundState["phase"];
 
 /** The honest-absent starting state — no round, nothing to render. */
 export const initialRoundState: RoundState = { phase: "absent" };
+
+function operationIdentity(snapshot: RoundOperationProgressSnapshot): RoundRunIdentity {
+  return {
+    operationId: snapshot.operationId,
+    revision: snapshot.revision,
+    createdAt: snapshot.createdAt,
+    roundNumber: snapshot.roundNumber,
+    sourceTarget: snapshot.sourceTarget,
+    askCount: snapshot.askCount,
+    gatePlan: snapshot.gatePlan,
+  };
+}
+
+export function roundTargetLabel(target: RoundRunIdentity["sourceTarget"]): string {
+  return target.kind === "branch" ? target.branch : `detached at ${target.head.slice(0, 12)}`;
+}
+
+function countLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function durationLabel(durationMs: number): string {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  const seconds = durationMs / 1_000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+}
+
+function preparedRows(operation: RoundRunIdentity, asks: "running" | "done"): readonly LaneRow[] {
+  return [
+    {
+      id: "worktree",
+      label: "Created detached worktree",
+      status: "done",
+      detail: `${roundTargetLabel(operation.sourceTarget)} @ round-${operation.roundNumber}`,
+    },
+    asks === "running"
+      ? { id: "asks", label: "Applying the round's asks", status: "running" }
+      : {
+          id: "asks",
+          label: "Applied the round's asks",
+          status: "done",
+          detail: countLabel(operation.askCount, "ask"),
+        },
+  ];
+}
+
+function settledWorkerRow(fileCount: number): LaneRow {
+  return {
+    id: "worker",
+    label: "Ran the round worker",
+    status: "done",
+    detail: countLabel(fileCount, "file changed", "files changed"),
+  };
+}
+
+function gateCommand(operation: RoundRunIdentity): string {
+  return operation.gatePlan.kind === "configured"
+    ? operation.gatePlan.command
+    : "no configured gate";
+}
+
+type ProgressState = RoundOperationProgressSnapshot["state"];
+type PropertyValues<T, Key extends PropertyKey> = T extends unknown
+  ? Key extends keyof T
+    ? T[Key]
+    : never
+  : never;
+type ProgressFailure = PropertyValues<ProgressState, "failure">;
+type GateProgress = PropertyValues<ProgressState, "gate"> | PropertyValues<ProgressFailure, "gate">;
+type SettledGateProgress = Exclude<GateProgress, { status: "running" | "failed" }>;
+
+function gateRow(operation: RoundRunIdentity, gate: GateProgress): LaneRow {
+  const command = gateCommand(operation);
+  switch (gate.status) {
+    case "running":
+      return { id: "gate", label: `Running the gate · ${command}`, status: "running" };
+    case "passed": {
+      const projectResult =
+        gate.projectCount === undefined
+          ? "passed"
+          : `${countLabel(gate.projectCount, "project")} green`;
+      return {
+        id: "gate",
+        label: "Ran the gate",
+        status: "done",
+        detail: `${command} · ${projectResult} · ${durationLabel(gate.durationMs)}`,
+      };
+    }
+    case "skipped":
+      return {
+        id: "gate",
+        label: "Skipped the gate",
+        status: "done",
+        detail: "not configured",
+      };
+    case "failed":
+      return {
+        id: "gate",
+        label: "Ran the gate",
+        status: "failed",
+        reason: `${command} · ${gate.reason} · ${durationLabel(gate.durationMs)}`,
+      };
+  }
+}
+
+function settledGateRow(operation: RoundRunIdentity, gate: SettledGateProgress): LaneRow {
+  return gateRow(operation, gate);
+}
+
+function commitRow(
+  commit:
+    | { readonly status: "running" }
+    | { readonly status: "done"; readonly count: number }
+    | { readonly status: "failed"; readonly reason: string },
+): LaneRow {
+  switch (commit.status) {
+    case "running":
+      return { id: "commit", label: "Recording round commits", status: "running" };
+    case "done":
+      return {
+        id: "commit",
+        label: "Recorded round commits",
+        status: "done",
+        detail: countLabel(commit.count, "commit"),
+      };
+    case "failed":
+      return {
+        id: "commit",
+        label: "Recording round commits",
+        status: "failed",
+        reason: commit.reason,
+      };
+  }
+}
+
+type ProgressResult = PropertyValues<ProgressState, "result">;
+type ChangedProgressResult = Extract<ProgressResult, { kind: "changed" }>;
+type ReportProgress =
+  | PropertyValues<ProgressState, "report">
+  | PropertyValues<ProgressFailure, "report">
+  | PropertyValues<ChangedProgressResult, "report">;
+
+function reportRow(report: ReportProgress): LaneRow {
+  switch (report.status) {
+    case "drafting":
+      return { id: "report", label: "Drafting the round report", status: "running" };
+    case "verifying":
+      return { id: "report", label: "Verifying the round report", status: "running" };
+    case "verified":
+      return {
+        id: "report",
+        label: "Drafted the round report",
+        status: "done",
+        detail: "verified against the round's diff",
+      };
+    case "failed":
+      return {
+        id: "report",
+        label:
+          report.step === "drafting" ? "Drafting the round report" : "Verifying the round report",
+        status: "failed",
+        reason: report.reason,
+      };
+  }
+}
+
+function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundState {
+  const operation = operationIdentity(snapshot);
+  const donePrep = preparedRows(operation, "done");
+  const state = snapshot.state;
+  switch (state.phase) {
+    case "claimed":
+      return { phase: "dispatching", operation, prep: [], worker: [], tail: [] };
+    case "workspace-preparing":
+      return {
+        phase: "preparing",
+        operation,
+        prep: [{ id: "worktree", label: "Creating detached worktree", status: "running" }],
+        worker: [],
+        tail: [],
+      };
+    case "prepared":
+      return {
+        phase: "preparing",
+        operation,
+        prep: preparedRows(operation, "running"),
+        worker: [],
+        tail: [],
+      };
+    case "worker-running":
+      return {
+        phase: "working",
+        operation,
+        prep: donePrep,
+        worker: [{ id: "worker", label: "Round worker", status: "running" }],
+        tail: [],
+      };
+    case "worker-settled":
+      return {
+        phase: "working",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [],
+      };
+    case "gate-running":
+      return {
+        phase: "gating",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [gateRow(operation, state.gate)],
+      };
+    case "gate-settled":
+      return {
+        phase: "gating",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [settledGateRow(operation, state.gate)],
+      };
+    case "committing":
+      return {
+        phase: "committing",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
+      };
+    case "commits-settled":
+      return {
+        phase: "committing",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
+      };
+    case "report-drafting":
+      return {
+        phase: "reporting",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [
+          settledGateRow(operation, state.gate),
+          commitRow(state.commits),
+          reportRow(state.report),
+        ],
+      };
+    case "report-verifying":
+      return {
+        phase: "verifying",
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [
+          settledGateRow(operation, state.gate),
+          commitRow(state.commits),
+          reportRow(state.report),
+        ],
+      };
+    case "completed": {
+      const rows = {
+        operation,
+        prep: donePrep,
+        worker: [settledWorkerRow(state.worker.fileCount)],
+        tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
+      };
+      if (state.result.kind === "unchanged") return { phase: "unchanged", ...rows };
+      return {
+        phase: "composed",
+        ...rows,
+        tail: [...rows.tail, reportRow(state.result.report)],
+        reportBoardId: state.result.report.reportBoardId,
+        newGeneration: state.result.report.generation,
+      };
+    }
+    case "failed": {
+      const failure = state.failure;
+      switch (failure.at) {
+        case "preparing":
+          return {
+            phase: "failed",
+            operation,
+            reason: failure.workspace.reason,
+            prep: [
+              {
+                id: "worktree",
+                label: "Creating detached worktree",
+                status: "failed",
+                reason: failure.workspace.reason,
+              },
+            ],
+            worker: [],
+            tail: [],
+          };
+        case "worker":
+          return {
+            phase: "failed",
+            operation,
+            reason: failure.worker.reason,
+            prep: donePrep,
+            worker: [
+              {
+                id: "worker",
+                label: "Round worker",
+                status: "failed",
+                reason: failure.worker.reason,
+              },
+            ],
+            tail: [],
+          };
+        case "gate":
+          return {
+            phase: "failed",
+            operation,
+            reason: failure.gate.reason,
+            prep: donePrep,
+            worker: [settledWorkerRow(failure.worker.fileCount)],
+            tail: [gateRow(operation, failure.gate)],
+          };
+        case "committing":
+          return {
+            phase: "failed",
+            operation,
+            reason: failure.commits.reason,
+            prep: donePrep,
+            worker: [settledWorkerRow(failure.worker.fileCount)],
+            tail: [settledGateRow(operation, failure.gate), commitRow(failure.commits)],
+          };
+        case "report-drafting":
+        case "report-verifying":
+          return {
+            phase: "failed",
+            operation,
+            reason: failure.report.reason,
+            prep: donePrep,
+            worker: [settledWorkerRow(failure.worker.fileCount)],
+            tail: [
+              settledGateRow(operation, failure.gate),
+              commitRow(failure.commits),
+              reportRow(failure.report),
+            ],
+          };
+      }
+    }
+  }
+}
+
+function isNewerOperation(
+  candidate: RoundOperationProgressSnapshot,
+  current: RoundRunIdentity,
+): boolean {
+  if (candidate.createdAt !== current.createdAt) return candidate.createdAt > current.createdAt;
+  if (candidate.operationId !== current.operationId) {
+    return candidate.operationId.localeCompare(current.operationId) > 0;
+  }
+  return candidate.revision > current.revision;
+}
 
 /**
  * The pure transition. Forward-only and tolerant: an event that does not apply to the
@@ -90,6 +486,12 @@ export const initialRoundState: RoundState = { phase: "absent" };
  * un-settles.
  */
 export function advance(state: RoundState, event: RoundEvent): RoundState {
+  if (event.type === "operation") {
+    if ("operation" in state && !isNewerOperation(event.snapshot, state.operation)) return state;
+    return durableState(event.snapshot);
+  }
+  // Once the durable stream is present, only a newer durable snapshot may change it.
+  if ("operation" in state) return state;
   if (event.type === "unchanged") {
     return state.phase === "absent" ||
       state.phase === "composed" ||
@@ -188,14 +590,32 @@ export function mergeRoundEvents(
   read: readonly RoundEvent[],
   streamed: readonly RoundEvent[],
 ): readonly RoundEvent[] {
-  if (streamed.length === 0) return [...read];
+  const all = [...read, ...streamed];
+  let latestOperation: Extract<RoundEvent, { type: "operation" }> | undefined;
+  for (const event of all) {
+    if (event.type !== "operation") continue;
+    if (
+      latestOperation === undefined ||
+      isNewerOperation(event.snapshot, operationIdentity(latestOperation.snapshot))
+    ) {
+      latestOperation = event;
+    }
+  }
+  // A durable event is a complete snapshot. Folding legacy deltas beside it could move
+  // the UI past report verification, and a daemon restart can reuse the legacy `seq`.
+  if (latestOperation !== undefined) return [latestOperation];
+
   const bySeq = new Map<number, RoundEvent>();
   const unsequenced: RoundEvent[] = [];
-  for (const event of [...read, ...streamed]) {
+  for (const event of all) {
     if (event.seq === undefined) unsequenced.push(event);
     else if (!bySeq.has(event.seq)) bySeq.set(event.seq, event);
   }
-  const ordered = [...bySeq.keys()].sort((a, b) => a - b).map((s) => bySeq.get(s) as RoundEvent);
+  const ordered: RoundEvent[] = [];
+  for (const position of [...bySeq.keys()].sort((a, b) => a - b)) {
+    const event = bySeq.get(position);
+    if (event !== undefined) ordered.push(event);
+  }
   const merged = [...unsequenced, ...ordered];
   const start = merged.findLastIndex((event) => event.type === "dispatched");
   return start > 0 ? merged.slice(start) : merged;
@@ -219,6 +639,7 @@ const PHASE_ORDER: readonly RoundPhase[] = [
   "gating",
   "committing",
   "reporting",
+  "verifying",
   "composing",
   "composed",
 ];
@@ -238,16 +659,13 @@ export function runProgressFraction(state: RoundState): number {
  *
  * - `absent` (a cold `/s/:slug/run` deep-link with no live round) ⇒ redirect to the
  *   session board (replace — the run route leaves no back-stack entry).
- * - `reporting` / `composing` / `composed` ⇒ leave the run takeover for the board
- *   surface, where the report is the greeting and regeneration streams beneath.
- * - every in-flight phase (`dispatching`…`committing`) and `failed` ⇒ `null`: stay on
- *   the run route (failed renders its reason there).
+ * - `composed` / `unchanged` ⇒ leave only after the durable operation says the report
+ *   verification settled, or says no report was needed.
+ * - every in-flight phase and `failed` ⇒ `null`: stay on the run route.
  */
 export function runNavigation(state: RoundState, slug: string): Navigation | null {
   switch (state.phase) {
     case "absent":
-    case "reporting":
-    case "composing":
     case "composed":
     case "unchanged":
       return { path: sessionPath(slug, { view: "board" }), replace: true };

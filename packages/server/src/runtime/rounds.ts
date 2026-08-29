@@ -277,6 +277,9 @@ export interface RoundInput {
   readonly session: SessionModel;
   /** The PR worktree the drafters are rooted at, and ports/boards resolve against. */
   readonly repoRoot: string;
+  /** Durable ids reserved before drafting starts. A restarted report attempt reuses
+   * these boards and generation instead of minting a second set after a crash. */
+  readonly draftPlan?: RoundDraftPlan;
   /**
    * The REAL prior generation this round succeeds — the one whose boards were actually
    * drafted and persisted (frozen if the code moves). **Absent means absent:** a session
@@ -333,6 +336,11 @@ export interface RoundInput {
   readonly reviewDraftLintCtx: RegisterLintContext;
   readonly curationFeedback?: string;
   readonly signal?: AbortSignal;
+}
+
+export interface RoundDraftPlan {
+  readonly generation: string;
+  readonly boardIds: Readonly<Record<LintTarget, string>>;
 }
 
 export interface RoundOutcome {
@@ -628,7 +636,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   ): Promise<{ readonly generation: Generation; readonly pipeline: LensPipelineResult }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const boardIds = new Map<LintTarget, string>();
-    for (const target of LINT_TARGETS) boardIds.set(target, await boards.createRennetBoard());
+    for (const target of LINT_TARGETS) {
+      boardIds.set(target, await boards.createRennetBoard(input.draftPlan?.boardIds[target]));
+    }
     const boardIdFor = (lens: LintTarget): string => {
       const id = boardIds.get(lens);
       if (id === undefined) throw new Error(`rounds: no board minted for ${lens}`);
@@ -821,9 +831,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const landedGenerationId =
       landedPatchsetId === undefined
         ? undefined
-        : input.dispatchId === undefined
-          ? newGenerationId(landedPatchsetId)
-          : generationIdForDispatch(landedPatchsetId, input.dispatchId);
+        : (input.draftPlan?.generation ??
+          (input.dispatchId === undefined
+            ? newGenerationId(landedPatchsetId)
+            : generationIdForDispatch(landedPatchsetId, input.dispatchId)));
     const boardGeneration =
       landedPatchsetId !== undefined && landedGenerationId !== undefined
         ? (deps.loadGeneration?.(landedGenerationId) ??

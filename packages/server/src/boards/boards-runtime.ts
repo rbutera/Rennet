@@ -20,8 +20,10 @@ export type BoardEventsListener = (boardId: string, events: BoardEventFrame["eve
 export interface BoardsRuntime {
   /** The embedded board service — reads for anyone, writes only via whiteboard-client. */
   readonly service: BoardService;
-  /** Mint a board declared with the Rennet host wire schema; returns the board id. */
-  createRennetBoard(): Promise<string>;
+  /** Mint a board declared with the Rennet host wire schema; returns the board id.
+   * A caller-owned id makes a durable drafting attempt restartable: the same attempt
+   * adopts the same empty or partially-written board instead of minting a second one. */
+  createRennetBoard(boardId?: string): Promise<string>;
 }
 
 /** Construct the runtime for one review project rooted at `projectRoot`. */
@@ -56,6 +58,17 @@ export function createBoardsRuntime(
   const service = new BoardService(observed);
   return {
     service,
-    createRennetBoard: () => service.createBoard(BOARD_WIRE_SCHEMA),
+    createRennetBoard: async (boardId?: string) => {
+      if (boardId === undefined) return service.createBoard(BOARD_WIRE_SCHEMA);
+      const existing = await store.getSchema(boardId);
+      if (existing !== undefined) {
+        if (JSON.stringify(existing) !== JSON.stringify(BOARD_WIRE_SCHEMA)) {
+          throw new Error(`board schema does not match the Rennet schema: ${boardId}`);
+        }
+        return boardId;
+      }
+      await store.createBoard(boardId, BOARD_WIRE_SCHEMA);
+      return boardId;
+    },
   };
 }

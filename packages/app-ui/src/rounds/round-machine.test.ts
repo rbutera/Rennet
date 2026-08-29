@@ -1,3 +1,4 @@
+import type { RoundOperationProgressSnapshot } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   FIXTURE_ROUND_COMPLETE_TICK,
@@ -8,6 +9,7 @@ import {
   advance,
   canRevealNewBoards,
   initialRoundState,
+  mergeRoundEvents,
   type RoundEvent,
   type RoundPhase,
   runNavigation,
@@ -19,6 +21,38 @@ import {
 // transition produced (the autopsy S9 fence).
 
 const SLUG = "s-1";
+
+const OPERATION_BASE = {
+  operationId: "operation-1",
+  revision: 0,
+  createdAt: 1_000,
+  roundNumber: 2,
+  sourceTarget: { kind: "branch", branch: "feat/truthful-round" },
+  askCount: 3,
+  gatePlan: { kind: "configured", command: "pnpm check" },
+} satisfies Omit<RoundOperationProgressSnapshot, "state">;
+
+const WORKSPACE = { status: "done" } as const;
+const WORKER = { status: "done", fileCount: 3 } as const;
+const GATE = { status: "passed", durationMs: 1_234, projectCount: 14 } as const;
+
+function operationEvent(
+  revision: number,
+  state: RoundOperationProgressSnapshot["state"],
+  options?: { readonly operationId?: string; readonly createdAt?: number; readonly seq?: number },
+): Extract<RoundEvent, { type: "operation" }> {
+  return {
+    type: "operation",
+    snapshot: {
+      ...OPERATION_BASE,
+      operationId: options?.operationId ?? OPERATION_BASE.operationId,
+      createdAt: options?.createdAt ?? OPERATION_BASE.createdAt,
+      revision,
+      state,
+    },
+    ...(options?.seq === undefined ? {} : { seq: options.seq }),
+  };
+}
 
 describe("round-machine — the pure run state machine", () => {
   it("walks absent → … → composed on the fixture timeline", () => {
@@ -65,15 +99,18 @@ describe("round-machine — the pure run state machine", () => {
       );
       expect(runNavigation(roundStateAtTick(at + 1), SLUG)).toBeNull();
     }
-    // Once the report has drafted (reporting) and once composed, navigation leaves the
-    // run takeover for the board surface — derived from state, replacing history.
-    for (const phase of ["reporting", "composing", "composed"] as const) {
+    // Drafting and lens composition are still in flight. Only the terminal composed
+    // receipt leaves the run takeover.
+    for (const phase of ["reporting", "composing"] as const) {
       const at = FIXTURE_ROUND_TIMELINE.findIndex(
         (_e, i) => roundStateAtTick(i + 1).phase === phase,
       );
-      const nav = runNavigation(roundStateAtTick(at + 1), SLUG);
-      expect(nav).toEqual({ path: "/s/s-1", replace: true });
+      expect(runNavigation(roundStateAtTick(at + 1), SLUG)).toBeNull();
     }
+    expect(runNavigation(roundStateAtTick(FIXTURE_ROUND_COMPLETE_TICK), SLUG)).toEqual({
+      path: "/s/s-1",
+      replace: true,
+    });
   });
 
   it("a cold absent state derives a redirect to the session board (no double-dispatch, no effect race)", () => {
@@ -135,5 +172,193 @@ describe("round-machine — the pure run state machine", () => {
     });
     const composed = FIXTURE_ROUND_TIMELINE.reduce(advance, initialRoundState);
     expect(advance(composed, { type: "failed", reason: "late" })).toBe(composed);
+  });
+
+  it("uses the newest durable snapshot across daemon seq restarts", () => {
+    const stale = operationEvent(
+      4,
+      {
+        phase: "gate-running",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: { status: "running" },
+      },
+      { seq: 0 },
+    );
+    const latest = operationEvent(
+      6,
+      {
+        phase: "report-verifying",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "verifying" },
+      },
+      { seq: 0 },
+    );
+
+    const merged = mergeRoundEvents([stale], [latest]);
+    expect(merged).toEqual([latest]);
+    const reattached = merged.reduce(advance, initialRoundState);
+    expect(reattached.phase).toBe("verifying");
+    expect(advance(reattached, stale)).toBe(reattached);
+  });
+
+  it("prefers a newer operation over an older terminal snapshot", () => {
+    const oldTerminal = operationEvent(
+      9,
+      {
+        phase: "completed",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 1 },
+        result: {
+          kind: "changed",
+          report: {
+            status: "verified",
+            reportBoardId: "report-old",
+            generation: "generation-old",
+          },
+        },
+      },
+      { operationId: "operation-old", createdAt: 900, seq: 0 },
+    );
+    const newClaim = operationEvent(
+      0,
+      { phase: "claimed" },
+      {
+        operationId: "operation-new",
+        createdAt: 1_100,
+        seq: 0,
+      },
+    );
+
+    expect(
+      mergeRoundEvents([oldTerminal], [newClaim]).reduce(advance, initialRoundState).phase,
+    ).toBe("dispatching");
+  });
+
+  it("renders the configured gate's real result, duration, and project count", () => {
+    const state = advance(
+      initialRoundState,
+      operationEvent(5, {
+        phase: "gate-settled",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+      }),
+    );
+
+    expect(state.phase).toBe("gating");
+    expect("tail" in state ? state.tail : []).toEqual([
+      {
+        id: "gate",
+        label: "Ran the gate",
+        status: "done",
+        detail: "pnpm check · 14 projects green · 1.2 s",
+      },
+    ]);
+  });
+
+  it.each([
+    [0, "0 commits"],
+    [1, "1 commit"],
+    [3, "3 commits"],
+  ])("renders an exact %i-commit receipt", (count, detail) => {
+    const state = advance(
+      initialRoundState,
+      operationEvent(7, {
+        phase: "commits-settled",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count },
+      }),
+    );
+
+    expect("tail" in state ? state.tail.at(-1) : undefined).toMatchObject({
+      status: "done",
+      detail,
+    });
+  });
+
+  it("keeps a failed gate on the run with the real failed receipt", () => {
+    const state = advance(
+      initialRoundState,
+      operationEvent(5, {
+        phase: "failed",
+        failure: {
+          at: "gate",
+          workspace: WORKSPACE,
+          worker: WORKER,
+          gate: {
+            status: "failed",
+            reason: "exited 1",
+            durationMs: 2_500,
+            projectCount: 8,
+          },
+        },
+      }),
+    );
+
+    expect(state.phase).toBe("failed");
+    expect(runNavigation(state, SLUG)).toBeNull();
+    expect("tail" in state ? state.tail.at(-1) : undefined).toEqual({
+      id: "gate",
+      label: "Ran the gate",
+      status: "failed",
+      reason: "pnpm check · exited 1 · 2.5 s",
+    });
+  });
+
+  it("does not navigate until the durable report is verified", () => {
+    const drafting = advance(
+      initialRoundState,
+      operationEvent(8, {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      }),
+    );
+    const verifying = advance(
+      drafting,
+      operationEvent(9, {
+        phase: "report-verifying",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "verifying" },
+      }),
+    );
+    const legacyEarlyTerminal = advance(verifying, { type: "composed", generation: "too-early" });
+    const completed = advance(
+      legacyEarlyTerminal,
+      operationEvent(10, {
+        phase: "completed",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        result: {
+          kind: "changed",
+          report: {
+            status: "verified",
+            reportBoardId: "report-2",
+            generation: "generation-2",
+          },
+        },
+      }),
+    );
+
+    expect(runNavigation(drafting, SLUG)).toBeNull();
+    expect(runNavigation(verifying, SLUG)).toBeNull();
+    expect(legacyEarlyTerminal).toBe(verifying);
+    expect(runNavigation(completed, SLUG)).toEqual({ path: "/s/s-1", replace: true });
   });
 });

@@ -10,7 +10,8 @@ import {
   FIXTURE_ROUND_COMPLETE_TICK,
   type TimelineRoundsSource,
 } from "../test/fixtures/rounds";
-import { RoundsSourceProvider } from "./rounds-data";
+import { advance, initialRoundState, type RoundEvent, type RoundState } from "./round-machine";
+import { type RoundsSource, RoundsSourceProvider } from "./rounds-data";
 import { RunRoute } from "./run-route";
 
 // Cluster 3's run route — the live takeover at `/s/:slug/run`. State comes from the seam
@@ -58,6 +59,25 @@ function pump(handle: ReturnType<typeof renderRun>, tick: number): void {
   );
 }
 
+function renderFixedState(
+  state: RoundState,
+): ReturnType<typeof mount> & { readonly history: ReturnType<typeof memoryHistory> } {
+  const source: RoundsSource = {
+    roundState: () => state,
+    roundRecords: () => [],
+    reportBoard: () => undefined,
+  };
+  const history = memoryHistory("/s/s-1/run");
+  const handle = mount(
+    <Router hook={history.hook} searchHook={history.searchHook}>
+      <RoundsSourceProvider value={source}>
+        <RunRoute slug="s-1" />
+      </RoundsSourceProvider>
+    </Router>,
+  );
+  return { ...handle, history };
+}
+
 describe("RunRoute — the live round takeover", () => {
   it("renders live worker rows that advance on fixture ticks, with no wall clock", () => {
     // Tick 5: the worker has begun — "Read the refresh path" is running, the next queued.
@@ -95,7 +115,7 @@ describe("RunRoute — the live round takeover", () => {
     expect(handle.timeline.dispatchCount()).toBe(0); // absent never dispatches either
   });
 
-  it("arms the greeting on entering a report phase, and only then (§3.2 continuity)", () => {
+  it("arms the greeting on verified terminal completion, and only then (§3.2 continuity)", () => {
     // In-flight: the greeting is NOT armed yet.
     renderRun({ startTick: 5 });
     expect(useRennetStore.getState().run.greetingArmed).toBe(false);
@@ -104,5 +124,49 @@ describe("RunRoute — the live round takeover", () => {
     act(() => useRennetStore.getState().runActions.resetRun());
     renderRun({ startTick: FIXTURE_ROUND_COMPLETE_TICK });
     expect(useRennetStore.getState().run.greetingArmed).toBe(true);
+  });
+
+  it("renders durable report verification receipts and stays on the run route", () => {
+    const event: Extract<RoundEvent, { type: "operation" }> = {
+      type: "operation",
+      snapshot: {
+        operationId: "operation-2",
+        revision: 9,
+        createdAt: 1_000,
+        roundNumber: 2,
+        sourceTarget: { kind: "branch", branch: "feat/truthful-round" },
+        askCount: 3,
+        gatePlan: { kind: "configured", command: "pnpm check" },
+        state: {
+          phase: "report-verifying",
+          workspace: { status: "done" },
+          worker: { status: "done", fileCount: 4 },
+          gate: { status: "passed", durationMs: 2_500, projectCount: 14 },
+          commits: { status: "done", count: 2 },
+          report: { status: "verifying" },
+        },
+      },
+    };
+    const handle = renderFixedState(advance(initialRoundState, event));
+
+    expect(handle.history.history.at(-1)).toBe("/s/s-1/run");
+    expect(handle.getByText("Round 2 · feat/truthful-round")).toBeTruthy();
+    expect(handle.container.querySelector('[data-row="worktree"]')?.textContent).toContain(
+      "feat/truthful-round @ round-2",
+    );
+    expect(handle.container.querySelector('[data-row="asks"]')?.textContent).toContain("3 asks");
+    expect(handle.container.querySelector('[data-row="worker"]')?.textContent).toContain(
+      "4 files changed",
+    );
+    expect(handle.container.querySelector('[data-row="gate"]')?.textContent).toContain(
+      "pnpm check · 14 projects green · 2.5 s",
+    );
+    expect(handle.container.querySelector('[data-row="commit"]')?.textContent).toContain(
+      "2 commits",
+    );
+    expect(handle.container.querySelector('[data-row="report"]')?.textContent).toContain(
+      "Verifying the round report",
+    );
+    expect(useRennetStore.getState().run.greetingArmed).toBe(false);
   });
 });

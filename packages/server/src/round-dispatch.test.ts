@@ -50,6 +50,8 @@ function harness(
     readonly store?: AskLogStore;
     readonly roundRecordsForReview?: DispatchDeps["roundRecordsForReview"];
     readonly broadcastAskProjection?: DispatchDeps["broadcastAskProjection"];
+    readonly queueRoundIfActive?: DispatchDeps["queueRoundIfActive"];
+    readonly composeBundle?: DispatchDeps["composeBundle"];
   } = {},
 ) {
   const store =
@@ -64,6 +66,10 @@ function harness(
     ...(options.broadcastAskProjection === undefined
       ? {}
       : { broadcastAskProjection: options.broadcastAskProjection }),
+    ...(options.queueRoundIfActive === undefined
+      ? {}
+      : { queueRoundIfActive: options.queueRoundIfActive }),
+    ...(options.composeBundle === undefined ? {} : { composeBundle: options.composeBundle }),
   } as unknown as DispatchDeps);
   return { store, dispatch: roundHandlers(rt)["round.dispatch"] };
 }
@@ -97,6 +103,28 @@ function completedRecord(
 type DispatchResult = { workOrder: ComposedHandoffBundle; dispatched: boolean };
 
 describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () => {
+  it("queues behind a durable active round before invoking the model composer", async () => {
+    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>();
+    const dispatchRound = vi.fn<NonNullable<DispatchDeps["dispatchRound"]>>();
+    const queueRoundIfActive = vi.fn(async () => true);
+    const { store, dispatch } = harness(dispatchRound, {
+      composeBundle,
+      queueRoundIfActive,
+    });
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "queue me" },
+    });
+
+    const result = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
+
+    expect(result.dispatched).toBe(true);
+    expect(result.workOrder.composed).toBe(false);
+    expect(queueRoundIfActive).toHaveBeenCalledTimes(1);
+    expect(composeBundle).not.toHaveBeenCalled();
+    expect(dispatchRound).not.toHaveBeenCalled();
+  });
+
   it("folds the durable asks into exactly one work-order carrying the staged asks", async () => {
     const { store, dispatch } = harness();
     // Two addressed asks (one code-anchored, one prose) + a question (excluded from the handoff).

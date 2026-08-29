@@ -129,19 +129,18 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     );
     expect(r.container.querySelector('[data-row="w-record"]')?.textContent).toContain("running");
 
-    // ── 3 · REPORT-AS-GREETING ON RETURN ─────────────────────────────────────────
-    // Reaching a report phase, the run route redirects to the board and arms the greeting;
-    // the report leads the surface, readable while regeneration streams beneath.
+    // ── 3 · REPORT VERIFICATION HOLDS THE RUN ROUTE ───────────────────────────────
     pump(COMPOSING_TICK);
+    expect(history.history.at(-1)).toBe("/s/s-1/run");
+    expect(r.container.querySelector('[data-phase="composing"]')).not.toBeNull();
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+
+    // ── 4 · RETURN AND REVEAL AT VERIFIED COMPOSITION ────────────────────────────
+    pump(FIXTURE_ROUND_COMPLETE_TICK);
     await waitFor(() => expect(history.history.at(-1)).toBe("/s/s-1"));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
-    expect(r.getByTestId("regeneration-progress").textContent).toContain("re-drafting");
-    // The reveal is ABSENT before composed — never a disabled teaser waiting to enable.
-    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
-
-    // ── 4 · REVEAL AT COMPOSITION (present, never disabled) ───────────────────────
-    pump(FIXTURE_ROUND_COMPLETE_TICK);
     const reveal = r.getByTestId("reveal-new-boards");
     expect(reveal.hasAttribute("disabled")).toBe(false);
 

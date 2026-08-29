@@ -11,6 +11,9 @@ import {
   RoundEventSchema,
   RoundOperationSchema,
   RoundRecordSchema,
+  RoundWorkspaceAttemptSchema,
+  RoundWorkspaceReceiptSchema,
+  roundOperationProgressSnapshot,
   SessionModelSchema,
   SessionThreadSchema,
   SessionTranscriptRowSchema,
@@ -68,11 +71,13 @@ const operationBase = {
 const operationWorkspaceAttempt = {
   kind: "detached-worktree",
   worktreePath: "/worktrees/round-1",
-  sourceHead: "abc123",
+  sourceTreeOid: "tree123",
+  sourceParentHead: "abc123",
   startedAt: 105,
 } as const;
 const operationWorkspace = {
   ...operationWorkspaceAttempt,
+  sourceHead: "abc123",
   preparedAt: 110,
 } as const;
 const operationWorker = {
@@ -98,6 +103,14 @@ const operationCommits = {
   to: "def456",
   count: 1,
   committedAt: 160,
+} as const;
+const operationBoardIds = {
+  design: "design-1",
+  sequence: "sequence-1",
+  decisions: "decisions-1",
+  flagged: "flagged-1",
+  noise: "noise-1",
+  report: "report-1",
 } as const;
 
 describe("session/ durable shapes (#466/#457)", () => {
@@ -294,6 +307,7 @@ describe("session/ durable shapes (#466/#457)", () => {
             executionId: "report-draft-1",
             reportBoardId: "report-1",
             generation: "gen-2",
+            boardIds: operationBoardIds,
             startedAt: 165,
             draftedAt: 170,
             verificationExecutionId: "report-verify-1",
@@ -334,6 +348,7 @@ describe("session/ durable shapes (#466/#457)", () => {
               executionId: "report-draft-1",
               reportBoardId: "report-1",
               generation: "gen-2",
+              boardIds: operationBoardIds,
               startedAt: 165,
               draftedAt: 170,
               verificationExecutionId: "report-verify-1",
@@ -345,6 +360,111 @@ describe("session/ durable shapes (#466/#457)", () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it("persists the reviewed tree before preparing a detached dirty snapshot", () => {
+    const attempt = RoundWorkspaceAttemptSchema.parse(operationWorkspaceAttempt);
+    expect(attempt).toEqual({
+      kind: "detached-worktree",
+      worktreePath: "/worktrees/round-1",
+      sourceTreeOid: "tree123",
+      sourceParentHead: "abc123",
+      startedAt: 105,
+    });
+    expect("sourceHead" in attempt).toBe(false);
+
+    const receipt = RoundWorkspaceReceiptSchema.parse({
+      ...attempt,
+      sourceHead: "synthetic-dirty-tree-commit",
+      preparedAt: 110,
+    });
+    expect(receipt.sourceHead).not.toBe(receipt.sourceParentHead);
+    expect(
+      RoundOperationSchema.parse({
+        ...operationBase,
+        sourceTarget: { kind: "detached", head: "abc123" },
+        state: { phase: "prepared", workspace: receipt },
+      }).state.phase,
+    ).toBe("prepared");
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        sourceTarget: { kind: "detached", head: "different-parent" },
+        state: { phase: "workspace-preparing", workspace: attempt },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("projects a durable operation to a UI-safe receipt snapshot", () => {
+    const operation = RoundOperationSchema.parse({
+      ...operationBase,
+      revision: 8,
+      updatedAt: 180,
+      state: {
+        phase: "completed",
+        workspace: operationWorkspace,
+        worker: operationWorker,
+        gate: { ...operationGate, projectCount: 14 },
+        commits: { ...operationCommits, count: 2 },
+        result: {
+          kind: "changed",
+          report: {
+            executionId: "report-draft-1",
+            reportBoardId: "report-1",
+            generation: "gen-2",
+            boardIds: operationBoardIds,
+            startedAt: 165,
+            draftedAt: 170,
+            verificationExecutionId: "report-verify-1",
+            verificationStartedAt: 175,
+            verifiedAt: 180,
+          },
+        },
+        completedAt: 180,
+      },
+    });
+    const snapshot = roundOperationProgressSnapshot(operation);
+
+    expect(RoundEventSchema.parse({ type: "operation", snapshot, seq: 0 })).toMatchObject({
+      type: "operation",
+      snapshot: {
+        operationId: "op-1",
+        revision: 8,
+        createdAt: 100,
+        roundNumber: 1,
+        sourceTarget: { kind: "branch", branch: "feat/round" },
+        askCount: 1,
+        gatePlan: { kind: "configured", command: "pnpm check" },
+        state: {
+          phase: "completed",
+          worker: { status: "done", fileCount: 1 },
+          gate: { status: "passed", durationMs: 10, projectCount: 14 },
+          commits: { status: "done", count: 2 },
+          result: {
+            kind: "changed",
+            report: {
+              status: "verified",
+              reportBoardId: "report-1",
+              generation: "gen-2",
+            },
+          },
+        },
+      },
+    });
+    const encoded = JSON.stringify(snapshot);
+    for (const privateValue of [
+      "/repo",
+      "/worktrees/round-1",
+      operationPrompt,
+      "diff --git a/a b/a",
+      "worker-1",
+      "gate-1",
+      "commit-1",
+      "abc123",
+      "def456",
+    ]) {
+      expect(encoded).not.toContain(privateValue);
+    }
   });
 
   it("rejects failed prerequisites and contradictory unchanged evidence", () => {
@@ -377,6 +497,7 @@ describe("session/ durable shapes (#466/#457)", () => {
                 executionId: "report-draft-1",
                 reportBoardId: "report-1",
                 generation: "gen-2",
+                boardIds: operationBoardIds,
                 startedAt: 165,
                 draftedAt: 170,
                 verificationExecutionId: "report-verify-1",
@@ -496,6 +617,7 @@ describe("session/ durable shapes (#466/#457)", () => {
             executionId: "report-draft-1",
             reportBoardId: "report-1",
             generation: "gen-2",
+            boardIds: operationBoardIds,
             startedAt: 165,
           },
         },
