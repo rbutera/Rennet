@@ -11,6 +11,9 @@ import {
   RoundEventSchema,
   RoundOperationSchema,
   RoundRecordSchema,
+  RoundReportDraftAttemptSchema,
+  RoundReportDraftReceiptSchema,
+  RoundReportReceiptSchema,
   RoundWorkspaceAttemptSchema,
   RoundWorkspaceReceiptSchema,
   roundOperationProgressSnapshot,
@@ -390,6 +393,49 @@ describe("session/ durable shapes (#466/#457)", () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it.each([
+    [
+      "draft attempt",
+      RoundReportDraftAttemptSchema,
+      {
+        executionId: "report-draft-1",
+        reportBoardId: "different-report",
+        generation: "gen-2",
+        boardIds: operationBoardIds,
+        startedAt: 165,
+      },
+    ],
+    [
+      "draft receipt",
+      RoundReportDraftReceiptSchema,
+      {
+        executionId: "report-draft-1",
+        reportBoardId: "different-report",
+        generation: "gen-2",
+        boardIds: operationBoardIds,
+        startedAt: 165,
+        draftedAt: 170,
+      },
+    ],
+    [
+      "verified receipt",
+      RoundReportReceiptSchema,
+      {
+        executionId: "report-draft-1",
+        reportBoardId: "different-report",
+        generation: "gen-2",
+        boardIds: operationBoardIds,
+        startedAt: 165,
+        draftedAt: 170,
+        verificationExecutionId: "report-verify-1",
+        verificationStartedAt: 175,
+        verifiedAt: 180,
+      },
+    ],
+  ])("requires reportBoardId to equal boardIds.report in a %s", (_kind, schema, value) => {
+    expect(schema.safeParse(value).success).toBe(false);
   });
 
   it("persists the reviewed tree before preparing a detached dirty snapshot", () => {

@@ -154,6 +154,7 @@ function sameReportDraftAttempt(
     left.executionId === right.executionId &&
     left.reportBoardId === right.reportBoardId &&
     left.generation === right.generation &&
+    sameReceipt(left.boardIds, right.boardIds) &&
     left.startedAt === right.startedAt
   );
 }

@@ -309,23 +309,28 @@ export const RoundRecordingReceiptSchema = RoundRecordingAttemptSchema.extend({
 });
 export type RoundRecordingReceipt = z.infer<typeof RoundRecordingReceiptSchema>;
 
-export const RoundReportDraftAttemptSchema = z.object({
-  executionId: id,
-  reportBoardId: id,
-  generation: id,
-  boardIds: z.object({
-    design: id,
-    sequence: id,
-    decisions: id,
-    flagged: id,
-    noise: id,
-    report: id,
-  }),
-  startedAt: z.number().int().nonnegative(),
-});
+export const RoundReportDraftAttemptSchema = z
+  .object({
+    executionId: id,
+    reportBoardId: id,
+    generation: id,
+    boardIds: z.object({
+      design: id,
+      sequence: id,
+      decisions: id,
+      flagged: id,
+      noise: id,
+      report: id,
+    }),
+    startedAt: z.number().int().nonnegative(),
+  })
+  .refine((attempt) => attempt.reportBoardId === attempt.boardIds.report, {
+    path: ["reportBoardId"],
+    message: "does not match boardIds.report",
+  });
 export type RoundReportDraftAttempt = z.infer<typeof RoundReportDraftAttemptSchema>;
 
-export const RoundReportDraftReceiptSchema = RoundReportDraftAttemptSchema.extend({
+export const RoundReportDraftReceiptSchema = RoundReportDraftAttemptSchema.safeExtend({
   draftedAt: z.number().int().nonnegative(),
 });
 export type RoundReportDraftReceipt = z.infer<typeof RoundReportDraftReceiptSchema>;
@@ -337,7 +342,7 @@ export const RoundReportVerificationAttemptSchema = z.object({
 export type RoundReportVerificationAttempt = z.infer<typeof RoundReportVerificationAttemptSchema>;
 
 /** A report is complete only once the durable board named here has been verified readable. */
-export const RoundReportReceiptSchema = RoundReportDraftReceiptSchema.extend({
+export const RoundReportReceiptSchema = RoundReportDraftReceiptSchema.safeExtend({
   verificationExecutionId: id,
   verificationStartedAt: z.number().int().nonnegative(),
   verifiedAt: z.number().int().nonnegative(),
