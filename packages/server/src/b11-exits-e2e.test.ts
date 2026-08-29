@@ -251,7 +251,14 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
     expect(composed.status).toBe("review");
     expect(composed.comments.length).toBeGreaterThan(0);
     // The prose ask surfaced as a BODY note (exactly once) — not dropped, not a line comment.
-    expect(composed.bodyNotes).toEqual([{ type: "comment", body: "PROSE NOTE" }]);
+    expect(composed.bodyNotes).toEqual([
+      {
+        id: "p1",
+        anchor: "The architecture section.",
+        type: "comment",
+        body: "PROSE NOTE",
+      },
+    ]);
     // The compose payload IS the canonical bytes of BOTH strata (the single source).
     expect(canonicalReviewPayload(composed.comments, composed.bodyNotes)).toBe(composed.payload);
 

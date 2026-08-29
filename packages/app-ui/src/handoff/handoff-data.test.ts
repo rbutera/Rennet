@@ -1,7 +1,12 @@
-import type { Review } from "@rennet/protocol";
+import type { CommandOutput, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createRennetStore } from "../store";
-import { modeHasExits, resolveEntryMode, selectLivingDraft } from "./handoff-data";
+import {
+  composeReviewDraft,
+  modeHasExits,
+  resolveEntryMode,
+  selectLivingDraft,
+} from "./handoff-data";
 
 const postTarget: NonNullable<Review["postTarget"]> = {
   repo: { forge: "github", owner: "o", name: "r" },
@@ -122,5 +127,29 @@ describe("handoff/handoff-data", () => {
         { path: "src/shared.ts", line: 7, side: "RIGHT" },
       ]);
     });
+  });
+
+  it("carries composed review-body notes onto the exact signing draft", () => {
+    const composed = {
+      status: "review",
+      comments: [],
+      bodyNotes: [
+        {
+          id: "ask-overall",
+          anchor: "Design · Retry policy",
+          type: "comment",
+          body: "the policy matches its documented boundary",
+        },
+      ],
+      payload: "canonical-review-bytes",
+      verdict: "COMMENT",
+      destination: "acme/orbital#7",
+      title: "acme/orbital#7",
+      compositionId: "composition-1",
+    } as Extract<CommandOutput<"publish.compose">, { status: "review" }>;
+
+    const draft = composeReviewDraft(composed);
+    expect(draft.bodyNotes).toEqual(composed.bodyNotes);
+    expect(draft.body).toEqual([]);
   });
 });

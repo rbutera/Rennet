@@ -81,7 +81,12 @@ describe("reviewCommentsFromProjection (B11 cluster 3) — the two-strata compos
     ]);
     // The prose ask surfaces as a review-BODY note (exactly once) — the lost reviewer intent.
     expect(reviewBodyNotesFromProjection(projection)).toEqual<ReviewBodyNote[]>([
-      { type: "request-change", body: "tighten this", anchor: "This reads well." },
+      {
+        id: "a3",
+        type: "request-change",
+        body: "tighten this",
+        anchor: "This reads well.",
+      },
     ]);
   });
 

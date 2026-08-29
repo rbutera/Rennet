@@ -116,6 +116,11 @@ export type ReviewComment = Extract<
   { status: "review" }
 >["comments"][number];
 
+/** One composed review-body note, including stable identity and visible source provenance. */
+export type ReviewBodyNote = NonNullable<
+  Extract<CommandOutput<"publish.compose">, { status: "review" }>["bodyNotes"]
+>[number];
+
 /** A composed line comment resolved to its `path:line`. */
 export interface ComposedLineComment {
   readonly path: string;
@@ -131,9 +136,10 @@ export interface ComposedLineGroup {
 
 /**
  * The composed outbound review the lane PREVIEWS and POSTS — byte-exact with what
- * `publish.review` receives. `body` is the comments with no line (the review body stratum);
- * `lineGroups` are the line-anchored comments grouped by file path; `arithmetic` is the
- * `N request changes · M comments` tally over the composed comments.
+ * `publish.review` receives. `bodyNotes` are asks with no trustworthy diff position; `body` is
+ * the file-level composed comments with no line; `lineGroups` are the line-anchored comments
+ * grouped by file path; `arithmetic` is the `N request changes · M comments` tally over the
+ * composed comments.
  *
  * `verdict` is the composed event — the daemon's derived proposal, or the durable override when
  * one is set. It is the ONE verdict: the daemon folds it into the composition binding, so this is
@@ -143,6 +149,7 @@ export interface ComposedLineGroup {
  * recomposes, it never travels as a separate post argument.
  */
 export interface ReviewDraft {
+  readonly bodyNotes: readonly ReviewBodyNote[];
   readonly body: readonly ReviewComment[];
   readonly lineGroups: readonly ComposedLineGroup[];
   readonly verdict: ProposedVerdict;
@@ -152,9 +159,9 @@ export interface ReviewDraft {
 }
 
 /**
- * Split the daemon's composed comments into GitHub's two strata (body vs file-grouped line
- * comments), preserving compose order. A comment with a `line` is a line comment; one without
- * is a review-body note. The lane renders THIS and posts the same composition — no re-derivation.
+ * Carry the daemon's body notes and split its composed comments into file-level vs file-grouped
+ * line comments, preserving compose order. The lane renders THIS and posts the same composition —
+ * no re-derivation.
  */
 export function composeReviewDraft(
   composed: Extract<CommandOutput<"publish.compose">, { status: "review" }>,
@@ -189,6 +196,7 @@ export function composeReviewDraft(
       ? "APPROVE"
       : "COMMENT";
   return {
+    bodyNotes: composed.bodyNotes ?? [],
     body,
     lineGroups,
     verdict: composed.verdict,

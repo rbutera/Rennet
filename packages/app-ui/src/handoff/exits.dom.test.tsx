@@ -106,12 +106,21 @@ describe("hand-off exits (C08 cluster 6)", () => {
     let postedPayload: string | undefined;
     let postedDryRun: boolean | undefined;
     let postedVerdict: string | undefined;
+    let postedBodyNotes: CommandInput<"publish.review">["bodyNotes"];
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": (input) => {
         calls.push(`compose:${input.mode}`);
         return {
           status: "review",
           comments: COMMENTS,
+          bodyNotes: [
+            {
+              id: "ask-overall",
+              anchor: "Design · Retry policy",
+              type: "comment",
+              body: "the policy matches its documented boundary",
+            },
+          ],
           payload: PAYLOAD,
           verdict: "REQUEST_CHANGES",
           destination: "acme/orbital#7",
@@ -124,6 +133,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
         postedPayload = input.payload;
         postedDryRun = input.dryRun;
         postedVerdict = input.verdict;
+        postedBodyNotes = input.bodyNotes;
         return {
           dryRun: false,
           request: { endpoint: "graphql", method: "POST", body: {} },
@@ -145,6 +155,8 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // ("ask src/a.ts:5") never does — the preview is the outbound review, not the working set.
     expect(await r.findByText("guard the boundary")).toBeTruthy();
     expect(r.getByText("overall this reads clean")).toBeTruthy();
+    expect(r.getByText("the policy matches its documented boundary")).toBeTruthy();
+    expect(r.getByText("Design · Retry policy")).toBeTruthy();
     expect(r.queryByText("ask src/a.ts:5")).toBeNull();
     // Compose ran (a read); nothing that LEAVES the machine has — no post without the sign-click.
     expect(calls).toEqual(["compose:review"]);
@@ -158,6 +170,14 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // and the COMPOSED verdict — the daemon binds both, so no other event could post.
     expect(postedPayload).toBe(PAYLOAD);
     expect(postedVerdict).toBe("REQUEST_CHANGES");
+    expect(postedBodyNotes).toEqual([
+      {
+        id: "ask-overall",
+        anchor: "Design · Retry policy",
+        type: "comment",
+        body: "the policy matches its documented boundary",
+      },
+    ]);
     // Real egress is the explicit opt-in.
     expect(postedDryRun).toBe(false);
     // The receipt names the verdict + line-comment count (one of two comments carries a line) + link.

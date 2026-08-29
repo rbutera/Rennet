@@ -270,6 +270,28 @@ describe("command registry invariants (#465)", () => {
     expect(parseCommandOutput("settings.setRoleAssignment", served)).toEqual(served);
   });
 
+  it("preserves review-body-note identity and provenance across the publish wire", () => {
+    const composed = {
+      status: "review" as const,
+      comments: [],
+      bodyNotes: [
+        {
+          id: "ask-overall",
+          anchor: "Design · Retry policy",
+          type: "comment" as const,
+          body: "the policy matches its documented boundary",
+        },
+      ],
+      payload: "canonical-review-bytes",
+      verdict: "COMMENT" as const,
+      destination: "acme/orbital#7",
+      title: "acme/orbital#7",
+      compositionId: "composition-1",
+    };
+
+    expect(parseCommandOutput("publish.compose", composed)).toEqual(composed);
+  });
+
   it("every row's args/output are the parse seams' schemas", () => {
     for (const [id, row] of Object.entries(commands)) {
       expect(row.args, id).toBeInstanceOf(z.ZodType);

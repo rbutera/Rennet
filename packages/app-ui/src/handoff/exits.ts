@@ -158,6 +158,7 @@ export function useHandoffExits(review: Review): HandoffExits {
       reviewId,
       target,
       comments: reviewComposed.comments,
+      bodyNotes: reviewComposed.bodyNotes ?? [],
       payload: reviewComposed.payload,
       verdict,
       compositionId: reviewComposed.compositionId,
