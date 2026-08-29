@@ -19,14 +19,17 @@
  *    Deterministic all the way down, because two runs of the same swarm must merge
  *    the same way.
  *  - **Import-shaped claims** are checked against the authoritative import graph. A
- *    claim that names two indexed files and asserts an import relation between them,
- *    where no resolved edge joins any pair it names, is FLAGGED — not deleted and
- *    not rewritten. The edge shard is textual and misses computed imports, so a
+ *    claim asserting an import relation between two files it names or cites, where
+ *    no resolved edge joins any pair of them, is FLAGGED — not deleted and not
+ *    rewritten. The edge shard is textual and misses computed imports, so a
  *    contradiction is a reason for judgment, not a proof of error, and silently
  *    editing a model's claim would be the worst of both.
- *  - **Seams** are identified: the statements sitting on an edge the batching cut,
- *    whose other end another batch also made claims about. That is the whole of the
- *    cross-batch synthesis job, and it is a fraction of the statement volume.
+ *  - **Seams** are identified: the statements sitting on an IMPORT edge the batching
+ *    cut, whose other end another batch also made claims about. That is the
+ *    cross-batch synthesis job for the one relation the repository can prove;
+ *    everything else cross-batch travels on the worker's own `hint`. See
+ *    {@link seamCandidates}, which states the boundary rather than implying
+ *    completeness.
  *
  * Nothing here mints, and nothing here is provenance-bearing: every surviving
  * statement keeps the worker's own provenance, byte for byte.
@@ -82,15 +85,30 @@ function byString(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** One worker statement with the slice that produced it — the merge's unit of work. */
+interface MergeRow {
+  readonly sliceId: string;
+  readonly entry: WorkerStatement;
+}
+
 /**
- * `subject`, `aspect`, `claim` joined by NUL — the same claim regardless of what it
- * was anchored to. NUL because it is the one byte a subject or a claim cannot
- * contain, so no printable separator can be forged inside a field to collide two
- * different claims. Written as the SOURCE ESCAPE, never as a literal control byte:
- * a literal one makes this file binary to git, undiffable in review.
+ * The composite-key separator: NUL, the one byte a path, a subject or a claim
+ * cannot contain, so no printable separator can be forged inside a field to
+ * collide two different keys.
+ *
+ * Built with `String.fromCharCode`, not written into a literal. A literal NUL makes
+ * this whole file BINARY to git — undiffable in review, which is how three of them
+ * survived here unnoticed — and the escape form is one careless copy away from
+ * becoming one again.
+ */
+const KEY_SEPARATOR = String.fromCharCode(0);
+
+/**
+ * `subject`, `aspect`, `claim` joined by {@link KEY_SEPARATOR} — the same claim
+ * regardless of what it was anchored to.
  */
 function claimKey(statement: KnowledgeStatement): string {
-  return `${statement.subject}\u0000${statement.aspect}\u0000${statement.claim}`;
+  return [statement.subject, statement.aspect, statement.claim].join(KEY_SEPARATOR);
 }
 
 /**
@@ -119,8 +137,23 @@ function betterAnchored(left: KnowledgeStatement, right: KnowledgeStatement): Kn
 const IMPORT_ASSERTION =
   /\b(imports?|importing|imported\s+by|re-?exports?|depends\s+(?:directly\s+)?on|dependency\s+of)\b/i;
 
-/** Every inventory path NAMED in a statement's own words (not merely cited as evidence). */
-function pathsNamedIn(statement: KnowledgeStatement, inventory: ReadonlySet<string>): string[] {
+/**
+ * The inventory paths an import-shaped claim identifies as its ENDPOINTS: every
+ * path named in its own words (subject + claim), plus every path it cites as
+ * evidence. Sorted, distinct.
+ *
+ * Prose alone was too narrow to catch the claim shape workers actually emit. "This
+ * module imports the store" names one path in words and cites the other as
+ * evidence, which is two resolvable endpoints and an assertion the edge shard can
+ * answer — and it went unchecked, because only the prose was read.
+ *
+ * THE CEILING, stated rather than implied: a claim whose second endpoint is neither
+ * written down nor cited stays unchecked and stays a hypothesis. That is deliberate.
+ * Guessing the other end from a bare module name would put unresolvable assertions
+ * in front of the verify seat by the hundred, and a residue nobody can adjudicate is
+ * worse than a claim nobody checked.
+ */
+function importEndpoints(statement: KnowledgeStatement, inventory: ReadonlySet<string>): string[] {
   const named = new Set<string>();
   for (const token of `${statement.subject} ${statement.claim}`.split(/[\s,;:()[\]{}"'`]+/)) {
     // Trim sentence punctuation a path can pick up in prose: `src/a.ts.` / `src/a.ts,`.
@@ -128,6 +161,7 @@ function pathsNamedIn(statement: KnowledgeStatement, inventory: ReadonlySet<stri
     if (inventory.has(trimmed)) named.add(trimmed);
     else if (inventory.has(token)) named.add(token);
   }
+  for (const anchor of statement.evidence) if (inventory.has(anchor.path)) named.add(anchor.path);
   return [...named].sort(byString);
 }
 
@@ -137,7 +171,7 @@ function pathsNamedIn(statement: KnowledgeStatement, inventory: ReadonlySet<stri
 export function mergeWorkerResults(input: DeterministicMergeInput): DeterministicMergeResult {
   // Iterate in a fixed order — (sliceId, statement id) — so every "keep the first"
   // below is a decision about the inputs, not about which promise settled first.
-  const entries: { readonly sliceId: string; readonly entry: WorkerStatement }[] = [];
+  const entries: MergeRow[] = [];
   for (const result of [...input.workerResults].sort((a, b) => byString(a.sliceId, b.sliceId))) {
     if (result.status !== "ok") continue;
     for (const entry of [...result.statements].sort((a, b) =>
@@ -148,7 +182,7 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
   }
 
   // 1. Duplicate ids: the same claim over the same evidence, minted twice.
-  const byId = new Map<string, { sliceId: string; entry: WorkerStatement }>();
+  const byId = new Map<string, MergeRow>();
   let duplicateIds = 0;
   for (const row of entries) {
     if (byId.has(row.entry.statement.id)) duplicateIds += 1;
@@ -156,7 +190,7 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
   }
 
   // 2. The same claim over DIFFERENT evidence: keep the better-anchored one.
-  const byClaim = new Map<string, { sliceId: string; entry: WorkerStatement }>();
+  const byClaim = new Map<string, MergeRow>();
   let duplicateClaims = 0;
   for (const row of byId.values()) {
     const key = claimKey(row.entry.statement);
@@ -177,27 +211,40 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
   const flagged: FlaggedStatement[] = [];
   if (input.importEdges !== undefined) {
     const inventory = new Set(input.snapshot.files.map((file) => file.path));
-    const edges = new Set(input.importEdges.map((edge) => `${edge.from}\u0000${edge.to}`));
+    const edges = new Set(
+      input.importEdges.map((edge) => `${edge.from}${KEY_SEPARATOR}${edge.to}`),
+    );
     for (const row of kept) {
       const statement = row.entry.statement;
       if (!IMPORT_ASSERTION.test(statement.claim)) continue;
-      const named = pathsNamedIn(statement, inventory);
-      // One path names no relation, so there is nothing to contradict.
-      if (named.length < 2) continue;
-      const joined = named.some((from) =>
-        named.some((to) => from !== to && edges.has(`${from}\u0000${to}`)),
+      const endpoints = importEndpoints(statement, inventory);
+      // Fewer than two resolvable endpoints names no relation, so there is nothing
+      // to contradict — and nothing a seat could adjudicate. See importEndpoints.
+      if (endpoints.length < 2) continue;
+      const joined = endpoints.some((from) =>
+        endpoints.some((to) => from !== to && edges.has(`${from}${KEY_SEPARATOR}${to}`)),
       );
       if (joined) continue;
       flagged.push({
         statement,
-        reason: `no resolved import edge joins the files this claim names (${named.join(", ")}); the import index is textual, so a computed or dynamic import would look exactly like this`,
+        reason: `no resolved import edge joins the files this claim names or cites (${endpoints.join(", ")}); the import index is textual, so a computed or dynamic import would look exactly like this`,
         ...(row.entry.hint === undefined ? {} : { hint: row.entry.hint }),
       });
     }
   }
 
-  // A delta's changed-evidence statements are judgment by construction.
-  for (const statement of [...(input.reverify ?? [])].sort((a, b) => byString(a.id, b.id))) {
+  // A delta's changed-evidence statements are judgment by construction — EXCEPT
+  // where a worker in THIS run re-minted the identical claim over identical
+  // evidence. A statement id hashes its anchors' blobOids, so an id collision here
+  // means a worker read the current bytes and said the same thing: nothing is stale
+  // and the FRESH mint is the one that survives, with its own provenance. The prior
+  // used to be appended straight past the id map, which put two copies of one claim
+  // in the set and sent the seat a residue entry about bytes just re-read.
+  const keptIds = new Set(kept.map((row) => row.entry.statement.id));
+  const reverify = [...(input.reverify ?? [])]
+    .filter((statement) => !keptIds.has(statement.id))
+    .sort((a, b) => byString(a.id, b.id));
+  for (const statement of reverify) {
     flagged.push({
       statement,
       reason: "a prior statement whose cited evidence changed at this baseline",
@@ -205,14 +252,63 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
   }
 
   return {
-    statements: [...kept.map((row) => row.entry.statement), ...(input.reverify ?? [])].sort(
-      (a, b) => byString(a.id, b.id),
+    statements: [...kept.map((row) => row.entry.statement), ...reverify].sort((a, b) =>
+      byString(a.id, b.id),
     ),
     flagged,
-    seams: seamCandidates(kept, input.slices),
+    seams: seamCandidates(kept, entries, input.slices, input.importEdges),
     duplicateIds,
     duplicateClaims,
   };
+}
+
+/**
+ * `path → the paths a CUT import edge joins it to` — an edge whose two ends are
+ * owned by two DIFFERENT slices.
+ *
+ * Derived from the AUTHORITATIVE edge list plus slice ownership when the graph was
+ * readable, and only from the slices' own neighbour maps when it was not.
+ *
+ * The neighbour map cannot be the source of truth here, obvious though it looks. It
+ * is capped at `NEIGHBOR_CAP` entries per member for PROMPT SIZE — a hub file's
+ * fifty-first neighbour is dropped from the packet on purpose — and a seam derived
+ * from it silently inherits that cap. A claim connected through a discarded edge is
+ * then neither seam nor flag: it never reaches the verify seat, and nothing reports
+ * the loss. The whole edge list is already in hand at merge time
+ * ({@link DeterministicMergeInput.importEdges}), so seam detection reads that and
+ * the cap stays where it belongs — on the worker packet.
+ */
+function cutEdgeMap(
+  slices: readonly PartitionSlice[],
+  importEdges: readonly SliceImport[] | undefined,
+): ReadonlyMap<string, readonly string[]> {
+  const joined = new Map<string, Set<string>>();
+  const link = (from: string, to: string): void => {
+    const row = joined.get(from);
+    if (row === undefined) joined.set(from, new Set([to]));
+    else row.add(to);
+  };
+  if (importEdges === undefined) {
+    // Degraded: the packets' capped view is all there is. Same shape, smaller truth.
+    for (const slice of slices) {
+      for (const member of slice.neighbors) {
+        for (const neighbor of member.neighbors) link(member.path, neighbor.path);
+      }
+    }
+  } else {
+    const ownerOf = new Map<string, string>();
+    for (const slice of slices) for (const file of slice.files) ownerOf.set(file.path, slice.id);
+    for (const edge of importEdges) {
+      const from = ownerOf.get(edge.from);
+      const to = ownerOf.get(edge.to);
+      // An edge to a path no slice in this run owns was not cut by the batching; on
+      // a delta it simply was not partitioned this time round.
+      if (from === undefined || to === undefined || from === to) continue;
+      link(edge.from, edge.to);
+      link(edge.to, edge.from);
+    }
+  }
+  return new Map([...joined].map(([path, row]) => [path, [...row].sort(byString)]));
 }
 
 /**
@@ -222,39 +318,65 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
  * A worker can only cite files in its own slice (anchor-or-drop enforces that at
  * mint), so no worker statement's evidence ever spans two batches — the synthesis
  * job is not "find the statements that already span", it is "find the pairs that
- * would span if someone read them together". The neighbour map records exactly which
- * edges the batching cut; a cut edge whose two ends BOTH carry claims is a seam where
- * a cross-batch pattern can exist. Everything else is a claim the verify seat could
- * only restate.
+ * would span if someone read them together". A cut edge whose two ends BOTH carry
+ * claims is where a cross-batch pattern can exist. Everything else is a claim the
+ * verify seat could only restate.
+ *
+ * WHAT THIS SIGNAL IS, exactly, because the name promises more than it delivers:
+ * the seam signal is IMPORT CUT EDGES and nothing else ({@link cutEdgeMap}). Two
+ * batches related by something the import graph cannot see — a shared convention, a
+ * protocol both ends implement, a runtime registration — produce no seam here and
+ * are NOT claimed to be covered. The channel for those is the worker's own `hint`,
+ * which joins the residue unconditionally below. So this is a high-precision signal
+ * over one relation, plus a model-supplied escape hatch for the rest; it is not a
+ * completeness claim about cross-batch relationships.
+ *
+ * PRE-DEDUPE ORIGINS decide it. Two workers on opposite ends of one cut edge often
+ * mint the SAME claim, and step 2 collapses them to one representative — which used
+ * to erase the other end from `citedBy` and leave the survivor neither seam nor
+ * flag. The exact case this pass exists to catch was the case dedupe deleted. So
+ * both the citation map and the span test read every origin, and the verdict is
+ * attached to the representative that survived.
  *
  * A statement carrying a worker HINT joins them regardless: the hint field exists for
  * this seat and nothing else reads it, so dropping a hinted statement here would
  * throw the hint away unread.
  */
 function seamCandidates(
-  kept: readonly { readonly sliceId: string; readonly entry: WorkerStatement }[],
+  kept: readonly MergeRow[],
+  origins: readonly MergeRow[],
   slices: readonly PartitionSlice[],
+  importEdges: readonly SliceImport[] | undefined,
 ): readonly WorkerStatement[] {
-  // path → the slices whose statements cite it.
+  // path → the slices whose statements cite it, and claim → every row that minted
+  // it. BOTH from the pre-dedupe origins: a collapsed twin still proves its slice
+  // wrote about its end of the edge.
   const citedBy = new Map<string, Set<string>>();
-  for (const row of kept) {
+  const originsByClaim = new Map<string, MergeRow[]>();
+  for (const row of origins) {
     for (const anchor of row.entry.statement.evidence) {
       const owners = citedBy.get(anchor.path);
       if (owners === undefined) citedBy.set(anchor.path, new Set([row.sliceId]));
       else owners.add(row.sliceId);
     }
+    const key = claimKey(row.entry.statement);
+    const group = originsByClaim.get(key);
+    if (group === undefined) originsByClaim.set(key, [row]);
+    else group.push(row);
   }
 
-  // path → its cut-edge neighbours, from every slice's neighbour map.
-  const cutNeighbors = new Map<string, readonly string[]>();
-  for (const slice of slices) {
-    for (const member of slice.neighbors) {
-      cutNeighbors.set(
-        member.path,
-        member.neighbors.map((neighbor) => neighbor.path),
-      );
-    }
-  }
+  const cutNeighbors = cutEdgeMap(slices, importEdges);
+  const spansFrom = (origin: MergeRow): boolean =>
+    origin.entry.statement.evidence.some((anchor) =>
+      (cutNeighbors.get(anchor.path) ?? []).some((neighbor) => {
+        const owners = citedBy.get(neighbor);
+        if (owners === undefined) return false;
+        // The other end must be claimed by a DIFFERENT slice: two claims inside one
+        // batch are already something a single worker saw whole.
+        for (const owner of owners) if (owner !== origin.sliceId) return true;
+        return false;
+      }),
+    );
 
   const out: WorkerStatement[] = [];
   for (const row of kept) {
@@ -262,17 +384,9 @@ function seamCandidates(
       out.push(row.entry);
       continue;
     }
-    const spans = row.entry.statement.evidence.some((anchor) =>
-      (cutNeighbors.get(anchor.path) ?? []).some((neighbor) => {
-        const owners = citedBy.get(neighbor);
-        if (owners === undefined) return false;
-        // The other end must be claimed by a DIFFERENT slice: two claims inside one
-        // batch are already something a single worker saw whole.
-        for (const owner of owners) if (owner !== row.sliceId) return true;
-        return false;
-      }),
-    );
-    if (spans) out.push(row.entry);
+    if ((originsByClaim.get(claimKey(row.entry.statement)) ?? [row]).some(spansFrom)) {
+      out.push(row.entry);
+    }
   }
   return out.sort((a, b) => byString(a.statement.id, b.statement.id));
 }

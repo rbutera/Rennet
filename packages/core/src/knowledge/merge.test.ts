@@ -2,7 +2,7 @@ import type { KnowledgeAnchor, KnowledgeStatement } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { mergeWorkerResults } from "./merge";
 import type { KnowledgeSnapshotContext } from "./mint";
-import type { PartitionSlice } from "./partition";
+import { NEIGHBOR_CAP, type PartitionSlice } from "./partition";
 import { knowledgeStatementId } from "./read";
 import type { PartitionWorkerResult, WorkerStatement } from "./swarm";
 
@@ -260,6 +260,45 @@ describe("mergeWorkerResults — the deterministic half", () => {
     expect(merged.flagged).toEqual([]);
   });
 
+  it("flags an import assertion whose SECOND endpoint is cited rather than named", () => {
+    // The shape a worker actually emits: one end written down, the other end sitting
+    // in the evidence. Reading only the prose left this unchecked.
+    const cited = statement({
+      subject: "src/b.ts",
+      claim: "this module imports the store to persist a review",
+      evidence: ["src/b.ts", "lib/d.ts"],
+    });
+    const merged = mergeWorkerResults({
+      workerResults: [worker(SLICE_A.id, [wrap(cited)])],
+      slices: SLICES,
+      snapshot: SNAPSHOT,
+      importEdges,
+    });
+    expect(merged.flagged.map((f) => f.statement.id)).toEqual([cited.id]);
+    // The endpoints are named in the reason, so the seat is told which pair the
+    // shard could not join rather than being sent to re-derive it.
+    expect(merged.flagged[0]?.reason).toContain("(lib/d.ts, src/b.ts)");
+  });
+
+  it("leaves an import assertion with only ONE resolvable endpoint as a hypothesis", () => {
+    // The stated ceiling: "the persistence layer" is not a path, so there is no
+    // second endpoint to cross-check and nothing a seat could adjudicate either.
+    // Guessing one would flood the residue with unanswerable questions.
+    const unresolvable = statement({
+      subject: "src",
+      claim: "src/b.ts imports the persistence layer at startup",
+      evidence: ["src/b.ts"],
+    });
+    const merged = mergeWorkerResults({
+      workerResults: [worker(SLICE_A.id, [wrap(unresolvable)])],
+      slices: SLICES,
+      snapshot: SNAPSHOT,
+      importEdges,
+    });
+    expect(merged.flagged).toEqual([]);
+    expect(merged.statements.map((s) => s.id)).toEqual([unresolvable.id]);
+  });
+
   it("routes a delta's changed-evidence statements straight to the flagged pile", () => {
     const prior = statement({ claim: "an older claim", evidence: ["lib/d.ts"] });
     const merged = mergeWorkerResults({
@@ -271,6 +310,31 @@ describe("mergeWorkerResults — the deterministic half", () => {
     expect(merged.flagged.map((f) => f.statement.id)).toEqual([prior.id]);
     expect(merged.flagged[0]?.reason).toContain("cited evidence changed");
     expect(merged.statements.map((s) => s.id)).toEqual([prior.id]);
+  });
+
+  it("a FRESH worker mint supersedes the reverify entry carrying the same id", () => {
+    // Same id means same claim over the same anchors at the same blobOids — a worker
+    // just re-read those bytes and said it again. The prior used to be appended past
+    // the id map, so the set carried two copies of one claim and the seat got a
+    // residue entry about evidence that had not moved after all.
+    const prior = statement({ claim: "a is the entry", evidence: ["src/a.ts"] });
+    const fresh: KnowledgeStatement = {
+      ...prior,
+      provenance: { ...prior.provenance, model: "fresh-worker" },
+    };
+    expect(fresh.id).toBe(prior.id);
+
+    const merged = mergeWorkerResults({
+      workerResults: [worker(SLICE_A.id, [wrap(fresh)])],
+      slices: SLICES,
+      snapshot: SNAPSHOT,
+      reverify: [prior],
+    });
+    expect(merged.statements).toHaveLength(1);
+    // The FRESH one, provenance and all — asserted by identity, so a version that
+    // kept the prior's object cannot pass on id equality alone.
+    expect(merged.statements[0]).toBe(fresh);
+    expect(merged.flagged).toEqual([]);
   });
 
   // ── Seams ─────────────────────────────────────────────────────────────────
@@ -303,6 +367,85 @@ describe("mergeWorkerResults — the deterministic half", () => {
       snapshot: SNAPSHOT,
     });
     expect(withoutFarSide.seams).toEqual([]);
+  });
+
+  it("keeps the seam when BOTH ends of a cut edge minted the same claim", () => {
+    // The case dedupe deleted. Two workers on opposite ends of one cut edge see the
+    // same pattern and word it identically; step 2 collapses them to one
+    // representative, and with the collapsed twin went the only proof that the other
+    // end of the edge had been written about. The survivor was then neither seam nor
+    // flag — the exact pair this pass exists to surface, dropped silently.
+    const fromHere = statement({
+      claim: "both ends share the retry shape",
+      evidence: ["src/a.ts"],
+    });
+    const fromThere = statement({
+      claim: "both ends share the retry shape",
+      evidence: ["lib/c.ts"],
+    });
+    expect(fromHere.id).not.toBe(fromThere.id);
+
+    const merged = mergeWorkerResults({
+      workerResults: [worker(SLICE_A.id, [wrap(fromHere)]), worker(SLICE_B.id, [wrap(fromThere)])],
+      slices: SLICES,
+      snapshot: SNAPSHOT,
+    });
+    // One claim, one survivor — and that survivor reaches the seat.
+    expect(merged.duplicateClaims).toBe(1);
+    expect(merged.statements).toHaveLength(1);
+    expect(merged.seams.map((s) => s.statement.id)).toEqual([merged.statements[0]?.id]);
+  });
+
+  it("finds a seam on a cut edge BEYOND the neighbour-map cap", () => {
+    // The neighbour map is truncated at NEIGHBOR_CAP for prompt size. A seam read off
+    // it inherits that cap, so a hub's later neighbours become invisible to the merge
+    // as well as to the packet — and nothing reports the loss.
+    const far = Array.from({ length: NEIGHBOR_CAP + 10 }, (_, i) => `lib/n${i}.ts`);
+    const beyondCap = far[NEIGHBOR_CAP + 5] as string;
+    const hubSlice: PartitionSlice = {
+      id: "mod:src/hub.ts#hub00000",
+      files: [{ path: "src/hub.ts", blobOid: "blob-hub" }],
+      neighbors: [
+        {
+          path: "src/hub.ts",
+          // Exactly what a real packet carries: the cap, plus the count it dropped.
+          neighbors: far.slice(0, NEIGHBOR_CAP).map((path) => ({
+            path,
+            direction: "imports" as const,
+            symbols: [],
+          })),
+          truncated: far.length - NEIGHBOR_CAP,
+        },
+      ],
+      imports: [],
+    };
+    const farSlice: PartitionSlice = {
+      id: "mod:lib/n0.ts#far00000",
+      files: far.map((path) => ({ path, blobOid: `blob-${path}` })),
+      neighbors: [],
+      imports: [],
+    };
+    const onHub = statement({ claim: "the hub owns the retry loop", evidence: ["src/hub.ts"] });
+    const onFar = statement({
+      subject: "lib",
+      claim: "this one retries too",
+      evidence: [beyondCap],
+    });
+    const input = {
+      workerResults: [worker(hubSlice.id, [wrap(onHub)]), worker(farSlice.id, [wrap(onFar)])],
+      slices: [hubSlice, farSlice],
+      snapshot: SNAPSHOT,
+    };
+
+    const merged = mergeWorkerResults({
+      ...input,
+      importEdges: far.map((to) => ({ from: "src/hub.ts", to })),
+    });
+    expect(merged.seams.map((s) => s.statement.id).sort()).toEqual([onHub.id, onFar.id].sort());
+
+    // The control, in-test: withhold the authoritative edges and the same fixture
+    // falls back to the capped neighbour map, which cannot see this pair at all.
+    expect(mergeWorkerResults(input).seams).toEqual([]);
   });
 
   it("never treats two claims from ONE slice as a seam", () => {
