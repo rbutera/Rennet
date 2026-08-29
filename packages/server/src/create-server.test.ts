@@ -4,10 +4,86 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GenerationStore, RoundOperationStore, RoundRecordStore } from "@rennet/adapters";
-import type { Review } from "@rennet/protocol";
-import { generationIdForPatchset, ROUND_NO_REGEN } from "@rennet/protocol";
+import type { Review, RoundOperation } from "@rennet/protocol";
+import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRennetServer } from "./create-server";
+import {
+  createRennetServer,
+  createRoundWorkerPort,
+  createRoundWorkspacePlanner,
+  type HandoffTurnExecution,
+} from "./create-server";
+
+describe("round worker execution context", () => {
+  it("plans and runs a WSL round in the source filesystem, not the Windows data directory", async () => {
+    const sourceRepoRoot = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo";
+    const prompt = "apply the round";
+    const operation: RoundOperation = {
+      operationId: "operation-1",
+      sessionId: "session-1",
+      reviewId: "review-1",
+      dispatchId: "dispatch-1",
+      sourcePatchsetId: "patchset-1",
+      askOccurrences: [{ id: "ask-1", revision: 1 }],
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "feat/test" },
+      repoRoot: sourceRepoRoot,
+      workOrderPrompt: prompt,
+      workOrderDigest: sha256Hex(prompt),
+      gatePlan: { kind: "absent" },
+      revision: 0,
+      rerunRequested: false,
+      createdAt: 1,
+      updatedAt: 1,
+      state: { phase: "claimed" },
+    };
+    const planner = createRoundWorkspacePlanner({
+      dataDir: "C:\\Users\\rai\\AppData\\Roaming\\Rennet",
+      sourceRepositoryFor: () => ({
+        reviewedTreeOid: "tree-1",
+        headOid: "head-1",
+        commonDir: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git",
+      }),
+      now: () => 2,
+    });
+    const workspace = planner(operation);
+    const key = sha256Hex(operation.operationId).slice(0, 32);
+    const expectedWorktree = `\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git\\rennet-round-worktrees\\${key}`;
+    expect(workspace.worktreePath).toBe(expectedWorktree);
+    expect(workspace.worktreePath).not.toContain("C:\\Users");
+
+    const workerAttempt = { executionId: "worker-1", startedAt: 3 };
+    const workerRunning: RoundOperation = {
+      ...operation,
+      state: {
+        phase: "worker-running",
+        workspace: { ...workspace, sourceHead: "source-head", preparedAt: 3 },
+        worker: workerAttempt,
+      },
+    };
+    const runHandoffTurn = vi.fn(async () => ({
+      status: "completed" as const,
+      finalText: "done",
+      turnDiff: "",
+      filesTouched: [],
+    }));
+    await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
+      operation: workerRunning,
+      attempt: workerAttempt,
+    });
+
+    expect(runHandoffTurn).toHaveBeenCalledWith({
+      repoRoot: expectedWorktree,
+      prompt,
+      sessionId: operation.sessionId,
+      execution: {
+        kind: "wsl",
+        distro: "Ubuntu",
+        cwd: `/home/rai/repo/.git/rennet-round-worktrees/${key}`,
+      },
+    });
+  });
+});
 
 // Pins design D4 (no module-level singletons — two servers in one process do not
 // share mutable state) and D5 (shutdown is idempotent). The handle is {dispatch,
@@ -179,13 +255,15 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
     const head = git("rev-parse", "HEAD");
     let workerCalls = 0;
+    let workerExecution: HandoffTurnExecution | undefined;
     let placeholderObserved = false;
     let roundSessionId = "";
     const server = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async ({ repoRoot }) => {
+      runHandoffTurn: async ({ repoRoot, execution }) => {
         workerCalls += 1;
+        workerExecution = execution;
         writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
         return {
           status: "completed",
@@ -267,6 +345,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       { timeout: 15_000, interval: 50 },
     );
     expect(workerCalls).toBe(1);
+    expect(workerExecution).toEqual({ kind: "host" });
     expect(git("rev-parse", "HEAD")).toBe(head);
   }, 30_000);
 

@@ -252,7 +252,10 @@ import {
   readPriorGeneration,
   runBoardRegeneration,
 } from "./runtime/round-collation";
-import { createRoundExecutionCoordinator } from "./runtime/round-execution";
+import {
+  createRoundExecutionCoordinator,
+  type RoundExecutionPorts,
+} from "./runtime/round-execution";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
@@ -347,6 +350,115 @@ async function reconnectDaemonForHost(
   return answer;
 }
 
+export type HandoffTurnExecution =
+  | { readonly kind: "host" }
+  | { readonly kind: "wsl"; readonly distro: string; readonly cwd: string };
+
+export interface HandoffTurnInput {
+  readonly repoRoot: string;
+  readonly prompt: string;
+  /**
+   * The persisted session this turn belongs to, when it has one. Present means the turn runs
+   * through the session turn loop. An absent or unknown session uses the plain one-shot port.
+   */
+  readonly sessionId?: string;
+  readonly execution?: HandoffTurnExecution;
+}
+
+function detectedLocusForRepo(repoRoot: string): Locus {
+  return resolveLocus(detectLocus(repoRoot)).value;
+}
+
+function handoffTurnExecution(locus: Locus, repoRoot: string): HandoffTurnExecution {
+  if (locus.kind === "host") return { kind: "host" };
+  const cwd = toDistroPath(repoRoot, locus.distro);
+  if (cwd === null) throw new LocusPathUntranslatableError(repoRoot, locus.distro);
+  return { kind: "wsl", distro: locus.distro, cwd };
+}
+
+export function roundWorkerTurnInput(input: {
+  readonly sourceRepoRoot: string;
+  readonly worktreePath: string;
+  readonly prompt: string;
+  readonly sessionId: string;
+}): HandoffTurnInput {
+  return {
+    repoRoot: input.worktreePath,
+    prompt: input.prompt,
+    sessionId: input.sessionId,
+    execution: handoffTurnExecution(detectedLocusForRepo(input.sourceRepoRoot), input.worktreePath),
+  };
+}
+
+export function createRoundWorkspacePlanner(input: {
+  readonly dataDir: string;
+  readonly sourceRepositoryFor: (operation: RoundOperation) => {
+    readonly reviewedTreeOid?: string;
+    readonly headOid: string;
+    readonly commonDir: string;
+  };
+  readonly now?: () => number;
+}): RoundExecutionPorts["planWorkspace"] {
+  return (operation) => {
+    const repository = input.sourceRepositoryFor(operation);
+    const key = sha256Hex(operation.operationId).slice(0, 32);
+    const sourceLocus = detectedLocusForRepo(operation.repoRoot);
+    let worktreePath: string;
+    if (sourceLocus.kind === "host") {
+      worktreePath = join(input.dataDir, "round-worktrees", key);
+    } else {
+      const commonDir = toDistroPath(repository.commonDir, sourceLocus.distro);
+      if (commonDir === null) {
+        throw new LocusPathUntranslatableError(repository.commonDir, sourceLocus.distro);
+      }
+      const separator = commonDir.endsWith("/") ? "" : "/";
+      worktreePath = toWindowsView(
+        `${commonDir}${separator}rennet-round-worktrees/${key}`,
+        sourceLocus.distro,
+      );
+    }
+    return {
+      kind: "detached-worktree",
+      worktreePath,
+      sourceTreeOid: repository.reviewedTreeOid ?? `${repository.headOid}^{tree}`,
+      sourceParentHead: repository.headOid,
+      startedAt: (input.now ?? Date.now)(),
+    };
+  };
+}
+
+export function createRoundWorkerPort(input: {
+  readonly runHandoffTurn: (turn: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
+  readonly now?: () => number;
+}): RoundExecutionPorts["runWorker"] {
+  return async ({ operation, attempt }) => {
+    if (operation.state.phase !== "worker-running") {
+      throw new Error("Round worker started outside its durable running phase.");
+    }
+    const outcome = await input.runHandoffTurn(
+      roundWorkerTurnInput({
+        sourceRepoRoot: operation.repoRoot,
+        worktreePath: operation.state.workspace.worktreePath,
+        prompt: operation.workOrderPrompt,
+        sessionId: operation.sessionId,
+      }),
+    );
+    const evidence = {
+      ...attempt,
+      completedAt: (input.now ?? Date.now)(),
+      diff: outcome.turnDiff,
+      changedPaths: [...outcome.filesTouched],
+    };
+    return outcome.status === "failed"
+      ? {
+          ...evidence,
+          outcome: "failed" as const,
+          termination: { kind: "error" as const, reason: outcome.reason },
+        }
+      : { ...evidence, outcome: "completed" as const };
+  };
+}
+
 export interface RennetServerOptions {
   /**
    * The per-user data directory (Electron passes app.getPath("userData")). The SQLite store,
@@ -383,11 +495,7 @@ export interface RennetServerOptions {
   readonly hostBundlePath?: string;
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
-  readonly runHandoffTurn?: (input: {
-    readonly repoRoot: string;
-    readonly prompt: string;
-    readonly sessionId?: string;
-  }) => Promise<HandoffTurnOutcome>;
+  readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
   /** Test observation at the crash commit point, before any PR-draft ripening await. */
   readonly onRoundPlaceholderCommitted?: (input: {
     readonly sessionId: string;
@@ -464,7 +572,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * detected, so the two can never disagree.
    */
   function locusForRepo(repoRoot: string): Locus {
-    return resolveLocus(detectLocus(repoRoot)).value;
+    return detectedLocusForRepo(repoRoot);
   }
 
   /**
@@ -1853,22 +1961,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     repoRoot,
     prompt,
     sessionId,
-  }: {
-    repoRoot: string;
-    prompt: string;
-    /**
-     * The persisted session this turn belongs to, when it has one. Present ⇒ the turn runs
-     * through the session turn loop (serialized, resumed, transcript-captured). Absent (or a
-     * session nothing persisted — a detached-HEAD round, a `review.handoff.run` against a
-     * target nobody entered) ⇒ the plain one-shot port, and that review's transcript stays
-     * honestly empty rather than being filed under a session that does not exist.
-     */
-    sessionId?: string;
-  }): Promise<HandoffTurnOutcome> => {
-    const locus = locusForRepo(repoRoot);
+    execution: requestedExecution,
+  }: HandoffTurnInput): Promise<HandoffTurnOutcome> => {
+    const execution = requestedExecution ?? handoffTurnExecution(locusForRepo(repoRoot), repoRoot);
+    const locus: Locus =
+      execution.kind === "host" ? HOST_LOCUS : { kind: "wsl", distro: execution.distro };
     // The SDK prepends this distro cwd to its direct wsl.exe spawn.
-    const distroCwd =
-      locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
+    const distroCwd = execution.kind === "wsl" ? execution.cwd : undefined;
     if (await repoHasSubmodules(repoRoot, locus)) {
       return {
         status: "failed",
@@ -2206,20 +2305,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   };
 
+  const planRoundWorkspace = createRoundWorkspacePlanner({
+    dataDir,
+    sourceRepositoryFor: (operation) => sourcePatchsetFor(operation).repository,
+  });
+  const runRoundWorker = createRoundWorkerPort({ runHandoffTurn });
+
   const coordinator = createRoundExecutionCoordinator({
     store: roundOperationStore,
     ports: {
-      planWorkspace: (operation) => {
-        const patchset = sourcePatchsetFor(operation);
-        return {
-          kind: "detached-worktree",
-          worktreePath: join(roundWorktreeRoot, sha256Hex(operation.operationId).slice(0, 32)),
-          sourceTreeOid:
-            patchset.repository.reviewedTreeOid ?? `${patchset.repository.headOid}^{tree}`,
-          sourceParentHead: patchset.repository.headOid,
-          startedAt: Date.now(),
-        };
-      },
+      planWorkspace: planRoundWorkspace,
       prepareWorkspace: ({ operation, attempt }) =>
         prepareRoundWorkspace({
           git: gitForRepo(operation.repoRoot),
@@ -2229,30 +2324,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           attempt,
         }),
       planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
-      runWorker: async ({ operation, attempt }) => {
-        if (operation.state.phase !== "worker-running") {
-          throw new Error("Round worker started outside its durable running phase.");
-        }
-        const outcome = await runHandoffTurn({
-          repoRoot: operation.state.workspace.worktreePath,
-          prompt: operation.workOrderPrompt,
-          sessionId: operation.sessionId,
-        });
-        const completedAt = Date.now();
-        const evidence = {
-          ...attempt,
-          completedAt,
-          diff: outcome.turnDiff,
-          changedPaths: [...outcome.filesTouched],
-        };
-        return outcome.status === "failed"
-          ? {
-              ...evidence,
-              outcome: "failed" as const,
-              termination: { kind: "error" as const, reason: outcome.reason },
-            }
-          : { ...evidence, outcome: "completed" as const };
-      },
+      runWorker: runRoundWorker,
       planGate: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       runGate: async ({ operation, attempt }) => {
         if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
