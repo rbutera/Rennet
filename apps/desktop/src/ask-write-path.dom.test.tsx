@@ -1,0 +1,339 @@
+// @vitest-environment happy-dom
+//
+// The reviewer's work reaches the daemon — the three exits, driven from a REAL surface
+// against the REAL command router.
+//
+// The defect this pins: eleven `ask.*` handlers, the projection, the fold and the durable
+// log all existed and were tested, and NOTHING in the client called any of them but
+// `ask.setVerdictOverride`. The reviewer's asks lived in the renderer's `review` store slice
+// and nowhere else, so every exit that reads `askLog.readProjection(reviewId)` — which is all
+// three of them, and nothing else — read an EMPTY log:
+//
+//   • `publish.compose(mode:"review")` composed nothing, so `publish.review` refused with
+//     "Publish refused: the review has no content". The team-reviewer Post exit could never
+//     succeed.
+//   • `round.dispatch` folded an empty projection into an empty work order and dispatched
+//     nothing.
+//   • `review.reviseSpan` answered "That ask is no longer staged." for every ask.
+//   • And a reload lost the lot.
+//
+// Every test below drives the SAME `<CodeBlock>` the review surface renders, clicks its real
+// "Request Changes" affordance, and then asks the daemon what it has. The harm is asserted
+// FIRST in each case — the exit's broken answer on an empty log — and then again after the
+// click, so each test carries its own positive control: the before-assertion is the exact
+// failure this change fixes, and it would still hold after the click if the write path
+// regressed. No assertion here is satisfied by "a mutation fired".
+//
+// This file lives in apps/desktop because that is the only layer permitted to import both
+// @rennet/server and @rennet/app-ui (the dependency arrows forbid the two reals meeting
+// anywhere else) — the same reason `ws-contract.test.ts` lives here. Nothing is stubbed on
+// the path under test: the dispatch is `createDispatch`, the log is the file-backed
+// `AskLogStore`, the fold and the composers are core's. Only the ports OUTSIDE the path (the
+// review store, the publish port, the round kick, the rework turn) are injected, so the gate
+// makes no live call and nothing egresses.
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AskLogStore, buildGitHubReviewRequest } from "@rennet/adapters";
+import { BridgeProvider, CodeBlock, useAskLog, useRennetStore } from "@rennet/app-ui";
+import type { ForgePublishPort, ForgeReviewPost } from "@rennet/core";
+import type { CommandName, RennetBridge, Review } from "@rennet/protocol";
+import { createDispatch, type DispatchDeps } from "@rennet/server";
+import { cleanup, render } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// happy-dom reports a Linux-like platform; the review surfaces are written for the desktop
+// app's primary platform and user-event's chords follow it.
+Object.defineProperty(globalThis.navigator, "platform", {
+  configurable: true,
+  value: "MacIntel",
+});
+
+const PATH = "packages/core/src/x.ts";
+const CODE = "const a = 1\nconst b = 2\nconst c = 3";
+const ASK_BODY = "rename the export";
+
+/** The teammate PR the Post exit posts to — the one exit that needs a real post target. */
+const POST_TARGET = {
+  repo: { forge: "github", owner: "rbutera", name: "rennet-egress-sandbox" },
+  number: 1,
+  forgeRef: "PR_kwSANDBOX1",
+  headOid: "deadbeefcafe0001",
+};
+
+const patchsets = [{ id: "ps-1", createdAt: "", truncated: false, files: [] }];
+
+/** A teammate's pull request: the Post-review exit's mode. */
+const PR_REVIEW = {
+  id: "review-pr",
+  repositoryRoot: "/repo",
+  activePatchsetId: "ps-1",
+  retrospective: false,
+  postTarget: POST_TARGET,
+  patchsets,
+  dispositions: [],
+  status: "current",
+} as unknown as Review;
+
+/** The reviewer's own branch: the round exit's mode (a work order, not a post). */
+const OWN_REVIEW = {
+  id: "review-own",
+  repositoryRoot: "/repo",
+  activePatchsetId: "ps-1",
+  retrospective: false,
+  patchsets,
+  dispositions: [],
+  status: "current",
+} as unknown as Review;
+
+const REVIEWS = [PR_REVIEW, OWN_REVIEW];
+
+/** A publish port that RECORDS real posts, so a test can assert nothing egressed. */
+function recordingPublishPort(): ForgePublishPort & { posts: ForgeReviewPost[] } {
+  const posts: ForgeReviewPost[] = [];
+  return {
+    posts,
+    capabilities: {
+      supportsThreadResolution: true,
+      supportsBatchedReview: true,
+      supportsMultiLineAnchors: true,
+      supportsFileLevelThreads: true,
+    },
+    buildReviewRequest: (post) => buildGitHubReviewRequest(post),
+    findExistingReview: () => Promise.resolve(null),
+    publishReview: (post) => {
+      posts.push(post);
+      return Promise.resolve({ reviewRef: "PRR_test", url: "https://x/1", reused: false });
+    },
+  };
+}
+
+const dirs: string[] = [];
+let dispatch: (name: CommandName, input: unknown) => Promise<unknown>;
+let publishPort: ReturnType<typeof recordingPublishPort>;
+let dispatchRound: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  const dir = mkdtempSync(join(tmpdir(), "rennet-ask-write-"));
+  dirs.push(dir);
+  publishPort = recordingPublishPort();
+  dispatchRound = vi.fn(() => Promise.resolve());
+  dispatch = createDispatch({
+    askLog: new AskLogStore(dir),
+    service: { reviewById: (id: string) => REVIEWS.find((r) => r.id === id) },
+    publishPort,
+    raiseAttention: () => "att-1",
+    dispatchRound,
+    // The rework's one-shot turn, stubbed at the model boundary only — everything between
+    // the command and the durable `ask.edit` it lands is the real thing.
+    reworkSpan: () => Promise.resolve({ status: "refined", refined: "renameExport", model: "t" }),
+  } as unknown as DispatchDeps) as unknown as typeof dispatch;
+  // A fresh renderer starts with a clean slice; the durable log is what carries anything over.
+  useRennetStore.getState().reviewActions.resetReview();
+});
+
+afterEach(() => {
+  cleanup();
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+/** The bridge the surfaces write through: every invoke lands on the real command router. */
+function bridge(): RennetBridge {
+  return {
+    invoke: (name: CommandName, input: unknown) => dispatch(name, input),
+  } as unknown as RennetBridge;
+}
+
+/** The review surface, bound to its durable ask log exactly as `ReviewWorkspace` binds it. */
+function ReviewSurface({ reviewId }: { readonly reviewId: string }) {
+  useAskLog(reviewId);
+  return <CodeBlock code={CODE} path={PATH} startLine={1} />;
+}
+
+function mountSurface(reviewId: string) {
+  const view = render(
+    <BridgeProvider bridge={bridge()}>
+      <ReviewSurface reviewId={reviewId} />
+    </BridgeProvider>,
+  );
+  return { ...view, user: userEvent.setup() };
+}
+
+/** Drive the real affordance: comment on line 2 and request changes there. */
+async function requestChangesOnLine2(view: ReturnType<typeof mountSurface>, reviewId: string) {
+  await view.user.click(view.getByLabelText("Comment on line 2"));
+  await view.user.type(view.getByPlaceholderText("Leave a comment on this line…"), ASK_BODY);
+  await view.user.click(view.getByText("Request Changes"));
+  // The write is fire-and-forget from the click handler; wait for the DAEMON to hold it.
+  const sessionId = reviewId;
+  await vi.waitFor(async () => {
+    const read = (await dispatch("ask.read", { sessionId })) as {
+      projection: { stagedAsks: Record<string, unknown> };
+    };
+    expect(Object.keys(read.projection.stagedAsks)).toHaveLength(1);
+  });
+}
+
+type Composed = {
+  status: string;
+  reason?: string;
+  comments: { path: string; line?: number; side: string; type: string; body: string }[];
+  bodyNotes: unknown[];
+  payload: string;
+  verdict: string;
+  compositionId: string;
+};
+
+describe("harm 1 — the Post exit composes the reviewer's comment instead of refusing as empty", () => {
+  it("goes from 'the review has no content' to a composed, previewable review", async () => {
+    const reviewId = PR_REVIEW.id;
+
+    // THE HARM, before the reviewer touches anything: the log is empty, so the compose is
+    // empty, and the exit the team reviewer takes cannot complete.
+    const empty = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId,
+      mode: "review",
+    })) as Composed;
+    expect(empty.status).toBe("review");
+    expect(empty.comments).toEqual([]);
+    expect(empty.bodyNotes).toEqual([]);
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId,
+        target: POST_TARGET,
+        comments: empty.comments,
+        bodyNotes: empty.bodyNotes,
+        payload: empty.payload,
+        verdict: empty.verdict,
+        compositionId: empty.compositionId,
+      }),
+    ).rejects.toThrow("Publish refused: the review has no content");
+
+    // The reviewer requests changes on line 2 of the real code surface.
+    const view = mountSurface(reviewId);
+    await requestChangesOnLine2(view, reviewId);
+
+    // The compose now carries what they wrote, on the line they wrote it on.
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId,
+      mode: "review",
+    })) as Composed;
+    expect(composed.comments).toEqual([
+      { path: PATH, line: 2, side: "RIGHT", type: "request-change", body: ASK_BODY },
+    ]);
+    expect(composed.verdict).toBe("REQUEST_CHANGES");
+
+    // And the exit completes: the preview builds the exact outbound request rather than
+    // refusing. `dryRun` defaults true, so nothing leaves the machine.
+    const preview = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId,
+      target: POST_TARGET,
+      comments: composed.comments,
+      bodyNotes: composed.bodyNotes,
+      payload: composed.payload,
+      verdict: composed.verdict,
+      compositionId: composed.compositionId,
+    })) as { dryRun: boolean; request: { body: unknown } };
+    expect(preview.dryRun).toBe(true);
+    expect(JSON.stringify(preview.request.body)).toContain(ASK_BODY);
+    expect(publishPort.posts).toHaveLength(0);
+  });
+});
+
+describe("harm 2 — a dispatched round carries the reviewer's asks", () => {
+  it("goes from an empty, undispatched work order to one that names what was asked", async () => {
+    const reviewId = OWN_REVIEW.id;
+
+    // THE HARM: nothing addressed, so the round refuses to dispatch and no worker is kicked.
+    const before = (await dispatch("round.dispatch", { reviewId })) as {
+      dispatched: boolean;
+      workOrder: { tasks?: unknown[]; body?: string };
+    };
+    expect(before.dispatched).toBe(false);
+    expect(dispatchRound).not.toHaveBeenCalled();
+
+    const view = mountSurface(reviewId);
+    await requestChangesOnLine2(view, reviewId);
+
+    // The same command now composes a real work order and kicks the round once.
+    const after = (await dispatch("round.dispatch", { reviewId })) as {
+      dispatched: boolean;
+      workOrder: unknown;
+    };
+    expect(after.dispatched).toBe(true);
+    // The reviewer's own words are IN the order the coding agent receives — not merely a
+    // non-empty order, and not a count.
+    expect(JSON.stringify(after.workOrder)).toContain(ASK_BODY);
+    expect(dispatchRound).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(dispatchRound.mock.calls[0])).toContain(ASK_BODY);
+  });
+});
+
+describe("harm 3 — a staged ask is revisable", () => {
+  it("goes from 'That ask is no longer staged.' to a rework that lands on the durable ask", async () => {
+    const reviewId = OWN_REVIEW.id;
+    const askId = `${PATH}:2`;
+
+    // THE HARM: the ask the reviewer is looking at does not exist as far as the daemon knows.
+    const before = (await dispatch("review.reviseSpan", {
+      commandId: randomUUID(),
+      reviewId,
+      askId,
+      span: "export",
+      instruction: "name the export",
+    })) as { status: string; reason?: string };
+    expect(before).toEqual({ status: "unavailable", reason: "That ask is no longer staged." });
+
+    const view = mountSurface(reviewId);
+    await requestChangesOnLine2(view, reviewId);
+
+    const after = (await dispatch("review.reviseSpan", {
+      commandId: randomUUID(),
+      reviewId,
+      askId,
+      span: "export",
+      instruction: "name the export",
+    })) as { status: string; reworkedBody?: string };
+    expect(after.status).toBe("reworked");
+    expect(after.reworkedBody).toBe("rename the renameExport");
+    // The rework wrote through the same one write path, so the durable ask carries it.
+    const read = (await dispatch("ask.read", { sessionId: reviewId })) as {
+      projection: { stagedAsks: Record<string, { body: string }> };
+    };
+    expect(read.projection.stagedAsks[askId]?.body).toBe("rename the renameExport");
+  });
+});
+
+describe("a reload keeps the reviewer's work", () => {
+  it("re-renders the comment the reviewer left, from the daemon, after the renderer is thrown away", async () => {
+    const reviewId = OWN_REVIEW.id;
+    const first = mountSurface(reviewId);
+    await requestChangesOnLine2(first, reviewId);
+    expect(first.getByLabelText("Edit comment on line 2")).toBeTruthy();
+
+    // RELOAD: the renderer goes away and its store comes back clean, which is exactly what a
+    // fresh `createRennetStore()` gives a reloaded window. Asserted, not assumed — this is the
+    // control that makes the remount below non-vacuous.
+    first.unmount();
+    useRennetStore.getState().reviewActions.resetReview();
+    expect(useRennetStore.getState().review.stagedAsks).toEqual({});
+    expect(useRennetStore.getState().review.codeComments).toEqual({});
+
+    const second = mountSurface(reviewId);
+    // The surface rehydrates from `ask.read`: the line reads as commented again, and the
+    // staged ask is back in the slice with the body the reviewer typed.
+    await vi.waitFor(() => expect(second.getByLabelText("Edit comment on line 2")).toBeTruthy());
+    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:2`]).toMatchObject({
+      anchor: `${PATH}:2`,
+      type: "request-change",
+      body: ASK_BODY,
+    });
+    expect(useRennetStore.getState().review.codeComments[PATH]?.[2]).toBe(ASK_BODY);
+  });
+});

@@ -159,6 +159,7 @@ export {
   ProseSelectionLayer,
   ReferenceChip,
   RichText,
+  useAskLog,
   useSpanRead,
 } from "./review";
 // The rounds surface (C09): the run route, report-as-greeting, ledger, and the rounds
@@ -182,3 +183,4 @@ export { SettingsScreen } from "./settings";
 // API lets a later overlay (C5/C12) register on the same Escape priority stack; the
 // entry builders + key-action catalogue stay module-private behind these.
 export { CommandMenu, type KeyLayerHandler, KeyOwner, useKeyLayer } from "./shell";
+export { useRennetStore } from "./store";

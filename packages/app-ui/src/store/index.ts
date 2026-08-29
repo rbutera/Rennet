@@ -8,9 +8,15 @@ import { createUiSlice, type UiSlice } from "./ui";
 // ─────────────────────────────────────────────────────────────────────────────
 // The Rennet renderer store (C01 §3): ONE zustand store, five slices — ui / review /
 // run / signal / viewedDelta (C05's UI-only delta-mark axis, Reconciliation 6). NO
-// persist middleware: a reload restores LOCATION from the URL and resets interaction
+// persist middleware: a reload restores LOCATION from the URL and starts every slice
 // clean. NO `sidebar` slice: the host/project/session tree is a server projection read
 // through the data seam, and its mutations are commands.
+//
+// The `review` slice is the ONE that comes back full rather than empty, and not by
+// persisting: it is the render-side cache of the daemon's durable ask projection, so
+// `useAskLog` refills it from `ask.read` when the review opens and writes every mutation
+// through the `ask.*` commands. A reload keeps the reviewer's work because the daemon
+// kept it, not because the renderer did.
 //
 // DELETE-ON-SIGHT: no field here may duplicate anything computable from the projection
 // cache plus other fields. Counts, tallies, highlights, and "is anything running" are
@@ -38,6 +44,8 @@ export const createRennetStore = () =>
 export const useRennetStore = createRennetStore();
 
 export type {
+  AskWriteCommand,
+  AskWriter,
   DispositionKind,
   QuoteMessage,
   QuoteScope,

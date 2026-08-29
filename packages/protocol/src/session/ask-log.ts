@@ -1,9 +1,11 @@
 // The durable-asks contract (B11 cluster 1, #458 R29–R36, Q15). The reviewer's
 // staged asks, per-line comments, quote threads, retired ledger and verdict
-// override are CLIENT-ONLY and transient today (`app-ui/src/store/review.ts` —
-// "no persist: reload resets interaction clean"), so a reload loses the review.
-// B11 moves them host-side behind ONE write path — command → event log →
+// override live HOST-SIDE behind ONE write path — command → event log →
 // projection — so they survive reload, with receipt-is-undo on every mutation.
+// The client half is `app-ui/src/review/ask-log.ts` (`useAskLog`): the review
+// route hydrates the `review` store slice from `ask.read` and every mutator in
+// that slice writes through the matching `ask.*` command. The slice is the
+// render-side CACHE of this projection, not a second source of truth.
 //
 // This file is shapes only: the projected state, the append-only event union,
 // and the receipt each write returns. The pure fold + `receiptFor` live in
