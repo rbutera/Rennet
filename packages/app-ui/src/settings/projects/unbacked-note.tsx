@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The honest disclosure a Projects editor shows when no served WRITE store backs it
-// yet (the live projection until B10, `projectEditsPersist === false`). It sits beside
+// The honest disclosure a Projects editor shows when no served WRITE store backs it —
+// a project whose row the live projection cannot address, or a daemon whose rows carry
+// no `prefs` (`prefsBackedByProject` false, falling back to `projectEditsPersist`). It sits beside
 // controls left visibly DISABLED — never a fully enabled control wired to a no-op
 // setter that silently eats input. This is the same honesty the Environments cards
 // already carry (`source-control.tsx`'s "Connect … to detect", `model-mappings.tsx`'s

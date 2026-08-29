@@ -4,20 +4,26 @@ import type { ProjectIconName } from "../assets/project-icon";
 import type { Layered } from "./provenance";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The settings PROJECTION seam (C10 §2.1, reconciliations 5 & 8). B10 has not
-// landed the settings engine that will serve environments, source-control /
-// agent detection, model mappings, project glyphs, worktree patterns, and issue
-// trackers. So — exactly as C03's `sidebar-data.ts` does for the B9 session
-// projection — those reads resolve through THIS context, not a protocol command:
+// The settings PROJECTION seam (C10 §2.1, reconciliations 5 & 8) — the shapes every
+// settings page reads environments, source-control / agent detection, model mappings,
+// project glyphs, worktree patterns, guidance and issue trackers through, instead of a
+// protocol command per page.
 //
-//   • the LIVE client supplies nothing, so the projection is honest-EMPTY (no fake
-//     hosts, no invented detection rows) and every setter is a genuine no-op;
+// The context was NOT deleted when the engine landed (the plan said it would be). The
+// B10 / B7 / C16 / C17 / C18 folds bound the reads to real commands INSIDE this seam
+// instead: `live-projection.tsx` builds a `SettingsProjection` off `settings.get`,
+// `daemon.status`, `forge.hosts`, `harness.hosts` and `projects.list`, and wraps the
+// live Settings takeover with it. So:
+//
+//   • the LIVE client supplies `LiveSettingsProjection` — real hosts, real detection
+//     rows, real per-project prefs — and its setters are served writes;
+//   • {@link EMPTY_SETTINGS_PROJECTION} is the CONTEXT DEFAULT, not the live client:
+//     what a subtree mounted outside that provider gets, honest-empty by construction;
 //   • TESTS (and per-test fixtures) supply a stateful projection, so every page is
-//     provable now — chips render, edits persist through the setters, a re-read
-//     reflects them (task 2.2, "never a hollow pass").
+//     provable in isolation — chips render, edits persist through the setters, a
+//     re-read reflects them (task 2.2, "never a hollow pass").
 //
-// When B10 lands (cluster 10.1), each read binds to its live projection and this
-// context is deleted — the seam is the ONLY file that changes (reconciliation 5).
+// The fields with no served backend are named one by one in `live-projection.tsx`.
 // Values carry the `{ value, layer }` keep contract ({@link Layered}); the live
 // `settings.*` commands keep their own richer `ResolvedProvenance` and bind in
 // `live.ts`, not here.
@@ -133,13 +139,15 @@ export interface IssueTrackerSettings {
 // ── The projection contract ────────────────────────────────────────────────────
 
 /**
- * Every B10-absent settings read and its edit, in one seam. Reads are maps keyed by
+ * Every projected settings read and its edit, in one seam. Reads are maps keyed by
  * host or project id; a missing key is an honest absence (a disconnected host, an
- * untouched project), never a thrown render. Setters persist into the supplied
- * projection state (test fixtures); the live EMPTY no-ops until B10.
+ * untouched project), never a thrown render. Setters write through whatever the
+ * supplied projection is: served commands under the live provider, projection state
+ * under a test fixture, genuine no-ops under {@link EMPTY_SETTINGS_PROJECTION}.
  */
 export interface SettingsProjection {
-  /** The environment cards, in display order. Empty in the live client until B10. */
+  /** The environment cards, in display order. Served in the live client from
+   *  `settings.get.daemonHosts` joined with `daemon.status`. */
   readonly hosts: readonly SettingsHost[];
   /** Source-control tooling detected per host id (absent host ⇒ nothing detected). */
   readonly sourceControlByHost: Readonly<Record<string, readonly DetectedTool[]>>;
@@ -158,11 +166,13 @@ export interface SettingsProjection {
   /** The guidance rules the review agents read, per project id. */
   readonly guidanceByProject: Readonly<Record<string, readonly GuidanceRule[]>>;
   /** Whether the per-project editors (name, glyph, worktree, tracker, guidance) have a
-   *  served WRITE store. FALSE in the live client until B10 — with no store, a fully
-   *  enabled control would silently eat every keystroke, so the pages instead disable
-   *  their controls and disclose the gap (the same honesty as the Environments cards,
-   *  no UI lie). A stateful test/B10 projection sets it TRUE, so those editors are live
-   *  and provable. (`setRepoVisibility` is NOT in this set — Repository is live-backed.) */
+   *  served WRITE store, asked of the SURFACE as a whole. The live projection leaves this
+   *  FALSE and answers per project through {@link prefsBackedByProject} instead — it can
+   *  only address a project whose row it holds. With no store, a fully enabled control
+   *  would silently eat every keystroke, so the pages disable their controls and disclose
+   *  the gap (the same honesty as the Environments cards, no UI lie). A stateful test
+   *  projection sets it TRUE, so those editors are live and provable.
+   *  (`setRepoVisibility` is NOT in this set — Repository is live-backed.) */
   readonly projectEditsPersist: boolean;
   /**
    * The SAME question, answered per project id — the honest one, because the capability
@@ -177,10 +187,12 @@ export interface SettingsProjection {
   readonly prefsBackedByProject: Readonly<Record<string, boolean>>;
   /**
    * Whether the project NAME field has a served write store. Separate from
-   * {@link SettingsProjection.projectEditsPersist} because it is separately TRUE: the
-   * name writes through `project.rename` (C18) while the glyph, worktree, tracker and
-   * guidance editors still have no served write. One flag for both would either disable
-   * a live control or enable four dead ones.
+   * {@link SettingsProjection.projectEditsPersist} because they are two different
+   * stores: the name writes through `project.rename` (C18, the projects store) while
+   * the glyph, worktree, tracker and guidance editors write the repo rung through
+   * `settings.setProjectValue` / `settings.setGuidance` and are answered per project by
+   * {@link prefsBackedByProject}. One flag for both would tell the wrong truth about
+   * one of them whenever a daemon serves one store and not the other.
    */
   readonly nameEditsPersist: boolean;
 
@@ -228,8 +240,10 @@ export interface SettingsProjection {
   setGuidance(projectId: string, rules: readonly GuidanceRule[]): void;
 }
 
-/** The live client's projection: nothing detected, every edit a genuine no-op (there
- *  is no B10 engine to persist to yet). Pages render their honest empty state over it. */
+/** The CONTEXT DEFAULT: nothing detected, every edit a genuine no-op. This is what a
+ *  subtree mounted outside `LiveSettingsProjection` gets — not the live client, which
+ *  supplies served reads and writes. Pages render their honest empty state over it, and
+ *  the live projection spreads it so an unserved field stays empty rather than absent. */
 export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   hosts: [],
   sourceControlByHost: {},
@@ -261,10 +275,11 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
 
 const SettingsProjectionContext = createContext<SettingsProjection>(EMPTY_SETTINGS_PROJECTION);
 
-/** Wraps a mount to supply projection reads + edits (tests until B10; deleted when B10 lands). */
+/** Wraps a mount to supply projection reads + edits — `live-projection.tsx` in the app,
+ *  a stateful fixture in tests. */
 export const SettingsProjectionProvider = SettingsProjectionContext.Provider;
 
-/** The one hook every page reads the B10-absent projection through. */
+/** The one hook every settings page reads its projection through. */
 export function useSettingsProjection(): SettingsProjection {
   return useContext(SettingsProjectionContext);
 }

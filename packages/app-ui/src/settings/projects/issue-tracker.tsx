@@ -19,7 +19,9 @@ import { UnbackedNote } from "./unbacked-note";
 //   • Switching to a REST tracker seeds its token env var with the conventional name;
 //     switching away drops its fields; Escape inside a field blurs, never closes settings.
 //
-// Rides the settings projection (`setTracker`) — provable now, one seam at B10.
+// Rides the settings projection (`setTracker`), which the live projection binds to the
+// served `settings.setProjectValue` writes on the repo rung (C18 group A) — the same rung
+// `resolveTrackerConfig` folds, so a per-project tracker actually reaches retrieval.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A project whose scout found nothing — tracker unset until the user says. */

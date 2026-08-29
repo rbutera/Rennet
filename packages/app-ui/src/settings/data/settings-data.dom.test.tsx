@@ -2,9 +2,10 @@
 //
 // C10 §2 — the settings data seam. Two proofs: (1) a LIVE write persists to the
 // bridge and a re-read reflects it (the appearance scheme through `settings.setAppearance`,
-// with the provenance rung moving builtin → global); (2) the B10-absent projection
-// resolves through its context — honest-empty by default, stateful when a test
-// supplies it. No page reaches a fixture directly; data enters only through the
+// with the provenance rung moving builtin → global); (2) a projected read resolves
+// through its context — honest-empty on the CONTEXT DEFAULT, stateful when a test
+// supplies one. (The live app supplies `LiveSettingsProjection`, which this file does
+// not mount.) No page reaches a fixture directly; data enters only through the
 // bridge context or the projection provider.
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../../data";
@@ -179,13 +180,13 @@ describe("AppearancePage — reset-to-builtin, read/write states, backing files 
   });
 });
 
-describe("settings projection — B10-absent reads resolve through the context", () => {
+describe("settings projection — projected reads resolve through the context", () => {
   function HostNames() {
     const { hosts } = useSettingsProjection();
     return <div data-testid="hosts">{hosts.map((h) => h.name).join(",")}</div>;
   }
 
-  it("is honest-empty by default (the live client, no B10 engine)", () => {
+  it("is honest-empty on the context DEFAULT (no provider mounted)", () => {
     expect(EMPTY_SETTINGS_PROJECTION.hosts).toEqual([]);
     const { getByTestId } = mount(<HostNames />);
     expect(getByTestId("hosts").textContent).toBe("");
