@@ -1,12 +1,107 @@
-import type { CommandHandler } from "./runtime";
+import { sideLinesByFileLine } from "@rennet/core";
+import type { AnchorSide, PatchFile, Patchset } from "@rennet/protocol";
+import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import type { CommandHandler, DispatchRuntime } from "./runtime";
 
-export function patchsetHandlers() {
+/** Lines of orientation offered either side of a cited span, when the capture has them. */
+const CONTEXT_LINES = 3;
+
+/**
+ * The file a citation addresses. A citation carries the patchset's own path, which for a
+ * RENAME is the new path — but a `base`-side citation into a renamed file legitimately
+ * names the old one, so both are matched.
+ */
+function fileFor(patchset: Patchset, path: string): PatchFile | undefined {
+  return patchset.files.find((file) => file.path === path || file.previousPath === path);
+}
+
+/**
+ * The lines immediately before/after a span that the capture actually contains, walking
+ * outward and stopping at the FIRST gap. Contiguity is load-bearing, not a nicety: the
+ * client numbers the returned block from `ref.startLine - contextBefore.length`
+ * (`spanToBlock`, app-ui), so a context line lifted across a gap in the diff would be
+ * rendered under a line number it does not have.
+ */
+function contiguous(
+  byLine: ReadonlyMap<number, string>,
+  from: number,
+  step: -1 | 1,
+): readonly string[] {
+  const out: string[] = [];
+  for (let n = from, taken = 0; taken < CONTEXT_LINES; n += step, taken += 1) {
+    const text = byLine.get(n);
+    if (text === undefined) break;
+    out.push(text);
+  }
+  return step === -1 ? out.reverse() : out;
+}
+
+/**
+ * `patchset.readSpan` — the ONE server-side reader behind every code citation.
+ *
+ * B3 registered this row contract-only and left a throwing handler for "B4/B10 to bind";
+ * B4 recorded that it stays unbound (its reconciliation 6) and B10 never came back for it,
+ * so every citation in the shipped app — every `code_ref`, finding, decision, order step,
+ * annotation and round outcome that cites code — resolved to a thrown command. This binds it.
+ *
+ * The span is served from the CAPTURED patchset's own patch text and nothing else: no
+ * working tree, no `git show`, no repository on disk. That is the #489 client-asset rule
+ * (a citation must read the immutable capture, not whatever the checkout says today), and
+ * it is also why a review whose repository is gone still resolves its citations — the
+ * content was captured, so `repositoryPresent: false` costs a reader nothing here.
+ *
+ * The cost of reading the patch is that a patchset contains only its hunks. A span the
+ * diff never showed is genuinely not in the store, and this says exactly that rather than
+ * returning empty lines that would render as blank code. Every rejection below names the
+ * specific absence, because the message is what the reviewer reads (`CitationBlock` renders
+ * it verbatim) — "not readable" tells them nothing they can act on.
+ */
+export function patchsetHandlers(rt: DispatchRuntime) {
   return {
-    "patchset.readSpan": async () => {
-      // B3 ships this row as CONTRACT ONLY (proposal reconciliation 8): the
-      // registry freezes the shape for Track C; B4/B10 bind the real
-      // patchset-backed reader. Until then the wire answers unbound.
-      throw new Error("patchset.readSpan is not bound yet (B4/B10 bind dispatch)");
+    "patchset.readSpan": async (rawInput) => {
+      const name = "patchset.readSpan" as const;
+      const ref = parseCommandInput(name, rawInput);
+
+      const patchset = rt.service.patchsetById(ref.patchsetId);
+      if (!patchset) {
+        throw new Error(
+          `This citation points at patchset ${ref.patchsetId}, which is not in this Rennet's store.`,
+        );
+      }
+
+      const file = fileFor(patchset, ref.path);
+      if (!file) {
+        throw new Error(`${ref.path} is not one of the files this patchset captured.`);
+      }
+      if (file.binary) {
+        throw new Error(`${ref.path} is binary — the capture holds no text to cite.`);
+      }
+
+      // `base` reads the pre-image, `head` the post-image. Context lines belong to both,
+      // so `additions` (rather than `context`) is the right post-image selector here.
+      const side: AnchorSide = ref.side === "base" ? "deletions" : "additions";
+      const byLine = sideLinesByFileLine(file, side);
+
+      const lines: string[] = [];
+      for (let n = ref.startLine; n <= ref.endLine; n += 1) {
+        const text = byLine.get(n);
+        if (text === undefined) {
+          // The honest, and by far the most common, absence: the patchset carries only
+          // the diff's hunks, so an unchanged region of the file was never captured.
+          const span =
+            ref.startLine === ref.endLine ? `line ${n}` : `lines ${ref.startLine}–${ref.endLine}`;
+          throw new Error(
+            `${ref.path} ${span} (${ref.side}) is outside the diff this patchset captured — line ${n} was never part of it.`,
+          );
+        }
+        lines.push(text);
+      }
+
+      return parseCommandOutput(name, {
+        lines,
+        contextBefore: [...contiguous(byLine, ref.startLine - 1, -1)],
+        contextAfter: [...contiguous(byLine, ref.endLine + 1, 1)],
+      });
     },
   } satisfies Record<string, CommandHandler>;
 }

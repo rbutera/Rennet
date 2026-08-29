@@ -16,9 +16,18 @@ export function CitationBlock({ citation }: { citation: CodeRef }) {
   const { data, error } = useSpanRead(citation);
   const label = `${basename(citation.path)}:${citation.startLine}`;
   if (error) {
+    // The daemon's own sentence, verbatim. `patchset.readSpan` distinguishes an unknown
+    // patchset from an uncaptured file from a span outside the captured diff, and those
+    // are different facts a reviewer acts on differently — a fixed "not readable" line
+    // flattened all three, and (before dispatch was bound) reported an unbound command
+    // as if the patchset had been consulted. Only a non-Error rejection falls back.
+    const reason =
+      error instanceof Error && error.message
+        ? error.message
+        : `${citation.path} could not be read from the captured patchset.`;
     return (
-      <p className="text-2xs text-muted-foreground">
-        {citation.path} is not readable from the captured patchset.
+      <p className="text-2xs text-muted-foreground" data-kind="citation-unreadable">
+        {reason}
       </p>
     );
   }

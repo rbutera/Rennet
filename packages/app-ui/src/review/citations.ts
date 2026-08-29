@@ -5,10 +5,10 @@ import { type CommandResult, useCommand } from "../data";
 // The span-read seam (C4, reconciliation 6): the ONE point every citation hydrates
 // through, reading the CAPTURED patchset via `patchset.readSpan` — NEVER a filesystem
 // read (no `node:fs`/`node:path` reachable here; grep-provable, verification 8.3).
-// Dispatch is STILL not bound: B4 and B10 both landed and `server/src/dispatch/patchset.ts`
-// throws for every call, so in the live app EVERY citation surfaces the command's honest
-// `error` and only tests (MemoryBridge handlers) ever see a span. When dispatch binds,
-// THIS file is the only one that changes.
+// Dispatch is BOUND (`server/src/dispatch/patchset.ts`): the daemon serves the span out
+// of the patchset's own patch text, so a citation resolves even when the repository is
+// gone. A span the diff never captured cannot be served, and the daemon says which
+// absence it hit — `CitationBlock` renders that sentence rather than a generic line.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type { CodeRef };
