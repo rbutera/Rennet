@@ -1,9 +1,29 @@
+import { cpSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// `@rennet/prompts` is INLINED into this bundle (not external), so at runtime the daemon
+// cannot `require.resolve("@rennet/prompts")` to find its prompt `.md` files — the loader
+// reads them off disk (the package is node-free by design; the caller owns the copy). So
+// copy the prompt files next to the bundle; `create-server.ts` resolves them relative to
+// its own dir when the resolve fails. Without this, every lens drafter hits ENOENT and no
+// board is ever drafted in the packaged/spawned daemon.
+function copyPromptFiles(): Plugin {
+  return {
+    name: "rennet-copy-prompt-files",
+    closeBundle() {
+      cpSync(
+        resolve(here, "../../packages/prompts/src/prompts"),
+        resolve(here, "dist/server/prompts"),
+        { recursive: true },
+      );
+    },
+  };
+}
 
 // The detached daemon bundle (#379, design D5): the 4th desktop lib build. The packaged
 // app spawns this with `ELECTRON_RUN_AS_NODE=1` (plain Node, no window), so it is bundled
@@ -15,6 +35,7 @@ export default defineConfig({
   define: {
     "import.meta.url": 'require("node:url").pathToFileURL(__filename).href',
   },
+  plugins: [copyPromptFiles()],
   build: {
     emptyOutDir: true,
     lib: {

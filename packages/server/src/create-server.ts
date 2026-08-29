@@ -17,6 +17,7 @@ import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Octokit } from "@octokit/core";
 import {
   AskLogStore,
@@ -170,6 +171,8 @@ import type {
   ProjectProcessEvent,
   ProjectSource,
   Review,
+  RoundEvent,
+  SessionModel,
 } from "@rennet/protocol";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
@@ -1896,12 +1899,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   );
   const promptsSrcDir = (() => {
     try {
-      // `@rennet/prompts` exports `./src/index.ts`; its dir is the prompt-file root the
-      // reader joins `prompts/<lens>.md` against. Resolved best-effort — only `runRound`
-      // reads a prompt, so an unresolved dir never breaks construction or the dispatch path.
+      // Dev/test/source: `@rennet/prompts` exports `./src/index.ts`; its dir is the
+      // prompt-file root the reader joins `prompts/<lens>.md` against.
       return dirname(createRequire(import.meta.url).resolve("@rennet/prompts"));
     } catch {
-      return join(homedir(), ".rennet", "prompts");
+      // Bundled daemon: `@rennet/prompts` is INLINED into the bundle, so it cannot be
+      // require.resolve'd at runtime. Each bundler copies the prompt files to
+      // `<bundle-dir>/prompts/` (the desktop server bundle via `vite.server.config.ts`, the
+      // CLI bundle via `build-server-cli.mjs`), so the root the reader joins `prompts/<file>`
+      // against is the bundle's OWN directory. The old fallback (`~/.rennet/prompts`) was
+      // wrong twice over: nothing ships prompts there, and joining `prompts/<file>` doubled
+      // the segment (`~/.rennet/prompts/prompts/post-process.md`) — every drafter hit ENOENT
+      // and no board was ever drafted in the packaged app.
+      //
+      // `__dirname` is the load-bearing source here: it is the real Node global in EVERY CJS
+      // bundle, whereas `import.meta.url` is only defined in the desktop bundle (which injects
+      // it via vite `define`) — in the CLI bundle it is `undefined`, so `fileURLToPath` of it
+      // threw at startup and the daemon never published its claim. `typeof` guards the ESM
+      // dev/test path (no `__dirname`), which never reaches this catch anyway because the
+      // require.resolve above succeeds there.
+      return typeof __dirname !== "undefined" ? __dirname : dirname(fileURLToPath(import.meta.url));
     }
   })();
   const sessionEntry = new SessionEntry(sessionStore);
@@ -1929,6 +1946,159 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readRounds: (sessionId) => roundRecordStore.read(sessionId),
     loadGeneration: (id) => generationStore.load(id),
   });
+
+  /**
+   * The deps a generation's boards are drafted through, for ONE review's session.
+   *
+   * Shared by the two callers, because they differ in exactly ONE thing — whether a coding
+   * turn ran first. The knowledge set the drafters read, the whole-tree citation inventory
+   * lint resolves against, the prior generation carry is decided by, and the rounds runtime
+   * itself are identical either way, and were identical when they were written twice.
+   */
+  const boardDraftingDeps = (
+    review: Review,
+    session: SessionModel,
+    recapture: () => Promise<void>,
+    emit: (event: RoundEvent) => void,
+  ) => ({
+    recapture,
+    reviewNow: () => service.reviewById(review.id) ?? review,
+    // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
+    // this seam hands over the stored set plus the snapshot gated fresh at the
+    // patchset's own base OID, and `assembleRoundCollation` projects (invalidated
+    // disclosed, rejected dropped), scopes to the change's 1-hop import
+    // neighbourhood, and caps — disclosing all three in the packet. A gate refusal
+    // is a null snapshot, which degrades to the unprojected set and SAYS so; it is
+    // never a silently narrower one.
+    //
+    // The reader is the OVERLAY-MERGED one, the same shape the review's own
+    // `context.file`/`context.map` tools are built with: a review on a
+    // non-default base resolves through a warmed overlay, and a bare reader
+    // would refuse it as stale. Without this the packet could degrade to
+    // `unprojected` on a review whose context tools were answering fine —
+    // two readers disagreeing about the same review's snapshot.
+    knowledgeFor: (patchset: Patchset) => {
+      const repoKey = repoKeyForRoot(review.repositoryRoot);
+      const overlayReader = new SnapshotOverlayReader({
+        store: liveSnapshotStore,
+        overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
+      });
+      const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
+        repoKey,
+        patchset.repository.baseOid,
+      );
+      return {
+        set: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null,
+        snapshot: gated.ok ? gated.snapshot : null,
+      };
+    },
+    // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
+    // lint resolves citations against every text file at the reviewed head and
+    // base, not only the changed ones. Two `git grep -c` passes over the repo's
+    // own git (locus-aware), ~80 ms on a 2.4k-file tree; a side git could not
+    // read comes back empty and degrades to the diff on that side alone.
+    fileInventory: (patchset: Patchset) =>
+      readTreeLineCounts(
+        patchset.repository.root,
+        patchset.repository.headOid,
+        patchset.repository.baseOid,
+        gitForRepo(patchset.repository.root),
+      ),
+    // The REAL prior generation, rebuilt from its two durable halves (the generation
+    // record + the board-meta rows' projected boards). Absent ⇒ this session has
+    // never drafted over that patchset, so this is honestly a first generation.
+    priorGeneration: (generationId: string) =>
+      readPriorGeneration(
+        {
+          loadGeneration: (id) => generationStore.load(id),
+          listBoardMeta: (sessionId, generation) =>
+            boardMetaStore.listForGeneration(sessionId, generation),
+          boardElements: async (boardId) => [
+            ...(await boardsRuntimeFor(review.repositoryRoot).service.getState(boardId)).values(),
+          ],
+        },
+        session.id,
+        generationId,
+      ),
+    runRound: (input: Parameters<typeof roundsRuntime.runRound>[0]) =>
+      roundsRuntime.runRound(input),
+    emit,
+  });
+
+  /**
+   * Draft the FIRST generation's boards over a review the reviewer just opened.
+   *
+   * `product-and-vision.md` draws it as `local --> boards` and `remote --> boards`: you
+   * capture a change and you READ it as boards. Nothing in that sentence waits on a coding
+   * round. But until this existed the drafting pipeline had exactly one caller — the round
+   * regeneration tail below — and a round only runs on staged asks, which the reviewer can
+   * only stage BY READING A BOARD. So a captured review never got a board, and could not
+   * get one: the first thing a new reviewer saw was an empty board, permanently.
+   *
+   * Same machinery as that tail, with no worker to run. `worked` carries no `patchsetId`, so
+   * nothing re-captures, nothing "landed", and `runRound` mints the FIRST generation over the
+   * patchset the drafters are reading. No successor account exists, so the round-report seat
+   * does not run — this is a first read of a change, not a report on a round.
+   *
+   * Idempotent by construction, and that is what makes it safe to kick from every door: the
+   * pipeline start guard dedups within the process and the durable BoardMeta for
+   * `(session, generation)` dedups across a restart, so re-opening a review whose patchset
+   * has not moved reconstructs the boards it already has instead of re-drafting twelve. A
+   * capture that produced a NEW patchset is a new generation and does draft again — which is
+   * exactly what a changed tree deserves.
+   *
+   * Failure-isolated. The review is captured and persisted either way; a drafting failure
+   * must never take the capture down with it.
+   */
+  async function draftBoardsForReview(review: Review): Promise<void> {
+    const patchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
+    if (patchset === undefined) return;
+    // The SAME mint the round dispatch takes (#580/#587): it prefers the session already
+    // HOLDING this review, so the front door's Current Checkout session is what the boards
+    // are filed under — and `sessionIdForReview`, the read side of `board.read`, resolves
+    // that same session back. Filed under anything else the boards would be undiscoverable.
+    const session = (
+      await enterRoundSession(
+        sessionEntry,
+        projectIdOf(review.repositoryRoot),
+        review,
+        gitForRepo(review.repositoryRoot),
+      )
+    ).session;
+    const head = patchset.repository.headOid;
+    await runBoardRegeneration(
+      boardDraftingDeps(
+        review,
+        session,
+        // No coding turn ran, so there is nothing to re-capture. `runBoardRegeneration`
+        // only calls this when `worked.patchsetId` is set, which it never is here.
+        async () => undefined,
+        // No live channel: the round-progress log belongs to ROUNDS. Feeding a capture's
+        // drafting into it would put a round the reviewer never dispatched in front of
+        // them — and the client's round machine ignores every event before a `dispatched`
+        // anyway, so it would be a lie that did not even render. The client learns the
+        // boards arrived by re-reading `board.read` (`board-view.tsx`).
+        () => undefined,
+      ),
+      {
+        session,
+        repoRoot: review.repositoryRoot,
+        // The review's OWN patchset is the prior: nothing moved, so this drafts the first
+        // generation over it rather than minting a successor to something that never ran.
+        priorPatchsetId: review.activePatchsetId,
+        asksDispatched: [],
+        worked: { commitRange: { from: head, to: head } },
+      },
+    );
+  }
+
+  /** Kick {@link draftBoardsForReview} behind the command that opened the review — the
+   *  swarm/scout post-commit-kick precedent. The capture has already returned; drafting
+   *  runs behind it and its failure never surfaces as a failed capture. */
+  const kickBoardDrafting = (review: Review): void => {
+    void draftBoardsForReview(review).catch(() => undefined);
+  };
+
   const dispatch = createDispatch({
     service,
     allowedRoots,
@@ -1944,6 +2114,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // council availability), and the tracker endpoints resolve off the
     // settings ladder (scout-detected offers under the global rung).
     onReviewOpened: (review) => {
+      // The change's boards — the thing the reviewer came here to read. Kicked at the
+      // review-open commands for the same reason related context is: opening a review is
+      // when the material to read it by has to start being made.
+      kickBoardDrafting(review);
       // The hook must never throw into the command path (`repoKeyOf` realpaths).
       try {
         void runRelatedContextRetrieval(review, {
@@ -2102,6 +2276,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // comes back carrying THAT one and the client lands where the diff actually is —
         // rather than being told this capture succeeded when nothing points at it.
         const bound = sessionStore.attachReview(entered.session.id, review.id) ?? entered.session;
+        // Draft this change's boards. The front door captures through `service.capture` /
+        // `captureBranch` / `openPullRequest` DIRECTLY rather than through the `review.*`
+        // dispatch, so `onReviewOpened` never fires for it — and New Chat is the only
+        // front door the shipping app has. Kicked AFTER the attach, so the session the
+        // boards file under is the one the row just bound the review to.
+        kickBoardDrafting(review);
         return { session: sidebarSessionOf(bound), reattached: entered.reattached };
       },
       rename: (sessionId, title) => {
@@ -2291,83 +2471,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // closes the live channel with a terminal event rather than stalling at `committing`.
       if (workerReturn !== undefined) {
         await runBoardRegeneration(
-          {
+          boardDraftingDeps(
+            review,
+            session,
             // The same `review.regenerate` the reviewer's own refresh runs — it activates
             // the successor patchset over the worker's tree and stamps the REAL
             // `successorAccount` for this round.
-            recapture: async () => {
+            async () => {
               await dispatch("review.regenerate", {
                 commandId: randomUUID(),
                 reviewId: review.id,
                 repoPath: review.repositoryRoot,
               });
             },
-            reviewNow: () => service.reviewById(review.id) ?? review,
-            // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
-            // this seam hands over the stored set plus the snapshot gated fresh at the
-            // patchset's own base OID, and `assembleRoundCollation` projects (invalidated
-            // disclosed, rejected dropped), scopes to the change's 1-hop import
-            // neighbourhood, and caps — disclosing all three in the packet. A gate refusal
-            // is a null snapshot, which degrades to the unprojected set and SAYS so; it is
-            // never a silently narrower one.
-            //
-            // The reader is the OVERLAY-MERGED one, the same shape the review's own
-            // `context.file`/`context.map` tools are built with: a review on a
-            // non-default base resolves through a warmed overlay, and a bare reader
-            // would refuse it as stale. Without this the packet could degrade to
-            // `unprojected` on a review whose context tools were answering fine —
-            // two readers disagreeing about the same review's snapshot.
-            knowledgeFor: (patchset) => {
-              const repoKey = repoKeyForRoot(review.repositoryRoot);
-              const overlayReader = new SnapshotOverlayReader({
-                store: liveSnapshotStore,
-                overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
-              });
-              const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
-                repoKey,
-                patchset.repository.baseOid,
-              );
-              return {
-                set: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null,
-                snapshot: gated.ok ? gated.snapshot : null,
-              };
-            },
-            // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
-            // lint resolves citations against every text file at the reviewed head and
-            // base, not only the changed ones. Two `git grep -c` passes over the repo's
-            // own git (locus-aware), ~80 ms on a 2.4k-file tree; a side git could not
-            // read comes back empty and degrades to the diff on that side alone.
-            fileInventory: (patchset) =>
-              readTreeLineCounts(
-                patchset.repository.root,
-                patchset.repository.headOid,
-                patchset.repository.baseOid,
-                gitForRepo(patchset.repository.root),
-              ),
-            // The REAL prior generation, rebuilt from its two durable halves (the generation
-            // record + the board-meta rows' projected boards). Absent ⇒ this session has
-            // never regenerated, so the round is honestly a first generation.
-            priorGeneration: (generationId) =>
-              readPriorGeneration(
-                {
-                  loadGeneration: (id) => generationStore.load(id),
-                  listBoardMeta: (sessionId, generation) =>
-                    boardMetaStore.listForGeneration(sessionId, generation),
-                  boardElements: async (boardId) => [
-                    ...(
-                      await boardsRuntimeFor(review.repositoryRoot).service.getState(boardId)
-                    ).values(),
-                  ],
-                },
-                session.id,
-                generationId,
-              ),
-            runRound: (input) => roundsRuntime.runRound(input),
             // The regeneration half of the live channel (C15 3.1): `runRound` emits the
             // round-report's arrival, each lens drafter starting and finishing with its
             // carried/reworked verdict, and the composed generation the reveal lands on.
             emit,
-          },
+          ),
           {
             session,
             repoRoot: review.repositoryRoot,

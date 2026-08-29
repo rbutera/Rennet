@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chmodSync } from "node:fs";
+import { chmodSync, cpSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Bundle the `rennet` CLI to a single runnable CJS file (#379). The workspace is
@@ -33,4 +33,13 @@ await build({
 });
 
 chmodSync(outfile, 0o755);
+
+// `@rennet/prompts` is INLINED into the bundle, so its prompt `.md` files cannot be
+// require.resolve'd at runtime; `create-server.ts` reads them from `<bundle-dir>/prompts/`.
+// Copy them next to `rennet.cjs` so the detached CLI daemon (#379) can draft boards — without
+// this, every lens drafter hits ENOENT and a captured review never gets a board.
+cpSync(resolve(here, "../packages/prompts/src/prompts"), resolve(serverRoot, "dist/prompts"), {
+  recursive: true,
+});
+
 console.log(`built ${outfile}`);
