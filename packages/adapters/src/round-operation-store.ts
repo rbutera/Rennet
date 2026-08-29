@@ -9,10 +9,12 @@ import {
   type RoundOperation,
   RoundOperationSchema,
   type RoundOperationState,
+  type RoundRecordingAttempt,
   type RoundReportDraftAttempt,
   type RoundReportDraftReceipt,
   type RoundReportReceipt,
   type RoundReportVerificationAttempt,
+  type RoundSourceLandingAttempt,
   type RoundWorkerAttempt,
   type RoundWorkspaceAttempt,
 } from "@rennet/protocol";
@@ -116,6 +118,30 @@ function sameCommitAttempt(left: RoundCommitAttempt, right: RoundCommitAttempt):
   return (
     left.executionId === right.executionId &&
     left.baseHead === right.baseHead &&
+    left.startedAt === right.startedAt
+  );
+}
+
+function sameSourceLandingAttempt(
+  left: RoundSourceLandingAttempt,
+  right: RoundSourceLandingAttempt,
+): boolean {
+  return (
+    left.effect === right.effect &&
+    left.executionId === right.executionId &&
+    left.baselineCommit === right.baselineCommit &&
+    left.workerHead === right.workerHead &&
+    left.startedAt === right.startedAt
+  );
+}
+
+function sameRoundRecordingAttempt(
+  left: RoundRecordingAttempt,
+  right: RoundRecordingAttempt,
+): boolean {
+  return (
+    left.effect === right.effect &&
+    left.executionId === right.executionId &&
     left.startedAt === right.startedAt
   );
 }
@@ -250,13 +276,72 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameCommitAttempt(current.commit, next.failure.commit)
       );
     case "commits-settled":
+      return (
+        next.phase === "source-landing" &&
+        sameReceipt(current.workspace, next.workspace) &&
+        sameReceipt(current.worker, next.worker) &&
+        sameReceipt(current.gate, next.gate) &&
+        sameReceipt(current.commits, next.commits)
+      );
+    case "source-landing":
+      if (next.phase === "source-landed") {
+        return (
+          sameReceipt(current.workspace, next.workspace) &&
+          sameReceipt(current.worker, next.worker) &&
+          sameReceipt(current.gate, next.gate) &&
+          sameReceipt(current.commits, next.commits) &&
+          sameSourceLandingAttempt(current.landing, next.landing)
+        );
+      }
+      return (
+        next.phase === "failed" &&
+        next.failure.at === "source-landing" &&
+        sameReceipt(current.workspace, next.failure.workspace) &&
+        sameReceipt(current.worker, next.failure.worker) &&
+        sameReceipt(current.gate, next.failure.gate) &&
+        sameReceipt(current.commits, next.failure.commits) &&
+        sameSourceLandingAttempt(current.landing, next.failure.landing)
+      );
+    case "source-landed":
+      return (
+        next.phase === "round-recording" &&
+        sameReceipt(current.workspace, next.workspace) &&
+        sameReceipt(current.worker, next.worker) &&
+        sameReceipt(current.gate, next.gate) &&
+        sameReceipt(current.commits, next.commits) &&
+        sameReceipt(current.landing, next.landing)
+      );
+    case "round-recording":
+      if (next.phase === "round-recorded") {
+        return (
+          sameReceipt(current.workspace, next.workspace) &&
+          sameReceipt(current.worker, next.worker) &&
+          sameReceipt(current.gate, next.gate) &&
+          sameReceipt(current.commits, next.commits) &&
+          sameReceipt(current.landing, next.landing) &&
+          sameRoundRecordingAttempt(current.recording, next.recording)
+        );
+      }
+      return (
+        next.phase === "failed" &&
+        next.failure.at === "round-recording" &&
+        sameReceipt(current.workspace, next.failure.workspace) &&
+        sameReceipt(current.worker, next.failure.worker) &&
+        sameReceipt(current.gate, next.failure.gate) &&
+        sameReceipt(current.commits, next.failure.commits) &&
+        sameReceipt(current.landing, next.failure.landing) &&
+        sameRoundRecordingAttempt(current.recording, next.failure.recording)
+      );
+    case "round-recorded":
       if (next.phase === "report-drafting") {
         return (
           hasChangedEvidence(current.worker, current.commits) &&
           sameReceipt(current.workspace, next.workspace) &&
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
-          sameReceipt(current.commits, next.commits)
+          sameReceipt(current.commits, next.commits) &&
+          sameReceipt(current.landing, next.landing) &&
+          sameReceipt(current.recording, next.recording)
         );
       }
       return (
@@ -265,7 +350,9 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.workspace, next.workspace) &&
         sameReceipt(current.worker, next.worker) &&
         sameReceipt(current.gate, next.gate) &&
-        sameReceipt(current.commits, next.commits)
+        sameReceipt(current.commits, next.commits) &&
+        sameReceipt(current.landing, next.landing) &&
+        sameReceipt(current.recording, next.recording)
       );
     case "report-drafting":
       if (next.phase === "report-verifying") {
@@ -274,6 +361,8 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
+          sameReceipt(current.landing, next.landing) &&
+          sameReceipt(current.recording, next.recording) &&
           sameReportDraftAttempt(current.report, next.report)
         );
       }
@@ -284,6 +373,8 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.worker, next.failure.worker) &&
         sameReceipt(current.gate, next.failure.gate) &&
         sameReceipt(current.commits, next.failure.commits) &&
+        sameReceipt(current.landing, next.failure.landing) &&
+        sameReceipt(current.recording, next.failure.recording) &&
         sameReceipt(current.report, next.failure.report)
       );
     case "report-verifying":
@@ -293,6 +384,8 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
+          sameReceipt(current.landing, next.landing) &&
+          sameReceipt(current.recording, next.recording) &&
           sameReportDraft(current.report, next.result.report) &&
           sameVerificationAttempt(current.verification, next.result.report)
         );
@@ -304,6 +397,8 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.worker, next.failure.worker) &&
         sameReceipt(current.gate, next.failure.gate) &&
         sameReceipt(current.commits, next.failure.commits) &&
+        sameReceipt(current.landing, next.failure.landing) &&
+        sameReceipt(current.recording, next.failure.recording) &&
         sameReceipt(current.report, next.failure.report) &&
         sameReceipt(current.verification, next.failure.verification)
       );

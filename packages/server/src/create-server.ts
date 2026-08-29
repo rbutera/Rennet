@@ -2386,23 +2386,63 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (operation.state.phase !== "committing") {
           throw new Error("Round commit effect started outside its durable commit phase.");
         }
-        const git = gitForRepo(operation.repoRoot);
-        const receipt = await settleRoundCommits({
-          git,
+        return settleRoundCommits({
+          git: gitForRepo(operation.repoRoot),
           worktreePath: operation.state.workspace.worktreePath,
           executionId: attempt.executionId,
           baseHead: attempt.baseHead,
           startedAt: attempt.startedAt,
         });
-        await landRoundChanges({
-          git,
+      },
+      planSourceLanding: (operation) => {
+        if (operation.state.phase !== "commits-settled") {
+          throw new Error("Round source landing planned before commits settled.");
+        }
+        return {
+          effect: "source-landing",
+          executionId: randomUUID(),
+          baselineCommit: operation.state.commits.from,
+          workerHead: operation.state.commits.to,
+          startedAt: Date.now(),
+        };
+      },
+      landSourceChanges: async ({ operation, attempt }) => {
+        if (operation.state.phase !== "source-landing") {
+          throw new Error("Round source landing started outside its durable landing phase.");
+        }
+        const result = await landRoundChanges({
+          git: gitForRepo(operation.repoRoot),
           locus: locusForRepo(operation.repoRoot),
           sourceRoot: operation.repoRoot,
           worktreePath: operation.state.workspace.worktreePath,
-          baselineCommit: attempt.baseHead,
+          baselineCommit: attempt.baselineCommit,
+          workerHead: attempt.workerHead,
         });
+        if (
+          result.baselineCommit !== attempt.baselineCommit ||
+          result.workerHead !== attempt.workerHead
+        ) {
+          throw new Error("Round source landing returned a different commit range.");
+        }
+        return { ...attempt, outcome: result.outcome, landedAt: Date.now() };
+      },
+      planRoundRecording: (operation) => {
+        if (operation.state.phase !== "source-landed") {
+          throw new Error("Round recording planned before source landing settled.");
+        }
+        return {
+          effect: "round-recording",
+          executionId: randomUUID(),
+          startedAt: Date.now(),
+        };
+      },
+      recordRound: async ({ operation, attempt }) => {
+        if (operation.state.phase !== "round-recording") {
+          throw new Error("Round recording started outside its durable recording phase.");
+        }
         const workOrder = exactWorkOrderFor(operation);
         const worker = operation.state.worker;
+        const commits = operation.state.commits;
         await roundsRuntime.dispatchRound({
           session: sessionForOperation(operation),
           workOrder,
@@ -2413,14 +2453,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             outcome: "completed",
             diff: worker.diff,
             changedPaths: [...worker.changedPaths],
-            workerCommitRange: { from: receipt.from, to: receipt.to },
+            workerCommitRange: {
+              from: commits.from,
+              to: commits.to,
+            },
           }),
         });
         await options.onRoundPlaceholderCommitted?.({
           sessionId: operation.sessionId,
           dispatchId: operation.dispatchId,
         });
-        return receipt;
+        return { ...attempt, recordedAt: Date.now() };
       },
       prepareReport: (operation) => {
         const idFor = (target: string): string =>

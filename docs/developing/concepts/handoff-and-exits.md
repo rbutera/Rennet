@@ -310,7 +310,9 @@ something the preview did not describe.
    was, carrying the daemon's reason — a round that never started never reads as
    one under way. Dispatch takes over a dedicated run view (`/s/:slug/run`)
    that reads the durable operation receipt as the prep, worker, gate, commit,
-   report-drafting, and report-verification phases settle. The view is
+   report-drafting, and report-verification phases settle. The visible commit
+   step coarsens separate detached-commit, source-landing, and round-recording
+   receipts; each remains its own restart boundary. The view is
    deep-linkable and cold: opening it mid-round reattaches to the newest durable
    receipt and never re-dispatches. It stays on the run through report drafting
    and verification, and hands back to the board surface only after the durable

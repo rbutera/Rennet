@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
   type RoundOperation,
+  type RoundRecordingAttempt,
+  type RoundSourceLandingAttempt,
   type RoundWorkspaceAttempt,
   type RoundWorkspaceReceipt,
   sha256Hex,
@@ -391,7 +393,7 @@ if (RACE_ROLE !== undefined) {
       ).toThrow(RoundOperationConflictError);
     });
 
-    it("cannot turn an unchanged worker and commit range into a changed report", () => {
+    it("carries unchanged evidence through landing and recording with exact attempt identity", () => {
       const store = new RoundOperationStore(tempStoreDir());
       const workerSettled = advanceToWorkerSettled(
         store,
@@ -464,15 +466,125 @@ if (RACE_ROLE !== undefined) {
       const settledWorker = commitsSettled.state.worker;
       const settledGate = commitsSettled.state.gate;
       const settledCommits = commitsSettled.state.commits;
+      const landingAttempt = {
+        effect: "source-landing",
+        executionId: "landing-1",
+        baselineCommit: settledCommits.from,
+        workerHead: settledCommits.to,
+        startedAt: 9,
+      } satisfies RoundSourceLandingAttempt;
+      const landing = store.compareAndSwap(expectation(commitsSettled), {
+        state: {
+          phase: "source-landing",
+          workspace,
+          worker: settledWorker,
+          gate: settledGate,
+          commits: settledCommits,
+          landing: landingAttempt,
+        },
+        updatedAt: 9,
+      });
+      if (landing.state.phase !== "source-landing") {
+        throw new Error("landing fixture did not start");
+      }
+      expect(() =>
+        store.compareAndSwap(expectation(landing), {
+          state: {
+            phase: "source-landed",
+            workspace,
+            worker: settledWorker,
+            gate: settledGate,
+            commits: settledCommits,
+            landing: {
+              ...landingAttempt,
+              executionId: "other-landing",
+              outcome: "unchanged",
+              landedAt: 10,
+            },
+          },
+          updatedAt: 10,
+        }),
+      ).toThrow(RoundOperationConflictError);
+      const sourceLanded = store.compareAndSwap(expectation(landing), {
+        state: {
+          phase: "source-landed",
+          workspace,
+          worker: settledWorker,
+          gate: settledGate,
+          commits: settledCommits,
+          landing: { ...landingAttempt, outcome: "unchanged", landedAt: 10 },
+        },
+        updatedAt: 10,
+      });
+      if (sourceLanded.state.phase !== "source-landed") {
+        throw new Error("landing fixture did not settle");
+      }
+      const settledLanding = sourceLanded.state.landing;
+      const recordingAttempt = {
+        effect: "round-recording",
+        executionId: "recording-1",
+        startedAt: 11,
+      } satisfies RoundRecordingAttempt;
+      const recording = store.compareAndSwap(expectation(sourceLanded), {
+        state: {
+          phase: "round-recording",
+          workspace,
+          worker: settledWorker,
+          gate: settledGate,
+          commits: settledCommits,
+          landing: settledLanding,
+          recording: recordingAttempt,
+        },
+        updatedAt: 11,
+      });
+      if (recording.state.phase !== "round-recording") {
+        throw new Error("recording fixture did not start");
+      }
+      expect(() =>
+        store.compareAndSwap(expectation(recording), {
+          state: {
+            phase: "round-recorded",
+            workspace,
+            worker: settledWorker,
+            gate: settledGate,
+            commits: settledCommits,
+            landing: settledLanding,
+            recording: {
+              ...recordingAttempt,
+              executionId: "other-recording",
+              recordedAt: 12,
+            },
+          },
+          updatedAt: 12,
+        }),
+      ).toThrow(RoundOperationConflictError);
+      const recorded = store.compareAndSwap(expectation(recording), {
+        state: {
+          phase: "round-recorded",
+          workspace,
+          worker: settledWorker,
+          gate: settledGate,
+          commits: settledCommits,
+          landing: settledLanding,
+          recording: { ...recordingAttempt, recordedAt: 12 },
+        },
+        updatedAt: 12,
+      });
+      if (recorded.state.phase !== "round-recorded") {
+        throw new Error("recording fixture did not settle");
+      }
+      const settledRecording = recorded.state.recording;
 
       expect(() =>
-        store.compareAndSwap(expectation(commitsSettled), {
+        store.compareAndSwap(expectation(recorded), {
           state: {
             phase: "report-drafting",
             workspace,
             worker: settledWorker,
             gate: settledGate,
             commits: settledCommits,
+            landing: settledLanding,
+            recording: settledRecording,
             report: {
               executionId: "report-1",
               reportBoardId: "board-1",
@@ -485,24 +597,26 @@ if (RACE_ROLE !== undefined) {
                 noise: "noise-1",
                 report: "board-1",
               },
-              startedAt: 9,
+              startedAt: 13,
             },
           },
-          updatedAt: 9,
+          updatedAt: 13,
         }),
       ).toThrow(RoundOperationConflictError);
       expect(
-        store.compareAndSwap(expectation(commitsSettled), {
+        store.compareAndSwap(expectation(recorded), {
           state: {
             phase: "completed",
             workspace,
             worker: settledWorker,
             gate: settledGate,
             commits: settledCommits,
+            landing: settledLanding,
+            recording: settledRecording,
             result: { kind: "unchanged" },
-            completedAt: 9,
+            completedAt: 13,
           },
-          updatedAt: 9,
+          updatedAt: 13,
         }).state.phase,
       ).toBe("completed");
     });

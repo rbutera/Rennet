@@ -104,6 +104,24 @@ const operationCommits = {
   count: 1,
   committedAt: 160,
 } as const;
+const operationLandingAttempt = {
+  effect: "source-landing",
+  executionId: "landing-1",
+  baselineCommit: operationCommits.from,
+  workerHead: operationCommits.to,
+  startedAt: 161,
+} as const;
+const operationLanding = {
+  ...operationLandingAttempt,
+  outcome: "applied",
+  landedAt: 162,
+} as const;
+const operationRecording = {
+  effect: "round-recording",
+  executionId: "recording-1",
+  startedAt: 163,
+  recordedAt: 164,
+} as const;
 const operationBoardIds = {
   design: "design-1",
   sequence: "sequence-1",
@@ -301,6 +319,8 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: operationGate,
         commits: operationCommits,
+        landing: operationLanding,
+        recording: operationRecording,
         result: {
           kind: "changed",
           report: {
@@ -328,6 +348,8 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
+          landing: operationLanding,
+          recording: operationRecording,
           result: { kind: "changed" },
           completedAt: 180,
         },
@@ -342,6 +364,14 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: { ...operationWorker, diff: "", changedPaths: [] },
           gate: operationGate,
           commits: { ...operationCommits, count: 0, from: "abc123", to: "abc123" },
+          landing: {
+            ...operationLandingAttempt,
+            baselineCommit: "abc123",
+            workerHead: "abc123",
+            outcome: "unchanged",
+            landedAt: 162,
+          },
+          recording: operationRecording,
           result: {
             kind: "changed",
             report: {
@@ -406,6 +436,8 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: { ...operationGate, projectCount: 14 },
         commits: { ...operationCommits, count: 2 },
+        landing: operationLanding,
+        recording: operationRecording,
         result: {
           kind: "changed",
           report: {
@@ -467,6 +499,41 @@ describe("session/ durable shapes (#466/#457)", () => {
     }
   });
 
+  it("coarsens landing and recording without advancing visible commit progress early", () => {
+    const landing = RoundOperationSchema.parse({
+      ...operationBase,
+      state: {
+        phase: "source-landing",
+        workspace: operationWorkspace,
+        worker: operationWorker,
+        gate: operationGate,
+        commits: operationCommits,
+        landing: operationLandingAttempt,
+      },
+    });
+    expect(roundOperationProgressSnapshot(landing).state).toMatchObject({
+      phase: "committing",
+      commits: { status: "running" },
+    });
+
+    const recorded = RoundOperationSchema.parse({
+      ...operationBase,
+      state: {
+        phase: "round-recorded",
+        workspace: operationWorkspace,
+        worker: operationWorker,
+        gate: operationGate,
+        commits: operationCommits,
+        landing: operationLanding,
+        recording: operationRecording,
+      },
+    });
+    expect(roundOperationProgressSnapshot(recorded).state).toMatchObject({
+      phase: "commits-settled",
+      commits: { status: "done", count: 1 },
+    });
+  });
+
   it("rejects failed prerequisites and contradictory unchanged evidence", () => {
     const failedWorker = {
       ...operationWorker,
@@ -491,6 +558,8 @@ describe("session/ durable shapes (#466/#457)", () => {
             worker,
             gate,
             commits: operationCommits,
+            landing: operationLanding,
+            recording: operationRecording,
             result: {
               kind: "changed",
               report: {
@@ -510,6 +579,12 @@ describe("session/ durable shapes (#466/#457)", () => {
         }).success,
       ).toBe(false);
     }
+    const contradictoryCommits = {
+      ...operationCommits,
+      count: 0,
+      from: "abc123",
+      to: "abc123",
+    } as const;
     expect(
       RoundOperationSchema.safeParse({
         ...operationBase,
@@ -527,7 +602,15 @@ describe("session/ durable shapes (#466/#457)", () => {
           workspace: operationWorkspace,
           worker: operationWorker,
           gate: operationGate,
-          commits: { ...operationCommits, count: 0, from: "abc123", to: "abc123" },
+          commits: contradictoryCommits,
+          landing: {
+            ...operationLandingAttempt,
+            baselineCommit: contradictoryCommits.from,
+            workerHead: contradictoryCommits.to,
+            outcome: "unchanged",
+            landedAt: 162,
+          },
+          recording: operationRecording,
           result: { kind: "unchanged" },
           completedAt: 180,
         },
@@ -566,6 +649,11 @@ describe("session/ durable shapes (#466/#457)", () => {
       to: operationCommits.from,
       count: 0,
     } as const;
+    const unchangedLanding = {
+      ...operationLanding,
+      workerHead: noCommits.to,
+      outcome: "unchanged",
+    } as const;
     expect(
       RoundOperationSchema.parse({
         ...operationBase,
@@ -576,6 +664,8 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: { ...operationWorker, diff: "", changedPaths: [] },
           gate: skippedGate,
           commits: noCommits,
+          landing: unchangedLanding,
+          recording: operationRecording,
           result: { kind: "unchanged" },
           completedAt: 180,
         },
@@ -601,6 +691,8 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
+          landing: operationLanding,
+          recording: operationRecording,
         },
       }).success,
     ).toBe(false);
@@ -613,6 +705,8 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
+          landing: operationLanding,
+          recording: operationRecording,
           report: {
             executionId: "report-draft-1",
             reportBoardId: "report-1",
