@@ -3,11 +3,14 @@
 // session turn loop (B09 cluster 2's loop, instantiated in `create-server.ts`).
 //
 //   1. `createTranscriptCapture` — the loop's `recordTranscript` sink. Projects the
-//      turn's harness events onto display transcript rows, R19-scrubs them at this
-//      ONE choke point (before they are persisted), and appends them to the durable
-//      store `session.transcript` reads. Failure-isolated: the transcript is a
-//      DISPLAY read-model, so an unwritable or corrupt log never fails the coding
-//      turn that produced it.
+//      turn's harness events onto display transcript rows and appends them to the
+//      durable store `session.transcript` reads, VERBATIM: the rows are stored as the
+//      harness produced them, host paths and all. R19 is a TRANSPORT rule ("do not send
+//      a host path to a remote client"), and the wire already enforces it — the listener
+//      scrubs a projected connection's frames and leaves a loopback connection's alone.
+//      Applying it here as well destroyed the reviewer's own paths at rest and bought
+//      nothing. Failure-isolated: the transcript is a DISPLAY read-model, so an
+//      unwritable or corrupt log never fails the coding turn that produced it.
 //
 //   2. `createContextRebuiltEmit` — the loop's `emit` sink, for the one transcript row
 //      the projector CANNOT produce: `context_rebuilt` is synthesized by the loop when a
@@ -23,10 +26,8 @@
 // standalone (the `session-entry` / `pipeline-guard` precedent).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { homedir } from "node:os";
 import { type HandoffRunPort, harnessEventsToRows } from "@rennet/core";
 import type { SessionTranscriptRow } from "@rennet/protocol";
-import { buildProjectionContext, redactAbsolutePaths, scrubRoots } from "../projection";
 import type { SessionTurnLoop, TurnLoopDeps } from "./turn-loop";
 
 /** The durable transcript log's append side (`TranscriptStore` in adapters satisfies it). */
@@ -37,22 +38,23 @@ export interface TranscriptSink {
 /**
  * Build the turn loop's `recordTranscript` sink over a durable transcript store.
  *
- * The R19 scrub runs HERE, once, before persistence: the turn's own repo root reads back as
- * `<repo>`, the home dir as `~`, and any absolute path outside both is redacted — so a host
- * path cannot reach the persisted rows, let alone a projected client. `onError` receives a
- * refused append (the store refuses rather than clobbering unread history) instead of it
- * being raised into the coding turn.
+ * The rows are stored RAW — the reviewer's own repo root, home dir and any other absolute path
+ * the harness printed survive to disk, because this is the reviewer's own machine reading back
+ * their own coding turns and a path they cannot see is a worse transcript, not a safer one.
+ * R19 is a rule about what crosses the WIRE to a remote client, and `projectCommandOutput`
+ * applies it there (see `../projection`), on a projected connection only. Scrubbing again at
+ * write time was lossy and bought nothing, since every read already passes that boundary.
+ *
+ * `onError` receives a refused append (the store refuses rather than clobbering unread history)
+ * instead of it being raised into the coding turn.
  */
 export function createTranscriptCapture(
   store: TranscriptSink,
   onError: (error: unknown) => void = () => undefined,
-  homeDir: string = homedir(),
 ): NonNullable<TurnLoopDeps["recordTranscript"]> {
-  return ({ sessionId, cwd, events }) => {
-    const ctx = buildProjectionContext([cwd], homeDir);
-    const rows = harnessEventsToRows(events, (text) => redactAbsolutePaths(scrubRoots(text, ctx)));
+  return ({ sessionId, events }) => {
     try {
-      store.append(sessionId, rows);
+      store.append(sessionId, harnessEventsToRows(events));
     } catch (error) {
       onError(error);
     }

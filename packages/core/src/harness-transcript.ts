@@ -11,10 +11,11 @@
 // the turn loop already consumes — B captures and projects them, it adds no new SDK
 // subscription.
 //
-// Client-safe: pure, no Node imports. The R19 host-path scrub is INJECTED as
-// `scrubPath` (the server builds it from the projection context and calls it here, the
-// single choke point — scrub once, at projection, before the rows are persisted). A
-// caller with nothing to scrub passes the identity.
+// Client-safe: pure, no Node imports. It scrubs NOTHING: the rows carry the harness's
+// own text, host paths included, because they are persisted on the reviewer's own machine
+// for the reviewer to read. R19 ("no host path to a REMOTE client") is a transport rule and
+// the server applies it at the wire, in `projectCommandOutput`, for a projected connection
+// only — see `packages/server/src/projection.ts`.
 //
 // Taxonomy (tool-lifecycle kinds, the reasoning-vs-prose lane split) is informed by
 // t3code (T3 Tools Inc., MIT) as a reference; no t3 code is used here — Rennet's own
@@ -24,20 +25,15 @@
 import type { ActivityStep, ContentBlock, SessionTranscriptRow } from "@rennet/protocol";
 import type { HarnessEvent, ToolCall } from "./harness";
 
-/** Redact host-absolute paths from one string (the server's R19 projection). Identity by default. */
-export type ScrubPath = (text: string) => string;
-const IDENTITY_SCRUB: ScrubPath = (text) => text;
-
 type TurnStatus = "streaming" | "complete" | "interrupted";
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** A tool call's display label + its primary (scrubbed) argument. The argument is where a
- *  host path hides — `Read.file_path`, `Bash.command` (`cd /Volumes/…`), `Glob.path` — so it
- *  runs through the injected R19 scrub before it becomes row content. */
-function describeTool(call: ToolCall, scrubPath: ScrubPath): { label: string; detail?: string } {
+/** A tool call's display label + its primary argument (`Read.file_path`, `Bash.command`,
+ *  `Glob.path`, …) — verbatim, so the reviewer reads the argument the harness actually used. */
+function describeTool(call: ToolCall): { label: string; detail?: string } {
   const input = call.input;
   const primary =
     asString(input.file_path) ??
@@ -46,7 +42,7 @@ function describeTool(call: ToolCall, scrubPath: ScrubPath): { label: string; de
     asString(input.command) ??
     asString(input.pattern) ??
     asString(input.url);
-  return primary ? { label: call.name, detail: scrubPath(primary) } : { label: call.name };
+  return primary ? { label: call.name, detail: primary } : { label: call.name };
 }
 
 function splitParagraphs(body: string): string[] {
@@ -65,12 +61,9 @@ function firstLine(text: string): string {
  * Project one turn's harness events (in arrival order) onto transcript rows. Normally one
  * orchestrator `turn` row — its thought/action `preface` and its prose/code `body` — plus a
  * `compact-boundary` row for each in-turn compaction (which flushes the turn-so-far first, so
- * order is preserved). Path-bearing content is scrubbed via `scrubPath` before it lands in a row.
+ * order is preserved). Content is carried verbatim; the wire projection is what scrubs.
  */
-export function harnessEventsToRows(
-  events: readonly HarnessEvent[],
-  scrubPath: ScrubPath = IDENTITY_SCRUB,
-): SessionTranscriptRow[] {
+export function harnessEventsToRows(events: readonly HarnessEvent[]): SessionTranscriptRow[] {
   const rows: SessionTranscriptRow[] = [];
   const anchor = events[0]?.seq ?? 0;
 
@@ -94,7 +87,7 @@ export function harnessEventsToRows(
     // outcome's finalText — so a turn that only streamed still shows its reply.
     if (body.length === 0) {
       const fallback = deltaBuf.trim() !== "" ? deltaBuf : (finalText ?? "");
-      if (fallback.trim() !== "") body.push({ kind: "text", text: scrubPath(fallback) });
+      if (fallback.trim() !== "") body.push({ kind: "text", text: fallback });
     }
     const paragraphs = body
       .filter((b): b is Extract<ContentBlock, { kind: "text" }> => b.kind === "text")
@@ -137,14 +130,14 @@ export function harnessEventsToRows(
         if (block && block.kind === "thought") {
           block.text = openThought.buf
             .split("\n")
-            .map((l) => scrubPath(l.trim()))
+            .map((l) => l.trim())
             .filter((l) => l.length > 0);
         }
         break;
       }
       case "text.message":
         closeThought();
-        if (event.text.trim() !== "") body.push({ kind: "text", text: scrubPath(event.text) });
+        if (event.text.trim() !== "") body.push({ kind: "text", text: event.text });
         break;
       case "text.delta":
         closeThought();
@@ -152,7 +145,7 @@ export function harnessEventsToRows(
         break;
       case "tool.started": {
         closeThought();
-        const { label, detail } = describeTool(event.call, scrubPath);
+        const { label, detail } = describeTool(event.call);
         actionByCall.set(event.call.id, preface.length);
         preface.push({
           kind: "action",
@@ -170,7 +163,7 @@ export function harnessEventsToRows(
         const step = idx === undefined ? undefined : preface[idx];
         if (step && step.kind === "action") {
           step.status = "complete";
-          const summary = firstLine(scrubPath(event.text));
+          const summary = firstLine(event.text);
           if (summary) step.doneDetail = summary;
           if (!event.ok) step.doneLabel = `${step.label} (failed)`;
         }
@@ -183,13 +176,13 @@ export function harnessEventsToRows(
         if (step && step.kind === "action") {
           step.status = "complete";
           step.denied = true;
-          step.doneLabel = `Denied: ${scrubPath(event.reason)}`;
+          step.doneLabel = `Denied: ${event.reason}`;
         } else {
           preface.push({
             kind: "action",
             id: `act-denied-${anchor}-${preface.length}`,
             label: `Denied ${event.toolName}`,
-            detail: scrubPath(event.reason),
+            detail: event.reason,
             status: "complete",
             toolKind: "other",
             denied: true,

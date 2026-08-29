@@ -45,6 +45,9 @@ describe("remote-surface e2e (#380)", () => {
   const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-remote-repo-"));
   const HOME = mkdtempSync(join(tmpdir(), "rennet-remote-home-"));
   const ASK_STREAM_ANCHOR = "src/app.ts";
+  // An absolute path under NEITHER the fixture repo root NOR the home dir — the shape the
+  // blanket root/home scrub cannot see, so only the transcript's own redaction catches it.
+  const STRAY_PATH = "/etc/hosts/passwd";
   const listeners: WsListener[] = [];
   const sockets: WebSocket[] = [];
 
@@ -161,6 +164,31 @@ describe("remote-surface e2e (#380)", () => {
           };
         case "review.setDisposition":
           return { review: reviewFixture() };
+        case "session.transcript":
+          // The display transcript as the capture sink now STORES it: raw harness text, host
+          // paths intact. Nothing between this and the socket except `projectCommandOutput`.
+          return {
+            trail: { title: "feat/seam" },
+            rows: [
+              {
+                kind: "turn",
+                id: "turn-1",
+                speaker: "orchestrator",
+                status: "complete",
+                paragraphs: [`wrote ${REPO_ROOT}/src/app.ts`],
+                preface: [
+                  {
+                    kind: "action",
+                    id: "act-1",
+                    label: "Bash",
+                    detail: `cat ${REPO_ROOT}/src/app.ts ${HOME}/.zshrc ${STRAY_PATH}`,
+                    status: "complete",
+                    toolKind: "exec",
+                  },
+                ],
+              },
+            ],
+          };
         case "review.ask":
           ctx?.emitAskStream?.({ kind: "ask-focus", anchor: ASK_STREAM_ANCHOR });
           return {};
@@ -373,6 +401,20 @@ describe("remote-surface e2e (#380)", () => {
       event: { kind: "ask-focus", anchor: ASK_STREAM_ANCHOR },
     });
 
+    // The display transcript over the PROJECTED connection. This is the half that must not
+    // regress now that the rows are stored raw: the repo root, the home dir, AND a stray
+    // absolute path under neither all have to be gone by the time the phone sees them.
+    const projectedTranscript = (await paired.request("session.transcript", {
+      reviewId: "rev-1",
+    })) as { rows: { preface: { detail: string }[]; paragraphs: string[] }[] };
+    const projectedDetail = projectedTranscript.rows[0]?.preface[0]?.detail ?? "";
+    expect(projectedDetail).not.toContain(REPO_ROOT);
+    expect(projectedDetail).not.toContain(HOME);
+    expect(projectedDetail).not.toContain(STRAY_PATH);
+    expect(projectedDetail).toContain("~/.zshrc");
+    expect(projectedDetail).toContain("<path>");
+    expect(projectedTranscript.rows[0]?.paragraphs[0]).not.toContain(REPO_ROOT);
+
     const projectedFailure = await requestFailure(paired, "harness.detect", {});
     expect(projectedFailure).toMatchObject({
       type: "rpcError",
@@ -425,6 +467,15 @@ describe("remote-surface e2e (#380)", () => {
       details: { path: `${REPO_ROOT}/details` },
     });
     expect(String(privateFailure.message)).toContain(REPO_ROOT);
+    // …and the LOOPBACK connection reads the transcript exactly as it was stored. This is the
+    // point of moving the scrub to the wire: the reviewer's own machine gets their own paths
+    // back, whole. Put the write-time scrub back and this assertion cannot hold.
+    const privateTranscript = (await privateClient.request("session.transcript", {
+      reviewId: "rev-1",
+    })) as { rows: { preface: { detail: string }[] }[] };
+    expect(privateTranscript.rows[0]?.preface[0]?.detail).toBe(
+      `cat ${REPO_ROOT}/src/app.ts ${HOME}/.zshrc ${STRAY_PATH}`,
+    );
     // Let the pushed progress frame arrive.
     await new Promise((r) => setTimeout(r, 30));
 

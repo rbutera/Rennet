@@ -109,6 +109,66 @@ describe("outbound structural projection", () => {
     expect(quiet.review.attention).toEqual({ needsYou: false, running: false });
   });
 
+  // ── session.transcript: the display transcript is stored RAW, scrubbed HERE ──────
+  //
+  // The capture sink used to redact before `append`, which destroyed the reviewer's own
+  // paths on their own disk and bought nothing, because every read already crosses this
+  // boundary. These two cases are the load-bearing half of that move: they are what stands
+  // between a raw stored row and a phone. Delete the `session.transcript` branch in
+  // `projectCommandOutput` and both go red.
+
+  /** One stored row exactly as the capture sink now writes it: harness text, host paths intact. */
+  const rawTranscript = {
+    trail: { title: "feat/seam" },
+    rows: [
+      {
+        kind: "turn",
+        id: "turn-1",
+        speaker: "orchestrator",
+        status: "complete",
+        paragraphs: [`wrote ${REPO}/packages/server/src/x.ts`],
+        preface: [
+          {
+            kind: "action",
+            id: "act-1",
+            label: "Bash",
+            // Three shapes in one argument: a known root, the home dir, and an absolute path
+            // under NEITHER — the last is the one a blanket root/home scrub cannot see.
+            detail: `cat ${REPO}/src/a.ts ${HOME}/.zshrc /etc/hosts/passwd`,
+            status: "complete",
+            toolKind: "exec",
+          },
+        ],
+        body: [{ kind: "code", path: `${REPO}/src/a.ts`, code: "const a = 1;" }],
+      },
+    ],
+  };
+
+  it("scrubs a raw stored transcript on the way out to a PROJECTED client", () => {
+    const out = projectCommandOutput("session.transcript", rawTranscript, ctx);
+    const serialized = JSON.stringify(out);
+    // The two needles the remote must never see.
+    expect(serialized).not.toContain(REPO);
+    expect(serialized).not.toContain(HOME);
+    // Known root and home become display tokens; the stray absolute path is redacted whole.
+    expect(serialized).toContain("<rennet>/src/a.ts");
+    expect(serialized).toContain("~/.zshrc");
+    expect(serialized).toContain("<path>");
+    expect(serialized).not.toContain("/etc/hosts/passwd");
+  });
+
+  it("the row scrub is what catches the stray path — the blanket root scrub alone does not", () => {
+    // Positive control on the CONTROL: `scrubRoots` is the blanket pass every command output
+    // gets, and it leaves `/etc/hosts/passwd` untouched. So the assertion above is testing the
+    // `session.transcript` branch specifically, not the pass that would have run anyway.
+    expect(scrubRoots("/etc/hosts/passwd", ctx)).toBe("/etc/hosts/passwd");
+    expect(redactAbsolutePaths("/etc/hosts/passwd")).toBe("<path>");
+    // And the branch is command-scoped: the same payload under a DIFFERENT command name keeps
+    // the stray path, which is exactly why the branch has to exist.
+    const other = JSON.stringify(projectCommandOutput("session.rounds", rawTranscript, ctx));
+    expect(other).toContain("/etc/hosts/passwd");
+  });
+
   it("projects a project list output", () => {
     const out = projectCommandOutput(
       "projects.list",
@@ -578,10 +638,17 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // Span rework (B11 cluster 5) echoes the same `AskEventBody` receipt (its
     // `ask.edit` write), so its receipt's line-comment `path` arm is repo-relative too.
     "review.reviseSpan.output.receipt.path",
-    // The display transcript (issue-set B): a coding turn's `code` body block cites the file
-    // it touched. The projector R19-scrubs every path at capture time BEFORE persistence, so a
-    // remote client already reads a repo-relative reference — no frame-boundary translation.
+  ]),
+  ...classified("host-path-projected", [
+    // The display transcript (issue-set B): a coding turn's `code` body block cites the file it
+    // touched, and the transcript is now stored RAW — the capture sink no longer redacts, because
+    // the log is the reviewer's own, on their own disk. So this path CAN be host-absolute at rest,
+    // and `projectCommandOutput`'s `session.transcript` branch is what translates it for a
+    // projected connection (scrub roots/home, then redact any leftover absolute path). Same
+    // treatment as the free-text a projected `rpcError` carries — the row content is harness text.
     "session.transcript.output.rows.body.path",
+  ]),
+  ...classified("repo-relative", [
     // The lens-board read (C18): a board's `code_ref` elements cite the CAPTURED patchset by
     // repo-relative path (`codeRefSchema`'s own field, the same one `review.setDisposition`
     // carries) — never a host-absolute path, so no remote projection translates it.
