@@ -165,8 +165,9 @@ describe("IndexingView — prefilled questionnaire", () => {
     const { user } = renderView("p4");
 
     await user.click(await screen.findByRole("button", { name: "Looks right" }));
-    // Honest copy — edits are local-only (no project-config write command exists yet), so the
-    // line points at Settings rather than claiming a save that never happened.
+    // Honest copy — this card writes nothing (edits are component state, even for the keys
+    // `settings.setProjectValue` now serves), so the line points at Settings rather than
+    // claiming a save that never happened.
     expect(screen.getByText(/Set these anytime in Settings/)).toBeTruthy();
     expect(screen.queryByText(/saved/i)).toBeNull();
     expect(screen.queryByRole("button", { name: "Looks right" })).toBeNull();

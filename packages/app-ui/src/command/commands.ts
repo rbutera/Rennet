@@ -7,9 +7,12 @@ import {
 } from "../nav/history";
 
 // The canvas review surface — lens/zoom/appearance/view-toggle commands and the
-// review.* actions — was deleted in the B2 delete-first cutover (#489). The review
-// route is a stub; Track C rebuilds the review command surface. What stays here is
-// navigation, settings, recents, and the start-a-review door.
+// review.* actions — was deleted in the B2 delete-first cutover (#489) and has NOT come
+// back: Track C rebuilt the review SCREENS (`app/review-workspace-route.tsx` is a real
+// surface, not a stub) without restoring a single review command to this catalogue. What
+// is here is navigation, settings, recents, and the start-a-review door — so the
+// context-aware "review-only commands" the machinery below supports currently have no
+// members.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command registry (wireframes screen 16: "⌘K, every action a named

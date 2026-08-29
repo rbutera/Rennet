@@ -12,9 +12,11 @@ import {
   useRoundState,
 } from "./rounds-data";
 
-// The rounds-data seam resolves its three reads through a RoundsSource on context (no
-// rounds runtime exists yet — Reconciliation 1), mirroring the board-data seam. The
-// fixtures live behind the import fence and reach the seam only via the provider here.
+// The rounds-data seam resolves its three reads through a RoundsSource on context
+// (Reconciliation 1), mirroring the board-data seam. The rounds runtime IS live — the app
+// binds `useLiveRoundsSource` — so what this file covers is the SEAM: the honest-absent
+// context default and a fixture source, never the transport. The fixtures live behind the
+// import fence and reach the seam only via the provider here.
 
 function RoundsProbe({ slug, reportId }: { slug: string; reportId: string }) {
   const state = useRoundState(slug);
