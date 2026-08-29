@@ -40,6 +40,13 @@ import { writeAtomic } from "./knowledge-store";
  * and stale target directories are swept by AGE on promotion (see
  * {@link STALE_TARGET_AGE_MS}) rather than by guessing which of them is still live.
  *
+ * The move to per-target directories ORPHANED every journal entry written under the
+ * old FLAT layout, and deliberately: nothing reads them, so a run in flight across
+ * the change re-runs its completed turns, once. Those loose files also outlive the
+ * age sweep, which walks directory entries only (`entry.isDirectory()`) — they are
+ * inert bytes under the project's reserved directory, costing disk and never
+ * correctness, and the alternative was a reader for a layout nothing writes.
+ *
  * ONE GAP, stated rather than defended: nothing here is atomic ACROSS the
  * journal-write / store-rename / journal-clear sequence, so a process death between
  * the store rename and the clear leaves a journal for a target already promoted. The

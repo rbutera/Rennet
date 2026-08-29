@@ -70,6 +70,21 @@ const PRIOR_SNAPSHOT = {
   ],
 } as unknown as LoadedSnapshot;
 
+/**
+ * The prior baseline with the CURRENT snapshot's file inventory — so every changed
+ * path has one blobOid on both sides and classifies cosmetic — carrying the
+ * fingerprint the stored set records as the one it was learned against (`fp-0`).
+ *
+ * That fingerprint is not decoration. A manifest at an OID is overwritten in place by
+ * a re-extraction, so a prior loaded by OID alone may be a DIFFERENT view of the same
+ * commit than the statements were learned against, and the swarm refuses to classify
+ * against it. This fixture is the case where the join genuinely holds.
+ */
+const COMPARABLE_PRIOR_SNAPSHOT = {
+  ...SNAPSHOT,
+  manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint: "fp-0" },
+} as unknown as LoadedSnapshot;
+
 const READER = {
   loadFresh: (_repoKey: string, oid: string) => ({
     ok: true as const,
@@ -505,15 +520,73 @@ describe("knowledge swarm — prior-set identity", () => {
     expect(refused.turns).toBe(1);
     if (refused.outcome.status === "ok") expect(refused.outcome.skippedCosmetic).toBe(0);
 
-    // The control: served the identical prior, the same change is cosmetic and costs
+    // The control: served an identical prior, the same change is cosmetic and costs
     // nothing — so the turn above is the fail-safe firing, not the diff being inert.
-    const served = await run(() => ({ ok: true as const, snapshot: SNAPSHOT }));
+    // The prior carries the FINGERPRINT the stored set was learned against; serving a
+    // snapshot with identical blobs but another fingerprint is a different refusal,
+    // and it has its own test below.
+    const served = await run((_repoKey, oid) => ({
+      ok: true as const,
+      snapshot:
+        oid === "oid-0"
+          ? (COMPARABLE_PRIOR_SNAPSHOT as unknown as LoadedSnapshot)
+          : (SNAPSHOT as unknown as LoadedSnapshot),
+    }));
     expect(served.turns).toBe(0);
     expect(served.outcome.status).toBe("ok");
     if (served.outcome.status === "ok") {
       expect(served.outcome.ranPartitions).toBe(0);
       expect(served.outcome.skippedCosmetic).toBe(1);
     }
+  });
+
+  it("a prior snapshot whose FINGERPRINT is not the learned-against one routes every change", async () => {
+    // The OID is not the snapshot's identity. A manifest is stored per baseline and
+    // overwritten in place, so a re-extraction at the prior OID — a new symbol or
+    // import extractor, a different inventory — replaces the view the stored
+    // statements were learned against while leaving the OID exactly where it was. A
+    // classification against THAT snapshot answers "did the signature move?" by
+    // comparing two different extractions.
+    //
+    // Both arms below are handed a prior with the SAME blobOids as the current
+    // snapshot, so both would classify the change cosmetic and spend nothing. The only
+    // difference is the fingerprint, and the run that cannot join on it must pay the
+    // turn rather than assume.
+    const git: GitExec = async (_root, args) => {
+      if (args[0] === "diff") return "a/one.ts\0";
+      if (args[0] === "ls-tree") return "a/one.ts\0b/two.ts\0";
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    };
+    const runWithPriorFingerprint = async (fingerprint: string): Promise<number> => {
+      const captures: CodexExecRequest[] = [];
+      const { store } = storeWithPrior(priorSet());
+      const reExtracted = {
+        ...COMPARABLE_PRIOR_SNAPSHOT,
+        manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint },
+      } as unknown as LoadedSnapshot;
+      const outcome = await runKnowledgeSwarmForRepo({
+        reader: {
+          loadFresh: (_repoKey: string, oid: string) => ({
+            ok: true as const,
+            snapshot: oid === "oid-0" ? reExtracted : SNAPSHOT,
+          }),
+        },
+        knowledgeStore: store,
+        claudePort: fakeClaudePort([], verifyBody),
+        codexExecutor: fakeCodexExecutor(captures, workerBody),
+        repoKey: "repo",
+        repoRoot: "/repo",
+        baseOid: "oid-1",
+        git,
+      });
+      expect(outcome.status).toBe("ok");
+      return captures.length;
+    };
+
+    // `fp-0` is what `priorSet()` records; `fp-re-extracted` is the same commit seen
+    // by a later extraction, which the set never learned against.
+    expect(await runWithPriorFingerprint("fp-re-extracted")).toBe(1);
+    expect(await runWithPriorFingerprint("fp-0")).toBe(0);
   });
 
   it("a git failure is a FAILED pass the scheduler retries, never a silent skip", async () => {

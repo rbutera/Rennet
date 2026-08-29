@@ -515,11 +515,24 @@ export async function runKnowledgeSwarmForRepo(
     // is handed `null`, which returns the changed set whole. Fewer turns is a saving
     // only when it is provably the same map; unprovable means run it.
     const priorSnapshot = deps.reader.loadFresh(deps.repoKey, prior.baseOid);
-    const structural = structuralChanges(
-      changed,
-      gated.snapshot,
-      priorSnapshot.ok ? priorSnapshot.snapshot : null,
-    );
+    // ⚠️ The OID is NOT enough to identify the prior snapshot. A manifest is stored
+    // per baseline and OVERWRITTEN in place, so a re-extraction at that same OID — a
+    // new symbol or import extractor, a changed inventory — replaces the view the
+    // stored statements were learned against while the OID stays put. Comparing the
+    // current snapshot against THAT one answers "did the file's signature move" from
+    // two different extractions, which can read identical when the code moved and
+    // different when it did not. `snapshotFingerprint` is the extraction's identity
+    // and the knowledge set records the one it learned against, so it is the join.
+    //
+    // A mismatch means we hold no comparable prior, which is exactly the case
+    // `structuralChanges(…, null)` exists for: the whole change is structural and
+    // every touched slice re-runs. Fail-safe, and the same direction every other
+    // unanswerable case in this pass takes.
+    const priorComparable =
+      priorSnapshot.ok && priorSnapshot.snapshot.manifest.fingerprint === prior.snapshotFingerprint
+        ? priorSnapshot.snapshot
+        : null;
+    const structural = structuralChanges(changed, gated.snapshot, priorComparable);
     slicesToRun = routeDelta(partitions, structural, priorPartitions);
     // What the partition-level rule would have run, minus what the file-level rule
     // does — computed, not inferred, because "3 slices ran" and "3 slices ran and 9
