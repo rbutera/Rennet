@@ -169,20 +169,29 @@ Those eligible files come out as **105 slices**:
 Batching itself takes about 110 ms; the clean full snapshot build that feeds it
 takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
-The fallback tail is where the count came from and where it went. Before
-coalescing it held the same 1,089-odd files in **149** slices at a mean of 7.3,
-which made the run 201 turns — and the plan's speed arithmetic, *"at ~50 batches,
-78 s/turn clears the five-minute bar at concurrency ~13"*, was computed against a
-batch count that did not exist. At 201 turns that arithmetic lands near twenty
-minutes, four times over the bar.
+#### The five-minute bar is not met yet
 
-At 105 turns it lands differently: 105 × 78 s ÷ 8 lanes ≈ 17 minutes of lane time,
-or about 2.6 minutes wall at the named concurrency of 8 once the deterministic
-30-second build is added — inside the bar, with no margin to spare and on a
-per-turn figure measured against the *old*, bare-path-list prompt. Skeleton-fed
-prompts should shorten the turn; that has not been measured against a live
-harness, so the honest statement of this design's cost remains **105 turns**, and
-the wall-clock claim above is arithmetic rather than a measurement.
+105 slices is 105 worker turns. At the last measured 78 s per turn that is 8,190
+seconds of turn time; at the named concurrency of 8 it is **about 17 minutes of
+wall clock**, or 17.6 with the 30-second deterministic build in front of it.
+Dividing turn time by lanes gives wall clock — there is no separate, smaller
+"wall" figure to quote, and the target is five minutes.
+
+Three things could close that gap, and none of them is done:
+
+- **More lanes.** At 78 s/turn the bar needs 28 concurrent workers, or 31 once
+  the build is counted. The 16 GB development host has headroom for 8 alongside
+  the harness processes each lane spawns; the ceiling here is the machine.
+- **Shorter turns.** Workers are fed a symbol skeleton and their slice's own
+  import edges rather than a bare path list, which should cut the turn
+  substantially. It has not been timed against a live harness, so it buys an
+  unknown amount.
+- **Fewer turns.** The scoping seat (deciding that an edge-less file does not
+  deserve a turn at all) is unbuilt.
+
+So the honest statement of this design's cost is **105 turns, ~17 minutes wall at
+concurrency 8**, on a per-turn figure measured against the old, bare-path-list
+prompt. It is arithmetic, not a stopwatch reading, and it is over the bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -288,24 +297,35 @@ statement ids; collapses the same claim minted over different evidence, keeping
 the better-anchored one (more anchors, then more line spans, then the smaller id
 — deterministic to the bottom, so two runs of one swarm merge identically); and
 checks every import-shaped claim against the authoritative edge shard. A claim
-that names two indexed files and asserts an import between them, where no
-resolved edge joins any pair it names, is *flagged* — never deleted and never
-rewritten. The import index is textual, so a computed import looks exactly like a
-false claim, and silently editing a model's words would be worse than either.
+that asserts an import between two files it *names or cites*, where no resolved
+edge joins any pair of them, is *flagged* — never deleted and never rewritten.
+The import index is textual, so a computed import looks exactly like a false
+claim, and silently editing a model's words would be worse than either. A claim
+whose second endpoint is neither written down nor cited stays a hypothesis: there
+is nothing to cross-check it against, and nothing a seat could adjudicate either.
 
 The merge never mints. Every surviving statement keeps its worker's provenance
 byte for byte.
 
 ### What the verify seat is left
 
-The seat used to receive every hypothesis the swarm minted. On Rennet that was
-~1,900 statements in one prompt, which is the prompt that died with "Prompt is
-too long" and discarded whole runs. It now receives only the merge's residue:
+The seat receives only the merge's residue:
 
 - **Seams.** A claim on one end of a cut import edge, where another batch also
-  made a claim about the other end. That pair is invisible to either worker and
-  is the whole of the cross-batch synthesis job. A claim carrying a worker *hint*
-  joins them too, since nothing else reads a hint.
+  made a claim about the other end. That pair is invisible to either worker. Cut
+  edges are read from the whole import graph, not from the packets' capped
+  neighbour lists, so a hub file's later neighbours are still visible to the
+  merge; and seam coverage is computed before duplicate claims collapse, because
+  two workers on opposite ends of one edge routinely word the same claim
+  identically and the collapse would otherwise erase the far end. A claim
+  carrying a worker *hint* joins them too, since nothing else reads a hint.
+
+  The seam signal is import cut edges and nothing more. Two batches related by
+  something the import graph cannot see — a shared convention, a protocol both
+  ends implement, a runtime registration — produce no seam; the channel for those
+  is the worker's own hint. This is a precise signal over one relation plus a
+  model-supplied escape hatch, not a completeness claim about cross-batch
+  relationships.
 - **Flagged statements.** The edge-shard contradictions above, plus a delta's
   prior statements whose cited evidence changed — unsettleable by script, because
   the bytes moved.
@@ -338,24 +358,37 @@ therefore near-repository-wide rather than exhaustive.
 
 ### Persistence: the journal
 
-The run used to have exactly one store write, after the verify seat returned. One
-flaky worker out of two hundred threw away the other hundred and ninety-nine
-turns, and a crash left nothing anywhere.
-
-Each completed batch now writes its result to a **journal** — a directory beside
+Each completed batch writes its result to a **journal** — a directory beside
 `knowledge/` in the project's reserved store, never inside it, that no reader
-consults. A re-run at the same target (base OID, slice id, and the slice's exact
-membership) reuses those results instead of re-running their turns, so a retry
-pays only for what actually failed. Narration says `reused from the journal`
-rather than `done`, because no turn was spent.
+consults. A re-run at the same target reuses those results instead of re-running
+their turns, so a retry pays only for what actually failed. Narration says
+`reused from the journal` rather than `done`, because no turn was spent.
 
-A failed batch no longer abandons the queue. Every batch runs, failures are
-retried once after the rest have finished, and if a batch still fails the run
-reports **which** slices failed and how many completed results are waiting for
-the next attempt. The store rule is unchanged and is the point of keeping the two
-places apart: the live `knowledge.json` is written once, when the set is whole. A
-partial set never presents as complete, however much of it is journaled. Only a
-successful promotion clears the journal.
+A *target* is the base OID, the snapshot fingerprint, the generator id, the slice
+id, and the slice's exact membership. All five: a re-extraction or a prompt
+rework at an unchanged git OID is a different question, and the old answer is not
+an answer to it. A journaled record also carries a checksum over the worker
+result, and on read every statement id is recomputed from its content, every
+`learnedAgainst` must name this target, and every anchor must resolve against the
+slice's membership at its current blob. Anything that does not survive those
+checks reads as "not journaled", which costs one re-run turn — the cheap side of
+the trade against a damaged statement entering a set.
+
+Every batch runs; failures are retried once after the rest have finished; and if
+a batch still fails the run reports **which** slices failed and how many of this
+run's batches are waiting for the next attempt. The store rule is the point of
+keeping the two places apart: the live `knowledge.json` is written once, when the
+set is whole. A partial set never presents as complete, however much of it is
+journaled.
+
+The journal is one directory **per target**, and a promotion clears only its own
+plus any target directory untouched for a day. Two runs can be in flight at once
+— the background watcher is single-flight with itself, but the review-open
+knowledge kick is not coordinated with it — and a recursive clear would let the
+first to promote destroy the other's completed turns. For the same reason the
+store write re-reads the store's identity first: a run whose prior moved
+underneath it refuses to save, reports **superseded**, and keeps its journal so
+the retry costs no turns.
 
 Worker fan-out runs at a named default concurrency of 8 — a policy, not an
 unrevisited literal, and overridable per run. It is deliberately not adaptive: a
