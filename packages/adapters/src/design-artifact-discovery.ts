@@ -615,15 +615,21 @@ function isPathCharacter(character: string | undefined): boolean {
   return character !== undefined && /[A-Za-z0-9_./-]/.test(character);
 }
 
+function isPathReferenceStart(content: string, index: number): boolean {
+  const before = index === 0 ? undefined : content[index - 1];
+  if (!isPathCharacter(before)) return true;
+  if (before !== "/" || content[index - 2] !== ".") return false;
+  return !isPathCharacter(index < 3 ? undefined : content[index - 3]);
+}
+
 function contentReferencesPath(content: string, path: string): boolean {
   let offset = 0;
   while (offset < content.length) {
     const index = content.indexOf(path, offset);
     if (index === -1) return false;
-    const before = index === 0 ? undefined : content[index - 1];
     const afterIndex = index + path.length;
     const after = afterIndex >= content.length ? undefined : content[afterIndex];
-    if (!isPathCharacter(before) && !isPathCharacter(after)) return true;
+    if (isPathReferenceStart(content, index) && !isPathCharacter(after)) return true;
     offset = index + 1;
   }
   return false;

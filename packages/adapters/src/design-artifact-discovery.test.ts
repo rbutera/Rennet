@@ -273,7 +273,7 @@ describe("discoverDesignArtifacts", () => {
       "src/target.ts": "export const target = 1;\n",
       "openspec/changes/aaa-decoy/proposal.md": "# Decoy\n\nThis mentions only `src/target.tsx`.\n",
       "openspec/changes/zzz-target/proposal.md":
-        "# Target\n\nThis change modifies `src/target.ts`.\n",
+        "# Target\n\nThis change modifies `./src/target.ts`.\n",
     });
     writeFiles(repo.root, { "src/target.ts": "export const target = 2;\n" });
 
