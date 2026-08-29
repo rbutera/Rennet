@@ -24,8 +24,10 @@ import { selectProcessingProjectIds, useRennetStore } from "../store";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The unified review-target vocabulary (R36 icon language). Location (the host) is
- *  the sidebar grouping, never a target label. Defined here until B9's projection
- *  carries it in the wire. */
+ *  the sidebar grouping, never a target label. BROADER than the wire it reads: the served
+ *  `SidebarSession.target` is `your-branch | your-pr` only — `sidebarSessionOf` splits on
+ *  whether the claim carries a PR number and never emits `teammate-pr` — so that member,
+ *  and its icon, are reachable from a fixture and not from a live row. */
 export type SessionTarget = "your-branch" | "your-pr" | "teammate-pr";
 export type SessionTargetState = "needs-you" | "merged" | "reviewed";
 
@@ -214,7 +216,7 @@ export interface SidebarTree {
 }
 
 /** The whole sidebar tree: real projects grouped by host, sessions from the
- *  projection (empty in the live client until B9). */
+ *  projection (served off `session.list` in the live client). */
 export function useSidebarTree(): SidebarTree {
   const { data, pending } = useCommand("projects.list", {});
   const projection = useSidebarSessionProjection();

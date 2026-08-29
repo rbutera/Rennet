@@ -19,8 +19,8 @@ import {
 // A main-surface takeover, like Settings: back/Esc leave to the front door, the
 // sidebar stays mounted underneath. This is a sibling route, NOT a settings page.
 //
-// Sessions are B9-shaped — they live in the sidebar's session projection, EMPTY in
-// the live client until B9 lands (no fake session protocol here). This view reads the
+// Sessions live in the sidebar's session projection, served off `session.list` (no fake
+// session protocol here, and none was ever added while it was empty). This view reads the
 // same projected tree the sidebar does, lists its archived rows, and lets you search
 // (by session title OR project name), sort (recent / project / title), open a row
 // (routes to the session), or unarchive it. Unarchive calls the projection's
