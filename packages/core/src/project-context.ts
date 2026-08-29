@@ -381,7 +381,7 @@ export interface ProjectMapScope {
 }
 
 /** Whether `entryPath` is `prefix` itself or lies within the `prefix/` subtree. */
-function underPrefix(entryPath: string, prefix: string): boolean {
+export function underPrefix(entryPath: string, prefix: string): boolean {
   if (prefix === "") return true;
   return entryPath === prefix || entryPath.startsWith(`${prefix}/`);
 }
@@ -1382,15 +1382,22 @@ function addAdjacent(index: Map<string, Set<string>>, key: string, value: string
  */
 export function fanInIndexFromSnapshot(snapshot: LoadedSnapshot): FanInIndex {
   const graph = queryImportGraph(snapshot);
+  // The BASE file inventory — the set of paths this snapshot can answer ANYTHING
+  // about. A changed path outside it (an added file, a rename destination, a path
+  // the file cap never indexed) must read as not-assessed, never as zero dependents.
+  const basePaths = new Set(snapshot.files.map((file) => file.path));
+  const knowsPath = (path: string): boolean => basePaths.has(path);
   if (graph.ok && graph.graph.edges.length > 0) {
     const resolved = graph.graph;
     return {
       method: "import-edges",
+      knowsPath,
       importersOf: (path: string) => resolved.importersOf(path),
     };
   }
   return {
     method: "textual",
+    knowsPath,
     definedSymbols(path: string): readonly string[] {
       const result = queryFileOverview(snapshot, path);
       return result.ok ? result.overview.symbols.map((symbol) => symbol.name) : [];

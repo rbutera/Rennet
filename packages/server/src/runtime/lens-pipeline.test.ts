@@ -2,8 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WhiteboardClient } from "@rennet/adapters";
-import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
-import type { DraftBoard, LensKind } from "@rennet/protocol";
+import {
+  type DeltaPacket,
+  type HarnessPort,
+  type LintContext,
+  type LintHunk,
+  type LintTarget,
+  selectPacketKnowledge,
+} from "@rennet/core";
+import type { DraftBoard, KnowledgeStatement, LensKind } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import {
@@ -13,6 +20,7 @@ import {
   composeReviewDraft,
   draftToOps,
   reconcileFlaggedBoards,
+  renderDrafterPrompt,
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
@@ -140,6 +148,49 @@ function fakeWhiteboard(applied: Applied[]) {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe("renderDrafterPrompt — what the packet's knowledge field actually shows a drafter", () => {
+  const statement = (id: string, claim: string): KnowledgeStatement => ({
+    id,
+    subject: "src/a.ts",
+    aspect: "purpose",
+    claim,
+    evidence: [{ path: "src/a.ts", blobOid: "blob-a" }],
+    confidence: "high",
+    status: "hypothesis",
+    provenance: { generator: "g@1", model: null, apiKeySource: null },
+    learnedAgainst: { baseOid: "oid", snapshotFingerprint: "fp" },
+  });
+
+  it("inlines the OFFERED subset, leaves the capped-out statement out, and shows the truncation", () => {
+    // Two statements, a cap of one: the drafter must see one claim, must NOT see the
+    // other, and must be able to tell that a second one exists. Asserting only the
+    // first would pass over an implementation that silently dropped the disclosure.
+    const knowledge = selectPacketKnowledge({
+      set: {
+        schemaVersion: 1,
+        repoKey: "repo",
+        baseOid: "oid",
+        snapshotFingerprint: "fp",
+        generator: "g@1",
+        statements: [statement("k1", "OFFERED-CLAIM"), statement("k2", "DROPPED-CLAIM")],
+      },
+      snapshot: null,
+      changedPaths: ["src/a.ts"],
+      cap: 1,
+    });
+    const packet = { ...PACKET, knowledge } as unknown as DeltaPacket;
+    const prompt = renderDrafterPrompt("PROMPT_FILE:prompts/design.md", packet);
+
+    expect(prompt).toContain("OFFERED-CLAIM");
+    expect(prompt).not.toContain("DROPPED-CLAIM");
+    // The honesty flags travel with it: the mode it got, and how much it did not get.
+    expect(prompt).toContain('"truncated":1');
+    expect(prompt).toContain('"inStore":2');
+    expect(prompt).toContain('"mode":"unprojected"');
+    expect(prompt).toContain("context.ask");
+  });
+});
 
 describe("draftToOps", () => {
   it("projects each draft element into one create op (the host is the sole op writer)", () => {

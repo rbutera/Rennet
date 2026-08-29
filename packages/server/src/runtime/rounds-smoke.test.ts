@@ -16,12 +16,12 @@ import {
   type LintContext,
   type LintHunk,
   type LintTarget,
+  selectPacketKnowledge,
 } from "@rennet/core";
 import {
   type DossierItem,
   type DraftBoard,
   type Generation,
-  type KnowledgeSet,
   type Patchset,
   parseDraft,
   type SessionModel,
@@ -120,14 +120,18 @@ function smallPatchset(): Patchset {
   };
 }
 
-const KNOWLEDGE: KnowledgeSet = {
-  schemaVersion: 1,
-  repoKey: "repo",
-  baseOid: "0".repeat(40),
-  snapshotFingerprint: "fp",
-  generator: "c15-smoke",
-  statements: [],
-};
+const KNOWLEDGE = selectPacketKnowledge({
+  set: {
+    schemaVersion: 1,
+    repoKey: "repo",
+    baseOid: "0".repeat(40),
+    snapshotFingerprint: "fp",
+    generator: "c15-smoke",
+    statements: [],
+  },
+  snapshot: null,
+  changedPaths: [],
+});
 
 const DOSSIER: readonly DossierItem[] = [];
 

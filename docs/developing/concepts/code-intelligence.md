@@ -80,11 +80,24 @@ in the stronger one's shape. `fanInIndexFromSnapshot` builds that index from a
 materialized snapshot, preferring the import graph and falling back to the
 identifier-reference index when the snapshot has no import shards.
 
-**Nothing consumes it yet.** The Delta packet builds its blast radius without a
-fan-in index, so the fan-in signal in a review today is marked *not assessed* — not
-zero, and not a textual count wearing an edge-backed label. Wiring the index into
-the packet is a later wave; until then the capability exists and the review does not
-use it.
+The Delta packet consumes it. When the composition root gates a fresh snapshot at
+the patchset's base OID, `assembleRoundCollation()` builds the index and the blast
+radius counts real dependents; the mark's own wording names the method that
+answered, so a textual count never reads as a proven import edge.
+
+The index is supplied only when the snapshot can genuinely answer the question. An
+`import-edges` index is populated by construction. A `textual` one is withheld
+unless the snapshot carries *both* the symbol and the identifier-occurrence shards,
+because its lookup is a join across them and either half missing answers *zero
+dependents* for every file — rendering as "checked, nothing depends on this".
+Without an index the mark stays *not assessed* — never a silent zero.
+
+Availability is also per file, because a populated index still cannot answer about
+a path the base snapshot never carried. Fan-in is asked at the **base-side** path,
+so a rename is counted where the file used to live; and an added file, or one the
+snapshot's file cap never indexed, gets its own *not assessed* mark rather than a
+zero. The repo-wide assessment stays true either way — this is one file the base
+could not answer for, not the signal going dark.
 
 ## Mapping eligibility
 

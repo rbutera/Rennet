@@ -1,8 +1,14 @@
-import type { DossierItem, KnowledgeSet, Patchset, SuccessorAccount } from "@rennet/protocol";
+import type { DossierItem, Patchset, SuccessorAccount } from "@rennet/protocol";
 import { parseFilePatch } from "../decomposition";
-import { type BlastRadiusSignalMark, compareStrings, computeBlastRadius } from "./blast-radius";
+import {
+  type BlastRadiusSignalMark,
+  compareStrings,
+  computeBlastRadius,
+  type FanInIndex,
+} from "./blast-radius";
 import { buildCounterpartHints, type CounterpartHint } from "./counterpart-hints";
 import { buildHunkIndex, type HunkIndex } from "./hunk-index";
+import type { ScopedKnowledge } from "./knowledge-scope";
 import { type NoisePreclassFact, preclassifyNoise } from "./noise-preclass";
 
 /**
@@ -38,7 +44,13 @@ export interface DeltaPacket {
     readonly files: readonly DeltaPacketFile[];
   };
   readonly hunks: HunkIndex;
-  readonly knowledge: KnowledgeSet;
+  /**
+   * The knowledge subset this packet offers — projected, scoped to the change, and
+   * capped, with all three disclosed ({@link ScopedKnowledge}). NOT the whole stored
+   * set: a drafter that wants more asks `context.ask`, and the packet's counts say
+   * how much more there is.
+   */
+  readonly knowledge: ScopedKnowledge;
   readonly dossier: readonly DossierItem[];
   /** Present iff a prior generation exists (the caller supplies it on rounds). */
   readonly successorAccount?: SuccessorAccount;
@@ -83,21 +95,26 @@ function openspecTouch(files: Patchset["files"]): OpenSpecTouch | undefined {
  * Assemble the Delta packet — pure, deterministic, no I/O, no model call. The
  * patchset supplies every derived section (hunk index, blast radius, noise
  * pre-classification, counterpart hints, openspec touch); knowledge, dossier and
- * the successor account arrive as the protocol contracts their producers minted
- * (B6/B7/rounds) and are carried through, never re-modeled.
+ * the successor account arrive as the contracts their producers minted
+ * (`selectPacketKnowledge`/B6/B7/rounds) and are carried through VERBATIM, never
+ * re-modeled here. Knowledge is a SELECTION, and the selecting — projection,
+ * 1-hop scoping, the cap and its disclosure — happens in its producer
+ * ({@link ScopedKnowledge}), upstream of this pure assembly.
  *
- * Blast radius here is patchset-only: ownership rules and the fan-in index live
- * with the project snapshot (I/O), so those signals stay honestly not-assessed /
- * absent until B8's dispatch — which owns the snapshot — feeds them in. The
- * openspec section is path grain for the same reason: artifact TEXT is read off
- * disk, so the full `parseOpenSpecChange` runs where the text lives (B8), over
- * the same seam-exported parser.
+ * Blast radius reads the snapshot-derived `fanIn` index when the composition root
+ * supplies one (it supplies it only when the snapshot can genuinely answer "what
+ * depends on this file?"); without it the fan-in signal stays honestly NOT
+ * ASSESSED rather than a silent zero. Ownership rules are still patchset-only. The
+ * openspec section is path grain because artifact TEXT is read off disk, so the
+ * full `parseOpenSpecChange` runs where the text lives (B8), over the same
+ * seam-exported parser.
  */
 export function buildDeltaPacket(
   patchset: Patchset,
-  knowledge: KnowledgeSet,
+  knowledge: ScopedKnowledge,
   dossier: readonly DossierItem[],
   successorAccount?: SuccessorAccount,
+  fanIn?: FanInIndex,
 ): DeltaPacket {
   const hunks = buildHunkIndex(patchset);
   const openspec = openspecTouch(patchset.files);
@@ -124,7 +141,11 @@ export function buildDeltaPacket(
     knowledge,
     dossier,
     ...(successorAccount !== undefined ? { successorAccount } : {}),
-    blastRadius: computeBlastRadius({ files: patchset.files, ownership: [] }),
+    blastRadius: computeBlastRadius({
+      files: patchset.files,
+      ownership: [],
+      ...(fanIn === undefined ? {} : { fanIn }),
+    }),
     ...(openspec !== undefined ? { openspec } : {}),
     noisePreclass: preclassifyNoise(hunks),
     counterpartHints: buildCounterpartHints(patchset.files.map((file) => file.path)),
