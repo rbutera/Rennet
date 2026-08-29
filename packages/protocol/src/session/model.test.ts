@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { sha256Hex } from "../sha256";
 import {
   AskSchema,
   ClaimSchema,
   GenerationSchema,
   HarnessCursorSchema,
+  isRoundOperationTerminal,
   LaneRowSchema,
   LensLaneSchema,
   RoundEventSchema,
+  RoundOperationSchema,
   RoundRecordSchema,
   SessionModelSchema,
   SessionThreadSchema,
@@ -41,6 +44,60 @@ const thread = {
     provenance: "el-finding-3",
     lifecycle: "staged",
   },
+} as const;
+
+const operationPrompt = "Apply the requested change.";
+const operationBase = {
+  operationId: "op-1",
+  sessionId: "session-1",
+  reviewId: "review-1",
+  dispatchId: "dispatch-1",
+  sourcePatchsetId: "patchset-1",
+  askOccurrences: [{ id: "ask-1", revision: 4 }],
+  roundNumber: 1,
+  sourceTarget: { kind: "branch", branch: "feat/round" },
+  repoRoot: "/repo",
+  workOrderPrompt: operationPrompt,
+  workOrderDigest: sha256Hex(operationPrompt),
+  gatePlan: { kind: "configured", command: "pnpm check" },
+  revision: 0,
+  rerunRequested: false,
+  createdAt: 100,
+  updatedAt: 100,
+} as const;
+const operationWorkspaceAttempt = {
+  kind: "detached-worktree",
+  worktreePath: "/worktrees/round-1",
+  sourceHead: "abc123",
+  startedAt: 105,
+} as const;
+const operationWorkspace = {
+  ...operationWorkspaceAttempt,
+  preparedAt: 110,
+} as const;
+const operationWorker = {
+  executionId: "worker-1",
+  startedAt: 120,
+  completedAt: 130,
+  outcome: "completed",
+  diff: "diff --git a/a b/a",
+  changedPaths: ["a"],
+} as const;
+const operationGate = {
+  executionId: "gate-1",
+  startedAt: 140,
+  completedAt: 150,
+  outcome: "passed",
+  exitCode: 0,
+} as const;
+const operationCommits = {
+  executionId: "commit-1",
+  baseHead: "abc123",
+  startedAt: 155,
+  from: "abc123",
+  to: "def456",
+  count: 1,
+  committedAt: 160,
 } as const;
 
 describe("session/ durable shapes (#466/#457)", () => {
@@ -205,6 +262,245 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(RoundEventSchema.parse({ type: "dispatched" }).seq).toBeUndefined();
     expect(RoundEventSchema.safeParse({ type: "dispatched", seq: -1 }).success).toBe(false);
     expect(RoundEventSchema.parse({ type: "unchanged" })).toEqual({ type: "unchanged" });
+  });
+
+  it("makes a durable round operation's active and terminal phases explicit", () => {
+    const claimed = RoundOperationSchema.parse({
+      ...operationBase,
+      state: { phase: "claimed" },
+    });
+    expect(isRoundOperationTerminal(claimed)).toBe(false);
+    expect(
+      RoundOperationSchema.parse({
+        ...operationBase,
+        revision: 1,
+        updatedAt: 105,
+        state: { phase: "workspace-preparing", workspace: operationWorkspaceAttempt },
+      }).state.phase,
+    ).toBe("workspace-preparing");
+    const completed = RoundOperationSchema.parse({
+      ...operationBase,
+      revision: 8,
+      updatedAt: 180,
+      state: {
+        phase: "completed",
+        workspace: operationWorkspace,
+        worker: operationWorker,
+        gate: operationGate,
+        commits: operationCommits,
+        result: {
+          kind: "changed",
+          report: {
+            executionId: "report-draft-1",
+            reportBoardId: "report-1",
+            generation: "gen-2",
+            startedAt: 165,
+            draftedAt: 170,
+            verificationExecutionId: "report-verify-1",
+            verificationStartedAt: 175,
+            verifiedAt: 180,
+          },
+        },
+        completedAt: 180,
+      },
+    });
+    expect(isRoundOperationTerminal(completed)).toBe(true);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "completed",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: operationCommits,
+          result: { kind: "changed" },
+          completedAt: 180,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "completed",
+          workspace: operationWorkspace,
+          worker: { ...operationWorker, diff: "", changedPaths: [] },
+          gate: operationGate,
+          commits: { ...operationCommits, count: 0, from: "abc123", to: "abc123" },
+          result: {
+            kind: "changed",
+            report: {
+              executionId: "report-draft-1",
+              reportBoardId: "report-1",
+              generation: "gen-2",
+              startedAt: 165,
+              draftedAt: 170,
+              verificationExecutionId: "report-verify-1",
+              verificationStartedAt: 175,
+              verifiedAt: 180,
+            },
+          },
+          completedAt: 180,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects failed prerequisites and contradictory unchanged evidence", () => {
+    const failedWorker = {
+      ...operationWorker,
+      outcome: "failed",
+      termination: { kind: "error", reason: "worker stopped" },
+    } as const;
+    const failedGate = {
+      ...operationGate,
+      outcome: "failed",
+      termination: { kind: "exit", exitCode: 1 },
+    } as const;
+    for (const [worker, gate] of [
+      [failedWorker, operationGate],
+      [operationWorker, failedGate],
+    ] as const) {
+      expect(
+        RoundOperationSchema.safeParse({
+          ...operationBase,
+          state: {
+            phase: "completed",
+            workspace: operationWorkspace,
+            worker,
+            gate,
+            commits: operationCommits,
+            result: {
+              kind: "changed",
+              report: {
+                executionId: "report-draft-1",
+                reportBoardId: "report-1",
+                generation: "gen-2",
+                startedAt: 165,
+                draftedAt: 170,
+                verificationExecutionId: "report-verify-1",
+                verificationStartedAt: 175,
+                verifiedAt: 180,
+              },
+            },
+            completedAt: 180,
+          },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "failed",
+          failure: { at: "gate", reason: "gate stopped", failedAt: 150 },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "completed",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: { ...operationCommits, count: 0, from: "abc123", to: "abc123" },
+          result: { kind: "unchanged" },
+          completedAt: 180,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("binds the operation identity and admits an honest detached source", () => {
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        workOrderDigest: "a".repeat(64),
+        state: { phase: "claimed" },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        askOccurrences: [operationBase.askOccurrences[0], operationBase.askOccurrences[0]],
+        state: { phase: "claimed" },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.parse({
+        ...operationBase,
+        sourceTarget: { kind: "detached", head: "abc123" },
+        state: { phase: "claimed" },
+      }).sourceTarget.kind,
+    ).toBe("detached");
+  });
+
+  it("records an absent gate honestly and writes report identity before drafting", () => {
+    const skippedGate = { outcome: "skipped", reason: "not-configured", settledAt: 150 } as const;
+    const noCommits = {
+      ...operationCommits,
+      to: operationCommits.from,
+      count: 0,
+    } as const;
+    expect(
+      RoundOperationSchema.parse({
+        ...operationBase,
+        gatePlan: { kind: "absent" },
+        state: {
+          phase: "completed",
+          workspace: operationWorkspace,
+          worker: { ...operationWorker, diff: "", changedPaths: [] },
+          gate: skippedGate,
+          commits: noCommits,
+          result: { kind: "unchanged" },
+          completedAt: 180,
+        },
+      }).state.phase,
+    ).toBe("completed");
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "gate-settled",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: skippedGate,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "report-drafting",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: operationCommits,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.parse({
+        ...operationBase,
+        state: {
+          phase: "report-drafting",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: operationCommits,
+          report: {
+            executionId: "report-draft-1",
+            reportBoardId: "report-1",
+            generation: "gen-2",
+            startedAt: 165,
+          },
+        },
+      }).state.phase,
+    ).toBe("report-drafting");
   });
 
   it("carries a frozen-predecessor id for a landed round, none for a first-generation round", () => {

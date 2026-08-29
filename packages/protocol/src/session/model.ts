@@ -9,6 +9,7 @@ import { AskLifecycleSchema, generationIdForPatchset, QuoteAnchorSchema } from "
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
+import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
 
@@ -142,6 +143,455 @@ export const AskOccurrenceSchema = z.object({
   revision: z.number().int().nonnegative(),
 });
 export type AskOccurrence = z.infer<typeof AskOccurrenceSchema>;
+
+/** The detached execution locus reserved before creation starts. Persisting its identity first
+ * lets restart recovery adopt or clean the exact worktree after a mid-prepare crash. */
+export const RoundWorkspaceAttemptSchema = z.object({
+  kind: z.literal("detached-worktree"),
+  worktreePath: id,
+  sourceHead: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundWorkspaceAttempt = z.infer<typeof RoundWorkspaceAttemptSchema>;
+
+/** The detached execution locus prepared for one round. Its source commit is the exact
+ * reviewed tree/checkpoint the work order was composed against, never ambient checkout HEAD. */
+export const RoundWorkspaceReceiptSchema = RoundWorkspaceAttemptSchema.extend({
+  preparedAt: z.number().int().nonnegative(),
+});
+export type RoundWorkspaceReceipt = z.infer<typeof RoundWorkspaceReceiptSchema>;
+
+export const RoundWorkerAttemptSchema = z.object({
+  executionId: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundWorkerAttempt = z.infer<typeof RoundWorkerAttemptSchema>;
+
+const completedWorkerBase = {
+  ...RoundWorkerAttemptSchema.shape,
+  completedAt: z.number().int().nonnegative(),
+  diff: z.string(),
+  changedPaths: z.array(z.string()),
+};
+
+export const RoundTerminationSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("exit"),
+    exitCode: z
+      .number()
+      .int()
+      .refine((value) => value !== 0),
+  }),
+  z.object({ kind: z.literal("signal"), signal: id }),
+  z.object({ kind: z.literal("error"), reason: z.string().min(1) }),
+]);
+export type RoundTermination = z.infer<typeof RoundTerminationSchema>;
+
+export const RoundWorkerCompletedReceiptSchema = z.object({
+  ...completedWorkerBase,
+  outcome: z.literal("completed"),
+});
+export type RoundWorkerCompletedReceipt = z.infer<typeof RoundWorkerCompletedReceiptSchema>;
+
+export const RoundWorkerFailedReceiptSchema = z.object({
+  ...completedWorkerBase,
+  outcome: z.literal("failed"),
+  termination: RoundTerminationSchema,
+});
+export type RoundWorkerFailedReceipt = z.infer<typeof RoundWorkerFailedReceiptSchema>;
+
+/** What the coding worker actually returned. A failed worker keeps its partial diff. */
+export const RoundWorkerReceiptSchema = z.discriminatedUnion("outcome", [
+  RoundWorkerCompletedReceiptSchema,
+  RoundWorkerFailedReceiptSchema,
+]);
+export type RoundWorkerReceipt = z.infer<typeof RoundWorkerReceiptSchema>;
+
+export const RoundGateAttemptSchema = z.object({
+  executionId: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundGateAttempt = z.infer<typeof RoundGateAttemptSchema>;
+
+const completedGateBase = {
+  ...RoundGateAttemptSchema.shape,
+  completedAt: z.number().int().nonnegative(),
+};
+
+export const RoundGatePassedReceiptSchema = z.object({
+  ...completedGateBase,
+  outcome: z.literal("passed"),
+  exitCode: z.literal(0),
+});
+export type RoundGatePassedReceipt = z.infer<typeof RoundGatePassedReceiptSchema>;
+
+export const RoundGateFailedReceiptSchema = z.object({
+  ...completedGateBase,
+  outcome: z.literal("failed"),
+  termination: RoundTerminationSchema,
+});
+export type RoundGateFailedReceipt = z.infer<typeof RoundGateFailedReceiptSchema>;
+
+export const RoundGateSkippedReceiptSchema = z.object({
+  outcome: z.literal("skipped"),
+  reason: z.literal("not-configured"),
+  settledAt: z.number().int().nonnegative(),
+});
+export type RoundGateSkippedReceipt = z.infer<typeof RoundGateSkippedReceiptSchema>;
+
+/** The configured repository gate's process result, not a UI inference. */
+export const RoundGateReceiptSchema = z.discriminatedUnion("outcome", [
+  RoundGatePassedReceiptSchema,
+  RoundGateFailedReceiptSchema,
+  RoundGateSkippedReceiptSchema,
+]);
+export type RoundGateReceipt = z.infer<typeof RoundGateReceiptSchema>;
+
+export const RoundGateSettledReceiptSchema = z.discriminatedUnion("outcome", [
+  RoundGatePassedReceiptSchema,
+  RoundGateSkippedReceiptSchema,
+]);
+export type RoundGateSettledReceipt = z.infer<typeof RoundGateSettledReceiptSchema>;
+
+export const RoundCommitAttemptSchema = z.object({
+  executionId: id,
+  baseHead: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundCommitAttempt = z.infer<typeof RoundCommitAttemptSchema>;
+
+/** The commits observed after the worker and gate settle. Equal endpoints with count zero
+ * are an honest no-commit result; a nonzero count is derived from Git. */
+export const RoundCommitReceiptSchema = z.object({
+  ...RoundCommitAttemptSchema.shape,
+  from: id,
+  to: id,
+  count: z.number().int().nonnegative(),
+  committedAt: z.number().int().nonnegative(),
+});
+export type RoundCommitReceipt = z.infer<typeof RoundCommitReceiptSchema>;
+
+export const RoundReportDraftAttemptSchema = z.object({
+  executionId: id,
+  reportBoardId: id,
+  generation: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundReportDraftAttempt = z.infer<typeof RoundReportDraftAttemptSchema>;
+
+export const RoundReportDraftReceiptSchema = RoundReportDraftAttemptSchema.extend({
+  draftedAt: z.number().int().nonnegative(),
+});
+export type RoundReportDraftReceipt = z.infer<typeof RoundReportDraftReceiptSchema>;
+
+export const RoundReportVerificationAttemptSchema = z.object({
+  executionId: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundReportVerificationAttempt = z.infer<typeof RoundReportVerificationAttemptSchema>;
+
+/** A report is complete only once the durable board named here has been verified readable. */
+export const RoundReportReceiptSchema = RoundReportDraftReceiptSchema.extend({
+  verificationExecutionId: id,
+  verificationStartedAt: z.number().int().nonnegative(),
+  verifiedAt: z.number().int().nonnegative(),
+});
+export type RoundReportReceipt = z.infer<typeof RoundReportReceiptSchema>;
+
+const failureBase = {
+  reason: z.string().min(1),
+  failedAt: z.number().int().nonnegative(),
+};
+
+export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
+  z.object({
+    at: z.literal("preparing"),
+    ...failureBase,
+    workspace: RoundWorkspaceAttemptSchema,
+  }),
+  z.object({
+    at: z.literal("worker"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: z.union([RoundWorkerFailedReceiptSchema, RoundWorkerAttemptSchema]),
+  }),
+  z.object({
+    at: z.literal("gate"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: z.union([RoundGateFailedReceiptSchema, RoundGateAttemptSchema]),
+  }),
+  z.object({
+    at: z.literal("committing"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commit: RoundCommitAttemptSchema,
+  }),
+  z.object({
+    at: z.literal("report-drafting"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    report: RoundReportDraftAttemptSchema,
+  }),
+  z.object({
+    at: z.literal("report-verifying"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    report: RoundReportDraftReceiptSchema,
+    verification: RoundReportVerificationAttemptSchema,
+  }),
+]);
+export type RoundOperationFailure = z.infer<typeof RoundOperationFailureSchema>;
+
+/** A round's durable phase. Each active arm carries every settled receipt needed to resume at
+ * that boundary, so a restart cannot mistake missing evidence for completed work. */
+export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
+  z.object({ phase: z.literal("claimed") }),
+  z.object({ phase: z.literal("workspace-preparing"), workspace: RoundWorkspaceAttemptSchema }),
+  z.object({ phase: z.literal("prepared"), workspace: RoundWorkspaceReceiptSchema }),
+  z.object({
+    phase: z.literal("worker-running"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("worker-settled"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+  }),
+  z.object({
+    phase: z.literal("gate-running"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("gate-settled"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+  }),
+  z.object({
+    phase: z.literal("committing"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commit: RoundCommitAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("commits-settled"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+  }),
+  z.object({
+    phase: z.literal("report-drafting"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    report: RoundReportDraftAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("report-verifying"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    report: RoundReportDraftReceiptSchema,
+    verification: RoundReportVerificationAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("completed"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    result: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("changed"), report: RoundReportReceiptSchema }),
+      z.object({ kind: z.literal("unchanged") }),
+    ]),
+    completedAt: z.number().int().nonnegative(),
+  }),
+  z.object({
+    phase: z.literal("failed"),
+    failure: RoundOperationFailureSchema,
+  }),
+]);
+export type RoundOperationState = z.infer<typeof RoundOperationStateSchema>;
+
+function hasChangedRoundEvidence(
+  worker: { diff: string; changedPaths: string[] },
+  commits: { count: number; from: string; to: string },
+): boolean {
+  return (
+    worker.diff.trim().length > 0 &&
+    worker.changedPaths.length > 0 &&
+    commits.count > 0 &&
+    commits.from !== commits.to
+  );
+}
+
+/** The one durable owner of a session's round from dispatch claim through report verification.
+ * `revision` is the store CAS token; `rerunRequested` coalesces a dispatch attempted while the
+ * operation is active so its ask snapshot is built only after this operation drains. */
+export const RoundOperationSchema = z
+  .object({
+    operationId: id,
+    sessionId: id,
+    reviewId: id,
+    dispatchId: id,
+    sourcePatchsetId: id,
+    askOccurrences: z.array(AskOccurrenceSchema).min(1),
+    roundNumber: z.number().int().positive(),
+    sourceTarget: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("branch"), branch: id }),
+      z.object({ kind: z.literal("detached"), head: id }),
+    ]),
+    repoRoot: id,
+    workOrderPrompt: z.string().min(1),
+    workOrderDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    gatePlan: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("configured"), command: z.string().min(1) }),
+      z.object({ kind: z.literal("absent") }),
+    ]),
+    revision: z.number().int().nonnegative(),
+    rerunRequested: z.boolean(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+    state: RoundOperationStateSchema,
+  })
+  .superRefine((operation, context) => {
+    if (operation.workOrderDigest !== sha256Hex(operation.workOrderPrompt)) {
+      context.addIssue({
+        code: "custom",
+        path: ["workOrderDigest"],
+        message: "does not match workOrderPrompt",
+      });
+    }
+    const askIds = operation.askOccurrences.map((occurrence) => occurrence.id);
+    if (new Set(askIds).size !== askIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["askOccurrences"],
+        message: "contains duplicate ask ids",
+      });
+    }
+    if (operation.updatedAt < operation.createdAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["updatedAt"],
+        message: "precedes createdAt",
+      });
+    }
+    const state = operation.state;
+    const failure = state.phase === "failed" ? state.failure : undefined;
+    const gate =
+      state.phase !== "failed" && "gate" in state
+        ? state.gate
+        : failure !== undefined && "gate" in failure
+          ? failure.gate
+          : undefined;
+    if (
+      operation.gatePlan.kind === "absent" &&
+      (state.phase === "gate-running" ||
+        failure?.at === "gate" ||
+        (gate !== undefined && ("outcome" in gate ? gate.outcome !== "skipped" : true)))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "gate"],
+        message: "gate evidence contradicts the absent gate plan",
+      });
+    }
+    if (
+      operation.gatePlan.kind === "configured" &&
+      gate !== undefined &&
+      "outcome" in gate &&
+      gate.outcome === "skipped"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "gate"],
+        message: "configured gate cannot be skipped as not configured",
+      });
+    }
+    const workspace =
+      state.phase !== "failed" && "workspace" in state
+        ? state.workspace
+        : failure !== undefined && "workspace" in failure
+          ? failure.workspace
+          : undefined;
+    if (
+      operation.sourceTarget.kind === "detached" &&
+      workspace !== undefined &&
+      workspace.sourceHead !== operation.sourceTarget.head
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "workspace", "sourceHead"],
+        message: "does not match the detached source head",
+      });
+    }
+    const commits =
+      state.phase !== "failed" && "commits" in state
+        ? state.commits
+        : failure !== undefined && "commits" in failure
+          ? failure.commits
+          : undefined;
+    const changedEvidenceIsValid =
+      state.phase === "report-drafting" || state.phase === "report-verifying"
+        ? hasChangedRoundEvidence(state.worker, state.commits)
+        : state.phase === "completed" && state.result.kind === "changed"
+          ? hasChangedRoundEvidence(state.worker, state.commits)
+          : state.phase === "failed" &&
+              (state.failure.at === "report-drafting" || state.failure.at === "report-verifying")
+            ? hasChangedRoundEvidence(state.failure.worker, state.failure.commits)
+            : true;
+    if (!changedEvidenceIsValid) {
+      context.addIssue({
+        code: "custom",
+        path: ["state"],
+        message: "report path requires worker and commit evidence of changed code",
+      });
+    }
+    if (
+      operation.state.phase === "completed" &&
+      operation.state.result.kind === "unchanged" &&
+      (operation.state.worker.diff.trim().length > 0 ||
+        operation.state.worker.changedPaths.length > 0 ||
+        operation.state.commits.count !== 0 ||
+        operation.state.commits.from !== operation.state.commits.to)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "result"],
+        message: "unchanged result contradicts worker or commit evidence",
+      });
+    }
+    if (commits !== undefined && commits.baseHead !== commits.from) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "commits", "baseHead"],
+        message: "does not match the observed commit range start",
+      });
+    }
+  });
+export type RoundOperation = z.infer<typeof RoundOperationSchema>;
+
+export function isRoundOperationTerminal(operation: RoundOperation): boolean {
+  return operation.state.phase === "completed" || operation.state.phase === "failed";
+}
 
 /**
  * The rounds-ledger row (#462's #486 R57 ripple): what one work-order round

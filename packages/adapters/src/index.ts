@@ -536,6 +536,18 @@ export {
   reviewAskFixturePorts,
 } from "./review-ask-fixture";
 export {
+  defaultRoundOperationStoreDir,
+  ROUND_OPERATION_STORE_FILE_NAME,
+  ROUND_OPERATION_STORE_VERSION,
+  type RoundOperationActiveList,
+  RoundOperationConflictError,
+  type RoundOperationExpectation,
+  type RoundOperationListError,
+  RoundOperationStore,
+  RoundOperationStoreCorruptError,
+  type RoundOperationTransition,
+} from "./round-operation-store";
+export {
   defaultGenerationStoreDir,
   defaultRoundRecordStoreDir,
   GenerationStore,
