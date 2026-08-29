@@ -10,7 +10,7 @@ import {
   ProseSelectionLayer,
   RichText,
 } from "../review";
-import type { DispositionKind, StagedAsk } from "../store";
+import type { DispositionKind, ReviewState, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import {
@@ -78,6 +78,29 @@ function IntentTag({ type }: { type: DispositionKind }) {
       {INTENT_LABEL[type]}
     </Badge>
   );
+}
+
+function localResidueCounts(
+  quoteThreads: ReviewState["quoteThreads"],
+  codeComments: ReviewState["codeComments"],
+): { readonly threads: number; readonly comments: number } {
+  return {
+    threads: Object.keys(quoteThreads).length,
+    comments: Object.values(codeComments).reduce(
+      (count, lines) => count + Object.keys(lines).length,
+      0,
+    ),
+  };
+}
+
+function localResidueLine(
+  quoteThreads: ReviewState["quoteThreads"],
+  codeComments: ReviewState["codeComments"],
+): string {
+  const { threads, comments } = localResidueCounts(quoteThreads, codeComments);
+  return `${threads} thread${threads === 1 ? "" : "s"} · ${comments} code comment${
+    comments === 1 ? "" : "s"
+  } stay local`;
 }
 
 /** The receipt the egress returns once the review posts (verdict + line-comment count + link). */
@@ -172,11 +195,10 @@ function WorkingReviewDraft({
 
   const draft = useMemo(() => composeLivingDraft(stagedAsks), [stagedAsks]);
   const arithmetic = useMemo(() => verdictArithmeticFromAsks(stagedAsks), [stagedAsks]);
-  const commentsStaying = useMemo(
-    () => Object.values(codeComments).reduce((n, lines) => n + Object.keys(lines).length, 0),
-    [codeComments],
+  const localResidue = useMemo(
+    () => localResidueLine(quoteThreads, codeComments),
+    [quoteThreads, codeComments],
   );
-  const threadsStaying = Object.keys(quoteThreads).length;
 
   // A verdict flip is DURABLE (#435): it writes the ask log, which is what `publish.compose`
   // reads, so the flip survives into the composition instead of being discarded the moment the
@@ -365,10 +387,7 @@ function WorkingReviewDraft({
         )}
 
         {/* Residue: what stays local (no reassurance clause). */}
-        <p className="text-xs text-muted-foreground/80">
-          {threadsStaying} thread{threadsStaying === 1 ? "" : "s"} · {commentsStaying} code comment
-          {commentsStaying === 1 ? "" : "s"} stay local
-        </p>
+        <p className="text-xs text-muted-foreground/80">{localResidue}</p>
 
         {/* The Retired drawer: struck blocks, restorable with their whole provenance. */}
         {retired.length > 0 && (
@@ -512,7 +531,13 @@ function ComposedReviewPreview({
     : draft.destination;
 
   const draftEdits = useRennetStore((s) => s.review.draftEdits);
+  const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
+  const codeComments = useRennetStore((s) => s.review.codeComments);
   const pendingEditCount = Object.keys(draftEdits).length;
+  const localResidue = useMemo(
+    () => localResidueLine(quoteThreads, codeComments),
+    [quoteThreads, codeComments],
+  );
 
   const [receipt, setReceipt] = useState<PostReceipt | null>(null);
 
@@ -644,6 +669,9 @@ function ComposedReviewPreview({
             ))}
           </div>
         )}
+
+        {/* Residue remains local metadata; it is not part of the composed outbound bytes. */}
+        <p className="text-xs text-muted-foreground/80">{localResidue}</p>
 
         {/* The exact bytes above are what posts — no separate preview, no recomposition (R31/R33). */}
         <div className="flex items-center border-t border-border/60 pt-4">
