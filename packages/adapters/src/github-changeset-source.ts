@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { ForgePort, ForgePullRequest, ForgePullRequestRef, SsoState } from "@rennet/core";
+import type {
+  ForgePort,
+  ForgePullRequest,
+  ForgePullRequestRef,
+  Locus,
+  SsoState,
+} from "@rennet/core";
 import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/protocol";
 import {
   captureRangePatchset,
@@ -92,6 +98,7 @@ export interface GitHubChangesetResult {
 export interface GitHubChangesetSourceDeps {
   forge: ForgePort;
   git: GitExec;
+  locus?: Locus;
   pin: GitObjectPinner;
   worktrees: WorktreeProvider;
   visibleByteLimit?: number;
@@ -156,6 +163,7 @@ export class GitHubChangesetSource {
       const projectSnapshotId = await this.deps.resolveProjectSnapshotId?.(match.root, pr.baseOid);
       const patchset = await captureRangePatchset(this.deps.git, {
         root: match.root,
+        ...(this.deps.locus === undefined ? {} : { locus: this.deps.locus }),
         baseOid: pr.baseOid,
         headOid: pr.headOid,
         baseRef: pr.baseRef,
@@ -290,6 +298,7 @@ export class GitHubChangesetSource {
     const projectSnapshotId = await this.deps.resolveProjectSnapshotId?.(pin.root, pin.baseOid);
     return captureRangePatchset(this.deps.git, {
       root: pin.root,
+      ...(this.deps.locus === undefined ? {} : { locus: this.deps.locus }),
       baseOid: pin.baseOid,
       headOid: pin.headOid,
       baseRef: pin.baseRef,

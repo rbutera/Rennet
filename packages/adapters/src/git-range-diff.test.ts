@@ -8,6 +8,7 @@ import {
   captureRangePatchset,
   execaGit,
   FILE_VISIBLE_BYTE_LIMIT,
+  type GitExec,
   parseUnifiedDiffFiles,
 } from "./git-range-diff";
 
@@ -230,6 +231,46 @@ describe("parseUnifiedDiffFiles (degraded REST parser) hunk-body content is neve
 });
 
 describe("captureRangePatchset", () => {
+  it("preserves the host-visible WSL root and common directory reported by distro Git", async () => {
+    const roots: string[] = [];
+    const git: GitExec = async (root, arguments_) => {
+      roots.push(root);
+      if (arguments_[0] === "rev-parse") return "/home/rai/repo/.git\n";
+      if (arguments_[0] === "diff") return "";
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    };
+
+    const patchset = await captureRangePatchset(git, {
+      root: "/home/rai/repo",
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      baseOid: "base",
+      headOid: "head",
+      baseRef: "main",
+      headRef: "feat/wsl-round",
+      source: "local-branch",
+    });
+    const ownPrPatchset = await captureRangePatchset(git, {
+      root: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      baseOid: "base",
+      headOid: "head",
+      baseRef: "main",
+      source: "github-local",
+    });
+
+    expect(roots).not.toContain("\\home\\rai\\repo");
+    expect(new Set(roots)).toEqual(new Set(["/home/rai/repo"]));
+    expect(patchset.repository).toEqual(
+      expect.objectContaining({
+        root: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        commonDir: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git",
+        headRef: "feat/wsl-round",
+      }),
+    );
+    expect(ownPrPatchset.repository.root).toBe(patchset.repository.root);
+    expect(ownPrPatchset.repository.commonDir).toBe(patchset.repository.commonDir);
+  });
+
   it("produces a rawDiff byte-identical to `git diff base...head`", async () => {
     const { root, baseOid, headOid } = repositoryWithRange();
     const patchset = await captureRangePatchset(execaGit, {

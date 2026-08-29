@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { HOST_LOCUS, type Locus, locusCommand } from "@rennet/core";
+import { isAbsolute, posix, resolve } from "node:path";
+import {
+  HOST_LOCUS,
+  type Locus,
+  LocusPathUntranslatableError,
+  locusCommand,
+  toDistroPath,
+  toWindowsView,
+} from "@rennet/core";
 import {
   DIFF_TRUNCATION_MARKER,
   type FileChangeStatus,
@@ -312,6 +319,9 @@ const DETERMINISTIC_DIFF_FLAGS = ["--no-ext-diff", "--no-textconv"];
 
 export interface RangeCaptureInput {
   root: string;
+  /** Execution locus for path normalization. WSL Git reports distro-native roots,
+   * while persisted patchsets must retain the host-visible UNC identity. */
+  locus?: Locus;
   baseOid: string;
   headOid: string;
   /** The base branch name, carried into provenance (e.g. `"main"`). */
@@ -331,6 +341,19 @@ export interface RangeCaptureInput {
   projectSnapshotId?: string;
 }
 
+function rangeCaptureRoots(
+  root: string,
+  locus: Locus,
+): {
+  readonly gitRoot: string;
+  readonly repositoryRoot: string;
+} {
+  if (locus.kind === "host") return { gitRoot: root, repositoryRoot: root };
+  const gitRoot = toDistroPath(root, locus.distro);
+  if (gitRoot === null) throw new LocusPathUntranslatableError(root, locus.distro);
+  return { gitRoot, repositoryRoot: toWindowsView(gitRoot, locus.distro) };
+}
+
 /**
  * Capture an immutable `Patchset` from an explicit commit range (`base...head`).
  *
@@ -344,23 +367,31 @@ export async function captureRangePatchset(
   git: GitExec,
   input: RangeCaptureInput,
 ): Promise<Patchset> {
-  const { root, baseOid, headOid, baseRef } = input;
+  const { baseOid, headOid, baseRef } = input;
+  const locus = input.locus ?? HOST_LOCUS;
+  const { gitRoot, repositoryRoot } = rangeCaptureRoots(input.root, locus);
   const source: PatchsetSource = input.source ?? "github-local";
   const visibleByteLimit = input.visibleByteLimit ?? DEFAULT_VISIBLE_BYTE_LIMIT;
   const range = `${baseOid}...${headOid}`;
 
-  const commonDirValue = (await git(root, ["rev-parse", "--git-common-dir"])).trim();
-  const commonDir = isAbsolute(commonDirValue) ? commonDirValue : resolve(root, commonDirValue);
+  const commonDirValue = (await git(gitRoot, ["rev-parse", "--git-common-dir"])).trim();
+  const gitCommonDir =
+    locus.kind === "wsl"
+      ? (toDistroPath(commonDirValue, locus.distro) ?? posix.resolve(gitRoot, commonDirValue))
+      : isAbsolute(commonDirValue)
+        ? commonDirValue
+        : resolve(gitRoot, commonDirValue);
+  const commonDir = locus.kind === "wsl" ? toWindowsView(gitCommonDir, locus.distro) : gitCommonDir;
 
-  const rawDiff = await git(root, ["diff", ...DETERMINISTIC_DIFF_FLAGS, range, "--"]);
+  const rawDiff = await git(gitRoot, ["diff", ...DETERMINISTIC_DIFF_FLAGS, range, "--"]);
   const changedPaths = parseChangedPaths(
-    await git(root, ["diff", "--name-status", "-z", range, "--"]),
+    await git(gitRoot, ["diff", "--name-status", "-z", range, "--"]),
   );
-  const counts = parseCounts(await git(root, ["diff", "--numstat", "-z", range, "--"]));
+  const counts = parseCounts(await git(gitRoot, ["diff", "--numstat", "-z", range, "--"]));
 
   const files: PatchFile[] = [];
   for (const changedPath of changedPaths) {
-    const patch = await git(root, [
+    const patch = await git(gitRoot, [
       "diff",
       ...DETERMINISTIC_DIFF_FLAGS,
       range,
@@ -385,8 +416,8 @@ export async function captureRangePatchset(
   const bytes = Buffer.from(rawDiff);
   const repository = {
     id: createHash("sha256").update(commonDir).digest("hex"),
-    root,
-    commonDir: resolve(dirname(commonDir), commonDir),
+    root: repositoryRoot,
+    commonDir,
     baseRef,
     baseOid,
     headOid,

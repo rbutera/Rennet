@@ -3,11 +3,113 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GenerationStore, RoundOperationStore, RoundRecordStore } from "@rennet/adapters";
-import type { Review } from "@rennet/protocol";
-import { generationIdForPatchset, ROUND_NO_REGEN } from "@rennet/protocol";
+import {
+  GenerationStore,
+  type GitExec,
+  RoundOperationStore,
+  RoundRecordStore,
+} from "@rennet/adapters";
+import type { Review, RoundOperation } from "@rennet/protocol";
+import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRennetServer } from "./create-server";
+import {
+  captureBranchPatchset,
+  createRennetServer,
+  createRoundWorkerPort,
+  createRoundWorkspacePlanner,
+  type HandoffTurnExecution,
+} from "./create-server";
+
+describe("round worker execution context", () => {
+  it("carries a distro-native WSL branch capture through the round planner and worker", async () => {
+    const git: GitExec = async (_root, arguments_) => {
+      if (arguments_[0] === "rev-parse" && arguments_[1] === "--show-toplevel") {
+        return "/home/rai/repo\n";
+      }
+      if (arguments_[0] === "rev-parse" && arguments_[1] === "--verify") {
+        return "worker-head\n";
+      }
+      if (arguments_[0] === "rev-parse" && arguments_[1] === "--git-common-dir") {
+        return "/home/rai/repo/.git\n";
+      }
+      if (arguments_[0] === "merge-base") return "base-head\n";
+      if (arguments_[0] === "diff") return "";
+      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
+    };
+    const resolveProjectSnapshotId = vi.fn(async () => "snapshot-1");
+    const patchset = await captureBranchPatchset({
+      git,
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+      head: "feat/test",
+      base: "main",
+      resolveProjectSnapshotId,
+    });
+    const sourceRepoRoot = patchset.repository.root;
+    expect(resolveProjectSnapshotId).toHaveBeenCalledWith(sourceRepoRoot, "base-head");
+    const prompt = "apply the round";
+    const operation: RoundOperation = {
+      operationId: "operation-1",
+      sessionId: "session-1",
+      reviewId: "review-1",
+      dispatchId: "dispatch-1",
+      sourcePatchsetId: "patchset-1",
+      askOccurrences: [{ id: "ask-1", revision: 1 }],
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "feat/test" },
+      repoRoot: sourceRepoRoot,
+      workOrderPrompt: prompt,
+      workOrderDigest: sha256Hex(prompt),
+      gatePlan: { kind: "absent" },
+      revision: 0,
+      rerunRequested: false,
+      createdAt: 1,
+      updatedAt: 1,
+      state: { phase: "claimed" },
+    };
+    const planner = createRoundWorkspacePlanner({
+      dataDir: "C:\\Users\\rai\\AppData\\Roaming\\Rennet",
+      sourceRepositoryFor: () => patchset.repository,
+      now: () => 2,
+    });
+    const workspace = planner(operation);
+    const key = sha256Hex(operation.operationId).slice(0, 32);
+    const expectedWorktree = `\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git\\rennet-round-worktrees\\${key}`;
+    expect(workspace.worktreePath).toBe(expectedWorktree);
+    expect(workspace.worktreePath).not.toContain("C:\\Users");
+
+    const workerAttempt = { executionId: "worker-1", startedAt: 3 };
+    const workerRunning: RoundOperation = {
+      ...operation,
+      state: {
+        phase: "worker-running",
+        workspace: { ...workspace, sourceHead: "source-head", preparedAt: 3 },
+        worker: workerAttempt,
+      },
+    };
+    const runHandoffTurn = vi.fn(async () => ({
+      status: "completed" as const,
+      finalText: "done",
+      turnDiff: "",
+      filesTouched: [],
+    }));
+    await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
+      operation: workerRunning,
+      attempt: workerAttempt,
+    });
+
+    expect(runHandoffTurn).toHaveBeenCalledWith({
+      repoRoot: expectedWorktree,
+      prompt,
+      sessionId: operation.sessionId,
+      execution: {
+        kind: "wsl",
+        distro: "Ubuntu",
+        cwd: `/home/rai/repo/.git/rennet-round-worktrees/${key}`,
+      },
+    });
+  });
+});
 
 // Pins design D4 (no module-level singletons — two servers in one process do not
 // share mutable state) and D5 (shutdown is idempotent). The handle is {dispatch,
@@ -179,13 +281,15 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
     const head = git("rev-parse", "HEAD");
     let workerCalls = 0;
+    let workerExecution: HandoffTurnExecution | undefined;
     let placeholderObserved = false;
     let roundSessionId = "";
     const server = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async ({ repoRoot }) => {
+      runHandoffTurn: async ({ repoRoot, execution }) => {
         workerCalls += 1;
+        workerExecution = execution;
         writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
         return {
           status: "completed",
@@ -267,6 +371,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       { timeout: 15_000, interval: 50 },
     );
     expect(workerCalls).toBe(1);
+    expect(workerExecution).toEqual({ kind: "host" });
     expect(git("rev-parse", "HEAD")).toBe(head);
   }, 30_000);
 
