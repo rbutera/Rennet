@@ -652,4 +652,47 @@ describe("partitionsFromSnapshot", () => {
       "packages/a/src/two.ts",
     ]);
   });
+
+  // ── The two shard families fail INDEPENDENTLY ─────────────────────────────
+  //
+  // `withImports: false` above emits no import shard at all, which is not the same
+  // thing as a shard the loader CANNOT PRODUCE — the former leaves the graph
+  // readable and empty, only the latter makes `queryImportGraph` return `ok: false`.
+  // These two break the loader for one shard family at a time, which is the only way
+  // to reach the degradation arms.
+  function withoutShardFamily(
+    snapshot: ReturnType<typeof snapshotOf>,
+    family: "imports" | "symbols",
+  ) {
+    const withheld = new Set(
+      (family === "imports" ? snapshot.importDigestByBlob : snapshot.symbolDigestByBlob).values(),
+    );
+    expect(withheld.size).toBeGreaterThan(0);
+    return {
+      ...snapshot,
+      load: (digest: string) => (withheld.has(digest) ? undefined : snapshot.load(digest)),
+    };
+  }
+
+  it("an unreadable SYMBOL index still batches by module — it says nothing about imports", () => {
+    const slices = partitionsFromSnapshot(withoutShardFamily(snapshotOf(), "symbols"));
+    // The graph was readable, so the connected sources are still one module batch
+    // with its real edges — not a fallback slice claiming the graph was unreadable.
+    const batches = slices.filter((s) => s.id.startsWith("mod:"));
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.imports?.length).toBeGreaterThan(0);
+    // What IS lost is the skeletons: absent, so a packet says "no symbol index",
+    // never "indexed, declares nothing".
+    expect(batches[0]?.files.every((f) => f.symbols === undefined)).toBe(true);
+  });
+
+  it("an unreadable IMPORT graph still carries skeletons — it says nothing about symbols", () => {
+    const slices = partitionsFromSnapshot(withoutShardFamily(snapshotOf(), "imports"));
+    // No graph, so the directory tier takes the whole eligible inventory and every
+    // slice's `imports` is ABSENT (not `[]`, which would claim the files join nothing).
+    expect(slices.every((s) => !s.id.startsWith("mod:"))).toBe(true);
+    expect(slices.every((s) => s.imports === undefined)).toBe(true);
+    // The symbol shards were fine, so the skeletons survive the import failure.
+    expect(slices.flatMap((s) => s.files).every((f) => f.symbols !== undefined)).toBe(true);
+  });
 });

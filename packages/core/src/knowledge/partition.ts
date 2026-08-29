@@ -151,6 +151,19 @@ export interface PartitionSlice {
    * unmerged fallback slice carries no `#` and is its own family.
    */
   readonly id: string;
+  /**
+   * EVERY routing family this slice answers to, when that is more than the one its
+   * {@link id} carries. Present only on a slice {@link coalesceFallbackSlices}
+   * MERGED; absent everywhere else, where {@link partitionIdFamily} of the id is
+   * the whole answer. Read it through {@link sliceFamilies}, never directly.
+   *
+   * A merge takes several constituents and keeps ONE of their ids, so the other
+   * constituents' families would otherwise vanish — and with them the only route a
+   * delta has for a path deleted under one of those directories. `dir:docs/b` is
+   * not a prefix of `dir:docs/a`, so `familiesMatch` would find nothing and the
+   * merged slice, which is where those files actually live now, would not re-run.
+   */
+  readonly families?: readonly string[];
   readonly files: readonly FileEntry[];
   /**
    * Cross-batch neighbours, one entry per member that HAS any — a member with no
@@ -199,6 +212,17 @@ function byString(a: string, b: string): number {
 export function partitionIdFamily(id: string): string {
   const hash = id.lastIndexOf("#");
   return hash < 0 ? id : id.slice(0, hash);
+}
+
+/**
+ * Every routing family a slice answers to: its {@link PartitionSlice.families} when
+ * a coalesce recorded several, otherwise the single family its id carries.
+ *
+ * The one accessor, so no caller re-derives "the family" from the id alone and
+ * silently loses a merged slice's other constituents.
+ */
+export function sliceFamilies(slice: PartitionSlice): readonly string[] {
+  return slice.families ?? [partitionIdFamily(slice.id)];
 }
 
 /** The id for a module batch: content-derived, never Louvain's community number. */
@@ -365,9 +389,18 @@ function mergeFallbackRun(run: readonly PartitionSlice[]): PartitionSlice {
   // before coalescing. The `#hash` half is the same content-addressing the module
   // batches use ({@link PartitionSlice.id}): membership decides the id, so an
   // unchanged rebuild reproduces it and a changed run moves only itself.
+  //
+  // The other constituents' families are kept explicitly ({@link
+  // PartitionSlice.families}). Keeping only the head's would make a deletion under
+  // a non-head constituent's directory route NOTHING: `dir:docs/b` neither equals
+  // nor prefixes `dir:docs/a`, so the slice now HOLDING those files would not
+  // re-run. Every constituent's family, deduped and sorted so the field is as
+  // deterministic as the id.
   const head = run[0]?.id ?? "dir:.";
+  const families = [...new Set(run.flatMap(sliceFamilies))].sort(byString);
   return {
     id: `${head}#${sha256Hex(files.map((file) => file.path).join("\n")).slice(0, 8)}`,
+    families,
     files,
     neighbors: [],
   };
@@ -745,11 +778,22 @@ function neighborMap(
  * batch the eligible connected files by import community, and hand the rest to
  * the directory fallback.
  *
- * DEGRADES, never throws. If the import graph or the symbol index cannot be read
- * (an older snapshot, a shard the loader cannot produce), the whole eligible
- * inventory goes through the directory fallback and the run proceeds with worse
- * partitions — the same slices #460 shipped. The alternative, refusing to map at
- * all because one shard family is unavailable, trades a degraded map for no map.
+ * DEGRADES, never throws. A shard family the loader cannot produce costs exactly
+ * what it covers and nothing else — refusing to map at all over one unavailable
+ * shard family trades a degraded map for no map:
+ *
+ *  - **No import graph** → no communities to batch by, so the whole eligible
+ *    inventory goes through the directory fallback, and every slice's `imports`
+ *    stays ABSENT so a worker packet says the graph could not be read.
+ *  - **No symbol index** → no skeletons and no neighbour export names, so every
+ *    file's `symbols` stays ABSENT and a packet says so per file.
+ *
+ * The two used to be ONE condition, which made either failure report both: a
+ * repository whose symbol shards were missing was told its import graph was
+ * unreadable, and the fallback it fell into then said "these files join nothing"
+ * about a graph that was sitting right there. Neither claim was true and both were
+ * about the file the worker was reading. They are independent here because they are
+ * independent facts.
  */
 export function partitionsFromSnapshot(snapshot: LoadedSnapshot): readonly PartitionSlice[] {
   const symbols = querySymbolIndex(snapshot);
@@ -761,27 +805,38 @@ export function partitionsFromSnapshot(snapshot: LoadedSnapshot): readonly Parti
     .filter((entry) => entry.ineligible === null)
     .map((entry) => ({ path: entry.path, blobOid: entry.blobOid }));
 
+  // Each eligible file carries its own skeleton, so the worker packet is built
+  // from the slice alone. `symbols` stays ABSENT for a blob with no shard — and
+  // for EVERY blob when the index itself could not be read.
+  const index = symbols.ok ? symbols.index : null;
+  const files =
+    index === null
+      ? eligible
+      : eligible.map((file) => {
+          const declared = index.symbolsByBlob.get(file.blobOid);
+          return declared === undefined ? file : { ...file, symbols: declared };
+        });
+
   const graph = queryImportGraph(snapshot);
-  if (!graph.ok || !symbols.ok) {
-    // Degradation: no skeletons and no `imports` list, because neither is known.
-    // The absent fields are what tells a worker packet to say so.
-    return buildPartitions({ files: eligible, scopes: snapshot.scopes });
+  if (!graph.ok) {
+    // No graph: the directory tier partitions the whole eligible inventory, and
+    // `imports` is absent on every slice. The skeletons above still ride along —
+    // an unreadable import shard says nothing about the symbol shards.
+    return buildPartitions({ files, scopes: snapshot.scopes });
   }
 
   const blobByPath = new Map(snapshot.files.map((file) => [file.path, file.blobOid] as const));
-  const index = symbols.index;
   return buildModuleBatches({
-    // Each eligible file carries its own skeleton, so the worker packet is built
-    // from the slice alone. `symbols` stays ABSENT for a blob with no shard.
-    files: eligible.map((file) => {
-      const declared = index.symbolsByBlob.get(file.blobOid);
-      return declared === undefined ? file : { ...file, symbols: declared };
-    }),
+    files,
     scopes: snapshot.scopes,
     graph: graph.graph,
+    // No symbol index means no export names to show — an empty list per neighbour,
+    // which the packet renders as a bare path rather than as "exports nothing".
     exportsOf: (path) => {
       const blobOid = blobByPath.get(path);
-      return blobOid === undefined ? [] : (index.exportsByBlob.get(blobOid) ?? []);
+      return blobOid === undefined || index === null
+        ? []
+        : (index.exportsByBlob.get(blobOid) ?? []);
     },
   });
 }

@@ -12,7 +12,7 @@
  */
 
 import type { KnowledgeSet, KnowledgeStatement, KnowledgeStatus } from "@rennet/protocol";
-import { type PartitionSlice, partitionIdFamily } from "./partition";
+import { type PartitionSlice, partitionIdFamily, sliceFamilies } from "./partition";
 import { fileBlobIndex, knowledgeStatementId } from "./read";
 
 /** Whether a statement cites any of the changed paths (⇒ needs re-adjudication). */
@@ -39,13 +39,28 @@ function familiesMatch(left: string, right: string): boolean {
 }
 
 /**
+ * Whether a CURRENT slice answers to a prior owner's family — asked of every family
+ * the slice carries, not just the one its id shows.
+ *
+ * A coalesced fallback slice is several constituents under one id, so the id names
+ * only the first of them ({@link sliceFamilies}). Matching on the id alone would
+ * route a deletion under any other constituent's directory to nothing at all, while
+ * the slice that actually holds those files sat right there.
+ */
+function sliceAnswersTo(slice: PartitionSlice, priorFamily: string): boolean {
+  return sliceFamilies(slice).some((family) => familiesMatch(family, priorFamily));
+}
+
+/**
  * The partitions that own at least one changed path — the only workers a delta
  * re-runs. A changed path with no CURRENT owner (deleted, ownership moved with the
  * scope graph, or the file is now mapping-ineligible) routes through its PRIOR
  * owner, by TWO independent rules whose results are unioned:
  *
- *  1. **Same id family.** Every current slice whose {@link partitionIdFamily}
- *     matches the prior owner's re-runs. Family, not raw id, because a module
+ *  1. **Same id family.** Every current slice answering to the prior owner's family
+ *     re-runs — asked of {@link sliceFamilies}, so a COALESCED fallback slice is
+ *     matched on every constituent it merged and not only on the one whose id it
+ *     kept. Family, not raw id, because a module
  *     batch's id carries a content hash over its members ({@link PartitionSlice.id})
  *     — losing a member changes the hash by design, so raw-id equality would report
  *     every re-formed batch as a stranger. This rule only ever fires WITHIN a tier
@@ -100,7 +115,7 @@ export function routeDelta(
     if (prior === undefined) continue;
     const priorFamily = partitionIdFamily(prior.id);
     for (const slice of partitions) {
-      if (familiesMatch(partitionIdFamily(slice.id), priorFamily)) routed.add(slice);
+      if (sliceAnswersTo(slice, priorFamily)) routed.add(slice);
     }
     for (let directory = parentDirectory(path); ; directory = parentDirectory(directory)) {
       const owners = slicesByDirectory.get(directory);
