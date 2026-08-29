@@ -15,18 +15,42 @@ const require = createRequire(import.meta.url);
 const nodeGypPath = require.resolve("@electron/node-gyp/bin/node-gyp.js");
 const scratchRoot = await mkdtemp(join(tmpdir(), "rennet-exclusive-move-"));
 
+// The pinned fork treats hidden logger levels as visible; its silly records
+// include child options and the environment.
+function forwardSafeNodeGypStderr(stream) {
+  let pending = "";
+  const forward = (line) => {
+    if (!/^gyp (?:sill|verb|info|http|notice|WARN)\b/.test(line)) {
+      process.stderr.write(`${line}\n`);
+    }
+  };
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    const lines = `${pending}${chunk}`.split(/\r?\n/);
+    pending = lines.pop() ?? "";
+    for (const line of lines) forward(line);
+  });
+  stream.on("end", () => {
+    if (pending !== "") forward(pending);
+  });
+}
+
 function runNodeGyp(cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [nodeGypPath, "rebuild", "--loglevel=error"], {
+    const environment = { ...process.env, npm_config_loglevel: "error" };
+    delete environment.NODE_GYP_NULL_LOGGER;
+    const child = spawn(process.execPath, [nodeGypPath, "--loglevel=error", "rebuild"], {
       cwd,
-      // Electron's fork logs child options, including the environment, at verbose level.
-      env: { ...process.env, NODE_GYP_NULL_LOGGER: "1" },
+      // Error-level output preserves actionable toolchain failures without the
+      // verbose child options that include the environment.
+      env: environment,
       shell: false,
-      stdio: "inherit",
+      stdio: ["ignore", "inherit", "pipe"],
       windowsHide: true,
     });
+    forwardSafeNodeGypStderr(child.stderr);
     child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.on("close", (code, signal) => {
       if (code === 0) {
         resolve();
         return;

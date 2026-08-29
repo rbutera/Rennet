@@ -51,18 +51,21 @@ describe("exclusive namespace move", () => {
     },
   );
 
-  it("keeps an ordinary syscall refusal distinct from unsupported and cross-device", async () => {
-    const { mover } = moverFor({
-      kind: "exited",
-      exitCode: 14,
-      stderr: "native-code=13\n",
-    });
+  it.each([13, 22])(
+    "keeps ambiguous syscall refusal %i distinct from unsupported and cross-device",
+    async (nativeCode) => {
+      const { mover } = moverFor({
+        kind: "exited",
+        exitCode: 14,
+        stderr: `native-code=${nativeCode}\n`,
+      });
 
-    await expect(mover.move({ sourcePath, destinationPath })).resolves.toEqual({
-      kind: "failed",
-      nativeCode: 13,
-    });
-  });
+      await expect(mover.move({ sourcePath, destinationPath })).resolves.toEqual({
+        kind: "failed",
+        nativeCode,
+      });
+    },
+  );
 
   it("reports a helper that never started without claiming the move ran", async () => {
     const { mover } = moverFor({

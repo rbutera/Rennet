@@ -92,6 +92,29 @@ describe("exclusive namespace move native semantics", () => {
     );
   });
 
+  it("does not replace an existing directory", async () => {
+    const sourcePath = join(scratchRoot, "source-directory");
+    const destinationPath = join(scratchRoot, "destination-directory");
+    await mkdir(sourcePath);
+    await writeFile(join(sourcePath, "source-child.txt"), "source payload");
+    await mkdir(destinationPath);
+    await writeFile(join(destinationPath, "destination-child.txt"), "destination payload");
+    const destinationInode = (await lstat(destinationPath)).ino;
+
+    await expect(mover.move({ sourcePath, destinationPath })).resolves.toMatchObject({
+      kind: "destination-exists",
+    });
+
+    await expect(readFile(join(sourcePath, "source-child.txt"), "utf8")).resolves.toBe(
+      "source payload",
+    );
+    expect((await lstat(destinationPath)).ino).toBe(destinationInode);
+    await expect(readFile(join(destinationPath, "destination-child.txt"), "utf8")).resolves.toBe(
+      "destination payload",
+    );
+    await expectMissing(join(destinationPath, "source-child.txt"));
+  });
+
   it("reports a missing source without creating the destination", async () => {
     const sourcePath = join(scratchRoot, "missing-source");
     const destinationPath = join(scratchRoot, "destination");
@@ -132,6 +155,48 @@ describe("exclusive namespace move native semantics", () => {
     for (const [index, contender] of contenders.entries()) {
       if (index !== winner)
         await expect(readFile(contender.path, "utf8")).resolves.toBe(contender.payload);
+    }
+  });
+
+  it("allows exactly one directory winner when contenders race for one destination", async () => {
+    const destinationPath = join(scratchRoot, "winner-directory");
+    const contenders = Array.from({ length: 32 }, (_, index) => ({
+      path: join(scratchRoot, `contender-directory-${index}`),
+      payload: `payload-${index}`,
+    }));
+    await Promise.all(
+      contenders.map(async (contender) => {
+        await mkdir(contender.path);
+        await writeFile(join(contender.path, "payload.txt"), contender.payload);
+      }),
+    );
+
+    const outcomes = await Promise.all(
+      contenders.map((contender) => mover.move({ sourcePath: contender.path, destinationPath })),
+    );
+    const winners = outcomes.flatMap((outcome, index) => (outcome.kind === "moved" ? [index] : []));
+
+    expect(winners).toHaveLength(1);
+    const winner = winners[0];
+    if (winner === undefined) throw new Error("exclusive directory move race had no winner");
+    const winningContender = contenders[winner];
+    if (winningContender === undefined)
+      throw new Error("exclusive directory move race winner was out of range");
+    expect(outcomes.filter((outcome) => outcome.kind === "destination-exists")).toHaveLength(31);
+    expect(
+      outcomes.every(
+        (outcome) => outcome.kind === "moved" || outcome.kind === "destination-exists",
+      ),
+    ).toBe(true);
+    await expect(readFile(join(destinationPath, "payload.txt"), "utf8")).resolves.toBe(
+      winningContender.payload,
+    );
+    await expectMissing(winningContender.path);
+    for (const [index, contender] of contenders.entries()) {
+      if (index !== winner)
+        await expect(readFile(join(contender.path, "payload.txt"), "utf8")).resolves.toBe(
+          contender.payload,
+        );
     }
   });
 });

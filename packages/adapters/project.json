@@ -13,6 +13,7 @@
   },
   "targets": {
     "build": {
+      "cache": false,
       "command": "pnpm exec tsc -p packages/adapters/tsconfig.json && node scripts/build-exclusive-namespace-move.mjs",
       "inputs": ["default", "^production", "nativeHelper"],
       "outputs": ["{projectRoot}/dist"]
@@ -22,12 +23,13 @@
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
     "test": {
+      "cache": false,
       "dependsOn": ["build"],
       "inputs": ["default", "^production", "nativeHelper"],
       "command": "pnpm exec vitest run packages/adapters/src"
     },
     "native-test": {
-      "cache": true,
+      "cache": false,
       "dependsOn": ["build"],
       "inputs": ["default", "^production", "nativeHelper"],
       "command": "pnpm exec vitest run packages/adapters/src/exclusive-namespace-move.test.ts packages/adapters/src/exclusive-namespace-move.native.test.ts"

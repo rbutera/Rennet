@@ -148,6 +148,21 @@ or execute all three syscall implementations. The focused matrix also runs
 `rennet-adapters:native-determinism-test`, which rebuilds under two distinct
 temporary roots and requires byte-identical host executables.
 
+Native artifacts and their semantic verdicts depend on the operating system,
+architecture, compiler, linker, SDK, and generator environment. The adapter's
+`build`, `test`, and `native-test` targets therefore remain uncached until Nx
+models the complete toolchain identity. The determinism target proves two
+fresh builds are byte-identical on one build host; it does not make artifacts
+portable across hosts. Windows native CI is fixed to `windows-2022` because the
+ruled Electron `node-gyp` revision recognises Visual Studio only through 2022;
+the auto-release Windows build uses the same host because desktop builds
+traverse to the adapter build.
+
+The native error contract maps only unambiguous platform results. Linux
+`EINVAL` remains a typed generic failure because it can mean either unsupported
+filesystem flags or invalid path topology; it must not be reported as
+unsupported without that distinction.
+
 ## Runtime and persistence
 
 Electron built-ins own native desktop facilities such as `utilityProcess`,

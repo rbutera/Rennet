@@ -93,7 +93,7 @@ Never replace an asset or reuse a version after publication. If signing, notariz
 
 ## Build on Windows
 
-The Windows build host needs Python 3 and Visual Studio 2022 with **Desktop development with C++** and a Windows SDK. The hosted `windows-latest` CI image supplies that toolchain; `@electron/node-gyp` uses it to compile the adapter's first-party executable.
+The Windows build host needs Python 3 and Visual Studio 2022 with **Desktop development with C++** and a Windows SDK. The focused native CI job and auto-release Windows build use `windows-2022` because the exact-SHA Electron `node-gyp` fork recognises Visual Studio only through 2022; the floating Windows image now carries Visual Studio 2026, which that ruled toolchain rejects. Desktop builds traverse to the adapter build even though Forge does not package the helper yet.
 
 Windows development uses the normal Nx target:
 
