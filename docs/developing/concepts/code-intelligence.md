@@ -330,9 +330,10 @@ The seat receives only the merge's residue:
   prior statements whose cited evidence changed — unsettleable by script, because
   the bytes moved.
 
-Measured on Rennet's 105 slices with a stand-in worker minting a claim for every
-eligible file (2,249 claims, denser than a real worker): the residue is 874, 39%
-of the set. At a more realistic density (793 claims) it is 218, 27%. Either is
+Measured on Rennet's 105 slices, over the authoritative edge list the production
+path uses, with a stand-in worker minting a claim for every eligible file (2,250
+claims, denser than a real worker): the residue is 877, 39% of the set. At a more
+realistic density (789 claims) it is 192, 24%. Either is
 two to six chunks where the old shape sent 100% by construction. An empty residue
 runs no turn at all — with no seam and no contradiction there is nothing to
 synthesize from, and a turn over an empty prompt is a seat inventing claims with
