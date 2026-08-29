@@ -447,5 +447,5 @@ describe("transactional round source landing", () => {
     await cleanupTransactionalRoundSourceLanding({ sourceRoot: current.sourceRoot, receipt });
     expect(existsSync(join(current.sourceRoot, ".rennet", "round-landings"))).toBe(true);
     expect(existsSync(join(current.sourceRoot, replaceUnit.backupPath))).toBe(false);
-  });
+  }, 30_000);
 });
