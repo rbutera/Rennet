@@ -2154,18 +2154,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               });
             },
             reviewNow: () => service.reviewById(review.id) ?? review,
+            // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
+            // this seam hands over the stored set plus the snapshot gated fresh at the
+            // patchset's own base OID, and `assembleRoundCollation` projects (invalidated
+            // disclosed, rejected dropped), scopes to the change's 1-hop import
+            // neighbourhood, and caps — disclosing all three in the packet. A gate refusal
+            // is a null snapshot, which degrades to the unprojected set and SAYS so; it is
+            // never a silently narrower one.
             knowledgeFor: (patchset) => {
               const repoKey = repoKeyForRoot(review.repositoryRoot);
-              return (
-                new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? {
-                  schemaVersion: 1,
-                  repoKey,
-                  baseOid: patchset.repository.baseOid,
-                  snapshotFingerprint: "",
-                  generator: "round-regeneration",
-                  statements: [],
-                }
+              const gated = new ProjectContextReader(liveSnapshotStore).loadFresh(
+                repoKey,
+                patchset.repository.baseOid,
               );
+              return {
+                set: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null,
+                snapshot: gated.ok ? gated.snapshot : null,
+              };
             },
             // The REAL prior generation, rebuilt from its two durable halves (the generation
             // record + the board-meta rows' projected boards). Absent ⇒ this session has

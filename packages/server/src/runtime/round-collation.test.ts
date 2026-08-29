@@ -1,7 +1,16 @@
-import { buildHunkIndex, taughtHunkIds } from "@rennet/core";
+import {
+  buildHunkIndex,
+  buildSnapshot,
+  type LoadedSnapshot,
+  materializeSnapshot,
+  type SnapshotStructuralInputs,
+  taughtHunkIds,
+} from "@rennet/core";
 import type {
+  BaseRefResolution,
   DraftElement,
   KnowledgeSet,
+  KnowledgeStatement,
   PatchFile,
   Patchset,
   SuccessorAccount,
@@ -161,5 +170,137 @@ describe("assembleRoundCollation", () => {
     const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [] });
     expect(c.deltaPacket.successorAccount).toBeUndefined(); // first-generation, not a crash
     expect(c.hunks).toHaveLength(2);
+  });
+});
+
+// ── The snapshot half of the packet (context-map rebuild, W5b) ────────────────
+//
+// `src/importer.ts` imports the changed `src/a.ts`. That one edge is what makes
+// both assertions below able to fail: it is a REAL dependent for fan-in to count,
+// and it is the 1-hop ring the knowledge scope is drawn around.
+
+function fixtureSnapshot(options: { omitImports?: boolean } = {}): LoadedSnapshot {
+  const files = ["src/a.ts", "src/importer.ts", "src/new.ts"];
+  const inputs: SnapshotStructuralInputs = {
+    repoKey: "/repo/.git",
+    baseRef: "main",
+    baseRefResolution: "symbolic-head" as BaseRefResolution,
+    baseOid: "0".repeat(40),
+    files: files.map((path) => ({ path, blobOid: `blob:${path}`, size: 1, mode: "100644" })),
+    scopes: [],
+    edges: [],
+    entryPoints: [],
+    tests: [],
+    ownership: [],
+    conventions: [],
+  };
+  const built = buildSnapshot(
+    inputs,
+    [],
+    [],
+    options.omitImports
+      ? []
+      : [
+          { blobOid: "blob:src/a.ts", extractor: "structural-imports-v1", imports: [] },
+          { blobOid: "blob:src/importer.ts", extractor: "structural-imports-v1", imports: ["./a"] },
+          { blobOid: "blob:src/new.ts", extractor: "structural-imports-v1", imports: [] },
+        ],
+  );
+  const materialized = materializeSnapshot(built.manifest, (digest) => built.shards.get(digest));
+  if (!materialized.ok) throw new Error(`materialize failed: ${materialized.slots.join(",")}`);
+  return materialized.snapshot;
+}
+
+/** The review-scoped fan-in mark — the one that says whether fan-in was assessed at all. */
+function fanInMark(collation: ReturnType<typeof assembleRoundCollation>) {
+  return collation.deltaPacket.blastRadius.find(
+    (mark) => mark.target === "rennet:review/blast-radius" && mark.signal === "fan-in",
+  );
+}
+
+describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
+  it("with the import shard present, blast radius carries an EDGE-BACKED count", () => {
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: KNOWLEDGE,
+      snapshot: fixtureSnapshot(),
+      dossier: [],
+    });
+    expect(fanInMark(c)?.assessed).toBe(true);
+    // The wording is the honest half: an edge-backed claim must never be able to
+    // read as the textual one, so the reason names the import graph.
+    expect(fanInMark(c)?.reason).toContain("import graph");
+    const perFile = c.deltaPacket.blastRadius.find(
+      (mark) => mark.signal === "fan-in" && mark.target === "rennet:file/src/a.ts",
+    );
+    expect(perFile?.reason).toBe("1 file imports this file; changes here ripple to them.");
+  });
+
+  it("CONTROL: without a snapshot the mark stays NOT ASSESSED, as it was before", () => {
+    const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [] });
+    expect(fanInMark(c)?.assessed).toBe(false);
+    expect(fanInMark(c)?.reason).toContain("not assessed");
+  });
+
+  it("a snapshot that can answer NOTHING supplies no index — not a silent zero", () => {
+    // No import shards and no reference shards: the textual arm would answer "zero
+    // dependents" for every file, which would render as "checked, nothing depends
+    // on this". Withholding the index keeps the mark honestly not-assessed.
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: KNOWLEDGE,
+      snapshot: fixtureSnapshot({ omitImports: true }),
+      dossier: [],
+    });
+    expect(fanInMark(c)?.assessed).toBe(false);
+  });
+});
+
+describe("assembleRoundCollation — the packet's knowledge is a selection, not the set", () => {
+  function statement(id: string, subject: string, anchorPath: string): KnowledgeStatement {
+    return {
+      id,
+      subject,
+      aspect: "purpose",
+      claim: `claim ${id}`,
+      evidence: [{ path: anchorPath, blobOid: `blob:${anchorPath}` }],
+      confidence: "high",
+      status: "hypothesis",
+      provenance: { generator: "g@1", model: null, apiKeySource: null },
+      learnedAgainst: { baseOid: "0".repeat(40), snapshotFingerprint: "fp" },
+    };
+  }
+  const REJECTED: KnowledgeStatement = {
+    ...statement("k2-rejected", "src/a.ts", "src/a.ts"),
+    status: "rejected",
+  };
+  const SET: KnowledgeSet = {
+    ...KNOWLEDGE,
+    statements: [statement("k1-changed", "src/a.ts", "src/a.ts"), REJECTED],
+  };
+
+  it("projects and scopes the stored set at the packet seam", () => {
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: SET,
+      snapshot: fixtureSnapshot(),
+      dossier: [],
+    });
+    expect(c.deltaPacket.knowledge.mode).toBe("import-graph");
+    expect(c.deltaPacket.knowledge.statements.map((s) => s.id)).toEqual(["k1-changed"]);
+    expect(c.deltaPacket.knowledge.counts.rejected).toBe(1);
+    // The store total is disclosed, so the drafter can see there is more to ask for.
+    expect(c.deltaPacket.knowledge.counts.inStore).toBe(2);
+  });
+
+  it("a repo that was never enriched is an honest empty selection, not a crash", () => {
+    const c = assembleRoundCollation({
+      patchset: PS,
+      knowledge: null,
+      snapshot: fixtureSnapshot(),
+      dossier: [],
+    });
+    expect(c.deltaPacket.knowledge.statements).toEqual([]);
+    expect(c.deltaPacket.knowledge.generator).toBeNull();
   });
 });
