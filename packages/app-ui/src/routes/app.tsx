@@ -23,6 +23,7 @@ import { useRennetStore } from "../store";
 import { FirstRunWelcome } from "../welcome/first-run-welcome";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
+import { resolveProject } from "./project-resolution";
 import { useSlugResolution } from "./slug";
 import { newChatPath, ROUTES } from "./url";
 
@@ -90,12 +91,8 @@ function NewChatScreen() {
     invalidates: ["settings.get"],
   });
   const projects = listed?.projects ?? [];
-  const requested = requestedId
-    ? projects.find((project) => project.id === requestedId)
-    : undefined;
   const rememberedId = settings?.navigation?.lastProjectBySource?.[activeSource];
-  const resolved =
-    requested ?? projects.find((project) => project.id === rememberedId) ?? projects[0];
+  const resolved = resolveProject(projects, requestedId, rememberedId);
   const recorded = useRef<string | undefined>(undefined);
 
   useEffect(() => {

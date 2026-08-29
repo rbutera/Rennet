@@ -17,6 +17,7 @@ import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
+import { usePriorSurface } from "../settings/prior-surface";
 import { TargetIcon } from "../shell/sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
 import { hideClaimedRows, useClaimedTargets, useNewChatMint } from "./new-chat-mint";
@@ -79,16 +80,24 @@ function matchesText(row: SmartRow, needle: string): boolean {
 
 /** Fold a smart-list row onto the unified target vocabulary (R36 icon language). */
 function targetOf(row: SmartRow): { kind: SessionTarget; state?: SessionTargetState } {
-  if (row.kind === "local") return { kind: "your-branch" };
+  if (row.kind === "local") {
+    return {
+      kind: "your-branch",
+      state: row.local?.stage === "reviewed" || row.local?.stage === "prd" ? "reviewed" : undefined,
+    };
+  }
   if (row.state === "merged" || row.state === "closed") {
     return { kind: row.mine ? "your-pr" : "teammate-pr", state: "merged" };
   }
-  if (row.mine) return { kind: "your-pr" };
-  return { kind: "teammate-pr", state: row.needsYou ? "needs-you" : undefined };
+  return {
+    kind: row.mine ? "your-pr" : "teammate-pr",
+    state: row.needsYou ? "needs-you" : undefined,
+  };
 }
 
 export function NewChatView({ projectId }: { readonly projectId: string }) {
   const [, navigate] = useLocation();
+  const priorSurface = usePriorSurface();
   const search = useSearch();
   const { data: projectsData } = useCommand("projects.list", {});
   const projects = projectsData?.projects ?? [];
@@ -103,6 +112,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   // A row click STARTS the session (R26) — mint + claim + land, in one act.
   const mint = useNewChatMint(projectId);
   const claimed = useClaimedTargets(projectId);
+  const { data: sessionsData } = useCommand("session.list", {});
 
   const { data: detail } = useCommand("project.detail", { projectId });
   const rows = useMemo(
@@ -117,24 +127,25 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const visible = filterSmartRows(unclaimed, tab).filter((row) => matchesText(row, needle));
   const showRepo = new Set(unclaimed.map(repoOf)).size > 1;
 
-  const close = () => navigate(newChatPath());
+  const close = () => navigate(priorSurface());
 
   // Escape closes the page (the filter input's own Escape stops there first — 6.2). `navigate`
   // is wouter-stable, so the exhaustive dep re-subscribes only if it ever changes (finding 15).
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") navigate(newChatPath());
+      if (event.key === "Escape") navigate(priorSurface());
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigate]);
+  }, [navigate, priorSurface]);
 
   const branch = project?.primaryBranch ?? "main";
 
   // Two coach marks live on this surface and chain in system order: `new-chat` (the
   // project header — pick what to review, add another repo) then `smart-list` (the
   // unified branches + pull-requests list).
-  const newChatRef = useCoachAnchor("new-chat");
+  const noSessionsAnywhere = sessionsData !== undefined && sessionsData.sessions.length === 0;
+  const newChatRef = useCoachAnchor("new-chat", noSessionsAnywhere);
   const smartListRef = useCoachAnchor("smart-list");
 
   return (

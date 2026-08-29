@@ -477,6 +477,18 @@ function SidebarTree() {
   const { glyphByProject } = useSettingsProjection();
   const removeProject = useRemoveProject();
   const { activeSlug, activeProjectId, standingIn } = useActiveRoute();
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [projectNameDraft, setProjectNameDraft] = useState("");
+  const [projectRenamePending, setProjectRenamePending] = useState(false);
+  const [projectRenameError, setProjectRenameError] = useState<string | null>(null);
+  const projectNameRef = useRef<HTMLInputElement>(null);
+  const projectRenameInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!renamingProjectId) return;
+    projectNameRef.current?.focus();
+    projectNameRef.current?.select();
+  }, [renamingProjectId]);
 
   const projects = hosts.flatMap((host) => host.projects);
   const pinned = projects.flatMap((project) =>
@@ -494,6 +506,34 @@ function SidebarTree() {
     projection.archiveSession(session.id);
     // Archiving the session you are viewing pulls it out of the tree — move on.
     if (session.slug === activeSlug) navigate(newChatPath());
+  }
+
+  function beginProjectRename(project: SidebarProject) {
+    setProjectNameDraft(project.name);
+    setProjectRenameError(null);
+    setRenamingProjectId(project.id);
+  }
+
+  function cancelProjectRename() {
+    if (projectRenamePending) return;
+    setProjectRenameError(null);
+    setRenamingProjectId(null);
+  }
+
+  async function commitProjectRename(project: SidebarProject) {
+    if (projectRenameInFlightRef.current) return;
+    projectRenameInFlightRef.current = true;
+    setProjectRenamePending(true);
+    setProjectRenameError(null);
+    try {
+      await projection.renameProject(project.id, projectNameDraft.trim());
+      setRenamingProjectId(null);
+    } catch (error) {
+      setProjectRenameError(error instanceof Error ? error.message : String(error));
+    } finally {
+      projectRenameInFlightRef.current = false;
+      setProjectRenamePending(false);
+    }
   }
 
   // Remove a project directly from the menu (Rule Zero: no confirmation ceremony). The
@@ -554,36 +594,87 @@ function SidebarTree() {
             {host.projects.map((project) => {
               const expanded = folds[project.id] !== true || project.id === activeProjectId;
               const activeCount = project.sessions.filter((s) => !s.archived).length;
+              const renaming = renamingProjectId === project.id;
               return (
                 <ContextMenu key={project.id}>
                   <ContextMenuTrigger render={<div className="flex flex-col" />}>
-                    <button
-                      type="button"
-                      onClick={() => toggleFold(project.id)}
-                      aria-expanded={expanded}
-                      className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised"
-                    >
-                      <Icon
-                        icon={ChevronDown}
-                        className={cn(
-                          "size-3 shrink-0 text-ink-faint transition-transform",
-                          !expanded && "-rotate-90",
+                    {renaming ? (
+                      <div className="rounded-chip bg-raised px-2 py-1">
+                        <div className="flex min-h-5 items-center gap-1.5">
+                          <Icon
+                            icon={ChevronDown}
+                            className={cn(
+                              "size-3 shrink-0 text-ink-faint transition-transform",
+                              !expanded && "-rotate-90",
+                            )}
+                          />
+                          <ProjectIcon
+                            icon={glyphByProject[project.id]}
+                            className="size-3.5 shrink-0 text-ink-faint"
+                          />
+                          <input
+                            ref={projectNameRef}
+                            value={projectNameDraft}
+                            disabled={projectRenamePending}
+                            onChange={(event) => setProjectNameDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                void commitProjectRename(project);
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                cancelProjectRename();
+                              }
+                            }}
+                            aria-label="Project name"
+                            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none disabled:text-ink-faint"
+                          />
+                          {projectRenamePending ? (
+                            <Icon
+                              icon={Loader2}
+                              className="size-3 shrink-0 animate-spin text-ink-faint"
+                            />
+                          ) : (
+                            <span className="text-2xs text-ink-faint">{activeCount}</span>
+                          )}
+                        </div>
+                        {projectRenameError ? (
+                          <p role="alert" className="pt-1 pl-[30px] text-2xs text-danger">
+                            {projectRenameError}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => toggleFold(project.id)}
+                        aria-expanded={expanded}
+                        className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised"
+                      >
+                        <Icon
+                          icon={ChevronDown}
+                          className={cn(
+                            "size-3 shrink-0 text-ink-faint transition-transform",
+                            !expanded && "-rotate-90",
+                          )}
+                        />
+                        <ProjectIcon
+                          icon={glyphByProject[project.id]}
+                          className="size-3.5 shrink-0 text-ink-faint"
+                        />
+                        <span className="flex-1 truncate">{project.name}</span>
+                        {project.indexing ? (
+                          <span className="flex items-center gap-1 text-2xs text-ink-faint">
+                            <Icon icon={Loader2} className="size-3 animate-spin" />
+                            indexing
+                          </span>
+                        ) : (
+                          <span className="text-2xs text-ink-faint">{activeCount}</span>
                         )}
-                      />
-                      <ProjectIcon
-                        icon={glyphByProject[project.id]}
-                        className="size-3.5 shrink-0 text-ink-faint"
-                      />
-                      <span className="flex-1 truncate">{project.name}</span>
-                      {project.indexing ? (
-                        <span className="flex items-center gap-1 text-2xs text-ink-faint">
-                          <Icon icon={Loader2} className="size-3 animate-spin" />
-                          indexing
-                        </span>
-                      ) : (
-                        <span className="text-2xs text-ink-faint">{activeCount}</span>
-                      )}
-                    </button>
+                      </button>
+                    )}
 
                     <Collapse open={expanded}>
                       {/* biome-ignore lint/a11y/noStaticElementInteractions: stops the row context menu leaking to session rows. */}
@@ -622,11 +713,10 @@ function SidebarTree() {
                       <Icon icon={MapIcon} />
                       View Context Map
                     </ContextMenuItem>
-                    {/* No rename item here. The seam exists and is served —
-                        `project.rename` is registered, dispatched, and bound by
-                        `sidebar-data.ts`'s `renameProject` — but nothing in this menu
-                        calls it, so the project name is renamed from Settings →
-                        Projects. Tracked on #572 (F3). */}
+                    <ContextMenuItem onClick={() => beginProjectRename(project)}>
+                      <Icon icon={Pencil} />
+                      Rename
+                    </ContextMenuItem>
                     <ContextMenuItem onClick={() => navigate(projectSettingsPath(project.id))}>
                       <Icon icon={Settings2} />
                       Project Settings

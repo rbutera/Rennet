@@ -194,6 +194,14 @@ describe("ProjectsPage — dual-source settings", () => {
     cleanup();
   });
 
+  it("accepts a unique display name in ?project while keeping the stable id as the scope", async () => {
+    const { findByLabelText } = mount(
+      <StatefulProjects path="/settings/projects?project=billing" />,
+    );
+    expect(((await findByLabelText("Project name")) as HTMLInputElement).value).toBe("billing");
+    cleanup();
+  });
+
   it("identity: rename persists, Reset restores org/repo, empty blur restores it", async () => {
     const { findByLabelText, getByRole, queryByRole, getByTestId, user } = mount(
       <StatefulProjects />,

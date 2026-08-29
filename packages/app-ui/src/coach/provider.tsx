@@ -1,4 +1,5 @@
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
+import { useSearch } from "wouter";
 import { useCommand, useMutation } from "../data";
 import { CoachProvider } from "./context";
 import { createLatestWinsPersist } from "./persist";
@@ -23,13 +24,21 @@ import { type CoachStore, createCoachStore } from "./store";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function CoachDataProvider({ children }: { children: ReactNode }) {
+  const search = useSearch();
   const { data } = useCommand("settings.get", {});
   const { mutate } = useMutation("settings.setCoachmarks", { invalidates: ["settings.get"] });
 
   // `persist` must always call the LATEST mutate, but without recreating the store —
   // so route it through a ref the store's stable `persist` closure reads at call time.
-  const persistRef = useRef(mutate);
-  persistRef.current = mutate;
+  const mutateRef = useRef(mutate);
+  mutateRef.current = mutate;
+  const persistRef = useRef<ReturnType<typeof createLatestWinsPersist> | null>(null);
+  if (!persistRef.current) {
+    persistRef.current = createLatestWinsPersist((snapshot) => mutateRef.current(snapshot));
+  }
+
+  const resetRequested = new URLSearchParams(search).get("tour") === "reset";
+  const resetAppliedRef = useRef(false);
 
   // Create the store once, seeded from the persisted slice. The ref guard makes this a
   // single creation across renders (and StrictMode's double-invoke); later `settings.get`
@@ -39,16 +48,22 @@ export function CoachDataProvider({ children }: { children: ReactNode }) {
   if (!storeRef.current && data) {
     storeRef.current = createCoachStore({
       initial: {
-        seen: data.coachmarks?.seen ?? [],
-        skipAll: data.coachmarks?.skipAll ?? false,
+        seen: resetRequested ? [] : (data.coachmarks?.seen ?? []),
+        skipAll: resetRequested ? false : (data.coachmarks?.skipAll ?? false),
       },
       // Observe the write and sequence it latest-wins (finding 2): a rejecting
       // bridge is retained and retried, out-of-order completions never clobber a
       // newer state, and nothing leaves an unobserved rejection. `persistRef.current`
       // is read at call time so it always uses the latest `mutate`.
-      persist: createLatestWinsPersist((snapshot) => persistRef.current(snapshot)),
+      persist: persistRef.current,
     });
   }
+
+  useEffect(() => {
+    if (!data || !resetRequested || resetAppliedRef.current) return;
+    resetAppliedRef.current = true;
+    storeRef.current?.getState().replay();
+  }, [data, resetRequested]);
 
   // Render the provider UNCONDITIONALLY, store or not: before `settings.get` resolves the
   // store is null and the context value is null (anchors read it optionally and no-op, then

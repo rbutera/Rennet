@@ -8,7 +8,9 @@
 // unseen mark elects once its anchor registers, and a dismiss persists (survives a reload,
 // modelled as a remount over the SAME bridge).
 import { describe, expect, it } from "vitest";
+import { Router } from "wouter";
 import { BridgeProvider } from "../data";
+import { memoryHistory } from "../routes/history";
 import { cleanup, mount, waitFor } from "../test/dom";
 import { SettingsStore } from "../test/fixtures/settings";
 import { MemoryBridge } from "../test/memory-bridge";
@@ -118,6 +120,39 @@ describe("coach persistence seam (C13 Cluster 3)", () => {
     );
     await waitFor(() => expect(second.getByTestId("anchor")).toBeTruthy());
     expect(second.getByTestId("active").textContent).toBe("none");
+    cleanup();
+  });
+
+  it("?tour=reset clears the persisted record once at load and immediately re-arms marks", async () => {
+    const store = new SettingsStore({
+      coachmarks: { seen: ["start-review"], skipAll: true },
+    });
+    const handlers = store.handlers();
+    const writes: unknown[] = [];
+    const write = handlers["settings.setCoachmarks"];
+    if (!write) throw new Error("settings.setCoachmarks fixture missing");
+    const bridge = new MemoryBridge({
+      ...handlers,
+      "settings.setCoachmarks": (input) => {
+        writes.push(input);
+        return write(input);
+      },
+    });
+    const history = memoryHistory("/new-chat?tour=reset");
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <CoachDataProvider>
+            <Probe />
+          </CoachDataProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByTestId("active").textContent).toBe("start-review"));
+    await waitFor(() => expect(writes).toEqual([{ seen: [], skipAll: false }]));
+    await Promise.resolve();
+    expect(writes).toHaveLength(1);
     cleanup();
   });
 });

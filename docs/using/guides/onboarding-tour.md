@@ -17,6 +17,11 @@ learn the board lenses on the board and the exit button when you first stage an
 ask. Marks on the same surface chain: dismiss one and the next on that screen
 follows a moment later.
 
+The New Chat introduction is genuinely first-run guidance: it appears only
+before any session exists. Active, pinned, and archived sessions all count. A
+replayed tour still skips that mark once you have review history, while the
+Smart List mark remains independently eligible.
+
 The tour is the one place in Rennet that explains itself. Everywhere else the
 chrome only names things; the coach marks are where the product is allowed to
 teach. So the copy is deliberately small — a title, a sentence — and it never
@@ -47,7 +52,8 @@ next launch, and Skip all tips means no mark fires again until you ask for it.
 Open the sidebar and choose **Replay Tour** under Help. It re-arms every mark —
 clears what you have seen and lifts Skip all tips — so the marks appear again as
 you move through the app, starting with the first one on whatever surface you are
-on.
+on. Opening a Rennet route with `?tour=reset` performs the same persisted reset
+once when that route loads; a normal route leaves the saved tour state alone.
 
 ## Where the tour's memory lives
 

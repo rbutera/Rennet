@@ -27,7 +27,7 @@ import {
 // here would be an assertion that passes for the wrong reason.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("the Map toggle and ⌘N reach real destinations", async () => {
+test("shell navigation and project rename reach real destinations", async () => {
   test.setTimeout(300_000);
 
   const repository = seedReviewRepo("rennet-e2e-shell-");
@@ -46,6 +46,32 @@ test("the Map toggle and ⌘N reach real destinations", async () => {
     const map = page.locator(".context-map-title");
     await expect(board).toBeVisible();
     await expect(map).toHaveCount(0);
+
+    // ── Project rename ───────────────────────────────────────────────────────
+    const sidebar = page.locator('[data-region="sidebar"]');
+    const projectRow = sidebar.locator('button[aria-expanded="true"]').first();
+    await projectRow.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Rename", exact: true }).click();
+    const projectName = page.getByRole("textbox", { name: "Project name" });
+    await expect(projectName).toBeFocused();
+    const selection = await projectName.evaluate((input: HTMLInputElement) => [
+      input.selectionStart,
+      input.selectionEnd,
+      input.value.length,
+    ]);
+    expect(selection).toEqual([0, selection[2], selection[2]]);
+    await projectName.fill("Shell fixture");
+    await projectName.press("Enter");
+    const renamedProject = sidebar.getByText("Shell fixture", { exact: true });
+    await expect(renamedProject).toBeVisible();
+
+    // The same served name reaches Settings; the session route stayed put during the write.
+    await renamedProject.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Project Settings", exact: true }).click();
+    await expect(page.locator('[data-screen="settings"]')).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Project name" })).toHaveValue("Shell fixture");
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(board).toBeVisible();
 
     // ── Map ──────────────────────────────────────────────────────────────────
     await page
@@ -68,6 +94,14 @@ test("the Map toggle and ⌘N reach real destinations", async () => {
     await expect(page.locator('[data-screen="new-chat"]')).toBeVisible({ timeout: 30_000 });
     // The surface it left is gone, not overlaid — the old ⌘N left the reviewer exactly here.
     await expect(board).toHaveCount(0);
+
+    // Escape and the visible back arrow both return to the exact surface New Chat took over.
+    await page.keyboard.press("Escape");
+    await expect(board).toBeVisible();
+    await page.keyboard.press("Meta+n");
+    await expect(page.locator('[data-screen="new-chat"]')).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(board).toBeVisible();
   } finally {
     await application.close();
     for (const dir of [repository, userData, home]) rmSync(dir, { recursive: true, force: true });

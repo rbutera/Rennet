@@ -82,7 +82,7 @@ export interface SidebarSessionProjection {
   archiveSession(id: string): void;
   /** Un-archive: returns the session to the live sidebar (release is archive-only). */
   restoreSession(id: string): void;
-  renameProject(id: string, name: string): void;
+  renameProject(id: string, name: string): Promise<void>;
 }
 
 /** The compact age line a session row shows (`now` / `5m` / `2h` / `1d` / `3w`) — the
@@ -150,7 +150,7 @@ export function useSidebarSessionProjection(): SidebarSessionProjection {
       archiveSession: (id) => void setArchived({ sessionId: id, archived: true }).catch(swallow),
       restoreSession: (id) => void setArchived({ sessionId: id, archived: false }).catch(swallow),
       renameProject: (id, name) =>
-        void renameProjectCommand({ projectId: id, name }).catch(swallow),
+        renameProjectCommand({ projectId: id, name }).then(() => undefined),
     };
   }, [data, rename, setPinned, setArchived, renameProjectCommand]);
 }
