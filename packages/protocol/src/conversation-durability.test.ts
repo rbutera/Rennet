@@ -43,6 +43,34 @@ describe("reviewAskStreamEvent round-trips each variant (#251)", () => {
     expect(reviewAskStreamEventSchema.parse(event)).toEqual(event);
   });
 
+  it("ask-state carries an idempotent ordered harness snapshot", () => {
+    const event = {
+      kind: "ask-state" as const,
+      threadId: "th",
+      turnId: "tn",
+      channel: "orchestrator" as const,
+      rows: [
+        {
+          kind: "turn" as const,
+          id: "tn::orchestrator",
+          speaker: "orchestrator" as const,
+          status: "streaming" as const,
+          paragraphs: [],
+          blocks: [
+            {
+              kind: "action" as const,
+              id: "tool-1",
+              label: "app_ask_stage",
+              status: "streaming" as const,
+              toolKind: "mcp" as const,
+            },
+          ],
+        },
+      ],
+    };
+    expect(reviewAskStreamEventSchema.parse(event)).toEqual(event);
+  });
+
   it("ask-complete carries the model label and the final body", () => {
     const event = {
       kind: "ask-complete" as const,

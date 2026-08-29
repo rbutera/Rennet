@@ -33,7 +33,13 @@ export function ThoughtBlock({ step }: { readonly step: ThoughtBlockData }) {
           )}
           aria-hidden="true"
         />
-        <span>{isLive ? "Thinking" : `Thought for ${step.seconds ?? 1}s`}</span>
+        <span>
+          {isLive
+            ? "Thinking"
+            : step.seconds === undefined
+              ? "Thought"
+              : `Thought for ${step.seconds}s`}
+        </span>
         {!isLive && (
           <ChevronRight
             className={cn(

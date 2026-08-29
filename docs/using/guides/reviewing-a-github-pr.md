@@ -86,9 +86,10 @@ produced it:
   numbers, so the ask carries a real diff position.
 - **A span of board prose** — highlight it and choose **Comment** or **Request
   Changes**; the quoted span becomes the ask's provenance.
-- **A conclusion you reached in chat** — chat answers questions about the change;
-  it does not stage asks for you. Stage the conclusion from the board, the line,
-  or the span it belongs to.
+- **A conclusion you reached in chat** — explicitly ask the orchestrator to stage
+  it and Rennet records the completed action and receipt, or stage it yourself
+  from the board, the line, or the span it belongs to. A suggested action is not
+  silently staged.
 
 The count on the **Write Review** button is your staged asks plus the comments
 and threads not yet folded into one. Questions you asked with **Explain** never

@@ -3,6 +3,13 @@
 // onto the real `review` store slice and the C01 data seam. Source hydration goes through
 // the span-read seam (citations.ts), never a filesystem read.
 
+export {
+  type AnchoredAsk,
+  type AnchoredAskInput,
+  AnchoredAskProvider,
+  ReviewAnchoredAskProvider,
+  useAnchoredAsk,
+} from "./anchored-ask";
 // Public surface: the shared components, the CodeRef shape, and the span-read hook.
 // `lineRef`/`spanToBlock`/`parseRef`/`CitationBlock` are module-private helpers — the
 // review components below use them internally; nothing outside review/ imports them.

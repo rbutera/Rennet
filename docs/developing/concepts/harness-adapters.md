@@ -101,10 +101,16 @@ The loop is where the **display transcript** is captured because it is the singl
 reader of every harness event. Its `recordTranscript` sink projects those events
 onto the transcript rows the chat dock renders (`harnessEventsToRows`) and
 appends them to the durable `TranscriptStore` that `session.transcript` reads.
-The rows are a display read-model, additive to the cursor: the CLI still owns the
-conversation. A session whose turns have not run reads back empty because it
-genuinely has no rows, and a transcript log that cannot be written never fails
-the coding turn that produced it.
+Each row preserves the harness event order as typed blocks — prose, thought,
+action, code, and lifecycle markers — instead of flattening activity into a
+preface string. Thought duration is derived only from harness `receivedAt`
+boundaries and remains absent when no honest end boundary exists. A caller may
+supply a stable public turn id; retries keep that id for the successful public
+turn while a failed resume attempt receives a distinct id, so durable merge and
+reload cannot collapse two attempts. The rows are a display read-model, additive
+to the cursor: the CLI still owns the conversation. A session whose turns have
+not run reads back empty because it genuinely has no rows, and a transcript log
+that cannot be written never fails the coding turn that produced it.
 
 The rows are stored **verbatim**, host paths and all. R19 is a rule about what
 crosses the wire to a *remote* client, and the daemon applies it at that

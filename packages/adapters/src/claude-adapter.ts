@@ -156,6 +156,17 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" ? value : null;
 }
 
+function resultErrorMessage(record: Record<string, unknown>, subtype: string | null): string {
+  const result = stringField(record, "result");
+  if (result !== null) return result;
+  const errors = record.errors;
+  if (Array.isArray(errors)) {
+    const first = errors.find((error): error is string => typeof error === "string");
+    if (first !== undefined) return first;
+  }
+  return subtype ?? "result error";
+}
+
 /**
  * Render a `tool_result` block's `content` to plain text for a `tool.output` event.
  * The Anthropic tool_result content is a string OR an array of blocks (usually
@@ -207,6 +218,10 @@ export function classifyToolKind(name: string): ToolKind {
   if (["Read", "NotebookRead"].includes(name)) return "read";
   if (["Grep", "Glob", "LS", "WebFetch", "WebSearch"].includes(name)) return "search";
   return "other";
+}
+
+function displayToolName(name: string): string {
+  return /^mcp__rennet-app(?:-\d+)?__(app_[a-z0-9_]+)$/iu.exec(name)?.[1] ?? name;
 }
 
 /**
@@ -354,12 +369,13 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
   }
 
   if (type === "system" && subtype === "permission_denied") {
+    const toolName = stringField(record, "tool_name") ?? "unknown";
     return [
       {
         ...envelope(context, frame),
         kind: "tool.denied",
         callId: stringField(record, "tool_use_id"),
-        toolName: stringField(record, "tool_name") ?? "unknown",
+        toolName: displayToolName(toolName),
         by: "policy",
         reason:
           stringField(record, "reason") ?? stringField(record, "message") ?? "denied by policy",
@@ -415,16 +431,16 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
           text: stringField(blockRecord, "thinking") ?? "",
         });
       } else if (blockType === "tool_use") {
-        const name = stringField(blockRecord, "name") ?? "unknown";
+        const nativeName = stringField(blockRecord, "name") ?? "unknown";
         events.push({
           ...envelope(context, frame),
           kind: "tool.started",
           call: {
             id: stringField(blockRecord, "id") ?? randomUUID(),
-            name,
+            name: displayToolName(nativeName),
             input: asRecord(blockRecord.input) ?? {},
             parentToolCallId: null,
-            kind: classifyToolKind(name),
+            kind: classifyToolKind(nativeName),
           },
         });
       }
@@ -491,10 +507,7 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
   if (type === "result") {
     const isError = record.is_error === true || subtype?.startsWith("error") === true;
     if (isError) {
-      const error = mapClaudeError(
-        subtype,
-        stringField(record, "result") ?? subtype ?? "result error",
-      );
+      const error = mapClaudeError(subtype, resultErrorMessage(record, subtype));
       return [
         { ...envelope(context, frame), kind: "error", error },
         {

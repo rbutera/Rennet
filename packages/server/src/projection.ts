@@ -18,7 +18,12 @@
 import { realpathSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { escapePath } from "@rennet/core";
-import type { CommandName, ProjectProgressEvent, RepoReference } from "@rennet/protocol";
+import type {
+  CommandName,
+  ProjectProgressEvent,
+  RepoReference,
+  ReviewAskStreamEvent,
+} from "@rennet/protocol";
 
 /** A repository the server may name outbound / accept inbound, in both path forms + its key. */
 interface RootEntry {
@@ -192,6 +197,33 @@ export function redactAbsolutePathsDeep(value: unknown, ctx: ProjectionContext):
   return value;
 }
 
+/** Transcript rows contain harness-authored prose plus optional code paths. Project the whole
+ * row through the same raw-transcript boundary as `session.transcript`: known roots/home become
+ * display tokens and any remaining absolute path is redacted. */
+function projectTranscriptRowsField(
+  value: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  if (!Array.isArray(value.rows)) return value;
+  return {
+    ...value,
+    rows: value.rows.map((row) => redactAbsolutePathsDeep(row, ctx)),
+  };
+}
+
+/** Project an ask-stream event for a paired client. Model prose remains byte-for-byte on the
+ * delta/terminal arms; only the structured raw transcript snapshot needs path projection. */
+export function projectAskStreamEvent(
+  event: ReviewAskStreamEvent,
+  ctx: ProjectionContext,
+): ReviewAskStreamEvent {
+  if (event.kind !== "ask-state") return event;
+  return {
+    ...event,
+    rows: event.rows.map((row) => redactAbsolutePathsDeep(row, ctx)),
+  } as ReviewAskStreamEvent;
+}
+
 // ── Board projections (B4: board events/state before a projected broadcast) ───
 
 /**
@@ -348,6 +380,28 @@ export function projectCommandOutput(
     // alone would let a `/var/…` or `C:\…` outside every known root cross to a phone.
     if (command === "session.transcript" && Array.isArray(o.rows))
       o.rows = (o.rows as unknown[]).map((row) => redactAbsolutePathsDeep(row, ctx));
+    // Reattach carries the same raw transcript rows under persisted messages and live turns.
+    // Apply the identical boundary here so reload/session-switch cannot expose a host path that
+    // the direct transcript read would redact.
+    if (command === "review.reattach") {
+      if (Array.isArray(o.threads)) {
+        o.threads = (o.threads as Record<string, unknown>[]).map((thread) => ({
+          ...thread,
+          ...(Array.isArray(thread.messages)
+            ? {
+                messages: (thread.messages as Record<string, unknown>[]).map((message) =>
+                  projectTranscriptRowsField(message, ctx),
+                ),
+              }
+            : {}),
+        }));
+      }
+      if (Array.isArray(o.inFlight)) {
+        o.inFlight = (o.inFlight as Record<string, unknown>[]).map((turn) =>
+          projectTranscriptRowsField(turn, ctx),
+        );
+      }
+    }
     projected = o;
   }
   return scrubProjectedValue(projected, ctx);

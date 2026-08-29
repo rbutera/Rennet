@@ -17,6 +17,7 @@ import type {
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import type { AttentionEventFrame, RoundEvent } from "./session";
+import { SessionTranscriptRowSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -1153,6 +1154,14 @@ export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
     seq: askStreamSeqSchema,
   }),
   z.object({
+    kind: z.literal("ask-state"),
+    threadId: z.string().min(1),
+    turnId: z.string().min(1),
+    channel: streamChannelSchema,
+    rows: z.array(SessionTranscriptRowSchema),
+    seq: askStreamSeqSchema,
+  }),
+  z.object({
     kind: z.literal("ask-complete"),
     threadId: z.string().min(1),
     turnId: z.string().min(1),
@@ -1193,6 +1202,10 @@ export const persistedThreadMessageSchema = z.object({
   model: z.string().min(1).optional(),
   body: z.string(),
   status: turnStatusSchema.optional(),
+  /** ISO occurrence time for chronology; absent on legacy rows. */
+  time: z.iso.datetime().optional(),
+  /** Rich harness rows for this message, when the live adapter supplied them. */
+  rows: z.array(SessionTranscriptRowSchema).optional(),
 });
 export type PersistedThreadMessageWire = z.infer<typeof persistedThreadMessageSchema>;
 
@@ -1216,6 +1229,10 @@ export const inFlightTurnSchema = z.object({
   channel: streamChannelSchema,
   model: z.string().min(1),
   bodySoFar: z.string(),
+  /** ISO turn-start time for chronology; absent on legacy daemon state. */
+  time: z.iso.datetime().optional(),
+  /** Latest idempotent activity snapshot for reload while the daemon still runs. */
+  rows: z.array(SessionTranscriptRowSchema).optional(),
 });
 export type InFlightTurn = z.infer<typeof inFlightTurnSchema>;
 

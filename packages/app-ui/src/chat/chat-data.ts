@@ -4,6 +4,7 @@ import type {
   SessionTranscriptRow,
   TurnStatus,
   ActivityStep as WireActivityStep,
+  TranscriptBlock as WireTranscriptBlock,
 } from "@rennet/protocol";
 import type { LucideIcon } from "lucide-react";
 import { Bot, FilePen, FileText, Plug, Search, TerminalSquare, Wrench } from "lucide-react";
@@ -11,6 +12,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef } fr
 import { useRoute, useSearch } from "wouter";
 import { commandKey, readCommandId, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
+import type { CommandCache } from "../data/cache";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES, readSessionQuery } from "../routes/url";
 
@@ -92,6 +94,7 @@ export interface CodeBlockData {
 }
 
 export type ContentBlock = ProseBlock | CodeBlockData;
+export type TranscriptBlock = ActivityStep | ContentBlock;
 
 /** One transcript turn — a user bubble or an orchestrator turn (lead prose, activity
  *  preface, body of prose/code blocks). */
@@ -107,6 +110,8 @@ export interface TurnRow {
   readonly preface?: readonly ActivityStep[];
   /** Richer reply content (prose interleaved with code blocks); takes precedence over `paragraphs`. */
   readonly body?: readonly ContentBlock[];
+  /** Exact event order for current rows; legacy preface/body remain readable. */
+  readonly blocks?: readonly TranscriptBlock[];
 }
 
 /** A `compact_boundary` timeline row — the harness compacted the session here. The
@@ -161,13 +166,21 @@ function activityStepOf(step: WireActivityStep): ActivityStep {
   return step.kind === "thought" ? step : { ...step, icon: TOOL_ICONS[step.toolKind] };
 }
 
+function transcriptBlockOf(block: WireTranscriptBlock): TranscriptBlock {
+  return block.kind === "action" ? activityStepOf(block) : block;
+}
+
 /** Project the persisted `session.transcript` rows onto the dock's rows. The only real
  *  difference is the action step's icon; everything else is the same shape by construction. */
 export function transcriptRowsOf(rows: readonly SessionTranscriptRow[]): TranscriptRow[] {
   return rows.map((row) => {
     if (row.kind !== "turn") return row;
-    const { preface, ...rest } = row;
-    return preface === undefined ? rest : { ...rest, preface: preface.map(activityStepOf) };
+    const { preface, blocks, ...rest } = row;
+    return {
+      ...rest,
+      ...(preface === undefined ? {} : { preface: preface.map(activityStepOf) }),
+      ...(blocks === undefined ? {} : { blocks: blocks.map(transcriptBlockOf) }),
+    };
   });
 }
 
@@ -229,40 +242,124 @@ function splitParagraphs(body: string): string[] {
 }
 
 /** A live in-flight turn → a streaming orchestrator `TurnRow`. */
-function inFlightToTurn(turn: ReattachResult["inFlight"][number]): TurnRow {
-  return {
-    kind: "turn",
-    id: turn.turnId,
-    speaker: "orchestrator",
-    status: "streaming",
-    paragraphs: splitParagraphs(turn.bodySoFar),
-  };
+function inFlightToRows(turn: ReattachResult["inFlight"][number]): TranscriptRow[] {
+  if (turn.rows && turn.rows.length > 0) return transcriptRowsOf(turn.rows);
+  return [
+    {
+      kind: "turn",
+      id: `${turn.turnId}::${turn.channel}`,
+      speaker: "orchestrator",
+      status: "streaming",
+      paragraphs: splitParagraphs(turn.bodySoFar),
+      ...(turn.time === undefined ? {} : { time: turn.time }),
+    },
+  ];
 }
 
 /** The persisted ask-thread transcript → turn rows (settled threads, then live turns). */
-export function reattachToRows(result: ReattachResult): TurnRow[] {
-  const rows: TurnRow[] = [];
+export function reattachToRows(result: ReattachResult): TranscriptRow[] {
+  const rows: TranscriptRow[] = [];
   const known = new Set<string>();
   for (const thread of result.threads) {
     known.add(thread.threadId);
     for (const message of thread.messages) {
-      rows.push({
-        kind: "turn",
-        id: message.id,
-        speaker: message.author === "you" ? "user" : "orchestrator",
-        status: message.status ?? "complete",
-        paragraphs: splitParagraphs(message.body),
-      });
+      if (message.rows && message.rows.length > 0) rows.push(...transcriptRowsOf(message.rows));
+      else
+        rows.push({
+          kind: "turn",
+          id: message.id,
+          speaker: message.author === "you" ? "user" : "orchestrator",
+          status: message.status ?? "complete",
+          paragraphs: splitParagraphs(message.body),
+          ...(message.time === undefined ? {} : { time: message.time }),
+        });
     }
     for (const turn of result.inFlight) {
-      if (turn.threadId === thread.threadId) rows.push(inFlightToTurn(turn));
+      if (turn.threadId === thread.threadId) rows.push(...inFlightToRows(turn));
     }
   }
   // A brand-new live ask whose thread was not in the reattach snapshot yet.
   for (const turn of result.inFlight) {
-    if (!known.has(turn.threadId)) rows.push(inFlightToTurn(turn));
+    if (!known.has(turn.threadId)) rows.push(...inFlightToRows(turn));
   }
   return rows;
+}
+
+function transcriptRowKey(row: TranscriptRow): string {
+  return row.kind === "anchored-thread" ? `anchored:${row.threadId}` : `${row.kind}:${row.id}`;
+}
+
+function transcriptRowTime(row: TranscriptRow): number | undefined {
+  if (row.kind === "anchored-thread" || row.kind === "context-rebuilt" || !row.time) {
+    return undefined;
+  }
+  const value = Date.parse(row.time);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function transcriptRowDetail(row: TranscriptRow): number {
+  if (row.kind !== "turn") return 0;
+  return (
+    (row.blocks?.length ?? 0) * 1000 +
+    (row.preface?.length ?? 0) * 100 +
+    (row.body?.length ?? 0) * 10 +
+    row.paragraphs.length
+  );
+}
+
+/**
+ * Merge the durable harness log with persisted/live thread rows. Stable ids collapse the
+ * two representations; the richer ordered row wins, while source timestamps put the
+ * reviewer's question before the harness activity that answered it. Legacy rows without
+ * timestamps retain their source order.
+ */
+export function mergeTranscriptRows(
+  history: readonly TranscriptRow[],
+  live: readonly TranscriptRow[],
+): TranscriptRow[] {
+  const merged = new Map<
+    string,
+    { row: TranscriptRow; firstIndex: number; time: number | undefined }
+  >();
+  for (const [index, row] of [...history, ...live].entries()) {
+    const key = transcriptRowKey(row);
+    const prior = merged.get(key);
+    if (!prior) {
+      merged.set(key, { row, firstIndex: index, time: transcriptRowTime(row) });
+      continue;
+    }
+    if (transcriptRowDetail(row) > transcriptRowDetail(prior.row)) prior.row = row;
+    prior.time ??= transcriptRowTime(row);
+  }
+  const sourceOrdered = [...merged.values()].sort(
+    (left, right) => left.firstIndex - right.firstIndex,
+  );
+  const nextTimed: Array<number | undefined> = new Array(sourceOrdered.length);
+  let next: number | undefined;
+  for (let index = sourceOrdered.length - 1; index >= 0; index--) {
+    nextTimed[index] = next;
+    const time = sourceOrdered[index]?.time;
+    if (time !== undefined) next = time;
+  }
+  let previous: number | undefined;
+  const chronological = sourceOrdered.map((entry, index) => {
+    if (entry.time !== undefined) {
+      previous = entry.time;
+      return { ...entry, chronology: entry.time, phase: 0 };
+    }
+    if (previous !== undefined) return { ...entry, chronology: previous, phase: 1 };
+    const following = nextTimed[index];
+    return following === undefined
+      ? { ...entry, chronology: Number.POSITIVE_INFINITY, phase: 0 }
+      : { ...entry, chronology: following, phase: -1 };
+  });
+  return chronological
+    .sort((left, right) => {
+      if (left.chronology !== right.chronology) return left.chronology - right.chronology;
+      if (left.phase !== right.phase) return left.phase - right.phase;
+      return left.firstIndex - right.firstIndex;
+    })
+    .map(({ row }) => row);
 }
 
 const EMPTY_REATTACH: ReattachResult = { threads: [], inFlight: [] };
@@ -271,6 +368,75 @@ const EMPTY_REATTACH: ReattachResult = { threads: [], inFlight: [] };
  *  persistence, not to duplicate the message, so a long question is clipped rather than
  *  stored twice — the full text is the turn body. */
 const ANCHOR_LABEL_CEILING = 120;
+
+export interface ReviewerEcho {
+  readonly threadId: string;
+  readonly id: string;
+  readonly body: string;
+}
+
+const pendingReviewerEchoes = new WeakMap<CommandCache, Map<string, ReviewerEcho[]>>();
+
+/** The one optimistic reviewer-message fold used by the dock composer and anchored board asks. */
+export function foldReviewerEcho(
+  prev: ReattachResult | undefined,
+  echo: ReviewerEcho,
+): ReattachResult {
+  const base = prev ?? EMPTY_REATTACH;
+  return {
+    ...base,
+    threads: appendMessage(base, echo.threadId, {
+      id: echo.id,
+      author: "you",
+      body: echo.body,
+      status: "complete",
+    }),
+  };
+}
+
+function queueReviewerEcho(cache: CommandCache, key: string, echo: ReviewerEcho): void {
+  let byKey = pendingReviewerEchoes.get(cache);
+  if (!byKey) {
+    byKey = new Map();
+    pendingReviewerEchoes.set(cache, byKey);
+  }
+  const queued = byKey.get(key) ?? [];
+  if (queued.some((candidate) => candidate.id === echo.id)) return;
+  byKey.set(key, [...queued, echo]);
+}
+
+/** Fold immediately when the authoritative reattach read is settled; otherwise queue a replay
+ * across that in-flight read, whose completion replaces the cache snapshot wholesale. */
+export function enqueueReviewerEcho(cache: CommandCache, key: string, echo: ReviewerEcho): void {
+  const snapshot = cache.getSnapshot(key);
+  if (snapshot.data !== undefined) {
+    cache.setData(key, (prev) => foldReviewerEcho(prev as ReattachResult | undefined, echo));
+  }
+  if (snapshot.fetching || snapshot.data === undefined) queueReviewerEcho(cache, key, echo);
+}
+
+/** Replay and clear echoes queued while `review.reattach` was fetching. Idempotent by message id. */
+export function flushReviewerEchoes(cache: CommandCache, key: string): void {
+  const byKey = pendingReviewerEchoes.get(cache);
+  const queued = byKey?.get(key) ?? [];
+  if (queued.length === 0) return;
+  byKey?.delete(key);
+  for (const echo of queued) {
+    cache.setData(key, (prev) => foldReviewerEcho(prev as ReattachResult | undefined, echo));
+  }
+}
+
+/** Deterministic cache identity shared by every producer that feeds `review.reattach`. */
+export function reviewReattachInput(reviewId: string) {
+  return {
+    commandId: readCommandId(`review.reattach:${reviewId}`),
+    reviewId,
+  };
+}
+
+export function reviewReattachKey(reviewId: string): string {
+  return commandKey("review.reattach", reviewReattachInput(reviewId));
+}
 
 /**
  * Fold one ask-stream event into the `review.reattach` read (reconciliation 3). The
@@ -319,18 +485,50 @@ export function foldAskStream(
         ],
       };
     }
+    case "ask-state": {
+      if (event.seq !== undefined) {
+        const last = seen.get(event.turnId);
+        if (last !== undefined && event.seq <= last) return base;
+        seen.set(event.turnId, event.seq);
+      }
+      const existing = base.inFlight.find((turn) => turn.turnId === event.turnId);
+      if (existing) {
+        return {
+          ...base,
+          inFlight: base.inFlight.map((turn) =>
+            turn.turnId === event.turnId ? { ...turn, rows: event.rows } : turn,
+          ),
+        };
+      }
+      return {
+        ...base,
+        inFlight: [
+          ...base.inFlight,
+          {
+            threadId: event.threadId,
+            turnId: event.turnId,
+            channel: event.channel,
+            model: "",
+            bodySoFar: "",
+            rows: event.rows,
+          },
+        ],
+      };
+    }
     case "ask-complete": {
       seen.delete(event.turnId);
       const settled = base.inFlight.find((t) => t.turnId === event.turnId);
-      if (!settled && threadHasTurn(base, event.threadId, event.turnId)) return base; // already settled
+      const messageId = `${event.turnId}::${event.channel}`;
+      if (!settled && threadHasTurn(base, event.threadId, messageId)) return base; // already settled
       return {
         inFlight: base.inFlight.filter((t) => t.turnId !== event.turnId),
         threads: appendMessage(base, event.threadId, {
-          id: event.turnId,
+          id: messageId,
           author: "harness",
           model: event.model,
           body: event.finalBody,
           status: "complete",
+          ...(settled?.rows === undefined ? {} : { rows: settled.rows }),
         }),
       };
     }
@@ -341,11 +539,12 @@ export function foldAskStream(
         return {
           inFlight: base.inFlight.filter((t) => t.turnId !== event.turnId),
           threads: appendMessage(base, event.threadId, {
-            id: event.turnId,
+            id: `${event.turnId}::${event.channel}`,
             author: "harness",
             model: "",
             body: inflight.bodySoFar,
             status: "interrupted",
+            ...(inflight.rows === undefined ? {} : { rows: inflight.rows }),
           }),
         };
       }
@@ -357,7 +556,9 @@ export function foldAskStream(
             ? {
                 ...thread,
                 messages: thread.messages.map((m) =>
-                  m.id === event.turnId ? { ...m, status: "interrupted" as const } : m,
+                  m.id === `${event.turnId}::${event.channel}`
+                    ? { ...m, status: "interrupted" as const }
+                    : m,
                 ),
               }
             : thread,
@@ -486,16 +687,10 @@ export function useChatDock(): ChatDockModel {
   // readable `reattach-${reviewId}` this used to send was rejected by the daemon and the
   // dock's own read came back an error on the real app — the transcript was empty because
   // it was never served, not because nothing was persisted.
-  const reattachInput = useMemo(
-    () => ({
-      commandId: readCommandId(`review.reattach:${reviewId ?? ""}`),
-      reviewId: reviewId ?? "",
-    }),
-    [reviewId],
-  );
-  const reattachKey = useMemo(() => commandKey("review.reattach", reattachInput), [reattachInput]);
+  const reattachInput = useMemo(() => reviewReattachInput(reviewId ?? ""), [reviewId]);
+  const reattachKey = useMemo(() => reviewReattachKey(reviewId ?? ""), [reviewId]);
 
-  const { data, error } = useCommand("review.reattach", reattachInput, {
+  const { data, error, fetching } = useCommand("review.reattach", reattachInput, {
     enabled: reviewId !== undefined,
   });
 
@@ -516,35 +711,16 @@ export function useChatDock(): ChatDockModel {
   // reattach key) changes, so no seq/buffer/settle state leaks across reviews.
   const seenSeq = useRef(new Map<string, number>());
   const buffer = useRef<ReviewAskStreamEvent[]>([]);
-  const optimistic = useRef<Array<{ threadId: string; id: string; body: string }>>([]);
   const settledRef = useRef(false);
+  const liveIds = useRef(new Set<string>());
   const keyRef = useRef(reattachKey);
   if (keyRef.current !== reattachKey) {
     keyRef.current = reattachKey;
     seenSeq.current = new Map();
     buffer.current = [];
-    optimistic.current = [];
     settledRef.current = false;
+    liveIds.current = new Set();
   }
-
-  // Fold one reviewer "you" turn into the reattach entry (the optimistic echo, Fix #1).
-  const foldEcho = useCallback(
-    (echo: { threadId: string; id: string; body: string }) => {
-      cache.setData(reattachKey, (prev) => {
-        const base = (prev as ReattachResult | undefined) ?? EMPTY_REATTACH;
-        return {
-          ...base,
-          threads: appendMessage(base, echo.threadId, {
-            id: echo.id,
-            author: "you",
-            body: echo.body,
-            status: "complete",
-          }),
-        };
-      });
-    },
-    [cache, reattachKey],
-  );
 
   // Fix #2 (join-mid-reply): a delta that folds into the reattach entry BEFORE the initial
   // fetch resolves is overwritten when cache.ts installs the server snapshot, and its seq is
@@ -566,23 +742,29 @@ export function useChatDock(): ChatDockModel {
     },
   });
 
-  const reattachSettled = reviewId !== undefined && (data !== undefined || error !== undefined);
+  const reattachSettled =
+    reviewId !== undefined && !fetching && (data !== undefined || error !== undefined);
   useEffect(() => {
     if (!reattachSettled || settledRef.current) return;
     settledRef.current = true;
     const buffered = buffer.current;
-    const echoes = optimistic.current;
     buffer.current = [];
-    optimistic.current = [];
-    // Buffered deltas first (in arrival order), then any pre-settle reviewer echo — so the
-    // transcript order matches send/receive order. Both fold onto the settled snapshot.
+    // The reviewer spoke before any reply event arrived, so replay the queued echo first; then
+    // fold buffered stream events in arrival order onto that authoritative snapshot.
+    flushReviewerEchoes(cache, reattachKey);
     for (const event of buffered) {
       cache.setData(reattachKey, (prev) =>
         foldAskStream(prev as ReattachResult | undefined, event, seenSeq.current),
       );
     }
-    for (const echo of echoes) foldEcho(echo);
-  }, [reattachSettled, cache, reattachKey, foldEcho]);
+  }, [reattachSettled, cache, reattachKey]);
+
+  // A background reattach refetch can also replace a live-folded entry. Anchored sends enqueue a
+  // replay whenever any fetch is active; apply it as soon as that fetch settles.
+  useEffect(() => {
+    if (fetching || (!data && !error)) return;
+    flushReviewerEchoes(cache, reattachKey);
+  }, [cache, data, error, fetching, reattachKey]);
 
   // No `invalidates`: a reattach refetch would overwrite the folded stream — cache.ts's
   // fetch-success installs the server snapshot, discarding live folds (the same clobber Fix #2
@@ -593,7 +775,6 @@ export function useChatDock(): ChatDockModel {
   // Turns that were streaming at least once this mount animate on arrival; the initial
   // snapshot's turns are records. We accumulate live ids in a ref so a settled turn keeps
   // its arrival animation and a record never re-animates on a later re-render.
-  const liveIds = useRef(new Set<string>());
   const reattach = data ?? EMPTY_REATTACH;
   const liveRows = useMemo(() => reattachToRows(reattach), [reattach]);
   for (const row of liveRows) {
@@ -605,7 +786,7 @@ export function useChatDock(): ChatDockModel {
     () => projection.rows ?? transcriptRowsOf(session?.rows ?? []),
     [projection.rows, session],
   );
-  const rows = useMemo(() => [...historyRows, ...liveRows], [historyRows, liveRows]);
+  const rows = useMemo(() => mergeTranscriptRows(historyRows, liveRows), [historyRows, liveRows]);
   const inFlight = liveRows.some((row) => row.kind === "turn" && row.status === "streaming");
 
   const send = useCallback(
@@ -628,11 +809,11 @@ export function useChatDock(): ChatDockModel {
       // read is still in flight, then flushed onto it), the reviewer's own message rendered
       // TWICE. Agreeing on the id is what makes the guard able to do its job.
       const echo = { threadId, id: `${turnId}::you`, body: text };
-      if (settledRef.current) foldEcho(echo);
-      else optimistic.current.push(echo);
+      enqueueReviewerEcho(cache, reattachKey, echo);
       // One ask, dispatch-bound (#251): the daemon persists the reviewer's turn under these
-      // ids and streams the orchestrator reply over `onAskStream`. No staging (C8), no
-      // command effects (B10). The stream fold above renders the growing turn.
+      // ids and streams the orchestrator reply over `onAskStream`. Sending alone records no
+      // review act; when the reviewer explicitly asks Rennet to act, the harness can call a
+      // registry-exposed app tool and the same stream records its durable receipt.
       void ask.mutate({
         commandId: crypto.randomUUID(),
         reviewId,
@@ -652,7 +833,7 @@ export function useChatDock(): ChatDockModel {
         },
       });
     },
-    [ask, foldEcho, reviewId],
+    [ask, cache, reattachKey, reviewId],
   );
 
   return {

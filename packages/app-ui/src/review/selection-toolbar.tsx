@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icon";
 import { useFlightBatcher } from "../handoff/exit-flight";
 import { useRennetStore } from "../store";
+import { useAnchoredAsk } from "./anchored-ask";
+import { displayToRawRange } from "./rich-text";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProseSelectionLayer (C4, packet keep-list). The panel is positioned INSIDE the
@@ -32,6 +34,18 @@ function scopeOfRange(range: Range): { target?: string; generation?: string } {
     target: el?.closest("[data-element-id]")?.getAttribute("data-element-id") ?? undefined,
     generation: el?.closest("[data-generation]")?.getAttribute("data-generation") ?? undefined,
   };
+}
+
+/** Resolve the displayed browser selection back to the renderer's exact markdown bytes. */
+export function rawQuoteOfRange(range: Range, displayQuote: string): string | null {
+  const node = range.commonAncestorContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const richText = element?.closest<HTMLElement>("[data-rich-text-raw]");
+  if (!richText) return displayQuote;
+  const rawText = richText.dataset.richTextRaw;
+  if (rawText === undefined) return null;
+  const rawRange = displayToRawRange(rawText, displayQuote);
+  return rawRange === null ? null : rawText.slice(rawRange.start, rawRange.end);
 }
 
 export interface DraftHandlers {
@@ -75,6 +89,7 @@ export function ProseSelectionLayer({
   const [reviseNote, setReviseNote] = useState<string | null>(null);
   const [reworking, setReworking] = useState(false);
   const { addQuoteComment, setFocusedThread, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const sendAnchoredAsk = useAnchoredAsk();
   const flight = useFlightBatcher();
 
   const dismiss = useCallback(() => {
@@ -106,8 +121,13 @@ export function ProseSelectionLayer({
         dismiss();
         return;
       }
-      const text = selection.toString().trim();
-      if (text.length === 0) {
+      const displayQuote = selection.toString().trim();
+      if (displayQuote.length === 0) {
+        dismiss();
+        return;
+      }
+      const quote = rawQuoteOfRange(range, displayQuote);
+      if (quote === null) {
         dismiss();
         return;
       }
@@ -121,7 +141,7 @@ export function ProseSelectionLayer({
       setAnchor({
         top: (placement === "below" ? rect.bottom : rect.top) - wrapRect.top,
         left: rect.left - wrapRect.left + rect.width / 2,
-        quote: text,
+        quote,
         placement,
         ...scope,
       });
@@ -146,6 +166,15 @@ export function ProseSelectionLayer({
       generation: anchor.generation,
     });
     setFocusedThread(id);
+    if (kind === "explain") {
+      void sendAnchoredAsk?.({
+        threadId: id,
+        question: opener,
+        excerpt: anchor.quote,
+        ...(anchor.target === undefined ? {} : { target: anchor.target }),
+        ...(anchor.generation === undefined ? {} : { generation: anchor.generation }),
+      });
+    }
     window.getSelection()?.removeAllRanges();
   }
 

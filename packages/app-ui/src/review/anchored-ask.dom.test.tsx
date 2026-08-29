@@ -299,4 +299,78 @@ describe("ReviewAnchoredAskProvider", () => {
       }),
     );
   });
+
+  it("repairs an earlier failed reply write without losing durable reply order", async () => {
+    const threadId = "qt-gap";
+    const initialThread = {
+      anchor: "rawCall()",
+      kind: "explain" as const,
+      messages: [
+        { author: "user" as const, text: "Explain this passage." },
+        { author: "orchestrator" as const, text: "Reply B" },
+      ],
+    };
+    const projection = emptyProjection({ [threadId]: initialThread });
+    const replacements: CommandInput<"ask.quoteOpen">[] = [];
+    const replyWrites: CommandInput<"ask.quoteReply">[] = [];
+    const bridge = new MemoryBridge({
+      "ask.read": () => ({ projection }),
+      "review.reattach": () => ({
+        threads: [
+          {
+            threadId,
+            anchor: { kind: "fragment", key: threadId, label: "rawCall()" },
+            messages: [
+              { id: "turn-0::you", author: "you", body: "Explain this passage." },
+              {
+                id: "turn-a::orchestrator",
+                author: "harness",
+                body: "Reply A",
+                status: "complete",
+              },
+              {
+                id: "turn-b::orchestrator",
+                author: "harness",
+                body: "Reply B",
+                status: "complete",
+              },
+            ],
+          },
+        ],
+        inFlight: [],
+      }),
+      "ask.quoteOpen": (input) => {
+        replacements.push(input);
+        return { receipt: { kind: "quote-open", threadId, thread: initialThread } };
+      },
+      "ask.quoteReply": (input) => {
+        replyWrites.push(input);
+        return { receipt: { kind: "quote-reply", threadId, messages: initialThread.messages } };
+      },
+    });
+
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <AskLogBinding reviewId="review-a" />
+        <ReviewAnchoredAskProvider reviewId="review-a">
+          <span>Board</span>
+        </ReviewAnchoredAskProvider>
+      </BridgeProvider>,
+    );
+
+    await waitFor(() => expect(replacements).toHaveLength(1));
+    expect(replyWrites).toEqual([]);
+    expect(replacements[0]).toEqual({
+      sessionId: "review-a",
+      threadId,
+      thread: {
+        ...initialThread,
+        messages: [
+          { author: "user", text: "Explain this passage." },
+          { author: "orchestrator", text: "Reply A" },
+          { author: "orchestrator", text: "Reply B" },
+        ],
+      },
+    });
+  });
 });

@@ -359,6 +359,22 @@ export interface SessionSpec {
    * `thread/start`'s `ephemeral`.
    */
   readonly ephemeral?: boolean;
+  /**
+   * Tools implemented by the embedding app and mounted in-process for this turn.
+   * The descriptor is harness-neutral: adapters translate it to their native tool
+   * surface, while the handler returns the app command's durable receipt/result.
+   * Absent means the harness receives no app-owned in-process tools.
+   */
+  readonly inProcessTools?: readonly HarnessInProcessTool[];
+}
+
+/** One app-owned tool mounted directly into a harness turn. */
+export interface HarnessInProcessTool {
+  readonly name: string;
+  readonly description: string;
+  /** The adapter-specific schema object; Claude consumes the registry's Zod object. */
+  readonly inputSchema: unknown;
+  readonly run: (input: unknown) => Promise<unknown>;
 }
 
 export interface TurnInput {

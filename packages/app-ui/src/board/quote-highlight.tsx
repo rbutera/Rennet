@@ -1,5 +1,6 @@
 import { cn } from "@rennet/ui";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useAnchoredAsk } from "../review/anchored-ask";
 import {
   displayToRawRange,
   type RawTextRange,
@@ -40,6 +41,7 @@ interface RangedThread extends KeyedThread, RawTextRange {}
  *  `<p>` and nested block/button elements are invalid there (spike keep-list note). */
 function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThread[] }) {
   const addQuoteReply = useRennetStore((s) => s.reviewActions.addQuoteReply);
+  const sendAnchoredAsk = useAnchoredAsk();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   return (
@@ -80,6 +82,13 @@ function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThrea
                 if (text.length === 0) return;
                 addQuoteReply(id, "user", text);
                 setDrafts((d) => ({ ...d, [id]: "" }));
+                void sendAnchoredAsk?.({
+                  threadId: id,
+                  question: text,
+                  excerpt: thread.anchor,
+                  ...(thread.target === undefined ? {} : { target: thread.target }),
+                  ...(thread.generation === undefined ? {} : { generation: thread.generation }),
+                });
               }
             }}
             placeholder="Reply…"

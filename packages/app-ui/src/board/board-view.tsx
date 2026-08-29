@@ -3,7 +3,7 @@ import { cn } from "@rennet/ui";
 import { useEffect } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
-import { ProseSelectionLayer, RichText } from "../review";
+import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
 import { lensBoardsFromResolutions, lensReadsSettled, useLensBoardResolutions } from "./board-data";
 import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
@@ -116,39 +116,41 @@ export function LensBoardView({
       </div>
 
       {board ? (
-        <BoardElementsProvider
-          elements={board.elements}
-          reviewId={reviewId}
-          generation={board.generation}
-          boardId={board.boardId}
-        >
-          <ProseSelectionLayer>
-            {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
+        <ReviewAnchoredAskProvider reviewId={reviewId}>
+          <BoardElementsProvider
+            elements={board.elements}
+            reviewId={reviewId}
+            generation={board.generation}
+            boardId={board.boardId}
+          >
+            <ProseSelectionLayer>
+              {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
                 refs (change/design/tasks), so without a board-identity key switching
                 generation would keep the prior board's per-section fold `useState`.
                 Remounting on boardId resets fold state to the new board's foldAll. */}
-            <article
-              key={board.boardId}
-              ref={highlightRef}
-              data-lens={board.lens}
-              data-generation={board.generation}
-              className="flex flex-col"
-            >
-              <BoardHeader board={board} />
-              {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
-              <div className="flex flex-col gap-8">
-                {board.sections.map((entry) => (
-                  <Section
-                    key={entry.ref}
-                    entry={entry}
-                    lens={board.lens}
-                    defaultOpen={forceOpen}
-                  />
-                ))}
-              </div>
-            </article>
-          </ProseSelectionLayer>
-        </BoardElementsProvider>
+              <article
+                key={board.boardId}
+                ref={highlightRef}
+                data-lens={board.lens}
+                data-generation={board.generation}
+                className="flex flex-col"
+              >
+                <BoardHeader board={board} />
+                {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
+                <div className="flex flex-col gap-8">
+                  {board.sections.map((entry) => (
+                    <Section
+                      key={entry.ref}
+                      entry={entry}
+                      lens={board.lens}
+                      defaultOpen={forceOpen}
+                    />
+                  ))}
+                </div>
+              </article>
+            </ProseSelectionLayer>
+          </BoardElementsProvider>
+        </ReviewAnchoredAskProvider>
       ) : shown.status === "invalid" ? (
         <div data-kind="board-error" data-reason={shown.reason} className="text-danger text-sm">
           <p className="font-medium">This board could not be read.</p>

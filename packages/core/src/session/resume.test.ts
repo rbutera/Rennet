@@ -87,13 +87,17 @@ describe("isResumeVanished", () => {
   // Keyed on the harness's native SUBTYPE (preserved as nativeCode), not the broad
   // invalid-request class (B09 F4). The real adapter mapping is exercised in the
   // adapters test through normalizeClaudeFrame.
-  const coded = (nativeCode: string, klass: HarnessError["class"] = "invalid-request") =>
+  const coded = (
+    nativeCode: string,
+    message = nativeCode,
+    klass: HarnessError["class"] = "invalid-request",
+  ) =>
     ({
       status: "failed" as const,
       error: {
         class: klass,
         origin: "harness" as const,
-        message: nativeCode,
+        message,
         retryable: false,
         retryableSource: "inferred" as const,
         nativeCode,
@@ -101,7 +105,24 @@ describe("isResumeVanished", () => {
     }) satisfies SessionOutcome;
 
   it("is true for an error_during_execution failure on a resumed turn (the transcript is gone)", () => {
-    expect(isResumeVanished(true, coded("error_during_execution"))).toBe(true);
+    expect(
+      isResumeVanished(
+        true,
+        coded(
+          "error_during_execution",
+          "No conversation found with session ID: 00000000-0000-4000-8000-000000000000",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not replay a resumed turn after an unrelated execution failure", () => {
+    expect(
+      isResumeVanished(
+        true,
+        coded("error_during_execution", "tool completed before the response stream failed"),
+      ),
+    ).toBe(false);
   });
 
   it("is false when resume was not attempted (a fresh turn cannot vanish)", () => {

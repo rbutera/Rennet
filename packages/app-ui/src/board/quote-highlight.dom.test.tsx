@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
-import { ProseSelectionLayer } from "../review";
+import { type AnchoredAskInput, AnchoredAskProvider, ProseSelectionLayer } from "../review";
 import { useRennetStore } from "../store";
 import { act, mount } from "../test/dom";
 import { designBoard, designGen0Board, prose } from "../test/fixtures/boards";
@@ -129,6 +129,39 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
       "No — it rides the subscription.",
     ]);
     expect(container.textContent).toContain("No — it rides the subscription.");
+  });
+
+  it("Enter sends one real follow-up on the existing anchored thread", async () => {
+    const id = seed("costs nothing per token", "Explain this passage.", "explain");
+    const sent: AnchoredAskInput[] = [];
+    const { container, user } = mount(
+      <BridgeProvider bridge={new MemoryBridge({})}>
+        <AnchoredAskProvider
+          value={async (input) => {
+            sent.push(input);
+          }}
+        >
+          <QuoteHighlightLayer text={PROSE} elementId={EL} patchsetId="ps-1" />
+        </AnchoredAskProvider>
+      </BridgeProvider>,
+    );
+    const highlight = container.querySelector<HTMLElement>("[data-quote-highlight]");
+    if (highlight) await user.click(highlight);
+    const box = container.querySelector<HTMLTextAreaElement>("textarea");
+    if (box) {
+      await user.type(box, "Why exactly?");
+      await user.keyboard("{Enter}");
+    }
+
+    expect(sent).toEqual([
+      {
+        threadId: id,
+        question: "Why exactly?",
+        excerpt: "costs nothing per token",
+        target: EL,
+        generation: "",
+      },
+    ]);
   });
 
   it("overlapping anchors stay reachable — the covered span carries both threads", async () => {

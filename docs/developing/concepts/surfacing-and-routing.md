@@ -174,16 +174,18 @@ flowchart LR
   registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
   registry -->|exposure.commandMenu| menu["⌘K command menu\napp-ui/shell/command-menu"]
   map --> handler["Family handler runs"]
-  tools -.->|exposure.agent (bridge exported, not yet wired)| turn["Orchestrator turn\nserver/review-ask-live.ts"]
+  tools -->|exposure.agent, rebuilt each turn| turn["Orchestrator turn\nserver/review-ask-live.ts"]
 ```
 
-The dashed edge is deliberate. The orchestrator turn is live: a chat ask runs one
-capable `claude` turn through `claudeHandoffRunPort` and answers from the review's
-diff and the repository itself. What that turn does *not* yet carry is the `app_*`
-projection — binding it needs the SDK's in-process MCP server threaded through
-core and adapters, which is a build rather than wiring. So chat **answers**; it
-cannot yet **act** on the app. The bridge remains a tested pure projection with no
-live caller, and no surface claims otherwise.
+The orchestrator turn is live: a chat ask normally runs one capable `claude` turn
+through the review's durable `SessionTurnLoop`; only a legacy review with no durable
+session falls back to `claudeHandoffRunPort`. Both paths answer from the review's
+diff and repository and receive the current `app_*` projection as in-process tools.
+The projection is rebuilt for every turn, so removing `exposure.agent` from a
+registry row removes the tool from the next turn without a second allow-list. When
+the reviewer asks the orchestrator to act in Rennet, it calls the matching tool once
+and receives the command's durable result or undo receipt; that observed result is
+what the transcript reports.
 
 **Dispatch map.** `packages/server/src/dispatch/` binds a
 `Map<commandId, handler>` from the registry, one module per command family
@@ -207,16 +209,16 @@ with no edit here. There is no per-tool allow or deny list (Rule Zero). The
 whiteboard five stay HTTP MCP tools (`WhiteboardClient`, #455-locked names); they
 are not registry ids, so they are structurally absent from this loop.
 
-`buildAppTools` is exported from `@rennet/server` but **currently unwired**: no
-production turn calls it, because the SDK orchestrator turn that would pass these
-tools to the harness does not exist yet (torn down in B2, rebuilt in B9/B11). The
-projection and its tests are ready; the consumer is B9/B11 scope. Until then, no
-live turn can invoke an `app_*` tool — treat this section as describing the shape
-the rebuilt turn will consume, not a path exercised today.
+`buildAppTools` is wired at the composition root. Each review ask derives the tools
+from the live registry, passes them through the harness-neutral turn contract, and
+the Claude adapter mounts them in its per-turn in-process MCP server alongside any
+configured HTTP MCP servers. Tool output is captured as an ordered transcript action,
+including the returned command receipt, and the underlying command remains the sole
+writer of durable app state.
 
 `exposure.agent` is the only per-row datum that gates the agent surface. The v1
-inventory covers project add and list, review capture and open-PR, and the
-settings ops. Session-scoped tools stay unexposed by choice: `session.list` and
+inventory covers staging a review ask, project add and list, review capture and
+open-PR, and the settings ops. Session-scoped tools stay unexposed by choice: `session.list` and
 its rename / pin / archive writes exist (C18), but they are client-surface reads
 and writes, not app tools. A client-locus `navigate` command does not exist in
 the registry yet, so it is left unbound rather than stubbed.
@@ -228,7 +230,7 @@ the registry yet, so it is left unbound rather than stubbed.
 | RSP envelope, registry, anchors, and validator | `packages/protocol/src/delta/rsp.ts` |
 | Body schemas and semantic checks | `packages/protocol/src/delta/bodies.ts` |
 | Shared RSP and lineage types | `packages/protocol/src/delta/` and `packages/protocol/src/domain.ts` |
-| Command registry (one table, two readers today; menu joins at C11) | `packages/protocol/src/commands/index.ts` |
+| Command registry (one table, three readers) | `packages/protocol/src/commands/index.ts` |
 | Dispatch map (per-family command modules) | `packages/server/src/dispatch/` |
 | `app_*` agent tool surface | `packages/server/src/agent-tools.ts` |
 | Base instructions and prompt assembly | `packages/prompts/src/index.ts` |

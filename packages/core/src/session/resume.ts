@@ -66,27 +66,19 @@ export function dropCursor(session: SessionModel): SessionModel {
  * named), so the loop should rebuild context honestly rather than surface a dead
  * turn (B09 task 2.3, #466 res. 3).
  *
- * The signal is the harness's terminal `error_during_execution` subtype, preserved
- * verbatim as the outcome error's `nativeCode` (the SDK refuses a resume of a
- * missing transcript with exactly this result — sdk.d.ts). Keying on the native
- * SUBTYPE, not the broad `invalid-request` class, is what makes this narrow (B09
- * F4): `model_not_found` also maps to `invalid-request` but carries a DIFFERENT
- * native code, so a bad-model turn is no longer mistaken for a vanished transcript.
- * Transient failures (rate-limit, overloaded, upstream) and auth failures are
- * different classes and codes — NOT treated as vanished — because they would fail
- * a fresh turn too, so they surface as real failures instead of a wasteful rebuild.
- *
- * Residual breadth (recorded in the ledger, F4): a resumed turn that errors mid-
- * execution for a NON-resume reason also carries this subtype and would rebuild
- * fresh — non-destructive (boards stay canonical), the honest degrade. The precise
- * missing-session message match is confirmed against the live CLI in the packet
- * E2E (cluster 8); this pure rule is what the offline gate exercises through the
- * real adapter frame mapping (`normalizeClaudeFrame`), not a synthetic error class.
+ * The signal is the harness's terminal `error_during_execution` subtype plus the
+ * CLI's specific missing-session message. The subtype alone is not enough: Claude
+ * also uses it for failures after tools have already run, and replaying that prompt
+ * could repeat a mutation. The message shape was executed against the installed
+ * CLI with an absent session; it returned before inference with zero token usage.
+ * `model_not_found`, transient failures, auth failures, and generic execution
+ * failures therefore surface as real failures instead of replaying the turn.
  */
 export function isResumeVanished(attemptedResume: boolean, outcome: SessionOutcome): boolean {
   return (
     attemptedResume &&
     outcome.status === "failed" &&
-    outcome.error.nativeCode === "error_during_execution"
+    outcome.error.nativeCode === "error_during_execution" &&
+    /^No conversation found with session ID: \S+$/iu.test(outcome.error.message)
   );
 }

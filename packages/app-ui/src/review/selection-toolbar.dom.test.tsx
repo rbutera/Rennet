@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
 import { act, mount } from "../test/dom";
+import { type AnchoredAskInput, AnchoredAskProvider } from "./anchored-ask";
+import { RichText } from "./rich-text";
 import { ProseSelectionLayer } from "./selection-toolbar";
 
 const PROSE = "The decomposition must preserve every hunk boundary.";
@@ -69,6 +71,37 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
     expect(threads[0]?.kind).toBe("explain");
     // Explain stages no ask.
     expect(Object.keys(reviewState().stagedAsks)).toHaveLength(0);
+  });
+
+  it("Explain maps display text to raw markdown and sends one anchored turn", async () => {
+    const sent: AnchoredAskInput[] = [];
+    const view = mount(
+      <AnchoredAskProvider
+        value={async (input) => {
+          sent.push(input);
+        }}
+      >
+        <ProseSelectionLayer>
+          <article data-generation="gen-1" data-element-id="finding-1">
+            <RichText text="Call `decompose()` before dispatch." patchsetId="ps-1" />
+          </article>
+        </ProseSelectionLayer>
+      </AnchoredAskProvider>,
+    );
+    selectAndRelease(view.getByText("decompose()"));
+    await view.user.click(view.getByText("Explain"));
+
+    const [threadId] = Object.keys(reviewState().quoteThreads);
+    expect(reviewState().quoteThreads[threadId ?? ""]?.anchor).toBe("`decompose()`");
+    expect(sent).toEqual([
+      {
+        threadId,
+        question: "Explain this passage.",
+        excerpt: "`decompose()`",
+        target: "finding-1",
+        generation: "gen-1",
+      },
+    ]);
   });
 
   it("Request Changes mints a thread AND stages an ask that claims that thread", async () => {

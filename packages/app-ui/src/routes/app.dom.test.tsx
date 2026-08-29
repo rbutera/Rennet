@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 
-import type { AskReviewResult, CommandInput, Project, SettingsView } from "@rennet/protocol";
+import type {
+  AskProjection,
+  AskReviewResult,
+  CommandInput,
+  Project,
+  SettingsView,
+} from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
 import { act, mount, screen, waitFor } from "../test/dom";
@@ -344,6 +350,105 @@ describe("a reopened session shows the daemon's transcript, not the one it left 
     act(() => history.navigate("/s/rev-1"));
     expect(await screen.findByText("the turn that landed while you were away")).toBeTruthy();
     expect(reads).toBe(2);
+  });
+
+  it("keeps A and B isolated, then restores A's transcript and comments on A → B → A", async () => {
+    const reviewFor = (id: string) => ({ ...REVIEW, id });
+    const projectionFor = (reviewId: string): AskProjection => ({
+      stagedAsks: {},
+      lineComments:
+        reviewId === "rev-a"
+          ? { "src/a.ts": { "4": "comment held by A" } }
+          : { "src/b.ts": { "7": "comment held by B" } },
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    });
+    const reattachReads: string[] = [];
+    let aReads = 0;
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([
+        { id: "rev-a", projectId: "proj-1" },
+        { id: "rev-b", projectId: "proj-1" },
+      ]),
+      "review.load": (input: CommandInput<"review.load">) => ({
+        review: reviewFor(input.reviewId),
+      }),
+      "review.reattach": (input: CommandInput<"review.reattach">) => {
+        reattachReads.push(input.reviewId);
+        if (input.reviewId !== "rev-a") return transcriptOf("answer held by B");
+        aReads += 1;
+        return aReads === 1
+          ? {
+              threads: [],
+              inFlight: [
+                {
+                  threadId: "t-1",
+                  turnId: "a-live",
+                  channel: "orchestrator" as const,
+                  model: "Claude",
+                  bodySoFar: "answer held by A",
+                },
+              ],
+            }
+          : {
+              threads: [
+                {
+                  threadId: "t-1",
+                  anchor: { kind: "fragment" as const, label: "conversation", key: "t-1" },
+                  messages: [
+                    {
+                      id: "a-live::orchestrator",
+                      author: "harness" as const,
+                      body: "answer held by A",
+                    },
+                  ],
+                },
+              ],
+              inFlight: [],
+            };
+      },
+      "ask.read": (input: CommandInput<"ask.read">) => ({
+        projection: projectionFor(input.sessionId),
+      }),
+    } as never);
+    const history = memoryHistory("/s/rev-a");
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    const transcript = await screen.findByTestId("chat-dock-transcript");
+    await waitFor(() => expect(transcript.textContent).toContain("answer held by A"));
+    await waitFor(() =>
+      expect(useRennetStore.getState().review.codeComments["src/a.ts"]?.[4]).toBe(
+        "comment held by A",
+      ),
+    );
+
+    act(() => history.navigate("/s/rev-b"));
+    await waitFor(() => expect(transcript.textContent).toContain("answer held by B"));
+    await waitFor(() => {
+      expect(useRennetStore.getState().review.codeComments["src/b.ts"]?.[7]).toBe(
+        "comment held by B",
+      );
+      expect(useRennetStore.getState().review.codeComments["src/a.ts"]).toBeUndefined();
+    });
+
+    act(() => history.navigate("/s/rev-a"));
+    await waitFor(() => expect(transcript.textContent).toContain("answer held by A"));
+    await waitFor(() => {
+      expect(useRennetStore.getState().review.codeComments["src/a.ts"]?.[4]).toBe(
+        "comment held by A",
+      );
+      expect(useRennetStore.getState().review.codeComments["src/b.ts"]).toBeUndefined();
+    });
+    expect(document.querySelector(".rennet-chat-dock")?.textContent).not.toContain(
+      "answer held by B",
+    );
+    expect(
+      document.querySelector(".rennet-chat-dock")?.querySelectorAll(".animate-word-in"),
+    ).toHaveLength(0);
+    expect(reattachReads).toEqual(["rev-a", "rev-b", "rev-a"]);
   });
 });
 

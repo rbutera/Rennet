@@ -447,7 +447,7 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     error: {
       class: "invalid-request",
       origin: "harness",
-      message: "resume rejected: no conversation found",
+      message: "No conversation found with session ID: gone",
       retryable: false,
       retryableSource: "inferred",
       nativeCode: "error_during_execution",
@@ -575,6 +575,37 @@ describe("SessionTurnLoop: resume-vanished fallback (task 2.3)", () => {
     expect(contextRebuilt).toBeUndefined();
     expect(rows).toEqual([]);
     // The stale cursor is left intact — a transient failure is not a vanish.
+    expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("gone");
+  });
+
+  it("does not replay a resumed prompt after a generic execution failure", async () => {
+    const store = memoryStore(withStaleCursor());
+    const specs: SessionSpec[] = [];
+    const executionFailed: SessionOutcome = {
+      status: "failed",
+      error: {
+        class: "invalid-request",
+        origin: "harness",
+        message: "tool completed before the response stream failed",
+        retryable: false,
+        retryableSource: "inferred",
+        nativeCode: "error_during_execution",
+      },
+    };
+    const loop = new SessionTurnLoop({
+      port: fakePort((turnSpec) => specs.push(turnSpec), { outcome: () => executionFailed }),
+      store,
+      buildSpec: spec,
+    });
+
+    const { outcome, contextRebuilt } = await loop.runTurn("s1", "stage this", {
+      inProcessTools: [],
+    });
+
+    expect(outcome).toBe(executionFailed);
+    expect(contextRebuilt).toBeUndefined();
+    expect(specs).toHaveLength(1);
+    expect(specs[0]?.resume).toEqual({ harnessSessionId: "gone" });
     expect(store.get("s1").harnessCursor?.harnessSessionId).toBe("gone");
   });
 

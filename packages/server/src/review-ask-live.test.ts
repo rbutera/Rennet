@@ -6,6 +6,8 @@ import {
   type HandoffRunInput,
   type HandoffRunOutcome,
   type HandoffRunPort,
+  type HarnessEvent,
+  type HarnessInProcessTool,
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
@@ -128,6 +130,35 @@ describe("createLiveOrchestratorAsk", () => {
     await ask({ review: review(), question: "q", abortController });
     expect(fake.input()?.signal).toBe(abortController.signal);
   });
+
+  it("runs the registry-projected app tools in the durable thread and forwards activity", async () => {
+    const fake = fakeRunPort({ status: "completed", finalText: "staged" });
+    const tool: HarnessInProcessTool = {
+      name: "app_ask_stage",
+      description: "Stage ask",
+      inputSchema: {},
+      run: async () => ({ receipt: { kind: "unstage", id: "ask-1" } }),
+    };
+    const ask = createLiveOrchestratorAsk({
+      resolveRunPort: () => Promise.resolve(fake.port),
+      toolsForReview: () => [tool],
+      askLogIdForReview: () => "review-1",
+    });
+    const events: HarnessEvent[] = [];
+
+    await ask({
+      review: review(),
+      question: "stage this ask",
+      turnId: "turn-1",
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(fake.input()?.inProcessTools).toEqual([tool]);
+    expect(fake.input()?.transcriptTurnId).toBe("turn-1::orchestrator");
+    expect(fake.input()?.prompt).toContain("Current Rennet review ask-log id: review-1");
+    expect(fake.input()?.prompt).toContain("pass review-1 as sessionId");
+    expect(fake.input()?.prompt).toContain("app_ask_stage");
+  });
 });
 
 describe("buildOrchestratorAskPrompt", () => {
@@ -166,21 +197,43 @@ describe("buildOrchestratorAskPrompt", () => {
 });
 
 describe("createLiveReviewAskPorts — askOrchestrator", () => {
-  it("delegates to the injected live orchestrator, passing the stream sink through", async () => {
+  it("delegates every live transcript and anchor seam to the injected orchestrator", async () => {
     const seen: string[] = [];
-    const ports = createLiveReviewAskPorts({
-      askOrchestrator: ({ question, onDelta }) => {
-        onDelta?.("tok");
-        return Promise.resolve({ model: ORCHESTRATOR_ASK_LABEL, answer: `answered: ${question}` });
-      },
+    const onEvent = vi.fn<(event: HarnessEvent) => void>();
+    const selection = {
+      anchor: "board:gen-2:finding-1",
+      excerpt: "`rawCall()`",
+      target: "finding-1",
+      generation: "gen-2",
+    };
+    const delegate = vi.fn<
+      NonNullable<Parameters<typeof createLiveReviewAskPorts>[0]["askOrchestrator"]>
+    >(({ question, onDelta }) => {
+      onDelta?.("tok");
+      return Promise.resolve({ model: ORCHESTRATOR_ASK_LABEL, answer: `answered: ${question}` });
     });
+    const ports = createLiveReviewAskPorts({
+      askOrchestrator: delegate,
+    });
+    const r = review();
     const answer = await ports.askOrchestrator({
-      review: review(),
+      review: r,
       question: "why?",
       onDelta: (text) => seen.push(text),
+      onEvent,
+      selection,
+      turnId: "turn-1",
     });
     expect(answer.answer).toBe("answered: why?");
     expect(seen).toEqual(["tok"]);
+    expect(delegate).toHaveBeenCalledWith({
+      review: r,
+      question: "why?",
+      onDelta: expect.any(Function),
+      onEvent,
+      selection,
+      turnId: "turn-1",
+    });
   });
 
   it("answers the honest no-harness line — never a Board-rebuild sentence — with no dep", async () => {

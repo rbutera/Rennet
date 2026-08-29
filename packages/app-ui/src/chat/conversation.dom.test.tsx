@@ -102,4 +102,69 @@ describe("transcript turns (task 2.3)", () => {
     rerender(<ConversationPane rows={[orchestratorTurn]} liveIds={new Set(["o1"])} />);
     expect(container.querySelectorAll(".animate-word-in").length).toBeGreaterThan(0);
   });
+
+  it("renders prose and tool activity in the harness's exact occurrence order", () => {
+    const ordered: TranscriptRow = {
+      kind: "turn",
+      id: "ordered",
+      speaker: "orchestrator",
+      status: "complete",
+      paragraphs: ["Before the tool.", "After the tool."],
+      blocks: [
+        { kind: "text", text: "Before the tool." },
+        {
+          kind: "action",
+          id: "a-ordered",
+          label: "Read",
+          detail: "src/a.ts",
+          status: "complete",
+          icon: FileText,
+        },
+        { kind: "text", text: "After the tool." },
+      ],
+    };
+    mount(<ConversationPane rows={[ordered]} liveIds={EMPTY_LIVE} />);
+    const before = screen.getByText("Before the tool.");
+    const action = screen.getByText(/Read · src\/a\.ts/);
+    const after = screen.getByText("After the tool.");
+    expect(before.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("does not reveal final prose until the preceding activity settles", () => {
+    const streaming: TranscriptRow = {
+      kind: "turn",
+      id: "ordered-live",
+      speaker: "orchestrator",
+      status: "streaming",
+      paragraphs: ["Before the tool.", "After the tool."],
+      blocks: [
+        { kind: "text", text: "Before the tool." },
+        {
+          kind: "action",
+          id: "a-live",
+          label: "Stage ask",
+          status: "streaming",
+          icon: FileText,
+        },
+        { kind: "text", text: "After the tool." },
+      ],
+    };
+    const { container, rerender } = mount(
+      <ConversationPane rows={[streaming]} liveIds={new Set(["ordered-live"])} />,
+    );
+    expect(container.textContent).toContain("Before the tool.");
+    expect(screen.getByText("Stage ask")).toBeTruthy();
+    expect(container.textContent).not.toContain("After the tool.");
+
+    const settled: TranscriptRow = {
+      ...streaming,
+      status: "complete",
+      blocks: streaming.blocks?.map((block) =>
+        block.kind === "action" ? { ...block, status: "complete" as const } : block,
+      ),
+    };
+    rerender(<ConversationPane rows={[settled]} liveIds={new Set(["ordered-live"])} />);
+    expect(container.textContent).toContain("After the tool.");
+  });
 });

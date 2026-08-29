@@ -147,6 +147,7 @@ const ABSORBED_IDS = [
 // would force a host dispatch handler, and C11 shipped the menu without one). Kept sorted — the invariant
 // test compares against the alphabetically sorted list of agent-exposed ids.
 const AGENT_INVENTORY = [
+  "ask.stage",
   "project.discover",
   "projects.add",
   "projects.list",

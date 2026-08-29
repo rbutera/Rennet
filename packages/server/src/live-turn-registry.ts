@@ -29,7 +29,7 @@
 // ever asserts the first. It does not, and structurally cannot, claim the second.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { InFlightTurn, StreamChannel } from "@rennet/protocol";
+import type { InFlightTurn, SessionTranscriptRow, StreamChannel } from "@rennet/protocol";
 
 /** The outcome of a bulk abort: the number of turns SIGNALLED (an abort request
  *  count, never a confirmed-exit count — see the honesty boundary above). */
@@ -46,6 +46,9 @@ interface LiveStream {
   model?: string;
   /** The coalesced deltas so far — the cursor the phone resumes on reattach. */
   body: string;
+  readonly time: string;
+  /** Latest ordered activity projection; replaced atomically as events arrive. */
+  rows?: readonly SessionTranscriptRow[];
 }
 
 interface LiveTurn {
@@ -86,7 +89,9 @@ export class LiveTurnRegistry {
     this.turns.set(turnId, {
       controller,
       ...(reviewId === undefined ? {} : { reviewId }),
-      ...(stream === undefined ? {} : { stream: { ...stream, body: "" } }),
+      ...(stream === undefined
+        ? {}
+        : { stream: { ...stream, body: "", time: new Date().toISOString() } }),
     });
     return controller;
   }
@@ -102,6 +107,12 @@ export class LiveTurnRegistry {
   appendDelta(turnId: string, delta: string): void {
     const turn = this.turns.get(turnId);
     if (turn?.stream) turn.stream.body += delta;
+  }
+
+  /** Replace a live turn's rich activity snapshot. Unknown/non-streaming ids are no-ops. */
+  setRows(turnId: string, rows: readonly SessionTranscriptRow[]): void {
+    const turn = this.turns.get(turnId);
+    if (turn?.stream) turn.stream.rows = rows;
   }
 
   /** The coalesced body streamed so far for a turn, or "" — used to persist the partial answer
@@ -123,6 +134,8 @@ export class LiveTurnRegistry {
         channel: turn.stream.channel,
         model: turn.stream.model ?? "harness",
         bodySoFar: turn.stream.body,
+        time: turn.stream.time,
+        ...(turn.stream.rows === undefined ? {} : { rows: [...turn.stream.rows] }),
       });
     }
     return out;
