@@ -156,9 +156,18 @@ describe("mergeWorkerResults — the deterministic half", () => {
     // The two anchor DIFFERENT files, deliberately: `knowledgeStatementId` does not
     // hash line spans, so a pair differing only by a span shares one id and is
     // collapsed as a duplicate id long before this tiebreak is reached.
-    const spanless = statement({ claim: "the pattern holds", evidence: ["src/b.ts"] });
-    const spanned = statement({ claim: "the pattern holds", evidence: [["src/a.ts", 10]] });
+    //
+    // WHICH files matters, and the assertion below is the fixture's load-bearing
+    // half. The id tiebreak (smaller id wins) runs immediately after the span rule,
+    // so a fixture where the two rules AGREE cannot tell them apart: deleting the
+    // span branch entirely would still elect `spanned`, and this test would stay
+    // green over a merge that had lost the rule it is named for. So the paths are
+    // chosen to make the id rule pick the WRONG one, and that requirement is
+    // asserted here rather than left as a comment for the next reader to re-derive.
+    const spanless = statement({ claim: "the pattern holds", evidence: ["src/a.ts"] });
+    const spanned = statement({ claim: "the pattern holds", evidence: [["src/b.ts", 10]] });
     expect(spanless.id).not.toBe(spanned.id);
+    expect(spanless.id < spanned.id).toBe(true);
     for (const [first, second] of [
       [spanless, spanned],
       [spanned, spanless],
