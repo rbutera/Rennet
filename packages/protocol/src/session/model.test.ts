@@ -339,6 +339,20 @@ describe("session/ durable shapes (#466/#457)", () => {
         units: [{ ...units[0], path: ".rennet/round-landings/live.txt" }, units[1]],
       }).success,
     ).toBe(false);
+    for (const path of [".RENNET/round-landings/live.txt", ".ReNnEt/round-landings/live.txt"]) {
+      expect(
+        RoundSourceLandingAttemptSchema.safeParse({
+          ...attempt,
+          units: [{ ...units[0], path }, units[1]],
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [{ ...units[0], path: "nested/.rennet/live.txt" }, units[1]],
+      }).success,
+    ).toBe(true);
     expect(
       RoundSourceLandingAttemptSchema.safeParse({
         ...attempt,

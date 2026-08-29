@@ -305,7 +305,7 @@ const gitObjectId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const rawSha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const landingUnitId = rawSha256;
 const landingUnitPath = repoRelativePath.refine(
-  (path) => path !== ".rennet" && !path.startsWith(".rennet/"),
+  (path) => path.split("/", 1)[0]?.toLowerCase() !== ".rennet",
   "must not overlap Rennet's local transaction namespace",
 );
 const ROUND_SOURCE_LANDING_ARTIFACT_ROOT = ".rennet/round-landings";

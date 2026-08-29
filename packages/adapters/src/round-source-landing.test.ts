@@ -322,6 +322,39 @@ describe("transactional round source landing", () => {
     ).toEqual(first);
   });
 
+  it.each([".RENNET/round-landings/tracked.txt", ".ReNnEt/round-landings/tracked.txt"])(
+    "refuses root transaction namespace alias %s while planning",
+    async (path) => {
+      const current = fixture();
+      const workerPath = join(current.worktreePath, path);
+      mkdirSync(dirname(workerPath), { recursive: true });
+      writeFileSync(workerPath, "tracked namespace alias\n");
+      git(current.worktreePath, "add", "--", path);
+      git(current.worktreePath, "commit", "-m", "change transaction namespace alias");
+
+      await expect(
+        plan({ ...current, workerHead: git(current.worktreePath, "rev-parse", "HEAD") }),
+      ).rejects.toThrow(RoundSourceLandingConflictError);
+    },
+  );
+
+  it("allows a nested non-root .rennet path while planning", async () => {
+    const current = fixture();
+    const path = "nested/.rennet/tracked.txt";
+    const workerPath = join(current.worktreePath, path);
+    mkdirSync(dirname(workerPath), { recursive: true });
+    writeFileSync(workerPath, "nested repository content\n");
+    git(current.worktreePath, "add", "--", path);
+    git(current.worktreePath, "commit", "-m", "add nested .rennet content");
+
+    const attempt = await plan({
+      ...current,
+      workerHead: git(current.worktreePath, "rev-parse", "HEAD"),
+    });
+
+    expect(attempt.units.some((unit) => unit.path === path)).toBe(true);
+  });
+
   it("preflights every path before mutating the first unit", async () => {
     const current = fixture();
     const attempt = await plan(current);

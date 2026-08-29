@@ -249,7 +249,7 @@ export async function planTransactionalRoundSourceLanding(input: {
   );
   const units: RoundSourceLandingUnit[] = [];
   for (const [ordinal, change] of changes.entries()) {
-    if (change.path === ".rennet" || change.path.startsWith(".rennet/")) {
+    if (change.path.split("/", 1)[0]?.toLowerCase() === ".rennet") {
       throw new RoundSourceLandingConflictError(
         change.path,
         "the changed path overlaps Rennet's local transaction namespace",
