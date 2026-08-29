@@ -15,7 +15,7 @@ import {
 } from "../command/commands";
 import { isKeyActionId, KEY_ACTIONS, type KeyActionId } from "../command/key-actions";
 import { useCommand } from "../data";
-import { settingsPath } from "../routes/url";
+import { newChatPath, settingsPath } from "../routes/url";
 import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,8 +112,14 @@ function runKeyAction(id: KeyActionId, navigate: (to: string) => void): void {
       uiActions.setCommandMenuOpen(true, "command");
       return;
     case "new-chat":
-      // The dialog internals are C12; C11 only opens it (pushes its id).
-      uiActions.openDialog("new-chat");
+      // NAVIGATE to the real New Chat route — there is no new-chat dialog, and there never
+      // was: `AppDialogs` mounts `add-project` and `add-environment` only, so the old
+      // `openDialog("new-chat")` pushed an id nothing renders. It was worse than inert.
+      // `ui.openDialogs` IS the Escape stack, so the phantom entry sat on top of it and ate
+      // the reviewer's NEXT Escape while the screen had never moved. `newChatPath()` takes no
+      // project: `/new-chat` resolves the remembered-then-first project itself and redirects,
+      // which is the same destination the sidebar's New Chat and the command menu open.
+      navigate(newChatPath());
       return;
     case "toggle-sidebar":
       uiActions.toggleSidebar();

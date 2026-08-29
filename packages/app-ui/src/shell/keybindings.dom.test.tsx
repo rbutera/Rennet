@@ -38,8 +38,8 @@ afterEach(() => {
 });
 
 /** Mount the whole router app over a MemoryBridge; returns the recording history. */
-function mountApp(handlers: MemoryBridgeHandlers = {}) {
-  const history = memoryHistory("/new-chat");
+function mountApp(handlers: MemoryBridgeHandlers = {}, path = "/new-chat") {
+  const history = memoryHistory(path);
   const bridge = new MemoryBridge({ ...frontDoorHandlers([]), ...handlers });
   const utils = mount(<RennetRouterApp bridge={bridge} history={history} />);
   return { ...utils, history, bridge };
@@ -49,6 +49,18 @@ function press(key: string, opts: { meta?: boolean } = {}): void {
   act(() => {
     fireEvent.keyDown(window, { key, metaKey: opts.meta ?? false });
   });
+}
+
+/** Press Escape and report whether it SURVIVED the key owner — `fireEvent` returns
+ *  `dispatchEvent`'s value, which is false exactly when a listener called
+ *  `preventDefault`, and the owner calls it only when it consumed the key. So this
+ *  EXECUTES the swallow path rather than reasoning about the stack's contents. */
+function escapeSurvived(): boolean {
+  let survived = false;
+  act(() => {
+    survived = fireEvent.keyDown(window, { key: "Escape" });
+  });
+  return survived;
 }
 
 describe("keybindings — the six advertised binds fire through the one key owner (§14 item 1)", () => {
@@ -63,11 +75,49 @@ describe("keybindings — the six advertised binds fire through the one key owne
     expect(useRennetStore.getState().ui.commandMenuMode).toBe("command");
   });
 
-  it("⌘N opens the new-chat dialog; ⌘B toggles the sidebar; ⌘J toggles the chat", () => {
-    mountApp();
-    press("n", { meta: true });
-    expect(useRennetStore.getState().ui.openDialogs).toContain("new-chat");
+  // ⌘N used to run `openDialog("new-chat")`, and no such dialog is mounted anywhere —
+  // `AppDialogs` has `add-project` and `add-environment` and nothing else. The old test
+  // here was titled "⌘N opens the new-chat dialog" and asserted that a string had been
+  // pushed onto an array, which is exactly what a broken ⌘N does. So the two tests below
+  // assert the two things the reviewer would actually notice: the app MOVES, and the next
+  // Escape still belongs to them.
+  it("⌘N leaves the surface it was on and lands on New Chat", async () => {
+    // Start somewhere that is NOT New Chat, so "did anything move?" is a real question.
+    const onSettings = () => document.querySelector('[data-screen="settings"]');
+    const { history } = mountApp({}, "/settings/appearance");
+    await waitFor(() => expect(onSettings()).not.toBeNull());
 
+    press("n", { meta: true });
+
+    // Position, not membership: the LAST navigation is New Chat. (`/new-chat` with no
+    // projects renders the add-project entry — the real front door for an empty machine.)
+    expect(history.history.at(-1)).toBe("/new-chat");
+    await waitFor(() => expect(screen.getByText("Add a project to begin.")).toBeTruthy());
+    // …and the surface it left is genuinely gone, not merely overlaid.
+    expect(onSettings()).toBeNull();
+  });
+
+  it("⌘N puts nothing on the Escape stack — the reviewer's next Escape is not swallowed", () => {
+    mountApp({}, "/settings/appearance");
+    press("n", { meta: true });
+
+    // Nothing owner-tracked is open, so Escape passes through untouched and a focused
+    // editor's own handler still gets it. The old ⌘N pushed a phantom dialog id here, and
+    // the owner pops `openDialogs.at(-1)` and CONSUMES the event — so this returned false
+    // while nothing had ever appeared on screen.
+    expect(escapeSurvived()).toBe(true);
+
+    // Positive control: with a dialog genuinely open the owner DOES consume Escape, so the
+    // assertion above is capable of failing and is not asserting an inert key.
+    act(() => {
+      useRennetStore.getState().uiActions.openDialog("add-project");
+    });
+    expect(escapeSurvived()).toBe(false);
+    expect(useRennetStore.getState().ui.openDialogs).toEqual([]);
+  });
+
+  it("⌘B toggles the sidebar; ⌘J toggles the chat", () => {
+    mountApp();
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(true);
     press("b", { meta: true });
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);

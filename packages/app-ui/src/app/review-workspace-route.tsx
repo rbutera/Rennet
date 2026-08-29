@@ -7,6 +7,7 @@ import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
+import { ProjectContextMapView } from "../project/context-map-view";
 import { DiffViewContainer } from "../review";
 import { RoundGreeting } from "../rounds/round-greeting";
 import {
@@ -18,6 +19,7 @@ import {
   useRoundsUnavailable,
 } from "../rounds/rounds-data";
 import { RoundsLedger } from "../rounds/rounds-ledger";
+import { useSessionProjectId } from "../routes/slug";
 import { ROUTES, readSessionQuery, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
@@ -70,6 +72,9 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const view = query.view;
   const slug = sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
   const mode = resolveEntryMode(review);
+  // WHICH project this session belongs to — the session ROW's own `projectId`, which is what
+  // `?view=map` needs and what `review.repositoryRoot` cannot supply.
+  const projectId = useSessionProjectId(slug);
 
   // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the
   // reviewer's ephemeral acts (staged asks, retired ledger, inline edits, the verdict override) are
@@ -168,6 +173,14 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // reachability half on top; a desktop window IS its daemon connection, so this is the whole rule.
   const stale = isReviewStale(review);
 
+  function toBoard() {
+    const { path, replace } = viewToggle(slug, "board", {
+      lens: query.lens,
+      file: query.file ?? undefined,
+    });
+    navigate(path, { replace });
+  }
+
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
       lens: query.lens,
@@ -212,6 +225,22 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       ) : null}
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
+      ) : view === "map" ? (
+        // `?view=map` shows this session's PROJECT context map — the destination the top
+        // bar's Map toggle has advertised since C03 §4.3 and the one the docs describe
+        // ("Map opens the project's context map"). There was no `map` branch here AT ALL, so
+        // the toggle lit up, the URL gained `?view=map`, and the board the reviewer was
+        // already reading stayed on screen with nothing to say it had failed. Reuses the same
+        // `ProjectContextMapView` that `/projects/:id/map` mounts, with Back routed to the
+        // board so leaving the map does not leave the session. The wrapper supplies the
+        // height and scroller the surrounding column expects.
+        <div className="min-h-0 flex-1 overflow-auto">
+          {projectId === undefined ? null : projectId === null ? (
+            <MapUnavailable />
+          ) : (
+            <ProjectContextMapView projectId={projectId} onBack={toBoard} />
+          )}
+        </div>
       ) : view === "diff" ? (
         <DiffViewContainer
           review={review}
@@ -255,6 +284,44 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
     </div>
+  );
+}
+
+/**
+ * `?view=map` with no project to map. The context map is a PROJECT's, and only the session row
+ * can name which project — so this is what a legacy `/s/<reviewId>` link reaches (a link that
+ * resolves a review no session row names), and equally what an unreadable `session.list`
+ * reaches. The copy is deliberately true of both: it says the project is UNKNOWN, never that
+ * the project is absent, because those are different facts and only one of them was proved.
+ *
+ * The Map toggle STAYS in the top bar — the rounds-unavailable precedent below: hiding a
+ * control behind an absence puts the reason out of reach. Clicking it states the fact rather
+ * than re-rendering the board and looking like nothing happened. Every other view remains
+ * exactly as reachable.
+ */
+function MapUnavailable() {
+  return (
+    <>
+      <header className="border-border border-b px-6 py-3">
+        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+          CONTEXT MAP
+        </p>
+      </header>
+      <section
+        data-testid="map-unavailable"
+        role="status"
+        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+      >
+        <h1 className="font-display text-foreground text-xl">
+          Rennet cannot tell which project this review belongs to.
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          A context map is a project&rsquo;s, and the session that owns this review is what names
+          its project. This address reached the review without one — opening it from its session in
+          the sidebar reaches its map.
+        </p>
+      </section>
+    </>
   );
 }
 
