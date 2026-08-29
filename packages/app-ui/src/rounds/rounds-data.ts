@@ -65,6 +65,14 @@ export interface RoundsSource {
    */
   readonly roundPending?: (slug: string) => boolean;
   /**
+   * True while this session's rounds LEDGER read is in flight — the honest "not known yet",
+   * which is NOT `roundRecords`' empty "there are no rounds" (#571). Distinct from
+   * {@link roundPending}, which is keyed on the live-progress read: a surface asking whether
+   * the LEDGER has arrived must not read the round-events read's flight. Omitted by sources
+   * that always know (the fixtures, the honest-absent default) ⇒ never pending.
+   */
+  readonly roundRecordsPending?: (slug: string) => boolean;
+  /**
    * Why this session's rounds LEDGER cannot be read, in the daemon's own words — or
    * `undefined` when it can (review finding 9). A client can outrun the daemon it is
    * talking to: an older daemon does not answer the rounds reads at all, and the
@@ -164,6 +172,13 @@ export function useRoundsUnavailable(slug: string): string | undefined {
 /** The session's completed rounds, oldest→newest — empty (stable ref) by default. */
 export function useRoundRecords(slug: string): readonly RoundRecord[] {
   return useContext(RoundsSourceContext).roundRecords(slug);
+}
+
+/** True while the LEDGER read is still in flight — see {@link RoundsSource.roundRecordsPending}.
+ *  The three situations `useRoundRecords` returns `[]` for are "no rounds", "not back yet",
+ *  and "could not be read"; this separates the second, `useRoundsUnavailable` the third. */
+export function useRoundRecordsPending(slug: string): boolean {
+  return useContext(RoundsSourceContext).roundRecordsPending?.(slug) ?? false;
 }
 
 /** Resolve a report `LensBoard` by id, validated against `LensBoardSchema` plus the identity
@@ -269,11 +284,11 @@ export function useLiveRoundsSource(): RoundsSource {
     },
   });
 
-  const { data: recordsData, error: recordsError } = useCommand(
-    "session.rounds",
-    { reviewId },
-    { enabled },
-  );
+  const {
+    data: recordsData,
+    error: recordsError,
+    pending: recordsPending,
+  } = useCommand("session.rounds", { reviewId }, { enabled });
   const { mutate } = useMutation("round.dispatch", {
     invalidates: ["session.rounds", "session.roundEvents"],
   });
@@ -313,6 +328,9 @@ export function useLiveRoundsSource(): RoundsSource {
       roundState: stateFor,
       roundRecords: (forSlug: string) => (forSlug === slug ? (records ?? NO_RECORDS) : NO_RECORDS),
       roundPending: (forSlug: string) => forSlug === slug && eventsPending,
+      // The LEDGER read's own flight (#571) — keyed on `session.rounds`, not the round-events
+      // read above. A cold deep-link to a round diff waits on THIS.
+      roundRecordsPending: (forSlug: string) => forSlug === slug && recordsPending,
       roundsUnavailable: (forSlug: string) => (forSlug === slug ? unavailable : undefined),
       reportBoard: () => undefined,
       dispatch: (forSlug: string) => {
@@ -329,5 +347,5 @@ export function useLiveRoundsSource(): RoundsSource {
         });
       },
     };
-  }, [events, records, slug, mutate, cache, eventsPending, unavailable, intent]);
+  }, [events, records, slug, mutate, cache, eventsPending, recordsPending, unavailable, intent]);
 }

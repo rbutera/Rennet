@@ -23,7 +23,9 @@ import { useReportBoard } from "./rounds-data";
 //     of the records themselves, oldest→newest, and a round with no distinct predecessor
 //     honestly offers no drill-down (the switcher hides itself under two ids);
 //   - its DIFF — the diff surface, reachable by toggling `?view=diff` with the round's
-//     generation identity (finding 2).
+//     LEDGER NUMBER (#571). The diff is the round's own checkpoint-measured change, carried
+//     on the record since the dispatch wrote it; a round that captured none offers no
+//     control at all rather than a live button that admits it does nothing.
 //
 // The ledger owns no round data of its own: records arrive from `useRoundRecords`
 // (read by the workspace, handed in as `records` — the workspace already needs the
@@ -154,15 +156,25 @@ export function RoundsLedger({
           </p>
         )}
 
-        <button
-          type="button"
-          data-testid="round-diff-link"
-          data-round-generation={liveGeneration}
-          onClick={() => navigate(sessionPath(slug, { view: "diff", round: liveGeneration }))}
-          className="self-start text-model text-sm underline-offset-2 hover:underline"
-        >
-          Round diff
-        </button>
+        {/* The round's DIFF — its own change, off the checkpoint the round captured
+            (`RoundRecord.diffFiles`, split at the `session.rounds` read). Addressed by the
+            round's LEDGER NUMBER, not its generation: a dispatch round that regenerated
+            nothing carries `ROUND_NO_REGEN`, so a generation id cannot name a round back
+            (#571). A round that captured no diff has NO control here — absent, never a
+            greyed-out button or a link that lands on "isn't wired yet". */}
+        {(record.diffFiles?.length ?? 0) > 0 && (
+          <button
+            type="button"
+            data-testid="round-diff-link"
+            data-round-number={selected.round}
+            onClick={() =>
+              navigate(sessionPath(slug, { view: "diff", round: String(selected.round) }))
+            }
+            className="self-start text-model text-sm underline-offset-2 hover:underline"
+          >
+            Round diff
+          </button>
+        )}
 
         {/* The regenerated board's intro (C15 4.4): the generation this round composed and
             the round that composed it, in one quiet line rather than chrome prose. The

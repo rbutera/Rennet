@@ -324,8 +324,28 @@ something the preview did not describe.
    report, and each round pins its asks, worker commits, frozen board
    generation, and the patchset generation it minted. Because #457 appends the
    new generation and freezes the old rather than overwriting, that frozen
-   generation stays reachable through the generation switcher and its diff
-   through `?view=diff`, so earlier reports and diffs never vanish.
+   generation stays reachable through the generation switcher, so earlier
+   reports never vanish.
+   A round's **diff** is its own change, not the review's whole changeset: the
+   checkpoint that brackets the round's coding turn measures it, the round
+   record carries it, and the durable ledger keeps it when the regeneration
+   record supersedes the dispatch placeholder — so an earlier round's diff is
+   immutable, and a later round never rewrites it. **Round diff** opens it at
+   `?view=diff&round=<round number>`. The round *number*, not its generation id:
+   a round that dispatched a work order without regenerating boards carries the
+   no-regeneration marker as its generation, so several rounds share one
+   generation id and a generation cannot name a round back.
+   A round that captured no diff of its own offers **no Round diff control at
+   all**, the same absent-not-disabled rule the ledger tab itself follows.
+   A past round's diff is **read-only**, and that is a correctness property, not
+   a restraint. A line comment and a request-change ask are both keyed on
+   `path:line`, and that keyspace belongs to the review's *active* patchset — but
+   a round's diff is measured checkpoint-to-checkpoint, so the same coordinates
+   name different code. Writing under them would surface a comment on the live
+   diff over code nobody read, and would silently replace a live-diff ask staged
+   at the same line. So the round surface carries no comment gutter and no
+   selection toolbar, and does not paint the review's marks either — the read
+   direction of the same mismatch.
 8. Repeat until nothing is left to ask. The surface becomes the pull
    request — one action pushes the branch and opens it, idempotently. After
    the PR exists, rounds continue identically; there is no self-review lane

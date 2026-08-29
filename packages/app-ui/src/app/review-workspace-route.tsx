@@ -13,6 +13,7 @@ import {
   useReportBoard,
   useRoundDispatch,
   useRoundRecords,
+  useRoundRecordsPending,
   useRoundState,
   useRoundsUnavailable,
 } from "../rounds/rounds-data";
@@ -103,6 +104,9 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // to: rendering "no rounds have completed" over a daemon that never answered would be a
   // claim nobody established. The reason is stated where the ledger would have been.
   const roundsUnavailable = useRoundsUnavailable(slug);
+  // The LEDGER read's own flight (#571) — the round-diff deep-link waits on this, not on the
+  // round-events read `useRoundPending` reports.
+  const roundRecordsPending = useRoundRecordsPending(slug);
   const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
   const reportBoardId = ("reportBoardId" in roundState ? roundState.reportBoardId : "") ?? "";
@@ -208,7 +212,13 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       {view === "handoff" ? (
         <HandoffMount review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
-        <DiffViewContainer review={review} roundGeneration={query.round ?? undefined} />
+        <DiffViewContainer
+          review={review}
+          records={roundRecords}
+          recordsPending={roundRecordsPending}
+          {...(roundsUnavailable === undefined ? {} : { recordsUnavailable: roundsUnavailable })}
+          round={query.round ?? undefined}
+        />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {view === "rounds" && roundsUnavailable !== undefined ? (
