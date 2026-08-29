@@ -1,10 +1,11 @@
-import { LENS_KINDS, type LensKind } from "@rennet/protocol";
+import { type BoardDocument, LENS_KINDS, type LensKind } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { useEffect } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, RichText } from "../review";
 import { useBoardData, useLensBoards } from "./board-data";
+import { SourceChips } from "./design-meta";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
 import { Section } from "./section";
@@ -115,6 +116,7 @@ export function LensBoardView({
       {board ? (
         <BoardElementsProvider
           elements={board.elements}
+          reviewId={reviewId}
           generation={board.generation}
           boardId={board.boardId}
         >
@@ -130,14 +132,7 @@ export function LensBoardView({
               data-generation={board.generation}
               className="flex flex-col"
             >
-              <header className="mb-8 flex flex-col gap-4">
-                <h1 className="font-display text-2xl text-foreground tracking-tight">
-                  {board.document.title}
-                </h1>
-                {board.document.introMarkdown.length > 0 ? (
-                  <BoardIntro markdown={board.document.introMarkdown} />
-                ) : null}
-              </header>
+              <BoardHeader document={board.document} />
               <div className="flex flex-col gap-8">
                 {board.sections.map((entry) => (
                   <Section key={entry.ref} entry={entry} defaultOpen={forceOpen} />
@@ -169,6 +164,26 @@ export function LensBoardView({
         </p>
       )}
     </main>
+  );
+}
+
+function BoardHeader({ document }: { readonly document: BoardDocument }) {
+  return (
+    <header className="mb-8 flex flex-col gap-4">
+      <h1 className="font-display text-2xl text-foreground tracking-tight">{document.title}</h1>
+      {document.stats && document.stats.length > 0 ? (
+        <dl data-kind="board-stats" className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
+          {document.stats.map((stat) => (
+            <div key={stat.label} className="flex items-baseline gap-1.5">
+              <dt className="text-2xs text-muted-foreground">{stat.label}</dt>
+              <dd className="font-medium text-sm text-foreground">{stat.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {document.introMarkdown.length > 0 ? <BoardIntro markdown={document.introMarkdown} /> : null}
+      <SourceChips sources={document.sources ?? []} kind="artifact" />
+    </header>
   );
 }
 

@@ -1,3 +1,4 @@
+import { SourceChips, SpecDeltaBadge } from "../design-meta";
 import type { ElementOf } from "../registry";
 import { BoardChildren } from "./renderers";
 
@@ -8,10 +9,19 @@ import { BoardChildren } from "./renderers";
 // section.tsx` component cluster 4 builds for the `LensSection` projection entries.
 
 export function SectionElement({ element }: { readonly element: ElementOf<"section"> }) {
-  const { title, children } = element.data;
+  const { title, children, sources, spec_delta: specDelta } = element.data;
   return (
-    <section data-kind="section" className="flex flex-col gap-2">
-      <h3 className="font-semibold text-base text-foreground">{title}</h3>
+    <section
+      data-kind="section"
+      data-element-id={element.id}
+      {...(specDelta ? { "data-spec-delta": specDelta } : {})}
+      className="flex flex-col gap-2"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="font-semibold text-base text-foreground">{title}</h3>
+        {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
+        <SourceChips sources={sources ?? []} className="ml-auto" />
+      </div>
       <BoardChildren ids={children} />
     </section>
   );

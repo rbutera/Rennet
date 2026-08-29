@@ -1,7 +1,7 @@
 import { type AuthoredSchema, compileToWire, defineSchema, WireSchema } from "@wboard/core";
 import { z } from "zod";
 import { codeRefSchema } from "../delta/citations";
-import type { FindingSeverity } from "../domain";
+import type { FindingSeverity, OpenSpecDeltaOperation } from "../domain";
 
 /**
  * The #462 host board schema — the one schema Rennet declares at board creation
@@ -52,6 +52,24 @@ export const AuthorSchema = z.object({
   kind: authorKindSchema,
   id: z.string().min(1),
 });
+
+/** A repository artifact that a board can open at its authored source. */
+export const SourceRefSchema = z.object({
+  path: z.string().min(1),
+  label: z.string().min(1).optional(),
+  line: z.number().int().positive().optional(),
+});
+export type SourceRef = z.infer<typeof SourceRefSchema>;
+
+/** The source-spec operation, separate from a round's new/reworked board delta. */
+export const SPEC_DELTA_STATES = [
+  "added",
+  "modified",
+  "removed",
+  "renamed",
+] as const satisfies readonly OpenSpecDeltaOperation[];
+export const SpecDeltaSchema = z.enum(SPEC_DELTA_STATES);
+export type SpecDelta = z.infer<typeof SpecDeltaSchema>;
 
 /** A per-model concurrence tally on a finding. */
 const concurrenceSchema = z.object({
@@ -124,8 +142,15 @@ const decisionData = withAuthor({
 });
 const requirementData = withAuthor({
   shall: z.string(),
-  coverage: z.enum(["met", "gap", "partial"]),
-  trace: z.array(z.string()),
+  name: z.string().min(1).optional(),
+  capability: z.string().min(1).optional(),
+  scenarios: z.array(z.string()).optional(),
+  related_files: z.array(z.string().min(1)).optional(),
+  source: SourceRefSchema.optional(),
+  spec_delta: SpecDeltaSchema.optional(),
+  coverage: z.enum(["met", "gap", "partial"]).optional(),
+  trace: z.array(z.string()).optional(),
+  tests: z.number().int().nonnegative().optional(),
 });
 const noiseVerdictData = withAuthor({
   hunk: z.string(),
@@ -156,6 +181,8 @@ export const SectionDeltaSchema = z.enum(["new", "reworked"]);
 const sectionData = withAuthor({
   title: z.string(),
   children: z.array(z.string()),
+  sources: z.array(SourceRefSchema).optional(),
+  spec_delta: SpecDeltaSchema.optional(),
   // The viewed set that decays the mark is UI-only.
   delta: SectionDeltaSchema.optional(),
 });
@@ -259,6 +286,15 @@ export const BoardDocumentSchema = z.object({
   title: z.string().min(1),
   introMarkdown: z.string(),
   measure: z.enum(BOARD_MEASURES),
+  sources: z.array(SourceRefSchema).optional(),
+  stats: z
+    .array(
+      z.object({
+        label: z.string().min(1),
+        value: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -358,10 +394,17 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     alternatives: a("element", true, "Alternative-option elements considered.", true),
     why: a("string", true, "Rationale, as markdown."),
   }),
-  requirement: authored("A shall-requirement and its coverage in the change.", {
+  requirement: authored("A shall-requirement, its source scenarios, and change coverage.", {
     shall: a("string", true, "The requirement text."),
-    coverage: a("string", true, "met | gap | partial."),
-    trace: a("element", true, "code_ref elements tracing coverage.", true),
+    name: a("string", false, "Optional short requirement name."),
+    capability: a("string", false, "Optional capability slug."),
+    scenarios: a("element", false, "Canonical child elements for the scenarios.", true),
+    related_files: a("string", false, "Repo-relative related file paths.", true),
+    source: a("json", false, "Source artifact { path, label?, line? }."),
+    spec_delta: a("string", false, "added | modified | removed | renamed."),
+    coverage: a("string", false, "met | gap | partial; absent when no mapping exists."),
+    trace: a("element", false, "code_ref elements tracing coverage.", true),
+    tests: a("number", false, "Nonnegative count of covering tests."),
   }),
   noise_verdict: authored("A per-hunk noise/signal verdict.", {
     hunk: a("element", true, "The code_ref element this verdict is on."),
@@ -383,6 +426,8 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
   section: authored("A section of the document: a title and child elements.", {
     title: a("string", true, "The section title."),
     children: a("element", true, "Child elements in the section.", true),
+    sources: a("json", false, "Source artifacts { path, label?, line? }.", true),
+    spec_delta: a("string", false, "added | modified | removed | renamed source-spec delta."),
     delta: a("string", false, "new | reworked round-delta stamp; absent = carried."),
   }),
   prose: authored("Freeform markdown — the agent's general expressive surface.", {
