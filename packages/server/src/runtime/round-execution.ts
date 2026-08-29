@@ -12,10 +12,14 @@ import {
   type RoundOperation,
   RoundOperationSchema,
   type RoundOperationState,
+  type RoundRecordingAttempt,
+  type RoundRecordingReceipt,
   type RoundReportDraftAttempt,
   type RoundReportDraftReceipt,
   type RoundReportReceipt,
   type RoundReportVerificationAttempt,
+  type RoundSourceLandingAttempt,
+  type RoundSourceLandingReceipt,
   type RoundWorkerAttempt,
   type RoundWorkerReceipt,
   type RoundWorkspaceAttempt,
@@ -63,6 +67,14 @@ export interface RoundExecutionPorts {
   readonly settleCommits: (
     input: RoundExecutionEffectInput<RoundCommitAttempt>,
   ) => Promise<RoundCommitReceipt>;
+  readonly planSourceLanding: (operation: RoundOperation) => RoundSourceLandingAttempt;
+  readonly landSourceChanges: (
+    input: RoundExecutionEffectInput<RoundSourceLandingAttempt>,
+  ) => Promise<RoundSourceLandingReceipt>;
+  readonly planRoundRecording: (operation: RoundOperation) => RoundRecordingAttempt;
+  readonly recordRound: (
+    input: RoundExecutionEffectInput<RoundRecordingAttempt>,
+  ) => Promise<RoundRecordingReceipt>;
   readonly prepareReport: (operation: RoundOperation) => RoundReportDraftAttempt;
   readonly draftReport: (
     input: RoundExecutionEffectInput<RoundReportDraftAttempt>,
@@ -582,6 +594,114 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "commits-settled": {
+          const attempt = this.options.ports.planSourceLanding(operation);
+          operation = this.persist(
+            operation,
+            {
+              phase: "source-landing",
+              workspace: state.workspace,
+              worker: state.worker,
+              gate: state.gate,
+              commits: state.commits,
+              landing: attempt,
+            },
+            attempt.startedAt,
+          ).operation;
+          break;
+        }
+        case "source-landing": {
+          let receipt: RoundSourceLandingReceipt;
+          try {
+            receipt =
+              hasWorkerChanges(state.worker) && hasCommitChanges(state.commits)
+                ? await this.options.ports.landSourceChanges({
+                    operation,
+                    attempt: state.landing,
+                  })
+                : {
+                    ...state.landing,
+                    outcome: "unchanged",
+                    landedAt: Math.max(this.now(), operation.updatedAt),
+                  };
+          } catch (error) {
+            operation = this.fail(operation, {
+              at: "source-landing",
+              reason: errorReason(error),
+              failedAt: Math.max(this.now(), operation.updatedAt),
+              workspace: state.workspace,
+              worker: state.worker,
+              gate: state.gate,
+              commits: state.commits,
+              landing: state.landing,
+            });
+            break;
+          }
+          operation = this.persist(
+            operation,
+            {
+              phase: "source-landed",
+              workspace: state.workspace,
+              worker: state.worker,
+              gate: state.gate,
+              commits: state.commits,
+              landing: receipt,
+            },
+            receipt.landedAt,
+          ).operation;
+          break;
+        }
+        case "source-landed": {
+          const attempt = this.options.ports.planRoundRecording(operation);
+          operation = this.persist(
+            operation,
+            {
+              phase: "round-recording",
+              workspace: state.workspace,
+              worker: state.worker,
+              gate: state.gate,
+              commits: state.commits,
+              landing: state.landing,
+              recording: attempt,
+            },
+            attempt.startedAt,
+          ).operation;
+          break;
+        }
+        case "round-recording": {
+          try {
+            const receipt = await this.options.ports.recordRound({
+              operation,
+              attempt: state.recording,
+            });
+            operation = this.persist(
+              operation,
+              {
+                phase: "round-recorded",
+                workspace: state.workspace,
+                worker: state.worker,
+                gate: state.gate,
+                commits: state.commits,
+                landing: state.landing,
+                recording: receipt,
+              },
+              receipt.recordedAt,
+            ).operation;
+          } catch (error) {
+            operation = this.fail(operation, {
+              at: "round-recording",
+              reason: errorReason(error),
+              failedAt: Math.max(this.now(), operation.updatedAt),
+              workspace: state.workspace,
+              worker: state.worker,
+              gate: state.gate,
+              commits: state.commits,
+              landing: state.landing,
+              recording: state.recording,
+            });
+          }
+          break;
+        }
+        case "round-recorded": {
           if (!hasWorkerChanges(state.worker) && !hasCommitChanges(state.commits)) {
             const completedAt = Math.max(this.now(), operation.updatedAt);
             operation = this.persist(
@@ -592,6 +712,8 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: state.worker,
                 gate: state.gate,
                 commits: state.commits,
+                landing: state.landing,
+                recording: state.recording,
                 result: { kind: "unchanged" },
                 completedAt,
               },
@@ -608,6 +730,8 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
+              landing: state.landing,
+              recording: state.recording,
               report: attempt,
             },
             attempt.startedAt,
@@ -629,6 +753,8 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: state.worker,
                 gate: state.gate,
                 commits: state.commits,
+                landing: state.landing,
+                recording: state.recording,
                 report,
                 verification,
               },
@@ -643,6 +769,8 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
+              landing: state.landing,
+              recording: state.recording,
               report: state.report,
             });
           }
@@ -664,6 +792,8 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: state.worker,
                 gate: state.gate,
                 commits: state.commits,
+                landing: state.landing,
+                recording: state.recording,
                 result: { kind: "changed", report },
                 completedAt,
               },
@@ -678,6 +808,8 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
+              landing: state.landing,
+              recording: state.recording,
               report: state.report,
               verification: state.verification,
             });

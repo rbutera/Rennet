@@ -349,6 +349,36 @@ describe("round commit settlement", () => {
 });
 
 describe("round landing", () => {
+  it("lands the persisted worker head even when the detached worktree moves later", async () => {
+    const repo = await createRepo();
+    const worktreePath = join(repo.tempRoot, "round-worktree");
+    await prepareRoundWorktree({
+      git: execaGit,
+      locus: HOST_LOCUS,
+      repoRoot: repo.root,
+      worktreePath,
+      sourceHead: repo.baseHead,
+    });
+    const plannedWorkerHead = await commitFile(worktreePath, "planned.txt", "planned\n");
+    await commitFile(worktreePath, "late.txt", "late\n");
+
+    const landed = await landRoundChanges({
+      git: execaGit,
+      locus: HOST_LOCUS,
+      sourceRoot: repo.root,
+      worktreePath,
+      baselineCommit: repo.baseHead,
+      workerHead: plannedWorkerHead,
+    });
+
+    expect(landed.workerHead).toBe(plannedWorkerHead);
+    expect(landed.changedPaths).toEqual(["planned.txt"]);
+    expect(await readFile(join(repo.root, "planned.txt"), "utf8")).toBe("planned\n");
+    await expect(readFile(join(repo.root, "late.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("applies only the worker delta without moving the source branch or dropping source edits", async () => {
     const repo = await createRepo();
     await writeFile(join(repo.root, "initial-source-edit.txt"), "kept\n");
@@ -368,7 +398,7 @@ describe("round landing", () => {
       worktreePath,
       sourceHead: source.commit,
     });
-    await commitFile(worktreePath, "worker.txt", "worker output\n");
+    const workerHead = await commitFile(worktreePath, "worker.txt", "worker output\n");
     await writeFile(join(repo.root, "mid-run-source-edit.txt"), "also kept\n");
     const sourceBranchHead = await git(repo.root, "rev-parse", "HEAD");
 
@@ -378,6 +408,7 @@ describe("round landing", () => {
       sourceRoot: repo.root,
       worktreePath,
       baselineCommit: source.commit,
+      workerHead,
     });
 
     expect(landed).toEqual(
@@ -395,6 +426,7 @@ describe("round landing", () => {
       sourceRoot: repo.root,
       worktreePath,
       baselineCommit: source.commit,
+      workerHead,
     });
     expect(recovered).toEqual(
       expect.objectContaining({
@@ -424,7 +456,7 @@ describe("round landing", () => {
       sourceHead: source.commit,
     });
     await writeFile(join(worktreePath, "base.txt"), "worker version\n");
-    await settleRoundCommits({
+    const commits = await settleRoundCommits({
       git: execaGit,
       worktreePath,
       executionId: "commit-attempt",
@@ -440,6 +472,7 @@ describe("round landing", () => {
         sourceRoot: repo.root,
         worktreePath,
         baselineCommit: source.commit,
+        workerHead: commits.to,
       }),
     ).rejects.toBeInstanceOf(RoundLandingConflictError);
     expect(await readFile(join(repo.root, "base.txt"), "utf8")).toBe("source version\n");

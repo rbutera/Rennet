@@ -276,6 +276,39 @@ export const RoundCommitReceiptSchema = z.object({
 });
 export type RoundCommitReceipt = z.infer<typeof RoundCommitReceiptSchema>;
 
+export const RoundSourceLandingAttemptSchema = z.object({
+  effect: z.literal("source-landing"),
+  executionId: id,
+  baselineCommit: id,
+  workerHead: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundSourceLandingAttempt = z.infer<typeof RoundSourceLandingAttemptSchema>;
+
+const roundSourceLandingReceiptBase = {
+  ...RoundSourceLandingAttemptSchema.shape,
+  landedAt: z.number().int().nonnegative(),
+};
+
+export const RoundSourceLandingReceiptSchema = z.discriminatedUnion("outcome", [
+  z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("unchanged") }),
+  z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("applied") }),
+  z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("already-applied") }),
+]);
+export type RoundSourceLandingReceipt = z.infer<typeof RoundSourceLandingReceiptSchema>;
+
+export const RoundRecordingAttemptSchema = z.object({
+  effect: z.literal("round-recording"),
+  executionId: id,
+  startedAt: z.number().int().nonnegative(),
+});
+export type RoundRecordingAttempt = z.infer<typeof RoundRecordingAttemptSchema>;
+
+export const RoundRecordingReceiptSchema = RoundRecordingAttemptSchema.extend({
+  recordedAt: z.number().int().nonnegative(),
+});
+export type RoundRecordingReceipt = z.infer<typeof RoundRecordingReceiptSchema>;
+
 export const RoundReportDraftAttemptSchema = z.object({
   executionId: id,
   reportBoardId: id,
@@ -344,12 +377,33 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     commit: RoundCommitAttemptSchema,
   }),
   z.object({
+    at: z.literal("source-landing"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingAttemptSchema,
+  }),
+  z.object({
+    at: z.literal("round-recording"),
+    ...failureBase,
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingAttemptSchema,
+  }),
+  z.object({
     at: z.literal("report-drafting"),
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
   }),
   z.object({
@@ -359,6 +413,8 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
     verification: RoundReportVerificationAttemptSchema,
   }),
@@ -408,11 +464,47 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     commits: RoundCommitReceiptSchema,
   }),
   z.object({
+    phase: z.literal("source-landing"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("source-landed"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+  }),
+  z.object({
+    phase: z.literal("round-recording"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingAttemptSchema,
+  }),
+  z.object({
+    phase: z.literal("round-recorded"),
+    workspace: RoundWorkspaceReceiptSchema,
+    worker: RoundWorkerCompletedReceiptSchema,
+    gate: RoundGateSettledReceiptSchema,
+    commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingReceiptSchema,
+  }),
+  z.object({
     phase: z.literal("report-drafting"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
   }),
   z.object({
@@ -421,6 +513,8 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
     verification: RoundReportVerificationAttemptSchema,
   }),
@@ -430,6 +524,8 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
+    landing: RoundSourceLandingReceiptSchema,
+    recording: RoundRecordingReceiptSchema,
     result: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("changed"), report: RoundReportReceiptSchema }),
       z.object({ kind: z.literal("unchanged") }),
@@ -568,6 +664,24 @@ export const RoundOperationSchema = z
         : failure !== undefined && "commits" in failure
           ? failure.commits
           : undefined;
+    const landing =
+      state.phase !== "failed" && "landing" in state
+        ? state.landing
+        : failure !== undefined && "landing" in failure
+          ? failure.landing
+          : undefined;
+    const settledWorker =
+      state.phase !== "failed" &&
+      "worker" in state &&
+      "outcome" in state.worker &&
+      state.worker.outcome === "completed"
+        ? state.worker
+        : failure !== undefined &&
+            "worker" in failure &&
+            "outcome" in failure.worker &&
+            failure.worker.outcome === "completed"
+          ? failure.worker
+          : undefined;
     const changedEvidenceIsValid =
       state.phase === "report-drafting" || state.phase === "report-verifying"
         ? hasChangedRoundEvidence(state.worker, state.commits)
@@ -603,6 +717,31 @@ export const RoundOperationSchema = z
         code: "custom",
         path: ["state", "commits", "baseHead"],
         message: "does not match the observed commit range start",
+      });
+    }
+    if (
+      commits !== undefined &&
+      landing !== undefined &&
+      (landing.baselineCommit !== commits.from || landing.workerHead !== commits.to)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "landing"],
+        message: "does not match the settled commit range",
+      });
+    }
+    if (
+      commits !== undefined &&
+      landing !== undefined &&
+      "outcome" in landing &&
+      settledWorker !== undefined &&
+      ((hasChangedRoundEvidence(settledWorker, commits) && landing.outcome === "unchanged") ||
+        (!hasChangedRoundEvidence(settledWorker, commits) && landing.outcome !== "unchanged"))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "landing", "outcome"],
+        message: "contradicts the settled worker and commit evidence",
       });
     }
   });
@@ -884,6 +1023,15 @@ function progressFailure(
         gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
+    case "source-landing":
+    case "round-recording":
+      return {
+        at: "committing",
+        workspace: doneWorkspaceProgress,
+        worker: doneWorkerProgress(failure.worker),
+        gate: settledGateProgress(failure.gate),
+        commits: { status: "failed", reason: failure.reason },
+      };
     case "report-drafting":
     case "report-verifying":
       return {
@@ -944,8 +1092,19 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         commits: { status: "running" },
       };
     case "commits-settled":
+    case "source-landing":
+    case "source-landed":
+    case "round-recording":
       return {
-        phase: state.phase,
+        phase: "committing",
+        workspace: doneWorkspaceProgress,
+        worker: doneWorkerProgress(state.worker),
+        gate: settledGateProgress(state.gate),
+        commits: { status: "running" },
+      };
+    case "round-recorded":
+      return {
+        phase: "commits-settled",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
         gate: settledGateProgress(state.gate),

@@ -601,11 +601,12 @@ export async function landRoundChanges(input: {
   readonly sourceRoot: string;
   readonly worktreePath: string;
   readonly baselineCommit: string;
+  readonly workerHead: string;
   readonly run?: RoundProcessExec;
 }): Promise<RoundLandingResult> {
   const run = input.run ?? execaRoundProcess;
   const baselineCommit = await resolveCommit(input.git, input.worktreePath, input.baselineCommit);
-  const workerHead = await resolveCommit(input.git, input.worktreePath, "HEAD");
+  const workerHead = await resolveCommit(input.git, input.worktreePath, input.workerHead);
   await assertAncestor(input.git, input.worktreePath, baselineCommit, workerHead);
   const [patch, changedPathsOutput] = await Promise.all([
     input.git(input.worktreePath, [

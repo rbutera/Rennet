@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -300,6 +308,16 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
       onRoundPlaceholderCommitted: ({ sessionId, dispatchId }) => {
         roundSessionId = sessionId;
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const operation = operationStore.read(sessionId);
+        operationStore.close();
+        expect(operation?.state.phase).toBe("round-recording");
+        if (operation?.state.phase !== "round-recording") {
+          throw new Error("round placeholder was recorded outside its durable recording attempt");
+        }
+        expect(operation.state.landing.outcome).toBe("applied");
+        expect(operation.state.recording.effect).toBe("round-recording");
+        expect(readFileSync(join(repo, "a.txt"), "utf8")).toContain("worker change");
         const record = new RoundRecordStore(join(dataDir, "rounds"))
           .read(sessionId)
           .find((candidate) => candidate.dispatchId === dispatchId);
@@ -399,6 +417,14 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
       onRoundPlaceholderCommitted: ({ sessionId }) => {
         crashedSessionId = sessionId;
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const operation = operationStore.read(sessionId);
+        operationStore.close();
+        expect(operation?.state.phase).toBe("round-recording");
+        if (operation?.state.phase !== "round-recording") {
+          throw new Error("unchanged round was recorded outside its durable recording attempt");
+        }
+        expect(operation.state.landing.outcome).toBe("unchanged");
         return new Promise<void>(() => undefined);
       },
     });
