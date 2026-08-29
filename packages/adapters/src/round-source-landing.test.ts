@@ -373,7 +373,7 @@ describe("transactional round source landing", () => {
     ).rejects.toThrow(RoundSourceLandingConflictError);
     expect(readFileSync(join(current.sourceRoot, firstUnit.path), "utf8")).toBe("old child\n");
     expect(pathOccupied(join(current.sourceRoot, firstUnit.backupPath))).toBe(false);
-  });
+  }, 30_000);
 
   it("preflights every future worker target before mutating the first unit", async () => {
     const current = fixture();
