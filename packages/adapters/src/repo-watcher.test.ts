@@ -12,6 +12,17 @@ describe("isIgnoredPath (add-windows-support: both separator flavours)", () => {
     expect(isIgnoredPath("C:\\dev\\repo\\.rennet\\map\\x")).toBe(true);
   });
 
+  // `.nx` is gitignored, so it can never enter a capture, and on this repository it is
+  // 4,877 of 23,549 entries — a fifth of the walk, for nothing. Pruning it took the initial
+  // walk from ~64s to ~900ms and 4,176–4,779 EMFILE failures to zero.
+  it("ignores .nx — a fifth of this repo's tree, and git can never show it", () => {
+    expect(isIgnoredPath("/repo/.nx/workspace-data/d.db")).toBe(true);
+    expect(isIgnoredPath("/repo/.nx")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo\\.nx\\workspace-data\\d.db")).toBe(true);
+    // Not a prefix match: a real source directory whose name merely starts with it stays.
+    expect(isIgnoredPath("/repo/src/.nxrc/config.ts")).toBe(false);
+  });
+
   it("ignores node_modules — the 9P poll storm's source (contents and the dir itself)", () => {
     expect(isIgnoredPath("/repo/node_modules/foo/index.js")).toBe(true);
     expect(

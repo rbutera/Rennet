@@ -8,16 +8,34 @@ export function isWslUncPath(path: string): boolean {
 
 /**
  * Segments never worth watching for review freshness: VCS/internal state
- * (`.git`, `.rennet`) and — critically — the dependency tree (`node_modules`).
+ * (`.git`, `.rennet`), the build-tool cache (`.nx`), and — critically — the
+ * dependency tree (`node_modules`). Every one of these is gitignored, so none
+ * can ever appear in a capture; walking them is pure cost.
+ *
  * On a WSL-UNC (9P) root the watcher POLLS, so descending `node_modules` meant
  * stat-ing tens of thousands of files every interval, and the pnpm `.bin`
  * symlinks even throw spurious EISDIR over the 9P bridge — a flood that both
  * spammed the log and starved the daemon's libuv thread pool (the same pool
- * undici uses for GitHub connects; field bug, lancelot 2026-08-20). None of
- * these trees ever change a review. Matches the segment itself or its contents,
- * in either separator flavour (backslashes on Windows/UNC).
+ * undici uses for GitHub connects; field bug, lancelot 2026-08-20).
+ *
+ * `.nx` was measured on this repository, twice each way, on a checkout that had
+ * been worked in for a while — 4,877 entries and 2.0 GB of build cache:
+ *
+ *   without `.nx` pruned   ready 61,959ms / 63,128ms   4,186 / 4,314 EMFILE errors
+ *   with    `.nx` pruned   ready    834ms /    893ms       0 EMFILE errors
+ *
+ * Seventy times faster, and the descriptor exhaustion disappears. Note WHY that
+ * matters more than the ratio: the cost is a function of accumulated cache, not
+ * of the project. A fresh worktree's `.nx` is 15 entries and the difference there
+ * is ~200ms vs ~136ms — nothing. So this degrades the longer a repository is used,
+ * which is exactly the shape that is invisible in testing and bites in the field.
+ * `.nx` also churns on every `nx` run, which marked the repo dirty for nothing and
+ * forced a real diff on the next freshness ask.
+ *
+ * Matches the segment itself or its contents, in either separator flavour
+ * (backslashes on Windows/UNC).
  */
-const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|node_modules)(?:[/\\]|$)/;
+const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
 
 /** True when a watched path is inside an ignored segment. */
 export function isIgnoredPath(path: string): boolean {
@@ -111,9 +129,22 @@ export class RepoWatcher {
    *
    * So while the walk is in flight the watcher refuses to vouch for the tree, and
    * the caller falls through to a real diff instead of trusting a silence that
-   * means nothing yet. This costs a handful of extra diffs in the first moments of
-   * a capture and closes the window completely: the flag can only go clean at a
-   * moment after which every subsequent change is guaranteed to be reported.
+   * means nothing yet.
+   *
+   * What that costs, measured on this repository rather than guessed: with `.nx`
+   * pruned the walk finishes in 834–893ms, so it is a diff or two. Before `.nx` was
+   * pruned the same walk took 62–63 seconds, and the cost stayed bounded anyway only
+   * because the walk blocks the event loop, which prevents an ask storm rather than
+   * absorbing one. That is not a property to rely on: this stays cheap only while
+   * the ignore list above stays honest about what is not worth walking.
+   *
+   * What it does NOT promise: that every later change is reported. `ready` fires
+   * when chokidar has finished walking, which is not the same as every watch being
+   * armed — measured on this repository before `.nx` was pruned, it fired after
+   * 4,186–4,314 EMFILE failures, and chokidar does not retry a nested failure. So
+   * the guarantee here is exactly "chokidar says it has finished looking", and no
+   * more. That closes the first-save window, which is the defect; descriptor
+   * exhaustion is a different failure and would need its own answer.
    */
   setDirty(value: boolean): void {
     this.dirty = value || !this.settled;
