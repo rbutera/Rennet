@@ -557,11 +557,12 @@ export interface DispatchDeps {
     workOrder: ComposedHandoffBundle;
   }) => Promise<void>;
   /**
-   * The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): the `RoundRecord[]`
-   * the live rounds runtime recorded for this review's session, resolved read-only (the READ
-   * side of `dispatchRound`'s mint — `resolveRoundSessionId`). Absent ⇒ no rounds runtime
-   * wired, so the read answers an honest empty ledger. Empty until a round RECORDS (`runRound`);
-   * the B11 dispatch WRITE runs the workers but the record wiring is a separate deferred piece.
+   * The rounds-ledger read for `session.rounds`: the `RoundRecord[]` the live rounds runtime
+   * recorded for this review's session, resolved read-only (the READ side of `dispatchRound`'s
+   * mint — `resolveRoundSessionId`). Absent ⇒ no rounds runtime wired, so the read answers an
+   * honest empty ledger. A session with no dispatched round is honestly empty: BOTH `runRound`
+   * and `dispatchRound` record a `RoundRecord` (`runtime/rounds.ts`), the dispatch one carrying
+   * `ROUND_NO_REGEN` for the generation fields it did not mint.
    */
   readonly roundRecordsForReview?: (reviewId: string) => readonly RoundRecord[];
   /**

@@ -1873,9 +1873,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // `BoardMetaStore` is the crash-boundary idempotency the `runRound` regeneration consults
   // (persist before arrival, load on restart); prompts read from the on-disk `@rennet/prompts`
   // src. `composeTurn` is omitted (optional — the lens boards are the surface until the
-  // authoring turn is wired). The round DISPATCH exercises only the per-session serializer;
-  // the full board regeneration `runRound` drives lands when its lens-pipeline collation
-  // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
+  // authoring turn is wired). The lens-pipeline collation context IS bridged now (C15
+  // cluster 1, `runtime/round-collation.ts`): the dispatch runs the coding turn behind the
+  // per-session serializer and then hands what the worker produced to `runRound` for the
+  // full board regeneration, so the dispatch still never runs an empty pipeline.
   const boardMetaStore = new BoardMetaStore(join(dataDir, "board-meta"));
   // Durable generation ledger (C15 2.1): the frozen prior + live successor a round mints,
   // so gen-1 survives a restart as a drill-down the rounds switcher opens by id.
@@ -2000,10 +2001,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // review-id session through the same store (#573). A failure-isolated
     // post-commit kick (the swarm/scout precedent): the turn runs behind the command, and its
     // rejection never surfaces — `round.dispatch` already returned the composed work-order.
-    // The rounds-ledger read for `session.rounds` (B9/B10-deferred seam): project the live
-    // rounds runtime's ledger for the review's session, resolved READ-ONLY (the read side of
-    // dispatchRound's mint below — same target-claim derivation, never minting). An unknown
-    // review or a session with no recorded round ⇒ an honest empty ledger.
+    // The rounds-ledger read for `session.rounds`: project the live rounds runtime's ledger
+    // for the review's session, resolved READ-ONLY (the read side of dispatchRound's mint
+    // below — same target-claim derivation, never minting). An unknown review or a session
+    // with no recorded round ⇒ an honest empty ledger.
     roundRecordsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (!review) return [];
@@ -2433,10 +2434,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     detectForges,
     github: githubAccount,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
-    // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
-    // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
-    // when auth is unavailable → the local-only list). An unknown projectId degrades
-    // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
+    // is real worktrees/branches with dirty/ahead/behind from git; the live GitHub
+    // OPEN-PR set rides the same boundary through the auth-ladder PR source (absent
+    // when auth is unavailable → the local-only list, with `authUnavailable` naming the
+    // reason). An unknown projectId degrades to an empty detail (fail-safe, mirroring
+    // the project store) rather than throwing.
     projectDetail: async (projectId, prStates, localOnly, emit) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {

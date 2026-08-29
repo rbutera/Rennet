@@ -6,7 +6,7 @@ import { sessionHandlers } from "./dispatch/session";
 import { buildProjectionContext, projectCommandOutput } from "./projection";
 import { resolveRoundSessionId } from "./session/session-entry";
 
-// The B9/B10-deferred SESSION READ seam (session.transcript + session.rounds). Positive
+// The SESSION READ seam (session.transcript + session.rounds). Positive
 // controls: each read returns the REAL projected shape (not a stub error), is dispatch-
 // reachable, session.rounds projects a seeded ledger's real records (and is empty unseeded),
 // the slug→session resolution lines up with dispatchRound's mint, and a host path smuggled
