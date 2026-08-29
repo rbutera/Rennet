@@ -5,7 +5,12 @@
 // `wire.ts` (#376) — two session contracts, one folder seam.
 
 import { z } from "zod";
-import { AskLifecycleSchema, generationIdForPatchset, QuoteAnchorSchema } from "../board";
+import {
+  AskLifecycleSchema,
+  generationIdForPatchset,
+  QuoteAnchorSchema,
+  RoundReportBoardSchema,
+} from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import { LENS_KINDS } from "../manifests";
@@ -736,6 +741,26 @@ export const RoundSourceTargetSchema = z.discriminatedUnion("kind", [
 ]);
 export type RoundSourceTarget = z.infer<typeof RoundSourceTargetSchema>;
 
+/** The configured project gate facts retained with a completed ledger row. */
+export const RoundRunGateReceiptSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("passed"),
+    command: z.string().min(1),
+    durationMs: z.number().int().nonnegative(),
+    projectCount: z.number().int().nonnegative().optional(),
+  }),
+  z.object({ outcome: z.literal("skipped"), reason: z.literal("not-configured") }),
+]);
+export type RoundRunGateReceipt = z.infer<typeof RoundRunGateReceiptSchema>;
+
+/** Immutable host facts about where and when one durable round ran. */
+export const RoundRunReceiptSchema = z.object({
+  startedAt: z.number().int().nonnegative(),
+  sourceTarget: RoundSourceTargetSchema,
+  gate: RoundRunGateReceiptSchema,
+});
+export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;
+
 export const RoundGatePlanSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("configured"), command: z.string().min(1) }),
   z.object({ kind: z.literal("absent") }),
@@ -1395,6 +1420,8 @@ export const RoundRecordSchema = z.object({
   /** Board id of the round-report board (the `round_outcome` items live on it), or
    *  `ROUND_NO_REGEN` when the round drafted no report board. */
   reportBoard: id,
+  /** Immutable run facts captured from the durable operation. Absent only on legacy rows. */
+  run: RoundRunReceiptSchema.optional(),
   /** How many reworks the round actually PRODUCED, counted off the round report the
    *  drafters wrote: its `round_outcome` items that are not `untouched`. The report
    *  verifies each ask against the round's own diff, so this is the round's verified
@@ -1421,6 +1448,12 @@ export const RoundRecordSchema = z.object({
   changedPaths: z.array(z.string()).optional(),
 });
 export type RoundRecord = z.infer<typeof RoundRecordSchema>;
+
+/** A rounds-ledger read row. `report` is an exact-id read projection, never persisted. */
+export const RoundLedgerRecordSchema = RoundRecordSchema.extend({
+  report: RoundReportBoardSchema.optional(),
+});
+export type RoundLedgerRecord = z.infer<typeof RoundLedgerRecordSchema>;
 
 /**
  * Resolve the generation the default board surface should read.

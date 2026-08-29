@@ -14,6 +14,7 @@ import {
   RoundReportDraftAttemptSchema,
   RoundReportDraftReceiptSchema,
   RoundReportReceiptSchema,
+  RoundRunReceiptSchema,
   RoundSourceLandingAttemptSchema,
   RoundSourceLandingReceiptSchema,
   RoundWorkspaceAttemptSchema,
@@ -220,9 +221,20 @@ describe("session/ durable shapes (#466/#457)", () => {
       mintedPatchsetGeneration: "gen-2",
       boardGeneration: "gen-1",
       reportBoard: "board-r",
+      run: {
+        startedAt: 1_777_777_777_000,
+        sourceTarget: { kind: "branch", branch: "feat/receipts" },
+        gate: {
+          outcome: "passed",
+          command: "pnpm check",
+          durationMs: 12_500,
+          projectCount: 7,
+        },
+      },
     };
     expect(RoundRecordSchema.parse(round).reportBoard).toBe("board-r");
     expect(RoundRecordSchema.parse(round).askOccurrences).toEqual([{ id: "th-1", revision: 7 }]);
+    expect(RoundRecordSchema.parse(round).run).toEqual(round.run);
     const unminted = { ...round, mintedPatchsetGeneration: undefined };
     expect(RoundRecordSchema.parse(unminted).mintedPatchsetGeneration).toBeUndefined();
     const legacy = {
@@ -232,6 +244,17 @@ describe("session/ durable shapes (#466/#457)", () => {
       reportBoard: "board-r",
     };
     expect(RoundRecordSchema.parse(legacy).dispatchId).toBeUndefined();
+    expect(RoundRecordSchema.parse(legacy).run).toBeUndefined();
+    expect(
+      RoundRecordSchema.safeParse({ ...legacy, run: { startedAt: round.run.startedAt } }).success,
+    ).toBe(false);
+    expect(
+      RoundRunReceiptSchema.safeParse({
+        startedAt: 10,
+        sourceTarget: { kind: "detached", head: "abc123" },
+        gate: { outcome: "skipped", reason: "not-configured" },
+      }).success,
+    ).toBe(true);
     expect(
       RoundRecordSchema.safeParse({ ...round, askOccurrences: [{ id: "th-1", revision: -1 }] })
         .success,

@@ -131,6 +131,17 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
   const reportBoardId = ("reportBoardId" in roundState ? roundState.reportBoardId : "") ?? "";
   const report = useReportBoard(reportBoardId);
+  const greetingRecordIndex = roundRecords.findLastIndex(
+    (record) => record.reportBoard === reportBoardId,
+  );
+  const greetingRecord = greetingRecordIndex < 0 ? undefined : roundRecords[greetingRecordIndex];
+  const greetingReceipt =
+    greetingRecord === undefined
+      ? undefined
+      : {
+          record: greetingRecord,
+          roundNumber: greetingRecordIndex + 1,
+        };
   // A report phase is one that HAS a report to greet with. A round with no successor
   // account never runs the report seat, so it composes with no report board id at all —
   // and holding its new boards behind a greeting that can never arrive would be a promise
@@ -292,6 +303,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
                 board={report.board}
                 state={roundState}
                 onReveal={() => armGreeting(false)}
+                {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
               />
             ) : (
               <ReportUnavailable status={report.status} />

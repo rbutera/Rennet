@@ -109,9 +109,29 @@ export const LensBoardSchema = z.looseObject({
   skippedHunks: z.array(SkippedHunkSchema),
 });
 
+/**
+ * The report board embedded in a rounds-ledger read. Reports share the host element
+ * vocabulary with lens boards, but they are not one of the five review lenses and never
+ * contain human-authored review comments.
+ */
+export const RoundReportBoardSchema = LensBoardSchema.extend({
+  lens: z.literal("report"),
+}).superRefine((board, context) => {
+  board.elements.forEach((element, index) => {
+    if (element.kind === "review_comment") {
+      context.addIssue({
+        code: "custom",
+        path: ["elements", index, "kind"],
+        message: "round reports cannot contain review comments",
+      });
+    }
+  });
+});
+
 export type LensSection = z.infer<typeof LensSectionSchema>;
 export type SkippedHunk = z.infer<typeof SkippedHunkSchema>;
 export type LensBoard = z.infer<typeof LensBoardSchema>;
+export type RoundReportBoard = z.infer<typeof RoundReportBoardSchema>;
 
 /** The first board visit over a patchset. A review with no landed round has no durable
  * ledger row yet, so both ends derive this initial address directly from the content id. */

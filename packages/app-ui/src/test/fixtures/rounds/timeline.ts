@@ -1,4 +1,4 @@
-import type { LensBoard, RoundRecord } from "@rennet/protocol";
+import type { RoundLedgerRecord, RoundReportBoard } from "@rennet/protocol";
 import {
   advance,
   initialRoundState,
@@ -146,8 +146,8 @@ export interface TimelineRoundsSource {
 
 export function createTimelineRoundsSource(opts?: {
   readonly timeline?: readonly RoundEvent[];
-  readonly records?: readonly RoundRecord[];
-  readonly reportBoards?: Readonly<Record<string, LensBoard>>;
+  readonly records?: readonly RoundLedgerRecord[];
+  readonly reportBoards?: Readonly<Record<string, RoundReportBoard>>;
   readonly startTick?: number;
 }): TimelineRoundsSource {
   const timeline = opts?.timeline ?? FIXTURE_ROUND_TIMELINE;

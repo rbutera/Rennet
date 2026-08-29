@@ -1,4 +1,8 @@
-import type { LensBoard } from "@rennet/protocol";
+import type {
+  RoundLedgerRecord,
+  RoundReportBoard as RoundReportBoardModel,
+  RoundRunReceipt,
+} from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import {
   canRevealNewBoards,
@@ -6,6 +10,7 @@ import {
   type LensLane,
   type RoundState,
   type RowStatus,
+  roundTargetLabel,
 } from "./round-machine";
 import { RoundReportBoard } from "./round-report";
 import { StatusIcon } from "./run-route";
@@ -32,6 +37,51 @@ const NO_LANES: readonly LensLane[] = Object.freeze([]);
 
 /** …and the same for the synthetic tail STEPS, which are step rows, not lens lanes. */
 const NO_STEPS: readonly LaneRow[] = Object.freeze([]);
+
+function durationLabel(durationMs: number): string {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  const seconds = durationMs / 1_000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+}
+
+function gateSummary(gate: RoundRunReceipt["gate"]) {
+  switch (gate.outcome) {
+    case "passed":
+      return (
+        <>
+          Passed <code>{gate.command}</code> in {durationLabel(gate.durationMs)}
+          {gate.projectCount === undefined
+            ? "."
+            : ` across ${gate.projectCount} ${gate.projectCount === 1 ? "project" : "projects"}.`}
+        </>
+      );
+    case "skipped":
+      return <>No project gate was configured.</>;
+  }
+}
+
+function RunReceiptSummary({
+  record,
+  roundNumber,
+}: {
+  readonly record: RoundLedgerRecord;
+  readonly roundNumber: number;
+}) {
+  if (record.run === undefined) return null;
+  const askCount = record.asksDispatched.length;
+  return (
+    <div
+      data-testid="round-run-receipt"
+      className="flex flex-col gap-1 text-muted-foreground text-sm"
+    >
+      <p>
+        Round {roundNumber} ran {askCount} {askCount === 1 ? "ask" : "asks"} on{" "}
+        {roundTargetLabel(record.run.sourceTarget)}.
+      </p>
+      <p>{gateSummary(record.run.gate)}</p>
+    </div>
+  );
+}
 
 /** The greeting's per-lane status label — EXHAUSTIVE over `RowStatus` (finding 5). A
  *  regenerating lane reads "re-drafting"; a queued one "queued"; a drafted-but-unannounced
@@ -175,10 +225,12 @@ export function RoundGreeting({
   board,
   state,
   onReveal,
+  receipt,
 }: {
-  readonly board: LensBoard;
+  readonly board: RoundReportBoardModel;
   readonly state: RoundState;
   readonly onReveal: () => void;
+  readonly receipt?: { readonly record: RoundLedgerRecord; readonly roundNumber: number };
 }) {
   // The regeneration block lives on both regeneration phases: `composing` carries the
   // live lanes, and `composed` carries the ones it composed from (the machine forwards
@@ -196,6 +248,7 @@ export function RoundGreeting({
       data-screen="round-greeting"
       className="mx-auto flex w-full max-w-[820px] flex-col gap-6 p-6"
     >
+      {receipt !== undefined && <RunReceiptSummary {...receipt} />}
       <RoundReportBoard board={board} />
       {regenerating && <RegenerationProgress state={state} lanes={lanes} />}
       {canRevealNewBoards(state) && (

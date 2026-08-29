@@ -377,6 +377,11 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         expect(record?.outcome).toBe("completed");
         expect(record?.boardGeneration).toBe(ROUND_NO_REGEN);
         expect(record?.regeneration).toBe("pending");
+        expect(record?.run).toEqual({
+          startedAt: operation.createdAt,
+          sourceTarget: operation.sourceTarget,
+          gate: { outcome: "skipped", reason: "not-configured" },
+        });
         // This hook runs before create-server enters PR-draft ripening. If placeholder
         // persistence moves behind that await, the record is absent and this control reds.
         placeholderObserved = true;

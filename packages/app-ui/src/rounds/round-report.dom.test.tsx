@@ -15,7 +15,10 @@ describe("RoundReportBoard — the round report as a board", () => {
   it("renders the greeting prose and one row per outcome, each with its status pill", () => {
     const { container } = mount(<RoundReportBoard board={reportBoardFixture} />);
     // The greeting prose fills the surface (reuses the `prose` renderer, unchanged).
-    expect(container.textContent).toContain("You dispatched two asks");
+    expect(container.textContent).toContain("Token refresh exits are now observable");
+    expect(container.textContent).toContain(
+      "Every terminal path now leaves a typed record without retaining credentials.",
+    );
     // Four outcomes, one of each status, each wearing its status pill.
     const outcomes = container.querySelectorAll('[data-kind="round_outcome"]');
     expect(outcomes).toHaveLength(4);

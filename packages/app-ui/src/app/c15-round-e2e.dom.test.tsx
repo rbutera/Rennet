@@ -18,28 +18,23 @@
 //     app tree binds (`routes/app.tsx`). Its round state is the `session.roundEvents`
 //     catch-up read with the `roundProgress` push channel folded in, reduced through the
 //     production `advance`. No fixture clock, no tick, no `setTimeout`.
-//   • The EVENTS are the server's. Every one below is emitted verbatim by production —
-//     `create-server.ts`'s dispatch half (`dispatched`/`prep`/`worker`/`gate`/`committed`,
-//     the "Folded the round's asks into one work order" and "Ran the work order" labels)
-//     and `rounds.ts`'s regeneration half (`report`, the per-lens `lens` lanes with the
-//     `LENS_LANE_LABEL` names and the `carrying forward`/`reworked` verdicts, `composed`).
-//     Each is PARSED through protocol's `RoundEventSchema` before it is pushed, so this
-//     file cannot drift from the wire; that the server really emits this walk is proven
-//     server-side in `server/src/runtime/round-progress.test.ts` (3.1/3.3), over a real
-//     `runRound` with only the model seats faked. The two halves meet at the schema.
-//   • The RECORD is the durable one — parsed through `RoundRecordSchema`, carrying the
+//   • The progress prefix is the legacy delta stream retained for compatibility. The
+//     terminal receipt is the current coordinator's production `operation` snapshot.
+//     Each event is parsed through `RoundEventSchema`; the ledger refresh assertion is
+//     therefore pinned to the event shape create-server publishes now.
+//   • The RECORD is the durable one — parsed through `RoundLedgerRecordSchema`, carrying the
 //     `frozenPredecessor` C15 2.2 stamps (distinct from `boardGeneration`), which is what
-//     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open.
-//   • The ONE seam that is not live: `reportBoard`. NO board-fetch-by-id command exists —
-//     `board.read` serves a `(reviewId, generation, lens)` triple and `LensKind` has no
-//     `report` arm, so the live source resolves the report `undefined` on purpose rather
-//     than fabricating a greeting (the honest half of C1, recorded at task 3.2 and in
-//     `docs/developing/concepts/handoff-and-exits.md`). The report's ARRIVAL is live (the
-//     `report` event carries the real drafted board id); only its BODY is handed in here,
-//     through the seam's own read, so the greeting has something to render.
+//     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open. Its exact
+//     report projection is the production `session.rounds` shape, so the live source supplies
+//     the greeting without a fixture-only provider override.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { ComposedHandoffBundle, Review, RoundEvent, RoundRecord } from "@rennet/protocol";
-import { RoundEventSchema, RoundRecordSchema } from "@rennet/protocol";
+import type {
+  ComposedHandoffBundle,
+  Review,
+  RoundEvent,
+  RoundLedgerRecord,
+} from "@rennet/protocol";
+import { RoundEventSchema, RoundLedgerRecordSchema } from "@rennet/protocol";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
@@ -51,7 +46,7 @@ import { ROUTES } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
-import { FIXTURE_REPORT_BOARDS } from "../test/fixtures/rounds";
+import { reportBoardFixture } from "../test/fixtures/rounds";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
 
@@ -76,6 +71,34 @@ const routeResolutionHandlers: MemoryBridgeHandlers = {
 };
 
 const REPORT_BOARD_ID = "report-round-1";
+
+const TERMINAL_OPERATION = RoundEventSchema.parse({
+  type: "operation",
+  snapshot: {
+    operationId: "operation-c15",
+    revision: 10,
+    createdAt: Date.UTC(2026, 7, 29, 9, 30),
+    roundNumber: 1,
+    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    askCount: 2,
+    gatePlan: { kind: "configured", command: "pnpm check" },
+    state: {
+      phase: "completed",
+      workspace: { status: "done" },
+      worker: { status: "done", fileCount: 3 },
+      gate: { status: "passed", durationMs: 12_400, projectCount: 7 },
+      commits: { status: "done", count: 1 },
+      result: {
+        kind: "changed",
+        report: {
+          status: "verified",
+          reportBoardId: REPORT_BOARD_ID,
+          generation: "gen2",
+        },
+      },
+    },
+  },
+});
 
 /**
  * The round the server ran, as it really came over the wire. Parsed — not cast —
@@ -127,23 +150,29 @@ const SERVER_ROUND: readonly RoundEvent[] = [
       { id: "noise", label: "Noise", status: "done", verdict: "carrying-forward" },
     ],
   },
-  { type: "composed", generation: "gen2" },
+  TERMINAL_OPERATION,
 ].map((event) => RoundEventSchema.parse(event));
 
 /** The DURABLE record the round wrote (C15 2.2) — the frozen predecessor is a distinct
  *  id from the generation it composed, which is the whole of finding F3. */
-const DURABLE_RECORD: RoundRecord = RoundRecordSchema.parse({
+const DURABLE_RECORD: RoundLedgerRecord = RoundLedgerRecordSchema.parse({
   asksDispatched: ["ask-observability", "ask-network"],
   workerCommitRange: { from: "commit-from", to: "commit-to" },
   mintedPatchsetGeneration: "gen2",
   frozenPredecessor: "gen1",
   boardGeneration: "gen2",
   reportBoard: REPORT_BOARD_ID,
+  run: {
+    startedAt: Date.UTC(2026, 7, 29, 9, 30),
+    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
+  },
+  report: reportBoardFixture,
   // The report's own verified tally (C15 finding 10) — two of this round's outcomes were
   // not `untouched`. Equal to the ask count here by coincidence of the fixture, and the
   // ledger's own tests hold the two apart.
   reworkCount: 2,
-} satisfies RoundRecord);
+} satisfies RoundLedgerRecord);
 
 /** A minimal-but-schema-real `round.dispatch` answer — the command's output shape. The
  *  UI ignores it (dispatch returns void); it exists so the write is a real command
@@ -165,16 +194,9 @@ const dispatchAnswer = (
   dispatched: true,
 });
 
-/** The live source, with the ONE unbound read supplied (see the header). */
 function LiveScope({ children }: { readonly children: ReactNode }) {
   const live = useLiveRoundsSource();
-  return (
-    <RoundsSourceProvider
-      value={{ ...live, reportBoard: (id: string) => FIXTURE_REPORT_BOARDS[id] }}
-    >
-      {children}
-    </RoundsSourceProvider>
-  );
+  return <RoundsSourceProvider value={live}>{children}</RoundsSourceProvider>;
 }
 
 afterEach(() =>
@@ -203,25 +225,26 @@ function appTree(history: ReturnType<typeof memoryHistory>, bridge: MemoryBridge
  * The daemon, as far as this app tree can tell: an append-only round log per review
  * (`RoundProgressHub`'s own semantics — a `dispatched` RESETS it) that both the
  * `session.roundEvents` catch-up read and the `roundProgress` push channel serve, and a
- * `round.dispatch` that — like production — does NOT resolve until the round is over
- * (`create-server.ts` awaits `dispatchRound` and the whole regeneration inside the
- * handler). That latency is load-bearing: everything the reviewer sees between clicking
- * Dispatch and the round settling arrives over the push channel, not the command's reply.
+ * `round.dispatch` that — like production — acknowledges the accepted work order while
+ * the round continues asynchronously. The durable ledger row lands before the terminal
+ * progress receipt; that receipt is what tells the client the row is now ready to read.
  */
 function mountApp(path: string) {
   const dispatched: string[] = [];
   const log: RoundEvent[] = [];
-  let finishRound: (() => void) | undefined;
+  let records: readonly RoundLedgerRecord[] = [];
+  let ledgerReads = 0;
   const bridge = new MemoryBridge({
     ...routeResolutionHandlers,
     "board.read": fixtureBoardRead,
     "session.roundEvents": () => ({ events: [...log] }),
-    "session.rounds": () => ({ records: [DURABLE_RECORD] }),
+    "session.rounds": () => {
+      ledgerReads += 1;
+      return { records: [...records] };
+    },
     "round.dispatch": ({ reviewId }) => {
       dispatched.push(reviewId);
-      return new Promise((resolve) => {
-        finishRound = () => resolve(dispatchAnswer(reviewId));
-      });
+      return dispatchAnswer(reviewId);
     },
   });
   const history = memoryHistory(path);
@@ -232,7 +255,17 @@ function mountApp(path: string) {
     log.push(event);
     act(() => bridge.emitRoundProgress(REVIEW_ID, event));
   };
-  return { r, history, bridge, dispatched, push, finish: () => finishRound?.() };
+  return {
+    r,
+    history,
+    bridge,
+    dispatched,
+    push,
+    persistRound: () => {
+      records = [DURABLE_RECORD];
+    },
+    ledgerReads: () => ledgerReads,
+  };
 }
 
 const evidence: string[] = [];
@@ -253,7 +286,9 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
         body: "guard the boundary",
       }),
     );
-    const { r, history, dispatched, push, finish } = mountApp(`/s/${REVIEW_ID}?view=handoff`);
+    const { r, history, dispatched, push, persistRound, ledgerReads } = mountApp(
+      `/s/${REVIEW_ID}?view=handoff`,
+    );
     const button = r.getByRole("button", { name: "Dispatch Round" });
     expect(button.hasAttribute("disabled")).toBe(false);
     await r.user.click(button);
@@ -297,17 +332,25 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
 
     // ── 5 · VERIFIED COMPLETION RETURNS WITH THE SETTLED ACCOUNT ─────────────
-    push(SERVER_ROUND[9] as RoundEvent); // composed, generation gen2
+    const readsBeforeRecord = ledgerReads();
+    persistRound();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Persisting server truth does not invent a client refresh. Only the terminal receipt
+    // below proves that the durable row is ready and changes the live ledger projection.
+    expect(ledgerReads()).toBe(readsBeforeRecord);
+    push(SERVER_ROUND[9] as RoundEvent); // durable completed/changed operation, generation gen2
+    await waitFor(() => expect(ledgerReads()).toBeGreaterThan(readsBeforeRecord));
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
     const progress = () => r.getByTestId("regeneration-progress");
     expect(progress().textContent).toContain("Regenerated the Boards");
-    const laneText = (id: string) =>
-      r.container.querySelector(`[data-row="${id}"]`)?.textContent ?? "";
-    expect(laneText("design")).toContain("reworked");
-    expect(laneText("design")).not.toContain("carrying forward");
-    expect(laneText("sequence")).toContain("carrying forward");
+    // A complete durable snapshot supersedes the compatibility deltas. It does not carry
+    // per-lens verdicts, so the greeting must not replay rows from the older event shape.
+    expect(r.container.querySelector('[data-row="design"]')).toBeNull();
+    expect(r.container.querySelector('[data-row="sequence"]')).toBeNull();
     // 4.2's post-process and composed receipts are present on the returned surface.
     expect(r.container.querySelector('[data-step="post-process"]')?.textContent).toContain(
       "Cleaning up drafts · post-process pass",
@@ -351,13 +394,6 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
       expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull(),
     );
     shown("6 · retrospective line + gen-1 drill-down off the durable frozenPredecessor");
-
-    // The round's command finally answers (production resolves it only once the whole
-    // round is over); the invalidated catch-up read refetches the SAME settled log.
-    await act(async () => {
-      finish();
-      await Promise.resolve();
-    });
 
     // The evidence chain, SHOWN — the nine C9 claims walked over one live round.
     console.log(`[c15-e2e]\n  ${evidence.join("\n  ")}`);

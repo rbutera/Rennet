@@ -20,6 +20,7 @@ import {
   LENS_KINDS,
   ROUND_NO_REGEN,
   type RoundEvent,
+  type RoundRunReceipt,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { BoardsRuntime } from "../boards/boards-runtime";
@@ -108,6 +109,12 @@ const PREV_GEN: Generation = {
   status: "live",
 };
 
+const RUN_RECEIPT: RoundRunReceipt = {
+  startedAt: 1,
+  sourceTarget: { kind: "branch", branch: "feat/test" },
+  gate: { outcome: "skipped", reason: "not-configured" },
+};
+
 function baseDeps(over: Partial<RoundsRuntimeDeps> = {}): RoundsRuntimeDeps {
   return {
     resolveClaudePort: async () => fakeClaudePort(),
@@ -137,6 +144,7 @@ const DISPATCH_FIELDS = {
   dispatchId: "dispatch:test",
   sourcePatchsetId: "ps-1",
   askOccurrences: [],
+  run: RUN_RECEIPT,
 } as const;
 
 // ── Pure state machine ──
@@ -824,6 +832,29 @@ describe("createRoundsRuntime", () => {
     expect(frozenPrevious).toBeUndefined();
   });
 
+  it("persists an unchanged round before emitting its terminal receipt", async () => {
+    const order: string[] = [];
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        recordRound: (_sessionId, record) => {
+          order.push(`persisted:${record.regeneration}`);
+        },
+      }),
+    );
+
+    const record = await runtime.finalizeUnchanged({
+      session: { id: "s1", projectId: "p1", threads: [], createdAt: 0 },
+      asksDispatched: ["ask-1"],
+      dispatchId: "dispatch-1",
+      sourcePatchsetId: "patchset-1",
+      workerCommitRange: { from: "commit-1", to: "commit-1" },
+      onProgress: (event) => order.push(event.type),
+    });
+
+    expect(record.regeneration).toBe("not-needed");
+    expect(order).toEqual(["persisted:not-needed", "unchanged"]);
+  });
+
   it("keeps askless first-generation drafting on the no-code path", async () => {
     const captures: { prompt?: string }[] = [];
     const outcome = await createRoundsRuntime(
@@ -871,6 +902,7 @@ describe("createRoundsRuntime", () => {
     );
     await reportOnly.dispatchRound({
       ...identity,
+      run: RUN_RECEIPT,
       session: roundInput().session,
       workOrder: { tasks: [{ asks: [{ id: "t1" }] }] } as unknown as ComposedHandoffBundle,
       runWorkers: async () => ({

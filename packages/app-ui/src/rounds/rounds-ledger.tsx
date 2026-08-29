@@ -1,11 +1,12 @@
-import { ROUND_NO_REGEN, type RoundRecord } from "@rennet/protocol";
+import { ROUND_NO_REGEN, type RoundLedgerRecord, type RoundRecord } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { readSessionQuery, sessionPath } from "../routes/url";
-import { RoundReportBoard } from "./round-report";
+import { roundTargetLabel } from "./round-machine";
+import { RoundReportBoard, roundOutcomeTally } from "./round-report";
 import { useReportBoard } from "./rounds-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,9 +31,15 @@ import { useReportBoard } from "./rounds-data";
 // The ledger owns no round data of its own: records arrive from `useRoundRecords`
 // (read by the workspace, handed in as `records` — the workspace already needs the
 // count for its presence guard), and the report board is resolved + validated through
-// the rounds seam's `useReportBoard`. No timestamp lives on a `RoundRecord`, so a row
-// summarises with the round number and its dispatched-ask count rather than a "when".
+// the rounds seam's `useReportBoard`. Modern rows carry the immutable run receipt and exact
+// report projection, so their summary states when and where the round ran and what it returned.
+// Legacy rows omit facts they do not carry rather than guessing them.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const ROUND_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 /**
  * The review's generation line, oldest→newest, walked out of the durable records (C15 4.4).
@@ -54,7 +61,7 @@ export function RoundsLedger({
   /** The review whose boards the ledger detail reads (the `board.read` identity). */
   readonly reviewId: string;
   readonly slug: string;
-  readonly records: readonly RoundRecord[];
+  readonly records: readonly RoundLedgerRecord[];
 }) {
   const [, navigate] = useLocation();
   const query = readSessionQuery(new URLSearchParams(useSearch()));
@@ -115,6 +122,7 @@ export function RoundsLedger({
       >
         {rows.map(({ record: r, round }) => {
           const active = round === selectedRound;
+          const tally = r.report === undefined ? "" : roundOutcomeTally(r.report);
           return (
             <li key={round}>
               <button
@@ -127,10 +135,21 @@ export function RoundsLedger({
                   active ? "bg-secondary" : "hover:bg-secondary/50",
                 )}
               >
-                <span className="font-medium text-foreground">Round {round}</span>
-                <span className="text-muted-foreground text-2xs">
-                  {r.asksDispatched.length} asks
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="font-medium text-foreground">Round {round}</span>
+                  {r.run !== undefined && (
+                    <span className="truncate text-muted-foreground text-2xs">
+                      <time dateTime={new Date(r.run.startedAt).toISOString()}>
+                        {ROUND_TIME_FORMATTER.format(new Date(r.run.startedAt))}
+                      </time>
+                      {" · on "}
+                      {roundTargetLabel(r.run.sourceTarget)}
+                    </span>
+                  )}
                 </span>
+                {tally.length > 0 && (
+                  <span className="ml-auto text-right text-muted-foreground text-2xs">{tally}</span>
+                )}
               </button>
             </li>
           );

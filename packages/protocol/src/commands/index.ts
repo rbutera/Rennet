@@ -10,7 +10,7 @@ import {
   LensAbsenceReasonSchema,
   QuoteThreadSchema,
   RoundEventSchema,
-  RoundRecordSchema,
+  RoundLedgerRecordSchema,
   SessionTranscriptSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
@@ -1438,7 +1438,7 @@ const definitions = {
   },
   "session.rounds": {
     input: z.object({ reviewId: z.string().min(1) }),
-    output: z.object({ records: z.array(RoundRecordSchema) }),
+    output: z.object({ records: z.array(RoundLedgerRecordSchema) }),
   },
   // The live round-progress READ (C15 3.1) — the ordered `RoundEvent` log for the
   // review's round so far. The push channel (`onRoundProgress`) carries each event as it

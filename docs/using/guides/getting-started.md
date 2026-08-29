@@ -371,7 +371,9 @@ absent.
 
 Once a round has completed, a **History** control joins Map · Diff in the
 header. It lists one row per round with its tally; selecting a round renders its
-full report, so nothing you have already read ever vanishes.
+full report. Each modern row states when the round ran, its exact branch or
+detached target, and the outcome tally from that round's own report, so nothing
+you have already read ever vanishes or gets relabelled by a later round.
 
 ## Move around quickly
 

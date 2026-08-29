@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-import type { ComposedHandoffBundle, Review, RoundEvent, SidebarSession } from "@rennet/protocol";
+import type {
+  ComposedHandoffBundle,
+  Review,
+  RoundEvent,
+  RoundOperationProgressSnapshot,
+  SidebarSession,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -28,6 +34,29 @@ import {
 
 const REVIEW = "rev-live";
 const SESSION = "session-live";
+
+const OPERATION_BASE = {
+  operationId: "operation-live",
+  createdAt: 1,
+  roundNumber: 1,
+  sourceTarget: { kind: "branch", branch: "feat/live" },
+  askCount: 1,
+  gatePlan: { kind: "absent" },
+} satisfies Omit<RoundOperationProgressSnapshot, "revision" | "state">;
+
+function operationEvent(
+  state: RoundOperationProgressSnapshot["state"],
+  revision: number,
+): RoundEvent {
+  return { type: "operation", snapshot: { ...OPERATION_BASE, revision, state } };
+}
+
+const SETTLED_OPERATION = {
+  workspace: { status: "done" },
+  worker: { status: "done", fileCount: 1 },
+  gate: { status: "skipped", reason: "not-configured" },
+  commits: { status: "done", count: 1 },
+} as const;
 
 const RESOLVED_REVIEW: Review = {
   id: REVIEW,
@@ -279,6 +308,95 @@ describe("the live rounds seam (C15 3.2)", () => {
       bridge.emitRoundProgress(REVIEW, { type: "prep", rows: [], seq: 1 });
     });
     await waitFor(() => expect(getByText("phase:preparing")).toBeTruthy());
+  });
+});
+
+describe("the durable ledger refresh receipt", () => {
+  function ledgerReads(): {
+    readonly bridge: MemoryBridge;
+    readonly count: () => number;
+  } {
+    let count = 0;
+    const bridge = new MemoryBridge({
+      ...resolutionHandlers,
+      "session.roundEvents": () => ({ events: [] }),
+      "session.rounds": () => {
+        count += 1;
+        return { records: [] };
+      },
+    });
+    return { bridge, count: () => count };
+  }
+
+  it.each([
+    {
+      name: "changed",
+      event: operationEvent(
+        {
+          phase: "completed",
+          ...SETTLED_OPERATION,
+          result: {
+            kind: "changed",
+            report: {
+              status: "verified",
+              reportBoardId: "report-live",
+              generation: "generation-live",
+            },
+          },
+        },
+        10,
+      ),
+    },
+    {
+      name: "failed",
+      event: operationEvent(
+        {
+          phase: "failed",
+          failure: {
+            at: "preparing",
+            workspace: { status: "failed", reason: "worktree failed" },
+          },
+        },
+        4,
+      ),
+    },
+  ])("refreshes the exact ledger key on a durable $name operation", async ({ event }) => {
+    const reads = ledgerReads();
+    mountLive(reads.bridge);
+    await waitFor(() => expect(reads.count()).toBeGreaterThan(0));
+    const beforeTerminal = reads.count();
+
+    act(() => reads.bridge.emitRoundProgress(REVIEW, event));
+
+    await waitFor(() => expect(reads.count()).toBeGreaterThan(beforeTerminal));
+  });
+
+  it("waits for the post-write unchanged receipt before refreshing the ledger", async () => {
+    const reads = ledgerReads();
+    mountLive(reads.bridge);
+    await waitFor(() => expect(reads.count()).toBeGreaterThan(0));
+    const beforeTerminal = reads.count();
+
+    act(() =>
+      reads.bridge.emitRoundProgress(
+        REVIEW,
+        operationEvent(
+          {
+            phase: "completed",
+            ...SETTLED_OPERATION,
+            worker: { status: "done", fileCount: 0 },
+            commits: { status: "done", count: 0 },
+            result: { kind: "unchanged" },
+          },
+          10,
+        ),
+      ),
+    );
+    await act(async () => Promise.resolve());
+    expect(reads.count()).toBe(beforeTerminal);
+
+    act(() => reads.bridge.emitRoundProgress(REVIEW, { type: "unchanged" }));
+    await waitFor(() => expect(reads.count()).toBeGreaterThan(beforeTerminal));
   });
 });
 
