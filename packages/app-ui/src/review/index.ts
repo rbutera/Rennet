@@ -6,6 +6,10 @@
 // Public surface: the shared components, the CodeRef shape, and the span-read hook.
 // `lineRef`/`spanToBlock`/`parseRef`/`CitationBlock` are module-private helpers — the
 // review components below use them internally; nothing outside review/ imports them.
+// The durable ask log binding for the open review — the client half of the `ask.*` write
+// path. The review route mounts it; it is public so the app layer can mount a review surface
+// against a real daemon dispatch.
+export { useAskLog } from "./ask-log";
 export type { CodeRef, SpanRead } from "./citations";
 export { useSpanRead } from "./citations";
 export { CodeBlock, type CodeBlockProps } from "./code-block";

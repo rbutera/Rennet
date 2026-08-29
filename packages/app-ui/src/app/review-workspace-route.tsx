@@ -8,6 +8,7 @@ import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
 import { DiffViewContainer } from "../review";
+import { useAskLog } from "../review/ask-log";
 import { RoundGreeting } from "../rounds/round-greeting";
 import {
   useReportBoard,
@@ -83,6 +84,13 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     previousReviewId.current = review.id;
     resetReview();
   }, [review.id, resetReview]);
+
+  // The durable ask log for THIS review (the ask-log session id is the review id). It
+  // hydrates the slice from `ask.read` — so a reload keeps the reviewer's staged asks, line
+  // comments, quote threads, retired ledger and verdict — and installs the write sink every
+  // mutator fires, which is the only reason `publish.compose`, `round.dispatch` and
+  // `review.reviseSpan` see any of it: all three read the projection and nothing else.
+  useAskLog(review.id);
 
   // The round report as the greeting (C09 §5.2). On return from a round the run route
   // armed `greetingArmed` and redirected here; while a round is in a report phase and its

@@ -1,17 +1,57 @@
+import type { AskProjection, CommandInput } from "@rennet/protocol";
 import type { StateCreator } from "zustand";
 import type { RennetState } from "./index";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The `review` slice (C01 §3): the reviewer's IN-FLIGHT interaction state for an open
-// review — staged asks, per-line code comments, quote threads, the focused thread, the
-// retired ledger, a verdict override, and draft-block edits. This is transient renderer
-// state (no persist): reload restores LOCATION from the URL and resets interaction clean.
+// The `review` slice (C01 §3): the reviewer's interaction state for an open review —
+// staged asks, per-line code comments, quote threads, the focused thread, the retired
+// ledger, a verdict override, and draft-block edits.
+//
+// THE DURABLE ASK LOG IS THE SOURCE OF TRUTH; this slice is its render-side cache. Every
+// mutator that touches durable state writes through the ONE server write path — the
+// `ask.*` commands in `server/src/dispatch/ask.ts`, whose handlers append to the review's
+// event log — and `hydrateAsks` REPLACES the durable half wholesale from `ask.read`'s
+// projection. `useAskLog` (review/ask-log.ts) installs the writer and drives the
+// hydration; a slice with no writer installed (a unit mount, a fixture-seeded store)
+// simply keeps its local state, exactly as it did before.
+//
+// This is what makes the three wired exits work at all. `publish.compose`,
+// `round.dispatch` and `review.reviseSpan` each read `askLog.readProjection(reviewId)`
+// and nothing else — a client that staged only into this slice left all three reading an
+// empty log, so a composed review had "no content", a dispatched round carried an empty
+// work order, and every ask was "no longer staged". It is also what makes a reload keep
+// the reviewer's work: the projection outlives the renderer.
+//
+// `focusedThreadId` and `draftEdits` stay CLIENT-TRANSIENT by contract (the durable-asks
+// shapes in `protocol/src/session/ask-log.ts` name them as the two exceptions) — they are
+// not in the projection, so they are not written through and not hydrated.
 //
 // DERIVE, DON'T STORE: counts, tallies, and highlights are selectors over this slice +
-// the projection cache — never fields. The review surface (C3+) fills these shapes in;
-// C01 lands the owned state, the core mutators, and the derived-count selectors that make
-// the discipline enforceable. `ponytail:` foundation slice — actions grow with C3+.
+// the projection cache — never fields.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** The `ask.*` WRITE commands (every one but the `ask.read` projection read). */
+export type AskWriteCommand =
+  | "ask.stage"
+  | "ask.unstage"
+  | "ask.retire"
+  | "ask.restore"
+  | "ask.quoteOpen"
+  | "ask.quoteReply"
+  | "ask.quoteClose"
+  | "ask.setVerdictOverride"
+  | "ask.setLineComment"
+  | "ask.clearLineComment";
+
+/**
+ * The durable write sink the slice fires on every mutation. `sessionId` is NOT a parameter:
+ * the ask log's session id IS the open review's id, and the installer (`useAskLog`) binds it
+ * once — so no surface can write an ask into another review's log.
+ */
+export type AskWriter = <K extends AskWriteCommand>(
+  name: K,
+  input: Omit<CommandInput<K>, "sessionId">,
+) => void;
 
 /** A disposition kind (mirrors protocol's `dispositionType`; kept local to avoid coupling). */
 export type DispositionKind = "approve" | "request-change" | "comment" | "question";
@@ -109,6 +149,18 @@ export interface ReviewState {
 export interface ReviewSlice {
   readonly review: ReviewState;
   readonly reviewActions: {
+    /**
+     * Install (or clear, with `null`) the durable write sink. `useAskLog` calls this for the
+     * open review and clears it on unmount, so a mutator fired between reviews writes nowhere
+     * rather than into the previous review's log.
+     */
+    setAskWriter(writer: AskWriter | null): void;
+    /**
+     * Replace the durable half of the slice from the server's projection — the session-open /
+     * reconnect rehydrate. A REPLACE, never a merge: the log is the source of truth, so a
+     * local value the projection does not carry is a value the server does not have.
+     */
+    hydrateAsks(projection: AskProjection): void;
     stageAsk(ask: StagedAsk): void;
     /** Remove a staged ask by its `id`, and drop any inline edit keyed to that id (so a later
      *  ask staged at the same anchor never inherits it). */
@@ -149,104 +201,156 @@ const initialReview: ReviewState = {
   draftEdits: {},
 };
 
-export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> = (set) => ({
-  review: initialReview,
-  reviewActions: {
-    stageAsk: (ask) =>
-      set((s) => ({
-        review: { ...s.review, stagedAsks: { ...s.review.stagedAsks, [ask.id]: ask } },
-      })),
-    unstageAsk: (id) =>
-      set((s) => {
-        const rest = { ...s.review.stagedAsks };
-        delete rest[id];
-        // Drop the inline edit keyed to this id too, so a later ask at the same anchor (a fresh id,
-        // or this id reused by a stable-id site) never inherits a withdrawn ask's edit.
-        const draftEdits = { ...s.review.draftEdits };
-        delete draftEdits[id];
-        return { review: { ...s.review, stagedAsks: rest, draftEdits } };
-      }),
-    setCodeComment: (path, line, body) =>
-      set((s) => ({
-        review: {
-          ...s.review,
-          codeComments: {
-            ...s.review.codeComments,
-            [path]: { ...s.review.codeComments[path], [line]: body },
-          },
-        },
-      })),
-    clearCodeComment: (path, line) =>
-      set((s) => {
-        const forPath = s.review.codeComments[path];
-        if (!forPath) return {};
-        const restLines = { ...forPath };
-        delete restLines[line];
-        return {
-          review: { ...s.review, codeComments: { ...s.review.codeComments, [path]: restLines } },
-        };
-      }),
-    addQuoteComment: (anchor, text, kind, scope) => {
-      const id = nextQuoteThreadId();
-      set((s) => ({
-        review: {
-          ...s.review,
-          quoteThreads: {
-            ...s.review.quoteThreads,
-            [id]: {
-              anchor,
-              kind,
-              ...(scope?.target === undefined ? {} : { target: scope.target }),
-              ...(scope?.generation === undefined ? {} : { generation: scope.generation }),
-              messages: [{ author: "user", text }],
-            },
-          },
-        },
-      }));
-      return id;
-    },
-    addQuoteReply: (threadId, author, text) =>
-      set((s) => {
-        const thread = s.review.quoteThreads[threadId];
-        if (!thread) return {};
-        return {
+export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> = (set) => {
+  // The write sink lives in the SLICE CLOSURE, not in `review` state: it is a seam, not
+  // something a surface renders, and the store's delete-on-sight rule keeps render state to
+  // what a selector could derive. One sink per `createRennetStore()`, so a test store can
+  // never write through the app singleton's bridge.
+  let sink: AskWriter | null = null;
+  const durable: AskWriter = (name, input) => sink?.(name, input);
+
+  return {
+    review: initialReview,
+    reviewActions: {
+      setAskWriter: (writer) => {
+        sink = writer;
+      },
+      hydrateAsks: (projection) =>
+        set((s) => ({
           review: {
             ...s.review,
-            quoteThreads: {
-              ...s.review.quoteThreads,
-              [threadId]: { ...thread, messages: [...thread.messages, { author, text }] },
+            stagedAsks: projection.stagedAsks,
+            // JSON object keys are strings, and `obj[10]` and `obj["10"]` address the same
+            // value — so the projection's `path → "line" → body` IS this slice's
+            // `path → line → body` at runtime (the ask-log contract says so in as many words).
+            codeComments: projection.lineComments as ReviewState["codeComments"],
+            quoteThreads: projection.quoteThreads,
+            // The projection keys `retired` by ask id (dedup-by-id made structural); the slice
+            // renders it as a list, newest last.
+            retired: Object.values(projection.retired),
+            verdictOverride: projection.verdictOverride,
+          },
+        })),
+      // ── The durable mutators ───────────────────────────────────────────────
+      // Each applies LOCALLY (the surfaces are synchronous click handlers) and writes the
+      // matching `ask.*` event through the sink. The local apply and the server fold are the
+      // same operation on the same shapes, so they agree; the next `hydrateAsks` settles any
+      // disagreement in the log's favour.
+      stageAsk: (ask) => {
+        durable("ask.stage", { ask });
+        set((s) => ({
+          review: { ...s.review, stagedAsks: { ...s.review.stagedAsks, [ask.id]: ask } },
+        }));
+      },
+      unstageAsk: (id) => {
+        durable("ask.unstage", { id });
+        set((s) => {
+          const rest = { ...s.review.stagedAsks };
+          delete rest[id];
+          // Drop the inline edit keyed to this id too, so a later ask at the same anchor (a fresh id,
+          // or this id reused by a stable-id site) never inherits a withdrawn ask's edit.
+          const draftEdits = { ...s.review.draftEdits };
+          delete draftEdits[id];
+          return { review: { ...s.review, stagedAsks: rest, draftEdits } };
+        });
+      },
+      setCodeComment: (path, line, body) => {
+        durable("ask.setLineComment", { path, line, body });
+        set((s) => ({
+          review: {
+            ...s.review,
+            codeComments: {
+              ...s.review.codeComments,
+              [path]: { ...s.review.codeComments[path], [line]: body },
             },
           },
+        }));
+      },
+      clearCodeComment: (path, line) => {
+        durable("ask.clearLineComment", { path, line });
+        set((s) => {
+          const forPath = s.review.codeComments[path];
+          if (!forPath) return {};
+          const restLines = { ...forPath };
+          delete restLines[line];
+          return {
+            review: { ...s.review, codeComments: { ...s.review.codeComments, [path]: restLines } },
+          };
+        });
+      },
+      addQuoteComment: (anchor, text, kind, scope) => {
+        const id = nextQuoteThreadId();
+        const thread = {
+          anchor,
+          ...(kind === undefined ? {} : { kind }),
+          ...(scope?.target === undefined ? {} : { target: scope.target }),
+          ...(scope?.generation === undefined ? {} : { generation: scope.generation }),
+          messages: [{ author: "user" as const, text }],
         };
-      }),
-    removeQuoteComment: (threadId) =>
-      set((s) => {
-        const rest = { ...s.review.quoteThreads };
-        delete rest[threadId];
-        return { review: { ...s.review, quoteThreads: rest } };
-      }),
-    setFocusedThread: (threadId) =>
-      set((s) => ({ review: { ...s.review, focusedThreadId: threadId } })),
-    retire: (ask, reason) =>
-      set((s) => ({
-        review: {
-          ...s.review,
-          retired: [...s.review.retired.filter((e) => e.ask.id !== ask.id), { ask, reason }],
-        },
-      })),
-    restoreRetired: (id) =>
-      set((s) => ({
-        review: { ...s.review, retired: s.review.retired.filter((e) => e.ask.id !== id) },
-      })),
-    setVerdictOverride: (verdict) =>
-      set((s) => ({ review: { ...s.review, verdictOverride: verdict } })),
-    setDraftEdit: (blockId, body) =>
-      set((s) => ({
-        review: { ...s.review, draftEdits: { ...s.review.draftEdits, [blockId]: body } },
-      })),
-    resetReview: () => set(() => ({ review: initialReview })),
-  },
-});
+        durable("ask.quoteOpen", { threadId: id, thread });
+        set((s) => ({
+          review: { ...s.review, quoteThreads: { ...s.review.quoteThreads, [id]: thread } },
+        }));
+        return id;
+      },
+      addQuoteReply: (threadId, author, text) => {
+        durable("ask.quoteReply", { threadId, author, text });
+        set((s) => {
+          const thread = s.review.quoteThreads[threadId];
+          if (!thread) return {};
+          return {
+            review: {
+              ...s.review,
+              quoteThreads: {
+                ...s.review.quoteThreads,
+                [threadId]: { ...thread, messages: [...thread.messages, { author, text }] },
+              },
+            },
+          };
+        });
+      },
+      removeQuoteComment: (threadId) => {
+        durable("ask.quoteClose", { threadId });
+        set((s) => {
+          const rest = { ...s.review.quoteThreads };
+          delete rest[threadId];
+          return { review: { ...s.review, quoteThreads: rest } };
+        });
+      },
+      // Client-transient by contract — the focused thread is not in the projection.
+      setFocusedThread: (threadId) =>
+        set((s) => ({ review: { ...s.review, focusedThreadId: threadId } })),
+      retire: (ask, reason) => {
+        // The server's `retire` withdraws the staged ask INTO the ledger in one event; the
+        // client splits the same act across `retire` + `unstageAsk`, and the fold is total, so
+        // the following `ask.unstage` on an already-withdrawn id is a no-op.
+        durable("ask.retire", { id: ask.id, reason });
+        set((s) => ({
+          review: {
+            ...s.review,
+            retired: [...s.review.retired.filter((e) => e.ask.id !== ask.id), { ask, reason }],
+          },
+        }));
+      },
+      restoreRetired: (id) => {
+        durable("ask.restore", { id });
+        set((s) => ({
+          review: { ...s.review, retired: s.review.retired.filter((e) => e.ask.id !== id) },
+        }));
+      },
+      setVerdictOverride: (verdict) => {
+        durable("ask.setVerdictOverride", { verdict });
+        set((s) => ({ review: { ...s.review, verdictOverride: verdict } }));
+      },
+      // Client-transient by contract — the PR-body draft blocks are not in the projection.
+      setDraftEdit: (blockId, body) =>
+        set((s) => ({
+          review: { ...s.review, draftEdits: { ...s.review.draftEdits, [blockId]: body } },
+        })),
+      resetReview: () => set(() => ({ review: initialReview })),
+    },
+  };
+};
 
 // ── Selectors (beside the slice) ─────────────────────────────────────────────
 /** How many asks are staged. DERIVED — the count is never a stored field. */

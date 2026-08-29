@@ -143,7 +143,9 @@ and Zod.
 Rennet owns event semantics, upcasts, projections, receipts, physical purge, and
 publication reconciliation. Do not add an event-sourcing framework, SQLite ORM,
 Redis queue, or general state-machine library around those contracts. Durable
-review state stays in the daemon; Zustand owns transient renderer state only.
+review state stays in the daemon; Zustand owns renderer state only — either genuinely
+transient (dialogs, focus, run lanes) or a cache of a daemon projection, as the `review`
+slice is for the durable ask log.
 
 `AsyncIterable` carries harness streams. The event store is replayable truth.
 Small injected-clock batchers own coalescing. Do not add RxJS or another general
@@ -198,8 +200,10 @@ retries, devtools, infinite queries) far exceeds it and would need configuring-o
 so it fails the admission test at the size that matters. The ~130-line `CommandCache`
 is browser-safe and invisible outside `src/data/` (`useCommand`/`useCommandStream`/
 `useMutation` are the whole contract), so adopting react-query later stays internal.
-Zustand owns transient interaction state; the command cache owns the server-projection
-read cache — distinct owners, no conflict.
+Zustand owns interaction state; the command cache owns the server-projection read cache
+— distinct owners, no conflict. Where the two meet (the `review` slice mirroring the
+durable ask projection) the daemon is the source: the slice is hydrated from `ask.read`
+and every mutation writes through an `ask.*` command.
 
 `graphology` and `graphology-communities-louvain` own the graph model and the
 Louvain community detection that shapes the knowledge swarm's

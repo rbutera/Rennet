@@ -219,7 +219,18 @@ provider receives model-turn context.
 
 ## The three exits, as built
 
-Each exit composes from the durable ask projection, never from a private copy:
+Each exit composes from the durable ask projection, never from a private copy.
+
+The projection is filled by the client, through one path. Every reviewer act on an
+open review — staging an ask, saving a line comment, opening or replying to a quote
+thread, retiring or restoring a draft block, setting the verdict — runs an `ask.*`
+command against the review's ask log, whose session identifier **is** the review
+identifier. The renderer's `review` store slice is the render-side cache of that
+projection: `useAskLog` hydrates it from `ask.read` when the review opens and writes
+each mutation through. Nothing an exit reads is client-derived, and a reload keeps the
+reviewer's work because the daemon holds it.
+
+The exits themselves:
 
 - **The GitHub review** — `publish.compose(mode:"review")` folds the projection
   into the two strata: staged line asks and bare line comments become line
