@@ -42,10 +42,8 @@ import {
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
   type DiscoveryDeps,
-  defaultClientSettingsPath,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
-  defaultDaemonSettingsPath,
   defaultDiscoveryDeps,
   defaultForgeDetectionDeps,
   defaultFsListDirDeps,
@@ -403,7 +401,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     openPath: options.openPath ?? (async () => false),
   });
-  const liveSnapshotStore = snapshotStoreFor();
+  const liveSnapshotStore = snapshotStoreFor(join(dataDir, "projects"));
   const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
 
   /**
@@ -1673,8 +1671,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // listener bind) in `daemon-settings.json`. A legacy `config.json` v1 blob is
   // migrated mechanically into the two on first construction — one-way, idempotent,
   // lossless. Both are sibling to the project snapshot store; neither is a repo fact.
-  const clientSettingsPath = defaultClientSettingsPath();
-  const daemonSettingsPath = defaultDaemonSettingsPath();
+  const clientSettingsPath = join(dataDir, "client-settings.json");
+  const daemonSettingsPath = join(dataDir, "daemon-settings.json");
   migrateLegacyGlobalConfig({
     legacyPath: defaultGlobalConfigPath(),
     clientPath: clientSettingsPath,
@@ -1685,11 +1683,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The device pairing store (issue #380): server-side secret store for remote
   // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
   // `pairing.*` commands (below) and the WS listener's handshake token check.
-  const pairingStore = new PairingStore();
+  const pairingStore = new PairingStore(join(dataDir, "devices.json"));
   // The push-token store (issue #383 M1): one row per paired device, keyed by device id,
   // in `~/.rennet/push-tokens.sqlite`. Shared between `device.registerPush` (set/delete),
   // the attention planner (list + dead-token cleanup), and revoke (delete stops pushes).
-  const pushTokenStore = new PushTokenStore();
+  const pushTokenStore = new PushTokenStore(join(dataDir, "push-tokens.sqlite"));
   // Which reviews have a model turn in flight (#383 batch) — the real source of projected
   // `attention.running`, marked by dispatch and read by the projection context below.
   const inFlightReviews = new InFlightReviews();
@@ -1737,17 +1735,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
   // (reload persisted threads, crash-recovered) and persistence (write a streaming
   // placeholder that recovers as interrupted if this process dies mid-answer).
-  const threadStore = new FileThreadStore();
+  const threadStore = new FileThreadStore(join(dataDir, "threads"));
   // B11: the durable ask-log store (~/.rennet/asks), sibling to the thread store.
   // Backs the `ask.*` write path (the sole writers) and the reload-survival read
   // a reconnecting client rehydrates from (`ask.read`).
-  const askLogStore = new AskLogStore();
+  const askLogStore = new AskLogStore(join(dataDir, "asks"));
   // The durable session store (B09) — the cursor the turn loop resumes from and the rows
   // the sidebar lists both live here.
-  const sessionStore = new SessionStore();
+  const sessionStore = new SessionStore(join(dataDir, "sessions"));
   // The display-transcript store (issue-set B): the durable read-model behind
   // `session.transcript`. The turn loop's `recordTranscript` sink (below) is its only writer.
-  const transcriptStore = new TranscriptStore();
+  const transcriptStore = new TranscriptStore(join(dataDir, "transcripts"));
   // ── The session turn loop, instantiated (B09 cluster 2's loop, wired here) ───────────────
   //
   // Every coding turn a round dispatches now runs THROUGH the loop. TWO of the loop's
@@ -1879,13 +1877,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // authoring turn is wired). The round DISPATCH exercises only the per-session serializer;
   // the full board regeneration `runRound` drives lands when its lens-pipeline collation
   // context is bridged (a follow-on — the dispatch never runs an empty pipeline).
-  const boardMetaStore = new BoardMetaStore(join(homedir(), ".rennet", "board-meta"));
+  const boardMetaStore = new BoardMetaStore(join(dataDir, "board-meta"));
   // Durable generation ledger (C15 2.1): the frozen prior + live successor a round mints,
   // so gen-1 survives a restart as a drill-down the rounds switcher opens by id.
-  const generationStore = new GenerationStore(join(homedir(), ".rennet", "generations"));
+  const generationStore = new GenerationStore(join(dataDir, "generations"));
   // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
   // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
-  const roundRecordStore = new RoundRecordStore(join(homedir(), ".rennet", "rounds"));
+  const roundRecordStore = new RoundRecordStore(join(dataDir, "rounds"));
   // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,
   // pushed to live sockets as it grows and read back by a client that joins mid-round. The
   // WS listener is late-bound (assigned below), exactly as the board/ask fan-outs are.

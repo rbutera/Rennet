@@ -69,9 +69,9 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
 
   it("takes the Current Checkout session rather than minting a second row beside it", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-site-"));
-    // `create-server` builds its SessionStore with NO dataDir, so it defaults to
-    // `~/.rennet/sessions` — a REAL user directory. Point HOME at a temp dir for the
-    // duration, or this test reads and writes the machine's own sessions.
+    // HOME is redirected as a BACKSTOP, not as the mechanism: every store honours `dataDir`
+    // now, so nothing should reach it. The assertion at the end proves that rather than
+    // assuming it — this test is the reason we know the stores used to escape.
     const home = mkdtempSync(join(tmpdir(), "rennet-round-home-"));
     vi.stubEnv("HOME", home);
     // The project is added under a SYMLINK to the repo, and git reports the resolved path —
@@ -151,5 +151,12 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     // And it is filed under the PROJECT, not under a path — the round resolved the symlinked
     // project path onto the review's resolved root rather than falling through to it.
     expect(listed.sessions[0]?.projectId).toBe(added.project.id);
+
+    // HERMETIC: the session the round just wrote lives under THIS server's `dataDir`, and the
+    // redirected home is untouched. Nine of the twelve stores used to ignore `dataDir` and
+    // write to `~/.rennet` from anywhere — which is how an earlier run of this very test wrote
+    // into the machine's real session store. A server given a `dataDir` now lives there.
+    expect(existsSync(join(dataDir, "sessions", `${checkoutId}.json`))).toBe(true);
+    expect(existsSync(join(home, ".rennet"))).toBe(false);
   }, 30_000);
 });

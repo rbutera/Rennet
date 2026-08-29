@@ -100,8 +100,7 @@ export async function runCli(
         io.err("Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>]");
         return 2;
       }
-      const dataDir =
-        parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+      const dataDir = parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
       return serve(dataDir, parsed["ui-dist"] ?? defaultUiDist(), io, env, deps);
     }
     case "status":
@@ -133,8 +132,7 @@ export async function runCli(
         io.err("Usage: rennet devices [--revoke <id>] [--data-dir <dir>]");
         return 2;
       }
-      const dataDir =
-        parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+      const dataDir = parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
       return devices(dataDir, parsed.revoke, io, deps);
     }
     case "map": {
@@ -200,7 +198,7 @@ function parseDataDir(argv: readonly string[], env: NodeJS.ProcessEnv): string {
     strict: true,
     options: { "data-dir": { type: "string" } },
   });
-  return values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+  return values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
 }
 
 /**

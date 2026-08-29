@@ -177,9 +177,9 @@ Rennet stores different kinds of state at their natural scopes:
 
 | Location | Contents |
 |---|---|
-| Platform daemon data directory | `rennet.sqlite`, project registry, daemon claim, and daemon-owned files |
-| `~/.rennet/client-settings.json` | Viewer preferences (appearance, keybindings) — the client rung |
-| `~/.rennet/daemon-settings.json` | This host's global settings rung (listener bind, tracker) |
+| Daemon data directory (`~/.rennet`) | `rennet.sqlite`, project registry, daemon claim, and every other daemon-owned store |
+| `<data dir>/client-settings.json` | Viewer preferences (appearance, keybindings) — the client rung |
+| `<data dir>/daemon-settings.json` | This host's global settings rung (listener bind, tracker) |
 | `~/.rennet/projects/<escaped-path>/` | Project snapshot, Repo Map shards and manifests, overlays, knowledge, and context manifests |
 | `~/.rennet/threads/<reviewId>.json` | Durable review conversation |
 | Project `.rennet/map/` and `.rennet/knowledge/` | Optional promoted context mirrors |

@@ -334,12 +334,28 @@ repository references rather than host paths.
 
 ## Local files
 
+The daemon keeps everything in one directory. It is `~/.rennet` by default, on
+every platform, and `RENNET_USER_DATA` or `--data-dir` moves the whole of it.
+
 ```text
-~/.rennet/
+<daemon data directory>/          # ~/.rennet by default
+├── daemon.json                   # discovery claim
+├── daemon.log
+├── github-token
+├── rennet.sqlite                 # review database
+├── projects.json                 # project registry
+├── pr-worktrees.json
 ├── client-settings.json
 ├── daemon-settings.json
-├── devices.json
+├── devices.json                  # paired devices
 ├── push-tokens.sqlite
+├── sessions/
+├── threads/
+├── asks/
+├── transcripts/
+├── rounds/
+├── generations/
+├── board-meta/
 └── projects/
     └── <escaped-absolute-path>/
         ├── config.json
@@ -351,14 +367,6 @@ repository references rather than host paths.
 ├── conventions.json
 ├── map/
 └── knowledge/
-
-<daemon data directory>/
-├── daemon.json
-├── daemon.log
-├── github-token
-├── projects.json
-├── pr-worktrees.json
-└── rennet.sqlite
 ```
 
 The project-store key is the escaped real path of the checkout. Relocation
@@ -372,11 +380,14 @@ protocol used by other clients. Closing the last window leaves the app resident
 in the tray and the daemon running. Quitting completely stops the daemon owned by
 that app instance.
 
-The daemon data directory contains its discovery claim, log, GitHub credential,
-project registry, pull-request worktree index, and review database.
-`RENNET_USER_DATA` or `--data-dir` selects that directory for a development or
-test daemon. It does not relocate the machine-wide `~/.rennet/client-settings.json`,
-`daemon-settings.json`, device stores, or path-keyed Repo Maps.
+The daemon data directory holds every durable thing the daemon owns: its
+discovery claim, log, GitHub credential, project registry, pull-request worktree
+index, review database, settings, device and push-token stores, and the
+session-keyed stores behind sessions, threads, asks, transcripts, rounds,
+generations and boards. `RENNET_USER_DATA` or `--data-dir` selects that
+directory, and because every store honours it, a development or test daemon
+given one is fully self-contained — it reads and writes nothing under the real
+`~/.rennet`.
 
 The desktop launcher and `rennet serve` set `UV_THREADPOOL_SIZE` to `16` before
 the daemon starts when the variable is absent. An explicit operator value wins.
