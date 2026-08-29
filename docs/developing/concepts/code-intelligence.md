@@ -440,12 +440,19 @@ error and a skipped one is invisible:
 | a symbol added, removed, renamed, or re-kinded | structural |
 | identical symbols, different lines or bodies | cosmetic |
 
-Statements are unaffected by this split. Re-anchoring still keys on the blob
-moving, so a body-only edit re-stamps every statement anchored in that file and
-sends it to the verify seat flagged. What the split governs is which slices spend
-a **model turn**, not which statements are re-verified — deliberately different
-questions, and conflating them would leave claims anchored to bytes that no longer
-exist.
+Which statements re-verify is a separate question from which slices re-run, and
+the split governs only the second. Re-anchoring keys on the blob moving, so a
+body-only edit re-stamps every statement anchored in that file and sends it to the
+verify seat flagged — conflating the two would leave claims anchored to bytes that
+no longer exist.
+
+Re-anchoring is not free of consequence for the statement, though. A moved anchor
+keeps its path and its cited symbol name but **loses its line span**: a cosmetic
+edit is exactly the edit that shifts every line below it, so the old span would
+point at the wrong code under the new blob, and the verify seat renders that span
+as the place to look. So the flagged entry says the span was dropped, and the seat
+re-reads the file rather than trusting a range. Precision is traded for not being
+wrong, and it is recovered the moment a seat looks.
 
 Two ceilings, both structural to the approach rather than bugs in it:
 

@@ -11,7 +11,12 @@
  * path changed — even one owned by a partition that is not re-running.
  */
 
-import type { KnowledgeSet, KnowledgeStatement, KnowledgeStatus } from "@rennet/protocol";
+import type {
+  KnowledgeAnchor,
+  KnowledgeSet,
+  KnowledgeStatement,
+  KnowledgeStatus,
+} from "@rennet/protocol";
 import { type LoadedSnapshot, queryBlobSignature } from "../project-context";
 import { hasSymbolExtractor } from "../project-snapshot";
 import { type PartitionSlice, partitionIdFamily, sliceFamilies } from "./partition";
@@ -243,13 +248,50 @@ export interface ReverifyPlan {
 }
 
 /**
+ * Re-stamp ONE anchor against the new inventory: `[]` when its path vanished,
+ * otherwise the anchor at the blob the path now carries.
+ *
+ * ⚠️ A moved blob DROPS `lines`. The span was measured against bytes that no longer
+ * exist, and a cosmetic edit is exactly the case that moves every line below it while
+ * leaving the export signature — and therefore the claim — intact. Carrying the old
+ * span forward produced a statement that pointed at the WRONG code: the verify prompt
+ * renders it ({@link renderHypothesis} in `swarm.ts`), so a seat re-reading "the cited
+ * span" read the wrong lines, and the merge's `betterAnchored` ranked that stale-span
+ * copy ABOVE a fresh mint carrying no span at all. `(path, blobOid)` is the documented
+ * resolution key ({@link KnowledgeAnchor}); `lines` only narrows it, so dropping the
+ * narrowing costs precision and keeps the anchor honest.
+ *
+ * `symbol` SURVIVES, and the asymmetry is deliberate: it is a declared NAME, not a
+ * span, so it does not drift with an insertion above it. A rename or removal moves the
+ * export signature, which classifies the edit structural and re-runs the worker
+ * anyway; and a name that no longer resolves is visibly a name that no longer
+ * resolves, where a stale span is silently the wrong lines.
+ */
+function reanchor(
+  anchor: KnowledgeAnchor,
+  filesByPath: ReadonlyMap<string, string>,
+): KnowledgeAnchor[] {
+  const blobOid = filesByPath.get(anchor.path);
+  if (blobOid === undefined) return [];
+  if (blobOid === anchor.blobOid) return [anchor];
+  return [
+    {
+      path: anchor.path,
+      blobOid,
+      ...(anchor.symbol === undefined ? {} : { symbol: anchor.symbol }),
+    },
+  ];
+}
+
+/**
  * Split the prior set into re-verify vs carry per the changed-path closure.
  * When the new snapshot's file inventory is supplied, re-verify entries are
- * RE-ANCHORED against it before verification: each anchor's blobOid is
- * restamped from the new inventory (an anchor whose path vanished is dropped),
- * and a statement whose evidence thereby changed gets a fresh id and returns to
- * `hypothesis` — its prior verdict was about bytes that no longer exist. A
- * statement with NO surviving anchor lands in `invalidated`.
+ * RE-ANCHORED against it before verification ({@link reanchor}): each anchor's
+ * blobOid is restamped from the new inventory, an anchor whose path vanished is
+ * dropped, a moved blob drops the anchor's stale line span, and a statement whose
+ * evidence thereby changed gets a fresh id and returns to `hypothesis` — its prior
+ * verdict was about bytes that no longer exist. A statement with NO surviving anchor
+ * lands in `invalidated`.
  */
 export function planReverify(
   knowledgeSet: KnowledgeSet,
@@ -270,10 +312,7 @@ export function planReverify(
       reverify.push(statement);
       continue;
     }
-    const evidence = statement.evidence.flatMap((anchor) => {
-      const blobOid = filesByPath.get(anchor.path);
-      return blobOid === undefined ? [] : [{ ...anchor, blobOid }];
-    });
+    const evidence = statement.evidence.flatMap((anchor) => reanchor(anchor, filesByPath));
     if (evidence.length === 0) {
       invalidated.push(statement);
       continue;

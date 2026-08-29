@@ -247,7 +247,14 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
   for (const statement of reverify) {
     flagged.push({
       statement,
-      reason: "a prior statement whose cited evidence changed at this baseline",
+      // The span disclosure is unconditional, and that is the honest shape: this pass
+      // sees the RE-ANCHORED statement, not the pair, so it cannot tell an anchor
+      // whose span was just dropped from one that never carried a span. Saying "a
+      // span you see is current, and an absent one may have been dropped" is true of
+      // every entry here; naming only some of them would need `planReverify` to
+      // report which, for a sentence the seat should act on either way.
+      reason:
+        "a prior statement whose cited evidence changed at this baseline; its anchors were re-stamped to the new blobs and any line span on a moved anchor was DROPPED as stale — re-read the cited file rather than trusting a span",
     });
   }
 

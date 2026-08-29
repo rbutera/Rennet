@@ -1248,8 +1248,15 @@ function byPath(left: string, right: string): number {
  * Lines are dropped deliberately. Every symbol below an inserted line moves, so a
  * signature carrying them would report an unrelated edit at the top of a file as a
  * change to every export in it — the comparison would answer "different" for almost
- * every real diff and buy nothing. What a line number is for (locating evidence) is
- * the anchor's job, and anchors re-stamp through `planReverify` on any blob change.
+ * every real diff and buy nothing.
+ *
+ * The corollary, stated because the first version of this note got it wrong: an
+ * evidence anchor's own line span does NOT survive the edits this signature calls
+ * cosmetic either. `planReverify` re-stamps a moved anchor's blobOid and DROPS its
+ * span, precisely because a line-shifting cosmetic edit would otherwise leave the old
+ * span pointing at the wrong code under the new blob. Locating the evidence is the
+ * anchor's job, and on a moved blob it does that job at file granularity until a seat
+ * re-reads it.
  */
 export interface BlobSignature {
   /** `<kind> <name>` per declared top-level symbol, sorted — an order-free multiset. */

@@ -408,6 +408,60 @@ describe("planReverify", () => {
     expect(reanchored?.status).toBe("hypothesis");
   });
 
+  it("DROPS a moved anchor's line span — a cosmetic edit shifts lines and keeps the signature", () => {
+    // The exact hazard: an edit this pass calls COSMETIC (same exports) is the edit
+    // most likely to move every line in the file. Carrying the span forward leaves the
+    // statement pointing at the wrong code under the new blob — rendered verbatim into
+    // the verify prompt, and ranked ABOVE an unspanned fresh mint by `betterAnchored`.
+    const spanned: KnowledgeStatement = {
+      ...statement("s-spanned", ["src/a.ts"], "confirmed"),
+      evidence: [
+        {
+          path: "src/a.ts",
+          blobOid: "blob-src/a.ts",
+          symbol: "run",
+          lines: { startLine: 3, endLine: 9 },
+        },
+      ],
+    };
+    const plan = planReverify(
+      set([spanned]),
+      ["src/a.ts"],
+      [{ path: "src/a.ts", blobOid: "blob-a-v2" }],
+    );
+    const anchor = plan.reverify[0]?.evidence[0];
+    expect(anchor?.blobOid).toBe("blob-a-v2");
+    expect(anchor?.lines).toBeUndefined();
+    // `symbol` is a NAME, not a span: it does not drift with an insertion above it, so
+    // the drop is deliberately asymmetric rather than "throw away everything".
+    expect(anchor?.symbol).toBe("run");
+  });
+
+  it("KEEPS the span on an anchor whose blob did NOT move", () => {
+    // The control for the drop above, and the reason it is per-anchor rather than
+    // per-statement: a cross-cutting statement re-verifies because ONE cited path
+    // changed, and the anchors into files nobody touched are still exact. Dropping
+    // those spans too would degrade evidence for no reason at all.
+    const crossCutting: KnowledgeStatement = {
+      ...statement("s-cross", ["src/a.ts", "lib/b.ts"]),
+      evidence: [
+        { path: "src/a.ts", blobOid: "blob-src/a.ts", lines: { startLine: 1, endLine: 2 } },
+        { path: "lib/b.ts", blobOid: "blob-lib/b.ts", lines: { startLine: 40, endLine: 44 } },
+      ],
+    };
+    const plan = planReverify(
+      set([crossCutting]),
+      ["src/a.ts"],
+      [
+        { path: "src/a.ts", blobOid: "blob-a-v2" },
+        { path: "lib/b.ts", blobOid: "blob-lib/b.ts" },
+      ],
+    );
+    const [moved, still] = plan.reverify[0]?.evidence ?? [];
+    expect(moved?.lines).toBeUndefined();
+    expect(still?.lines).toEqual({ startLine: 40, endLine: 44 });
+  });
+
   it("a statement whose evidence is entirely deleted is invalidated, never carried as completed", () => {
     const confirmed = statement("s-dead", ["src/a.ts"], "confirmed");
     const survivor = statement("s-live", ["lib/b.ts"]);
