@@ -15,7 +15,7 @@
         "VCCLCompilerTool": {
           "AdditionalOptions": ["/std:c11", "/Brepro"],
           "DebugInformationFormat": 0,
-          "TreatWarningAsError": "true",
+          "WarnAsError": "true",
           "WarningLevel": 4
         },
         "VCLinkerTool": {
