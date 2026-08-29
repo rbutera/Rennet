@@ -292,6 +292,7 @@ const roundSourceLandingBase = {
 const repoRelativePath = id.refine(
   (path) =>
     !path.startsWith("/") &&
+    !path.includes("\0") &&
     !path.includes("\\") &&
     path.split("/").every((part) => part.length > 0 && part !== "." && part !== ".."),
   "must be a normalized repository-relative path",
@@ -301,23 +302,45 @@ const landingArtifactPath = repoRelativePath.refine(
   "must be inside .rennet/round-landings",
 );
 const gitObjectId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+const rawSha256 = z.string().regex(/^[0-9a-f]{64}$/);
+const landingUnitId = rawSha256;
+const landingUnitPath = repoRelativePath.refine(
+  (path) => path !== ".rennet" && !path.startsWith(".rennet/"),
+  "must not overlap Rennet's local transaction namespace",
+);
 const ROUND_SOURCE_LANDING_ARTIFACT_ROOT = ".rennet/round-landings";
 
 export function roundSourceLandingArtifactPaths(
   executionId: string,
   unitId: string,
 ): { readonly stagePath: string; readonly backupPath: string } {
-  const transactionKey = sha256Hex(executionId).slice(0, 24);
-  const root = `${ROUND_SOURCE_LANDING_ARTIFACT_ROOT}/${transactionKey}/${unitId}`;
+  const root = `${roundSourceLandingTransactionPath(executionId)}/${unitId}`;
   return { stagePath: `${root}/stage`, backupPath: `${root}/backup` };
+}
+
+export function roundSourceLandingTransactionPath(executionId: string): string {
+  const transactionKey = sha256Hex(executionId).slice(0, 24);
+  return `${ROUND_SOURCE_LANDING_ARTIFACT_ROOT}/${transactionKey}`;
+}
+
+export function roundSourceLandingPreparationPath(
+  executionId: string,
+  unitId: string,
+  preparationId: string,
+): string {
+  const root = `${roundSourceLandingTransactionPath(executionId)}/${unitId}`;
+  return `${root}/prepare/${sha256Hex(preparationId).slice(0, 24)}`;
 }
 
 export const RoundSourceLandingPathDescriptorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("absent") }),
+  // Exact Git entry identity: executable/symlink mode plus raw file bytes or symlink payload.
+  // Non-Git host permission metadata (for example 0644 versus 0600) is intentionally out of scope.
   z.object({
     kind: z.literal("git"),
     mode: z.enum(["100644", "100755", "120000"]),
     oid: gitObjectId,
+    rawSha256,
   }),
 ]);
 export type RoundSourceLandingPathDescriptor = z.infer<
@@ -326,8 +349,8 @@ export type RoundSourceLandingPathDescriptor = z.infer<
 
 export const RoundSourceLandingUnitSchema = z
   .object({
-    id,
-    path: repoRelativePath,
+    id: landingUnitId,
+    path: landingUnitPath,
     baseline: RoundSourceLandingPathDescriptorSchema,
     target: RoundSourceLandingPathDescriptorSchema,
     stagePath: landingArtifactPath,
@@ -342,7 +365,7 @@ export const RoundSourceLandingUnitSchema = z
 export type RoundSourceLandingUnit = z.infer<typeof RoundSourceLandingUnitSchema>;
 
 export const RoundSourceLandingUnitReceiptSchema = z.object({
-  unitId: id,
+  unitId: landingUnitId,
   outcome: z.enum(["applied", "already-applied"]),
   landedAt: z.number().int().nonnegative(),
 });

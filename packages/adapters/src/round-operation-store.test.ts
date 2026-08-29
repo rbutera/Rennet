@@ -765,6 +765,8 @@ if (RACE_ROLE !== undefined) {
     });
 
     it("allows only the next exact transactional landing receipt prefix", () => {
+      const unitAId = "a".repeat(64);
+      const unitBId = "b".repeat(64);
       const landingAttempt = {
         effect: "source-landing",
         strategy: "exclusive-move-v1",
@@ -774,18 +776,33 @@ if (RACE_ROLE !== undefined) {
         startedAt: 9,
         units: [
           {
-            id: "unit-a",
+            id: unitAId,
             path: "a.txt",
-            baseline: { kind: "git", mode: "100644", oid: "a".repeat(40) },
-            target: { kind: "git", mode: "100644", oid: "b".repeat(40) },
-            ...roundSourceLandingArtifactPaths("landing-prefix", "unit-a"),
+            baseline: {
+              kind: "git",
+              mode: "100644",
+              oid: "a".repeat(40),
+              rawSha256: "1".repeat(64),
+            },
+            target: {
+              kind: "git",
+              mode: "100644",
+              oid: "b".repeat(40),
+              rawSha256: "2".repeat(64),
+            },
+            ...roundSourceLandingArtifactPaths("landing-prefix", unitAId),
           },
           {
-            id: "unit-b",
+            id: unitBId,
             path: "b.txt",
             baseline: { kind: "absent" },
-            target: { kind: "git", mode: "100644", oid: "c".repeat(40) },
-            ...roundSourceLandingArtifactPaths("landing-prefix", "unit-b"),
+            target: {
+              kind: "git",
+              mode: "100644",
+              oid: "c".repeat(40),
+              rawSha256: "3".repeat(64),
+            },
+            ...roundSourceLandingArtifactPaths("landing-prefix", unitBId),
           },
         ],
         unitReceipts: [],
@@ -800,7 +817,7 @@ if (RACE_ROLE !== undefined) {
       } satisfies Extract<RoundOperation["state"], { phase: "source-landing" }>;
       const active = operation({ revision: 10, state: landingState });
       const store = storeWithPersistedOperation(active);
-      const firstReceipt = { unitId: "unit-a", outcome: "applied", landedAt: 11 } as const;
+      const firstReceipt = { unitId: unitAId, outcome: "applied", landedAt: 11 } as const;
 
       expect(() =>
         store.compareAndSwap(expectation(active), {
@@ -810,7 +827,7 @@ if (RACE_ROLE !== undefined) {
               ...landingAttempt,
               unitReceipts: [
                 firstReceipt,
-                { unitId: "unit-b", outcome: "applied", landedAt: 12 } as const,
+                { unitId: unitBId, outcome: "applied", landedAt: 12 } as const,
               ],
             },
           },
@@ -824,7 +841,7 @@ if (RACE_ROLE !== undefined) {
             landing: {
               ...landingAttempt,
               units: landingAttempt.units.map((unit) =>
-                unit.id === "unit-b" ? { ...unit, path: "rewritten.txt" } : unit,
+                unit.id === unitBId ? { ...unit, path: "rewritten.txt" } : unit,
               ),
               unitReceipts: [firstReceipt],
             },
@@ -844,7 +861,7 @@ if (RACE_ROLE !== undefined) {
       if (first.state.landing.strategy !== "exclusive-move-v1") {
         throw new Error("transactional landing strategy changed");
       }
-      expect(first.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual(["unit-a"]);
+      expect(first.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual([unitAId]);
     });
 
     it("claims only an initial claimed operation", () => {

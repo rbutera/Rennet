@@ -43,6 +43,8 @@ export interface RoundReportVerificationInput
 export interface RoundSourceLandingUnitInput
   extends RoundExecutionEffectInput<TransactionalRoundSourceLandingAttempt> {
   readonly unit: RoundSourceLandingUnit;
+  /** True exactly once at the start of each coordinator drive or recovery. */
+  readonly fullPreflight: boolean;
 }
 
 export interface RoundSourceLandingCleanupInput {
@@ -673,6 +675,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               break;
             }
             let unitFailed = false;
+            let fullPreflight = true;
             while (operation.state.phase === "source-landing") {
               const landing = operation.state.landing;
               if (landing.strategy !== "exclusive-move-v1") {
@@ -682,7 +685,13 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               if (unit === undefined) break;
               let unitReceipt: RoundSourceLandingUnitReceipt;
               try {
-                unitReceipt = await landSourceUnit({ operation, attempt: landing, unit });
+                unitReceipt = await landSourceUnit({
+                  operation,
+                  attempt: landing,
+                  unit,
+                  fullPreflight,
+                });
+                fullPreflight = false;
               } catch (error) {
                 operation = this.fail(operation, {
                   at: "source-landing",

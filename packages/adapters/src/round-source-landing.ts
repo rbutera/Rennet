@@ -1,37 +1,115 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  readdir,
-  readlink,
-  rm,
-  rmdir,
-  symlink,
-} from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   type RoundSourceLandingPathDescriptor,
   type RoundSourceLandingUnit,
   type RoundSourceLandingUnitReceipt,
   roundSourceLandingArtifactPaths,
+  roundSourceLandingPreparationPath,
+  roundSourceLandingTransactionPath,
   sha256Hex,
   type TransactionalRoundSourceLandingAttempt,
   TransactionalRoundSourceLandingAttemptSchema,
   type TransactionalRoundSourceLandingReceipt,
 } from "@rennet/protocol";
-import type { ExclusiveNamespaceMover } from "./exclusive-namespace-move";
-import type { GitExec } from "./git-range-diff";
+import type { ExclusiveNamespaceMoveOutcome } from "./exclusive-namespace-move";
 
 const TRANSACTION_ROOT = ".rennet/round-landings";
+const TRANSACTION_EXCLUDE_RULE = `/${TRANSACTION_ROOT}/`;
 
-type ObservedPathDescriptor =
+type GitTreePathDescriptor =
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "git";
+      readonly mode: "100644" | "100755" | "120000";
+      readonly oid: string;
+    };
+
+export type RoundSourceLandingObservedPathDescriptor =
   | RoundSourceLandingPathDescriptor
   | { readonly kind: "directory" }
   | { readonly kind: "unsupported"; readonly detail: string };
 
+declare const roundSourceLandingRelativePath: unique symbol;
+
+export type RoundSourceLandingRelativePath = string & {
+  readonly [roundSourceLandingRelativePath]: true;
+};
+
+/**
+ * A root-handle capability, not a string-path filesystem facade.
+ *
+ * Implementations must capture the source and worker root directory handles exactly once. Every
+ * component of every branded path must be resolved beneath the selected captured handle without
+ * traversing a symlink or reparse point, and every inspection or mutation must be performed
+ * handle-relative at the syscall that observes or changes the namespace. A lexical containment
+ * check or an lstat followed by an absolute-path syscall does not satisfy this contract.
+ *
+ * `inspect` must derive `rawSha256` and the filtered Git object id from the same immutable file-byte
+ * or symlink-payload snapshot. It must never hash a symlink target. The other methods carry the same
+ * no-follow, handle-relative guarantee, including preparation artifacts and recursive cleanup.
+ */
+export interface AnchoredRoundSourceLandingFileSystem {
+  /**
+   * Installs and verifies the permanent Git-info exclusion before any artifact write. It must
+   * refuse visible pre-existing content and append idempotently without clobbering concurrent
+   * info/exclude edits.
+   */
+  ensureInternalExclusion(input: {
+    readonly artifactRoot: RoundSourceLandingRelativePath;
+  }): Promise<{
+    readonly source: "git-info-exclude";
+    readonly pattern: string;
+  }>;
+  inspect(input: {
+    readonly root: "source" | "worker";
+    readonly path: RoundSourceLandingRelativePath;
+    readonly repoPath: RoundSourceLandingRelativePath;
+    readonly attrSource: string;
+    readonly oidLength: 40 | 64;
+  }): Promise<RoundSourceLandingObservedPathDescriptor>;
+  manifestLeafPaths(input: {
+    readonly root: "source" | "worker";
+    readonly path: RoundSourceLandingRelativePath;
+  }): Promise<readonly string[]>;
+  /** Creates parents beneath the captured source root. */
+  ensureParent(input: { readonly path: RoundSourceLandingRelativePath }): Promise<void>;
+  /** Copies one worker-root leaf snapshot to a source-root artifact without following ancestors. */
+  materializeTarget(input: {
+    readonly sourcePath: RoundSourceLandingRelativePath;
+    readonly destinationPath: RoundSourceLandingRelativePath;
+    readonly mode: "100644" | "100755" | "120000";
+  }): Promise<void>;
+  /** Exclusively moves between two paths beneath the captured source root. */
+  move(input: {
+    readonly sourcePath: RoundSourceLandingRelativePath;
+    readonly destinationPath: RoundSourceLandingRelativePath;
+  }): Promise<ExclusiveNamespaceMoveOutcome>;
+  /** Removes only beneath the captured source root. */
+  remove(input: {
+    readonly path: RoundSourceLandingRelativePath;
+    readonly recursive?: boolean;
+  }): Promise<void>;
+  removeEmptyParents(input: { readonly path: RoundSourceLandingRelativePath }): Promise<void>;
+  removeEmptyDirectory(input: {
+    readonly path: RoundSourceLandingRelativePath;
+  }): Promise<"absent" | "removed" | "not-empty" | "not-directory">;
+}
+
+/** Git execution already bound to the captured worker repository; it accepts no filesystem root. */
+export type BoundRoundSourceLandingGit = (
+  arguments_: readonly string[],
+  options?: { readonly reject?: boolean },
+) => Promise<string>;
+
+type ObservedPathDescriptor = RoundSourceLandingObservedPathDescriptor;
+
 type RawChangedPath = {
+  readonly path: string;
+  readonly baseline: GitTreePathDescriptor;
+  readonly target: GitTreePathDescriptor;
+};
+
+type FrozenChangedPath = {
   readonly path: string;
   readonly baseline: RoundSourceLandingPathDescriptor;
   readonly target: RoundSourceLandingPathDescriptor;
@@ -44,7 +122,7 @@ export class RoundSourceLandingConflictError extends Error {
   }
 }
 
-function descriptorFromRaw(mode: string, oid: string): RoundSourceLandingPathDescriptor {
+function descriptorFromRaw(mode: string, oid: string): GitTreePathDescriptor {
   if (mode === "000000") return { kind: "absent" };
   if (mode !== "100644" && mode !== "100755" && mode !== "120000") {
     throw new Error(`Git returned unsupported mode ${mode}`);
@@ -127,42 +205,38 @@ function orderChanges(changes: readonly RawChangedPath[]): RawChangedPath[] {
 }
 
 function descriptorIdentity(descriptor: RoundSourceLandingPathDescriptor): string {
-  return descriptor.kind === "absent" ? "absent" : `${descriptor.mode}:${descriptor.oid}`;
+  return descriptor.kind === "absent"
+    ? "absent"
+    : `${descriptor.mode}:${descriptor.oid}:${descriptor.rawSha256}`;
 }
 
-function unitIdFor(change: RawChangedPath, ordinal: number): string {
+function unitIdFor(change: FrozenChangedPath, ordinal: number): string {
   return sha256Hex(
     `${ordinal}\0${change.path}\0${descriptorIdentity(change.baseline)}\0${descriptorIdentity(change.target)}`,
   );
 }
 
-function transactionKey(executionId: string): string {
-  return sha256Hex(executionId).slice(0, 24);
-}
-
-async function resolveCommit(git: GitExec, worktreePath: string, ref: string): Promise<string> {
-  return (await git(worktreePath, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+async function resolveCommit(git: BoundRoundSourceLandingGit, ref: string): Promise<string> {
+  return (await git(["rev-parse", "--verify", `${ref}^{commit}`])).trim();
 }
 
 export async function planTransactionalRoundSourceLanding(input: {
-  readonly git: GitExec;
-  readonly worktreePath: string;
+  readonly git: BoundRoundSourceLandingGit;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
   readonly executionId: string;
   readonly baselineCommit: string;
   readonly workerHead: string;
   readonly startedAt: number;
 }): Promise<TransactionalRoundSourceLandingAttempt> {
-  const baselineCommit = await resolveCommit(input.git, input.worktreePath, input.baselineCommit);
-  const workerHead = await resolveCommit(input.git, input.worktreePath, input.workerHead);
-  const mergeBase = (
-    await input.git(input.worktreePath, ["merge-base", baselineCommit, workerHead])
-  ).trim();
+  const baselineCommit = await resolveCommit(input.git, input.baselineCommit);
+  const workerHead = await resolveCommit(input.git, input.workerHead);
+  const mergeBase = (await input.git(["merge-base", baselineCommit, workerHead])).trim();
   if (mergeBase !== baselineCommit) {
     throw new Error(`round baseline ${baselineCommit} is not an ancestor of ${workerHead}`);
   }
   const changes = orderChanges(
     parseRawChanges(
-      await input.git(input.worktreePath, [
+      await input.git([
         "diff",
         "--raw",
         "-z",
@@ -173,17 +247,35 @@ export async function planTransactionalRoundSourceLanding(input: {
       ]),
     ),
   );
-  const units = changes.map((change, ordinal): RoundSourceLandingUnit => {
+  const units: RoundSourceLandingUnit[] = [];
+  for (const [ordinal, change] of changes.entries()) {
     if (change.path === ".rennet" || change.path.startsWith(".rennet/")) {
       throw new RoundSourceLandingConflictError(
         change.path,
         "the changed path overlaps Rennet's local transaction namespace",
       );
     }
-    const id = unitIdFor(change, ordinal);
-    return { id, ...change, ...roundSourceLandingArtifactPaths(input.executionId, id) };
-  });
-  return TransactionalRoundSourceLandingAttemptSchema.parse({
+    const frozen = {
+      path: change.path,
+      baseline: await freezeEndpointDescriptor({
+        fileSystem: input.fileSystem,
+        root: "source",
+        repoPath: change.path,
+        expected: change.baseline,
+        attrSource: baselineCommit,
+      }),
+      target: await freezeEndpointDescriptor({
+        fileSystem: input.fileSystem,
+        root: "worker",
+        repoPath: change.path,
+        expected: change.target,
+        attrSource: workerHead,
+      }),
+    } satisfies FrozenChangedPath;
+    const id = unitIdFor(frozen, ordinal);
+    units.push({ id, ...frozen, ...roundSourceLandingArtifactPaths(input.executionId, id) });
+  }
+  const attempt = TransactionalRoundSourceLandingAttemptSchema.parse({
     effect: "source-landing",
     strategy: "exclusive-move-v1",
     executionId: input.executionId,
@@ -193,20 +285,8 @@ export async function planTransactionalRoundSourceLanding(input: {
     units,
     unitReceipts: [],
   });
-}
-
-function absoluteRepoPath(repoRoot: string, repoPath: string): string {
-  const root = resolve(repoRoot);
-  const absolute = resolve(root, ...repoPath.split("/"));
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
-    throw new Error(`repository-relative path escaped its root: ${repoPath}`);
-  }
-  return absolute;
-}
-
-function errorCode(error: unknown): string | undefined {
-  if (!(error instanceof Error) || !("code" in error)) return undefined;
-  return typeof error.code === "string" ? error.code : undefined;
+  await assertPlannedAbsentEndpoints(input.fileSystem, attempt);
+  return attempt;
 }
 
 function oidLengthFor(unit: RoundSourceLandingUnit): 40 | 64 {
@@ -217,79 +297,61 @@ function oidLengthFor(unit: RoundSourceLandingUnit): 40 | 64 {
   return descriptor.oid.length === 64 ? 64 : 40;
 }
 
-function gitBlobOid(bytes: Uint8Array, oidLength: 40 | 64): string {
-  const hash = createHash(oidLength === 64 ? "sha256" : "sha1");
-  hash.update(`blob ${bytes.byteLength}\0`);
-  hash.update(bytes);
-  return hash.digest("hex");
+function landingRelativePath(path: string): RoundSourceLandingRelativePath {
+  if (
+    path.length === 0 ||
+    path.startsWith("/") ||
+    path.includes("\0") ||
+    path.includes("\\") ||
+    path.split("/").some((part) => part.length === 0 || part === "." || part === "..")
+  ) {
+    throw new Error(`landing path is not normalized and repository-relative: ${path}`);
+  }
+  return path as RoundSourceLandingRelativePath;
 }
 
-async function inspectPath(input: {
-  readonly git: GitExec;
-  readonly gitRoot: string;
-  readonly absolutePath: string;
+async function freezeEndpointDescriptor(input: {
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
+  readonly root: "source" | "worker";
   readonly repoPath: string;
+  readonly expected: GitTreePathDescriptor;
   readonly attrSource: string;
-  readonly oidLength: 40 | 64;
-}): Promise<ObservedPathDescriptor> {
-  let stats: Awaited<ReturnType<typeof lstat>>;
-  try {
-    stats = await lstat(input.absolutePath);
-  } catch (error) {
-    const code = errorCode(error);
-    if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
-    throw error;
+}): Promise<RoundSourceLandingPathDescriptor> {
+  if (input.expected.kind === "absent") return input.expected;
+  const repoPath = landingRelativePath(input.repoPath);
+  const observed = await input.fileSystem.inspect({
+    root: input.root,
+    path: repoPath,
+    repoPath,
+    attrSource: input.attrSource,
+    oidLength: input.expected.oid.length === 64 ? 64 : 40,
+  });
+  if (
+    observed.kind !== "git" ||
+    observed.mode !== input.expected.mode ||
+    observed.oid !== input.expected.oid
+  ) {
+    throw new RoundSourceLandingConflictError(
+      input.repoPath,
+      `planned Git endpoint is ${describeObserved(observed)}`,
+    );
   }
-  if (stats.isSymbolicLink()) {
-    const target = await readlink(input.absolutePath, { encoding: "buffer" });
-    return { kind: "git", mode: "120000", oid: gitBlobOid(target, input.oidLength) };
-  }
-  if (stats.isFile()) {
-    const diskPath = relative(resolve(input.gitRoot), resolve(input.absolutePath));
-    if (
-      diskPath.length === 0 ||
-      diskPath === ".." ||
-      diskPath.startsWith(`..${sep}`) ||
-      isAbsolute(diskPath)
-    ) {
-      throw new Error(`landing inspection escaped its Git root: ${input.absolutePath}`);
-    }
-    const oid = (
-      await input.git(input.gitRoot, [
-        "-c",
-        `attr.tree=${input.attrSource}`,
-        "hash-object",
-        `--path=${input.repoPath}`,
-        "--",
-        diskPath.split(sep).join("/"),
-      ])
-    ).trim();
-    if (!new RegExp(`^[0-9a-f]{${input.oidLength}}$`).test(oid)) {
-      throw new Error(`Git returned invalid landing object id ${oid}`);
-    }
-    return {
-      kind: "git",
-      mode: (stats.mode & 0o111) === 0 ? "100644" : "100755",
-      oid,
-    };
-  }
-  if (stats.isDirectory()) return { kind: "directory" };
-  return { kind: "unsupported", detail: "path is not a regular file, symlink, or directory" };
+  return observed;
 }
 
 async function inspectUnitPath(input: {
-  readonly git: GitExec;
-  readonly gitRoot: string;
-  readonly absolutePath: string;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
+  readonly root: "source" | "worker";
+  readonly path: string;
   readonly attempt: TransactionalRoundSourceLandingAttempt;
   readonly unit: RoundSourceLandingUnit;
   readonly endpoint: "baseline" | "target";
 }): Promise<ObservedPathDescriptor> {
-  return inspectPath({
-    git: input.git,
-    gitRoot: input.gitRoot,
-    absolutePath: input.absolutePath,
-    repoPath: input.unit.path,
+  const path = landingRelativePath(input.path);
+  return input.fileSystem.inspect({
+    root: input.root,
+    path,
+    repoPath: landingRelativePath(input.unit.path),
     attrSource:
       input.endpoint === "baseline" ? input.attempt.baselineCommit : input.attempt.workerHead,
     oidLength: oidLengthFor(input.unit),
@@ -303,7 +365,11 @@ function sameDescriptor(
   if (observed.kind !== expected.kind) return false;
   if (observed.kind === "absent" || expected.kind === "absent") return true;
   if (observed.kind !== "git" || expected.kind !== "git") return false;
-  return observed.mode === expected.mode && observed.oid === expected.oid;
+  return (
+    observed.mode === expected.mode &&
+    observed.oid === expected.oid &&
+    observed.rawSha256 === expected.rawSha256
+  );
 }
 
 function sameObserved(left: ObservedPathDescriptor, right: ObservedPathDescriptor): boolean {
@@ -313,7 +379,12 @@ function sameObserved(left: ObservedPathDescriptor, right: ObservedPathDescripto
     case "directory":
       return true;
     case "git":
-      return right.kind === "git" && left.mode === right.mode && left.oid === right.oid;
+      return (
+        right.kind === "git" &&
+        left.mode === right.mode &&
+        left.oid === right.oid &&
+        left.rawSha256 === right.rawSha256
+      );
     case "unsupported":
       return right.kind === "unsupported" && left.detail === right.detail;
     default: {
@@ -328,7 +399,7 @@ function describeObserved(descriptor: ObservedPathDescriptor): string {
     case "absent":
       return "absent";
     case "git":
-      return `${descriptor.mode}:${descriptor.oid}`;
+      return `${descriptor.mode}:${descriptor.oid}:${descriptor.rawSha256}`;
     case "directory":
       return "directory";
     case "unsupported":
@@ -340,39 +411,24 @@ function describeObserved(descriptor: ObservedPathDescriptor): string {
   }
 }
 
-async function manifestLeafPaths(root: string, repoPath: string): Promise<string[]> {
-  const absolute = absoluteRepoPath(root, repoPath);
-  const entries = await readdir(absolute, { withFileTypes: true });
-  const leaves: string[] = [];
-  for (const entry of entries) {
-    const childPath = `${repoPath}/${entry.name}`;
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      leaves.push(...(await manifestLeafPaths(root, childPath)));
-    } else {
-      leaves.push(childPath);
-    }
-  }
-  return leaves;
-}
-
 async function directoryIsManifestStructure(
-  git: GitExec,
-  repoRoot: string,
+  fileSystem: AnchoredRoundSourceLandingFileSystem,
+  root: "source" | "worker",
   repoPath: string,
   attempt: TransactionalRoundSourceLandingAttempt,
 ): Promise<boolean> {
   const descendants = attempt.units.filter((unit) => unit.path.startsWith(`${repoPath}/`));
   if (descendants.length === 0) return false;
   const unitsByPath = new Map(descendants.map((unit) => [unit.path, unit]));
-  const leaves = await manifestLeafPaths(repoRoot, repoPath);
+  const leaves = await fileSystem.manifestLeafPaths({ root, path: landingRelativePath(repoPath) });
   for (const leaf of leaves) {
+    landingRelativePath(leaf);
     const unit = unitsByPath.get(leaf);
     if (unit === undefined) return false;
-    const absolutePath = absoluteRepoPath(repoRoot, leaf);
     const observedBaseline = await inspectUnitPath({
-      git,
-      gitRoot: repoRoot,
-      absolutePath,
+      fileSystem,
+      root,
+      path: leaf,
       attempt,
       unit,
       endpoint: "baseline",
@@ -380,9 +436,9 @@ async function directoryIsManifestStructure(
     const observedTarget =
       observedBaseline.kind === "git"
         ? await inspectUnitPath({
-            git,
-            gitRoot: repoRoot,
-            absolutePath,
+            fileSystem,
+            root,
+            path: leaf,
             attempt,
             unit,
             endpoint: "target",
@@ -399,8 +455,8 @@ async function directoryIsManifestStructure(
 }
 
 async function matchesEndpoint(input: {
-  readonly git: GitExec;
-  readonly repoRoot: string;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
+  readonly root: "source" | "worker";
   readonly path: string;
   readonly observed: ObservedPathDescriptor;
   readonly expected: RoundSourceLandingPathDescriptor;
@@ -410,8 +466,43 @@ async function matchesEndpoint(input: {
   return (
     input.expected.kind === "absent" &&
     input.observed.kind === "directory" &&
-    (await directoryIsManifestStructure(input.git, input.repoRoot, input.path, input.attempt))
+    (await directoryIsManifestStructure(input.fileSystem, input.root, input.path, input.attempt))
   );
+}
+
+async function assertPlannedAbsentEndpoints(
+  fileSystem: AnchoredRoundSourceLandingFileSystem,
+  attempt: TransactionalRoundSourceLandingAttempt,
+): Promise<void> {
+  for (const unit of attempt.units) {
+    for (const endpoint of ["baseline", "target"] as const) {
+      if (unit[endpoint].kind !== "absent") continue;
+      const root = endpoint === "baseline" ? "source" : "worker";
+      const observed = await inspectUnitPath({
+        fileSystem,
+        root,
+        path: unit.path,
+        attempt,
+        unit,
+        endpoint,
+      });
+      if (
+        !(await matchesEndpoint({
+          fileSystem,
+          root,
+          path: unit.path,
+          observed,
+          expected: unit[endpoint],
+          attempt,
+        }))
+      ) {
+        throw new RoundSourceLandingConflictError(
+          unit.path,
+          `${endpoint} endpoint is ${describeObserved(observed)}`,
+        );
+      }
+    }
+  }
 }
 
 function assertArtifactPaths(
@@ -424,115 +515,144 @@ function assertArtifactPaths(
   }
 }
 
-async function preflightAll(
-  git: GitExec,
-  repoRoot: string,
+async function preflightUnit(
+  fileSystem: AnchoredRoundSourceLandingFileSystem,
   attempt: TransactionalRoundSourceLandingAttempt,
+  unit: RoundSourceLandingUnit,
+  index: number,
 ): Promise<void> {
-  for (const [index, unit] of attempt.units.entries()) {
-    assertArtifactPaths(attempt, unit);
-    const absolutePath = absoluteRepoPath(repoRoot, unit.path);
-    const observedBaseline = await inspectUnitPath({
-      git,
-      gitRoot: repoRoot,
-      absolutePath,
-      attempt,
-      unit,
-      endpoint: "baseline",
-    });
-    const observedTarget =
-      observedBaseline.kind === "git"
-        ? await inspectUnitPath({
-            git,
-            gitRoot: repoRoot,
-            absolutePath,
-            attempt,
-            unit,
-            endpoint: "target",
-          })
-        : observedBaseline;
-    const matchesBaseline = await matchesEndpoint({
-      git,
-      repoRoot,
+  assertArtifactPaths(attempt, unit);
+  const stage = await inspectUnitPath({
+    fileSystem,
+    root: "source",
+    path: unit.stagePath,
+    attempt,
+    unit,
+    endpoint: "target",
+  });
+  const stageMatchesTarget = unit.target.kind === "git" && sameDescriptor(stage, unit.target);
+  if (stage.kind !== "absent" && !stageMatchesTarget) {
+    throw new RoundSourceLandingConflictError(
+      unit.path,
+      `transaction stage is ${describeObserved(stage)}`,
+    );
+  }
+  if (index >= attempt.unitReceipts.length && !stageMatchesTarget) {
+    const workerTarget = await inspectUnitPath({
+      fileSystem,
+      root: "worker",
       path: unit.path,
-      observed: observedBaseline,
-      expected: unit.baseline,
-      attempt,
-    });
-    const matchesTarget = await matchesEndpoint({
-      git,
-      repoRoot,
-      path: unit.path,
-      observed: observedTarget,
-      expected: unit.target,
-      attempt,
-    });
-    const backup = await inspectUnitPath({
-      git,
-      gitRoot: repoRoot,
-      absolutePath: absoluteRepoPath(repoRoot, unit.backupPath),
-      attempt,
-      unit,
-      endpoint: "baseline",
-    });
-    const stage = await inspectUnitPath({
-      git,
-      gitRoot: repoRoot,
-      absolutePath: absoluteRepoPath(repoRoot, unit.stagePath),
       attempt,
       unit,
       endpoint: "target",
     });
-    const backupMatchesBaseline =
-      unit.baseline.kind === "git" && sameDescriptor(backup, unit.baseline);
-    const stageMatchesTarget = unit.target.kind === "git" && sameDescriptor(stage, unit.target);
-    if (backup.kind !== "absent" && !backupMatchesBaseline) {
+    if (
+      !(await matchesEndpoint({
+        fileSystem,
+        root: "worker",
+        path: unit.path,
+        observed: workerTarget,
+        expected: unit.target,
+        attempt,
+      }))
+    ) {
       throw new RoundSourceLandingConflictError(
         unit.path,
-        `transaction backup is ${describeObserved(backup)}`,
+        `worker target is ${describeObserved(workerTarget)}`,
       );
     }
-    if (stage.kind !== "absent" && !stageMatchesTarget) {
-      throw new RoundSourceLandingConflictError(
-        unit.path,
-        `transaction stage is ${describeObserved(stage)}`,
-      );
-    }
-    const recoverablePublish =
-      observedBaseline.kind === "absent" &&
-      unit.baseline.kind === "git" &&
-      backupMatchesBaseline &&
-      unit.target.kind === "git" &&
-      stageMatchesTarget;
-    if (!matchesBaseline && !matchesTarget && !recoverablePublish) {
-      throw new RoundSourceLandingConflictError(
-        unit.path,
-        `expected baseline or target, found ${describeObserved(observedBaseline)}`,
-      );
-    }
-    if (index < attempt.unitReceipts.length && !matchesTarget) {
-      throw new RoundSourceLandingConflictError(
-        unit.path,
-        "a durably landed unit no longer matches its target",
-      );
-    }
+  }
+  const observedBaseline = await inspectUnitPath({
+    fileSystem,
+    root: "source",
+    path: unit.path,
+    attempt,
+    unit,
+    endpoint: "baseline",
+  });
+  const observedTarget =
+    observedBaseline.kind === "git"
+      ? await inspectUnitPath({
+          fileSystem,
+          root: "source",
+          path: unit.path,
+          attempt,
+          unit,
+          endpoint: "target",
+        })
+      : observedBaseline;
+  const matchesBaseline = await matchesEndpoint({
+    fileSystem,
+    root: "source",
+    path: unit.path,
+    observed: observedBaseline,
+    expected: unit.baseline,
+    attempt,
+  });
+  const matchesTarget = await matchesEndpoint({
+    fileSystem,
+    root: "source",
+    path: unit.path,
+    observed: observedTarget,
+    expected: unit.target,
+    attempt,
+  });
+  const backup = await inspectUnitPath({
+    fileSystem,
+    root: "source",
+    path: unit.backupPath,
+    attempt,
+    unit,
+    endpoint: "baseline",
+  });
+  const backupMatchesBaseline =
+    unit.baseline.kind === "git" && sameDescriptor(backup, unit.baseline);
+  if (backup.kind !== "absent" && !backupMatchesBaseline) {
+    throw new RoundSourceLandingConflictError(
+      unit.path,
+      `transaction backup is ${describeObserved(backup)}`,
+    );
+  }
+  const recoverablePublish =
+    observedBaseline.kind === "absent" &&
+    unit.baseline.kind === "git" &&
+    backupMatchesBaseline &&
+    unit.target.kind === "git" &&
+    stageMatchesTarget;
+  if (!matchesBaseline && !matchesTarget && !recoverablePublish) {
+    throw new RoundSourceLandingConflictError(
+      unit.path,
+      `expected baseline or target, found ${describeObserved(observedBaseline)}`,
+    );
+  }
+  if (index < attempt.unitReceipts.length && !matchesTarget) {
+    throw new RoundSourceLandingConflictError(
+      unit.path,
+      "a durably landed unit no longer matches its target",
+    );
+  }
+}
+
+async function preflightAll(
+  fileSystem: AnchoredRoundSourceLandingFileSystem,
+  attempt: TransactionalRoundSourceLandingAttempt,
+): Promise<void> {
+  for (const [index, unit] of attempt.units.entries()) {
+    await preflightUnit(fileSystem, attempt, unit, index);
   }
 }
 
 async function materializeStage(input: {
-  readonly git: GitExec;
-  readonly sourceRoot: string;
-  readonly worktreePath: string;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
   readonly attempt: TransactionalRoundSourceLandingAttempt;
   readonly unit: RoundSourceLandingUnit;
-  readonly mover: ExclusiveNamespaceMover;
 }): Promise<void> {
   if (input.unit.target.kind === "absent") return;
-  const stage = absoluteRepoPath(input.sourceRoot, input.unit.stagePath);
+  const stage = input.unit.stagePath;
   const observedStage = await inspectUnitPath({
-    git: input.git,
-    gitRoot: input.sourceRoot,
-    absolutePath: stage,
+    fileSystem: input.fileSystem,
+    root: "source",
+    path: stage,
     attempt: input.attempt,
     unit: input.unit,
     endpoint: "target",
@@ -544,11 +664,10 @@ async function materializeStage(input: {
       `staged target is ${describeObserved(observedStage)}`,
     );
   }
-  const workerSource = absoluteRepoPath(input.worktreePath, input.unit.path);
   const observedWorkerSource = await inspectUnitPath({
-    git: input.git,
-    gitRoot: input.worktreePath,
-    absolutePath: workerSource,
+    fileSystem: input.fileSystem,
+    root: "worker",
+    path: input.unit.path,
     attempt: input.attempt,
     unit: input.unit,
     endpoint: "target",
@@ -559,39 +678,41 @@ async function materializeStage(input: {
       `worker target is ${describeObserved(observedWorkerSource)}`,
     );
   }
-  await mkdir(dirname(stage), { recursive: true });
-  const preparation = `${stage}.prepare-${randomUUID()}`;
-  if (input.unit.target.mode === "120000") {
-    await symlink(await readlink(workerSource, { encoding: "buffer" }), preparation);
-  } else {
-    await copyFile(workerSource, preparation);
-    await chmod(preparation, input.unit.target.mode === "100755" ? 0o755 : 0o644);
-  }
+  const preparation = roundSourceLandingPreparationPath(
+    input.attempt.executionId,
+    input.unit.id,
+    randomUUID(),
+  );
+  await input.fileSystem.ensureParent({ path: landingRelativePath(preparation) });
+  await input.fileSystem.materializeTarget({
+    sourcePath: landingRelativePath(input.unit.path),
+    destinationPath: landingRelativePath(preparation),
+    mode: input.unit.target.mode,
+  });
+  await input.fileSystem.ensureParent({ path: landingRelativePath(stage) });
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const outcome = await input.mover.move({
-      sourcePath: preparation,
-      destinationPath: stage,
+    const outcome = await input.fileSystem.move({
+      sourcePath: landingRelativePath(preparation),
+      destinationPath: landingRelativePath(stage),
     });
-    const [materialized, pending] = await Promise.all([
-      inspectUnitPath({
-        git: input.git,
-        gitRoot: input.sourceRoot,
-        absolutePath: stage,
-        attempt: input.attempt,
-        unit: input.unit,
-        endpoint: "target",
-      }),
-      inspectUnitPath({
-        git: input.git,
-        gitRoot: input.sourceRoot,
-        absolutePath: preparation,
-        attempt: input.attempt,
-        unit: input.unit,
-        endpoint: "target",
-      }),
-    ]);
+    const materialized = await inspectUnitPath({
+      fileSystem: input.fileSystem,
+      root: "source",
+      path: stage,
+      attempt: input.attempt,
+      unit: input.unit,
+      endpoint: "target",
+    });
+    const pending = await inspectUnitPath({
+      fileSystem: input.fileSystem,
+      root: "source",
+      path: preparation,
+      attempt: input.attempt,
+      unit: input.unit,
+      endpoint: "target",
+    });
     if (sameDescriptor(materialized, input.unit.target)) {
-      await rm(preparation, { force: true });
+      await input.fileSystem.remove({ path: landingRelativePath(preparation) });
       return;
     }
     if (
@@ -602,7 +723,7 @@ async function materializeStage(input: {
     ) {
       continue;
     }
-    await rm(preparation, { force: true });
+    await input.fileSystem.remove({ path: landingRelativePath(preparation) });
     throw new RoundSourceLandingConflictError(
       input.unit.path,
       `materialized stage is ${describeObserved(materialized)} after ${outcome.kind}`,
@@ -610,50 +731,21 @@ async function materializeStage(input: {
   }
 }
 
-async function removeEmptyParents(path: string, root: string): Promise<void> {
-  const resolvedRoot = resolve(root);
-  let current = dirname(path);
-  while (current !== resolvedRoot && current.startsWith(`${resolvedRoot}${sep}`)) {
-    try {
-      await rmdir(current);
-    } catch (error) {
-      const code = errorCode(error);
-      if (code === "ENOENT") {
-        current = dirname(current);
-        continue;
-      }
-      if (code === "ENOTEMPTY" || code === "EEXIST") return;
-      throw error;
-    }
-    current = dirname(current);
-  }
-}
-
-async function ensureNamespaceAbsent(path: string, repoPath: string): Promise<void> {
-  let stats: Awaited<ReturnType<typeof lstat>>;
-  try {
-    stats = await lstat(path);
-  } catch (error) {
-    const code = errorCode(error);
-    if (code === "ENOENT" || code === "ENOTDIR") return;
-    throw error;
-  }
-  if (!stats.isDirectory()) {
-    throw new RoundSourceLandingConflictError(repoPath, "target namespace is occupied");
-  }
-  try {
-    await rmdir(path);
-  } catch (error) {
-    const code = errorCode(error);
-    if (code === "ENOTEMPTY" || code === "EEXIST") {
-      throw new RoundSourceLandingConflictError(repoPath, "target directory is not empty");
-    }
-    throw error;
-  }
+async function ensureNamespaceAbsent(
+  fileSystem: AnchoredRoundSourceLandingFileSystem,
+  path: string,
+  repoPath: string,
+): Promise<void> {
+  const outcome = await fileSystem.removeEmptyDirectory({ path: landingRelativePath(path) });
+  if (outcome === "absent" || outcome === "removed") return;
+  throw new RoundSourceLandingConflictError(
+    repoPath,
+    outcome === "not-empty" ? "target directory is not empty" : "target namespace is occupied",
+  );
 }
 
 async function moveAndReconcile(input: {
-  readonly mover: ExclusiveNamespaceMover;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
   readonly repoPath: string;
   readonly sourcePath: string;
   readonly destinationPath: string;
@@ -662,14 +754,12 @@ async function moveAndReconcile(input: {
   readonly restoreUnexpectedDestination?: boolean;
 }): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const outcome = await input.mover.move({
-      sourcePath: input.sourcePath,
-      destinationPath: input.destinationPath,
+    const outcome = await input.fileSystem.move({
+      sourcePath: landingRelativePath(input.sourcePath),
+      destinationPath: landingRelativePath(input.destinationPath),
     });
-    const [source, destination] = await Promise.all([
-      input.inspect(input.sourcePath),
-      input.inspect(input.destinationPath),
-    ]);
+    const source = await input.inspect(input.sourcePath);
+    const destination = await input.inspect(input.destinationPath);
     if (source.kind === "absent" && sameDescriptor(destination, input.descriptor)) return;
     if (
       source.kind === "absent" &&
@@ -677,14 +767,12 @@ async function moveAndReconcile(input: {
       input.restoreUnexpectedDestination === true &&
       (outcome.kind === "moved" || outcome.kind === "outcome-unknown")
     ) {
-      const restoreOutcome = await input.mover.move({
-        sourcePath: input.destinationPath,
-        destinationPath: input.sourcePath,
+      const restoreOutcome = await input.fileSystem.move({
+        sourcePath: landingRelativePath(input.destinationPath),
+        destinationPath: landingRelativePath(input.sourcePath),
       });
-      const [restoredSource, clearedDestination] = await Promise.all([
-        input.inspect(input.sourcePath),
-        input.inspect(input.destinationPath),
-      ]);
+      const restoredSource = await input.inspect(input.sourcePath);
+      const clearedDestination = await input.inspect(input.destinationPath);
       if (sameObserved(restoredSource, destination) && clearedDestination.kind === "absent") {
         throw new RoundSourceLandingConflictError(
           input.repoPath,
@@ -726,28 +814,24 @@ async function compatibleArtifact(input: {
 }
 
 async function restoreStrandedConcurrentEdit(input: {
-  readonly git: GitExec;
-  readonly sourceRoot: string;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
   readonly attempt: TransactionalRoundSourceLandingAttempt;
   readonly unit: RoundSourceLandingUnit;
-  readonly mover: ExclusiveNamespaceMover;
 }): Promise<void> {
   if (input.unit.baseline.kind === "absent") return;
-  const destination = absoluteRepoPath(input.sourceRoot, input.unit.path);
-  const backup = absoluteRepoPath(input.sourceRoot, input.unit.backupPath);
-  const inspectBaseline = (absolutePath: string) =>
+  const destination = input.unit.path;
+  const backup = input.unit.backupPath;
+  const inspectBaseline = (path: string) =>
     inspectUnitPath({
-      git: input.git,
-      gitRoot: input.sourceRoot,
-      absolutePath,
+      fileSystem: input.fileSystem,
+      root: "source",
+      path,
       attempt: input.attempt,
       unit: input.unit,
       endpoint: "baseline",
     });
-  const [observedDestination, observedBackup] = await Promise.all([
-    inspectBaseline(destination),
-    inspectBaseline(backup),
-  ]);
+  const observedDestination = await inspectBaseline(destination);
+  const observedBackup = await inspectBaseline(backup);
   if (
     observedDestination.kind !== "absent" ||
     observedBackup.kind === "absent" ||
@@ -755,11 +839,13 @@ async function restoreStrandedConcurrentEdit(input: {
   ) {
     return;
   }
-  const outcome = await input.mover.move({ sourcePath: backup, destinationPath: destination });
-  const [restoredDestination, clearedBackup] = await Promise.all([
-    inspectBaseline(destination),
-    inspectBaseline(backup),
-  ]);
+  await input.fileSystem.ensureParent({ path: landingRelativePath(destination) });
+  const outcome = await input.fileSystem.move({
+    sourcePath: landingRelativePath(backup),
+    destinationPath: landingRelativePath(destination),
+  });
+  const restoredDestination = await inspectBaseline(destination);
+  const clearedBackup = await inspectBaseline(backup);
   if (sameObserved(restoredDestination, observedBackup) && clearedBackup.kind === "absent") {
     throw new RoundSourceLandingConflictError(
       input.unit.path,
@@ -772,13 +858,27 @@ async function restoreStrandedConcurrentEdit(input: {
   );
 }
 
+async function ensureInternalExclusion(
+  fileSystem: AnchoredRoundSourceLandingFileSystem,
+  unitPath: string,
+): Promise<void> {
+  const exclusion = await fileSystem.ensureInternalExclusion({
+    artifactRoot: landingRelativePath(TRANSACTION_ROOT),
+  });
+  if (exclusion.source !== "git-info-exclude" || exclusion.pattern !== TRANSACTION_EXCLUDE_RULE) {
+    throw new RoundSourceLandingConflictError(
+      unitPath,
+      "transaction namespace exclusion was not verified in Git info/exclude",
+    );
+  }
+}
+
 export async function landTransactionalRoundSourceUnit(input: {
-  readonly git: GitExec;
-  readonly sourceRoot: string;
-  readonly worktreePath: string;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
   readonly attempt: TransactionalRoundSourceLandingAttempt;
   readonly unit: RoundSourceLandingUnit;
-  readonly mover: ExclusiveNamespaceMover;
+  /** True exactly for the first unit invocation of each coordinator drive or recovery. */
+  readonly fullPreflight: boolean;
   readonly now?: () => number;
 }): Promise<RoundSourceLandingUnitReceipt> {
   const nextUnit = input.attempt.units[input.attempt.unitReceipts.length];
@@ -788,25 +888,35 @@ export async function landTransactionalRoundSourceUnit(input: {
       "unit is not the next manifest item",
     );
   }
+  await ensureInternalExclusion(input.fileSystem, input.unit.path);
   await restoreStrandedConcurrentEdit(input);
-  await preflightAll(input.git, input.sourceRoot, input.attempt);
-  const destination = absoluteRepoPath(input.sourceRoot, input.unit.path);
-  const stage = absoluteRepoPath(input.sourceRoot, input.unit.stagePath);
-  const backup = absoluteRepoPath(input.sourceRoot, input.unit.backupPath);
-  const inspectBaseline = (absolutePath: string) =>
+  if (input.fullPreflight) {
+    await preflightAll(input.fileSystem, input.attempt);
+  } else {
+    await preflightUnit(
+      input.fileSystem,
+      input.attempt,
+      input.unit,
+      input.attempt.unitReceipts.length,
+    );
+  }
+  const destination = input.unit.path;
+  const stage = input.unit.stagePath;
+  const backup = input.unit.backupPath;
+  const inspectBaseline = (path: string) =>
     inspectUnitPath({
-      git: input.git,
-      gitRoot: input.sourceRoot,
-      absolutePath,
+      fileSystem: input.fileSystem,
+      root: "source",
+      path,
       attempt: input.attempt,
       unit: input.unit,
       endpoint: "baseline",
     });
-  const inspectTarget = (absolutePath: string) =>
+  const inspectTarget = (path: string) =>
     inspectUnitPath({
-      git: input.git,
-      gitRoot: input.sourceRoot,
-      absolutePath,
+      fileSystem: input.fileSystem,
+      root: "source",
+      path,
       attempt: input.attempt,
       unit: input.unit,
       endpoint: "target",
@@ -815,8 +925,8 @@ export async function landTransactionalRoundSourceUnit(input: {
   const observedTarget =
     observedDestination.kind === "git" ? await inspectTarget(destination) : observedDestination;
   const destinationIsTarget = await matchesEndpoint({
-    git: input.git,
-    repoRoot: input.sourceRoot,
+    fileSystem: input.fileSystem,
+    root: "source",
     path: input.unit.path,
     observed: observedTarget,
     expected: input.unit.target,
@@ -854,8 +964,8 @@ export async function landTransactionalRoundSourceUnit(input: {
   }
 
   const destinationIsBaseline = await matchesEndpoint({
-    git: input.git,
-    repoRoot: input.sourceRoot,
+    fileSystem: input.fileSystem,
+    root: "source",
     path: input.unit.path,
     observed: observedDestination,
     expected: input.unit.baseline,
@@ -880,12 +990,9 @@ export async function landTransactionalRoundSourceUnit(input: {
   }
 
   await materializeStage({
-    git: input.git,
-    sourceRoot: input.sourceRoot,
-    worktreePath: input.worktreePath,
+    fileSystem: input.fileSystem,
     attempt: input.attempt,
     unit: input.unit,
-    mover: input.mover,
   });
 
   if (destinationIsBaseline && input.unit.baseline.kind !== "absent") {
@@ -895,9 +1002,9 @@ export async function landTransactionalRoundSourceUnit(input: {
         "baseline exists at both destination and backup",
       );
     }
-    await mkdir(dirname(backup), { recursive: true });
+    await input.fileSystem.ensureParent({ path: landingRelativePath(backup) });
     await moveAndReconcile({
-      mover: input.mover,
+      fileSystem: input.fileSystem,
       repoPath: input.unit.path,
       sourcePath: destination,
       destinationPath: backup,
@@ -905,7 +1012,7 @@ export async function landTransactionalRoundSourceUnit(input: {
       inspect: inspectBaseline,
       restoreUnexpectedDestination: true,
     });
-    await removeEmptyParents(destination, input.sourceRoot);
+    await input.fileSystem.removeEmptyParents({ path: landingRelativePath(destination) });
     observedDestination = await inspectBaseline(destination);
   } else if (!destinationIsBaseline) {
     const recoverablePublish =
@@ -922,11 +1029,11 @@ export async function landTransactionalRoundSourceUnit(input: {
 
   if (input.unit.target.kind !== "absent") {
     if (observedDestination.kind === "directory") {
-      await ensureNamespaceAbsent(destination, input.unit.path);
+      await ensureNamespaceAbsent(input.fileSystem, destination, input.unit.path);
     }
-    await mkdir(dirname(destination), { recursive: true });
+    await input.fileSystem.ensureParent({ path: landingRelativePath(destination) });
     await moveAndReconcile({
-      mover: input.mover,
+      fileSystem: input.fileSystem,
       repoPath: input.unit.path,
       sourcePath: stage,
       destinationPath: destination,
@@ -945,15 +1052,10 @@ export async function landTransactionalRoundSourceUnit(input: {
 }
 
 export async function cleanupTransactionalRoundSourceLanding(input: {
-  readonly sourceRoot: string;
+  readonly fileSystem: AnchoredRoundSourceLandingFileSystem;
   readonly receipt: TransactionalRoundSourceLandingReceipt;
 }): Promise<void> {
   for (const unit of input.receipt.units) assertArtifactPaths(input.receipt, unit);
-  await rm(
-    absoluteRepoPath(
-      input.sourceRoot,
-      `${TRANSACTION_ROOT}/${transactionKey(input.receipt.executionId)}`,
-    ),
-    { recursive: true, force: true },
-  );
+  const transactionPath = roundSourceLandingTransactionPath(input.receipt.executionId);
+  await input.fileSystem.remove({ path: landingRelativePath(transactionPath), recursive: true });
 }
