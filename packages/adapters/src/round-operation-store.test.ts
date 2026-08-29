@@ -8,6 +8,7 @@ import {
   type RoundOperation,
   type RoundRecordingAttempt,
   type RoundSourceLandingAttempt,
+  type RoundWorkerCompletedReceipt,
   type RoundWorkspaceAttempt,
   type RoundWorkspaceReceipt,
   sha256Hex,
@@ -40,6 +41,69 @@ const workspace: RoundWorkspaceReceipt = {
   sourceHead: "abc123",
   preparedAt: 3,
 };
+const changedWorker = {
+  executionId: "worker-1",
+  startedAt: 3,
+  completedAt: 4,
+  outcome: "completed",
+  diff: "diff --git a/file.ts b/file.ts",
+  changedPaths: ["file.ts"],
+} satisfies RoundWorkerCompletedReceipt;
+const changedGate = {
+  executionId: "gate-1",
+  startedAt: 5,
+  completedAt: 6,
+  outcome: "passed",
+  exitCode: 0,
+} as const;
+const changedCommits = {
+  executionId: "commit-1",
+  baseHead: "abc123",
+  startedAt: 7,
+  from: "abc123",
+  to: "def456",
+  count: 1,
+  committedAt: 8,
+} as const;
+const changedLanding = {
+  effect: "source-landing",
+  executionId: "landing-1",
+  baselineCommit: "abc123",
+  workerHead: "def456",
+  startedAt: 9,
+  outcome: "applied",
+  landedAt: 10,
+} as const;
+const recordingReceipt = {
+  effect: "round-recording",
+  executionId: "recording-1",
+  startedAt: 11,
+  recordedAt: 12,
+} as const;
+const reportDraftAttempt = {
+  executionId: "report-draft-1",
+  reportBoardId: "report-1",
+  generation: "generation-2",
+  boardIds: {
+    design: "design-1",
+    sequence: "sequence-1",
+    decisions: "decisions-1",
+    flagged: "flagged-1",
+    noise: "noise-1",
+    report: "report-1",
+  },
+  startedAt: 13,
+} as const;
+const reportDraftReceipt = { ...reportDraftAttempt, draftedAt: 14 } as const;
+const verificationAttempt = { executionId: "report-verify-1", startedAt: 15 } as const;
+const changedRoundEvidence = {
+  workspace,
+  worker: changedWorker,
+  gate: changedGate,
+  commits: changedCommits,
+  landing: changedLanding,
+  recording: recordingReceipt,
+} as const;
 
 function tempStoreDir(): string {
   return mkdtempSync(join(tmpdir(), "round-operation-store-"));
@@ -107,6 +171,21 @@ function expectation(value: RoundOperation): RoundOperationExpectation {
     operationId: value.operationId,
     revision: value.revision,
   };
+}
+
+function storeWithPersistedOperation(value: RoundOperation): RoundOperationStore {
+  const dir = tempStoreDir();
+  new RoundOperationStore(dir).close();
+  insertStoredEnvelope(dir, {
+    sessionId: value.sessionId,
+    operationId: value.operationId,
+    revision: value.revision,
+    envelopeJson: JSON.stringify({
+      version: ROUND_OPERATION_STORE_VERSION,
+      operation: value,
+    }),
+  });
+  return new RoundOperationStore(dir);
 }
 
 function failDuringPreparation(
@@ -345,6 +424,69 @@ if (RACE_ROLE !== undefined) {
             worker: { executionId: "worker-1", startedAt: 3 },
           },
           updatedAt: 3,
+        }),
+      ).toThrow(RoundOperationConflictError);
+    });
+
+    it("rejects a drafted report receipt that rewrites a lens board id", () => {
+      const drafting = operation({
+        operationId: "draft-board-identity",
+        revision: 8,
+        state: {
+          phase: "report-drafting",
+          ...changedRoundEvidence,
+          report: reportDraftAttempt,
+        },
+      });
+      const store = storeWithPersistedOperation(drafting);
+
+      expect(() =>
+        store.compareAndSwap(expectation(drafting), {
+          state: {
+            phase: "report-verifying",
+            ...changedRoundEvidence,
+            report: {
+              ...reportDraftReceipt,
+              boardIds: { ...reportDraftReceipt.boardIds, design: "rewritten-design" },
+            },
+            verification: verificationAttempt,
+          },
+          updatedAt: 15,
+        }),
+      ).toThrow(RoundOperationConflictError);
+    });
+
+    it("rejects a verified report receipt that rewrites a lens board id", () => {
+      const verifying = operation({
+        operationId: "verified-board-identity",
+        revision: 9,
+        state: {
+          phase: "report-verifying",
+          ...changedRoundEvidence,
+          report: reportDraftReceipt,
+          verification: verificationAttempt,
+        },
+      });
+      const store = storeWithPersistedOperation(verifying);
+
+      expect(() =>
+        store.compareAndSwap(expectation(verifying), {
+          state: {
+            phase: "completed",
+            ...changedRoundEvidence,
+            result: {
+              kind: "changed",
+              report: {
+                ...reportDraftReceipt,
+                boardIds: { ...reportDraftReceipt.boardIds, design: "rewritten-design" },
+                verificationExecutionId: verificationAttempt.executionId,
+                verificationStartedAt: verificationAttempt.startedAt,
+                verifiedAt: 16,
+              },
+            },
+            completedAt: 16,
+          },
+          updatedAt: 16,
         }),
       ).toThrow(RoundOperationConflictError);
     });
