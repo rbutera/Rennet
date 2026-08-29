@@ -55,7 +55,7 @@ export function LensSwitcher({
   readonly lenses: readonly LensBoardEntry[];
   readonly selected: LensKind | null;
   readonly onSelect: (lens: LensKind) => void;
-  /** Durable open-finding projection. Zero until #619 supplies review-action state. */
+  /** Open findings derived from immutable board bytes plus durable reviewer actions. */
   readonly flaggedOpenCount?: number;
   readonly className?: string;
 }) {
@@ -81,6 +81,12 @@ export function LensSwitcher({
           (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
         ).length;
         const openCount = lens === "flagged" ? flaggedOpenCount : 0;
+        const accessibleStatus =
+          lens === "flagged"
+            ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
+            : unviewedDeltas > 0
+              ? ", changed this round"
+              : "";
         const active = lens === selected;
         return (
           <button
@@ -88,7 +94,7 @@ export function LensSwitcher({
             type="button"
             role="tab"
             aria-selected={active}
-            aria-label={`${LENS_LABEL[lens]}${openCount > 0 ? `, ${openCount} open` : unviewedDeltas > 0 ? ", changed this round" : ""}`}
+            aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
             title={LENS_LABEL[lens]}
             data-lens={lens}
             onClick={() => onSelect(lens)}
@@ -105,7 +111,7 @@ export function LensSwitcher({
                 <span
                   data-testid="lens-open-count"
                   aria-hidden="true"
-                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-danger px-0.5 font-semibold text-2xs text-white leading-none"
+                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-2xs text-destructive-foreground leading-none"
                 >
                   {openCount}
                 </span>

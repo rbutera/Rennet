@@ -61,6 +61,20 @@ describe("handoff/selectors", () => {
       expect(selectExitPipCount(store.getState())).toBe(1);
     });
 
+    it("does not let a LEFT ask claim a RIGHT line comment at the same path and line", () => {
+      const store = createRennetStore();
+      const { reviewActions } = store.getState();
+      reviewActions.setCodeComment("src/a.ts", 12, "right-side note");
+      reviewActions.stageAsk({
+        id: "left-12",
+        anchor: "src/a.ts:12",
+        type: "request-change",
+        body: "restore the deleted branch",
+        side: "LEFT",
+      });
+      expect(selectExitPipCount(store.getState())).toBe(2);
+    });
+
     it("the DUAL-CLAIM rule: one ask claiming both a thread and a code anchor counts once (finding 8)", () => {
       // An ask that names BOTH a quote thread (threadId) AND a code position (its path:line anchor),
       // with a matching thread and a matching code comment present. The ask claims both sources and

@@ -7,5 +7,6 @@
  */
 export * from "./compose";
 export * from "./design-obligations";
+export * from "./finding-round";
 export * from "./lint";
 export * from "./validate";

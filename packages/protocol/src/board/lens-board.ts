@@ -113,22 +113,21 @@ export type LensSection = z.infer<typeof LensSectionSchema>;
 export type SkippedHunk = z.infer<typeof SkippedHunkSchema>;
 export type LensBoard = z.infer<typeof LensBoardSchema>;
 
-/**
- * The generation id for the boards drafted over a patchset.
- *
- * A generation is "the boards for one review of one patchset"
- * (`architecture-contracts.md`), so the patchset id is the whole of its identity — the
- * daemon mints `generationIdForPatchset(patchset.id)` when it drafts, and a client
- * addressing the LIVE boards asks for `generationIdForPatchset(review.activePatchsetId)`.
- * It lives in the protocol because both ends must spell the same string: `board.read`
- * matches the generation EXACTLY, and the client re-checks the answer's `generation`
- * against the one it asked for, so a client that guesses the format reads nothing and a
- * server that resolves a placeholder server-side fails the client's own identity check.
- *
- * The placeholder this replaced was the literal `"live"`, which no board was ever stamped
- * with — so `board.read` answered `null` on the default path for every review that had a
- * board at all.
- */
+/** The first board visit over a patchset. A review with no landed round has no durable
+ * ledger row yet, so both ends derive this initial address directly from the content id. */
 export function generationIdForPatchset(patchsetId: string): string {
   return `gen:${patchsetId}`;
+}
+
+/**
+ * The immutable board visit produced by one exact dispatched round.
+ *
+ * Patchsets are content-addressed: P0 → P1 → P0 legitimately revisits the same patchset.
+ * A generation is visit-addressed, so a later P0 must not reopen the initial P0 generation
+ * or treat its settled report as evidence for the new round. The durable dispatch id is
+ * stable across crash/restart and unique to the exact staged-ask occurrences; pairing it
+ * with the successor patchset makes the generation deterministic without conflating visits.
+ */
+export function generationIdForDispatch(patchsetId: string, dispatchId: string): string {
+  return `gen:${patchsetId}:dispatch:${dispatchId}`;
 }

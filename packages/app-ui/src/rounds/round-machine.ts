@@ -60,10 +60,9 @@ export type RoundState =
   | {
       readonly phase: "composed";
       /** The round's report board, when it drafted one. **Optional, and it matters:** a
-       *  round with no successor account is not a round to the pipeline, so its report
-       *  seat never runs and no report board exists — the commonest cause being that the
-       *  coding agent ran and changed nothing. Such a round still regenerates and still
-       *  composes; it simply has no greeting to hand back. */
+       *  report drafter may honestly fail while real lens boards still compose. An empty
+       *  coding checkpoint takes the separate `unchanged` terminal and never claims a
+       *  composed generation. */
       readonly reportBoardId?: string;
       readonly newGeneration: string;
       /** The lanes that were still on screen when the generation composed — carried
@@ -73,6 +72,7 @@ export type RoundState =
        *  (a round that composed nothing per-lens) honestly carries no lanes. */
       readonly lanes?: readonly LensLane[];
     }
+  | { readonly phase: "unchanged" }
   | { readonly phase: "failed"; readonly reason: string };
 
 /** The phase discriminants, in progress order. */
@@ -90,8 +90,19 @@ export const initialRoundState: RoundState = { phase: "absent" };
  * un-settles.
  */
 export function advance(state: RoundState, event: RoundEvent): RoundState {
+  if (event.type === "unchanged") {
+    return state.phase === "absent" ||
+      state.phase === "composed" ||
+      state.phase === "unchanged" ||
+      state.phase === "failed"
+      ? state
+      : { phase: "unchanged" };
+  }
   if (event.type === "failed") {
-    return state.phase === "absent" || state.phase === "composed" || state.phase === "failed"
+    return state.phase === "absent" ||
+      state.phase === "composed" ||
+      state.phase === "unchanged" ||
+      state.phase === "failed"
       ? state
       : { phase: "failed", reason: event.reason };
   }
@@ -147,6 +158,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
         ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
         : state;
     case "composed":
+    case "unchanged":
     case "failed":
       return state; // terminal
   }
@@ -214,7 +226,7 @@ const PHASE_ORDER: readonly RoundPhase[] = [
 /** A coarse 0..1 progress fraction, DERIVED from the phase's position in the run — not
  *  a stored count. `failed` reads as complete (the run stopped). */
 export function runProgressFraction(state: RoundState): number {
-  if (state.phase === "failed") return 1;
+  if (state.phase === "failed" || state.phase === "unchanged") return 1;
   return PHASE_ORDER.indexOf(state.phase) / (PHASE_ORDER.length - 1);
 }
 
@@ -237,6 +249,7 @@ export function runNavigation(state: RoundState, slug: string): Navigation | nul
     case "reporting":
     case "composing":
     case "composed":
+    case "unchanged":
       return { path: sessionPath(slug, { view: "board" }), replace: true };
     default:
       return null;

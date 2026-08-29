@@ -1,4 +1,4 @@
-import type { AskProjection } from "@rennet/protocol";
+import { type AskProjection, findingRefKey } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   createRennetStore,
@@ -145,6 +145,7 @@ describe("rennet store", () => {
       const persistedId = numeric === null ? first : `qt-${Number(numeric[1]) + 1}`;
       const projection: AskProjection = {
         stagedAsks: {},
+        findingDispositions: {},
         lineComments: {},
         quoteThreads: {
           [persistedId]: {
@@ -166,6 +167,40 @@ describe("rennet store", () => {
       );
       expect(Object.keys(store.getState().review.quoteThreads)).toHaveLength(2);
       randomUUID.mockRestore();
+    });
+
+    it("writes reversible finding dispositions and restores them from hydration", () => {
+      const store = createRennetStore();
+      const writes: { name: string; input: unknown }[] = [];
+      const actions = store.getState().reviewActions;
+      actions.setAskWriter((name, input) => writes.push({ name, input }));
+      const finding = { generation: "gen-1", boardId: "board:flagged:1", findingId: "f-1" };
+      const key = findingRefKey(finding);
+
+      actions.dismissFinding(finding);
+      expect(store.getState().review.findingDispositions[key]).toEqual({
+        finding,
+        disposition: "dismissed",
+      });
+      actions.restoreFinding(finding);
+      expect(store.getState().review.findingDispositions[key]).toBeUndefined();
+      expect(writes).toEqual([
+        { name: "ask.dismissFinding", input: { finding } },
+        { name: "ask.restoreFinding", input: { finding } },
+      ]);
+
+      actions.resetReview();
+      actions.hydrateAsks({
+        stagedAsks: {},
+        findingDispositions: {
+          [key]: { finding, disposition: "dismissed" },
+        },
+        lineComments: {},
+        quoteThreads: {},
+        retired: {},
+        verdictOverride: null,
+      });
+      expect(store.getState().review.findingDispositions[key]?.finding).toEqual(finding);
     });
 
     it("a missing-thread reply is a proven no-op — review state is byte-identical", () => {

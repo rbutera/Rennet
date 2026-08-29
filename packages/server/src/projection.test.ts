@@ -678,27 +678,44 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "project.contextMap.output.knowledge.statements.evidence.path",
     "project.contextAsk.output.answer.evidence.path",
     "project.knowledgeDisposition.output.statement.evidence.path",
-    // Durable asks (B11): a per-line comment's `path` is the REVIEWED file's
-    // repo-relative path (like a disposition's), never a host-absolute path — so
-    // no remote projection translates it. Every write echoes its receipt (an
-    // `AskEventBody`, whose line-comment arms carry `path`), so each write command's
-    // `output.receipt.path` surfaces here too; all repo-relative.
+    // Durable asks (B11): per-line comments and canonical CodeRefs point into the
+    // reviewed repository, never the host filesystem. Every write echoes an
+    // `AskEventBody`, so both path-bearing variants surface on every receipt schema.
     "ask.setLineComment.input.path",
     "ask.clearLineComment.input.path",
+    "ask.stage.input.ask.codeRef.path",
     "ask.stage.output.receipt.path",
+    "ask.stage.output.receipt.ask.codeRef.path",
     "ask.unstage.output.receipt.path",
+    "ask.unstage.output.receipt.ask.codeRef.path",
+    "ask.dismissFinding.output.receipt.path",
+    "ask.dismissFinding.output.receipt.ask.codeRef.path",
+    "ask.restoreFinding.output.receipt.path",
+    "ask.restoreFinding.output.receipt.ask.codeRef.path",
     "ask.edit.output.receipt.path",
+    "ask.edit.output.receipt.ask.codeRef.path",
     "ask.retire.output.receipt.path",
+    "ask.retire.output.receipt.ask.codeRef.path",
     "ask.restore.output.receipt.path",
+    "ask.restore.output.receipt.ask.codeRef.path",
     "ask.quoteOpen.output.receipt.path",
+    "ask.quoteOpen.output.receipt.ask.codeRef.path",
     "ask.quoteReply.output.receipt.path",
+    "ask.quoteReply.output.receipt.ask.codeRef.path",
     "ask.quoteClose.output.receipt.path",
+    "ask.quoteClose.output.receipt.ask.codeRef.path",
     "ask.setVerdictOverride.output.receipt.path",
+    "ask.setVerdictOverride.output.receipt.ask.codeRef.path",
     "ask.setLineComment.output.receipt.path",
+    "ask.setLineComment.output.receipt.ask.codeRef.path",
     "ask.clearLineComment.output.receipt.path",
+    "ask.clearLineComment.output.receipt.ask.codeRef.path",
+    "ask.read.output.projection.stagedAsks.codeRef.path",
+    "ask.read.output.projection.retired.ask.codeRef.path",
     // Span rework (B11 cluster 5) echoes the same `AskEventBody` receipt (its
-    // `ask.edit` write), so its receipt's line-comment `path` arm is repo-relative too.
+    // `ask.edit` write), so both receipt path variants are repo-relative too.
     "review.reviseSpan.output.receipt.path",
+    "review.reviseSpan.output.receipt.ask.codeRef.path",
   ]),
   ...classified("host-path-projected", [
     // The display transcript (issue-set B): a coding turn's `code` body block cites the file it

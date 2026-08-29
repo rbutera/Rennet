@@ -1,5 +1,5 @@
 import {
-  generationIdForPatchset,
+  currentGenerationId,
   isReviewStale,
   isWorkingTreeReview,
   type Review,
@@ -39,17 +39,10 @@ import { useRennetStore } from "../store";
 // `board.read` command (bound in C18) for this review's `(generation, lens)` pairs — a
 // lens the host drafted no board for is honestly absent.
 //
-// GENERATION IDENTITY. This used to pass the literal `"live"`, on the reasoning that the
-// session projection would supply the real id later. Nothing was ever stamped `"live"` —
-// the daemon files every board under `generationIdForPatchset(patchset.id)` and
-// `board.read` matches the string EXACTLY — so the default path read `null` for every
-// review, board or no board, and the reviewer's board was unreachable even once drafted.
-// The id is not the session projection's to invent: a generation IS one review of one
-// patchset (`architecture-contracts.md`), so the live generation is the one keyed to the
-// review's ACTIVE patchset, and the shared `generationIdForPatchset` is how both ends spell
-// it. Resolving `"live"` server-side would not have worked either: `board-data.ts` re-checks
-// the answer's `generation` against the one it asked for, so the resolved board would have
-// come back as a cross-wire error.
+// GENERATION IDENTITY. The initial board visit is content-derived; after a returned round,
+// the durable ledger names the exact current visit. That distinction matters when the code
+// returns to an earlier content-addressed patchset: the old visit stays frozen while the new
+// visit has a distinct report and boards. `board.read` matches this id exactly.
 //
 // The exit FAB is mounted across the reading views (board/diff) in a `relative` container so its
 // `absolute inset-0` root observes the PANE's width (the 54rem label-drop, C08 cluster 2). It
@@ -155,7 +148,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const boardGeneration =
     roundState.phase === "composed"
       ? roundState.newGeneration
-      : generationIdForPatchset(review.activePatchsetId);
+      : currentGenerationId(roundRecords, review.activePatchsetId);
   const boardGenerations = [...new Set([...generationLine(roundRecords), boardGeneration])];
 
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the

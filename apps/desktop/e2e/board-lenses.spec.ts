@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { AskLogStore } from "@rennet/adapters";
 import {
   BOARD_DESIGN_DECOY_PATH,
   BOARD_DESIGN_SCENARIO,
@@ -171,6 +172,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await addProject(page, repository);
     await openWorkingTreeReview(page);
     const fixture = await seedBoardFixture(page, repository, userData);
+    const askLog = new AskLogStore(join(userData, "asks"));
     await page.reload();
     expect((await currentHash(page)).split("?")[0]).toBe(
       `#/s/${encodeURIComponent(fixture.sessionId)}`,
@@ -193,6 +195,61 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     expect(
       Math.abs(topBarBox.x + topBarBox.width / 2 - (railBox.x + railBox.width / 2)),
     ).toBeLessThan(2);
+
+    const flaggedTab = rail.locator('[data-lens="flagged"]');
+    await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
+    await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveText("1");
+    await expect(flaggedTab.locator("[data-testid=lens-delta-pip]")).toHaveCount(0);
+    await flaggedTab.click();
+    await expect(board).toHaveAttribute("data-lens", "flagged");
+    const finding = board.locator('[data-kind="finding"]');
+    await expect(finding).toHaveCount(1);
+
+    await finding.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
+    await expect(flaggedTab).toHaveAccessibleName(/^Flagged, 0 open(?:, changed this round)?$/);
+    await page.reload();
+    await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await expect(finding).toHaveAttribute("data-status", "dismissed");
+    await finding.locator("button[aria-expanded]").click();
+    await finding.getByRole("button", { name: "Dismissed · Undo" }).click();
+    await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
+
+    await finding.getByRole("button", { name: "Request This Change" }).click();
+    await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
+    await expect(finding.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await finding.getByRole("button", { name: "Staged · Request Change" }).click();
+    await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
+    await expect
+      .poll(() => Object.keys(askLog.readProjection(fixture.reviewId).stagedAsks))
+      .toEqual([]);
+    await page.reload();
+    await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await expect(finding.getByRole("button", { name: "Request This Change" })).toBeVisible();
+    await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
+
+    await finding.getByRole("button", { name: "Discuss", exact: true }).click();
+    const chatComposer = page.getByLabel("Message the orchestrator");
+    await expect(chatComposer).toBeVisible();
+    await expect(chatComposer).toBeFocused();
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).quoteThreads))
+      .toContainEqual(
+        expect.objectContaining({
+          kind: "explain",
+          anchor: "Return the reviewed value from the implementation.",
+        }),
+      );
+    await page.reload();
+    await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await page.getByRole("button", { name: "Open chat" }).click();
+    await expect(
+      page
+        .locator(".rennet-chat-dock")
+        .getByText("“Return the reviewed value from the implementation.”", { exact: true }),
+    ).toBeVisible();
 
     const beforeDesign = await page.evaluate(() => history.length);
     await rail.getByRole("tab", { name: /Design/ }).click();
@@ -226,13 +283,42 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(artifactSource).toHaveAttribute("href", `#${designSectionId}`);
     await expect(artifactSource).toHaveAttribute("data-target-id", designSectionId);
     await expect(artifactSource).toHaveAttribute("aria-label", "Jump to widget/spec.md");
+    await page.setViewportSize({ width: 1440, height: 480 });
+    const boardScroller = page
+      .locator(".min-h-0.flex-1.overflow-y-auto")
+      .filter({ has: page.locator('[data-kind="lens-board-view"]') });
+    await expect(boardScroller).toHaveCount(1);
+    await boardScroller.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    const beforeAnchorScroll = await boardScroller.evaluate((element) => element.scrollTop);
+    expect(beforeAnchorScroll).toBe(0);
     await installScrollProbe(page);
     const beforeArtifactJump = await currentHash(page);
     const beforeArtifactHistory = await page.evaluate(() => history.length);
-    await artifactSource.click();
+    await artifactSource.evaluate((element) => {
+      if (!(element instanceof HTMLElement)) throw new Error("artifact source is not an element");
+      element.click();
+    });
     expect(await currentHash(page)).toBe(beforeArtifactJump);
     expect(await page.evaluate(() => history.length)).toBe(beforeArtifactHistory);
     await expect.poll(() => scrollTargets(page)).toContain(designSectionId);
+    await expect
+      .poll(() => boardScroller.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(beforeAnchorScroll);
+    await expect
+      .poll(async () => {
+        const [sectionBox, scrollerBox, headerBox] = await Promise.all([
+          designSection.boundingBox(),
+          boardScroller.boundingBox(),
+          topBar.boundingBox(),
+        ]);
+        if (sectionBox === null || scrollerBox === null || headerBox === null) return false;
+        const unobscuredTop = Math.max(scrollerBox.y, headerBox.y + headerBox.height);
+        return sectionBox.y >= unobscuredTop - 1;
+      })
+      .toBe(true);
+    await page.setViewportSize({ width: 1440, height: 900 });
     const capabilityGrid = board.getByRole("navigation", { name: "Design capabilities" });
     const capability = capabilityGrid.getByRole("link", { name: "Jump to widget-value" });
     await expect(capability).toHaveAttribute("href", `#${designSectionId}`);

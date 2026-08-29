@@ -1,8 +1,11 @@
 import type {
   AskProjection,
+  CodeRef,
   Disposition,
   DispositionType,
   HandoffDisposition,
+  Patchset,
+  StagedAsk,
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
@@ -193,6 +196,42 @@ function parsePathLine(anchor: string): { path: string; line: number } | null {
   return { path: match[1], line: Number(match[2]) };
 }
 
+interface AskCodePosition {
+  readonly path: string;
+  readonly line: number;
+  readonly side: "LEFT" | "RIGHT";
+}
+
+/** Canonical captured provenance wins; `anchor` + `side` read older durable logs. */
+function activeFileForCodeRef(ref: CodeRef, activePatchset: Patchset) {
+  if (ref.patchsetId !== activePatchset.id) return undefined;
+  const matches = activePatchset.files.filter((candidate) =>
+    ref.side === "base"
+      ? candidate.path === ref.path || candidate.previousPath === ref.path
+      : candidate.path === ref.path,
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function askCodePosition(ask: StagedAsk, activePatchset?: Patchset): AskCodePosition | null {
+  if (ask.codeRef !== undefined) {
+    const file =
+      activePatchset === undefined ? undefined : activeFileForCodeRef(ask.codeRef, activePatchset);
+    if (activePatchset !== undefined && file === undefined) return null;
+    return {
+      path: file?.path ?? ask.codeRef.path,
+      line: ask.codeRef.startLine,
+      side: ask.codeRef.side === "base" ? "LEFT" : "RIGHT",
+    };
+  }
+  const legacy = parsePathLine(ask.anchor);
+  return legacy === null ? null : { ...legacy, side: ask.side ?? "RIGHT" };
+}
+
+function askPositionKey(position: AskCodePosition): string {
+  return `${position.path}:${position.line}:${position.side}`;
+}
+
 /**
  * Compose the DEFAULT outbound review comments from the durable ASK PROJECTION (B11
  * cluster 3, #458 R29–R36) — the projection equivalent of
@@ -202,35 +241,33 @@ function parsePathLine(anchor: string): { path: string; line: number } | null {
  * re-derive the same bytes off the same projection (single-source, R33).
  *
  * Two strata, GitHub's shape:
- *   • LINE comments — a staged ask whose `anchor` is a `path:line` code position, plus
- *     every `lineComments` entry (`path`→line→body). An ask and a bare line comment on the
- *     SAME `path:line` collapse to ONE comment (the client's dual-claim rule): the ask
- *     wins, since it carries the intent `type` and its own body.
- *   • BODY notes — a staged ask with NO `path:line` (a prose/quote-of-board ask, or a
- *     path-only ask) has no diff line to pin to, so {@link reviewBodyNotesFromProjection}
- *     surfaces it as a review-BODY note (woven into the review body, ledgered). It is NOT
- *     dropped here — that was B11 P0 finding 2 (lost reviewer intent): a prose request-change
- *     entered the round work-order but VANISHED from the team review. The two functions
- *     PARTITION `stagedAsks`, so every staged ask appears EXACTLY ONCE (a line comment OR a
- *     body note), never twice, never zero times.
+ *   • LINE comments — a staged ask whose canonical `codeRef` resolves uniquely in the
+ *     active patchset, or whose legacy `anchor` is a `path:line`, plus every `lineComments`
+ *     entry (`path`→line→body). Position identity includes side, so a LEFT ask and RIGHT
+ *     bare comment at the same path/line remain distinct.
+ *   • BODY notes — prose asks and canonical refs that no longer resolve in the active
+ *     patchset have no trustworthy active diff position, so
+ *     {@link reviewBodyNotesFromProjection} surfaces them as review-BODY notes. The two
+ *     functions PARTITION `stagedAsks`, so every ask appears exactly once.
  *
  * Deterministic order (path, then line) so the canonical payload is byte-stable regardless
  * of the projection's Record key order — a projection round-tripped through disk composes
  * identically.
  */
-export function reviewCommentsFromProjection(projection: AskProjection): ReviewCommentInput[] {
+export function reviewCommentsFromProjection(
+  projection: AskProjection,
+  activePatchset?: Patchset,
+): ReviewCommentInput[] {
   const comments: ReviewCommentInput[] = [];
   const claimed = new Set<string>();
   for (const ask of Object.values(projection.stagedAsks)) {
-    const at = parsePathLine(ask.anchor);
+    const at = askCodePosition(ask, activePatchset);
     if (!at) continue; // a no-line ask travels in the body — see reviewBodyNotesFromProjection
-    claimed.add(`${at.path}:${at.line}`);
-    // Honor the ask's diff SIDE (B11 finding 7): a deletion-side ask posts on the pre-image
-    // (LEFT), not the hardcoded RIGHT it was flattened to. Absent ⇒ RIGHT (the common case).
+    claimed.add(askPositionKey(at));
     comments.push({
       path: at.path,
       line: at.line,
-      side: ask.side ?? "RIGHT",
+      side: at.side,
       type: ask.type,
       body: ask.body,
     });
@@ -238,7 +275,7 @@ export function reviewCommentsFromProjection(projection: AskProjection): ReviewC
   for (const [path, lines] of Object.entries(projection.lineComments)) {
     for (const [lineStr, body] of Object.entries(lines)) {
       const line = Number(lineStr);
-      if (claimed.has(`${path}:${line}`)) continue; // a staged ask already claims this line
+      if (claimed.has(askPositionKey({ path, line, side: "RIGHT" }))) continue;
       comments.push({ path, line, side: "RIGHT", type: "comment", body });
     }
   }
@@ -247,22 +284,27 @@ export function reviewCommentsFromProjection(projection: AskProjection): ReviewC
       ? left.path < right.path
         ? -1
         : 1
-      : (left.line ?? 0) - (right.line ?? 0),
+      : (left.line ?? 0) - (right.line ?? 0) ||
+        (left.side === right.side ? 0 : left.side === "LEFT" ? -1 : 1),
   );
 }
 
 /**
  * The review's BODY stratum (B11 P0 finding 2, handoff-and-exits.md "The review's two
- * strata"). Every staged ask with NO diff line — a prose/quote-of-board ask, or a path-only
- * ask (anchor does not parse as `path:line`) — becomes a review-BODY note. This is the exact
- * complement of {@link reviewCommentsFromProjection}: together they partition `stagedAsks`,
- * so a pathless request-change is posted in the review body rather than silently dropped.
+ * strata"). Every staged ask with no trustworthy active diff line — prose, path-only, or a
+ * canonical CodeRef that does not resolve uniquely in the active patchset — becomes a
+ * review-BODY note. This is the exact complement of
+ * {@link reviewCommentsFromProjection}: together they partition `stagedAsks`, so reviewer
+ * intent is never silently dropped or posted on a stale line.
  * Deterministic order (anchor, then body) so the canonical payload is byte-stable.
  */
-export function reviewBodyNotesFromProjection(projection: AskProjection): ReviewBodyNote[] {
+export function reviewBodyNotesFromProjection(
+  projection: AskProjection,
+  activePatchset?: Patchset,
+): ReviewBodyNote[] {
   const notes: ReviewBodyNote[] = [];
   for (const ask of Object.values(projection.stagedAsks)) {
-    if (parsePathLine(ask.anchor)) continue; // a code-anchored ask is a line comment, not a body note
+    if (askCodePosition(ask, activePatchset)) continue;
     notes.push({ type: ask.type, body: ask.body, anchor: ask.anchor });
   }
   return notes.sort((left, right) => {
@@ -281,37 +323,60 @@ export function reviewBodyNotesFromProjection(projection: AskProjection): Review
  * So this maps all of `projection.stagedAsks`; `buildHandoffBundle` then keeps the
  * addressed types (request-change / comment), the same filter the disposition path uses.
  *
- * A code-anchored ask (`anchor` = `path:line`) carries its line as a `startLine` span on
- * the additions side, so the bundle resolves the covering diff hunk; a prose ask (a quoted
- * board span, no `path:line`) has no repo path, so its anchor text stands as the locator —
- * the agent addresses the body, and the context resolves to nothing rather than a guess.
+ * A canonical CodeRef resolves only against its captured active patchset. A matching
+ * renamed base-side ref maps to the current file path while preserving its full span and
+ * deletion side. A frozen or ambiguous ref keeps only its captured path, with no span or
+ * side to reinterpret. Legacy asks still read `anchor` + `side`.
  *
- * Deterministic order (path, then line) so the same asks always compose the same bundle
+ * Deterministic order (path, then line, then durable ask id) so the same asks always compose the same bundle
  * (a stable digest — the dispatch idempotency key), regardless of the projection's Record
  * key order or a disk round-trip.
  */
-export function handoffDispositionsFromProjection(projection: AskProjection): HandoffDisposition[] {
+export function handoffDispositionsFromProjection(
+  projection: AskProjection,
+  activePatchset: Patchset,
+): HandoffDisposition[] {
   const dispositions: HandoffDisposition[] = Object.values(projection.stagedAsks).map((ask) => {
+    const common = {
+      id: ask.id,
+      type: ask.type,
+      body: ask.body,
+      ...(ask.finding === undefined ? {} : { finding: ask.finding }),
+    };
+    if (ask.codeRef !== undefined) {
+      const ref = ask.codeRef;
+      const file = activeFileForCodeRef(ref, activePatchset);
+      if (file === undefined) return { ...common, path: ref.path };
+      return {
+        ...common,
+        path: file.path,
+        span: { startLine: ref.startLine, endLine: ref.endLine },
+        side: ref.side === "base" ? ("deletions" as const) : ("additions" as const),
+      };
+    }
     const at = parsePathLine(ask.anchor);
     return at
       ? {
+          ...common,
           path: at.path,
-          type: ask.type,
-          body: ask.body,
           span: { startLine: at.line },
           // Honor the ask's diff side (B11 finding 7): a deletion-side ask resolves the
           // pre-image hunk, not the hardcoded additions side. Absent ⇒ additions.
           side: ask.side === "LEFT" ? ("deletions" as const) : ("additions" as const),
         }
-      : { path: ask.anchor, type: ask.type, body: ask.body };
+      : {
+          ...common,
+          path: ask.anchor,
+        };
   });
-  return dispositions.sort((left, right) =>
-    left.path !== right.path
-      ? left.path < right.path
-        ? -1
-        : 1
-      : (left.span?.startLine ?? 0) - (right.span?.startLine ?? 0),
-  );
+  return dispositions.sort((left, right) => {
+    if (left.path !== right.path) return left.path < right.path ? -1 : 1;
+    const byLine = (left.span?.startLine ?? 0) - (right.span?.startLine ?? 0);
+    if (byLine !== 0) return byLine;
+    const leftId = left.id ?? "";
+    const rightId = right.id ?? "";
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
 }
 
 /** A reference to the exact PR + head a review is pinned to. */

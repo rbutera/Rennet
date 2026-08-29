@@ -359,11 +359,10 @@ describe("the read and the push merge by seq, neither erasing the other", () => 
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(answer).toBeTypeOf("function"));
 
-    // The round finishes while the read is still in flight.
-    act(() => {
-      for (const event of seeded) bridge.emitRoundProgress(REVIEW, event);
-    });
-    // …and the read's answer, served BEFORE the round composed, lands afterwards.
+    // Only the terminal delta arrives live while the read is in flight. The earlier
+    // events exist solely in the catch-up response, so neither half can settle the round
+    // by itself — the surface must merge their union by sequence.
+    act(() => bridge.emitRoundProgress(REVIEW, seeded[seeded.length - 1] as RoundEvent));
     await act(async () => {
       answer?.({ events: seeded.slice(0, -1) });
       await Promise.resolve();

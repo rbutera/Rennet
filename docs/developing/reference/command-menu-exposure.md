@@ -1,6 +1,6 @@
 ---
 title: Command menu exposure
-description: Which of the 97 registered commands the ⌘K menu lists, and the rationale for every row.
+description: Which of the 102 registered commands the ⌘K menu lists, and the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -20,7 +20,7 @@ boolean flag has no input channel, and the dialog has no result surface. So a
 command earns `commandMenu: true` only when all four hold:
 
 1. **Its schema accepts `{}`.** Nothing required that the menu cannot supply.
-   18 of the 97 commands pass this; the rest need a review, session, project,
+   18 of the 102 commands pass this; the rest need a review, session, project,
    span, host, or path the menu has no way to name. A protocol test asserts the
    invariant, so an exposed row can never be one that only fails.
 2. **It is an action, not a read the UI already drives.** `settings.get`,
@@ -190,6 +190,8 @@ reason. A menu row never reports a success it did not get.
 | `ask.setVerdictOverride` | Needs the ask and the override verdict. |
 | `ask.setLineComment` | Needs the line citation and the comment. |
 | `ask.clearLineComment` | Needs the line citation being cleared. |
+| `ask.dismissFinding` | Needs the active session and finding reference. |
+| `ask.restoreFinding` | Needs the active session and finding reference. |
 | `ask.read` | Read the review surface drives. |
 | `round.dispatch` | Needs the session's staged asks and council picks. |
 

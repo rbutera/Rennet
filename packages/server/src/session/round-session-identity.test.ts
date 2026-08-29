@@ -132,6 +132,9 @@ async function recordARound(session: SessionModel): Promise<void> {
   await sub.rounds.dispatchRound({
     session,
     workOrder: WORK_ORDER,
+    dispatchId: "dispatch-1",
+    sourcePatchsetId: "ps-1",
+    askOccurrences: [{ id: "ask-1", revision: 0 }],
     runWorkers: async () => ({
       outcome: "completed" as const,
       diff: "diff --git a/a b/a",

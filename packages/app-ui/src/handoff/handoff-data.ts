@@ -1,6 +1,6 @@
 import type { CommandOutput, Review } from "@rennet/protocol";
-import type { RennetState, StagedAsk } from "../store";
-import { type ProposedVerdict, parseLineAnchor, partitionAsksByAnchor } from "./selectors";
+import { type RennetState, type StagedAsk, stagedAskCodePosition } from "../store";
+import { type ProposedVerdict, partitionAsksByAnchor } from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The hand-off resolution seam (C08 cluster 1, Reconciliation 1/3) — the SINGLE point
@@ -47,6 +47,7 @@ export const modeHasExits = (mode: EntryMode): boolean => mode !== "retrospectiv
 export interface LineComment {
   readonly path: string;
   readonly line: number;
+  readonly side: "LEFT" | "RIGHT";
   readonly ask: StagedAsk;
 }
 
@@ -78,11 +79,11 @@ export const composeLivingDraft = (asks: Readonly<Record<string, StagedAsk>>): L
   const { body, line } = partitionAsksByAnchor(asks);
   const byPath = new Map<string, LineComment[]>();
   for (const ask of line) {
-    const parsed = parseLineAnchor(ask.anchor);
-    if (!parsed) continue; // partitionAsksByAnchor already proved the parse; guard for types
-    const group = byPath.get(parsed.path) ?? [];
-    group.push({ path: parsed.path, line: parsed.line, ask });
-    byPath.set(parsed.path, group);
+    const position = stagedAskCodePosition(ask);
+    if (!position) continue; // partitionAsksByAnchor already proved this; guard for types
+    const group = byPath.get(position.path) ?? [];
+    group.push({ ...position, ask });
+    byPath.set(position.path, group);
   }
   const lineGroups: LineCommentGroup[] = [...byPath.entries()].map(([path, comments]) => ({
     path,

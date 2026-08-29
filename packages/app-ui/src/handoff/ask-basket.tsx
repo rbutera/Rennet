@@ -1,9 +1,13 @@
 import { Badge, Button, cn } from "@rennet/ui";
 import { X } from "lucide-react";
 import { useMemo } from "react";
-import type { DispositionKind, StagedAsk } from "../store";
-import { useRennetStore } from "../store";
-import { parseLineAnchor, partitionAsksByAnchor } from "./selectors";
+import {
+  type DispositionKind,
+  type StagedAsk,
+  stagedAskCodePosition,
+  useRennetStore,
+} from "../store";
+import { partitionAsksByAnchor } from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ask basket (C08 cluster 3, Objective clause 2, R29) — the staged asks the review
@@ -32,7 +36,7 @@ const INTENT: Record<DispositionKind, { label: string; variant: "destructive" | 
 function AskRow({ ask }: { ask: StagedAsk }) {
   const unstageAsk = useRennetStore((s) => s.reviewActions.unstageAsk);
   const intent = INTENT[ask.type];
-  const lineAnchor = parseLineAnchor(ask.anchor);
+  const lineAnchor = stagedAskCodePosition(ask);
 
   return (
     <li className="flex items-start gap-3 rounded-md border border-border/60 bg-card px-3 py-2">

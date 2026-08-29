@@ -12,6 +12,7 @@ import { DiffView } from "./diff-view";
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
 
 const PATH = "packages/core/src/a.ts";
+const PATCHSET_ID = "patchset-live";
 const FILE: PatchFile = {
   path: PATH,
   status: "modified",
@@ -26,13 +27,17 @@ function mountDiff() {
   const history = memoryHistory("/s/x?view=diff");
   return mount(
     <Router hook={history.hook} searchHook={history.searchHook}>
-      <DiffView files={[FILE]} />
+      <DiffView files={[FILE]} patchsetId={PATCHSET_ID} />
     </Router>,
   );
 }
 
 function rowState(line: number, container: HTMLElement): string | null {
-  return container.querySelector(`[data-line="${line}"]`)?.getAttribute("data-line-state") ?? null;
+  return (
+    container
+      .querySelector(`[data-line="${line}"][data-side="RIGHT"]`)
+      ?.getAttribute("data-line-state") ?? null
+  );
 }
 
 describe("DiffView line comments — the C4 machinery, one object with the board", () => {
@@ -45,7 +50,9 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     // The commented line now shows the persistent (edit) glyph and reads evidence green.
     expect(getByLabelText("Edit comment on line 2")).toBeTruthy();
     expect(rowState(2, container)).toBe("comment");
-    expect(container.querySelector('[data-line="2"]')?.className).toContain("bg-green/15");
+    expect(container.querySelector('[data-line="2"][data-side="RIGHT"]')?.className).toContain(
+      "bg-green/15",
+    );
   });
 
   it("a saved comment's glyph persists across a remount of the same store", () => {
@@ -64,11 +71,19 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     await user.type(getByPlaceholderText("Leave a comment on this line…"), "rename this");
     await user.click(getByText("Request Changes"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[1]).toBe("rename this");
-    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1`]).toEqual({
-      id: `${PATH}:1`,
+    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:1:RIGHT`]).toEqual({
+      id: `${PATH}:1:RIGHT`,
       anchor: `${PATH}:1`,
       type: "request-change",
       body: "rename this",
+      side: "RIGHT",
+      codeRef: {
+        patchsetId: PATCHSET_ID,
+        path: PATH,
+        side: "head",
+        startLine: 1,
+        endLine: 1,
+      },
     });
     // Danger red rides the row, and its state attr flips to "ask".
     expect(rowState(1, container)).toBe("ask");
@@ -88,6 +103,34 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     expect(rowState(1, container)).toBe("comment");
     expect(rowState(2, container)).toBe("ask");
     cleanup();
+  });
+
+  it("paints a LEFT ask only on the deletion row, leaving the same-number RIGHT comment visible", () => {
+    useRennetStore.getState().reviewActions.setCodeComment(PATH, 2, "right-side note");
+    useRennetStore.getState().reviewActions.stageAsk({
+      id: "left-2",
+      anchor: `${PATH}:2`,
+      type: "request-change",
+      body: "restore this deletion",
+      side: "LEFT",
+      codeRef: {
+        patchsetId: PATCHSET_ID,
+        path: PATH,
+        side: "base",
+        startLine: 2,
+        endLine: 2,
+      },
+    });
+
+    const { container } = mountDiff();
+    expect(
+      container.querySelector('[data-line="2"][data-side="LEFT"]')?.getAttribute("data-line-state"),
+    ).toBe("ask");
+    expect(
+      container
+        .querySelector('[data-line="2"][data-side="RIGHT"]')
+        ?.getAttribute("data-line-state"),
+    ).toBe("comment");
   });
 
   it("a deleted line (no new-side number) offers no comment button", () => {

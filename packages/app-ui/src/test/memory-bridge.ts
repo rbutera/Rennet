@@ -1,4 +1,5 @@
 import type {
+  AskProjection,
   AttentionEventFrame,
   CommandInput,
   CommandName,
@@ -89,6 +90,7 @@ export class MemoryBridge implements RennetBridge {
   readonly #progress = new KeyedEmitter<ProjectProcessEvent>();
   readonly #detailProgress = new KeyedEmitter<ProjectDetailProgressEvent>();
   readonly #askStream = new KeyedEmitter<ReviewAskStreamEvent>();
+  readonly #askProjection = new KeyedEmitter<AskProjection>();
   readonly #roundProgress = new KeyedEmitter<RoundEvent>();
   readonly #attention = new Emitter<AttentionEventFrame>();
   readonly #updateReady = new Emitter<UpdateReadyInfo>();
@@ -140,6 +142,10 @@ export class MemoryBridge implements RennetBridge {
     return this.#askStream.subscribe(reviewId, listener);
   }
 
+  onAskProjection(reviewId: string, listener: Listener<AskProjection>): () => void {
+    return this.#askProjection.subscribe(reviewId, listener);
+  }
+
   onRoundProgress(reviewId: string, listener: Listener<RoundEvent>): () => void {
     return this.#roundProgress.subscribe(reviewId, listener);
   }
@@ -163,6 +169,10 @@ export class MemoryBridge implements RennetBridge {
 
   emitAskStream(reviewId: string, event: ReviewAskStreamEvent): void {
     this.#askStream.emit(reviewId, event);
+  }
+
+  emitAskProjection(reviewId: string, projection: AskProjection): void {
+    this.#askProjection.emit(reviewId, projection);
   }
 
   /** Push one live round-progress event to the review's subscribers (C15 3.1). */

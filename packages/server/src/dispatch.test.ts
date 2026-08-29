@@ -17,6 +17,7 @@ import {
   type HandoffRunPort,
   type HarnessEvent,
   type PatchsetCapturePort,
+  type ReviewBodyNote,
   type ReviewCommentInput,
   type ReviewEvent,
   ReviewService,
@@ -1892,6 +1893,99 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     })) as { dryRun: boolean; outcome: { url: string | null } | null };
     expect(out.dryRun).toBe(false);
     expect(out.outcome).not.toBeNull();
+  });
+
+  it("normalizes matching renamed-base asks and routes frozen asks to the review body", async () => {
+    const { dispatch, service } = harness();
+    const review = await service.createReviewFromPatchset(
+      randomUUID(),
+      {
+        ...prPatchset(),
+        id: "renamed-active",
+        files: [
+          {
+            path: "src/current.ts",
+            previousPath: "src/previous.ts",
+            status: "renamed",
+            additions: 1,
+            deletions: 1,
+            binary: false,
+            patch: "@@ -8 +8 @@\n-old\n+new",
+          },
+        ],
+      },
+      { postTarget: SANDBOX_TARGET },
+    );
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "matching",
+        anchor: "src/previous.ts:999",
+        type: "request-change",
+        body: "preserve the base-side contract",
+        side: "RIGHT",
+        codeRef: {
+          patchsetId: review.activePatchsetId,
+          path: "src/previous.ts",
+          side: "base",
+          startLine: 8,
+          endLine: 10,
+        },
+      },
+    });
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "frozen",
+        anchor: "src/current.ts:999",
+        type: "comment",
+        body: "revisit the frozen concern",
+        codeRef: {
+          patchsetId: "renamed-frozen",
+          path: "src/previous.ts",
+          side: "base",
+          startLine: 8,
+          endLine: 10,
+        },
+      },
+    });
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    })) as {
+      status: string;
+      comments: ReviewCommentInput[];
+      bodyNotes: ReviewBodyNote[];
+      payload: string;
+      verdict: ForgeReviewEvent;
+      compositionId: string;
+    };
+
+    expect(composed.comments).toEqual([
+      {
+        path: "src/current.ts",
+        line: 8,
+        side: "LEFT",
+        type: "request-change",
+        body: "preserve the base-side contract",
+      },
+    ]);
+    expect(composed.bodyNotes).toEqual([{ type: "comment", body: "revisit the frozen concern" }]);
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments: composed.comments,
+        bodyNotes: composed.bodyNotes,
+        payload: composed.payload,
+        verdict: composed.verdict,
+        compositionId: composed.compositionId,
+        dryRun: true,
+      }),
+    ).resolves.toMatchObject({ dryRun: true });
   });
 
   it("publish.compose (mode review) sources asks + line comments + verdict override; publish.review accepts the projection-composed bytes", async () => {

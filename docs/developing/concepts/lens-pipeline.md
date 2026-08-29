@@ -44,18 +44,16 @@ with no live model call.
 composition root that supplies the scheduler's open seams — `onBoardArrival` to
 the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
 `composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
-prompt reader — and drives a generation: the round-report seat drafts first and
+prompt reader — and drives a generation visit: the round-report seat drafts first and
 gates the regeneration, the per-board arrival events this scheduler emits order
 the progressive reveal, and a `PipelineStartGuard` keyed on the session and
-patchset generation makes a re-entry mid-generation reattach rather than
-double-start. So the pipeline now has its non-test caller in the factory. The
-factory is the wiring, not yet the trigger: `create-server` does not instantiate
-the runtime on a live review — the round trigger that calls it is the own-branch
-round loop (C9/B10). The seams are bound; the pipeline lights up on a review
-when that trigger lands.
+exact generation visit makes a retry of that dispatch reattach rather than
+double-start. `create-server` owns the live trigger: the own-branch round loop
+dispatches the coding turn, captures its result against the active patchset,
+and calls board regeneration through this runtime.
 
-0. **Round-report first** (on rounds only). When a review re-runs on a new
-   patchset generation, the `round-report` drafter runs *before* the lens
+0. **Round-report first** (on rounds only). When a review re-runs into a new
+   generation visit, the `round-report` drafter runs *before* the lens
    drafters. Its board is both the reviewer's greeting and the lens drafters'
    input — it is threaded into every lens prompt. It funnels through the same
    validation and post-process passes, but it is not a lens: it carries no
@@ -132,13 +130,26 @@ when that trigger lands.
    part lives in `core/board/`: the coverage assertion (every patchset hunk is
    taught by some lens or listed in some lens's `skippedHunks`), verbatim carry
    on stable element ids (a carried element is byte-identical across
-   generations), and `new`/`reworked` delta stamps on sections. The **authored**
-   part is the orchestrator's connective review prose, written write-through on
-   the versioned reviewer-voice prompt (`src/prompts/review-draft-voice.md`) in
-   the reviewer's first-person register; curation feedback from the prior
-   generation threads into that authoring turn. The authored prose is screened
-   by a narrower register lint (citations plus the machinery screen) — visible,
-   never blocking.
+   generations), `new`/`reworked` delta stamps on sections, and the host-owned
+   finding lifecycle for a returned round. That lifecycle matches each
+   generation-and-board-scoped finding against the prior and freshly drafted
+   Flagged boards. It removes only a stable-id or unique semantic match for an
+   addressed ask or durable dismissal. It leaves an ambiguous match or a
+   reference to an abandoned draft attempt visible and returns a detached
+   resolution instead of applying the old disposition. A uniquely reattached
+   dismissal is cloned onto the successor board before Flagged persists, while
+   the frozen predecessor keeps its own disposition. On Sequence,
+   the same pass preserves earlier host chapters and appends
+   **Round N · Addressed** from the report's exact dispatched-ask ids. The pass
+   is pure and produces the successor boards without changing either input
+   board or any frozen generation.
+
+   The **authored** part is the orchestrator's connective review prose, written
+   write-through on the versioned reviewer-voice prompt
+   (`src/prompts/review-draft-voice.md`) in the reviewer's first-person
+   register; curation feedback from the prior generation threads into that
+   authoring turn. The authored prose is screened by a narrower register lint
+   (citations plus the machinery screen) — visible, never blocking.
 
 As each board freezes and is persisted, the scheduler emits a **per-board
 arrival event** over the existing board-event broadcast. The rounds machinery
@@ -171,6 +182,16 @@ lens selections come from the session URL rather than component-local state,
 so reload and direct navigation resolve the same `(generation, lens)` pair. An
 absent lens parameter resolves Flagged when it is present, then the first board
 present in canonical order.
+
+The client overlays reviewer-owned finding state instead of editing the board
+bytes it reads. Request and Dismiss bind to `(generation, Flagged board id,
+finding id)` in the durable ask projection; Undo applies the inverse event. A
+failed draft attempt therefore cannot leak its action onto a retry that reuses
+the same model-authored finding id. Discuss stores a quote
+thread at the same generation anchor and sends one live anchored ask through
+the existing chat dock. The Flagged segment derives its open count from the
+board's finding statuses, staged finding asks, and dispositions, so reload
+reconstructs the same number without a stored counter.
 
 ## Related context in the delta
 

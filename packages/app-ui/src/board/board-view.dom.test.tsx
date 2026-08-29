@@ -114,6 +114,13 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(sections.every((section) => section.className.includes("scroll-mt-16"))).toBe(true);
   });
 
+  it("selects the normal reading measure for a prose board", async () => {
+    const { container } = await renderView("gen1", GENERATIONS, "sequence");
+    const document = container.querySelector<HTMLElement>("[data-kind=lens-board-view]");
+    expect(document?.className).toContain("max-w-[760px]");
+    expect(document?.className).not.toContain("max-w-[960px]");
+  });
+
   it("uses h3 card titles and h4 in-card detail headings", async () => {
     const { container } = await renderView("gen1", GENERATIONS, "flagged");
     expect(container.querySelector('[data-kind="finding"] h3 > button')).toBeTruthy();

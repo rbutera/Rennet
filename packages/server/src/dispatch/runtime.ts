@@ -19,6 +19,7 @@ import {
 import type {
   AnchorSide,
   AnchorSpan,
+  AskOccurrence,
   AskProjection,
   ComposedHandoffBundle,
   DeltaDigestResult,
@@ -563,6 +564,9 @@ export interface DispatchDeps {
   readonly dispatchRound?: (input: {
     review: Review;
     workOrder: ComposedHandoffBundle;
+    dispatchId: string;
+    sourcePatchsetId: string;
+    askOccurrences: readonly AskOccurrence[];
   }) => Promise<void>;
   /**
    * The rounds-ledger read for `session.rounds`: the `RoundRecord[]` the live rounds runtime
@@ -783,13 +787,19 @@ export function assertCompositionFresh(
 ): void {
   if (compositionId === undefined) return;
   const proj = reviewProjection ?? emptyAskProjection();
+  const activePatchset = review.patchsets.find(
+    (patchset) => patchset.id === review.activePatchsetId,
+  );
+  if (mode === "review" && activePatchset === undefined) {
+    throw new Error("Publish refused: the review's active patchset is missing.");
+  }
   const boundPayload =
     mode === "review"
       ? // BOTH strata (B11 finding 2): the bound payload folds in body notes too, so a
         // prose ask edited between preview and post is caught as stale like a line comment.
         canonicalReviewPayload(
-          reviewCommentsFromProjection(proj),
-          reviewBodyNotesFromProjection(proj),
+          reviewCommentsFromProjection(proj, activePatchset),
+          reviewBodyNotesFromProjection(proj, activePatchset),
         )
       : payload;
   const expected = publishCompositionId({

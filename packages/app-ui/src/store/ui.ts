@@ -22,6 +22,8 @@ export interface UiState {
   readonly sidebarFolds: Readonly<Record<string, boolean>>;
   /** The chat dock is open (its slot is always mounted; this toggles its visible width). */
   readonly chatOpen: boolean;
+  /** Monotonic signal for moving keyboard focus into the always-mounted chat composer. */
+  readonly chatComposerFocusRevision: number;
   /** The chat dock width in px. */
   readonly chatWidth: number;
   /** The ⌘P/⌘K command menu is open. */
@@ -66,6 +68,8 @@ export interface UiSlice {
     toggleSidebar(): void;
     toggleFold(nodeId: string): void;
     setChatOpen(open: boolean): void;
+    /** Open the dock and move keyboard focus to its composer. */
+    focusChatComposer(): void;
     setChatWidth(width: number): void;
     /** Open/close the command menu; opening without a mode defaults to `"search"`. */
     setCommandMenuOpen(open: boolean, mode?: CommandMenuMode): void;
@@ -87,6 +91,7 @@ const initialUi: UiState = {
   sidebarOpen: true,
   sidebarFolds: {},
   chatOpen: false,
+  chatComposerFocusRevision: 0,
   // 420 — the INVENTORY §1 double-click reset, made the default too (proposal
   // reconciliation 8: C01's interim 360 corrected here, one number, inventory wins).
   chatWidth: 420,
@@ -110,6 +115,14 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
         },
       })),
     setChatOpen: (open) => set((s) => ({ ui: { ...s.ui, chatOpen: open } })),
+    focusChatComposer: () =>
+      set((s) => ({
+        ui: {
+          ...s.ui,
+          chatOpen: true,
+          chatComposerFocusRevision: s.ui.chatComposerFocusRevision + 1,
+        },
+      })),
     setChatWidth: (width) => set((s) => ({ ui: { ...s.ui, chatWidth: width } })),
     // Opening without a mode defaults to "search" (the sidebar Search row's behaviour,
     // reconciliation 1); ⌘P passes "search", ⌘K passes "command". A close leaves the

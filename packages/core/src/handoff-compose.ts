@@ -37,14 +37,9 @@ import { sha256Hex } from "@rennet/protocol";
 // `sha256Hex` only; the real council-routed model turn is injected as a `ComposePort`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A stable ask id: the ordinal in the mechanical bundle's deterministic order. */
-function askIdAt(index: number): string {
-  return `d${index}`;
-}
-
-/** Give every mechanical task its stable id (its deterministic ordinal). */
+/** Preserve the durable ask identity already carried by each mechanical task. */
 export function asksFromBundle(bundle: HandoffBundle): ComposableAsk[] {
-  return bundle.tasks.map((task, index) => ({ ...task, id: askIdAt(index) }));
+  return bundle.tasks.map((task) => ({ ...task }));
 }
 
 const TYPE_LABEL: Record<DispositionType, string> = {
@@ -151,6 +146,18 @@ export function validateComposition(
   proposal: ComposeProposal,
 ): CompositionValidation {
   const known = new Set(asks.map((ask) => ask.id));
+  if (known.size !== asks.length) {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const ask of asks) {
+      if (seen.has(ask.id)) duplicates.add(ask.id);
+      seen.add(ask.id);
+    }
+    return {
+      ok: false,
+      reason: `the input contained duplicate ask id(s): ${[...duplicates].join(", ")}`,
+    };
+  }
   const seen = new Set<string>();
   for (const group of proposal.groups) {
     if (group.dispositionIds.length === 0) {
@@ -246,6 +253,7 @@ function composedDigest(tasks: readonly ComposedTask[]): string {
         ids: [...task.sourceDispositions],
         asks: task.asks.map((ask) => ({
           id: ask.id,
+          finding: ask.finding ?? null,
           path: ask.path,
           type: ask.type,
           instruction: ask.instruction,

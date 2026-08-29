@@ -88,6 +88,45 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
     expect(snap.data).toEqual({ repos: ["streamed"] });
   });
 
+  it("resolve-after-snapshot: an older read cannot replace a pushed full projection", async () => {
+    const cache = new CommandCache();
+    const key = commandKey("ask.read", { sessionId: "review-1" });
+    const first = deferred<unknown>();
+    let calls = 0;
+    const fetcher = () => {
+      calls += 1;
+      return first.promise;
+    };
+
+    cache.subscribe(key, () => undefined);
+    cache.ensure(key, fetcher);
+    cache.setData(key, () => ({ projection: { stagedAsks: {} } }), {
+      supersedeInFlight: true,
+    });
+
+    first.resolve({ projection: { stagedAsks: { stale: { id: "stale" } } } });
+    await tick();
+    expect(cache.getSnapshot(key).data).toEqual({ projection: { stagedAsks: {} } });
+    expect(cache.getSnapshot(key).stale).toBe(false);
+    expect(calls).toBe(1);
+  });
+
+  it("resolve-after-delta: the catch-up read still installs for the owner to merge", async () => {
+    const cache = new CommandCache();
+    const key = commandKey("session.roundEvents", { reviewId: "review-1" });
+    const first = deferred<unknown>();
+
+    cache.subscribe(key, () => undefined);
+    cache.ensure(key, () => first.promise);
+    cache.setData(key, () => ({ events: [{ type: "composed", seq: 5 }] }));
+
+    first.resolve({ events: [{ type: "dispatched", seq: 0 }] });
+    await tick();
+    expect(cache.getSnapshot(key).data).toEqual({
+      events: [{ type: "dispatched", seq: 0 }],
+    });
+  });
+
   it("getSnapshot does not create an entry (no render-phase mutation)", () => {
     const cache = new CommandCache();
     const key = commandKey("projects.list", {});

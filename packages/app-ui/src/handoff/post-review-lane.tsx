@@ -600,7 +600,7 @@ function ComposedReviewPreview({
                 <span className="font-mono text-2xs text-muted-foreground">{group.path}</span>
                 {group.comments.map((line) => (
                   <ComposedLineCard
-                    key={`${line.path}:${line.line}`}
+                    key={`${line.path}:${line.line}:${line.comment.side}`}
                     line={line}
                     patchsetId={patchsetId}
                   />
@@ -635,7 +635,7 @@ function ComposedLineCard({ line, patchsetId }: { line: ComposedLineComment; pat
   const codeRef: CodeRef = {
     patchsetId,
     path: line.path,
-    side: "head",
+    side: line.comment.side === "LEFT" ? "base" : "head",
     startLine: line.line,
     endLine: line.line,
   };
@@ -680,10 +680,10 @@ function LineCommentCard({
   onCancelEdit: () => void;
   onDelete: () => void;
 }) {
-  const codeRef: CodeRef = {
+  const codeRef: CodeRef = comment.ask.codeRef ?? {
     patchsetId,
     path: comment.path,
-    side: "head",
+    side: comment.side === "LEFT" ? "base" : "head",
     startLine: comment.line,
     endLine: comment.line,
   };

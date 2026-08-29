@@ -49,20 +49,35 @@ describe("GenerationStore", () => {
 const commitRange = { from: "H0", to: "H1" };
 
 /** A dispatch-path placeholder: ran a work-order, regenerated nothing (yet). */
-const dispatchPlaceholder = (): RoundRecord => ({
+const dispatchPlaceholder = (dispatchId: string | null = "dispatch-1"): RoundRecord => ({
   asksDispatched: ["ask-1"],
+  ...(dispatchId === null
+    ? {}
+    : {
+        dispatchId,
+        sourcePatchsetId: "ps-1",
+        askOccurrences: [{ id: "ask-1", revision: 3 }],
+      }),
   workerCommitRange: commitRange,
   boardGeneration: ROUND_NO_REGEN,
   reportBoard: ROUND_NO_REGEN,
   outcome: "completed",
+  regeneration: "pending",
   diff: "--- a\n+++ b",
   changedPaths: ["src/a.ts"],
 });
 
 /** The regeneration record for the SAME round (same commit range): real minted generation
  *  + a distinct frozen predecessor, no diff of its own. */
-const regenRecord = (): RoundRecord => ({
+const regenRecord = (dispatchId: string | null = "dispatch-1"): RoundRecord => ({
   asksDispatched: ["ask-1"],
+  ...(dispatchId === null
+    ? {}
+    : {
+        dispatchId,
+        sourcePatchsetId: "ps-1",
+        askOccurrences: [{ id: "ask-1", revision: 3 }],
+      }),
   workerCommitRange: commitRange,
   mintedPatchsetGeneration: "gen:H1",
   boardGeneration: "gen:H1",
@@ -96,6 +111,50 @@ describe("RoundRecordStore", () => {
     const [only] = store.read("s2");
     expect(only?.boardGeneration).toBe(ROUND_NO_REGEN);
     expect(only?.frozenPredecessor).toBeUndefined();
+  });
+
+  it("updates a completed placeholder from pending to terminal no-code in place", () => {
+    const store = new RoundRecordStore(dir());
+    store.record("s-no-code", dispatchPlaceholder());
+    store.record("s-no-code", { ...dispatchPlaceholder(), regeneration: "not-needed" });
+    const records = store.read("s-no-code");
+    expect(records).toHaveLength(1);
+    expect(records[0]?.regeneration).toBe("not-needed");
+    expect(records[0]?.boardGeneration).toBe(ROUND_NO_REGEN);
+  });
+
+  it("does not reconcile modern dispatches that share a commit range but have different identities", () => {
+    const store = new RoundRecordStore(dir());
+    store.record("s-identities", dispatchPlaceholder("dispatch-1"));
+    store.record("s-identities", regenRecord("dispatch-2"));
+    expect(store.read("s-identities")).toHaveLength(2);
+  });
+
+  it("reconciles by dispatch identity even when the observed commit range differs", () => {
+    const store = new RoundRecordStore(dir());
+    store.record("s-range", dispatchPlaceholder("dispatch-1"));
+    store.record("s-range", {
+      ...regenRecord("dispatch-1"),
+      workerCommitRange: { from: "other-from", to: "other-to" },
+    });
+    const records = store.read("s-range");
+    expect(records).toHaveLength(1);
+    expect(records[0]?.boardGeneration).toBe("gen:H1");
+    expect(records[0]?.diff).toBe("--- a\n+++ b");
+  });
+
+  it("keeps the commit-range reconciliation fallback for two legacy records", () => {
+    const store = new RoundRecordStore(dir());
+    store.record("s-legacy", dispatchPlaceholder(null));
+    store.record("s-legacy", regenRecord(null));
+    expect(store.read("s-legacy")).toHaveLength(1);
+  });
+
+  it("never reconciles a failed placeholder into a successful generation", () => {
+    const store = new RoundRecordStore(dir());
+    store.record("s-failed", { ...dispatchPlaceholder("dispatch-1"), outcome: "failed" });
+    store.record("s-failed", regenRecord("dispatch-1"));
+    expect(store.read("s-failed")).toHaveLength(2);
   });
 
   it("survives a fresh-store reload (restart sim) and reads the reconciled record back", () => {

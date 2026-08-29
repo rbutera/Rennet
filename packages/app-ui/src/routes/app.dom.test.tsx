@@ -356,6 +356,7 @@ describe("a reopened session shows the daemon's transcript, not the one it left 
     const reviewFor = (id: string) => ({ ...REVIEW, id });
     const projectionFor = (reviewId: string): AskProjection => ({
       stagedAsks: {},
+      findingDispositions: {},
       lineComments:
         reviewId === "rev-a"
           ? { "src/a.ts": { "4": "comment held by A" } }

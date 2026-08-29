@@ -245,11 +245,12 @@ export function publishHandlers(rt: DispatchRuntime) {
         // Compose the DEFAULT (unedited) comments from the durable ask projection — the phone
         // does not edit (publish decision 4), so the default IS the product. The payload and
         // verdict are core's, so publish.review re-verifies these very bytes (single-source).
-        const comments = reviewCommentsFromProjection(projection);
+        const activePatchset = activePatchsetOf(review);
+        const comments = reviewCommentsFromProjection(projection, activePatchset);
         // The BODY stratum (B11 finding 2): pathless/prose asks that have no diff line travel in
         // the review body rather than vanishing. `reviewCommentsFromProjection` +
         // `reviewBodyNotesFromProjection` PARTITION the staged asks, so each appears exactly once.
-        const bodyNotes = reviewBodyNotesFromProjection(projection);
+        const bodyNotes = reviewBodyNotesFromProjection(projection, activePatchset);
         // Path safety at compose (#382 M2 finding 8): refuse to compose an outbound review whose
         // comments carry an absolute or traversing path — such a path would post outside the
         // repo (or is corruption). Ingestion (`canvas.disposition`) already rejects them; this is

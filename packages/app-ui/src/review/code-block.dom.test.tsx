@@ -44,11 +44,12 @@ describe("CodeBlock — the one code surface", () => {
     await user.type(getByPlaceholderText("Leave a comment on this line…"), "rename");
     await user.click(getByText("Request Changes"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[2]).toBe("rename");
-    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:2`]).toEqual({
-      id: `${PATH}:2`,
+    expect(useRennetStore.getState().review.stagedAsks[`${PATH}:2:RIGHT`]).toEqual({
+      id: `${PATH}:2:RIGHT`,
       anchor: `${PATH}:2`,
       type: "request-change",
       body: "rename",
+      side: "RIGHT",
     });
     expect(stateOf(2, container)).toBe("ask");
     // The real danger-red class rides the row, not just the synthetic state attr.

@@ -8,11 +8,13 @@ import {
   type CoverageHunkInput,
   type CoverageRequirementInput,
   carriedElementIds,
+  composeFindingRound,
   createInvocationBudget,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
   type DesignTaskProgressSource,
   deriveDesignTaskProgress,
+  type FindingResolution,
   type HarnessPort,
   type HarnessTurnResult,
   isCarriedForward,
@@ -39,13 +41,16 @@ import {
 } from "@rennet/prompts";
 import {
   type BoardDocument,
+  type ComposableAsk,
   type CouncilJobId,
   type CouncilResolveContext,
   type DraftBoard,
   DraftBoardSchema,
   type DraftElement,
   type FindingAgreement,
+  type FindingDisposition,
   type FindingElement,
+  generationIdForPatchset,
   LENS_KINDS,
   type LensKind,
   parseDraft,
@@ -283,6 +288,36 @@ function finalizedFlaggedDocument(
   return { ...authored, introMarkdown, measure: "reading" };
 }
 
+/** The findings the served board can reach from its top-level section roots. */
+function reachableFindingElements(elements: readonly DraftElement[]): DraftElement[] {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const nested = new Set<string>();
+  for (const element of elements) {
+    if (element.kind !== "section" && element.kind !== "order_step") continue;
+    for (const child of element.data.children) nested.add(child);
+  }
+
+  const findings: DraftElement[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const element = byId.get(id);
+    if (element === undefined) return;
+    if (element.kind === "finding") {
+      findings.push(element);
+      return;
+    }
+    if (element.kind !== "section" && element.kind !== "order_step") return;
+    for (const child of element.data.children) visit(child);
+  };
+
+  for (const element of elements) {
+    if (element.kind === "section" && !nested.has(element.id)) visit(element.id);
+  }
+  return findings;
+}
+
 /**
  * Namespace every element id in a board (and every INTRA-board reference to it)
  * under `prefix`, so two independently-drafted seats can never share an id. The
@@ -456,6 +491,7 @@ export function renderDrafterPrompt(
   reportBoard?: DraftBoard,
   designArtifacts?: DesignArtifactSet,
   hostSchema: unknown = boardOutputSchema(),
+  round?: RoundDraftContext,
 ): string {
   const context = JSON.stringify({
     deltaPacket: packet,
@@ -463,6 +499,15 @@ export function renderDrafterPrompt(
     // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
     ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
     ...(designArtifacts === undefined ? {} : { designArtifacts }),
+    ...(round === undefined
+      ? {}
+      : {
+          round: {
+            number: round.number,
+            dispatchedAsks: round.dispatchedAsks,
+            ...(round.worker === undefined ? {} : { worker: round.worker }),
+          },
+        }),
   });
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
 }
@@ -563,6 +608,8 @@ export interface LensBoardOutcome {
   readonly omissions: readonly Omission[];
   readonly blemishes: readonly Violation[];
   readonly immutability: readonly Violation[];
+  /** Flagged-only reattachment/detachment facts for durable disposition migration. */
+  readonly findingResolutions?: readonly FindingResolution[];
   /** An honest resolution failure — no harness for this seat (never a throw, never a block). */
   readonly failure?: string;
   /** A successful absence: discovery found no material for this lens. */
@@ -623,6 +670,11 @@ export interface LensPipelineDeps {
   readonly repoRoot: string;
   /** The lens drafters' entire input, inlined into every prompt (B5). */
   readonly deltaPacket: DeltaPacket;
+  /** Exact generation visit being drafted. Older direct callers fall back to the initial
+   *  content-derived generation; the rounds runtime always supplies this. */
+  readonly currentGeneration?: string;
+  /** Trusted durable-ask identity for a returned round. */
+  readonly round?: RoundDraftContext;
   /** The collation producer's hunk list — the coverage-assert universe (cluster 4). */
   readonly hunks: readonly LintHunk[];
   /** Per-lens lint context the caller assembles (files, patchsetId, scaffold globs…). */
@@ -651,6 +703,15 @@ export interface LensPipelineDeps {
    * composition root supplies a real store; absent ⇒ metadata is result-only.
    */
   readonly persistBoardMeta?: (meta: BoardMeta) => void | Promise<void>;
+  /** Read the reviewer-owned overlay at the exact Flagged composition boundary. */
+  readonly readFindingDispositions?: () => Readonly<Record<string, FindingDisposition>>;
+  /** Persist/migrate Flagged resolution state before its hidden board is written. */
+  readonly persistFindingResolutions?: (
+    currentGeneration: string,
+    currentBoardId: string,
+    resolutions: readonly FindingResolution[],
+    findingDispositions: Readonly<Record<string, FindingDisposition>>,
+  ) => void | Promise<void>;
   /** Prior generation's boards, for R58 delta stamps (cluster 4). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -674,8 +735,27 @@ export interface LensPipelineDeps {
   readonly signal?: AbortSignal;
 }
 
+export interface RoundDraftContext {
+  readonly number: number;
+  readonly previousGeneration: string;
+  readonly previousFlaggedBoardId?: string;
+  readonly dispatchedAsks: readonly ComposableAsk[];
+  readonly findingDispositions: Readonly<Record<string, FindingDisposition>>;
+  /** Checkpoint-measured evidence from this coding turn. Production supplies it after
+   *  the turn returns, so the report verifies the worker's exact delta rather than the
+   *  whole branch or the worker's account of itself. */
+  readonly worker?: {
+    readonly outcome: "completed";
+    readonly diff: string;
+    readonly changedPaths: readonly string[];
+    readonly commitRange: { readonly from: string; readonly to: string };
+  };
+}
+
 export interface LensPipelineResult {
   readonly boards: readonly LensBoardOutcome[];
+  /** The Flagged board's reattachment/detachment facts, when this was a round. */
+  readonly findingResolutions?: readonly FindingResolution[];
   /**
    * Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set.
    *
@@ -695,6 +775,12 @@ export interface LensPipelineResult {
   readonly report?: LensBoardOutcome;
   /** The authored composition (C2), present only when a `composeTurn` was supplied. */
   readonly composition?: ComposeResult;
+}
+
+function pipelineGenerationId(
+  deps: Pick<LensPipelineDeps, "currentGeneration" | "deltaPacket">,
+): string {
+  return deps.currentGeneration ?? generationIdForPatchset(deps.deltaPacket.patchset.id);
 }
 
 // ── Seat resolution (council-routed, the B06 precedent) ──
@@ -994,11 +1080,17 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const postProcessText = await deps.readPrompt(POST_PROCESS_FILE);
   const postProcess = buildPostProcess(deps, council, postProcessText);
 
-  // R58/D3 — on a ROUND (a prior generation exists, so the packet carries a
-  // successor account) the round-report drafts FIRST: it gates the regeneration
-  // and is the lens drafters' input. Its validated board is threaded into every
-  // lens prompt below. Not a lens — excluded from the coverage assert.
-  const isRound = deps.deltaPacket.successorAccount !== undefined;
+  // R58/D3 — a landed dispatched round is explicit in its generation lineage. The
+  // successor account is useful report material, but it is not the round marker: old
+  // reviews can reconstruct exact durable asks without `review.dispositions`, so their
+  // account may be absent even though the code moved. A same-generation round is the
+  // honest no-code shape and drafts no report. Legacy callers without round context keep
+  // the old successor-account signal.
+  const currentGeneration = pipelineGenerationId(deps);
+  const isRound =
+    deps.round === undefined
+      ? deps.deltaPacket.successorAccount !== undefined
+      : deps.round.previousGeneration !== currentGeneration;
   const report = isRound ? await runRoundReport(deps, council, postProcess) : undefined;
   const reportBoard = report?.board;
 
@@ -1049,9 +1141,14 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     });
   }
 
+  const findingResolutions = outcomes.find(
+    (outcome) => outcome.lens === "flagged",
+  )?.findingResolutions;
+
   return {
     boards: outcomes,
     coverage,
+    ...(findingResolutions === undefined ? {} : { findingResolutions }),
     ...(report === undefined ? {} : { report }),
     ...(composition === undefined ? {} : { composition }),
   };
@@ -1073,7 +1170,14 @@ async function runRoundReport(
   if ("failure" in seat) return undefined;
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
-  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket);
+  const basePrompt = renderDrafterPrompt(
+    promptText,
+    deps.deltaPacket,
+    undefined,
+    undefined,
+    boardOutputSchema(),
+    deps.round,
+  );
   const ctx = deps.lintContextFor("report");
   const validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
   if ("failure" in validated) {
@@ -1981,6 +2085,7 @@ async function runLensBoard(
     reportBoard,
     lens === "design" ? (deps.designArtifacts ?? undefined) : undefined,
     semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
+    deps.round,
   );
   const baseCtx = deps.lintContextFor(lens);
   const artifacts = lens === "design" ? discoveredArtifacts(deps.designArtifacts) : [];
@@ -2059,6 +2164,80 @@ async function runLensBoard(
     };
   }
 
+  let findingResolutions: readonly FindingResolution[] | undefined;
+  let findingDispositions: Readonly<Record<string, FindingDisposition>> | undefined;
+  if (deps.round !== undefined) {
+    if (lens === "flagged" && deps.readFindingDispositions !== undefined) {
+      try {
+        findingDispositions = deps.readFindingDispositions();
+      } catch (error) {
+        return {
+          lens,
+          omissions: validated.omissions,
+          blemishes: validated.blemishes,
+          immutability: validated.immutability,
+          failure: `flagged finding disposition read failed — ${error instanceof Error ? error.message : String(error)}.`,
+        };
+      }
+    } else {
+      findingDispositions = deps.round.findingDispositions;
+    }
+    const composition = composeFindingRound({
+      lens,
+      current: validated.board,
+      previous: deps.previous?.get(lens),
+      previousGeneration: deps.round.previousGeneration,
+      previousBoardId: deps.round.previousFlaggedBoardId,
+      report: reportBoard ?? { elements: [] },
+      roundNumber: deps.round.number,
+      dispatchedAsks: deps.round.dispatchedAsks,
+      findingDispositions,
+    });
+    if (lens === "flagged") findingResolutions = composition.resolutions;
+    validated = {
+      ...validated,
+      board: composition.board,
+    };
+  }
+
+  if (lens === "flagged") {
+    const visibleElements = reachableFindingElements(validated.board.elements);
+    validated = {
+      ...validated,
+      board: {
+        ...validated.board,
+        document: finalizedFlaggedDocument(validated.board.document, visibleElements),
+      },
+    };
+  }
+
+  const boardId = deps.boardIdFor(lens);
+
+  if (
+    lens === "flagged" &&
+    findingResolutions !== undefined &&
+    findingDispositions !== undefined &&
+    deps.persistFindingResolutions !== undefined
+  ) {
+    try {
+      await deps.persistFindingResolutions(
+        pipelineGenerationId(deps),
+        boardId,
+        findingResolutions,
+        findingDispositions,
+      );
+    } catch (error) {
+      return {
+        lens,
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        findingResolutions,
+        failure: `flagged finding resolution persistence failed — ${error instanceof Error ? error.message : String(error)}.`,
+      };
+    }
+  }
+
   // R58 delta stamps against the prior generation's board (cluster 4).
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);
 
@@ -2066,7 +2245,6 @@ async function runLensBoard(
   // failure, never announced as arrived. On acceptance the coverage/validation
   // metadata is durably stored (finding 3). Arrival is NOT emitted here — the pipeline
   // announces lens arrivals only after cross-lens coverage runs over the frozen set.
-  const boardId = deps.boardIdFor(lens);
   const persisted = await persistBoard(deps, lens, boardId, stamped, validated, `lens:${lens}`);
   if (!persisted.ok) {
     return {
@@ -2085,5 +2263,6 @@ async function runLensBoard(
     omissions: validated.omissions,
     blemishes: validated.blemishes,
     immutability: validated.immutability,
+    ...(findingResolutions === undefined ? {} : { findingResolutions }),
   };
 }

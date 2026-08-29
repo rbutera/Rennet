@@ -120,7 +120,44 @@ function compareTasks(left: HandoffDisposition, right: HandoffDisposition): numb
   const leftStart = left.span?.startLine ?? 0;
   const rightStart = right.span?.startLine ?? 0;
   if (leftStart !== rightStart) return leftStart - rightStart;
-  return left.type < right.type ? -1 : left.type > right.type ? 1 : 0;
+  if (left.type !== right.type) return left.type < right.type ? -1 : 1;
+  const leftId = left.id ?? "";
+  const rightId = right.id ?? "";
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+}
+
+/**
+ * Preserve each first caller-provided id and mint collision-free ids for legacy or
+ * duplicate dispositions. Reserving every provided id before allocation keeps an
+ * earlier legacy disposition from claiming an id carried by a later durable ask.
+ */
+function withTaskIds(
+  dispositions: readonly HandoffDisposition[],
+): Array<{ readonly disposition: HandoffDisposition; readonly id: string }> {
+  const provided = new Set(
+    dispositions.flatMap((disposition) => (disposition.id === undefined ? [] : [disposition.id])),
+  );
+  const used = new Set<string>();
+  let fallbackIndex = 0;
+
+  const nextFallback = (): string => {
+    let candidate = `d${fallbackIndex}`;
+    fallbackIndex += 1;
+    while (provided.has(candidate) || used.has(candidate)) {
+      candidate = `d${fallbackIndex}`;
+      fallbackIndex += 1;
+    }
+    used.add(candidate);
+    return candidate;
+  };
+
+  return dispositions.map((disposition) => {
+    if (disposition.id !== undefined && !used.has(disposition.id)) {
+      used.add(disposition.id);
+      return { disposition, id: disposition.id };
+    }
+    return { disposition, id: nextFallback() };
+  });
 }
 
 const TYPE_LABEL: Record<DispositionType, string> = {
@@ -204,12 +241,14 @@ export function buildHandoffBundle(input: BuildHandoffBundleInput): HandoffBundl
     .filter((disposition) => isAddressedByHandoff(disposition.type))
     .slice()
     .sort(compareTasks);
-  const tasks: HandoffTask[] = addressed.map((disposition) => ({
+  const tasks: HandoffTask[] = withTaskIds(addressed).map(({ disposition, id }) => ({
+    id,
     path: disposition.path,
     type: disposition.type,
     instruction: disposition.body,
     ...(disposition.span === undefined ? {} : { span: disposition.span }),
     ...(disposition.side === undefined ? {} : { side: disposition.side }),
+    ...(disposition.finding === undefined ? {} : { finding: disposition.finding }),
     context: anchoredContext(
       fileByPath.get(disposition.path),
       HANDOFF_CONTEXT_CEILING,
@@ -223,11 +262,13 @@ export function buildHandoffBundle(input: BuildHandoffBundleInput): HandoffBundl
   const digest = sha256Hex(
     JSON.stringify(
       tasks.map((task) => ({
+        id: task.id,
         path: task.path,
         type: task.type,
         instruction: task.instruction,
         span: task.span ?? null,
         side: task.side ?? null,
+        finding: task.finding ?? null,
       })),
     ),
   );

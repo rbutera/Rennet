@@ -174,6 +174,60 @@ describe("buildHandoffBundle", () => {
     });
     expect(bundle.patchsetId).toBe("ps-1");
   });
+
+  it("keeps both asks when the caller supplies the same durable id twice", () => {
+    const bundle = buildHandoffBundle({
+      reviewId: "r1",
+      patchset,
+      dispositions: [
+        disposition({
+          id: "ask-7",
+          path: "src/foo.ts",
+          type: "request-change",
+          body: "add the first guard",
+          span: { startLine: 2 },
+          side: "additions",
+        }),
+        disposition({
+          id: "ask-7",
+          path: "src/foo.ts",
+          type: "request-change",
+          body: "add the second guard",
+          span: { startLine: 3 },
+          side: "additions",
+        }),
+      ],
+    });
+
+    expect(bundle.tasks).toHaveLength(2);
+    expect(bundle.tasks.map((task) => task.instruction)).toEqual([
+      "add the first guard",
+      "add the second guard",
+    ]);
+    expect(bundle.tasks.map((task) => task.id)).toEqual(["ask-7", "d0"]);
+    expect(new Set(bundle.tasks.map((task) => task.id)).size).toBe(2);
+  });
+
+  it("never mints a fallback id that collides with a caller-provided id", () => {
+    const bundle = buildHandoffBundle({
+      reviewId: "r1",
+      patchset,
+      dispositions: [
+        disposition({ path: "src/bar.ts", type: "comment", body: "legacy ask" }),
+        disposition({
+          id: "d0",
+          path: "src/foo.ts",
+          type: "request-change",
+          body: "durable ask",
+        }),
+      ],
+    });
+
+    expect(bundle.tasks.map(({ id, instruction }) => ({ id, instruction }))).toEqual([
+      { id: "d1", instruction: "legacy ask" },
+      { id: "d0", instruction: "durable ask" },
+    ]);
+  });
 });
 
 describe("renderHandoffPrompt", () => {

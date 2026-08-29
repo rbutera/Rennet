@@ -26,11 +26,11 @@ import { z } from "zod";
  * stores, written atomically (temp + rename + fsync) so a reader never sees a
  * half-written file — the `session-store`/`file-thread-store` precedent.
  *
- * THE LOG IS THE ONLY WRITE PATH. `append` adds exactly one event; the projection
- * is `foldAsks(read())`, computed on demand, never a second stored copy that could
- * drift. `append` stamps the caller-agnostic bookkeeping — the `sessionId` and a
- * monotonic `seq` — onto the event body, so the sole-writer handlers upstream hand
- * a body and get back the stored event (with its seq) plus can derive the receipt.
+ * THE LOG IS THE ONLY WRITE PATH. `append` adds exactly one event and `appendMany`
+ * atomically adds one related batch; the projection is `foldAsks(read())`, computed
+ * on demand, never a second stored copy that could drift. Both append paths stamp
+ * caller-agnostic bookkeeping — the `sessionId` and monotonic `seq` values — onto
+ * event bodies, so upstream writers get back the stored events and can derive receipts.
  *
  * ABSENT vs CORRUPT (B11 P0 finding 1). A MISSING log (ENOENT) is the honest empty
  * state — a review with no asks yet folds to the empty projection, no error. But a
@@ -189,6 +189,21 @@ export class AskLogStore {
    * rather than clobbering unread history.
    */
   append(sessionId: string, body: AskEventBody): AskEvent {
+    const [event] = this.appendMany(sessionId, [body]);
+    if (event === undefined) {
+      throw new Error("appendMany returned no event for a non-empty batch");
+    }
+    return event;
+  }
+
+  /**
+   * Append a related batch with one read and one atomic write. Events receive
+   * contiguous sequence numbers in caller order. This is the durable boundary for
+   * host migrations that must never leave a partially-applied disposition set.
+   */
+  appendMany(sessionId: string, bodies: readonly AskEventBody[]): AskEvent[] {
+    if (bodies.length === 0) return [];
+
     const state = this.readState(sessionId);
     if (state.status === "corrupt") {
       throw new AskLogCorruptError(
@@ -197,9 +212,11 @@ export class AskLogStore {
       );
     }
     const events = state.file.events;
-    const seq = (events.at(-1)?.seq ?? -1) + 1;
-    const event = { ...body, sessionId, seq } as AskEvent;
-    this.write(sessionId, [...events, event]);
-    return event;
+    const firstSeq = (events.at(-1)?.seq ?? -1) + 1;
+    const appended = bodies.map(
+      (body, index) => ({ ...body, sessionId, seq: firstSeq + index }) as AskEvent,
+    );
+    this.write(sessionId, [...events, ...appended]);
+    return appended;
   }
 }

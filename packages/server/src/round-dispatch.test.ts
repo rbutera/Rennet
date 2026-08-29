@@ -1,9 +1,18 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AskLogStore } from "@rennet/adapters";
-import type { ComposedHandoffBundle, Review, RoundRecord, SessionModel } from "@rennet/protocol";
-import { ROUND_NO_REGEN } from "@rennet/protocol";
+import { AskLogStore, RoundRecordStore } from "@rennet/adapters";
+import type { HarnessPort, LintTarget } from "@rennet/core";
+import type {
+  AskOccurrence,
+  ComposedHandoffBundle,
+  DraftBoard,
+  Review,
+  RoundEvent,
+  RoundRecord,
+  SessionModel,
+} from "@rennet/protocol";
+import { ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatchRuntime, type DispatchDeps } from "./dispatch";
 import { roundHandlers } from "./dispatch/round";
@@ -16,8 +25,8 @@ import {
 // B11 cluster 4 — the round exit's dispatch. Two surfaces: the `round.dispatch` HANDLER
 // (asks → ONE work-order, coalesced so the runtime is kicked once per distinct work-order) and
 // the rounds runtime's `dispatchRound` SERIALIZER (one round in flight per session). The durable
-// cross-restart idempotency is `runRound`/`runOnce`'s (loadDraftedBoards), proven in B09's
-// `packet-e2e.test.ts` and wired live by cluster 4 — not re-proven here.
+// cross-restart boundaries are the completed dispatch record for the worker and the
+// Generation-owned BoardMeta attempt for regeneration.
 
 const REVIEW_ID = "review-1";
 
@@ -35,14 +44,54 @@ const REVIEW = {
 /** Build the round handler over a real ask-log store (keyed by review id — the session contract)
  *  plus an injected `dispatchRound` seam spy. `composeBundle` is omitted, so the handler composes
  *  the mechanical floor: one work-order carrying every addressed ask. */
-function harness(dispatchRound?: DispatchDeps["dispatchRound"]) {
-  const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-dispatch-")));
+function harness(
+  dispatchRound?: DispatchDeps["dispatchRound"],
+  options: {
+    readonly store?: AskLogStore;
+    readonly roundRecordsForReview?: DispatchDeps["roundRecordsForReview"];
+    readonly broadcastAskProjection?: DispatchDeps["broadcastAskProjection"];
+  } = {},
+) {
+  const store =
+    options.store ?? new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-dispatch-")));
   const rt = createDispatchRuntime({
     askLog: store,
     service: { reviewById: (id: string) => (id === REVIEW_ID ? REVIEW : undefined) },
     ...(dispatchRound ? { dispatchRound } : {}),
+    ...(options.roundRecordsForReview === undefined
+      ? {}
+      : { roundRecordsForReview: options.roundRecordsForReview }),
+    ...(options.broadcastAskProjection === undefined
+      ? {}
+      : { broadcastAskProjection: options.broadcastAskProjection }),
   } as unknown as DispatchDeps);
   return { store, dispatch: roundHandlers(rt)["round.dispatch"] };
+}
+
+type DispatchKickInput = Parameters<NonNullable<DispatchDeps["dispatchRound"]>>[0];
+
+function idFor(askOccurrences: readonly AskOccurrence[], sourcePatchsetId = "ps-1"): string {
+  return sha256Hex(JSON.stringify({ reviewId: REVIEW_ID, sourcePatchsetId, askOccurrences }));
+}
+
+function completedRecord(
+  askOccurrences: readonly AskOccurrence[],
+  over: Partial<RoundRecord> = {},
+): RoundRecord {
+  return {
+    asksDispatched: askOccurrences.map((occurrence) => occurrence.id),
+    dispatchId: idFor(askOccurrences),
+    sourcePatchsetId: "ps-1",
+    askOccurrences: [...askOccurrences],
+    workerCommitRange: { from: "c0", to: "c0" },
+    boardGeneration: ROUND_NO_REGEN,
+    reportBoard: ROUND_NO_REGEN,
+    outcome: "completed",
+    regeneration: "pending",
+    diff: "+worker change",
+    changedPaths: ["src/x.ts"],
+    ...over,
+  };
 }
 
 type DispatchResult = { workOrder: ComposedHandoffBundle; dispatched: boolean };
@@ -77,7 +126,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     expect(workOrder.prompt).not.toContain("why here?");
   });
 
-  it("a second dispatch of the same asks kicks the runtime exactly once (idempotent)", async () => {
+  it("a same-process redispatch of the same asks kicks the runtime exactly once", async () => {
     const dispatchRound = vi.fn(() => Promise.resolve());
     const { store, dispatch } = harness(dispatchRound);
     store.append(REVIEW_ID, {
@@ -195,6 +244,339 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
 
     expect(dispatchRound).toHaveBeenCalledTimes(2);
   });
+
+  it("fresh handler reconstructs a pending placeholder and cleans after simulated regeneration", async () => {
+    const askDir = mkdtempSync(join(tmpdir(), "rennet-round-crash-asks-"));
+    const roundDir = mkdtempSync(join(tmpdir(), "rennet-round-crash-records-"));
+    const rounds = new RoundRecordStore(roundDir);
+    const firstStore = new AskLogStore(askDir);
+    const staged = firstStore.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "fix once" },
+    });
+    const first = harness(
+      async (input) => {
+        rounds.record("s1", completedRecord(input.askOccurrences));
+        throw new Error("crash after the completed placeholder");
+      },
+      { store: firstStore, roundRecordsForReview: () => rounds.read("s1") },
+    );
+    await first.dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() => expect(rounds.read("s1")[0]?.regeneration).toBe("pending"));
+    expect(firstStore.readProjection(REVIEW_ID).stagedAsks.a1).toBeDefined();
+
+    const restartedStore = new AskLogStore(askDir);
+    const regeneration = vi.fn(async (input: DispatchKickInput) => {
+      const completed = rounds
+        .read("s1")
+        .find((record) => record.outcome === "completed" && record.dispatchId === input.dispatchId);
+      expect(completed?.regeneration).toBe("pending");
+      rounds.record("s1", {
+        ...completedRecord(input.askOccurrences),
+        boardGeneration: "gen:ps-2",
+        reportBoard: "board:report",
+      });
+    });
+    const restarted = harness(regeneration, {
+      store: restartedStore,
+      roundRecordsForReview: () => rounds.read("s1"),
+    });
+    await restarted.dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() =>
+      expect(restartedStore.readProjection(REVIEW_ID).stagedAsks.a1).toBeUndefined(),
+    );
+    expect(staged.seq).toBe(0);
+    expect(regeneration).toHaveBeenCalledTimes(1);
+    expect(rounds.read("s1")).toHaveLength(1);
+    expect(rounds.read("s1")[0]?.boardGeneration).toBe("gen:ps-2");
+  });
+
+  it("repairs stranded asks from a completed real record without invoking dispatch", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-real-crash-")));
+    const staged = store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "fix" },
+    });
+    const record = completedRecord([{ id: "a1", revision: staged.seq }], {
+      boardGeneration: "gen:ps-2",
+      reportBoard: "board:report",
+    });
+    const dispatchRound = vi.fn<NonNullable<DispatchDeps["dispatchRound"]>>();
+    const broadcast = vi.fn<NonNullable<DispatchDeps["broadcastAskProjection"]>>();
+    const { dispatch } = harness(dispatchRound, {
+      store,
+      roundRecordsForReview: () => [record],
+      broadcastAskProjection: broadcast,
+    });
+
+    const result = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
+    expect(result.dispatched).toBe(false);
+    expect(dispatchRound).not.toHaveBeenCalled();
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1).toBeUndefined();
+    expect(broadcast).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed durable record retries and consumes nothing", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-failed-retry-")));
+    const staged = store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "retry me" },
+    });
+    const failed = completedRecord([{ id: "a1", revision: staged.seq }], { outcome: "failed" });
+    const dispatchRound = vi.fn(async () => {
+      throw new Error("still failed");
+    });
+    const { dispatch } = harness(dispatchRound, {
+      store,
+      roundRecordsForReview: () => [failed],
+    });
+
+    await dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() => expect(dispatchRound).toHaveBeenCalledTimes(1));
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe("retry me");
+  });
+
+  it("a restored same-id ask has a new occurrence and runs again", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-restored-")));
+    const first = store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "fix" },
+    });
+    const real = completedRecord([{ id: "a1", revision: first.seq }], {
+      boardGeneration: "gen:ps-2",
+      reportBoard: "board:report",
+    });
+    store.append(REVIEW_ID, { kind: "retire", id: "a1", reason: "later" });
+    const restored = store.append(REVIEW_ID, { kind: "restore", id: "a1" });
+    let dispatchedInput: DispatchKickInput | undefined;
+    const dispatchRound = vi.fn(async (input: DispatchKickInput) => {
+      dispatchedInput = input;
+      throw new Error("stop after proving the new occurrence ran");
+    });
+    const { dispatch } = harness(dispatchRound, {
+      store,
+      roundRecordsForReview: () => [real],
+    });
+
+    await dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() => expect(dispatchRound).toHaveBeenCalledTimes(1));
+    expect(dispatchedInput?.askOccurrences).toEqual([{ id: "a1", revision: restored.seq }]);
+    expect(dispatchedInput?.dispatchId).not.toBe(real.dispatchId);
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1).toBeDefined();
+  });
+
+  it("an edit and a new ask staged mid-run both survive successful cleanup", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-mid-run-")));
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "original" },
+    });
+    let finish!: () => void;
+    const running = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let finished = false;
+    const dispatchRound = vi.fn(async () => {
+      await running;
+      finished = true;
+    });
+    const { dispatch } = harness(dispatchRound, { store });
+
+    await dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() => expect(dispatchRound).toHaveBeenCalledTimes(1));
+    store.append(REVIEW_ID, { kind: "edit", id: "a1", body: "edited during the run" });
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a2", anchor: "src/y.ts:1", type: "comment", body: "new during the run" },
+    });
+    finish();
+    await vi.waitFor(() => expect(finished).toBe(true));
+    expect(Object.keys(store.readProjection(REVIEW_ID).stagedAsks)).toEqual(["a1", "a2"]);
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe("edited during the run");
+  });
+
+  it("resumes a completed placeholder from recorded bytes while edited asks stay queued", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-partial-edit-")));
+    const a = store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/a.ts:1", type: "request-change", body: "original a" },
+    });
+    const b = store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a2", anchor: "src/b.ts:1", type: "comment", body: "original b" },
+    });
+    const occurrences = [
+      { id: "a1", revision: a.seq },
+      { id: "a2", revision: b.seq },
+    ];
+    const rounds = new RoundRecordStore(
+      mkdtempSync(join(tmpdir(), "rennet-round-partial-record-")),
+    );
+    rounds.record("s1", completedRecord(occurrences));
+    store.append(REVIEW_ID, { kind: "edit", id: "a1", body: "edited after the crash" });
+    let resumed: DispatchKickInput | undefined;
+    const { dispatch } = harness(
+      async (input) => {
+        resumed = input;
+        rounds.record("s1", {
+          ...completedRecord(input.askOccurrences),
+          boardGeneration: "gen:ps-2",
+          reportBoard: "board:report",
+        });
+      },
+      { store, roundRecordsForReview: () => rounds.read("s1") },
+    );
+
+    await dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() => expect(store.readProjection(REVIEW_ID).stagedAsks.a2).toBeUndefined());
+    expect(
+      resumed?.workOrder.tasks.flatMap((task) => task.asks).find((ask) => ask.id === "a1")
+        ?.instruction,
+    ).toBe("original a");
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe("edited after the crash");
+  });
+
+  it("resumes pending regeneration even when every recorded occurrence was edited", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-all-edited-")));
+    const staged = store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a1", anchor: "src/a.ts:1", type: "request-change", body: "old bytes" },
+    });
+    const pending = completedRecord([{ id: "a1", revision: staged.seq }]);
+    store.append(REVIEW_ID, { kind: "edit", id: "a1", body: "new occurrence" });
+    let dispatchedInput: DispatchKickInput | undefined;
+    const dispatchRound = vi.fn(async (input: DispatchKickInput) => {
+      dispatchedInput = input;
+    });
+    const { dispatch } = harness(dispatchRound, {
+      store,
+      roundRecordsForReview: () => [pending],
+    });
+
+    await dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() => expect(dispatchRound).toHaveBeenCalledTimes(1));
+    expect(dispatchedInput?.workOrder.tasks.flatMap((task) => task.asks)[0]?.instruction).toBe(
+      "old bytes",
+    );
+    expect(store.readProjection(REVIEW_ID).stagedAsks.a1?.body).toBe("new occurrence");
+  });
+
+  it("keeps asks staged when a report succeeds but every lens regeneration fails", async () => {
+    const store = new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-round-zero-lens-asks-")));
+    const roundRecords = new RoundRecordStore(
+      mkdtempSync(join(tmpdir(), "rennet-round-zero-lens-records-")),
+    );
+    let boardSequence = 0;
+    const reportOnlyPort = {
+      createSession: async () => {
+        let prompt = "";
+        return {
+          send: async (input: { prompt: string }) => {
+            prompt = input.prompt;
+          },
+          close: async () => undefined,
+          events: (async function* () {
+            const isReport =
+              prompt.includes("prompts/report.md") || prompt.includes("prompts/post-process.md");
+            yield {
+              kind: "session.ended",
+              native: {},
+              outcome: {
+                status: "completed",
+                structuredOutput: isReport
+                  ? ({
+                      elements: [
+                        {
+                          id: "report-prose",
+                          kind: "prose",
+                          data: {
+                            author: { kind: "lens-agent", id: "report-seat" },
+                            markdown: "The coding turn completed.",
+                          },
+                        },
+                      ],
+                    } as unknown as DraftBoard)
+                  : ({ invalid: true } as unknown as DraftBoard),
+              },
+            };
+          })(),
+        };
+      },
+    } as unknown as HarnessPort;
+    const progress: RoundEvent[] = [];
+    const rounds = createRoundsRuntime({
+      ...runtimeDeps(),
+      resolveClaudePort: async () => reportOnlyPort,
+      boardsRuntimeFor: () =>
+        ({
+          service: { apply: async () => ({ ok: true }) },
+          createRennetBoard: async () => `board:${boardSequence++}`,
+        }) as unknown as ReturnType<RoundsRuntimeDeps["boardsRuntimeFor"]>,
+      readPrompt: (file) => `PROMPT_FILE:${file}`,
+      recordRound: (sessionId, record) => roundRecords.record(sessionId, record),
+      readRounds: (sessionId) => roundRecords.read(sessionId),
+    });
+    const dispatchRound = async (input: DispatchKickInput): Promise<void> => {
+      const runtimeSession = session("s1");
+      await rounds.dispatchRound({
+        session: runtimeSession,
+        workOrder: input.workOrder,
+        dispatchId: input.dispatchId,
+        sourcePatchsetId: input.sourcePatchsetId,
+        askOccurrences: input.askOccurrences,
+        runWorkers: async () => ({
+          outcome: "completed",
+          diff: "+changed",
+          changedPaths: ["a.ts"],
+          workerCommitRange: { from: "c0", to: "c0" },
+        }),
+      });
+      await rounds.runRound({
+        session: runtimeSession,
+        repoRoot: "/repo",
+        asksDispatched: input.askOccurrences.map((occurrence) => occurrence.id),
+        dispatchId: input.dispatchId,
+        sourcePatchsetId: input.sourcePatchsetId,
+        askOccurrences: input.askOccurrences,
+        runWorkers: async () => ({
+          commitRange: { from: "c0", to: "c0" },
+          patchsetId: "ps-2",
+        }),
+        deltaPacket: {
+          patchset: { id: "ps-2", createdAt: "", truncated: false, files: [] },
+          successorAccount: { asks: [] },
+        } as never,
+        hunks: [],
+        lintContextFor: (lens: LintTarget) => ({ lens, hunks: [], files: new Map() }),
+        reviewDraftLintCtx: { files: new Map() },
+        onProgress: (event) => progress.push(event),
+      });
+    };
+    const { dispatch } = harness(dispatchRound, {
+      store,
+      roundRecordsForReview: () => roundRecords.read("s1"),
+    });
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: {
+        id: "report-only-ask",
+        anchor: "a.ts:1",
+        type: "request-change",
+        body: "change it",
+      },
+    });
+
+    await dispatch({ reviewId: REVIEW_ID });
+    await vi.waitFor(() =>
+      expect(progress.filter((event) => event.type === "failed")).toHaveLength(1),
+    );
+
+    expect(progress.some((event) => event.type === "report")).toBe(true);
+    expect(progress.some((event) => event.type === "composed")).toBe(false);
+    expect(store.readProjection(REVIEW_ID).stagedAsks["report-only-ask"]).toBeDefined();
+    expect(roundRecords.read("s1")).toHaveLength(1);
+    expect(roundRecords.read("s1")[0]?.regeneration).toBe("pending");
+  });
 });
 
 // ── The rounds runtime's per-session serializer (reused by `dispatchRound`, no second lock) ──
@@ -214,6 +596,11 @@ function runtimeDeps(): RoundsRuntimeDeps {
 const session = (id: string): SessionModel =>
   ({ id, projectId: "/repo", threads: [], createdAt: 0 }) as SessionModel;
 const WORK_ORDER = {} as ComposedHandoffBundle;
+const SERIAL_DISPATCH = {
+  dispatchId: "dispatch:serializer",
+  sourcePatchsetId: "ps-1",
+  askOccurrences: [],
+} as const;
 
 describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight per session", () => {
   it("serializes concurrent dispatches on one session (the second waits for the first)", async () => {
@@ -225,6 +612,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
     });
 
     const first = runtime.dispatchRound({
+      ...SERIAL_DISPATCH,
       session: session("s1"),
       workOrder: WORK_ORDER,
       runWorkers: async () => {
@@ -234,6 +622,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
       },
     });
     const second = runtime.dispatchRound({
+      ...SERIAL_DISPATCH,
       session: session("s1"),
       workOrder: WORK_ORDER,
       runWorkers: async () => {
@@ -257,6 +646,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
     // the key and an identical re-dispatch retries, rather than memoizing a failure forever.
     await expect(
       runtime.dispatchRound({
+        ...SERIAL_DISPATCH,
         session: session("s1"),
         workOrder: WORK_ORDER,
         runWorkers: async () => {
@@ -267,23 +657,32 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
 
     // The session tail is not wedged by the failure: a subsequent (successful) round still runs.
     const ran = vi.fn(() => Promise.resolve());
-    await runtime.dispatchRound({ session: session("s1"), workOrder: WORK_ORDER, runWorkers: ran });
+    await runtime.dispatchRound({
+      ...SERIAL_DISPATCH,
+      session: session("s1"),
+      workOrder: WORK_ORDER,
+      runWorkers: ran,
+    });
     expect(ran).toHaveBeenCalledTimes(1);
   });
 
-  it("finding 4: a SUCCESSFUL round runs its ripening after the worker turn lands", async () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
-    // Model the create-server runWorkers: after a completed turn it re-composes (ripens).
-    const ripen = vi.fn(() => Promise.resolve());
+  it("fsyncs the completed placeholder before post-dispatch ripening can start", async () => {
+    const order: string[] = [];
+    const runtime = createRoundsRuntime({
+      ...runtimeDeps(),
+      recordRound: () => order.push("placeholder-fsynced"),
+    });
     await runtime.dispatchRound({
+      ...SERIAL_DISPATCH,
       session: session("s1"),
       workOrder: WORK_ORDER,
       runWorkers: async () => {
-        // (a completed turn does not throw) …
-        await ripen();
+        order.push("worker-completed");
+        return COMPLETED_RESULT;
       },
     });
-    expect(ripen).toHaveBeenCalledTimes(1);
+    order.push("ripening-started");
+    expect(order).toEqual(["worker-completed", "placeholder-fsynced", "ripening-started"]);
   });
 
   it("runs dispatches on different sessions concurrently (the lock is per session)", async () => {
@@ -295,6 +694,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
     });
 
     const a = runtime.dispatchRound({
+      ...SERIAL_DISPATCH,
       session: session("sA"),
       workOrder: WORK_ORDER,
       runWorkers: async () => {
@@ -303,6 +703,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
       },
     });
     const b = runtime.dispatchRound({
+      ...SERIAL_DISPATCH,
       session: session("sB"),
       workOrder: WORK_ORDER,
       runWorkers: async () => {
@@ -348,6 +749,14 @@ const COMPLETED_RESULT: DispatchRoundResult = {
   changedPaths: ["a.ts"],
   workerCommitRange: { from: "c0", to: "c1" },
 };
+const ORDER_DISPATCH = {
+  dispatchId: "dispatch:asks",
+  sourcePatchsetId: "ps-1",
+  askOccurrences: [
+    { id: "t1", revision: 0 },
+    { id: "t2", revision: 1 },
+  ],
+} as const;
 
 describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: record only)", () => {
   it("un-dispatched session ⇒ empty ledger (no fabricated round)", () => {
@@ -358,6 +767,7 @@ describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: r
   it("a completed dispatch records a real RoundRecord: asks, diff, paths, commits, honest no-regen generation", async () => {
     const runtime = createRoundsRuntime(runtimeDeps());
     await runtime.dispatchRound({
+      ...ORDER_DISPATCH,
       session: session("s1"),
       workOrder: ORDER_WITH_ASKS,
       runWorkers: async () => COMPLETED_RESULT,
@@ -367,6 +777,10 @@ describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: r
     expect(ledger).toHaveLength(1);
     const record = ledger[0] as RoundRecord;
     expect(record.asksDispatched).toEqual(["t1", "t2"]);
+    expect(record.dispatchId).toBe(ORDER_DISPATCH.dispatchId);
+    expect(record.sourcePatchsetId).toBe("ps-1");
+    expect(record.askOccurrences).toEqual(ORDER_DISPATCH.askOccurrences);
+    expect(record.regeneration).toBe("pending");
     expect(record.diff).toBe(COMPLETED_RESULT.diff);
     expect(record.changedPaths).toEqual(["a.ts"]);
     expect(record.workerCommitRange).toEqual({ from: "c0", to: "c1" });
@@ -388,6 +802,7 @@ describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: r
     };
     await expect(
       runtime.dispatchRound({
+        ...ORDER_DISPATCH,
         session: session("s1"),
         workOrder: ORDER_WITH_ASKS,
         runWorkers: async () => failed,

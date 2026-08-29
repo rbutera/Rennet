@@ -80,6 +80,25 @@ const concurrenceSchema = z.object({
 });
 
 /**
+ * A finding on one immutable board generation. Review identity is deliberately
+ * outside this shape: the durable ask log is already scoped to exactly one
+ * review, while generation + board id + element id binds an action to one
+ * immutable draft attempt. A failed attempt cannot leak a disposition onto a
+ * same-id finding drafted by its retry.
+ */
+export const FindingRefSchema = z.object({
+  generation: z.string().min(1),
+  boardId: z.string().min(1),
+  findingId: z.string().min(1),
+});
+export type FindingRef = z.infer<typeof FindingRefSchema>;
+
+/** Canonical Record key for an attempt-scoped finding reference. */
+export function findingRefKey(ref: FindingRef): string {
+  return JSON.stringify([ref.generation, ref.boardId, ref.findingId]);
+}
+
+/**
  * A prose selection anchor (#462 R27/R28 ripple): the sub-element quote a
  * message/thread replies to. The UI highlight is a projection of this — derived
  * state, never stored presentation.

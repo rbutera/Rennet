@@ -140,6 +140,41 @@ describe("reviewCommentsFromProjection (B11 cluster 3) — the two-strata compos
     ]);
   });
 
+  it("uses canonical CodeRef provenance and keeps same-number LEFT and RIGHT positions distinct", () => {
+    const { store, sid } = freshStore();
+    store.append(sid, { kind: "line-comment-set", path: "src/a.ts", line: 12, body: "right note" });
+    store.append(sid, {
+      kind: "stage",
+      ask: {
+        id: "left",
+        anchor: "legacy prose that must not decide placement",
+        type: "request-change",
+        body: "restore the removed branch",
+        side: "RIGHT",
+        codeRef: {
+          patchsetId: "patchset-1",
+          path: "src/a.ts",
+          side: "base",
+          startLine: 12,
+          endLine: 14,
+        },
+      },
+    });
+
+    const projection = store.readProjection(sid);
+    expect(reviewCommentsFromProjection(projection)).toEqual<ReviewCommentInput[]>([
+      {
+        path: "src/a.ts",
+        line: 12,
+        side: "LEFT",
+        type: "request-change",
+        body: "restore the removed branch",
+      },
+      { path: "src/a.ts", line: 12, side: "RIGHT", type: "comment", body: "right note" },
+    ]);
+    expect(reviewBodyNotesFromProjection(projection)).toEqual([]);
+  });
+
   it("an empty ask set composes nothing to post", () => {
     const { store, sid } = freshStore();
     expect(reviewCommentsFromProjection(store.readProjection(sid))).toEqual([]);

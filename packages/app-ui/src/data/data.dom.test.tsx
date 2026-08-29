@@ -61,6 +61,7 @@ describe("data seam", () => {
       const { data } = useCommand("project.process", { commandId: PROCESS_ID, projectId: "p1" });
       useCommandStream({
         channel: "progress",
+        delivery: "delta",
         subscriptionKey: PROCESS_ID,
         command: { name: "project.process", input: { commandId: PROCESS_ID, projectId: "p1" } },
         fold: (prev, event) => ({

@@ -17,13 +17,14 @@
 //      code minted under two racing rounds would fork the generation ledger.
 //   2. GENERATION lifecycle (#457, append-then-freeze) — when the code moves the
 //      prior generation FREEZES and a successor is MINTED; when nothing landed
-//      the round re-reports against the existing generation.
-//   3. IDEMPOTENT drafting per (session, generation) — the pipeline start routes
+//      the existing generation remains current and the round records no report.
+//   3. IDEMPOTENT drafting per (session, generation visit) — the pipeline start routes
 //      through cluster 5's `PipelineStartGuard`, keyed on the boardGeneration id
-//      (derived from the landed patchset so re-drafting the same patchset dedups).
+//      (derived from the landed patchset plus durable dispatch identity).
 //      The guard is the same-PROCESS fast path; across a restart it is empty, so
-//      the durable truth is the BoardMeta on disk for the (session, generation)
-//      (`loadDraftedBoards`): present ⇒ reconstruct, never re-draft (B09 F1).
+//      durable completion is the generation's five lens slots, each backed by its
+//      BoardMeta or an honest absence. Partial evidence retries; complete evidence
+//      reconstructs without re-drafting (B09 F1).
 //   4. RECORD the round — a `RoundRecord` pinning asks, worker commit range,
 //      minted generation, board generation, and the round-report board; the
 //      rounds ledger is `RoundRecord[]` data (no UI — C9 out of scope).
@@ -45,9 +46,11 @@ import type {
   RegisterLintContext,
 } from "@rennet/core";
 import {
+  type AskOccurrence,
   type ComposedHandoffBundle,
   type DraftBoard,
   type Generation,
+  generationIdForDispatch,
   generationIdForPatchset,
   LENS_KINDS,
   type LensKind,
@@ -64,8 +67,10 @@ import {
   type BoardMeta,
   createDesignCoverageMapper,
   type LensBoardOutcome,
+  type LensPipelineDeps,
   type LensPipelineResult,
   type PromptReader,
+  type RoundDraftContext,
   runLensPipeline,
 } from "./lens-pipeline";
 
@@ -188,8 +193,8 @@ export function withLensBoards(
   gen: Generation,
   result: Pick<LensPipelineResult, "boards">,
 ): Generation {
-  const lensBoards: Partial<Record<LensKind, string>> = { ...gen.lensBoards };
-  const absentLenses: Partial<Record<LensKind, "no-material">> = { ...gen.absentLenses };
+  const lensBoards: Partial<Record<LensKind, string>> = {};
+  const absentLenses: Partial<Record<LensKind, "no-material">> = {};
   for (const o of result.boards) {
     if (o.lens === "report") continue;
     if (o.boardId !== undefined) {
@@ -200,8 +205,12 @@ export function withLensBoards(
       delete lensBoards[o.lens];
     }
   }
-  if (Object.keys(absentLenses).length > 0) return { ...gen, lensBoards, absentLenses };
-  const generationWithoutAbsences = { ...gen };
+  const generationWithoutAttempt = { ...gen };
+  delete generationWithoutAttempt.draftingBoardIds;
+  if (Object.keys(absentLenses).length > 0) {
+    return { ...generationWithoutAttempt, lensBoards, absentLenses };
+  }
+  const generationWithoutAbsences = { ...generationWithoutAttempt };
   delete generationWithoutAbsences.absentLenses;
   return { ...generationWithoutAbsences, lensBoards };
 }
@@ -229,6 +238,20 @@ function reportedReworkCount(report: LensBoardOutcome | undefined): number | und
   ).length;
 }
 
+/** A no-code turn has no successor to report. Strip a stale account before drafting so
+ *  the report seat cannot describe an earlier round as if it belonged to this one. */
+function withoutSuccessorAccount(packet: DeltaPacket): DeltaPacket {
+  const { successorAccount, ...withoutAccount } = packet;
+  return successorAccount === undefined ? packet : withoutAccount;
+}
+
+/** BoardMeta is generation-scoped, while reports account for one specific round. Reusing
+ *  an existing generation may restore its lens boards, but never its prior report. */
+function withoutRoundReport(result: LensPipelineResult): LensPipelineResult {
+  const { report, ...withoutReport } = result;
+  return report === undefined ? result : withoutReport;
+}
+
 /** The drafters' own failure reasons, for the terminal event a board-less round emits. */
 function failureReasons(pipeline: LensPipelineResult): string {
   const reasons = [pipeline.report, ...pipeline.boards].flatMap((outcome) =>
@@ -241,11 +264,11 @@ function failureReasons(pipeline: LensPipelineResult): string {
 
 // ── The round call ──
 
-/** The dispatched work's return: the commit range the workers produced, and the
- *  patchset it landed (absent if nothing landed — then the round re-reports). */
+/** The regeneration handoff: the worker's observed commit range plus the recaptured
+ *  patchset when checkpoint diff/path evidence proved the tree changed. */
 export interface WorkerReturn {
   readonly commitRange: { readonly from: string; readonly to: string };
-  /** The patchset the worker commits produced; absent if the code did not move. */
+  /** The activated post-worker patchset; absent when the checkpoint was empty. */
   readonly patchsetId?: string;
 }
 
@@ -266,10 +289,23 @@ export interface RoundInput {
   readonly previousGeneration?: Generation;
   /** Thread ids of the asks this round dispatched (pinned into the `RoundRecord`). */
   readonly asksDispatched: readonly string[];
+  /** Stable identity of the exact staged-ask occurrence this regeneration completes. */
+  readonly dispatchId?: string;
+  /** Patchset the dispatched work order was built from. */
+  readonly sourcePatchsetId?: string;
+  /** The exact staged occurrences eligible for successful cleanup. */
+  readonly askOccurrences?: readonly AskOccurrence[];
+  /** Exact durable asks and finding overlays for a real reviewer-dispatched round. */
+  readonly round?: RoundDraftContext;
+  /** Re-read the reviewer overlay at the exact Flagged composition boundary. */
+  readonly readFindingDispositions?: LensPipelineDeps["readFindingDispositions"];
+  /** Persist reviewer-owned finding reattachments before Flagged is written. */
+  readonly persistFindingResolutions?: LensPipelineDeps["persistFindingResolutions"];
   /** Run the dispatched work WATCHED LIVE — the injected worker turn (a coding-agent
    *  loop upstream); this runtime owns serialization + recording, not the exec. */
   readonly runWorkers: () => Promise<WorkerReturn>;
-  /** The round delta packet (carries `successorAccount`, so the pipeline drafts as a round). */
+  /** The pinned packet over the current patchset. A landed round carries the new
+   *  `successorAccount`; the no-code boundary removes any stale prior account. */
   readonly deltaPacket: DeltaPacket;
   readonly hunks: readonly LintHunk[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
@@ -308,6 +344,17 @@ export interface RoundOutcome {
   readonly pipeline: LensPipelineResult;
 }
 
+/** A dispatched coding turn whose durable checkpoint proved the tree did not change. */
+export interface UnchangedRoundInput {
+  readonly session: SessionModel;
+  readonly asksDispatched: readonly string[];
+  readonly dispatchId?: string;
+  readonly sourcePatchsetId?: string;
+  readonly askOccurrences?: readonly AskOccurrence[];
+  readonly workerCommitRange: WorkerReturn["commitRange"];
+  readonly onProgress?: (event: RoundEvent) => void;
+}
+
 // ── The composition-root factory (the swarm/scout precedent) ──
 
 export interface RoundsRuntimeDeps {
@@ -327,10 +374,9 @@ export interface RoundsRuntimeDeps {
    *  idempotency read below can find it (B09 F1). */
   readonly persistBoardMeta?: (repoRoot: string, meta: PersistedBoardMeta) => void | Promise<void>;
   /** The durable idempotency read (B09 F1): the board-meta already on disk for a
-   *  (session, generation). Non-empty ⇒ that generation already drafted its boards,
-   *  so this runtime reconstructs from the evidence instead of re-minting/re-drafting
-   *  — the crash-boundary truth the in-memory guard cannot survive a restart to carry.
-   *  Absent ⇒ only the in-memory guard dedups (same-process re-entry, no restart proof). */
+   *  (session, generation). Together with the persisted generation's lens-board ids and
+   *  honest absences, this distinguishes a complete draft from a partial crash. Absent ⇒
+   *  only the in-memory guard dedups (same-process re-entry, no restart proof). */
   readonly loadDraftedBoards?: (
     repoRoot: string,
     sessionId: string,
@@ -343,9 +389,7 @@ export interface RoundsRuntimeDeps {
   readonly composeTurn?: (
     repoRoot: string,
   ) => ((prompt: string) => Promise<string> | string) | undefined;
-  /** The board-generation id minter, derived from the landed patchset so re-drafting
-   *  the same patchset shares a key and the start guard dedups. Defaults to the protocol's
-   *  own `generationIdForPatchset` — the spelling the client reads boards by. */
+  /** The initial generation id minter. Returned rounds add durable dispatch identity. */
   readonly newGenerationId?: (patchsetId: string) => string;
   /** Persist a minted generation durably (C15 2.1) — called for the live successor (with
    *  its lens board ids recorded) and, when the code moved, the frozen prior. Absent ⇒
@@ -367,9 +411,8 @@ export interface RoundsRuntimeDeps {
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
  *  handed to the workers, serialized per session (B11 cluster 4). Lighter than a full
- *  `RoundInput`: the dispatch runs the coding-agent turn over the composed work-order; the
- *  board regeneration + `RoundRecord` are `runRound`'s (invoked once its lens-pipeline
- *  collation context is wired — a follow-on, kept out of the dispatch path). */
+ *  `RoundInput`: this step runs and durably checkpoints the coding turn; the composition
+ *  root then supplies the recaptured collation to `runRound` for regeneration. */
 /** What a dispatched round produced — the checkpoint-measured change and the honest
  *  outcome classification, the substance the runtime pins into a `RoundRecord`. The
  *  diff + changed paths come from `GitCheckpointStore` (via the injected worker turn),
@@ -387,13 +430,19 @@ export interface RoundDispatchInput {
   readonly session: SessionModel;
   /** The composed work-order the dispatched asks folded into — the workers' input. */
   readonly workOrder: ComposedHandoffBundle;
+  /** Stable identity of this exact set of staged-ask occurrences. */
+  readonly dispatchId: string;
+  /** Patchset the work order was built from. */
+  readonly sourcePatchsetId: string;
+  /** Exact staged occurrences this dispatch may consume after successful regeneration. */
+  readonly askOccurrences: readonly AskOccurrence[];
   /** Run the composed work-order WATCHED LIVE (the injected coding-agent turn upstream);
    *  the runtime owns the per-session serialization + recording, never the exec. Returns
    *  the round's result so `dispatchRound` records a `RoundRecord`; a `void` return records
    *  nothing (the serializer-only path used where no round result exists). */
-  // biome-ignore lint/suspicious/noConfusingVoidType: `void` is deliberate here — the union
   // accepts a worker callback that legitimately returns nothing (the record-nothing path);
   // `undefined` would reject a `Promise<void>`-returning callback.
+  // biome-ignore lint/suspicious/noConfusingVoidType: `void` is deliberate here — the union
   readonly runWorkers: (workOrder: ComposedHandoffBundle) => Promise<DispatchRoundResult | void>;
   /** The live round-progress sink — the SAME channel `runRound` reports on. Present ⇒ a
    *  dispatch that dies emits a terminal `failed`; absent ⇒ no live channel, same round. */
@@ -405,9 +454,11 @@ export interface RoundsRuntime {
   runRound(input: RoundInput): Promise<RoundOutcome>;
   /** Dispatch a round's composed work-order, serialized per session behind any round already
    *  in flight for it — one round per session, the SAME serializer `runRound` uses (no second
-   *  lock). Same-asks idempotency is the dispatch-command handler's (it coalesces repeats
-   *  before they reach here), so the workers run once per distinct work-order. */
+   *  lock). The handler coalesces same-process repeats before they reach this method; the
+   *  completed placeholder is the later cross-restart commit point. */
   dispatchRound(input: RoundDispatchInput): Promise<void>;
+  /** Settle an empty-checkpoint dispatch without loading any board-drafting context. */
+  finalizeUnchanged(input: UnchangedRoundInput): Promise<RoundRecord>;
   /** The session's rounds ledger — every `RoundRecord` this runtime recorded, in order. */
   ledger(sessionId: string): readonly RoundRecord[];
   /** Read a minted generation by id (C15 2.3) — the ledger's `GenerationSwitcher` drills back
@@ -417,9 +468,8 @@ export interface RoundsRuntime {
 }
 
 export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
-  // The default is the PROTOCOL's, not a local literal: the client addresses the live
-  // boards by spelling the same id (`generationIdForPatchset(review.activePatchsetId)`),
-  // and `board.read` matches it exactly, so the two spellings have to be one function.
+  // Initial drafting has no round row. Returned rounds use the dispatch-derived visit id;
+  // the durable ledger then tells clients which generation is current after restart.
   const newGenerationId = deps.newGenerationId ?? generationIdForPatchset;
   const guard = new PipelineStartGuard();
   const ledger = new Map<string, RoundRecord[]>();
@@ -440,48 +490,142 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     return run;
   }
 
-  /** Reconstruct the drafting result from durable BoardMeta (B09 F1): a fresh
-   *  runtime after a restart never re-mints or re-drafts an already-drafted
-   *  (session, generation) — it rebuilds the board ids + per-board blemish metadata
-   *  from the evidence on disk. The report board drafts FIRST, so any non-empty
-   *  evidence includes it.
+  function finalizeUnchanged(input: UnchangedRoundInput): RoundRecord {
+    const completedPlaceholder = deps
+      .readRounds?.(input.session.id)
+      .findLast(
+        (record) =>
+          record.boardGeneration === ROUND_NO_REGEN &&
+          record.outcome === "completed" &&
+          record.regeneration === "pending" &&
+          (input.dispatchId === undefined
+            ? record.dispatchId === undefined &&
+              record.workerCommitRange.from === input.workerCommitRange.from &&
+              record.workerCommitRange.to === input.workerCommitRange.to
+            : record.dispatchId === input.dispatchId),
+      );
+    const record: RoundRecord = {
+      ...(completedPlaceholder ?? {
+        asksDispatched: [...input.asksDispatched],
+        ...(input.dispatchId === undefined ? {} : { dispatchId: input.dispatchId }),
+        ...(input.sourcePatchsetId === undefined
+          ? {}
+          : { sourcePatchsetId: input.sourcePatchsetId }),
+        ...(input.askOccurrences === undefined
+          ? {}
+          : { askOccurrences: [...input.askOccurrences] }),
+        workerCommitRange: { ...input.workerCommitRange },
+        boardGeneration: ROUND_NO_REGEN,
+        reportBoard: ROUND_NO_REGEN,
+        outcome: "completed",
+      }),
+      regeneration: "not-needed",
+    };
+    const records = ledger.get(input.session.id) ?? [];
+    const pendingIndex = records.findLastIndex(
+      (candidate) =>
+        candidate.boardGeneration === ROUND_NO_REGEN &&
+        candidate.outcome === "completed" &&
+        candidate.dispatchId !== undefined &&
+        candidate.dispatchId === record.dispatchId,
+    );
+    if (pendingIndex >= 0) records[pendingIndex] = record;
+    else records.push(record);
+    ledger.set(input.session.id, records);
+    deps.recordRound?.(input.session.id, record);
+    input.onProgress?.({ type: "unchanged" });
+    return record;
+  }
+
+  /** Does the Generation's state have enough exact durable evidence to reconstruct?
+   * An active attempt must settle all five slots. A settled Generation has no attempt map;
+   * its named boards plus absences are the honest partial-success result. */
+  function hasCompleteLensEvidence(generation: Generation, records: readonly BoardMeta[]): boolean {
+    if (generation.draftingBoardIds === undefined) {
+      const namedLenses = LENS_KINDS.filter((lens) => generation.lensBoards[lens] !== undefined);
+      return (
+        namedLenses.length > 0 &&
+        namedLenses.every((lens) => {
+          const boardId = generation.lensBoards[lens];
+          return records.some((record) => record.lens === lens && record.boardId === boardId);
+        })
+      );
+    }
+    return LENS_KINDS.every((lens) => {
+      if (generation.absentLenses?.[lens] !== undefined) return true;
+      const boardId = generation.draftingBoardIds?.[lens];
+      return (
+        boardId !== undefined &&
+        records.some((record) => record.lens === lens && record.boardId === boardId)
+      );
+    });
+  }
+
+  /** Reconstruct the drafting result from complete durable BoardMeta (B09 F1): a fresh
+   *  runtime after a restart rebuilds the board ids + per-board blemish metadata from the
+   *  exact records its Generation names. A recovery redraft can leave metadata from its
+   *  partial predecessor on disk; those unreferenced records are deliberately ignored.
    *
    *  COVERAGE IS OMITTED, not emptied. Cross-lens coverage is computed from the drafted
    *  boards (which hunks each one teaches) and the boards are not in the durable meta —
    *  so a restored round CANNOT know its coverage picture. Reporting `[]` here said "this
    *  round covered every hunk", which is a claim the reconstruction never verified; the
    *  honest answer is that it cannot say. */
-  function reconstructFromMeta(records: readonly BoardMeta[]): LensPipelineResult {
-    const outcomes: LensBoardOutcome[] = records.map((m) => ({
-      lens: m.lens,
-      boardId: m.boardId,
-      omissions: m.omissions,
-      blemishes: m.blemishes,
-      immutability: m.immutability,
-    }));
-    const report = outcomes.find((o) => o.lens === "report");
+  function reconstructFromMeta(
+    records: readonly BoardMeta[],
+    generation: Generation,
+  ): LensPipelineResult {
+    const byBoardId = new Map(records.map((record) => [record.boardId, record]));
+    const outcomes: LensBoardOutcome[] = [];
+    for (const lens of LENS_KINDS) {
+      const absence = generation.absentLenses?.[lens];
+      if (absence !== undefined) {
+        outcomes.push({ lens, omissions: [], blemishes: [], immutability: [], absence });
+        continue;
+      }
+      const boardId = generation.lensBoards[lens] ?? generation.draftingBoardIds?.[lens];
+      const record = boardId === undefined ? undefined : byBoardId.get(boardId);
+      if (record?.lens === lens) {
+        outcomes.push({
+          lens,
+          boardId: record.boardId,
+          omissions: record.omissions,
+          blemishes: record.blemishes,
+          immutability: record.immutability,
+        });
+      }
+    }
+    const reports = records.filter((record) => record.lens === "report");
+    const ownedReportMeta =
+      generation.draftingReportBoardId === undefined
+        ? reports.length === 1
+          ? reports[0]
+          : undefined
+        : byBoardId.get(generation.draftingReportBoardId);
+    const reportMeta = ownedReportMeta?.lens === "report" ? ownedReportMeta : undefined;
+    const report: LensBoardOutcome | undefined =
+      reportMeta === undefined
+        ? undefined
+        : {
+            lens: "report",
+            boardId: reportMeta.boardId,
+            omissions: reportMeta.omissions,
+            blemishes: reportMeta.blemishes,
+            immutability: reportMeta.immutability,
+          };
     return {
-      boards: outcomes.filter((o) => o.lens !== "report"),
+      boards: outcomes,
       ...(report === undefined ? {} : { report }),
     };
   }
 
-  /** Pre-mint the round's boards, resolve ports, and run the pipeline once. Lives
-   *  inside the start guard so a re-entry for the same generation never re-mints or
-   *  re-drafts — it returns the first run's result. */
+  /** Pre-mint the round's boards, resolve ports, and run the pipeline once. New generations
+   *  enter through the start guard; partial durable generations call this directly because
+   *  the guard may already hold their settled incomplete result. */
   async function draft(
     input: RoundInput,
     boardGeneration: Generation,
-  ): Promise<LensPipelineResult> {
-    if (input.designArtifacts === null) {
-      await deps.persistGeneration?.({
-        ...boardGeneration,
-        absentLenses: {
-          ...boardGeneration.absentLenses,
-          design: "no-material",
-        },
-      });
-    }
+  ): Promise<{ readonly generation: Generation; readonly pipeline: LensPipelineResult }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const boardIds = new Map<LintTarget, string>();
     for (const target of LINT_TARGETS) boardIds.set(target, await boards.createRennetBoard());
@@ -490,6 +634,23 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (id === undefined) throw new Error(`rounds: no board minted for ${lens}`);
       return id;
     };
+    const draftingBoardIds = Object.fromEntries(
+      LENS_KINDS.map((lens) => [lens, boardIdFor(lens)]),
+    ) as Partial<Record<LensKind, string>>;
+    const generationWithoutAbsences = { ...boardGeneration };
+    delete generationWithoutAbsences.absentLenses;
+    const attemptGeneration: Generation = {
+      ...generationWithoutAbsences,
+      lensBoards: {},
+      draftingBoardIds,
+      draftingReportBoardId: boardIdFor("report"),
+      ...(input.designArtifacts === null
+        ? { absentLenses: { design: "no-material" as const } }
+        : {}),
+    };
+    // Attempt identity lands before any BoardMeta. A retry replaces these ids first, so
+    // partial rows from different attempts can never masquerade as one complete draft.
+    await deps.persistGeneration?.(attemptGeneration);
 
     const [claudePort, codexExecutor] = await Promise.all([
       deps.resolveClaudePort(input.repoRoot),
@@ -527,7 +688,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             lanes.arrived(event.lens, event.carried);
           };
     const earlyAbsentLenses: Partial<Record<LensKind, "no-material">> = {
-      ...boardGeneration.absentLenses,
+      ...attemptGeneration.absentLenses,
     };
     const onLensAbsence =
       lanes === undefined && deps.persistGeneration === undefined
@@ -539,7 +700,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             );
             earlyAbsentLenses[lens] = reason;
             await deps.persistGeneration?.({
-              ...boardGeneration,
+              ...attemptGeneration,
               absentLenses: { ...earlyAbsentLenses },
             });
           };
@@ -549,6 +710,21 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       codexExecutor,
       repoRoot: input.repoRoot,
       deltaPacket: input.deltaPacket,
+      currentGeneration: attemptGeneration.id,
+      ...(input.round === undefined
+        ? {}
+        : {
+            round: {
+              ...input.round,
+              previousFlaggedBoardId: input.previousGeneration?.lensBoards.flagged,
+            },
+          }),
+      ...(input.readFindingDispositions === undefined
+        ? {}
+        : { readFindingDispositions: input.readFindingDispositions }),
+      ...(input.persistFindingResolutions === undefined
+        ? {}
+        : { persistFindingResolutions: input.persistFindingResolutions }),
       hunks: input.hunks,
       lintContextFor: input.lintContextFor,
       ...(input.designArtifacts === undefined
@@ -581,7 +757,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               return persistBoardMeta?.(input.repoRoot, {
                 ...meta,
                 session: input.session.id,
-                generation: boardGeneration.id,
+                generation: attemptGeneration.id,
               });
             },
           }),
@@ -599,44 +775,98 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (outcome.absence !== undefined) continue;
       lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
     }
-    return pipeline;
+    return { generation: attemptGeneration, pipeline };
   }
 
   async function runOnce(input: RoundInput): Promise<RoundOutcome> {
     // Run the dispatched work watched live, then regenerate over what it produced.
     const worked = await input.runWorkers();
     const landed = worked.patchsetId !== undefined;
-    // Code moved ⇒ mint a successor generation; else re-report against the existing
-    // one. F8: two rounds that land NOTHING share `previousGeneration.id`, so they
-    // share the (session, generation) key — the second's draft dedups to the first's
-    // boards (the in-memory guard, or the durable reconstruction below after a
-    // restart). Intended: no code moved ⇒ no new generation ⇒ the same boards re-reported.
+    // A completed coding turn with no tree change has no new generation to reveal. The
+    // dispatch path already fsynced its ROUND_NO_REGEN placeholder; retain that commit
+    // point and terminate without reconstructing old boards or filing them as this round's
+    // output. Askless first-generation drafting continues below unchanged.
+    if (!landed && input.asksDispatched.length > 0) {
+      const record = finalizeUnchanged({
+        session: input.session,
+        asksDispatched: input.asksDispatched,
+        ...(input.dispatchId === undefined ? {} : { dispatchId: input.dispatchId }),
+        ...(input.sourcePatchsetId === undefined
+          ? {}
+          : { sourcePatchsetId: input.sourcePatchsetId }),
+        ...(input.askOccurrences === undefined ? {} : { askOccurrences: input.askOccurrences }),
+        workerCommitRange: worked.commitRange,
+        ...(input.onProgress === undefined ? {} : { onProgress: input.onProgress }),
+      });
+      return {
+        record,
+        boardGeneration:
+          input.previousGeneration ??
+          mintGeneration(
+            newGenerationId(input.deltaPacket.patchset.id),
+            input.deltaPacket.patchset.id,
+          ),
+        pipeline: { boards: [] },
+      };
+    }
+    // Code moved ⇒ mint a successor generation; else retain the existing one. F8: two
+    // rounds that land NOTHING share `previousGeneration.id`, so they share the
+    // (session, generation) key — the second reuses the first's lens boards (the
+    // in-memory guard, or the durable reconstruction below after a restart). Reports
+    // are round-scoped, not generation-scoped, and are stripped below on this path.
     // Nothing landed and no prior generation ⇒ this is the session's FIRST generation over
     // the patchset the drafters are reading; mint it from that patchset rather than from a
     // predecessor that does not exist.
-    const boardGeneration = landed
-      ? (deps.loadGeneration?.(newGenerationId(worked.patchsetId as string)) ??
-        mintGeneration(newGenerationId(worked.patchsetId as string), worked.patchsetId as string))
-      : (input.previousGeneration ??
-        mintGeneration(
-          newGenerationId(input.deltaPacket.patchset.id),
-          input.deltaPacket.patchset.id,
-        ));
+    const landedPatchsetId = worked.patchsetId;
+    const landedGenerationId =
+      landedPatchsetId === undefined
+        ? undefined
+        : input.dispatchId === undefined
+          ? newGenerationId(landedPatchsetId)
+          : generationIdForDispatch(landedPatchsetId, input.dispatchId);
+    const boardGeneration =
+      landedPatchsetId !== undefined && landedGenerationId !== undefined
+        ? (deps.loadGeneration?.(landedGenerationId) ??
+          mintGeneration(landedGenerationId, landedPatchsetId))
+        : (input.previousGeneration ??
+          mintGeneration(
+            newGenerationId(input.deltaPacket.patchset.id),
+            input.deltaPacket.patchset.id,
+          ));
 
     // Durable idempotency across the crash boundary (F1): a fresh runtime after a
-    // restart has an EMPTY in-memory guard, so the guard alone would re-draft (12
-    // boards). The truth is the BoardMeta already on disk for this (session,
-    // generation): if it exists, reconstruct the drafted boards from it and never
-    // re-mint/re-draft. The guard stays the same-process fast path; this durable
-    // check is what survives a restart. (Absent read seam ⇒ guard-only, no restart proof.)
+    // restart has an EMPTY in-memory guard. BoardMeta presence alone is insufficient —
+    // a crash or one failed lens can leave a non-empty partial set. Reconstruct only when
+    // all five generation slots are backed by their exact meta or an honest absence.
+    // Partial durable state bypasses the guard (which may hold a settled incomplete run)
+    // and redrafts; the new Generation ids become the authority over stale partial meta.
     const durableEvidence =
       deps.loadDraftedBoards?.(input.repoRoot, input.session.id, boardGeneration.id) ?? [];
-    const pipeline =
-      durableEvidence.length > 0
-        ? reconstructFromMeta(durableEvidence)
+    const draftingInput = landed
+      ? input
+      : { ...input, deltaPacket: withoutSuccessorAccount(input.deltaPacket) };
+    const completeEvidence = hasCompleteLensEvidence(boardGeneration, durableEvidence);
+    const hasPartialDurableState =
+      durableEvidence.length > 0 ||
+      Object.keys(boardGeneration.lensBoards).length > 0 ||
+      Object.keys(boardGeneration.draftingBoardIds ?? {}).length > 0 ||
+      Object.keys(boardGeneration.absentLenses ?? {}).length > 0;
+    const restoredOrDrafted = completeEvidence
+      ? {
+          generation: boardGeneration,
+          pipeline: reconstructFromMeta(durableEvidence, boardGeneration),
+        }
+      : hasPartialDurableState
+        ? await draft(draftingInput, boardGeneration)
         : await guard.start(input.session.id, boardGeneration.id, () =>
-            draft(input, boardGeneration),
+            draft(draftingInput, boardGeneration),
           );
+    // Durable BoardMeta is keyed only by generation, so evidence for an existing
+    // generation may contain the report from the round that minted it. A no-code round
+    // can reuse those lens boards, but that old report is not evidence about this turn.
+    const pipeline = landed
+      ? restoredOrDrafted.pipeline
+      : withoutRoundReport(restoredOrDrafted.pipeline);
 
     // The round-report seat's board, or the `ROUND_NO_REGEN` marker when the seat wrote
     // nothing. Every board id is PRE-MINTED before the drafters run, so recording the
@@ -644,11 +874,14 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // pointing at a document nobody wrote. Honest absence is the protocol's own contract
     // for this field ("`ROUND_NO_REGEN` when the round drafted no report board").
     const reportBoard = pipeline.report?.boardId ?? ROUND_NO_REGEN;
-    // The boards this round actually WROTE (report included) — the difference between a
-    // regeneration and a round that only reports its own failures.
-    const drafted = [pipeline.report, ...pipeline.boards].filter(
-      (outcome) => outcome?.boardId !== undefined,
-    );
+    // A report is an account of the round, not a regenerated review board. Filing a real
+    // generation when all five lenses failed would turn a failed retry into durable success
+    // and consume its asks. Keep the completed placeholder pending until at least one lens
+    // board exists; the next dispatch resumes regeneration without rerunning the worker.
+    const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
+    if (draftedLensBoards.length === 0) {
+      throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
+    }
     // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
     // prior generation exists, it freezes and its id is the earlier generation the ledger's
     // switcher drills back to. Absent on a no-move round and on a first generation —
@@ -660,8 +893,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const reworkCount = reportedReworkCount(pipeline.report);
     const record: RoundRecord = {
       asksDispatched: [...input.asksDispatched],
+      ...(input.dispatchId === undefined ? {} : { dispatchId: input.dispatchId }),
+      ...(input.sourcePatchsetId === undefined ? {} : { sourcePatchsetId: input.sourcePatchsetId }),
+      ...(input.askOccurrences === undefined ? {} : { askOccurrences: [...input.askOccurrences] }),
       workerCommitRange: { from: worked.commitRange.from, to: worked.commitRange.to },
       ...(landed ? { mintedPatchsetGeneration: boardGeneration.id } : {}),
+      ...(landed ? { resultPatchsetId: boardGeneration.patchsetId } : {}),
       boardGeneration: boardGeneration.id,
       reportBoard,
       ...(reworkCount === undefined ? {} : { reworkCount }),
@@ -672,7 +909,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // crash between the two writes must leave a missing row (honest: the round is not in
     // the ledger yet) rather than a row whose generation was never written — a drill-down
     // into nothing. There is no transaction across two stores; ordering is the guarantee.
-    const liveSuccessor = withLensBoards(boardGeneration, pipeline);
+    const liveSuccessor = withLensBoards(restoredOrDrafted.generation, pipeline);
     await deps.persistGeneration?.(liveSuccessor);
     const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
@@ -699,18 +936,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // New Boards** on. Emitted with the generation the reveal lands on, so the control
     // appears at real composition — never as a disabled button waiting for a flag.
     //
-    // A round where EVERY drafter failed composed nothing: there are no new boards to
-    // reveal, so it terminates on `failed` carrying the drafters' own reasons. Announcing
-    // "composed" over an empty generation would put a reveal control in front of a
-    // regeneration that does not exist.
-    if (drafted.length > 0) {
-      input.onProgress?.({ type: "composed", generation: liveSuccessor.id });
-    } else {
-      input.onProgress?.({
-        type: "failed",
-        reason: `The regeneration drafted no boards: ${failureReasons(pipeline)}`,
-      });
-    }
+    input.onProgress?.({ type: "composed", generation: liveSuccessor.id });
 
     return {
       record,
@@ -747,6 +973,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     runRound(input: RoundInput): Promise<RoundOutcome> {
       return enqueue(input.session.id, () => reported(input.onProgress, () => runOnce(input)));
     },
+    finalizeUnchanged(input: UnchangedRoundInput): Promise<RoundRecord> {
+      return enqueue(input.session.id, () =>
+        reported(input.onProgress, async () => finalizeUnchanged(input)),
+      );
+    },
     dispatchRound(input: RoundDispatchInput): Promise<void> {
       return enqueue(input.session.id, () =>
         reported(input.onProgress, async () => {
@@ -760,7 +991,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           // separate workstream). The asks are the work-order's own ask ids; the diff +
           // changed paths + commit range are the checkpoint-measured truth from the turn.
           const record: RoundRecord = {
-            asksDispatched: input.workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.id)),
+            asksDispatched: input.askOccurrences.map((occurrence) => occurrence.id),
+            dispatchId: input.dispatchId,
+            sourcePatchsetId: input.sourcePatchsetId,
+            askOccurrences: [...input.askOccurrences],
             workerCommitRange: {
               from: result.workerCommitRange.from,
               to: result.workerCommitRange.to,
@@ -768,6 +1002,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             boardGeneration: ROUND_NO_REGEN,
             reportBoard: ROUND_NO_REGEN,
             outcome: result.outcome,
+            ...(result.outcome === "completed" ? { regeneration: "pending" as const } : {}),
             diff: result.diff,
             changedPaths: [...result.changedPaths],
           };

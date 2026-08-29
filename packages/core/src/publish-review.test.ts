@@ -1,6 +1,7 @@
-import type { Disposition } from "@rennet/protocol";
+import type { AskProjection, Disposition, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { ForgeCapabilities } from "./forge-port";
+import { buildHandoffBundle } from "./handoff-loop";
 import {
   buildForgeReviewPost,
   buildReviewMarker,
@@ -10,9 +11,12 @@ import {
   extractMarker,
   type ForgeReviewTarget,
   forgeTargetKey,
+  handoffDispositionsFromProjection,
   markerComment,
   type ReviewCommentInput,
+  reviewBodyNotesFromProjection,
   reviewCommentsFromDispositions,
+  reviewCommentsFromProjection,
 } from "./publish-review";
 
 const TARGET: ForgeReviewTarget = {
@@ -113,6 +117,293 @@ describe("reviewCommentsFromDispositions (issue #382 M2) — the daemon's one-so
 
   it("empty dispositions compose an empty (honest) review, not a throw", () => {
     expect(reviewCommentsFromDispositions([])).toEqual([]);
+  });
+});
+
+describe("handoffDispositionsFromProjection", () => {
+  const renamedFile: PatchFile = {
+    path: "src/current.ts",
+    previousPath: "src/previous.ts",
+    status: "renamed",
+    additions: 1,
+    deletions: 1,
+    binary: false,
+    patch: "@@ -8,3 +8,3 @@\n-old\n+new",
+  };
+  const activePatchset: Patchset = {
+    id: "patchset-active",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    repository: {
+      id: "repo",
+      root: "/repo",
+      commonDir: "/repo/.git",
+      baseRef: "origin/main",
+      baseOid: "base",
+      headOid: "head",
+    },
+    files: [renamedFile],
+    rawDiff: renamedFile.patch,
+    byteLength: renamedFile.patch.length,
+    truncated: false,
+  };
+
+  it("carries durable finding identity and orders same-line asks by ask id", () => {
+    const finding = {
+      generation: "generation-2",
+      boardId: "board:flagged:generation-2",
+      findingId: "finding-7",
+    };
+    const projection: AskProjection = {
+      stagedAsks: {
+        late: {
+          id: "ask-z",
+          anchor: "src/auth.ts:12",
+          type: "comment",
+          body: "second",
+          finding,
+        },
+        early: {
+          id: "ask-a",
+          anchor: "src/auth.ts:12",
+          type: "comment",
+          body: "first",
+        },
+      },
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+
+    expect(handoffDispositionsFromProjection(projection, activePatchset)).toEqual([
+      {
+        id: "ask-a",
+        path: "src/auth.ts",
+        type: "comment",
+        body: "first",
+        span: { startLine: 12 },
+        side: "additions",
+      },
+      {
+        id: "ask-z",
+        path: "src/auth.ts",
+        type: "comment",
+        body: "second",
+        span: { startLine: 12 },
+        side: "additions",
+        finding,
+      },
+    ]);
+  });
+
+  it("uses the matching frozen CodeRef, maps a renamed base path, and preserves its full span", () => {
+    const projection: AskProjection = {
+      stagedAsks: {
+        finding: {
+          id: "finding",
+          anchor: "src/previous.ts:999",
+          type: "request-change",
+          body: "preserve the old-side contract",
+          side: "RIGHT",
+          codeRef: {
+            patchsetId: activePatchset.id,
+            path: "src/previous.ts",
+            side: "base",
+            startLine: 8,
+            endLine: 10,
+          },
+        },
+      },
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+
+    expect(handoffDispositionsFromProjection(projection, activePatchset)).toEqual([
+      {
+        id: "finding",
+        path: "src/current.ts",
+        type: "request-change",
+        body: "preserve the old-side contract",
+        span: { startLine: 8, endLine: 10 },
+        side: "deletions",
+      },
+    ]);
+  });
+
+  it("does not reinterpret a frozen CodeRef from another patchset through its legacy anchor", () => {
+    const projection: AskProjection = {
+      stagedAsks: {
+        stale: {
+          id: "stale",
+          anchor: "src/current.ts:999",
+          type: "request-change",
+          body: "revisit this concern",
+          side: "RIGHT",
+          codeRef: {
+            patchsetId: "patchset-frozen",
+            path: "src/previous.ts",
+            side: "base",
+            startLine: 8,
+            endLine: 10,
+          },
+        },
+      },
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+
+    const dispositions = handoffDispositionsFromProjection(projection, activePatchset);
+    expect(dispositions).toEqual([
+      {
+        id: "stale",
+        path: "src/previous.ts",
+        type: "request-change",
+        body: "revisit this concern",
+      },
+    ]);
+    expect(
+      buildHandoffBundle({ reviewId: "review", patchset: activePatchset, dispositions }).tasks,
+    ).toEqual([
+      {
+        id: "stale",
+        path: "src/previous.ts",
+        type: "request-change",
+        instruction: "revisit this concern",
+        context: "",
+      },
+    ]);
+  });
+
+  it("normalizes a matching renamed-base citation for publication", () => {
+    const projection: AskProjection = {
+      stagedAsks: {
+        finding: {
+          id: "finding",
+          anchor: "src/previous.ts:999",
+          type: "request-change",
+          body: "preserve the base-side contract",
+          side: "RIGHT",
+          codeRef: {
+            patchsetId: activePatchset.id,
+            path: "src/previous.ts",
+            side: "base",
+            startLine: 8,
+            endLine: 10,
+          },
+        },
+      },
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+
+    expect(reviewCommentsFromProjection(projection, activePatchset)).toEqual([
+      {
+        path: "src/current.ts",
+        line: 8,
+        side: "LEFT",
+        type: "request-change",
+        body: "preserve the base-side contract",
+      },
+    ]);
+    expect(reviewBodyNotesFromProjection(projection, activePatchset)).toEqual([]);
+  });
+
+  it("routes a frozen citation from another patchset into the review body exactly once", () => {
+    const projection: AskProjection = {
+      stagedAsks: {
+        frozen: {
+          id: "frozen",
+          anchor: "src/current.ts:999",
+          type: "request-change",
+          body: "revisit this concern",
+          codeRef: {
+            patchsetId: "patchset-frozen",
+            path: "src/previous.ts",
+            side: "base",
+            startLine: 8,
+            endLine: 10,
+          },
+        },
+      },
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+
+    expect(reviewCommentsFromProjection(projection, activePatchset)).toEqual([]);
+    expect(reviewBodyNotesFromProjection(projection, activePatchset)).toEqual([
+      {
+        type: "request-change",
+        body: "revisit this concern",
+        anchor: "src/current.ts:999",
+      },
+    ]);
+  });
+
+  it("does not anchor a base ref that maps to more than one active file", () => {
+    const ambiguousPatchset: Patchset = {
+      ...activePatchset,
+      files: [
+        {
+          path: "src/shared.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          binary: false,
+          patch: renamedFile.patch,
+        },
+        {
+          ...renamedFile,
+          path: "src/current.ts",
+          previousPath: "src/shared.ts",
+        },
+      ],
+    };
+    const projection: AskProjection = {
+      stagedAsks: {
+        ambiguous: {
+          id: "ambiguous",
+          anchor: "src/current.ts:999",
+          type: "request-change",
+          body: "resolve this without guessing",
+          codeRef: {
+            patchsetId: ambiguousPatchset.id,
+            path: "src/shared.ts",
+            side: "base",
+            startLine: 8,
+            endLine: 10,
+          },
+        },
+      },
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    };
+
+    expect(handoffDispositionsFromProjection(projection, ambiguousPatchset)).toEqual([
+      {
+        id: "ambiguous",
+        path: "src/shared.ts",
+        type: "request-change",
+        body: "resolve this without guessing",
+      },
+    ]);
+    expect(reviewCommentsFromProjection(projection, ambiguousPatchset)).toEqual([]);
+    expect(reviewBodyNotesFromProjection(projection, ambiguousPatchset)).toHaveLength(1);
   });
 });
 

@@ -22,6 +22,8 @@
 // exactly reversible (object equality ignores key order, an array's does not).
 
 import { z } from "zod";
+import { FindingRefSchema } from "../board/schema";
+import { codeRefSchema } from "../delta/citations";
 import { dispositionTypeSchema, forgeReviewEventSchema } from "../wire";
 
 const id = z.string().min(1);
@@ -51,6 +53,10 @@ export const StagedAskSchema = z.object({
    * line`) is a ledgered follow-up (`ReviewCommentInput` models a single line today).
    */
   side: z.enum(["LEFT", "RIGHT"]).optional(),
+  /** The canonical captured position. `anchor` + `side` remain the legacy fallback. */
+  codeRef: codeRefSchema.optional(),
+  /** The immutable board finding that originated this ask, when applicable. */
+  finding: FindingRefSchema.optional(),
 });
 export type StagedAsk = z.infer<typeof StagedAskSchema>;
 
@@ -93,6 +99,13 @@ export type QuoteThread = z.infer<typeof QuoteThreadSchema>;
 export const VerdictOverrideSchema = forgeReviewEventSchema;
 export type VerdictOverride = z.infer<typeof VerdictOverrideSchema>;
 
+/** A reviewer-owned overlay on immutable finding bytes. */
+export const FindingDispositionSchema = z.object({
+  finding: FindingRefSchema,
+  disposition: z.literal("dismissed"),
+});
+export type FindingDisposition = z.infer<typeof FindingDispositionSchema>;
+
 /**
  * The projected ask state — the living set plus the retired ledger, folded from
  * the event log. Every collection is a Record keyed by identity (ask id, thread
@@ -103,6 +116,7 @@ export type VerdictOverride = z.infer<typeof VerdictOverrideSchema>;
  */
 export const AskProjectionSchema = z.object({
   stagedAsks: z.record(id, StagedAskSchema),
+  findingDispositions: z.record(z.string(), FindingDispositionSchema),
   lineComments: z.record(z.string().min(1), z.record(z.string(), z.string())),
   quoteThreads: z.record(id, QuoteThreadSchema),
   retired: z.record(id, RetiredEntrySchema),
@@ -119,6 +133,7 @@ export type AskProjection = z.infer<typeof AskProjectionSchema>;
 // just one more appended event:
 //
 //   stage        ↔ unstage            (add / plain remove)
+//   finding-dismiss ↔ finding-restore (board-attempt-scoped overlay / remove overlay)
 //   retire       ↔ restore            (withdraw-to-ledger / re-stage from ledger)
 //   edit         ↔ edit(prior body)   (self-inverse via prior value)
 //   quote-open   ↔ quote-close        (mint / drop a thread)
@@ -133,6 +148,8 @@ export type AskProjection = z.infer<typeof AskProjectionSchema>;
 const askEventBodyVariants = [
   z.object({ kind: z.literal("stage"), ask: StagedAskSchema }),
   z.object({ kind: z.literal("unstage"), id }),
+  z.object({ kind: z.literal("finding-dismiss"), finding: FindingRefSchema }),
+  z.object({ kind: z.literal("finding-restore"), finding: FindingRefSchema }),
   z.object({ kind: z.literal("edit"), id, body: z.string() }),
   z.object({ kind: z.literal("retire"), id, reason: z.string() }),
   z.object({ kind: z.literal("restore"), id }),

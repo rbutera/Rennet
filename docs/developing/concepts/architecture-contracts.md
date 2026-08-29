@@ -78,8 +78,10 @@ distinction is how the result was produced, not whether provenance is required.
 
 ## Generations, carry, and the successor account
 
-The boards for one review of one patchset are a **generation**. Within a
-generation the boards are live append-only logs: re-running a lens appends, and
+One visit to a review's boards over one patchset is a **generation**. The
+patchset id identifies immutable content; the generation id identifies the visit,
+so P0 → P1 → P0 produces two distinct P0 generations. Within a generation the
+boards are live append-only logs: re-running a lens appends, and
 board-native data on surviving element ids persists. When the code moves, the
 generation **freezes** immutable and a successor generation is minted against
 the successor patchset. Nothing is edited in place — append-then-freeze is the

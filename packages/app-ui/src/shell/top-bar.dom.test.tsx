@@ -7,6 +7,7 @@
 import type { LensBoard, LensKind, Project, Review } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
+import { findingAskId, findingRef } from "../board/finding-lifecycle";
 import { BridgeProvider } from "../data";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
@@ -23,6 +24,7 @@ import { TopBar } from "./top-bar";
 
 afterEach(() => {
   cleanup();
+  useRennetStore.getState().reviewActions.resetReview();
   useRennetStore.setState((s) => ({ ui: { ...s.ui, chatOpen: false, sidebarOpen: true } }));
 });
 
@@ -108,7 +110,7 @@ describe("session top-bar (C03 §4)", () => {
       lensHandlers,
     );
 
-    const flagged = await findByLabelText("Flagged");
+    const flagged = await findByLabelText("Flagged, 2 open");
     const rail = container.querySelector('[data-slot="lens-switcher"] [role="tablist"]');
     expect(
       [...(rail?.querySelectorAll("[data-lens]") ?? [])].map((tab) =>
@@ -146,6 +148,83 @@ describe("session top-bar (C03 §4)", () => {
 
     fireEvent.click(await findByLabelText("Sequence"));
     expect(history.history.at(-1)).toBe("/s/s2?lens=sequence");
+  });
+
+  it("derives the Flagged count from dismiss and request state, ahead of its delta pip", async () => {
+    const flagged = BOARDS_AT_LIVE.flagged;
+    if (!flagged) throw new Error("missing flagged fixture");
+    const flaggedWithDelta: LensBoard = {
+      ...flagged,
+      sections: flagged.sections.map((section, index) =>
+        index === 0 ? { ...section, delta: "new" } : section,
+      ),
+    };
+    const handlers: MemoryBridgeHandlers = {
+      ...lensHandlers,
+      "board.read": ({ generation, lens }) => ({
+        board:
+          generation !== LIVE_GENERATION
+            ? null
+            : lens === "flagged"
+              ? flaggedWithDelta
+              : (BOARDS_AT_LIVE[lens as LensKind] ?? null),
+      }),
+    };
+    const { container, findByLabelText } = mountTopBar("/s/s2", undefined, handlers);
+    const firstRef = findingRef(LIVE_GENERATION, flagged.boardId, "f1");
+    const secondRef = findingRef(LIVE_GENERATION, flagged.boardId, "f2");
+
+    const twoOpen = await findByLabelText("Flagged, 2 open");
+    const openBadge = twoOpen.querySelector<HTMLElement>("[data-testid=lens-open-count]");
+    expect(openBadge?.textContent).toBe("2");
+    expect(openBadge?.className).toContain("bg-destructive");
+    expect(openBadge?.className).toContain("text-destructive-foreground");
+    expect(openBadge?.className).not.toContain("text-white");
+    expect(twoOpen.querySelector("[data-testid=lens-delta-pip]")).toBeNull();
+
+    act(() => useRennetStore.getState().reviewActions.dismissFinding(firstRef));
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Flagged, 1 open"]')).toBeTruthy(),
+    );
+
+    act(() => useRennetStore.getState().reviewActions.restoreFinding(firstRef));
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Flagged, 2 open"]')).toBeTruthy(),
+    );
+
+    const askId = findingAskId(firstRef);
+    act(() =>
+      useRennetStore.getState().reviewActions.stageAsk({
+        id: askId,
+        anchor: "packages/adapters/src/github-auth.ts:244",
+        type: "request-change",
+        body: "Write a terminal record on every exit.",
+        finding: firstRef,
+      }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Flagged, 1 open"]')).toBeTruthy(),
+    );
+
+    act(() => useRennetStore.getState().reviewActions.dismissFinding(secondRef));
+    await waitFor(() =>
+      expect(
+        container.querySelector('[aria-label="Flagged, 0 open, changed this round"]'),
+      ).toBeTruthy(),
+    );
+    const zeroOpen = container.querySelector('[data-lens="flagged"]');
+    expect(zeroOpen?.querySelector("[data-testid=lens-open-count]")).toBeNull();
+    expect(zeroOpen?.querySelector("[data-testid=lens-delta-pip]")).toBeTruthy();
+
+    act(() => useRennetStore.getState().reviewActions.restoreFinding(secondRef));
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Flagged, 1 open"]')).toBeTruthy(),
+    );
+
+    act(() => useRennetStore.getState().reviewActions.unstageAsk(askId));
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Flagged, 2 open"]')).toBeTruthy(),
+    );
   });
 
   it("keeps a requested live lens while other lenses are still drafting", async () => {

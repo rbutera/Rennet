@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
-import { act, cleanup, fireEvent, mount, screen } from "../test/dom";
+import { act, cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 import { SessionTranscriptProvider } from "./chat-data";
@@ -21,7 +21,10 @@ import { Composer } from "./composer";
 beforeEachStubObjectUrl();
 afterEach(() => {
   cleanup();
-  act(() => useRennetStore.getState().reviewActions.resetReview());
+  act(() => {
+    useRennetStore.getState().reviewActions.resetReview();
+    useRennetStore.getState().uiActions.setChatOpen(false);
+  });
 });
 
 function beforeEachStubObjectUrl(): void {
@@ -58,6 +61,16 @@ describe("composer badges read the real review slice (task 4.3)", () => {
 });
 
 describe("composer send + image + presence (task 4.3)", () => {
+  it("focuses the existing composer when the chat focus action fires", async () => {
+    mount(<Composer onSend={() => undefined} />);
+    const textarea = screen.getByLabelText("Message the orchestrator");
+
+    act(() => useRennetStore.getState().uiActions.focusChatComposer());
+
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+    expect(useRennetStore.getState().ui.chatOpen).toBe(true);
+  });
+
   it("sends the typed body and clears the input", async () => {
     const onSend = vi.fn();
     const { user } = mount(<Composer onSend={onSend} />);

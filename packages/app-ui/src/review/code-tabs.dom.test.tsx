@@ -143,6 +143,26 @@ describe("CodeTabs / AnchorReveal — multi-site evidence", () => {
     expect(container.querySelectorAll('button[aria-pressed="true"]')).toHaveLength(1);
   });
 
+  it("stages a base citation with its canonical ref and LEFT position", async () => {
+    const { bridge } = bridgeCounting();
+    const { getByLabelText, getByPlaceholderText, getByText, user } = mount(
+      withBridge(bridge, <CodeTabs citations={[BASE5]} />),
+    );
+    await waitFor(() => expect(getByText("L5")).toBeTruthy());
+    await user.click(getByLabelText("Comment on line 5"));
+    await user.type(getByPlaceholderText("Leave a comment on this line…"), "keep the base case");
+    await user.click(getByText("Request Changes"));
+
+    expect(Object.values(useRennetStore.getState().review.stagedAsks)).toContainEqual({
+      id: "a/one.ts:5:LEFT",
+      anchor: "a/one.ts:5",
+      type: "request-change",
+      body: "keep the base case",
+      side: "LEFT",
+      codeRef: BASE5,
+    });
+  });
+
   it("relays the daemon's OWN reason for an unreadable citation, never a generic line", async () => {
     // The surface must not editorialise. `patchset.readSpan` distinguishes an unknown
     // patchset from an uncaptured file from a span outside the captured diff; a fixed
