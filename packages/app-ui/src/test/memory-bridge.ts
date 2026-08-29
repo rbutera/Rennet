@@ -178,3 +178,28 @@ export class MemoryBridge implements RennetBridge {
     this.#updateReady.emit(info);
   }
 }
+
+/**
+ * A `patchset.readSpan` that REFUSES the way the real daemon refuses, for the surfaces
+ * that must render an unreadable citation honestly.
+ *
+ * Written as a stub that rejects with a daemon-shaped sentence rather than as a MISSING
+ * handler, because the two prove different things. A missing handler makes `MemoryBridge`
+ * reject with its own "no handler for command" text — which is a fact about the test
+ * harness, not about the product, and asserting a fixed surface line against it let the
+ * unbound-dispatch defect (`patchset.readSpan` throwing in the shipped app for two
+ * workstreams) sit behind four green tests that all read as coverage.
+ *
+ * The contract these surfaces owe is: whatever reason the daemon gives, the reviewer sees
+ * THAT reason. So the assertion is that this exact sentence reaches the DOM. The wording
+ * the real daemon produces is pinned separately, against the real handler, in
+ * `apps/desktop/src/citation-span.integration.test.tsx`.
+ */
+export const SPAN_OUTSIDE_CAPTURE = "is outside the diff this patchset captured";
+
+/** The refusing handler itself — hand it to a MemoryBridge as `"patchset.readSpan"`. */
+export const refusesSpanRead: CommandHandler<"patchset.readSpan"> = (input) => {
+  throw new Error(
+    `${input.path} lines ${input.startLine}–${input.endLine} (${input.side}) ${SPAN_OUTSIDE_CAPTURE}.`,
+  );
+};

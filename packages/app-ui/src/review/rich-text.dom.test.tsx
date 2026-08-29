@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
 import { RichText } from "./rich-text";
 
 const PS = "ps-1";
@@ -136,17 +136,17 @@ describe("RichText — R45 markdown subset (base tier)", () => {
     expect(queryByText("L42")).toBeNull();
   });
 
-  it("an unreadable citation renders one honest line", async () => {
+  it("relays the daemon's OWN reason for an unreadable citation", async () => {
     const { getByRole, getByText, user } = mount(
       withBridge(
-        new MemoryBridge({}),
+        new MemoryBridge({ "patchset.readSpan": refusesSpanRead }),
         <RichText text="see packages/core/x.ts:42 here" patchsetId={PS} />,
       ),
     );
     await user.click(getByRole("button", { name: "x.ts:42" }));
     await waitFor(() =>
       expect(
-        getByText("packages/core/x.ts is not readable from the captured patchset."),
+        getByText(`packages/core/x.ts lines 42–42 (head) ${SPAN_OUTSIDE_CAPTURE}.`),
       ).toBeTruthy(),
     );
   });

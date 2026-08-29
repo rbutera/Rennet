@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
 import type { CodeRef } from "./citations";
 import { AnchorReveal, CodeTabs } from "./code-tabs";
 
@@ -143,14 +143,18 @@ describe("CodeTabs / AnchorReveal — multi-site evidence", () => {
     expect(container.querySelectorAll('button[aria-pressed="true"]')).toHaveLength(1);
   });
 
-  it("an unreadable citation renders one honest line, never a silent empty block", async () => {
-    const bridge = new MemoryBridge({}); // no handler → rejects like unbound dispatch
+  it("relays the daemon's OWN reason for an unreadable citation, never a generic line", async () => {
+    // The surface must not editorialise. `patchset.readSpan` distinguishes an unknown
+    // patchset from an uncaptured file from a span outside the captured diff; a fixed
+    // "not readable" line flattened all three and, while dispatch was unbound, blamed the
+    // patchset for a command that was never called.
+    const bridge = new MemoryBridge({ "patchset.readSpan": refusesSpanRead });
     const { getByRole, getByText, user } = mount(
       withBridge(bridge, <AnchorReveal citations={[A]} />),
     );
     await user.click(getByRole("button", { name: "one.ts:10" }));
     await waitFor(() =>
-      expect(getByText("a/one.ts is not readable from the captured patchset.")).toBeTruthy(),
+      expect(getByText(`a/one.ts lines 10–10 (head) ${SPAN_OUTSIDE_CAPTURE}.`)).toBeTruthy(),
     );
   });
 });
