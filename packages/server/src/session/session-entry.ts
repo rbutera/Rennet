@@ -15,6 +15,8 @@
 // claim; nothing is shared to serialize.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { realpathSync } from "node:fs";
+import { type GitExec, repositoryIdentity } from "@rennet/adapters";
 import { bindTarget, type MintSessionDeps, mintSession } from "@rennet/core";
 import {
   type Claim,
@@ -58,6 +60,21 @@ export interface EntryResult {
 }
 
 /**
+ * A path with its symlinks resolved, falling back to the input. Only ever applied to `local`
+ * projects — a `wsl:` or `remote:` path names a filesystem this host cannot resolve. A path
+ * that no longer exists throws and compares as written, which is the honest answer for a
+ * project whose directory was moved or deleted.
+ */
+function canonicalPath(path: string): string {
+  if (path.length === 0) return path;
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * The `Project.id` a repository root belongs to — the ONE key both session mints converge on
  * (#580). The client's New Chat mint always had a `Project.id`; the round dispatch used to mint
  * with the repo root instead, and a `Project.id` is a `crypto.randomUUID()` stamped at add time,
@@ -72,13 +89,22 @@ export interface EntryResult {
  * rather than filed under a project that does not contain it.
  */
 export function projectIdForRepoRoot(repoRoot: string, projects: readonly Project[]): string {
+  // BOTH sides are canonicalised before comparing, because they arrive spelled differently.
+  // A review's root comes from `git rev-parse --show-toplevel`, which resolves symlinks; a
+  // project's path is whatever was stored when it was added. On macOS `/var/folders` resolves
+  // to `/private/var/folders`, so a project added under an unresolved path never matched its
+  // own review's root — the lookup missed, this fell through to the raw path, and the round's
+  // session was filed under a project id no sidebar row has. #580's bug, one spelling over.
+  const root = canonicalPath(repoRoot);
   const covering = projects.find(
     (p) =>
       p.source === "local" &&
-      (p.openPath === repoRoot ||
-        p.path === repoRoot ||
-        (p.includedRepoPaths ?? []).includes(repoRoot)),
+      (canonicalPath(p.openPath) === root ||
+        canonicalPath(p.path) === root ||
+        (p.includedRepoPaths ?? []).some((included) => canonicalPath(included) === root)),
   );
+  // The fallback stays the caller's own spelling: read and write both pass `review.repositoryRoot`,
+  // so they agree, and canonicalising it here would orphan every session already filed under it.
   return covering?.id ?? repoRoot;
 }
 
@@ -112,13 +138,17 @@ export function projectIdForRepoRoot(repoRoot: string, projects: readonly Projec
  * for another root never wins at all. The unstamped fallback is taken only when there is exactly
  * ONE — see below; an ambiguous fallback is declined rather than guessed.
  *
- * The two identities are complementary rather than redundant, and neither caller has both: the
- * New Chat mint knows the `owner/name` (it is on the row) and can never know a host path; the
- * round dispatch knows the path and cannot derive an `owner/name` synchronously (that is a git
- * remote read). The consequence is stated rather than hidden: in a workspace holding two repos
- * that share a branch name, a session minted from a row and the session a later round dispatches
- * onto can be two rows rather than one. That is an honest split, not a wrong answer — the
- * alternative, guessing, files one repo's rounds under the other repo's session.
+ * The two identities are complementary rather than redundant. The New Chat mint knows the
+ * `owner/name` (it is on the row) and can never know a host path; the round dispatch knows the
+ * path, and {@link enterRoundSession} pays one `git remote get-url origin` to know the
+ * `owner/name` too — the same {@link repositoryIdentity} that stamped the row — so the write
+ * side carries BOTH and the ambiguous fallback below is no longer reached from a dispatch.
+ *
+ * The READ side, {@link resolveRoundSessionId}, is synchronous and still names no repository.
+ * So between a New Chat click and that target's first round, two same-named branches in one
+ * workspace are two unstamped sessions the read cannot tell apart, and it declines — an honest
+ * empty, self-healed by the first dispatch, which reattaches to the right one and stamps the
+ * root. Guessing there would file one repo's rounds under the other repo's session.
  */
 export function claimingSession(
   sessions: readonly SessionModel[],
@@ -188,6 +218,59 @@ export function resolveRoundSessionId(
     ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
   };
   return claimingSession(sessions, projectId, review.repositoryRoot, target)?.id ?? review.id;
+}
+
+/**
+ * The WRITE side of the same derivation — the session a round for this review dispatches
+ * ONTO. It lives here, beside {@link resolveRoundSessionId}, because the two must agree and
+ * they only agree if a reader can see both at once. Inline in the composition root the write
+ * side drifted twice, silently, and each drift emptied all four session-keyed reads
+ * (`session.rounds`, `session.transcript`, `board.read`, and the per-session round lock):
+ *
+ *   • It never passed the review id, so the review's HOLDER arm — the arm the read side takes
+ *     FIRST, and the only arm that can find the claim-less Current Checkout session (#587) —
+ *     was dead on the one path that mints. A round dispatched from Current Checkout recorded
+ *     under a freshly minted claim session while every read resolved the holder.
+ *   • It never named a repository, so in a workspace holding two repos that share a branch
+ *     name the two unstamped New Chat sessions were indistinguishable to it, the ambiguous
+ *     fallback was declined, and the click's session and the round's session were two rows.
+ *
+ * The `owner/name` is read HERE rather than taken from a caller, from the SAME
+ * `repositoryIdentity` that stamped the row the New Chat click carried — one git call per
+ * round, against the review's own root. Measured stable across a repo root, a linked worktree
+ * and a symlinked path, with and without an origin remote, so the two strings agree by
+ * construction rather than by hope. If they ever did diverge the cost is bounded to today's
+ * behaviour: a positive contradiction mints a fresh root-stamped session, which the read side
+ * then resolves exactly — a split rather than a wrong or empty ledger, so long as at most one
+ * live session per (claim, root) exists. The read's exact-root arm is a `find`, so a second
+ * live session on the same claim AND the same root would be settled by store order; the mint
+ * is what prevents that pair, since it reattaches before it ever creates the second.
+ */
+export async function enterRoundSession(
+  entry: SessionEntry,
+  projectId: string,
+  review: Review,
+  git: GitExec,
+): Promise<EntryResult> {
+  const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
+  const branch = activePatchset?.repository.headRef;
+  // Detached HEAD: no branch, so no claim to dedupe on. `enterDetached` takes the review's
+  // HOLDER when there is one and the review id otherwise (#573) — the read side's precedence
+  // exactly, holder arm included, so the two agree on both branches and not just on the
+  // fallback.
+  if (branch === undefined) {
+    return entry.enterDetached(projectId, review.id, review.repositoryRoot);
+  }
+  return entry.enter(
+    projectId,
+    {
+      branch,
+      ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
+      repository: await repositoryIdentity(git, review.repositoryRoot),
+    },
+    review.repositoryRoot,
+    review.id,
+  );
 }
 
 /** Mints and reattaches sessions from New-chat row clicks, and hides the rows a
@@ -275,7 +358,16 @@ export class SessionEntry {
    * under an identity the product cannot look up.
    */
   enterDetached(projectId: string, reviewId: string, repositoryRoot: string): EntryResult {
-    const existing = this.store.list().find((s) => s.id === reviewId);
+    const sessions = this.store.list();
+    // The HOLDER first, then the review-id key — the SAME precedence `resolveRoundSessionId`
+    // applies, and for the same reason. The front door mints the Current Checkout session with
+    // a `randomUUID()` id and ATTACHES the review, so a holder's id is never the review id; a
+    // detached-HEAD capture from that session would write here under `review.id` while every
+    // read resolved the holder, and all four session-keyed reads would go empty at once. Same
+    // failure as the branch arm's, one arm over.
+    const existing =
+      sessions.find((s) => s.projectId === projectId && s.reviewId === reviewId) ??
+      sessions.find((s) => s.id === reviewId);
     if (existing !== undefined) return { session: existing, reattached: true };
     const session: SessionModel = {
       id: reviewId,

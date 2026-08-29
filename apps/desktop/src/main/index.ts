@@ -4,6 +4,7 @@ import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { detectLocus, listWslDistros } from "@rennet/core";
+import { defaultDataDir } from "@rennet/server";
 import {
   app,
   BrowserWindow,
@@ -336,7 +337,14 @@ app.whenReady().then(async () => {
   // effects it used to receive from the shell (net→global fetch; the repo dialog moves to
   // the renderer picker forwarded as `repository.choose`'s `path`). Persistence is unchanged:
   // the daemon opens the same rennet.sqlite / projects.json / threads under `dataDir`.
-  const dataDir = app.getPath("userData");
+  //
+  // `dataDir` is `~/.rennet`, NOT Electron's `userData`. Every store honours `dataDir` now,
+  // so passing `userData` here would relocate all twelve into
+  // `~/Library/Application Support/@rennet/desktop` — a directory that has only ever held an
+  // empty `rennet.sqlite`, while the real state lived in `~/.rennet` all along. The daemon is
+  // plain Node spawned detached and `rennet serve` runs the same code, so its data root must
+  // not depend on whether Electron started it. `RENNET_USER_DATA` still overrides.
+  const dataDir = process.env.RENNET_USER_DATA ?? defaultDataDir();
   let wsPort: number;
   try {
     wsPort = await ensureDaemon(dataDir);

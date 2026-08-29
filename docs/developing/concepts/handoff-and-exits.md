@@ -37,7 +37,10 @@ two repositories sharing a branch name would collapse into a single rounds
 ledger. A New-chat row cannot know a repository's path, so it names the
 repository by its `owner/name` identity instead — the same composite the smart
 list already dedupes on — and two `main` branches in one workspace stay two
-targets rather than one. A detached HEAD has no branch to claim, so its session is keyed by the
+targets rather than one. A round dispatched on that target reads the same
+`owner/name` back from the repository it is about to run in, so it joins the
+session the click created instead of starting a second one beside it. A
+detached HEAD has no branch to claim, so its session is keyed by the
 review instead — and it is persisted like every other, because a session the
 store does not hold is a session no surface can read back.
 

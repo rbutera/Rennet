@@ -1,12 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BoardMetaStore, SessionStore, TranscriptStore } from "@rennet/adapters";
+import { BoardMetaStore, type GitExec, SessionStore, TranscriptStore } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort } from "@rennet/core";
 import type { ComposedHandoffBundle, Project, Review, SessionModel } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRoundsRuntime, type RoundsRuntime } from "../runtime/rounds";
 import {
+  enterRoundSession,
   projectIdForRepoRoot,
   resolveRoundSessionId,
   SessionEntry,
@@ -520,5 +521,218 @@ describe("#587 the review's holder resolves before any claim heuristic", () => {
       createdAt: 1,
     } as unknown as SessionModel;
     expect(resolveRoundSessionId(review, [claimer, held], "proj-1")).toBe("sess-holder");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The WRITE side, executed: `enterRoundSession` is what `create-server`'s
+// `dispatchRound` now calls, so these run the real derivation rather than a
+// re-statement of it. Each control breaks the derivation the way the shipped code
+// was actually broken and shows the HARM — a durable read going empty, or a round
+// filed under an id no sidebar row lists — not a missing field.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The origin remote of each repo root, as `repositoryIdentity` reads it. */
+function gitFor(root: string): GitExec {
+  return async (_root, arguments_) => {
+    calledGit.push(arguments_.join(" "));
+    if (arguments_[0] !== "remote") return "";
+    return root === REPO_A
+      ? "git@github.com:acme/repo-a.git\n"
+      : "git@github.com:acme/repo-b.git\n";
+  };
+}
+let calledGit: string[] = [];
+beforeEach(() => {
+  calledGit = [];
+});
+
+/** The pre-fix derivation, verbatim: no review id, no repository. The control. */
+function preFixEnter(review: Review) {
+  const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
+  const branch = activePatchset?.repository.headRef;
+  return branch === undefined
+    ? sub.entry.enterDetached(PROJECT_ID, review.id, review.repositoryRoot)
+    : sub.entry.enter(
+        PROJECT_ID,
+        { branch, ...(review.postTarget ? { prNumber: review.postTarget.number } : {}) },
+        review.repositoryRoot,
+      );
+}
+
+describe("enterRoundSession — the dispatch's own mint, run for real", () => {
+  it("names the repo, so two unstamped New Chat sessions stop being a coin flip", async () => {
+    // Two rows, one branch name, two repos of ONE workspace — the fixture shape without which
+    // none of this is visible. Both mints are unstamped: a row carries an `owner/name` and
+    // never a host path (R19).
+    const inA = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-a" }).session;
+    const inB = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-b" }).session;
+    expect(inB.repositoryRoot).toBeUndefined();
+
+    // The round dispatches in repo B. It now knows WHICH repo, so repo A's session is a
+    // positive contradiction and repo B's is the one unambiguous survivor.
+    const review = reviewFor("review-b", REPO_B, "main");
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_B));
+    expect(entered.reattached).toBe(true);
+    expect(entered.session.id).toBe(inB.id);
+    expect(entered.session.repositoryRoot).toBe(REPO_B); // stamped in place
+    expect(sub.sessions.list()).toHaveLength(2); // NOT a third row
+    expect(sub.sessions.load(inA.id)?.repositoryRoot).toBeUndefined(); // repo A untouched
+
+    // The read resolves the identical id and all four durable reads answer under it.
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(inB.id);
+    await recordARound(entered.session);
+    expectAllFourAnswer(readId);
+  });
+
+  it("POSITIVE CONTROL: without the repository the SAME click's session goes empty", async () => {
+    const inA = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-a" }).session;
+    const inB = sub.entry.enter(PROJECT_ID, { branch: "main", repository: "acme/repo-b" }).session;
+    const review = reviewFor("review-b", REPO_B, "main");
+
+    // The shipped derivation: a path and no `owner/name`, so it excludes neither unstamped
+    // session, declines the ambiguous fallback, and mints a THIRD.
+    const entered = preFixEnter(review);
+    expect(entered.reattached).toBe(false);
+    expect(entered.session.id).not.toBe(inB.id);
+    expect(sub.sessions.list()).toHaveLength(3);
+
+    // THE HARM: the round lands on the split row, and the session the reviewer actually
+    // clicked — repo B's, the one the sidebar lists and the one they are looking at — is
+    // empty on all four reads at once. That is the split, measured rather than asserted.
+    await recordARound(entered.session);
+    expect(sub.sessions.load(inB.id)).toBeDefined(); // the row is still listed...
+    expect(sub.rounds.ledger(inB.id)).toHaveLength(0); // ...and reads empty on all three
+    expect(sub.transcripts.read(inB.id)).toHaveLength(0);
+    expect(sub.boardMeta.listForGeneration(inB.id, GENERATION)).toHaveLength(0);
+    expect(sub.rounds.ledger(inA.id)).toHaveLength(0);
+    expect(sub.rounds.ledger(entered.session.id)).toHaveLength(1);
+  });
+
+  it("takes the review's HOLDER, so a round from Current Checkout lands where the reads look", async () => {
+    // The Current Checkout front door mints a session that is root-stamped and claims NOTHING
+    // by design, then attaches the review. No claim ⇒ no claim match can ever find it.
+    const checkout = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_A).session;
+    const held: SessionModel = { ...checkout, claim: undefined, reviewId: "review-a" };
+    sub.sessions.save(held);
+
+    const review = reviewFor("review-a", REPO_A, "main");
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+    expect(entered.reattached).toBe(true);
+    expect(entered.session.id).toBe(held.id);
+    expect(sub.sessions.list()).toHaveLength(1);
+
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(held.id);
+    await recordARound(entered.session);
+    expectAllFourAnswer(readId);
+  });
+
+  it("POSITIVE CONTROL: without the review id the holder is unreachable and all four go empty", async () => {
+    const checkout = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_A).session;
+    const held: SessionModel = { ...checkout, claim: undefined, reviewId: "review-a" };
+    sub.sessions.save(held);
+    const review = reviewFor("review-a", REPO_A, "main");
+
+    // The shipped derivation passed three arguments. The holder arm is skipped, the claim
+    // matcher cannot see a claim-less session, and it mints a phantom second row.
+    const entered = preFixEnter(review);
+    expect(entered.reattached).toBe(false);
+    expect(entered.session.id).not.toBe(held.id);
+
+    // THE HARM: the read side takes the holder FIRST, so every one of the four durable reads
+    // asks the holder — and the round was recorded somewhere else entirely. The reviewer
+    // watches a round run and then finds no ledger, no transcript, and no board.
+    await recordARound(entered.session);
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(held.id);
+    expect(sub.rounds.ledger(readId)).toHaveLength(0);
+    expect(sub.transcripts.read(readId)).toHaveLength(0);
+    expect(sub.boardMeta.listForGeneration(readId, GENERATION)).toHaveLength(0);
+    expect(sub.rounds.ledger(entered.session.id)).toHaveLength(1); // filed under the phantom
+  });
+
+  it("keeps #597's silence rule: naming a repository never excludes a session lacking one", async () => {
+    // A session that predates the field. Over-tightening here is the four-empty-reads bug,
+    // which is worse than the split this lane closes — so silence must still reattach.
+    const older = sub.entry.enter(PROJECT_ID, { branch: "main" }).session;
+    expect(older.repository).toBeUndefined();
+
+    const review = reviewFor("review-a", REPO_A, "main");
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+    expect(entered.reattached).toBe(true);
+    expect(entered.session.id).toBe(older.id);
+    // Converged, not excluded: both facts are now stamped on the one session.
+    expect(entered.session.repository).toBe("acme/repo-a");
+    expect(entered.session.repositoryRoot).toBe(REPO_A);
+    expect(sub.sessions.list()).toHaveLength(1);
+
+    await recordARound(entered.session);
+    expectAllFourAnswer(resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID));
+  });
+
+  it("reads the repo identity from the ORIGIN REMOTE — the same string the row carries", async () => {
+    const review = reviewFor("review-a", REPO_A, "main");
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+    // Exactly what `repositoryIdentity` produces for that remote, `.git` stripped: the row's
+    // `owner/name` comes from this same function, so the two agree byte-for-byte.
+    expect(entered.session.repository).toBe("acme/repo-a");
+    expect(calledGit[0]).toBe("remote get-url origin");
+  });
+
+  it("a detached HEAD keeps its review-id session and never reaches git for a repository", async () => {
+    const review = reviewFor("review-detached", REPO_A); // no headRef
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+    expect(entered.session.id).toBe("review-detached");
+    expect(entered.session.claim).toBeUndefined();
+    // No branch ⇒ no claim to discriminate, so the git read is not paid for at all.
+    expect(calledGit).toEqual([]);
+    await recordARound(entered.session);
+    expectAllFourAnswer(resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID));
+  });
+
+  it("a detached HEAD takes the review's HOLDER too — the branch arm's rule, one arm over", async () => {
+    // The fixture the previous test structurally cannot be: a HOLDER in the store. The front
+    // door mints Current Checkout with a `randomUUID()` id and attaches the review, so the
+    // holder's id is NEVER the review id — which is exactly why an id-only match misses it.
+    const checkout = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_A).session;
+    const held: SessionModel = { ...checkout, claim: undefined, reviewId: "review-detached" };
+    sub.sessions.save(held);
+    expect(held.id).not.toBe("review-detached");
+
+    const review = reviewFor("review-detached", REPO_A); // detached capture: no headRef
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+    expect(entered.reattached).toBe(true);
+    expect(entered.session.id).toBe(held.id);
+    expect(sub.sessions.list()).toHaveLength(1);
+
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(held.id);
+    await recordARound(entered.session);
+    expectAllFourAnswer(readId);
+  });
+
+  it("POSITIVE CONTROL: an id-only detached match writes where no read looks", async () => {
+    const checkout = sub.entry.enter(PROJECT_ID, { branch: "main" }, REPO_A).session;
+    const held: SessionModel = { ...checkout, claim: undefined, reviewId: "review-detached" };
+    sub.sessions.save(held);
+    const review = reviewFor("review-detached", REPO_A);
+
+    // The pre-fix arm, verbatim: match on `s.id === reviewId` alone. The holder's id is a
+    // UUID, so nothing matches and it mints a second session under the review id.
+    const idOnly = sub.sessions.list().find((s) => s.id === review.id);
+    expect(idOnly).toBeUndefined();
+    const phantom = sub.entry.enterDetached(PROJECT_ID, `${review.id}-idonly`, REPO_A).session;
+
+    // THE HARM: the read takes the holder FIRST, so all four reads ask a session the round
+    // never touched — ledger, transcript and boards empty under a row the sidebar lists.
+    await recordARound(phantom);
+    const readId = resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID);
+    expect(readId).toBe(held.id);
+    expect(sub.rounds.ledger(readId)).toHaveLength(0);
+    expect(sub.transcripts.read(readId)).toHaveLength(0);
+    expect(sub.boardMeta.listForGeneration(readId, GENERATION)).toHaveLength(0);
+    expect(sub.rounds.ledger(phantom.id)).toHaveLength(1);
   });
 });

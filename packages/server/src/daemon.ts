@@ -13,18 +13,20 @@ import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, removeDaemonFile, writeDaemonFile } from "./daemon-file";
 
-/** Electron's `app.getPath("userData")` layout, replicated for a daemon running as plain Node. */
-export function defaultDataDir(
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  if (platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "Rennet");
-  }
-  if (platform === "win32") {
-    return join(env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Rennet");
-  }
-  return join(env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "Rennet");
+/**
+ * Rennet's data directory: `~/.rennet`, one root on every platform.
+ *
+ * It used to mirror Electron's `app.getPath("userData")` layout, which produced a path
+ * (`~/Library/Application Support/Rennet` on macOS) that never held anything — because
+ * only three of the twelve stores honoured `dataDir` and the other nine went straight to
+ * `~/.rennet`. The app was split across two roots, and the nine could find the user's home
+ * directory from anywhere, including a test harness that believed it was hermetic.
+ *
+ * `~/.rennet` is the root the stores already used, so unifying here moves no data. It is
+ * also the root a user can `ls`, which is the point of a local-first product's state.
+ */
+export function defaultDataDir(): string {
+  return join(homedir(), ".rennet");
 }
 
 export interface DaemonConfig {
@@ -58,8 +60,7 @@ export function resolveDaemonConfig(
       "host-bundle": { type: "string" },
     },
   });
-  const dataDir =
-    values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+  const dataDir = values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
   return {
     dataDir,
     serverVersion: values["server-version"] ?? env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
