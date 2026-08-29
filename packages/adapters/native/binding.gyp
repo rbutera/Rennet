@@ -3,6 +3,7 @@
     {
       "target_name": "rennet-exclusive-move",
       "type": "executable",
+      "win_delay_load_hook": "false",
       "sources": ["exclusive-namespace-move.c"],
       "cflags": ["-std=c11", "-Wall", "-Wextra", "-Werror", "-g0"],
       "xcode_settings": {
@@ -13,7 +14,7 @@
       },
       "msvs_settings": {
         "VCCLCompilerTool": {
-          "AdditionalOptions": ["/std:c11", "/Brepro"],
+          "AdditionalOptions": ["/Brepro"],
           "DebugInformationFormat": 0,
           "WarnAsError": "true",
           "WarningLevel": 4
