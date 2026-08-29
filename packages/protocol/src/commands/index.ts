@@ -565,8 +565,10 @@ const definitions = {
   "patchset.readSpan": {
     // Read a cited span from the CAPTURED patchset — never a working tree
     // (client asset risk 2, #489). Registered in B3 so Track C freezes against
-    // the shape; dispatch binds it in B4/B10 — the wire answers
-    // unknown-command until then (proposal reconciliation 8).
+    // the shape (proposal reconciliation 8). STILL UNBOUND: B4 and B10 have both
+    // landed and neither bound dispatch, so `dispatch/patchset.ts` throws for every
+    // call and every live citation surfaces that error. The shape below is frozen
+    // and correct; the patchset-backed reader behind it does not exist yet.
     input: codeRefSchema,
     output: z.object({
       /** The cited span's lines, in order, from the captured patch text. */
@@ -1312,7 +1314,8 @@ const definitions = {
   // write returns a RECEIPT — the inverse event body — so a client implements undo
   // by feeding the receipt straight back through `ask.apply`. `ask.read` is the
   // projection read a reconnecting client rehydrates from; nothing is client-derived.
-  // Handlers + create-server wiring land in B11 cluster 2; these are the shapes.
+  // The handlers (`server/src/dispatch/ask.ts`) and the create-server wiring landed
+  // in B11 cluster 2; these are their shapes.
   "ask.stage": {
     input: z.object({ sessionId: z.string().min(1), ask: StagedAskSchema }),
     output: z.object({ receipt: AskEventBodySchema }),
@@ -1402,17 +1405,17 @@ const definitions = {
     input: z.object({ reviewId: z.string().min(1) }),
     output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
   },
-  // ── Session reads (B9/B10-deferred client seam) ─────────────────────────────
-  // The two client-facing SESSION READs B9 (the runtime) and B11 (the round WRITE)
-  // deferred. `session.transcript` is the chat dock's read (C07): the header trail +
-  // the historical transcript rows + the harness context figure. Honest-absent today —
-  // the harness owns the coding transcript (#466 res. 3), so Rennet has no server-side
-  // coding turns to return; `rows` is empty and `contextWindow` absent until a harness-
-  // transcript read port lands (a future capability, not a projection). The live ask
-  // threads arrive separately via `review.reattach`, already wired. `session.rounds` is
+  // ── Session reads (the client seam B9 and B11 opened) ───────────────────────
+  // Both are SERVED. `session.transcript` is the chat dock's read (C07): the header
+  // trail + the transcript rows + the harness context figure. The harness CLI remains
+  // the canonical conversation owner (#466 res. 3), but the session turn loop captures
+  // the harness events it already sees, R19-scrubs them and persists them, so `rows`
+  // carries real coding turns for a session that has run one and is honestly `[]` for a
+  // session that has not. `contextWindow` stays absent — no read port reports it. The
+  // live ask threads still arrive separately via `review.reattach`. `session.rounds` is
   // the rounds ledger read (C09 cluster 8): the session's `RoundRecord[]`, projected from
-  // the live rounds runtime. Empty until a round RECORDS (`runRound`); the dispatch WRITE
-  // (B11) runs the workers but the record wiring is a separate deferred piece.
+  // the live rounds runtime. Both `runRound` and the round DISPATCH record a
+  // `RoundRecord`, so the ledger fills from the first dispatched round onward.
   "session.transcript": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: SessionTranscriptSchema,
@@ -1541,9 +1544,10 @@ const definitions = {
  * and `project.discover` (read-only discovery → the DiscoveryResult). Without them
  * the add-project tool was uncompletable. `navigate` (#480) stays UNEXPOSED and
  * unregistered: it is a client-locus command, and the dispatch table's compile-time
- * exhaustiveness guard would force a HOST handler for it — that is client execution,
- * deferred to C11. The `session.*` READS now exist (host-locus) but stay UNEXPOSED to the
- * agent — they are client-surface reads, not app tools. None invented. */
+ * exhaustiveness guard would force a HOST handler for it — that is client execution.
+ * C11 landed the command menu without it and no command by that name exists. The
+ * `session.*` READS exist (host-locus) but stay UNEXPOSED to the agent — they are
+ * client-surface reads, not app tools. None invented. */
 const AGENT_EXPOSED = new Set<string>([
   "repository.choose",
   "project.discover",
