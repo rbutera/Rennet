@@ -81,6 +81,38 @@ describe("round detached worktree", () => {
     expect(await readFile(join(repo.root, "base.txt"), "utf8")).toBe("base\n");
   });
 
+  it("creates a detached worktree below the Git common directory without exposing it", async () => {
+    const repo = await createRepo();
+    const commonDir = await git(
+      repo.root,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    );
+    const worktreePath = join(commonDir, "rennet-round-worktrees", "operation-1");
+
+    await expect(
+      prepareRoundWorktree({
+        git: execaGit,
+        locus: HOST_LOCUS,
+        repoRoot: repo.root,
+        worktreePath,
+        sourceHead: repo.baseHead,
+      }),
+    ).resolves.toEqual({ path: worktreePath, head: repo.baseHead, created: true });
+    expect(await git(repo.root, "status", "--porcelain=v1", "--untracked-files=all")).toBe("");
+
+    await expect(
+      removeRoundWorktree({
+        git: execaGit,
+        locus: HOST_LOCUS,
+        repoRoot: repo.root,
+        worktreePath,
+        sourceHead: repo.baseHead,
+      }),
+    ).resolves.toEqual({ removed: true });
+  });
+
   it("refuses a worktree whose detached HEAD no longer matches without replacing it", async () => {
     const repo = await createRepo();
     const worktreePath = join(repo.tempRoot, "round-worktree");
