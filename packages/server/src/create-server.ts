@@ -224,6 +224,7 @@ import {
   type PersistedBoardMeta,
   type WorkerReturn,
 } from "./runtime/rounds";
+import { resolveCaptureRoot } from "./session/capture-root";
 import {
   enterRoundSession,
   projectIdForRepoRoot,
@@ -2049,15 +2050,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // rejected capture has claimed nothing and the row stays clickable.
       start: async ({ projectId, commandId, target }) => {
         const project = projectStore.list().find((entry) => entry.id === projectId);
-        // The repo this row named. Absent target (the Current Checkout row) is the project
+        // WHICH repo this row named. Absent target (the Current Checkout row) is the project
         // as a whole, which is exactly what `openPath` means; a target resolves through its
-        // identity, falling back to the project path when nothing matches (a single-repo
-        // project, or a row whose identity predates the field).
-        const projectRoot = project?.openPath || project?.path || "";
-        const root =
+        // identity. A miss falls back to the default root ONLY when it is unambiguous (a
+        // single-repo project, or a legacy row) — in a multi-repo workspace `resolveCaptureRoot`
+        // refuses rather than capture the wrong repo under this row's label, and the rejection
+        // (before the mint) leaves the row clickable.
+        const resolvedRoot =
           target?.repository === undefined
-            ? projectRoot
-            : ((await repoRootForIdentity(project, target.repository)) ?? projectRoot);
+            ? undefined
+            : await repoRootForIdentity(project, target.repository);
+        const rootDecision = resolveCaptureRoot(project, target?.repository, resolvedRoot);
+        if ("error" in rootDecision) throw new Error(rootDecision.error);
+        const root = rootDecision.root;
         // Cleared before the capture, not after (the `checkFreshness` rule): this front
         // door is reachable on an ALREADY-OPEN project, whose root is watched and settled,
         // so an edit made while the capture runs must survive as dirty.
