@@ -358,7 +358,7 @@ function appendMessage(
 // ── The dock's resolved model (the single hook the dock reads) ────────────────
 
 export interface ChatDockModel {
-  /** The full ordered transcript: session rows (B9-stubbed) then the live ask turns. */
+  /** The full ordered transcript: session rows then the live ask turns. */
   readonly rows: readonly TranscriptRow[];
   /** Turn ids that arrived live this mount — they animate; records replay instantly. */
   readonly liveIds: ReadonlySet<string>;

@@ -91,9 +91,8 @@ import { TargetIcon } from "./target-icon";
 //
 // One persistent `<aside>` animates 256px panel ↔ 0; collapsed means hidden (C20),
 // and the one collapse/expand toggle rides the corner slot wherever it mounts.
-// Sessions are B9's
-// projection — until it lands the live client shows an honest empty state and the
-// row/mutation proofs run over the projection context (reconciliation 2).
+// Sessions come from the served `session.list` read (`sidebar-data.ts`), which B9
+// landed — the rows below are live, not an honest-empty placeholder waiting on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DOCS_URL = "https://docs.rennet.dev";
