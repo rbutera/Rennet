@@ -82,6 +82,8 @@ pnpm check
 ```
 
 It runs formatting, architecture, licence, lint, typecheck, test, and build
-targets. Before editing documentation, read the
+targets. The adapter build includes Rennet's first-party native executable and
+therefore needs the host C toolchain described in the
+[dependency standard](./reference/dependency-standard.md). Before editing documentation, read the
 [docs style guide](./contributing/docs-style-guide.md) and the
 [good docs standard](./contributing/good-docs-standard.md).

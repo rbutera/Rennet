@@ -14,6 +14,8 @@ The macOS build requires:
 
 The DMG maker uses `macos-alias` and `fs-xattr`. The workspace lists both native packages under `onlyBuiltDependencies`, so pnpm builds them during installation.
 
+The adapter build also compiles Rennet's first-party exclusive-namespace-move executable with the exact-SHA `@electron/node-gyp` and the Xcode C toolchain. This is an explicit Nx build step, not a pnpm dependency lifecycle script.
+
 ## Build on macOS
 
 ```sh
@@ -91,6 +93,8 @@ Never replace an asset or reuse a version after publication. If signing, notariz
 
 ## Build on Windows
 
+The Windows build host needs Python 3 and Visual Studio 2022 with **Desktop development with C++** and a Windows SDK. The hosted `windows-latest` CI image supplies that toolchain; `@electron/node-gyp` uses it to compile the adapter's first-party executable.
+
 Windows development uses the normal Nx target:
 
 ```powershell
@@ -117,6 +121,8 @@ Rennet does not require a POSIX login shell on Windows. Agent discovery checks t
 [`forge.config.cjs`](forge.config.cjs) owns makers, icons, signing, notarization, Electron fuses, unpacked server assets, and package exclusions.
 
 The packaged application keeps the daemon and browser bundles outside the asar because the detached daemon loads them from disk. It also copies tray assets into the application resources.
+
+The adapter build writes its host executable under `packages/adapters/dist/native/`. Forge does not copy or resolve that artifact yet, so current packages do not ship it and the daemon does not call it.
 
 The Claude adapter uses the user's installed `claude` executable. Packaging excludes executables supplied inside `@anthropic-ai/claude-agent-sdk` so Rennet does not ship a second Claude binary.
 

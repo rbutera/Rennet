@@ -73,6 +73,7 @@ executables because Rennet runs the user's installed `claude`.
 | Electron journeys | Playwright |
 | Desktop packaging and release | Electron Forge |
 | Desktop runtime | Electron |
+| First-party native executable builds | `@electron/node-gyp` and the platform C toolchain |
 | Documentation site | Astro and Starlight |
 | Native mobile app | Expo and expo-router |
 
@@ -96,6 +97,7 @@ These versions come from the current workspace manifests:
 | Renderer build | `vite`, `@vitejs/plugin-react` | `8.1.5`, `6.0.4` |
 | Tests | `vitest`, `@playwright/test` | `4.1.10`, `1.62.1` |
 | Desktop | `electron`, Electron Forge, `@electron/fuses` | `43.4.1`, `7.11.2`, `2.1.3` |
+| Native executable build | `@electron/node-gyp` | `10.2.0-electron.1` at `06b29aafb7708acef8b3669835c8a7857ebc92d2` |
 | Docs | `astro`, `@astrojs/starlight` | `7.1.6`, `0.41.7` |
 | Claude | `@anthropic-ai/claude-agent-sdk` | `0.3.223` |
 | GitHub | `@octokit/core` | `7.0.7` |
@@ -128,6 +130,23 @@ user repositories, or undeclared ambient state in cache inputs or outputs.
 Long-running development servers, watch processes, interactive Electron tasks,
 and end-to-end tests remain uncached. Local Nx caching is the default; the
 workspace does not use Nx Cloud.
+
+## First-party native executables
+
+`@rennet/adapters` owns the small FSL-1.1-MIT C executable that asks the host
+filesystem for an exclusive, no-replace namespace move. Its Nx `build` target
+invokes the workspace's exact-SHA `@electron/node-gyp` directly and writes the
+host artifact to
+`packages/adapters/dist/native/<platform>-<architecture>/rennet-exclusive-move`
+(`.exe` on Windows). This is a repository build command, not a dependency
+lifecycle script, so it does not belong in pnpm's `onlyBuiltDependencies` list.
+
+Run `pnpm nx run rennet-adapters:native-test` for the typed adapter contract and
+real file, symlink, directory, existing-destination, and contention semantics.
+CI runs that target on Ubuntu, macOS, and Windows because no one host can compile
+or execute all three syscall implementations. The focused matrix also runs
+`rennet-adapters:native-determinism-test`, which rebuilds under two distinct
+temporary roots and requires byte-identical host executables.
 
 ## Runtime and persistence
 
