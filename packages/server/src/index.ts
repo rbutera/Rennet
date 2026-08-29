@@ -11,6 +11,9 @@ export {
   appToolName,
   buildAppTools,
 } from "./agent-tools";
+// The desktop integration fixture writes boards through the same embedded runtime and
+// WhiteboardClient as production, so its launched proof cannot drift onto a JSON-only writer.
+export { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 export {
   createRennetServer,
   type RennetServer,

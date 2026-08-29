@@ -18,6 +18,11 @@ const author = { kind: "lens-agent", id: "test" } as const;
 
 /** A two-section board with a nested section, a citation, and per-kind children. */
 const board: DraftBoard = {
+  document: {
+    title: "Design · durable refresh observations",
+    introMarkdown: "Read the specification shape beside the implementation evidence.",
+    measure: "structured",
+  },
   skippedHunks: [{ hunk: "h9", reason: "sequence's lane" }],
   elements: [
     {
@@ -27,7 +32,7 @@ const board: DraftBoard = {
         author,
         title: "The Change",
         gist: "Two decisions, one requirement.",
-        children: ["d1", "r1", "nested"],
+        children: ["d1", "r1", "nested", "c1", "c2"],
         delta: "reworked",
       },
     },
@@ -65,6 +70,18 @@ const board: DraftBoard = {
         end_line: 2,
       },
     },
+    {
+      id: "c2",
+      kind: "code_ref",
+      data: {
+        author,
+        patchset_id: "ps-1",
+        path: "packages/server/src/a.ts",
+        side: "head",
+        start_line: 8,
+        end_line: 9,
+      },
+    },
   ],
 } as DraftBoard;
 
@@ -83,6 +100,7 @@ async function roundTrip() {
     lens: "design",
     generation: "gen-1",
     boardId,
+    document: board.document,
     skippedHunks: [{ hunk: "h9", reason: "sequence's lane" }],
   });
 }
@@ -93,9 +111,11 @@ describe("projectLensBoard — the persisted board, read back", () => {
     expect(read.lens).toBe("design");
     expect(read.generation).toBe("gen-1");
     expect(read.boardId).toBeTruthy();
+    expect(read.document).toEqual(board.document);
     // Every written element survives the round trip — nothing dropped, nothing added.
     expect(read.elements.map((el) => el.id).sort()).toEqual([
       "c1",
+      "c2",
       "change",
       "d1",
       "f1",
@@ -116,9 +136,15 @@ describe("projectLensBoard — the persisted board, read back", () => {
     // across the write/read round trip: `change` was authored before `risks`, so it leads.
     expect(read.sections.map((s) => s.ref)).toEqual(["change", "risks"]);
     const [change] = read.sections;
-    expect(change?.counts).toEqual({ decision: 1, requirement: 1, section: 1 });
+    // Two code refs into one path are one file, not a misleading "2 files" label.
+    expect(change?.counts).toEqual({ decisions: 1, requirements: 1, files: 1 });
     expect(change?.gist).toBe("Two decisions, one requirement.");
     expect(change?.delta).toBe("reworked");
+    expect(read.sections[1]?.counts).toEqual({ findings: 1 });
+    const countKeys = read.sections.flatMap((section) => Object.keys(section.counts));
+    expect(countKeys).toEqual(["decisions", "requirements", "files", "findings"]);
+    expect(countKeys).not.toContain("decision");
+    expect(countKeys).not.toContain("section");
   });
 
   it("falls back to the section's own title when the board carries no gist", () => {
@@ -129,5 +155,6 @@ describe("projectLensBoard — the persisted board, read back", () => {
     );
     expect(read.sections[0]?.gist).toBe("Untitled Work");
     expect(read.sections[0]?.counts).toEqual({});
+    expect(read.document).toEqual({ title: "Noise", introMarkdown: "", measure: "reading" });
   });
 });

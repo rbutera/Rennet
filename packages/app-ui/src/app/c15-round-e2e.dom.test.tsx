@@ -52,13 +52,13 @@ import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import { FIXTURE_REPORT_BOARDS } from "../test/fixtures/rounds";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
 
 const store = () => useRennetStore.getState();
 
-/** The slug IS the review id (`routes/slug.ts`), so one id keys the route, the event
- *  channel, the ledger read and every `board.read`. */
+/** This fixture exercises the legacy review-id route fallback. Durable session slugs
+ *  resolve their attached review separately in rounds-live.dom.test and the desktop journey. */
 const REVIEW_ID = "rev-c15";
 
 const review = {
@@ -66,6 +66,14 @@ const review = {
   activePatchsetId: "ps-1",
   repositoryRoot: "/home/dev/rennet",
 } as unknown as Review;
+
+const routeResolutionHandlers: MemoryBridgeHandlers = {
+  "session.list": () => ({ sessions: [] }),
+  "review.load": ({ reviewId }) => {
+    if (reviewId !== REVIEW_ID) throw new Error(`unexpected review ${reviewId}`);
+    return { review, repositoryPresent: true };
+  },
+};
 
 const REPORT_BOARD_ID = "report-round-1";
 
@@ -205,6 +213,7 @@ function mountApp(path: string) {
   const log: RoundEvent[] = [];
   let finishRound: (() => void) | undefined;
   const bridge = new MemoryBridge({
+    ...routeResolutionHandlers,
     "board.read": fixtureBoardRead,
     "session.roundEvents": () => ({ events: [...log] }),
     "session.rounds": () => ({ records: [DURABLE_RECORD] }),
@@ -320,6 +329,10 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     await waitFor(() =>
       expect(r.container.querySelector('article[data-generation="gen2"]')).not.toBeNull(),
     );
+    const boardSwitcher = r.container.querySelector('[data-kind="generation-switcher"]');
+    expect(
+      boardSwitcher?.querySelector('[data-generation="gen1"][data-frozen="true"]'),
+    ).not.toBeNull();
     shown('5 · "Regenerated the Boards" + reveal → gen2 boards over board.read');
 
     // ── 6 · THE DURABLE RECORD IN THE LEDGER, GEN-1 REACHABLE ────────────────
@@ -359,6 +372,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     // source's `session.roundEvents` read IS the catch-up; the run route only reads.
     const dispatched: string[] = [];
     const bridge = new MemoryBridge({
+      ...routeResolutionHandlers,
       "board.read": fixtureBoardRead,
       "session.roundEvents": () => ({ events: SERVER_ROUND.slice(0, 5) }), // through `gate`
       "session.rounds": () => ({ records: [] }),

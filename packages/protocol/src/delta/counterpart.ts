@@ -42,3 +42,25 @@ export function testPathsFor(implPath: string): string[] {
   const base = implPath.slice(0, implPath.length - (ext.length + 1));
   return [`${base}.test.${ext}`, `${base}.spec.${ext}`];
 }
+
+/**
+ * Resolve the implementation/test counterpart for one captured path.
+ *
+ * Both the shown path and its counterpart must belong to `capturedPaths`. This keeps
+ * the jump inside the immutable patchset instead of turning the naming convention into
+ * a filesystem guess. For an implementation with both conventions captured, `.test.`
+ * wins in the same order returned by {@link testPathsFor}.
+ */
+export function counterpartPathFor(
+  path: string,
+  capturedPaths: ReadonlySet<string>,
+): string | null {
+  if (!capturedPaths.has(path)) return null;
+  if (isTestPath(path)) {
+    const implementationPath = implementationPathFor(path);
+    return implementationPath !== null && capturedPaths.has(implementationPath)
+      ? implementationPath
+      : null;
+  }
+  return testPathsFor(path).find((candidate) => capturedPaths.has(candidate)) ?? null;
+}

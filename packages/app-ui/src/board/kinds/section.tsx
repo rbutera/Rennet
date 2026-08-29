@@ -11,7 +11,7 @@ export function SectionElement({ element }: { readonly element: ElementOf<"secti
   const { title, children } = element.data;
   return (
     <section data-kind="section" className="flex flex-col gap-2">
-      <h3 className="font-semibold text-foreground text-sm">{title}</h3>
+      <h3 className="font-semibold text-base text-foreground">{title}</h3>
       <BoardChildren ids={children} />
     </section>
   );

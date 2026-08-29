@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { basename } from "node:path";
 import { expect, test } from "@playwright/test";
+import { BOARD_IMPLEMENTATION_PATH, BOARD_TEST_PATH, seedBoardFixture } from "./board-fixture";
 import {
   addProject,
   completeWelcome,
@@ -9,6 +10,7 @@ import {
   openDiffView,
   openWorkingTreeReview,
   seedReviewRepo,
+  writeRepoFile,
 } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,9 +61,8 @@ test("the board is the review workspace, and is honest when no board is drafted"
     // A control run (flipping both to `toBe(1)`) confirms they evaluate against a genuinely
     // empty DOM — `Expected: 1, Received: 0` — so they are not silently erroring. What that
     // control does NOT prove is that the selectors would still match a REAL switcher or error
-    // panel if one appeared; only a fixture that drafts a board could show that, and none
-    // exists model-free. Provenance is pinned instead: `board/lens-switcher.tsx:49-51`
-    // (role/aria-label/data-kind) and `board/board-view.tsx:116`.
+    // panel if one appeared. The positive persisted-board journey below supplies that
+    // complementary proof; this test remains the honest-absence half of the contract.
     //
     // The contract itself is C05 6.2's absent-not-disabled rule: a lens with no board is not
     // in the switcher at all, so with no boards there is no switcher — never a row of dead
@@ -79,6 +80,176 @@ test("the board is the review workspace, and is honest when no board is drafted"
     await page.getByRole("button", { name: "Back to board" }).click();
     await expect(board).toBeVisible();
     await expect(page.getByText(`REVIEW · ${basename(repository)}`)).toBeVisible();
+  } finally {
+    await application.close();
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+function currentHash(page: Parameters<typeof seedBoardFixture>[0]): Promise<string> {
+  return page.evaluate(() => location.hash);
+}
+
+async function expectQuery(
+  page: Parameters<typeof seedBoardFixture>[0],
+  expected: Record<string, string>,
+): Promise<void> {
+  const hash = await currentHash(page);
+  const query = new URLSearchParams(hash.split("?")[1] ?? "");
+  expect(Object.fromEntries(query)).toEqual(expected);
+}
+
+async function installScrollProbe(page: Parameters<typeof seedBoardFixture>[0]): Promise<void> {
+  await page.evaluate(() => {
+    const target = window as unknown as { rennetE2eScrollTargets: string[] };
+    target.rennetE2eScrollTargets = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function scrollIntoView(
+      options?: boolean | ScrollIntoViewOptions,
+    ) {
+      target.rennetE2eScrollTargets.push(this.id);
+      original.call(this, options);
+    };
+  });
+}
+
+async function scrollTargets(page: Parameters<typeof seedBoardFixture>[0]): Promise<string[]> {
+  return page.evaluate(
+    () => (window as unknown as { rennetE2eScrollTargets?: string[] }).rennetE2eScrollTargets ?? [],
+  );
+}
+
+test("a persisted board owns lens, generation, and captured-code navigation in the launched app", async () => {
+  test.setTimeout(300_000);
+
+  const repository = seedReviewRepo("rennet-e2e-board-positive-");
+  writeRepoFile(repository, BOARD_TEST_PATH, "import { widget } from './widget';\nvoid widget;\n");
+  const userData = makeTempDir("rennet-e2e-board-positive-state-");
+  const home = makeTempDir("rennet-e2e-board-positive-home-");
+  const { application } = await launchRennet({ repository, userData, home });
+
+  try {
+    const page = await application.firstWindow();
+    await completeWelcome(page);
+    await addProject(page, repository);
+    await openWorkingTreeReview(page);
+    const fixture = await seedBoardFixture(page, repository, userData);
+    await page.reload();
+    expect((await currentHash(page)).split("?")[0]).toBe(
+      `#/s/${encodeURIComponent(fixture.sessionId)}`,
+    );
+
+    const board = page.locator("article[data-lens]");
+    await expect(board).toHaveAttribute("data-generation", fixture.liveGeneration, {
+      timeout: 60_000,
+    });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const topBar = page.locator('[data-slot="session-top-bar"]');
+    const rail = topBar.locator('[data-slot="lens-switcher"] [role="tablist"]');
+    await expect(rail).toBeVisible();
+    expect(
+      await rail.locator("[data-lens]").evaluateAll((tabs) => tabs.map((tab) => tab.dataset.lens)),
+    ).toEqual(["design", "sequence", "decisions", "flagged", "noise"]);
+    const [topBarBox, railBox] = await Promise.all([topBar.boundingBox(), rail.boundingBox()]);
+    if (topBarBox === null || railBox === null) throw new Error("lens rail has no layout box");
+    expect(
+      Math.abs(topBarBox.x + topBarBox.width / 2 - (railBox.x + railBox.width / 2)),
+    ).toBeLessThan(2);
+    const sequenceTab = rail.getByRole("tab", { name: /Sequence/ });
+    const sequenceLabel = sequenceTab.locator("span").last();
+    const containerThreshold = await page.evaluate(
+      () => 46 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    );
+    expect(topBarBox.width).toBeGreaterThan(containerThreshold);
+    expect(await sequenceLabel.evaluate((label) => getComputedStyle(label).display)).not.toBe(
+      "none",
+    );
+
+    await page.setViewportSize({ width: 720, height: 900 });
+    await expect
+      .poll(async () => (await topBar.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
+      .toBeLessThan(containerThreshold);
+    await expect
+      .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
+      .toBe("none");
+    await expect(sequenceTab).toBeVisible();
+    await expect(sequenceTab).toHaveAccessibleName(/Sequence/);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect
+      .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
+      .not.toBe("none");
+
+    const beforeLens = await page.evaluate(() => history.length);
+    await rail.getByRole("tab", { name: "Sequence" }).click();
+    expect(await page.evaluate(() => history.length)).toBe(beforeLens);
+    await expectQuery(page, { lens: "sequence" });
+    await expect(board).toHaveAttribute("data-lens", "sequence");
+
+    await page.getByRole("button", { name: "Diff", exact: true }).click();
+    await expectQuery(page, { view: "diff", lens: "sequence" });
+    await expect(rail.getByRole("tab", { selected: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expectQuery(page, { view: "rounds", lens: "sequence" });
+    const generations = page.getByRole("tablist", { name: "Generation" });
+    await expect(generations).toBeVisible();
+    await expect(generations.getByRole("tab")).toHaveCount(2);
+    const beforeGeneration = await page.evaluate(() => history.length);
+    await generations.getByRole("tab", { name: /Generation 1/ }).click();
+    expect(await page.evaluate(() => history.length)).toBe(beforeGeneration);
+    await expectQuery(page, {
+      view: "rounds",
+      lens: "sequence",
+      generation: fixture.frozenGeneration,
+    });
+    await expect(board).toHaveAttribute("data-generation", fixture.frozenGeneration);
+
+    await rail.getByRole("tab", { name: "Flagged" }).click();
+    await expectQuery(page, { generation: fixture.frozenGeneration });
+    await expect(board).toHaveAttribute("data-lens", "flagged");
+    await expect(board).toHaveAttribute("data-generation", fixture.frozenGeneration);
+
+    await rail.getByRole("tab", { name: "Sequence" }).click();
+    await expectQuery(page, { lens: "sequence", generation: fixture.frozenGeneration });
+    await page.getByRole("button", { name: "widget.ts:1" }).click();
+    const implementation = page.getByRole("button", {
+      name: BOARD_IMPLEMENTATION_PATH,
+      exact: true,
+    });
+    await expect(implementation).toBeVisible();
+    await expect(page.getByRole("button", { name: "View test", exact: true })).toBeVisible();
+
+    await installScrollProbe(page);
+    const beforeFilename = await page.evaluate(() => history.length);
+    await implementation.click();
+    expect(await page.evaluate(() => history.length)).toBe(beforeFilename);
+    await expectQuery(page, {
+      view: "diff",
+      lens: "sequence",
+      generation: fixture.frozenGeneration,
+      file: BOARD_IMPLEMENTATION_PATH,
+    });
+    await expect(page.locator(`[id="diff-${BOARD_IMPLEMENTATION_PATH}"]`)).toBeVisible();
+    await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_IMPLEMENTATION_PATH}`);
+
+    await rail.getByRole("tab", { name: "Sequence" }).click();
+    await page.getByRole("button", { name: "widget.ts:1" }).click();
+    await installScrollProbe(page);
+    const beforeCounterpart = await page.evaluate(() => history.length);
+    await page.getByRole("button", { name: "View test", exact: true }).click();
+    expect(await page.evaluate(() => history.length)).toBe(beforeCounterpart);
+    await expectQuery(page, {
+      view: "diff",
+      lens: "sequence",
+      generation: fixture.frozenGeneration,
+      file: BOARD_TEST_PATH,
+    });
+    await expect(page.locator(`[id="diff-${BOARD_TEST_PATH}"]`)).toBeVisible();
+    await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_TEST_PATH}`);
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });

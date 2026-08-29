@@ -26,7 +26,9 @@ import { join } from "node:path";
 import type { ProcessedRepoSummary, Project, ProjectDetail, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
+import { useLensBoards } from "../board/board-data";
 import { LensBoardView } from "../board/board-view";
+import { LensSwitcher } from "../board/lens-switcher";
 import { BridgeProvider } from "../data";
 import { ExitFab } from "../handoff/fab";
 import { PostReviewLane } from "../handoff/post-review-lane";
@@ -145,6 +147,21 @@ function bridgeWith(handlers: ConstructorParameters<typeof MemoryBridge>[0]): Me
   });
 }
 
+function BoardCoachSurface() {
+  const lenses = useLensBoards("rev-1", "gen1");
+  return (
+    <>
+      <LensSwitcher lenses={lenses} selected="flagged" onSelect={() => undefined} />
+      <LensBoardView
+        reviewId="rev-1"
+        generation="gen1"
+        lens="flagged"
+        generations={["gen0", "gen1", "gen2"]}
+      />
+    </>
+  );
+}
+
 describe("every coach anchor resolves (C13 Cluster 5)", () => {
   it("every mark has EXACTLY ONE real anchor site and no site anchors an unknown mark (no orphan, no dupe)", () => {
     const counts = new Map<string, number>();
@@ -159,10 +176,7 @@ describe("every coach anchor resolves (C13 Cluster 5)", () => {
 
   it("board surface — lenses and highlight each resolve to a live element", async () => {
     useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } });
-    const { getByTestId } = mountSurface(
-      <LensBoardView reviewId="rev-1" generation="gen1" generations={["gen0", "gen1", "gen2"]} />,
-      ["lenses", "highlight"],
-    );
+    const { getByTestId } = mountSurface(<BoardCoachSurface />, ["lenses", "highlight"]);
     await waitFor(() => expect(getByTestId("el-lenses").textContent).not.toBe("none"));
     expect(getByTestId("el-highlight").textContent).not.toBe("none");
     cleanup();

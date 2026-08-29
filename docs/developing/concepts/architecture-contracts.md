@@ -117,8 +117,11 @@ and ignored by default, never staged or committed. Each board is a
 `schema.json` written once at creation plus an append-only `log.jsonl` with
 contiguous sequence numbers; a batch of ops lands contiguously or not at all.
 The embedded board service replays the log on restart, so a fresh process over
-the same directory serves the identical board. All board writes route through
-the adapters `whiteboard-client` — the only writer of board ops.
+the same directory serves the identical element state. The board-level document
+envelope, coverage, and validation results persist separately in the daemon's
+board-meta store before the board is announced. `board.read` joins those two
+durable halves. All element writes route through the adapters
+`whiteboard-client`, the only writer of board ops.
 
 ## Harness boundary
 

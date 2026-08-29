@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
+import type { LensKind } from "@rennet/protocol";
+import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
+import { useLensBoards } from "./board-data";
 import { LensBoardView } from "./board-view";
+import { LensSwitcher } from "./lens-switcher";
 
 // Cluster 6 — the board document, lens switcher, and generation drill-down over the
 // fixture generations. gen0 = frozen propose-time Design only; gen1 = all five lenses;
@@ -13,12 +17,45 @@ import { LensBoardView } from "./board-view";
 
 const GENERATIONS = ["gen0", "gen1", "gen2"] as const;
 
-async function renderView(generation: string, generations: readonly string[] = GENERATIONS) {
+function BoardHarness({
+  generation,
+  generations,
+  initialLens = "flagged",
+}: {
+  readonly generation: string;
+  readonly generations: readonly string[];
+  readonly initialLens?: LensKind;
+}) {
+  const [selectedGeneration, setSelectedGeneration] = useState(generation);
+  const [lens, setLens] = useState<LensKind>(initialLens);
+  const lenses = useLensBoards("rev-1", selectedGeneration);
+  const available = lenses.map((entry) => entry.lens);
+  const selectedLens = available.includes(lens) ? lens : (available[0] ?? lens);
+  return (
+    <>
+      <LensSwitcher lenses={lenses} selected={selectedLens} onSelect={setLens} />
+      <LensBoardView
+        reviewId="rev-1"
+        generation={generation}
+        selectedGeneration={selectedGeneration}
+        lens={lens}
+        generations={generations}
+        onGenerationSelect={setSelectedGeneration}
+      />
+    </>
+  );
+}
+
+async function renderView(
+  generation: string,
+  generations: readonly string[] = GENERATIONS,
+  initialLens: LensKind = "flagged",
+) {
   // Boards arrive over `board.read`; the bridge stubs nothing else, so board citations
   // read the honest error the board document renders around (Reconciliation 2).
   const result = mount(
     <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
-      <LensBoardView reviewId="rev-1" generation={generation} generations={generations} />
+      <BoardHarness generation={generation} generations={generations} initialLens={initialLens} />
     </BridgeProvider>,
   );
   await settled(result.container);
@@ -36,6 +73,27 @@ const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAtt
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
 describe("LensBoardView — board document, switchers, drill-down", () => {
+  it("renders document metadata, structured measure, and a semantic anchored outline", async () => {
+    const { container } = await renderView("gen1", GENERATIONS, "design");
+    const document = container.querySelector<HTMLElement>("[data-kind=lens-board-view]");
+    const article = document?.querySelector("article");
+    expect(document?.className).toContain("max-w-[960px]");
+    expect(article?.querySelector("h1")?.textContent).toBe("Design");
+    expect(article?.querySelector("header p")?.textContent?.length).toBeGreaterThan(0);
+
+    const sections = [...(article?.querySelectorAll("[data-kind=board-section]") ?? [])];
+    expect(sections.length).toBeGreaterThan(0);
+    expect(article?.querySelectorAll("h2 > button").length).toBe(sections.length);
+    expect(sections.every((section) => section.id.length > 0)).toBe(true);
+    expect(sections.every((section) => section.className.includes("scroll-mt-16"))).toBe(true);
+  });
+
+  it("uses h3 card titles and h4 in-card detail headings", async () => {
+    const { container } = await renderView("gen1", GENERATIONS, "flagged");
+    expect(container.querySelector('[data-kind="finding"] h3 > button')).toBeTruthy();
+    expect(container.querySelector('[data-kind="finding"] h4')?.textContent).toContain("Fix");
+  });
+
   it("renders a segment only for lenses present this generation (absent-not-disabled)", async () => {
     const { container } = await renderView("gen2");
     const tabs = container.querySelector("[data-kind=lens-switcher]");
@@ -47,9 +105,9 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(tabs?.querySelector("[data-lens=noise]")).toBeNull();
   });
 
-  it("opens on the Flagged lens expanded (R44) and folds every section on another lens", async () => {
+  it("opens Flagged expanded when selected (R44) and folds every section on another lens", async () => {
     const { container, user } = await renderView("gen1");
-    // R44: Flagged is the default lens and its sections arrive expanded.
+    // R44: Flagged sections arrive expanded when that URL-owned lens is selected.
     expect(lensOf(container)).toBe("flagged");
     const flaggedOpen = [...container.querySelectorAll("[data-kind=board-section]")];
     expect(flaggedOpen.length).toBeGreaterThan(0);

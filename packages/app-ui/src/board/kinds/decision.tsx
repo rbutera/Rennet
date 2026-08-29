@@ -13,7 +13,7 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
   const citations = useCodeRefs(evidence);
   return (
     <div data-kind="decision" data-element-id={element.id} className="flex flex-col gap-1.5">
-      <p className="font-semibold text-foreground text-sm leading-snug">{statement}</p>
+      <h3 className="font-semibold text-base text-foreground leading-snug">{statement}</h3>
       <QuoteHighlightLayer
         text={why}
         elementId={element.id}
@@ -22,9 +22,7 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
       />
       {alternatives.length > 0 && (
         <div className="flex flex-col gap-1">
-          <span className="font-medium text-2xs text-muted-foreground uppercase tracking-wide">
-            Alternatives considered
-          </span>
+          <h4 className="font-medium text-sm text-foreground">Alternatives considered</h4>
           <ul className="flex list-disc flex-col gap-0.5 pl-5 text-foreground/80 text-sm marker:text-muted-foreground/60">
             {alternatives.map((alt) => (
               <li key={alt}>{alt}</li>

@@ -19,6 +19,10 @@ describe("lens prompt manifest", () => {
       expect(text.length, `${kind} prompt`).toBeGreaterThan(500);
       expect(text).toMatch(/^# /);
       expect(text).toContain("Ground rules");
+      expect(text).toContain("`document.title`");
+      expect(text).toContain("`document.introMarkdown`");
+      const measure = kind === "design" ? "structured" : "reading";
+      expect(text.replace(/\s+/g, " ")).toContain(`Set \`document.measure\` to \`${measure}\``);
     }
   });
 
@@ -32,6 +36,8 @@ describe("lens prompt manifest", () => {
     // The two steps wrapped around it.
     expect(text).toContain("break it down");
     expect(text).toContain("humanizer additions");
+    expect(text).toContain("Never add or remove it");
+    expect(text.replace(/\s+/g, " ")).toContain("never change `document.measure`");
   });
 
   it("carries the round-report drafter with verification duty and the shared ground rules", () => {
@@ -42,6 +48,9 @@ describe("lens prompt manifest", () => {
     // The seat's defining duties: verify against the diff, never launder.
     expect(text).toContain("Investigate before you report");
     expect(text).toMatch(/[Nn]ever launder/);
+    expect(text).toContain("`document.title`");
+    expect(text).toContain("`document.introMarkdown`");
+    expect(text).toMatch(/Set `document\.measure` to\s+`reading`/);
   });
 
   it("carries the review-draft voice rules", () => {

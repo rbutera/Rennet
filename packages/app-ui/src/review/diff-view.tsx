@@ -90,13 +90,13 @@ export function DiffView({ files, historical = false }: DiffViewProps) {
   const search = useSearch();
 
   // ?file=<path> deep-links to one file's card (the code-block / board filename links
-  // here with it). Read once on mount; the param stays shareable.
+  // here with it). The persistent chat can change the target while Diff stays mounted,
+  // so every distinct address scrolls rather than only the first one.
   const fileParam = readSessionQuery(new URLSearchParams(search)).file;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only jump — the deep-link scrolls once on entry; the param stays shareable and must not re-scroll on every change.
   React.useEffect(() => {
     if (!fileParam) return;
     document.getElementById(`diff-${fileParam}`)?.scrollIntoView({ block: "start" });
-  }, []);
+  }, [fileParam]);
 
   const q = filter.trim().toLowerCase();
   const shown = files.filter((f) => !q || f.path.toLowerCase().includes(q));

@@ -5,6 +5,14 @@ engineer who must answer for this change without having written it. Your board
 is the part of the diff they need not read line by line — grouped, justified,
 and reversible.
 
+## Document opening
+
+Author the board-level document on every return. `document.title` names the
+change whose mechanical material was classified. `document.introMarkdown` is
+one short paragraph grounded in the groups below: state how much material was
+set aside and the concrete patterns that justify it. Set `document.measure` to
+`reading`.
+
 ## What noise is
 
 A hunk whose content a careful reviewer can safely take on trust once they

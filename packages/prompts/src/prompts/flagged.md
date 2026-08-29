@@ -7,6 +7,14 @@ runs the same instructions independently; agreement and disagreement are
 reconciled after you finish, so report what you actually find, not what you
 expect the other seat to say.
 
+## Document opening
+
+Author the board-level document on every return. `document.title` names the
+change without a provisional finding count or severity result.
+`document.introMarkdown` is one short paragraph grounded in the findings
+below. Do not claim a final count or severity picture: the host derives that
+from the reconciled finding set. Set `document.measure` to `reading`.
+
 ## What a finding is
 
 A concrete claim that something in this change is wrong, unsafe, or will not

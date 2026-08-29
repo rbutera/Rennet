@@ -1,4 +1,11 @@
-import type { HostElement, LensBoard, LensKind, LensSection, SkippedHunk } from "@rennet/protocol";
+import type {
+  DomainCountKind,
+  HostElement,
+  LensBoard,
+  LensKind,
+  LensSection,
+  SkippedHunk,
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Protocol-shaped board fixtures (C05 task 1.1). The spike's `lib/fixtures/*` are
@@ -26,6 +33,17 @@ const HUMAN = { kind: "human", id: "reviewer" } as const;
 const withAuthor = <T extends object>(data: T) => ({ author: AUTHOR, ...data });
 
 type SectionDelta = "new" | "reworked";
+
+const DOMAIN_COUNT: Readonly<Record<string, DomainCountKind | undefined>> = {
+  finding: "findings",
+  decision: "decisions",
+  requirement: "requirements",
+  order_step: "steps",
+  round_outcome: "outcomes",
+  noise_verdict: "groups",
+  code_ref: "files",
+  review_comment: "comments",
+};
 
 // ── Element builders (each returns one HostElement in the canonical vocabulary) ──
 
@@ -210,7 +228,16 @@ export function section(
     }),
   };
   const counts: Record<string, number> = {};
-  for (const child of children) counts[child.kind] = (counts[child.kind] ?? 0) + 1;
+  const countedFilePaths = new Set<string>();
+  for (const child of children) {
+    const domain = DOMAIN_COUNT[child.kind];
+    if (domain === undefined) continue;
+    if (domain === "files") {
+      if (child.kind !== "code_ref" || countedFilePaths.has(child.data.path)) continue;
+      countedFilePaths.add(child.data.path);
+    }
+    counts[domain] = (counts[domain] ?? 0) + 1;
+  }
   return {
     elements: [sectionEl, ...children, ...(opts.refs ?? [])],
     entry: {
@@ -228,12 +255,18 @@ export function board(
   generation: string,
   boardId: string,
   sections: readonly AssembledSection[],
-  opts: { skippedHunks?: readonly SkippedHunk[] } = {},
+  opts: { skippedHunks?: readonly SkippedHunk[]; document?: LensBoard["document"] } = {},
 ): LensBoard {
+  const title = `${lens[0]?.toUpperCase() ?? ""}${lens.slice(1)}`;
   return {
     lens,
     generation,
     boardId,
+    document: opts.document ?? {
+      title,
+      introMarkdown: sections[0]?.entry.gist ?? `The ${title} reading of this change.`,
+      measure: lens === "design" ? "structured" : "reading",
+    },
     sections: sections.map((s) => s.entry),
     elements: sections.flatMap((s) => [...s.elements]),
     skippedHunks: [...(opts.skippedHunks ?? [])],

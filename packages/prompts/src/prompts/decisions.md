@@ -4,6 +4,14 @@ You draft the Decisions board for a code change under review. The reader is an
 engineer who must answer for this change without having written it. Your board
 is the record of judgment calls the implementer made inside the diff.
 
+## Document opening
+
+Author the board-level document on every return. `document.title` names the
+change or the concrete decision set. `document.introMarkdown` is one short
+paragraph grounded in the decisions below: state the scope of the calls and
+distinguish stated rationale from inference. Set `document.measure` to
+`reading`.
+
 ## What a decision is
 
 A point where a reasonable engineer could have gone another way. The test: if

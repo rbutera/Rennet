@@ -4,6 +4,7 @@ import { useRoute } from "wouter";
 import { ChatDock } from "../chat/chat-dock";
 import { Coachmark } from "../coach/coachmark";
 import { CoachDataProvider } from "../coach/provider";
+import { CodeDestinationProvider } from "../review/code-destination";
 import { AppDialogs } from "../shell/app-dialogs";
 import { CommandMenu } from "../shell/command-menu";
 import {
@@ -78,110 +79,115 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   const effectiveChatWidth = Math.min(maxChatWidth, Math.max(MIN_CHAT_WIDTH, chatWidth));
 
   return (
-    // The ONE global key owner wraps the frame + outlet, so every overlay (the command
-    // menu here, C5/C12's later ones) shares one keydown authority + Escape priority stack.
-    <KeyOwner>
-      {/* The coach provider sits HIGH in the shell so every anchor-bearing surface
+    // Code evidence in both persistent chat and the route outlet resolves against this
+    // route's active patchset. The provider sits outside both regions so they cannot drift.
+    <CodeDestinationProvider>
+      {/* The ONE global key owner wraps the frame + outlet, so every overlay (the command
+          menu here, C5/C12's later ones) shares one keydown authority + Escape priority stack. */}
+      <KeyOwner>
+        {/* The coach provider sits HIGH in the shell so every anchor-bearing surface
           (sidebar Replay control, the outlet's surfaces) shares one store + registry.
           It renders children plain until `settings.get` resolves (the store awaits its
           seed), so the anchors' null-safe refs no-op then self-heal. One `<Coachmark/>`
           mounts inside it — the single shell-level surface that renders the elected mark. */}
-      <CoachDataProvider>
-        <div className="rennet-layout fixed inset-0 flex overflow-hidden bg-canvas text-ink">
-          {/* The ⌘P/⌘K command menu — mounted once, outside the outlet, so the sidebar
+        <CoachDataProvider>
+          <div className="rennet-layout fixed inset-0 flex overflow-hidden bg-canvas text-ink">
+            {/* The ⌘P/⌘K command menu — mounted once, outside the outlet, so the sidebar
             Search row (C3) drives this single controlled instance. */}
-          <CommandMenu />
+            <CommandMenu />
 
-          {/* Sidebar region — the host/project/session tree is a projection (C3). */}
-          <Sidebar />
+            {/* Sidebar region — the host/project/session tree is a projection (C3). */}
+            <Sidebar />
 
-          {/* The chat-dock SLOT — the SAME always-mounted element OUTSIDE the outlet, so
+            {/* The chat-dock SLOT — the SAME always-mounted element OUTSIDE the outlet, so
           navigating never unmounts it (risk 4). Hidden by width-0 + `inert` off a
           session route or with the chat closed; C7 fills the dock's internals. */}
-          <div
-            data-slot="chat-dock"
-            data-testid="chat-dock-slot"
-            data-open={dockOpen}
-            inert={!dockOpen}
-            style={{ width: dockOpen ? effectiveChatWidth : 0 }}
-            className={cn(
-              "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
-              !resizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-            )}
-          >
-            {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
+            <div
+              data-slot="chat-dock"
+              data-testid="chat-dock-slot"
+              data-open={dockOpen}
+              inert={!dockOpen}
+              style={{ width: dockOpen ? effectiveChatWidth : 0 }}
+              className={cn(
+                "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
+                !resizing &&
+                  "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+              )}
+            >
+              {/* C7 fills the dock's internals; the slot's lifetime IS the transcript-identity
               guarantee — the dock mounts once here and never unmounts on navigation. */}
-            {/* State 2 (C20): with the sidebar collapsed and the dock OPEN, the chat is
+              {/* State 2 (C20): with the sidebar collapsed and the dock OPEN, the chat is
               the leftmost pane and owns the corner slot — inline in its existing header
               row. Gated on ownership, never on the dock existing: this slot stays
               MOUNTED at width 0 + `inert` when closed, and an ungated mount here would
               be an invisible second corner slot that steals the window's drag region. */}
-            <ChatDock corner={owner === "chat" ? <CornerSlot owner="chat" /> : null} />
-          </div>
+              <ChatDock corner={owner === "chat" ? <CornerSlot owner="chat" /> : null} />
+            </div>
 
-          {/* The divider — only on a session route with the chat open. */}
-          {dockOpen ? (
-            <ResizeHandle
-              aria-label="Resize chat column"
-              value={effectiveChatWidth}
-              min={MIN_CHAT_WIDTH}
-              max={maxChatWidth}
-              defaultValue={DEFAULT_CHAT_WIDTH}
-              onPointerDown={() => setResizing(true)}
-              onPointerUp={() => setResizing(false)}
-              onPointerCancel={() => setResizing(false)}
-              onLostPointerCapture={() => setResizing(false)}
-              onChange={setChatWidth}
-            />
-          ) : null}
+            {/* The divider — only on a session route with the chat open. */}
+            {dockOpen ? (
+              <ResizeHandle
+                aria-label="Resize chat column"
+                value={effectiveChatWidth}
+                min={MIN_CHAT_WIDTH}
+                max={maxChatWidth}
+                defaultValue={DEFAULT_CHAT_WIDTH}
+                onPointerDown={() => setResizing(true)}
+                onPointerUp={() => setResizing(false)}
+                onPointerCancel={() => setResizing(false)}
+                onLostPointerCapture={() => setResizing(false)}
+                onChange={setChatWidth}
+              />
+            ) : null}
 
-          {/* The outlet — the ONLY part navigation swaps — under the session top-bar. */}
-          <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
-            {isSessionRoute ? <TopBar /> : null}
-            {/* State 3 (C20): with no pane to its left the main view runs full-bleed
+            {/* The outlet — the ONLY part navigation swaps — under the session top-bar. */}
+            <main data-region="outlet" className="rennet-outlet flex min-w-0 flex-1 flex-col">
+              {isSessionRoute ? <TopBar /> : null}
+              {/* State 3 (C20): with no pane to its left the main view runs full-bleed
               under the floating chip layer, and the two surface families need different
               treatment (index.css). A SESSION surface hands the clearance to its primary
               scroller, so prose clears the chips at rest and passes under them on scroll.
               A TAKEOVER surface has its own in-flow header and must not scroll content
               through it, so it takes the clearance as plain padding and nothing else. */}
-            <div
-              data-floating-chrome={
-                owner === "floating" ? (isSessionRoute ? "scroll" : "pad") : "off"
-              }
-              className={cn(
-                // A flex COLUMN, not a block. Surfaces in here declare `min-h-0 flex-1
-                // overflow-y-auto` for their own scrolling (the repo-wide primary-scroller
-                // idiom), and `flex-1` is inert unless this parent is a flex container — a
-                // scroller that renders but cannot scroll. Every other child either uses
-                // `h-full` (identical under both) or `min-h-screen` (overflows identically
-                // under both), so this is neutral for them and load-bearing for the rest.
-                "relative flex min-h-0 flex-1 flex-col",
-                owner === "floating" &&
-                  (isSessionRoute ? "rennet-floating-chrome-scroll" : "rennet-floating-chrome"),
-              )}
-            >
-              {children}
-            </div>
-          </main>
+              <div
+                data-floating-chrome={
+                  owner === "floating" ? (isSessionRoute ? "scroll" : "pad") : "off"
+                }
+                className={cn(
+                  // A flex COLUMN, not a block. Surfaces in here declare `min-h-0 flex-1
+                  // overflow-y-auto` for their own scrolling (the repo-wide primary-scroller
+                  // idiom), and `flex-1` is inert unless this parent is a flex container — a
+                  // scroller that renders but cannot scroll. Every other child either uses
+                  // `h-full` (identical under both) or `min-h-screen` (overflows identically
+                  // under both), so this is neutral for them and load-bearing for the rest.
+                  "relative flex min-h-0 flex-1 flex-col",
+                  owner === "floating" &&
+                    (isSessionRoute ? "rennet-floating-chrome-scroll" : "rennet-floating-chrome"),
+                )}
+              >
+                {children}
+              </div>
+            </main>
 
-          {/* The corner slot's floating mount (C20 state 3): with the sidebar
+            {/* The corner slot's floating mount (C20 state 3): with the sidebar
             collapsed and no chat dock open there is no pane header left to host the
             traffic-light inset and the sidebar toggle, so the slot floats over the
             main view. It belongs to the LAYOUT, not `TopBar`, because every takeover
             route (settings, new chat, archived, map, indexing) has no top bar at all
             and would otherwise have no corner slot and no drag region. */}
-          {owner === "floating" ? <CornerSlot owner="floating" /> : null}
+            {owner === "floating" ? <CornerSlot owner="floating" /> : null}
 
-          {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
+            {/* App-wide dialogs (add-project, add-environment) — mounted once, each binds
             its own visibility to `ui.openDialogs` and portals over the frame. Inside the
             KeyOwner so their open/Escape participates in the one priority stack. */}
-          <AppDialogs />
+            <AppDialogs />
 
-          {/* The one active coach mark for the whole shell — reads the elected mark from
+            {/* The one active coach mark for the whole shell — reads the elected mark from
             the store and renders that single card + spotlight, or nothing. */}
-          <Coachmark />
-        </div>
-      </CoachDataProvider>
-    </KeyOwner>
+            <Coachmark />
+          </div>
+        </CoachDataProvider>
+      </KeyOwner>
+    </CodeDestinationProvider>
   );
 }

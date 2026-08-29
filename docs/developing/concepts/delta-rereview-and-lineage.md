@@ -38,7 +38,9 @@ generation the boards are live append-only logs: re-running a lens appends, and
 board-native data on surviving element ids persists. When the code moves, the
 whole generation freezes immutable and a successor generation is minted. The
 frozen generation stays readable as drill-down; nothing is ever edited in
-place.
+place. The session URL selects a frozen generation with `?generation=<id>`;
+without that parameter the client reads the live generation. The drill-down is
+therefore reloadable and directly addressable, not local switcher state.
 
 ## What carries
 

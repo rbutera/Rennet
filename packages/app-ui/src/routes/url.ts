@@ -15,8 +15,9 @@ export const VIEW_KINDS: readonly ViewKind[] = ["board", "diff", "map", "handoff
 /** The board default view — an unknown or absent ?view falls back here, and it alone is
  *  omitted from a serialized query (diff/map/handoff/rounds always serialize). */
 export const DEFAULT_VIEW: ViewKind = "board";
-/** The default lens — an unknown ?lens falls back to the first available (else this). */
-export const DEFAULT_LENS: LensKind = LENS_KINDS[0];
+/** The default lens — preserve the review-first board main already opened when no lens
+ *  was addressed. A missing Flagged board still falls back to the first present lens. */
+export const DEFAULT_LENS: LensKind = "flagged";
 
 /** The #480 route patterns (wouter path syntax), plus the two interim routes
  *  (reconciliation 2 — NOT part of the documented #480 grammar). */
@@ -39,6 +40,9 @@ export const ROUTES = {
 export interface SessionQuery {
   readonly view?: ViewKind;
   readonly lens?: LensKind;
+  /** A frozen board generation selected through the board's generation drill-down.
+   *  Absent means the review's live generation. */
+  readonly generation?: string;
   readonly file?: string;
   /** WHICH round's diff `?view=diff` shows — the round's 1-based number in the session's
    *  oldest→newest ledger, set on the ledger's Round-diff link. The round NUMBER, not its
@@ -68,6 +72,7 @@ export function sessionPath(slug: string, query: SessionQuery = {}): string {
   return `/s/${encodeURIComponent(slug)}${queryString([
     ["view", query.view && query.view !== DEFAULT_VIEW ? query.view : undefined],
     ["lens", query.lens && query.lens !== DEFAULT_LENS ? query.lens : undefined],
+    ["generation", query.generation],
     ["file", query.file],
     ["round", query.round],
     ["ask", query.ask],
@@ -116,19 +121,24 @@ export function parseView(raw: string | null | undefined): ViewKind {
   return VIEW_KINDS.includes(raw as ViewKind) ? (raw as ViewKind) : DEFAULT_VIEW;
 }
 
-/** Parse ?lens against the available lenses; an unknown or absent value falls back to
- *  the first available lens (else the global default). */
+/** Parse ?lens against the available lenses. An unknown/absent value keeps the global
+ *  default when present; a known lens absent from this generation falls to its first board. */
 export function parseLens(
   raw: string | null | undefined,
   available: readonly LensKind[] = LENS_KINDS,
 ): LensKind {
   if (raw != null && available.includes(raw as LensKind)) return raw as LensKind;
+  if (raw == null || !LENS_KINDS.includes(raw as LensKind)) {
+    if (available.includes(DEFAULT_LENS)) return DEFAULT_LENS;
+  }
   return available[0] ?? DEFAULT_LENS;
 }
 
 export interface ParsedSessionQuery {
   readonly view: ViewKind;
   readonly lens: LensKind;
+  /** The selected frozen generation, or null for the review's live generation. */
+  readonly generation: string | null;
   readonly file: string | null;
   /** The requested round's 1-based ledger number, or null for the live review diff. */
   readonly round: string | null;
@@ -144,6 +154,7 @@ export function readSessionQuery(
   return {
     view: parseView(search.get("view")),
     lens: parseLens(search.get("lens"), availableLenses),
+    generation: search.get("generation"),
     file: search.get("file"),
     round: search.get("round"),
     ask: search.get("ask"),

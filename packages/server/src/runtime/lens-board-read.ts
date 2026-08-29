@@ -1,4 +1,12 @@
-import { type LensBoard, LensBoardSchema, type LensKind } from "@rennet/protocol";
+import {
+  type BoardDocument,
+  type DomainCountKind,
+  type HostKind,
+  type LensBoard,
+  LensBoardSchema,
+  type LensKind,
+  resolveBoardDocument,
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The lens-board READ projection (C05 cluster 8 / C18) — the inverse of
@@ -8,6 +16,8 @@ import { type LensBoard, LensBoardSchema, type LensKind } from "@rennet/protocol
 // two durable halves, inventing nothing:
 //
 //   • `elements` — the board's projected state, in the order the ops created them.
+//   • `document` — the authored title/intro/measure from board metadata, or the
+//     deterministic lens fallback for a legacy record that predates it.
 //   • `sections` — the TOP-LEVEL `section` elements (a section another element
 //     names as a child is nested, not a fold line), in that same order. `counts`
 //     is TALLIED from each section's own resolved children, exactly as the fold
@@ -33,11 +43,25 @@ export interface LensBoardIdentity {
   readonly lens: LensKind;
   readonly generation: string;
   readonly boardId: string;
+  readonly document?: BoardDocument;
   readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
 }
 
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
+
+const DOMAIN_COUNT_ENTRIES = [
+  ["finding", "findings"],
+  ["decision", "decisions"],
+  ["requirement", "requirements"],
+  ["order_step", "steps"],
+  ["round_outcome", "outcomes"],
+  ["noise_verdict", "groups"],
+  ["code_ref", "files"],
+  ["review_comment", "comments"],
+] as const satisfies readonly (readonly [HostKind, DomainCountKind])[];
+
+const DOMAIN_COUNT_FOR_HOST_KIND = new Map<string, DomainCountKind>(DOMAIN_COUNT_ENTRIES);
 
 /** The element ids some element names as a child — the nested set, excluded from the
  *  top-level fold lines. Only `children` is a containment relation; other element-typed
@@ -71,9 +95,19 @@ export function projectLensBoard(
     .map((el) => {
       const children = Array.isArray(el.data.children) ? el.data.children : [];
       const counts: Record<string, number> = {};
+      const countedFilePaths = new Set<string>();
       for (const child of children) {
-        const kind = typeof child === "string" ? byId.get(child)?.kind : undefined;
-        if (kind !== undefined) counts[kind] = (counts[kind] ?? 0) + 1;
+        const childElement = typeof child === "string" ? byId.get(child) : undefined;
+        const hostKind = childElement?.kind;
+        const domainKind =
+          hostKind === undefined ? undefined : DOMAIN_COUNT_FOR_HOST_KIND.get(hostKind);
+        if (domainKind === undefined) continue;
+        if (domainKind === "files") {
+          const path = asString(childElement?.data.path);
+          if (path === undefined || countedFilePaths.has(path)) continue;
+          countedFilePaths.add(path);
+        }
+        counts[domainKind] = (counts[domainKind] ?? 0) + 1;
       }
       const delta = el.data.delta;
       return {
@@ -87,6 +121,7 @@ export function projectLensBoard(
     lens: identity.lens,
     generation: identity.generation,
     boardId: identity.boardId,
+    document: resolveBoardDocument(identity.lens, identity.document),
     sections,
     elements,
     skippedHunks: identity.skippedHunks.map((s) => ({ hunk: s.hunk, reason: s.reason })),

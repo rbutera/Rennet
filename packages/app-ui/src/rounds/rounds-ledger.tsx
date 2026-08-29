@@ -2,9 +2,9 @@ import { ROUND_NO_REGEN, type RoundRecord } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check } from "lucide-react";
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { LensBoardView } from "../board";
-import { sessionPath } from "../routes/url";
+import { readSessionQuery, sessionPath } from "../routes/url";
 import { RoundReportBoard } from "./round-report";
 import { useReportBoard } from "./rounds-data";
 
@@ -41,7 +41,7 @@ import { useReportBoard } from "./rounds-data";
  * each. `ROUND_NO_REGEN` is a dispatch round's honest "regenerated nothing" marker, not a
  * generation, so it never enters the line.
  */
-function generationLine(records: readonly RoundRecord[]): readonly string[] {
+export function generationLine(records: readonly RoundRecord[]): readonly string[] {
   const ids = records.flatMap((r) => [r.frozenPredecessor, r.boardGeneration]);
   return [...new Set(ids.filter((id): id is string => id !== undefined && id !== ROUND_NO_REGEN))];
 }
@@ -57,6 +57,7 @@ export function RoundsLedger({
   readonly records: readonly RoundRecord[];
 }) {
   const [, navigate] = useLocation();
+  const query = readSessionQuery(new URLSearchParams(useSearch()));
 
   // Newest round first; the round number is the 1-based position in the oldest→newest
   // ledger, preserved as we reverse for display.
@@ -90,6 +91,10 @@ export function RoundsLedger({
   const line = generationLine(records);
   const position = line.indexOf(liveGeneration);
   const generations = position >= 0 ? line.slice(0, position + 1) : [liveGeneration];
+  const selectedGeneration =
+    query.generation !== null && generations.includes(query.generation)
+      ? query.generation
+      : liveGeneration;
   const regenerated = liveGeneration !== ROUND_NO_REGEN;
 
   return (
@@ -168,7 +173,16 @@ export function RoundsLedger({
             data-testid="round-diff-link"
             data-round-number={selected.round}
             onClick={() =>
-              navigate(sessionPath(slug, { view: "diff", round: String(selected.round) }))
+              navigate(
+                sessionPath(slug, {
+                  view: "diff",
+                  lens: query.lens,
+                  generation: query.generation ?? undefined,
+                  file: query.file ?? undefined,
+                  round: String(selected.round),
+                  ask: query.ask ?? undefined,
+                }),
+              )
             }
             className="self-start text-model text-sm underline-offset-2 hover:underline"
           >
@@ -187,7 +201,26 @@ export function RoundsLedger({
           </p>
         )}
 
-        <LensBoardView reviewId={reviewId} generation={liveGeneration} generations={generations} />
+        <LensBoardView
+          reviewId={reviewId}
+          generation={liveGeneration}
+          selectedGeneration={selectedGeneration}
+          lens={query.lens}
+          generations={generations}
+          onGenerationSelect={(generation) =>
+            navigate(
+              sessionPath(slug, {
+                view: "rounds",
+                lens: query.lens,
+                generation: generation === liveGeneration ? undefined : generation,
+                file: query.file ?? undefined,
+                round: query.round ?? undefined,
+                ask: query.ask ?? undefined,
+              }),
+              { replace: true },
+            )
+          }
+        />
       </div>
     </section>
   );

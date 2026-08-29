@@ -24,9 +24,9 @@ import {
   useRoundState,
   useRoundsUnavailable,
 } from "../rounds/rounds-data";
-import { RoundsLedger } from "../rounds/rounds-ledger";
+import { generationLine, RoundsLedger } from "../rounds/rounds-ledger";
 import { useSessionProjectId } from "../routes/slug";
-import { ROUTES, readSessionQuery, sessionRunPath, viewToggle } from "../routes/url";
+import { ROUTES, readSessionQuery, sessionPath, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
 // The review workspace route (B2 stub → Track C rebuild, #489). The canvas-era surface
@@ -156,6 +156,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     roundState.phase === "composed"
       ? roundState.newGeneration
       : generationIdForPatchset(review.activePatchsetId);
+  const boardGenerations = [...new Set([...generationLine(roundRecords), boardGeneration])];
 
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
   // contract — a PR review is a snapshot taken against the pull request's pinned OIDs, "NOT wired
@@ -202,7 +203,10 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   function toBoard() {
     const { path, replace } = viewToggle(slug, "board", {
       lens: query.lens,
+      generation: query.generation ?? undefined,
       file: query.file ?? undefined,
+      round: query.round ?? undefined,
+      ask: query.ask ?? undefined,
     });
     navigate(path, { replace });
   }
@@ -210,7 +214,10 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
       lens: query.lens,
+      generation: query.generation ?? undefined,
       file: query.file ?? undefined,
+      round: query.round ?? undefined,
+      ask: query.ask ?? undefined,
     });
     navigate(path, { replace });
   }
@@ -303,7 +310,26 @@ export function ReviewWorkspace({ review }: { review: Review }) {
                   REVIEW · {review.repositoryRoot.split("/").at(-1)}
                 </p>
               </header>
-              <LensBoardView reviewId={review.id} generation={boardGeneration} />
+              <LensBoardView
+                reviewId={review.id}
+                generation={boardGeneration}
+                selectedGeneration={query.generation ?? boardGeneration}
+                lens={query.lens}
+                generations={boardGenerations}
+                onGenerationSelect={(generation) =>
+                  navigate(
+                    sessionPath(slug, {
+                      view: "board",
+                      lens: query.lens,
+                      generation: generation === boardGeneration ? undefined : generation,
+                      file: query.file ?? undefined,
+                      round: query.round ?? undefined,
+                      ask: query.ask ?? undefined,
+                    }),
+                    { replace: true },
+                  )
+                }
+              />
             </>
           )}
         </div>

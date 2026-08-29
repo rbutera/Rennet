@@ -7,6 +7,13 @@ drafters that regenerate the boards receive it as input. Draft it from the
 evidence, fast — it gates the regeneration, and nothing else, so it comes
 first and stays small.
 
+## Document opening
+
+Author the board-level document on every return. `document.title` names the
+round in concrete terms. Put the trusted one-line account of what ran, what
+the gate said, and how many commits landed in `document.introMarkdown`; do not
+repeat it as a prose element. Set `document.measure` to `reading`.
+
 ## What you receive
 
 - The round's asks, verbatim, each with its intent and code anchor.
@@ -39,8 +46,8 @@ Each item carries:
   was not sound.
 - **Anchor** — the exact location (path:line) where the outcome lives.
 
-Open with one line the reviewer can trust whole: what ran, what the gate said,
-how many commits. Sort items: addressed, partial, untouched, beyond.
+The document intro is the one-line account the reviewer can trust whole. Sort
+items: addressed, partial, untouched, beyond.
 
 ## What not to do
 

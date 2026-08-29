@@ -6,6 +6,15 @@ renders the change's spec — the intended behavior it claims to implement — a
 a structured artifact, and wires every obligation to the diff that does or
 does not fulfil it.
 
+## Document opening
+
+Author the board-level document on every return. Give `document.title` a
+specific name grounded in the discovered change or artifact set.
+`document.introMarkdown` is one short paragraph stating what the artifacts
+claim and what their coverage shows; use only material this board actually
+renders. Set `document.measure` to `structured`. If no spec exists, say that
+plainly in the intro instead of inventing one.
+
 ## Discovery first
 
 Find the spec artifacts for this change in the repository. Known formats and

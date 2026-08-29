@@ -7,6 +7,11 @@ import { type BoardMetaInput, BoardMetaStore } from "./board-meta-store";
 const meta = (boardId: string, lens: BoardMetaInput["lens"]): BoardMetaInput => ({
   lens,
   boardId,
+  document: {
+    title: lens === "report" ? "Round report" : "A grounded board",
+    introMarkdown: "Walked from the durable write to the reader.",
+    measure: lens === "design" ? "structured" : "reading",
+  },
   skippedHunks: [{ hunk: "h1", reason: "binary blob" }],
   blemishes: [{ ruleId: "prose-length", elementRef: "/e1", message: "too long" }],
   omissions: [{ elementId: "e2", hunks: ["h2"], reason: "not covered" }],
@@ -22,6 +27,11 @@ describe("BoardMetaStore", () => {
     const read = store.load("board:design");
     expect(read?.boardId).toBe("board:design");
     expect(read?.lens).toBe("design");
+    expect(read?.document).toEqual({
+      title: "A grounded board",
+      introMarkdown: "Walked from the durable write to the reader.",
+      measure: "structured",
+    });
     expect(read?.skippedHunks).toEqual([{ hunk: "h1", reason: "binary blob" }]);
     expect(read?.blemishes).toEqual([
       { ruleId: "prose-length", elementRef: "/e1", message: "too long" },
@@ -62,6 +72,19 @@ describe("BoardMetaStore", () => {
   it("fails safe: a missing board reads back undefined, never a throw", () => {
     const store = new BoardMetaStore(dir());
     expect(store.load("board:absent")).toBeUndefined();
+  });
+
+  it("keeps metadata written before the document contract readable", () => {
+    const store = new BoardMetaStore(dir());
+    store.save({
+      lens: "sequence",
+      boardId: "board:legacy",
+      skippedHunks: [],
+      blemishes: [],
+      omissions: [],
+      immutability: [],
+    });
+    expect(store.load("board:legacy")?.document).toBeUndefined();
   });
 
   it("fails safe: a malformed file is undefined on read and skipped in list (left untouched)", () => {

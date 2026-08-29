@@ -5,6 +5,7 @@ import { Icon } from "../components/icon";
 import { useFlightBatcher } from "../handoff/exit-flight";
 import { selectCodeComments, useRennetStore } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
+import { useCodeDestination } from "./code-destination";
 import { LineCommentEditor } from "./line-comment-editor";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,8 +13,8 @@ import { LineCommentEditor } from "./line-comment-editor";
 // Two load-bearing decisions: tokenization is SYNCHRONOUS (the existing syntax/shiki.ts —
 // no async load, no skeleton, reconciliation 3), and comments/asks read and write the
 // `review` slice DIRECTLY (no provider shim, no `store?.` guard — reconciliation 8).
-// Header-path navigation is host-supplied via `onOpenPath` (routing is a C5–C9 surface
-// concern, not this component's — same seam shape as `counterpart`).
+// Header navigation comes from the route-scoped code destination. Explicit props can
+// replace or suppress those defaults for tests and special callers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CodeBlockProps {
@@ -26,20 +27,19 @@ export interface CodeBlockProps {
   /** Absolute line numbers to call out as the lines under discussion (evidence green). */
   readonly highlightLines?: readonly number[];
   /**
-   * The impl↔test counterpart jump (R41, #492) — the SAME shape CodeView already
-   * ships (`{ label, path, onView() }`), rendered right of Copy. Absent ⇒ no button.
+   * The impl↔test counterpart jump (R41, #492), rendered right of Copy. `undefined`
+   * uses the route provider, a value overrides it, and `null` suppresses it.
    */
   readonly counterpart?: {
     readonly label: string;
     readonly path: string;
     onView(): void;
-  };
+  } | null;
   /**
-   * Host-supplied header-path navigation (the Diff-view jump the docs promise). When
-   * set, the header path is a button that calls this with the file path; absent ⇒ inert
-   * label. Routing lives in the C5–C9 surface, not here — same pattern as `counterpart`.
+   * Header-path navigation for the Diff jump. `undefined` uses the route provider, a
+   * function overrides it, and `null` keeps the path inert.
    */
-  readonly onOpenPath?: (path: string) => void;
+  readonly onOpenPath?: ((path: string) => void) | null;
   readonly className?: string;
 }
 
@@ -52,6 +52,11 @@ export function CodeBlock({
   onOpenPath,
   className,
 }: CodeBlockProps) {
+  const destination = useCodeDestination(path);
+  const resolvedOpenPath =
+    onOpenPath === undefined ? destination.onOpenPath : (onOpenPath ?? undefined);
+  const resolvedCounterpart =
+    counterpart === undefined ? destination.counterpart : (counterpart ?? undefined);
   const comments = useRennetStore(selectCodeComments(path));
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
@@ -106,11 +111,11 @@ export function CodeBlock({
       <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/50 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
           <Icon icon={FileCode} className="size-3.5 shrink-0 text-muted-foreground" />
-          {onOpenPath ? (
+          {resolvedOpenPath ? (
             <button
               type="button"
               title={path}
-              onClick={() => onOpenPath(path)}
+              onClick={() => resolvedOpenPath(path)}
               className="truncate font-mono text-2xs text-foreground/80 hover:text-foreground hover:underline"
             >
               {path}
@@ -133,14 +138,14 @@ export function CodeBlock({
             <Icon icon={copied ? Check : Copy} className="size-3" />
             {copied ? "Copied" : "Copy"}
           </button>
-          {counterpart ? (
+          {resolvedCounterpart ? (
             <button
               type="button"
-              onClick={() => counterpart.onView()}
-              title={`Go to ${counterpart.path}`}
+              onClick={() => resolvedCounterpart.onView()}
+              title={`Go to ${resolvedCounterpart.path}`}
               className="rounded-full border border-accent-line bg-accent-soft px-3 py-1 text-2xs text-accent transition-colors hover:bg-accent-surface"
             >
-              {counterpart.label}
+              {resolvedCounterpart.label}
             </button>
           ) : null}
         </div>

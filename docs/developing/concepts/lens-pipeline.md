@@ -14,6 +14,15 @@ Design, Sequence, Decisions, Flagged, Noise — in that display order, Design
 first. Each lens is a board of typed blocks drafted by a review agent on a
 fixed prompt.
 
+The client projects the boards present in the selected generation into a
+centred rail in the session top bar, in that same order. The session URL owns
+the selection. Flagged is the address-free default; another lens uses `?lens=`.
+When a completed frozen generation has no Flagged board, the client selects its
+first present lens and replaces the URL with that canonical address. A live
+generation drafts progressively: it may show the first board that arrives, but
+it keeps the requested address so a later Flagged arrival restores that reading.
+A missing board produces no segment rather than a disabled one.
+
 The prompts live in `packages/prompts` (`@rennet/prompts`),
 one markdown file per lens plus the post-process editor pass, the
 reviewer-voice file, and the round-report prompt. The package exports a
@@ -52,10 +61,15 @@ when that trigger lands.
    hunk-coverage obligation and is excluded from the coverage assertion.
 1. **Draft.** One agent per lens receives the delta context and its lens
    prompt, plus the host board schema derived once from the frozen
-   `DraftBoardSchema`, and returns a structured board. The host — never the
-   drafter — writes the board ops through `whiteboard-client` (the sole op
-   writer); drafters never call whiteboard tools. The Flagged lens runs two
-   independent seats (Claude and Codex) on the same instructions.
+   `DraftBoardSchema`, and returns a structured board. Each drafting instruction
+   requires a document envelope with an authored title, a short Markdown
+   introduction, and a measure. The target owns the final measure: Design is
+   `structured`; Sequence, Decisions, Flagged, Noise, and the round report are
+   `reading`.
+   The host, never the drafter, writes the board ops through
+   `whiteboard-client` (the sole op writer); drafters never call whiteboard
+   tools. The Flagged lens runs two independent seats (Claude and Codex) on the
+   same instructions.
 2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
    location: a matched pair collapses to the clearer finding carrying both
    models' concurrence, a solo finding carries only the raising model's. The
@@ -103,16 +117,15 @@ when that trigger lands.
    authored prose is screened by a separate, narrower register.
 4. **Post-process.** Every draft board passes through an editor agent running
    the post-process pass (`src/prompts/post-process.md`): a break-it-down step
-   that reshapes dense prose into terse, scannable chunks — bullets for
-   enumerable facts, prose kept for genuine narrative — then the unslop
+   that reshapes dense prose into terse, scannable chunks, then the unslop
    skill verbatim, then the humanizer additions (patterns from the MIT
-   humanizer skill the unslop body does not cover). The editor rewrites
-   prose fields only — and enforces the board voice editorially, deleting
-   sentences about the review machinery that survive the lint's vocabulary
-   screen. Typed data — paths, line numbers, counts, severities, concurrence
-   flags — is untouched, and the immutability gate proves it. When no editor
-   seat resolves the pass is identity: prose is simply left unpolished, never
-   blocked.
+   humanizer skill the unslop body does not cover). The editor may revise the
+   document title and introduction with the other prose fields, but it cannot
+   add or remove the document envelope or change its target-owned measure. The
+   pipeline enforces both constraints after the editor returns. Typed data such
+   as paths, line numbers, counts, severities, and concurrence flags is
+   untouched, and the immutability gate proves it. When no editor seat resolves,
+   the pass is identity: prose is left as drafted, never blocked.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
    part lives in `core/board/`: the coverage assertion (every patchset hunk is
@@ -132,16 +145,28 @@ consumes these to drive the progressive reveal; the pipeline only emits them.
 
 ## Reading a board back
 
-A drafted board lands in two durable places: its elements in the whiteboard
-event log, and the board-level coverage the 13-kind element vocabulary cannot
-carry (`skippedHunks`, blemishes, omissions) in the board-meta store. The client
-reads it back through one command, `board.read`, keyed by review, generation, and
-lens. The handler resolves the review's session, finds that triple's board-meta
-record, projects the board's element state, and assembles the `LensBoard`: the
-element pool in creation order, and a fold line per top-level section whose
-per-kind counts are tallied from that section's own children. A pair the host
-drafted no board for answers `null` — the lens is honestly absent, and no board
-is ever assembled from another generation's elements.
+A drafted board lands in two durable places. Its elements go to the whiteboard
+event log. Its document envelope, skipped-hunk coverage, blemishes, omissions,
+and immutability result go to the board-meta store before the board arrival is
+announced. The client reads both halves through `board.read`, keyed by review,
+generation, and lens. The handler resolves the review's session, finds that
+triple's board-meta record, projects the element state, and assembles one
+`LensBoard` with the persisted document, the element pool in creation order,
+and one fold line per top-level section.
+
+Fold counts are reader-facing domain objects, not raw element-kind tallies. The
+projection emits findings, decisions, requirements, steps, outcomes, groups,
+files, and comments from each section's direct children. Repeated code refs for
+one path count as one file, and structural prose does not inflate the count. A
+pair the host drafted no board for answers `null`; the lens is absent, and no
+board is assembled from another generation's elements.
+
+The client addresses a frozen board with `?generation=<id>` and treats an
+absent generation parameter as the live generation. Both the generation and
+lens selections come from the session URL rather than component-local state,
+so reload and direct navigation resolve the same `(generation, lens)` pair. An
+absent lens parameter resolves Flagged when it is present, then the first board
+present in canonical order.
 
 ## Related context in the delta
 
@@ -261,12 +286,20 @@ hunks renders as an honest "unimplemented".
 
 ## Reading affordances every board shares
 
-- Sections fold to a one-line gist with counts; the gist summarizes, never
-  teases.
+- The authored title and introduction open the document. A `reading` measure
+  keeps prose narrow; `structured` gives artifact-heavy content a wider column.
+- Sections fold to a one-line gist with domain counts; the gist summarizes,
+  never teases.
 - Code is cited, never copied: the code block card renders a citation with
   path and line span. In board prose, backticked terms render monospace and
   `path:line` citations are interactive — clicking one reveals the real
   cited lines inline.
+- A code-card filename opens `?view=diff&file=<path>` only when the path belongs
+  to the active captured patchset. The same active-path set resolves reversible
+  JavaScript and TypeScript counterparts (`foo.ts` with `foo.test.ts` or
+  `foo.spec.ts`). **View test** or **View implementation** appears only when
+  both paths were captured as changed; the client never guesses from the
+  working tree.
 - A revealed citation is served from the **captured patchset's own patch
   text** (`patchset.readSpan`), never from the working tree. Two consequences
   follow. A review whose repository has since moved or been deleted still

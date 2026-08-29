@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { implementationPathFor, isTestPath, testPathsFor } from "./counterpart";
+import { counterpartPathFor, implementationPathFor, isTestPath, testPathsFor } from "./counterpart";
 
 describe("isTestPath", () => {
   it("matches the reversible .test./.spec. suffix convention", () => {
@@ -30,5 +30,27 @@ describe("testPathsFor", () => {
   it("is empty for a test path or a non-JS/TS path", () => {
     expect(testPathsFor("src/foo.test.ts")).toEqual([]);
     expect(testPathsFor("README.md")).toEqual([]);
+  });
+});
+
+describe("counterpartPathFor", () => {
+  it("resolves in both directions when both files were captured", () => {
+    const captured = new Set(["src/foo.ts", "src/foo.test.ts"]);
+    expect(counterpartPathFor("src/foo.ts", captured)).toBe("src/foo.test.ts");
+    expect(counterpartPathFor("src/foo.test.ts", captured)).toBe("src/foo.ts");
+  });
+
+  it("prefers .test. when both reversible test names were captured", () => {
+    const captured = new Set(["src/foo.ts", "src/foo.spec.ts", "src/foo.test.ts"]);
+    expect(counterpartPathFor("src/foo.ts", captured)).toBe("src/foo.test.ts");
+  });
+
+  it("returns null when either side is outside the captured change", () => {
+    const implementationOnly = new Set(["src/foo.ts"]);
+    expect(counterpartPathFor("src/foo.ts", implementationOnly)).toBeNull();
+
+    const counterpartOnly = new Set(["src/foo.test.ts"]);
+    expect(counterpartPathFor("src/foo.ts", counterpartOnly)).toBeNull();
+    expect(counterpartPathFor("src/foo.test.ts", counterpartOnly)).toBeNull();
   });
 });
