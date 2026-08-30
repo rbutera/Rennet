@@ -1,4 +1,4 @@
-import { ArchiveRestore, ArrowLeft, Check, Inbox, Search } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Check, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
@@ -31,10 +31,12 @@ import {
 
 type SortKey = "recent" | "project" | "title";
 
+// Lowercase labels: these are sort keys inside a segmented control, not sentences,
+// and Title Case here reads as three competing headings next to the search field.
 const SORT_OPTIONS: readonly { readonly id: SortKey; readonly label: string }[] = [
-  { id: "recent", label: "Recent" },
-  { id: "project", label: "Project" },
-  { id: "title", label: "Title" },
+  { id: "recent", label: "recent" },
+  { id: "project", label: "project" },
+  { id: "title", label: "title" },
 ];
 
 /** Parse the fuzzy sidebar times ("now", "1h", "2d", "3w") into minutes, for a real
@@ -118,7 +120,7 @@ export function ArchivedView() {
         <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-8 py-8">
           {all.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-24 text-center">
-              <Icon icon={Inbox} className="size-5 text-ink-faint" />
+              <Icon icon={Archive} className="size-5 text-muted-foreground/50" />
               <span className="text-sm text-ink-soft">Nothing archived.</span>
               <span className="text-xs text-ink-faint">
                 Right-click a session in the sidebar to archive it.
@@ -127,7 +129,7 @@ export function ArchivedView() {
           ) : (
             <>
               <div className="flex items-center gap-2">
-                <div className="flex h-8 flex-1 items-center gap-2 rounded-control border border-line bg-raised px-2 focus-within:border-accent-line">
+                <div className="flex h-8 flex-1 items-center gap-2 rounded-control border border-line bg-card px-2 focus-within:border-accent-line">
                   <Icon icon={Search} className="size-3.5 shrink-0 text-ink-faint" />
                   <input
                     value={query}
@@ -158,7 +160,7 @@ export function ArchivedView() {
                   No archived sessions match “{query.trim()}”.
                 </span>
               ) : (
-                <div className="flex flex-col divide-y divide-line rounded-surface border border-line">
+                <div className="flex flex-col divide-y divide-line rounded-md border border-line">
                   {shown.map(({ session, project }) => (
                     <ArchivedRow
                       key={session.id}
@@ -194,7 +196,7 @@ function ArchivedRow({
 }) {
   const reviewed = session.targetState === "reviewed";
   return (
-    <div className="group flex items-center gap-3 px-3 py-2.5 hover:bg-raised">
+    <div className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-secondary/40">
       <button
         type="button"
         onClick={onSelect}
@@ -208,21 +210,21 @@ function ArchivedRow({
             state={reviewed ? undefined : session.targetState}
             className="size-3"
           />
-          <span className="truncate text-sm text-ink">{session.title}</span>
+          <span className="truncate text-13 leading-tight text-foreground/90">{session.title}</span>
           {reviewed ? (
             <Icon icon={Check} className="size-3 shrink-0 text-green" aria-label="Reviewed" />
           ) : null}
         </span>
         <span className="pl-[18px] text-2xs text-ink-faint">{session.time}</span>
       </button>
-      <span className="flex shrink-0 items-center gap-1.5 rounded-chip border border-line px-2 py-0.5 text-xs text-ink-soft">
+      <span className="flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-xs text-ink-soft">
         <ProjectIcon icon={glyph} className="size-3" />
         {project.name}
       </span>
       <button
         type="button"
         onClick={onUnarchive}
-        className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1 text-xs text-ink-soft opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+        className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1 text-xs text-ink-soft opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
       >
         <Icon icon={ArchiveRestore} className="size-3.5" />
         Unarchive

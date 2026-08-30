@@ -182,8 +182,12 @@ describe("ContextMapView — the Context Map surface", () => {
       "abcdef012345",
     );
     const tree = container.querySelector(".context-map-tree");
-    expect(tree?.textContent).toContain("@rennet/core");
-    expect(tree?.textContent).toContain("@rennet/ui");
+    // Scope rows carry the SHORT name (the graph nodes and the prototype both do), so
+    // this is an exact-equality check on the row's own name span, not a `toContain`
+    // that "core" would satisfy just as happily against an unstripped "@rennet/core".
+    expect(
+      [...(tree?.querySelectorAll(".context-map-name") ?? [])].map((n) => n.textContent),
+    ).toEqual(["core", "ui"]);
     // Two files under core roll up to a "2f" count on its row.
     expect(tree?.textContent).toContain("2f");
   });
@@ -451,7 +455,7 @@ describe("ContextMapView — the Context Map surface", () => {
     );
     // Select @rennet/ui in the tree → its claim replaces core's.
     const uiRow = [...container.querySelectorAll(".context-map-tree .context-map-row")].find(
-      (row) => row.textContent?.includes("@rennet/ui"),
+      (row) => row.querySelector(".context-map-name")?.textContent === "ui",
     );
     fireEvent.click(uiRow as Element);
     await waitFor(() =>

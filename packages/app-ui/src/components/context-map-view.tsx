@@ -8,7 +8,7 @@ import {
   type ProjectProcessEvent,
 } from "@rennet/protocol";
 import { Spinner } from "@rennet/ui";
-import { ArrowLeft, Check, ChevronRight, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, RotateCcw, X } from "lucide-react";
 import {
   type FormEvent,
   forwardRef,
@@ -115,7 +115,7 @@ function MapHeader({ projectId, onBack }: { projectId: string; onBack(): void })
         type="button"
         onClick={onBack}
         aria-label="Back"
-        className="context-map-back mr-0.5 flex size-6 items-center justify-center rounded-control text-ink-soft hover:bg-raised hover:text-ink"
+        className="context-map-back mr-0.5 flex size-6 items-center justify-center rounded-control text-ink-soft transition-colors hover:bg-raised hover:text-ink"
       >
         <Icon icon={ArrowLeft} className="size-3.5" />
       </button>
@@ -272,7 +272,7 @@ export function ContextMapView({
         {mapQuery.error || build.kind === "error" ? (
           <button
             type="button"
-            className="inline-flex w-fit items-center gap-1.5 rounded-chip border border-line px-2.5 py-1.5 text-sm text-ink-soft hover:bg-raised hover:text-ink"
+            className="inline-flex w-fit items-center gap-1.5 rounded-chip border border-line px-2.5 py-1.5 text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
             onClick={() => {
               setRetryMode(build.kind === "error" ? build.retry : "resume");
               setBuild({ kind: "idle" });
@@ -382,18 +382,18 @@ function ContextMap({
           {knowledge?.repoKey ?? map.baseRef} · {map.baseRef} @ {map.baseOid.slice(0, 12)}
         </span>
         {knowledgeBehind ? (
-          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-2xs font-semibold">
+          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-10 font-semibold">
             ◐ knowledge behind map
           </span>
         ) : (
-          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-2xs font-semibold">
+          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-10 font-semibold">
             ● current
           </span>
         )}
       </div>
       <div className="context-map-main flex flex-1 min-h-0">
         <section className="context-map-col flex flex-col min-w-0 w-64 shrink-0 border-r border-line">
-          <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
+          <div className="context-map-col-title px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
             Structure — {map.scopes.length} scopes · {fileCount.toLocaleString()} files
           </div>
           <div className="context-map-scroll flex-1 overflow-auto py-1.5">
@@ -424,7 +424,7 @@ function ContextMap({
         </section>
         {showAskRail ? (
           <section className="context-map-col flex flex-col min-w-0 w-[24rem]">
-            <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
+            <div className="context-map-col-title px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
               Orchestrator — project session
             </div>
             <AskRail ref={askRef} projectId={projectId} />
@@ -454,10 +454,28 @@ function Tree({
   );
 }
 
+// Selection is the quiet raised ground, not gold — gold is the reserve. The hover
+// tone is deliberately HALF that ground (`bg-secondary/50`): at full strength a
+// hovered row is pixel-identical to the selected one and impersonates it.
 function rowClass(selected: boolean): string {
-  return `context-map-row flex items-center gap-1.5 w-full py-1 pr-3 text-left text-ink-soft hover:bg-raised hover:text-ink ${
-    selected ? "is-selected bg-accent-surface text-ink" : ""
+  return `context-map-row flex items-center gap-1.5 w-full py-1 pr-3 text-left transition-colors ${
+    selected
+      ? "is-selected bg-secondary text-foreground"
+      : "text-ink-soft hover:bg-secondary/50 hover:text-ink"
   }`;
+}
+
+/** The fold marker: ONE chevron that rotates, not two glyphs swapped. The rotation is
+ *  the affordance — a static `▾`/`▸` pair reads as two different characters blinking. */
+function Twisty({ open }: { open: boolean }) {
+  return (
+    <Icon
+      icon={ChevronDown}
+      className={`context-map-twist size-3 shrink-0 text-ink-faint transition-transform ${
+        open ? "" : "-rotate-90"
+      }`}
+    />
+  );
 }
 
 function ScopeRow({
@@ -482,9 +500,9 @@ function ScopeRow({
           onSelect({ kind: "scope", scope: scope.name });
         }}
       >
-        <span className="context-map-twist w-3 text-ink-faint">{open ? "▾" : "▸"}</span>
-        <span className="context-map-name flex-1 truncate text-ink">{scope.name}</span>
-        <span className="context-map-count text-2xs text-ink-faint">
+        <Twisty open={open} />
+        <span className="context-map-name flex-1 truncate">{short(scope.name)}</span>
+        <span className="context-map-count text-10 text-ink-faint">
           {scope.in.length > 0 ? `⇦${scope.in.length} ` : ""}
           {scope.tree.fileCount}f
         </span>
@@ -563,9 +581,9 @@ function DirRow({
         style={{ paddingLeft: `${0.75 + depth * 0.85}rem` }}
         onClick={() => setOpen(!open)}
       >
-        <span className="context-map-twist w-3 text-ink-faint">{open ? "▾" : "▸"}</span>
+        <Twisty open={open} />
         <span className="context-map-name flex-1 truncate">{dir.name}/</span>
-        <span className="context-map-count text-2xs text-ink-faint">{dir.fileCount}f</span>
+        <span className="context-map-count text-10 text-ink-faint">{dir.fileCount}f</span>
       </button>
       {open ? (
         <DirChildren
@@ -602,8 +620,8 @@ function FileRow({
       style={{ paddingLeft: `${0.75 + depth * 0.85}rem` }}
       onClick={() => onSelect({ kind: "file", scope, path: file.path })}
     >
-      <span className="context-map-twist w-3" />
-      <span className="context-map-name flex-1 truncate">{base}</span>
+      <span className="context-map-twist size-3 shrink-0" />
+      <span className="context-map-name flex-1 truncate text-2xs">{base}</span>
     </button>
   );
 }
@@ -628,14 +646,18 @@ function Neighborhood({
     );
   }
   const width = 720;
-  const height = 300;
+  // The canvas grows with the busier side rather than sitting at a fixed 300: a scope
+  // with eight importers stops cramming its nodes into a strip they overlap in, and a
+  // scope with one stops floating in empty space. 44px per node is the row pitch that
+  // keeps the 28px node boxes apart; 200 is the floor a one-edge neighborhood needs.
+  const height = Math.max(200, Math.max(ins.length, outs.length) * 44 + 60);
   const cx = width / 2;
   const cy = height / 2;
   const nodeWidth = 128;
   const place = (list: string[], side: "left" | "right") =>
     list.map((name, index) => {
       const step = height / (list.length + 1);
-      return { name, x: side === "left" ? 120 : width - 120, y: step * (index + 1) };
+      return { name, x: side === "left" ? 110 : width - 110, y: step * (index + 1) };
     });
   const inNodes = place(ins, "left");
   const outNodes = place(outs, "right");
@@ -714,16 +736,16 @@ function Neighborhood({
         height={32}
         rx="6"
       />
-      <text fill="var(--rn-ink)" fontSize="14" x={cx} y={cy + 4} textAnchor="middle">
+      <text fill="var(--rn-ink)" fontSize="13" x={cx} y={cy + 4} textAnchor="middle">
         {short(scope.name)}
       </text>
       {ins.length > 0 ? (
-        <text fill="var(--rn-ink-faint)" fontSize="11" x={120} y={16} textAnchor="middle">
+        <text fill="var(--rn-ink-faint)" fontSize="11" x={110} y={16} textAnchor="middle">
           imported by
         </text>
       ) : null}
       {outs.length > 0 ? (
-        <text fill="var(--rn-ink-faint)" fontSize="11" x={width - 120} y={16} textAnchor="middle">
+        <text fill="var(--rn-ink-faint)" fontSize="11" x={width - 110} y={16} textAnchor="middle">
           imports
         </text>
       ) : null}
@@ -754,12 +776,12 @@ function DetailTabs({
   const relevant = knowledgeForSelection(statements, selection, scope);
   return (
     <div className="context-map-detail flex flex-col flex-1 min-h-0">
-      <div className="context-map-tabs flex gap-1 px-4 pt-3 border-b border-line">
+      <div className="context-map-tabs flex gap-1 px-4 pt-2 border-b border-line">
         {(["knowledge", "details"] as const).map((name) => (
           <button
             key={name}
             type="button"
-            className={`context-map-tab px-3 py-1.5 rounded-t-md text-sm ${
+            className={`context-map-tab px-3 py-1.5 rounded-t-md text-12-5 transition-colors ${
               tab === name
                 ? "is-active text-ink border-b-2 border-accent"
                 : "text-ink-soft hover:text-ink"
@@ -814,12 +836,12 @@ function KnowledgePanel({
       {statements.map((statement) => (
         <article
           key={statement.id}
-          className={`context-map-claim rounded-surface border p-3 ${
+          className={`context-map-claim rounded-md border p-3 ${
             statement.status === "rejected"
               ? "border-line bg-surface opacity-60"
               : statement.status === "confirmed"
                 ? "border-green-line bg-surface"
-                : "border-line bg-raised"
+                : "border-line bg-secondary/30"
           }`}
         >
           <div className="context-map-claim-head flex items-center gap-2 mb-1.5">
@@ -835,13 +857,17 @@ function KnowledgePanel({
                   ? "bg-green-soft text-green"
                   : statement.status === "rejected"
                     ? "bg-surface text-ink-faint"
-                    : "bg-accent-soft text-accent"
+                    : // Verdigris, the machine's voice: an unconfirmed statement is the
+                      // model talking, and gold is not the model's colour.
+                      "bg-model-soft text-model"
               }`}
             >
               {statement.status}
             </span>
           </div>
-          <div className="context-map-claim-body text-base text-ink">{statement.claim}</div>
+          <div className="context-map-claim-body text-13 leading-relaxed text-foreground/90">
+            {statement.claim}
+          </div>
           <div className="context-map-claim-evidence mt-1.5 text-2xs text-ink-faint font-mono truncate">
             evidence: {statement.evidence.map((anchor) => anchor.path).join(", ") || "—"} ·{" "}
             {statement.provenance.generator}
@@ -851,22 +877,22 @@ function KnowledgePanel({
               <button
                 type="button"
                 onClick={() => onConfirm(statement.id)}
-                className="context-map-confirm inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-green-line text-green text-sm hover:bg-green-soft"
+                className="context-map-confirm inline-flex items-center gap-1 px-2 py-1 rounded-md border border-green-line text-green text-2xs transition-colors hover:bg-green-soft"
               >
-                <Icon icon={Check} className="h-3 w-3" /> confirm
+                <Icon icon={Check} className="size-3" /> confirm
               </button>
               <button
                 type="button"
                 onClick={() => onReject(statement.id)}
-                className="context-map-reject inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-danger"
+                className="context-map-reject inline-flex items-center gap-1 px-2 py-1 rounded-md border border-line text-ink-soft text-2xs transition-colors hover:bg-raised hover:text-danger"
               >
-                <Icon icon={X} className="h-3 w-3" /> reject
+                <Icon icon={X} className="size-3" /> reject
               </button>
               {onDiscuss ? (
                 <button
                   type="button"
                   onClick={() => onDiscuss(statement)}
-                  className="context-map-discuss inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-ink"
+                  className="context-map-discuss inline-flex items-center gap-1 px-2 py-1 rounded-md border border-line text-ink-soft text-2xs transition-colors hover:bg-raised hover:text-ink"
                 >
                   ↪ discuss
                 </button>
@@ -890,7 +916,7 @@ function DetailsPanel({
 }) {
   if (selection.kind === "file") {
     return (
-      <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-12-5">
         <dt className="text-ink-faint">path</dt>
         <dd className="font-mono text-ink truncate">{selection.path}</dd>
         <dt className="text-ink-faint">scope</dt>
@@ -900,7 +926,7 @@ function DetailsPanel({
   }
   if (!scope) return null;
   return (
-    <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+    <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-12-5">
       <dt className="text-ink-faint">scope</dt>
       <dd className="text-ink">{scope.name}</dd>
       <dt className="text-ink-faint">root</dt>
