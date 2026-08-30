@@ -1,5 +1,5 @@
 import { Button, cn } from "@rennet/ui";
-import { ArrowRight, GitPullRequest } from "lucide-react";
+import { ArrowRight, PenLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useCoachAnchor, useMergedRefs } from "../coach/registry";
 import { useRennetStore } from "../store";
@@ -20,7 +20,7 @@ import { selectExitPipCount } from "./selectors";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FLIGHT_MS = 420;
-const POP_MS = 280;
+const POP_MS = 240;
 /** Below 54rem of PANE width the label drops to icon + count (Objective clause 1). */
 const COMPACT_BELOW_PX = 864;
 
@@ -67,8 +67,11 @@ function useExitFlight(fabRef: React.RefObject<HTMLButtonElement | null>) {
     dot.style.left = `${from.left + from.width / 2 - 6}px`;
     dot.style.top = `${from.top + from.height / 2 - 6}px`;
     document.body.appendChild(dot);
-    const dx = to.left + to.width / 2 - (from.left + from.width / 2);
-    const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+    // The pip is a corner badge overhanging the pill, not a chip inside it, so the
+    // bubble flies to that corner — 10px in from the pill's trailing edge, at its
+    // top — and NOT to the pill's centre, where nothing would be waiting for it.
+    const dx = to.left + to.width - 10 - (from.left + from.width / 2);
+    const dy = to.top - (from.top + from.height / 2);
     const flight = dot.animate(
       [
         { transform: "translate(0,0) scale(1)", opacity: 0.9 },
@@ -119,8 +122,12 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
     prevLanded.current = landedTotal;
     setPop(true);
     pipRef.current?.animate?.(
-      [{ transform: "scale(0.6)" }, { transform: "scale(1.25)" }, { transform: "scale(1)" }],
-      { duration: POP_MS, easing: "cubic-bezier(0.2,0.9,0.3,1)" },
+      [
+        { transform: "scale(0.4)" },
+        { transform: "scale(1.2)", offset: 0.6 },
+        { transform: "scale(1)" },
+      ],
+      { duration: POP_MS, easing: "ease-out" },
     );
     if (popTimer.current) clearTimeout(popTimer.current);
     popTimer.current = setTimeout(() => setPop(false), POP_MS);
@@ -149,7 +156,10 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
   if (!modeHasExits(mode)) return null;
 
   const label = mode === "teammate-pr" ? "Write Review" : "Continue";
-  const Icon = mode === "teammate-pr" ? GitPullRequest : ArrowRight;
+  // The prototype rests on PenLine for every scenario. Writing the review IS the pen,
+  // so teammate-pr takes it. `own-branch` keeps ArrowRight: below the compact width the
+  // glyph is the ONLY signal left, and handing the branch onward is not writing.
+  const Icon = mode === "teammate-pr" ? PenLine : ArrowRight;
   // The accessible name carries the count (R50 second amendment — no inline "· n" in the text).
   const accessibleName = count > 0 ? `${label}, ${count} staged` : label;
 
@@ -163,11 +173,11 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
         aria-pressed={open}
         data-open={open || undefined}
         className={cn(
-          "pointer-events-auto absolute right-6 bottom-6 h-12 gap-2 rounded-full px-5 shadow-lg",
-          open && "pointer-events-none scale-90 opacity-0",
+          "pointer-events-auto absolute right-6 bottom-6 h-12 gap-2 rounded-full px-5 font-semibold shadow-lg transition-all duration-200 hover:bg-primary/90",
+          open && "pointer-events-none scale-75 opacity-0",
         )}
       >
-        <Icon aria-hidden="true" />
+        <Icon className="size-4.5 shrink-0" aria-hidden="true" />
         {compact ? null : <span>{label}</span>}
         {count > 0 && (
           <span
@@ -175,7 +185,7 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
             data-pip="exit"
             data-pop={pop || undefined}
             aria-hidden="true"
-            className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-xs font-semibold text-destructive-foreground"
+            className="absolute -top-1.5 -right-1 inline-flex h-5.5 min-w-5.5 items-center justify-center rounded-full bg-destructive px-1.5 text-2xs leading-none font-semibold text-on-danger shadow-sm"
           >
             {count}
           </span>
