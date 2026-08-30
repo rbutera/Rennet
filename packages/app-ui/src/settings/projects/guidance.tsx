@@ -21,9 +21,11 @@ import { UnbackedNote } from "./unbacked-note";
 // the projection cannot address (`prefsBackedByProject`).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Severity reads in three registers, none of them gold: danger for high, copper
+// `warn` for medium (a flag to weigh), quiet raised for low.
 const SEVERITY_CHIP: Record<GuidanceSeverity, string> = {
-  high: "bg-danger-soft text-danger",
-  medium: "bg-accent-soft text-accent-ink",
+  high: "bg-destructive/15 text-destructive",
+  medium: "bg-warn-soft text-warn",
   low: "bg-raised text-ink-soft",
 };
 

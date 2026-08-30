@@ -99,8 +99,8 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
       </DialogHeader>
 
       {stage === "connected" ? (
-        <p className="flex items-center gap-2 text-sm text-ink">
-          <Icon icon={Check} className="size-4 flex-none text-accent" />
+        <p className="flex items-center gap-2 text-13 text-foreground/90">
+          <Icon icon={Check} className="size-4 flex-none text-green" />
           <span>
             Connected to <span className="font-medium">{name}</span>.
           </span>

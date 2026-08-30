@@ -14,8 +14,10 @@ import type { DetectedTool, ToolStatus } from "../data";
 
 const STATUS: Record<ToolStatus, { readonly label: string; readonly chip: string }> = {
   available: { label: "Available", chip: "bg-green-soft text-green" },
-  "not-authenticated": { label: "Not Authenticated", chip: "bg-accent-soft text-accent-ink" },
-  unreachable: { label: "Unreachable", chip: "bg-accent-soft text-accent-ink" },
+  // Copper, not gold: an unauthenticated or unreachable tool is a flag to weigh, not
+  // Rennet's one accent. Gold stays the reserve (board prototype `settings-view.tsx`).
+  "not-authenticated": { label: "Not Authenticated", chip: "bg-warn-soft text-warn" },
+  unreachable: { label: "Unreachable", chip: "bg-warn-soft text-warn" },
   "not-installed": { label: "Not Installed", chip: "bg-raised text-ink-soft" },
 };
 
@@ -23,7 +25,7 @@ const STATUS: Record<ToolStatus, { readonly label: string; readonly chip: string
 export function StatusChip({ status }: { readonly status: ToolStatus }) {
   const { label, chip } = STATUS[status];
   return (
-    <span className={cn("rounded px-1.5 py-0.5 text-2xs font-medium tracking-wide", chip)}>
+    <span className={cn("rounded px-1.5 py-0.5 text-10 font-medium tracking-wide", chip)}>
       {label}
     </span>
   );
