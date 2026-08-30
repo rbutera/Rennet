@@ -333,7 +333,7 @@ export const publishDegradationSchema = z.object({
 
 export const publishOutcomeSchema = z.object({
   reviewRef: z.string(),
-  url: z.string().nullable(),
+  url: z.url(),
   reused: z.boolean(),
 });
 

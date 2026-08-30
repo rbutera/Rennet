@@ -266,9 +266,19 @@ daemon restarts; changed boards, asks, patchset, or verdict draft a new opener.
 That stability keeps the canonical payload and retry marker stable when a post
 may have landed but its response was lost.
 
-The post carries a deterministic idempotency marker. The GitHub adapter checks
-for that marker before creating anything, so a retry returns the review that
-already landed instead of posting a second one.
+The post carries a deterministic idempotency marker. GitHub and GitLab check
+for that marker before creating anything, so a retry after a lost response
+returns the review that already landed instead of posting a second one. When no
+matching review exists, the provider adapter reads the pull or merge request's
+live head and refuses a moved head before its first mutation. A matching marker
+or a durable local receipt proves the earlier operation already landed and wins
+over that freshness check.
+
+After the provider returns a result, the daemon persists the publication receipt
+by review and marker before it answers the client. `publish.receipt` reads that
+record, including the canonical provider review URL, verdict, and line-comment
+count. The Hand off lane hydrates it on mount, so a daemon or app restart returns
+to the posted state rather than offering a second Post action.
 
 The outbound payload holds only what the reviewer sent. Internal conversation,
 model traces, and draft history never enter it unless their text became
@@ -301,7 +311,8 @@ The exits themselves:
   bare comment there); pathless asks become body notes and retired asks stay local. The verdict follows
   the outbound set, and a set **verdict override wins** over the derived event.
   The composed artifact and forge descriptor pass unchanged to `publish.review`,
-  which independently rebuilds them before posting.
+  which independently rebuilds them before posting. A completed publication is
+  recorded durably before the command returns and reloaded by marker on remount.
 - **The round work-order** — `round.dispatch` folds the addressed asks into
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces

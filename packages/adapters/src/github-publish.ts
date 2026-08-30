@@ -57,6 +57,7 @@ const ADD_REVIEW_MUTATION = `mutation($input: AddPullRequestReviewInput!) {
 const REVIEWS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
+      headRefOid
       reviews(first:100, after:$cursor){
         pageInfo{ hasNextPage endCursor }
         nodes{ id url body }
@@ -133,6 +134,7 @@ interface ReviewNode {
 interface ReviewsPage {
   repository: {
     pullRequest: {
+      headRefOid: string;
       reviews: {
         pageInfo: { hasNextPage: boolean; endCursor: string | null };
         nodes: ReviewNode[];
@@ -237,22 +239,30 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     octokit: Octokit,
     target: ForgeReviewTarget,
     marker: string,
-  ): Promise<ForgePublishOutcome | null> {
+  ): Promise<{ outcome: ForgePublishOutcome | null; headOid: string }> {
     let cursor: string | null = null;
+    let headOid: string | undefined;
     // Bound the reconcile scan so a pathological PR cannot loop forever; the marker
     // is written by the most recent post, so it surfaces on the first pages.
     for (let page = 0; page < 20; page += 1) {
       const fetched = await this.fetchReviewsPage(octokit, target, cursor);
-      const reviews = fetched.repository.pullRequest.reviews;
+      const pullRequest = fetched.repository.pullRequest;
+      headOid ??= pullRequest.headRefOid;
+      const reviews = pullRequest.reviews;
       for (const node of reviews.nodes) {
         if (extractMarker(node.body) === marker) {
-          return { reviewRef: node.id, url: node.url, reused: true };
+          if (node.url === null) throw new Error("GitHub returned a review without a URL.");
+          return {
+            outcome: { reviewRef: node.id, url: node.url, reused: true },
+            headOid: pullRequest.headRefOid,
+          };
         }
       }
       if (!reviews.pageInfo.hasNextPage) break;
       cursor = reviews.pageInfo.endCursor;
     }
-    return null;
+    if (headOid === undefined) throw new Error("GitHub returned no pull-request head.");
+    return { outcome: null, headOid };
   }
 
   async findExistingReview(
@@ -260,7 +270,7 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     marker: string,
   ): Promise<ForgePublishOutcome | null> {
     const octokit = await this.config.resolveOctokit();
-    return this.findExistingReviewWith(octokit, target, marker);
+    return (await this.findExistingReviewWith(octokit, target, marker)).outcome;
   }
 
   async publishReview(post: ForgeReviewPost): Promise<ForgePublishOutcome> {
@@ -268,8 +278,13 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     // Query-before-post idempotency (R17 / #21): if a review carrying THIS post's
     // marker already exists, a prior send landed even if its outcome was dropped —
     // reuse it rather than double-post, so a retry yields exactly one review.
-    const existing = await this.findExistingReviewWith(octokit, post.target, post.marker);
-    if (existing) return existing;
+    const reconciled = await this.findExistingReviewWith(octokit, post.target, post.marker);
+    if (reconciled.outcome) return reconciled.outcome;
+    if (reconciled.headOid !== post.target.headOid) {
+      throw new Error(
+        `Publish refused: the pull-request head moved from ${post.target.headOid} to ${reconciled.headOid}.`,
+      );
+    }
 
     const request = this.buildReviewRequest(post).requests[0];
     if (request === undefined) throw new Error("GitHub review request is missing.");
@@ -279,6 +294,7 @@ export class GitHubPublishAdapter implements ForgePublishPort {
       (request.body as { variables: Record<string, unknown> }).variables,
     );
     const review = data.addPullRequestReview.pullRequestReview;
+    if (review.url === null) throw new Error("GitHub returned a review without a URL.");
     return { reviewRef: review.id, url: review.url, reused: false };
   }
 }

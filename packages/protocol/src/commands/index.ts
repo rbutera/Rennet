@@ -285,6 +285,25 @@ const definitions = {
       outcome: publishOutcomeSchema.nullable(),
     }),
   },
+  "publish.receipt": {
+    input: z.object({
+      reviewId: z.string().min(1),
+      marker: z.string().regex(/^[0-9a-f]{64}$/),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("missing") }),
+      z.object({
+        status: z.literal("posted"),
+        receipt: z.object({
+          marker: z.string().regex(/^[0-9a-f]{64}$/),
+          verdict: z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]),
+          lineCommentCount: z.number().int().nonnegative(),
+          reviewRef: z.string().min(1),
+          url: z.url(),
+        }),
+      }),
+    ]),
+  },
   // ── Submit an own-branch PR (issue #257 / #107) — push + open the PR ─────────
   // The action the product is named for: on a single human sign-click, push the
   // review's OWN branch and open a real pull request with the drafted title/body.
@@ -378,6 +397,11 @@ const definitions = {
          * bytes and the current persisted evidence before posting.
          */
         compositionId: z.string().min(1),
+        /** Current daemons expose the operation marker so clients can hydrate its durable receipt. */
+        marker: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
       }),
       z.object({
         status: z.literal("pr"),
@@ -1648,7 +1672,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 104 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 106 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *

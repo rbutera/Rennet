@@ -179,6 +179,7 @@ describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () =>
         data: {
           repository: {
             pullRequest: {
+              headRefOid: TARGET.headOid,
               reviews: {
                 pageInfo: {
                   hasNextPage: reviewPages === 1,
@@ -239,6 +240,7 @@ describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () =>
         data: {
           repository: {
             pullRequest: {
+              headRefOid: TARGET.headOid,
               reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: created },
             },
           },
@@ -261,6 +263,72 @@ describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () =>
     expect(second.reused).toBe(true);
     expect(second.reviewRef).toBe(first.reviewRef);
     expect(mutationCount()).toBe(1); // NO second post — exactly one review
+  });
+
+  it("refuses a moved head before the review mutation", async () => {
+    let mutations = 0;
+    const adapter = adapterOver((parsed) => {
+      if (parsed.query.includes("addPullRequestReview")) mutations += 1;
+      return json(200, {
+        data: {
+          repository: {
+            pullRequest: {
+              headRefOid: "new-head",
+              reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+            },
+          },
+        },
+      });
+    });
+
+    await expect(adapter.publishReview(post([]))).rejects.toThrow(/head moved/i);
+    expect(mutations).toBe(0);
+  });
+
+  it("reconciles a mutation whose response was lost without posting twice", async () => {
+    const created: { id: string; url: string; body: string }[] = [];
+    let mutations = 0;
+    let loseFirstMutationResponse = true;
+    const adapter = adapterOver((parsed) => {
+      const { query, variables } = parsed as unknown as {
+        query: string;
+        variables: { input?: { body?: string } };
+      };
+      if (query.includes("addPullRequestReview")) {
+        mutations += 1;
+        const node = {
+          id: `PRR_${mutations}`,
+          url: `https://github.com/o/r/pull/3#pullrequestreview-${mutations}`,
+          body: variables.input?.body ?? "",
+        };
+        created.push(node);
+        if (loseFirstMutationResponse) {
+          loseFirstMutationResponse = false;
+          throw new Error("socket closed after GitHub committed the mutation");
+        }
+        return json(200, {
+          data: { addPullRequestReview: { pullRequestReview: node } },
+        });
+      }
+      return json(200, {
+        data: {
+          repository: {
+            pullRequest: {
+              headRefOid: TARGET.headOid,
+              reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: created },
+            },
+          },
+        },
+      });
+    });
+    const review = post([]);
+
+    await expect(adapter.publishReview(review)).rejects.toThrow(/socket closed/);
+    await expect(adapter.publishReview(review)).resolves.toMatchObject({
+      reviewRef: "PRR_1",
+      reused: true,
+    });
+    expect(mutations).toBe(1);
   });
 
   it("posts a changed verdict as a new review when the body content is otherwise identical", async () => {

@@ -274,6 +274,47 @@ describe("PostReviewLane", () => {
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
   });
 
+  it("does not carry a local receipt into a replacement composition", async () => {
+    const composition = (marker: string): ReviewDraft & { readonly marker: string } => ({
+      marker,
+      artifact: { opener: `Opener ${marker}.`, comments: [], bodyNotes: [] },
+      post: { event: "APPROVE", body: `Body ${marker}.`, threads: [] },
+      ledger: [],
+      proposed: "APPROVE",
+      arithmetic: { requestChanges: 0, comments: 0 },
+      destination: "acme/orbital#7",
+    });
+    const receipt: PostReceipt = {
+      verdict: "APPROVE",
+      lineCommentCount: 0,
+      url: "https://github.com/acme/orbital/pull/7#pullrequestreview-1",
+    };
+    const r = mount(
+      <PostReviewLane
+        review={review}
+        draft={composition("a".repeat(64))}
+        onPost={async () => receipt}
+      />,
+    );
+
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+    expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
+
+    r.rerender(
+      <PostReviewLane
+        review={review}
+        draft={composition("b".repeat(64))}
+        onPost={async () => receipt}
+      />,
+    );
+
+    expect(r.queryByText(/Review posted to acme\/orbital#7/)).toBeNull();
+    expect(r.getByRole("button", { name: /Post Review/ })).toBeTruthy();
+    expect(
+      r.getByText("Body bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb."),
+    ).toBeTruthy();
+  });
+
   it("keeps quote threads and code comments visible as local residue after composition", () => {
     act(() => {
       store().reviewActions.addQuoteComment("quoted review prose", "keep this local");

@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AskLogStore, buildGitHubReviewRequest, FileThreadStore } from "@rennet/adapters";
+import {
+  AskLogStore,
+  buildGitHubReviewRequest,
+  FileThreadStore,
+  PublishReceiptStore,
+} from "@rennet/adapters";
 import {
   type AskAnswer,
   buildForgeReviewPost,
@@ -218,6 +223,7 @@ function harness(
     inFlightReviews?: DispatchDeps["inFlightReviews"];
     threadPersistence?: DispatchDeps["threadPersistence"];
     publishPortFor?: DispatchDeps["publishPortFor"];
+    publishReceipts?: DispatchDeps["publishReceipts"];
     /** Swap the recording spies for REAL ports (F1's E2E runs the live orchestrator
      *  ask over a fake harness turn port through this seam). */
     reviewAsk?: DispatchDeps["reviewAsk"];
@@ -247,6 +253,7 @@ function harness(
   flaggedReviewSpy: ReturnType<typeof vi.fn>;
   refineCommentSpy: ReturnType<typeof vi.fn>;
   draftPrBodySpy: ReturnType<typeof vi.fn>;
+  deps: DispatchDeps;
 } {
   const capture: PatchsetCapturePort = extra.capturePort ?? {
     capture: () => Promise.resolve(patchset()),
@@ -305,6 +312,9 @@ function harness(
     service,
     allowedRoots,
     askLog: new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-asks-"))),
+    publishReceipts:
+      extra.publishReceipts ??
+      new PublishReceiptStore(mkdtempSync(join(tmpdir(), "rennet-publish-receipts-"))),
     projectContextMap:
       extra.projectContextMap ?? (() => Promise.resolve({ status: "absent", reason: "stub" })),
     projectContextAsk:
@@ -462,6 +472,7 @@ function harness(
     flaggedReviewSpy,
     refineCommentSpy,
     draftPrBodySpy,
+    deps,
   };
 }
 
@@ -1450,7 +1461,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       buildGitHubReviewRequest(post),
     );
     const publishGitHubReview = vi.fn<ForgePublishPort["publishReview"]>(() =>
-      Promise.resolve({ reviewRef: "PRR_wrong", url: null, reused: false }),
+      Promise.resolve({ reviewRef: "PRR_wrong", url: "https://x/wrong", reused: false }),
     );
     const githubPort = fakePublishPort({
       buildReviewRequest: buildGitHubRequest,
@@ -1542,6 +1553,55 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     // The wire event is COMMENT (asserted on the constructed request in the dry-run
     // test); a post carries no event field to check here.
     expect(port.posts[0]?.body).toContain(out.marker); // the idempotency marker is embedded
+  });
+
+  it("persists the publication receipt before returning and hydrates it after dispatch restart", async () => {
+    const receiptRoot = mkdtempSync(join(tmpdir(), "rennet-publish-receipt-restart-"));
+    const port = fakePublishPort();
+    const { dispatch, deps } = harness(
+      port,
+      {},
+      {
+        publishReceipts: new PublishReceiptStore(receiptRoot),
+      },
+    );
+    const review = await postableReview(dispatch);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
+    if (composed.marker === undefined) throw new Error("Expected a publication marker.");
+
+    await expect(
+      dispatch("publish.receipt", {
+        reviewId: review.id,
+        marker: composed.marker,
+      }),
+    ).resolves.toEqual({ status: "missing" });
+    await dispatch("publish.review", composedPublishInput(review.id, composed, false));
+
+    const restarted = createDispatch({
+      ...deps,
+      publishReceipts: new PublishReceiptStore(receiptRoot),
+    });
+    await expect(
+      restarted("publish.receipt", {
+        reviewId: review.id,
+        marker: composed.marker,
+      }),
+    ).resolves.toEqual({
+      status: "posted",
+      receipt: {
+        marker: composed.marker,
+        verdict: composed.post.event,
+        lineCommentCount: composed.post.threads.length,
+        reviewRef: "PRR_test",
+        url: "https://x/1",
+      },
+    });
+
+    await expect(
+      restarted("publish.review", composedPublishInput(review.id, composed, false)),
+    ).resolves.toMatchObject({ outcome: { reviewRef: "PRR_test", reused: true } });
+    expect(port.posts).toHaveLength(1);
   });
 
   it("rechecks durable intent after awaited board evidence and refuses an edit that landed meanwhile", async () => {
@@ -1707,7 +1767,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       publishReview: async (post) => {
         posts.push(post);
         await gate; // hold the first post in flight, marker in the in-flight set
-        return { reviewRef: "PRR_1", url: null, reused: false };
+        return { reviewRef: "PRR_1", url: "https://x/1", reused: false };
       },
     });
     const { dispatch } = harness(port);
@@ -3102,6 +3162,9 @@ function frontDoorHarness(seed: {
     service,
     allowedRoots,
     askLog: new AskLogStore(mkdtempSync(join(tmpdir(), "rennet-asks-"))),
+    publishReceipts: new PublishReceiptStore(
+      mkdtempSync(join(tmpdir(), "rennet-publish-receipts-")),
+    ),
     projectContextMap: () => Promise.resolve({ status: "absent", reason: "stub" }),
     projectContextAsk: () =>
       Promise.resolve({

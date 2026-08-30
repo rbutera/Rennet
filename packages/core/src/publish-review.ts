@@ -672,7 +672,7 @@ export interface ForgeRequestDescriptor {
 export interface ForgePublishOutcome {
   /** The forge's opaque id for the review. */
   readonly reviewRef: string;
-  readonly url: string | null;
+  readonly url: string;
   /** True when an existing review carrying the marker was reused (idempotent no-op). */
   readonly reused: boolean;
 }
