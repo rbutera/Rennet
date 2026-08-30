@@ -47,7 +47,11 @@ const STATUS_LABEL: Record<FileChangeStatus, string> = {
   renamed: "renamed",
 };
 
-/** GitHub's five-square add/delete proportion chip. */
+/** GitHub's five-square add/delete proportion chip. The squares carry the 4px `micro`
+ *  radius, not the prototype's 2px: Rennet's named radius ramp STARTS at micro
+ *  (`DESIGN.md` — micro/chip/control/surface/window). Tailwind's own `rounded-xs` would
+ *  render 2px here only because `theme.css` never resets the `--radius-*` namespace, and
+ *  no test guards it — a 2px step is a ramp decision, not a per-component nudge. */
 function StatSquares({ additions, deletions }: { additions: number; deletions: number }) {
   const total = additions + deletions;
   const greens = total === 0 ? 0 : Math.round((additions / total) * 5);

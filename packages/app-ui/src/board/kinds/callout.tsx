@@ -27,7 +27,7 @@ export function CalloutElement({ element }: { readonly element: ElementOf<"callo
         text={body}
         elementId={element.id}
         patchsetId={patchsetId}
-        paragraphClassName="text-sm leading-relaxed text-foreground/90"
+        paragraphClassName="text-13 leading-relaxed text-foreground/90"
       />
     </div>
   );

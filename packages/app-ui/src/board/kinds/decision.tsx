@@ -20,7 +20,10 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
         text={why}
         elementId={element.id}
         patchsetId={patchsetId}
-        paragraphClassName="text-foreground/85 text-sm leading-relaxed"
+        // 13px, one step UNDER the 13.5px statement above and one over the 12.5px
+        // alternatives below (prototype `lens-board.tsx:384-402`). At `text-sm` the
+        // reasoning outsized the decision it explains — the hierarchy read inverted.
+        paragraphClassName="text-foreground/85 text-13 leading-relaxed"
       />
       {alternatives.length > 0 && (
         // One inline line, not a headed list: the roads not taken are context for the

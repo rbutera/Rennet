@@ -6,6 +6,7 @@ import { SourceChips, SpecDeltaBadge, StoryStatus } from "../design-meta";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context";
+import { ProseElement } from "./prose";
 import { BoardElement } from "./renderers";
 
 // `requirement` (C05 3.4) — a shall-requirement and how the change covers it. A
@@ -137,7 +138,9 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
                   <dl
                     data-kind="scenario-clauses"
                     data-element-id={scenario.id}
-                    className="grid min-w-0 flex-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-[auto_1fr]"
+                    // No size of its own: the clauses ARE the row's text, so they inherit
+                    // the row's 13px rather than dropping a step below the bullet beside them.
+                    className="grid min-w-0 flex-1 gap-x-3 gap-y-1 sm:grid-cols-[auto_1fr]"
                   >
                     <dt className="font-medium text-muted-foreground">Trigger</dt>
                     <dd data-scenario-clause="condition" className="text-foreground/80">
@@ -148,6 +151,14 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
                       <InlineQuoteHighlight text={clauses.response} elementId={scenario.id} />
                     </dd>
                   </dl>
+                ) : scenario.kind === "prose" ? (
+                  // A scenario is prose nested INSIDE this row, so the row's own type is
+                  // what it should read at. Left to its top-level defaults, `ProseElement`
+                  // would size the body at `text-sm` (overruling the 13px declared above —
+                  // a paragraph's own class beats an inherited one) and cap it at the 640px
+                  // reading measure, which narrows it again inside an already-indented flex
+                  // column. Both come off; the row supplies size, colour and leading.
+                  <ProseElement element={scenario} className="" paragraphClassName="" />
                 ) : (
                   <BoardElement element={scenario} />
                 )}
