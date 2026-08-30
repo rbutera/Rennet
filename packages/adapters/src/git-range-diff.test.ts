@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { decompose } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -26,7 +28,8 @@ function repositoryWithRange(): { root: string; baseOid: string; headOid: string
   git(root, "config", "user.email", "rennet@example.test");
   git(root, "config", "user.name", "Rennet Test");
   writeFileSync(join(root, "app.ts"), "export const a = 1;\n");
-  git(root, "add", "app.ts");
+  writeFileSync(join(root, ".gitattributes"), "filtered.txt text eol=lf\n");
+  git(root, "add", "app.ts", ".gitattributes");
   git(root, "commit", "-qm", "base");
   const baseOid = git(root, "rev-parse", "HEAD").trim();
   git(root, "checkout", "-qb", "feature");
@@ -227,6 +230,39 @@ describe("parseUnifiedDiffFiles (degraded REST parser) hunk-body content is neve
     // The preamble `--- a/other.txt` sets previousPath internally, but a `modified`
     // result omits it; the in-hunk `--- ` does not change the status or output path.
     expect(files[0]?.previousPath).toBeUndefined();
+  });
+});
+
+describe("execaGit input and failure semantics", () => {
+  it("streams Buffer and Readable input through attribute-aware Git without trimming output", async () => {
+    const { root, baseOid } = repositoryWithRange();
+    const normalized = Buffer.from("line\n");
+    const raw = Buffer.from("line\r\n");
+    const normalizedOid = createHash("sha1")
+      .update(`blob ${normalized.length}\0`)
+      .update(normalized)
+      .digest("hex");
+    const rawOid = createHash("sha1").update(`blob ${raw.length}\0`).update(raw).digest("hex");
+
+    await expect(
+      execaGit(
+        root,
+        ["-c", `attr.tree=${baseOid}`, "hash-object", "--stdin", "--path=filtered.txt"],
+        { input: Readable.from([Buffer.from("line\r"), Buffer.from("\n")]) },
+      ),
+    ).resolves.toBe(`${normalizedOid}\n`);
+    await expect(execaGit(root, ["hash-object", "--stdin"], { input: raw })).resolves.toBe(
+      `${rawOid}\n`,
+    );
+    expect(normalizedOid).not.toBe(rawOid);
+  });
+
+  it("rejects failed Git commands unless reject is explicitly false", async () => {
+    const { root } = repositoryWithRange();
+    const arguments_ = ["check-ignore", "--quiet", "--no-index", "--", "not-ignored"];
+
+    await expect(execaGit(root, arguments_)).rejects.toMatchObject({ exitCode: 1 });
+    await expect(execaGit(root, arguments_, { reject: false })).resolves.toBe("");
   });
 });
 
