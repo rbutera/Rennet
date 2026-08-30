@@ -170,13 +170,103 @@ describe("FirstRunWelcome", () => {
     expect(
       await screen.findByText("You stopped writing the code. You still have to answer for it."),
     ).toBeTruthy();
-    expect(container.querySelector(".rn-welcome-header")).toBeNull();
+    expect(container.querySelector("header")).toBeNull();
     const fragments = [...container.querySelectorAll("[data-fragment]")];
     expect(fragments).toHaveLength(10);
     expect(new Set(fragments.map((fragment) => fragment.textContent?.length)).size).toBeGreaterThan(
       5,
     );
     expect(screen.getByText("Appearance")).toBeTruthy();
+  });
+
+  it("renders each code fragment as toned spans over its full-length source", async () => {
+    // What a DOM test CAN see: the token structure and which tone each token claims.
+    // What it CANNOT see: the colour those tones resolve to (happy-dom has no style
+    // engine, and the tones resolve through `--rn-syn-*` in index.css), nor the drift
+    // and gather that move these nodes. Asserted here: structure only.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const first = container.querySelector("[data-fragment]");
+    if (!first) throw new Error("no code fragment rendered");
+    // Six lines, not the four of the truncated string version — the fragments carry the
+    // prototype's whole function body, so the rain reads as real code.
+    expect(first.querySelectorAll(":scope > span")).toHaveLength(6);
+    expect(first.querySelector('[data-tone="keyword"]')?.textContent).toBe("export async function");
+    expect(first.querySelector('[data-tone="function"]')?.textContent).toBe(" listProjectFiles");
+    const tones = new Set(
+      [...container.querySelectorAll("[data-fragment] [data-tone]")].map(
+        (node) => node.getAttribute("data-tone") ?? "",
+      ),
+    );
+    // Every tone in the catalogue is actually used by some fragment; a palette entry
+    // nothing renders is a colour nobody sees.
+    expect([...tones].sort()).toEqual([
+      "add",
+      "comment",
+      "function",
+      "hunk",
+      "keyword",
+      "literal",
+      "remove",
+      "string",
+      "type",
+    ]);
+  });
+
+  it("carries the whole sentence per reel row, with the first row repeated for the wrap", async () => {
+    // The reel's MOTION (a `y` keyframe track held 1.55s per word) is invisible here —
+    // no layout, no animation frames. What is assertable is the thing the setInterval
+    // word-swap could not do: every row holds the complete sentence, so nothing reflows
+    // mid-swap, and row 0 is repeated last so the loop closes without a jump.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const rows = [...container.querySelectorAll("[data-sentence-reel] > strong")];
+    expect(rows).toHaveLength(21);
+    expect(rows[0]?.textContent).toBe("Rennet makes code review digestible");
+    expect(rows.at(-1)?.textContent).toBe(rows[0]?.textContent);
+    for (const row of rows) expect(row.textContent).toContain("Rennet makes code review ");
+  });
+
+  it("remounts the stage on every step so its entrance animation re-fires", async () => {
+    // `key={step}` is the whole mechanism: a CSS animation on a node that survives the
+    // step change plays once, on first paint, and never again. Node identity is the only
+    // DOM-visible proof that the remount happens.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const first = container.querySelector("main");
+    expect(first?.className).toContain("animate-welcome-step");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    await screen.findByText("Your tools, already connected.");
+    const second = container.querySelector("main");
+    expect(second).not.toBe(first);
+    expect(second?.className).toContain("animate-welcome-step");
+  });
+
+  it("marks a finished step complete, not merely 'not current'", async () => {
+    // Three states, and the third one is the point: after leaving Appearance its pip
+    // reads `complete` with a tick, while Review setup is `active` and the rest are
+    // `upcoming`. Position matters here — asserting the SET of states would pass on a
+    // wizard that marked the wrong steps done.
+    mount(<RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    await screen.findByText("Your tools, already connected.");
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    await screen.findByText("Choose how Rennet reviews.");
+    const nav = screen.getByRole("navigation", { name: "Welcome progress" });
+    expect(
+      [...nav.querySelectorAll("button")].map((pip) => pip.getAttribute("data-state")),
+    ).toEqual(["complete", "complete", "active", "upcoming", "upcoming"]);
+    // The done pips swap their number for a tick; the active one keeps its number.
+    expect(within(nav).getByText("3")).toBeTruthy();
+    expect(within(nav).queryByText("1")).toBeNull();
   });
 
   it("applies and persists appearance immediately inside the welcome", async () => {

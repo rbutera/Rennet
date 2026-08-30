@@ -308,10 +308,10 @@ function StartupGate({ children }: { readonly children: ReactNode }) {
     pending: settingsPending,
     error: settingsError,
   } = useCommand("settings.get", {});
-  if (settingsError) return <div className="rn-startup-content">{children}</div>;
+  if (settingsError) return <div className="contents">{children}</div>;
   if (settingsPending || !settings)
-    return <div className="rn-startup-content rn-startup-pending">{children}</div>;
-  if (settings.welcome) return <div className="rn-startup-content">{children}</div>;
+    return <div className="contents opacity-0 pointer-events-none">{children}</div>;
+  if (settings.welcome) return <div className="contents">{children}</div>;
   return <FirstRunEligibility settings={settings}>{children}</FirstRunEligibility>;
 }
 
@@ -334,9 +334,9 @@ function FirstRunEligibility({
     setWelcomeClaimed(listed.projects.length === 0);
   }, [listed, welcomeClaimed]);
 
-  if (projectsError) return <div className="rn-startup-content">{children}</div>;
+  if (projectsError) return <div className="contents">{children}</div>;
   if (projectsPending || welcomeClaimed === undefined) {
-    return <div className="rn-startup-content rn-startup-pending">{children}</div>;
+    return <div className="contents opacity-0 pointer-events-none">{children}</div>;
   }
   // The shell must NOT mount beneath the welcome. A hidden-but-mounted underlay is
   // not inert enough: its coach anchors still register, the coach store still elects
@@ -344,7 +344,7 @@ function FirstRunEligibility({
   // wizard, and a click in the wizard burns an unseen mark. Unmounting is the fix at
   // the root; the shell comes up once, on the other side of the welcome.
   if (welcomeClaimed) return <FirstRunWelcome settings={settings} />;
-  return <div className="rn-startup-content">{children}</div>;
+  return <div className="contents">{children}</div>;
 }
 
 /** A session route (#480 `/s/:slug`). The slug is the durable session id (C21); it

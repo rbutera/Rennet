@@ -41,7 +41,8 @@ const BANS: ReadonlyArray<readonly [RegExp, string]> = [
 // texture, not as text:
 //
 //   .rn-code-fragment       9px  the code-rain fragments drifting behind the
-//                                theme picker (`.rn-code-field`, opacity .52)
+//                                theme picker (`.rn-code-fragment`, opacity .58,
+//                                under the field's own .72 on `.rn-code-field`)
 //   .rn-theme-preview code  8px  the faux-diff miniature inside a ~100px-wide
 //                                theme preview card
 //
