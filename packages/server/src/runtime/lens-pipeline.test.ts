@@ -1729,6 +1729,41 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(applied.map(({ boardId }) => boardId)).not.toContain("board:design");
   });
 
+  it("keeps a valid Design board when the provider envelope also contains grounded absence fields", async () => {
+    const applied: Applied[] = [];
+    const designBoard = cleanBody("design");
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "design") return cleanBody(lens);
+        return {
+          ...designBoard,
+          absence: "no-material",
+          candidates: DESIGN_ARTIFACTS.candidates.map((candidate) => ({
+            id: candidate.id,
+            relevance: candidate.relevance.kind,
+            reason: "The candidate is unrelated to the reviewed change.",
+          })),
+        };
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      designArtifacts: DESIGN_ARTIFACTS,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const design = result.boards.find(({ lens }) => lens === "design");
+    expect(design).toMatchObject({ lens: "design" });
+    expect(design?.absence).toBeUndefined();
+    expect(design?.board).toBeDefined();
+    expect(applied.map(({ boardId }) => boardId)).toContain("board:design");
+  });
+
   it("refuses durable no-material when Design discovery omitted a candidate", async () => {
     const incompleteArtifacts: DesignArtifactSet = {
       ...DESIGN_ARTIFACTS,

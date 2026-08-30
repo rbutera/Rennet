@@ -91,7 +91,8 @@ function lowerRootObjectUnion(schema: Record<string, unknown>): Record<string, u
       properties[key] = existing === undefined ? value : { anyOf: [existing, value] };
     }
   }
-  const { anyOf: _anyOf, ...rest } = schema;
+  const rest = { ...schema };
+  delete rest.anyOf;
   return {
     ...rest,
     type: "object",

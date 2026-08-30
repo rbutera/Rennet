@@ -1697,6 +1697,7 @@ function groundedDesignAbsence(
   set: DesignArtifactSet,
 ): { readonly absence: "no-material" } | undefined {
   if (designArtifactBundleIncomplete(set)) return undefined;
+  if (DraftBoardSchema.safeParse(output).success) return undefined;
   const parsed = DesignNoMaterialSchema.safeParse(output);
   if (!parsed.success || parsed.data.candidates.length !== set.candidates.length) return undefined;
   const byId = new Map(parsed.data.candidates.map((candidate) => [candidate.id, candidate]));
