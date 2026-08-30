@@ -17,6 +17,7 @@ import type {
   UiVerification,
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
+import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
 import { SessionTranscriptRowSchema } from "./session/model";
 
@@ -123,15 +124,9 @@ export const dispositionSchema = z.object({
 
 // The real forge post-target persisted on the review snapshot. `publish.review`
 // deliberately carries no client target; the server derives it from this record.
-const forgeRepoSchema = z.object({
-  forge: z.string().min(1),
-  owner: z.string().min(1),
-  name: z.string().min(1),
-});
-
 /** The pinned review target: which PR, which node id, which reviewed head. */
 const forgePublishTargetSchema = z.object({
-  repo: forgeRepoSchema,
+  repo: forgeRepoIdentitySchema,
   number: z.number().int().positive(),
   /** The forge's opaque PR node id (carried, interpreted only in the adapter). */
   forgeRef: z.string().min(1),
@@ -213,7 +208,7 @@ export const reviewSchema = z.object({
 // review before independently rebuilding and comparing the exact operation. The
 // Post click is the whole authorization (Rule Zero).
 
-// `forgeRepoSchema` and the publish target now live above `reviewSchema` (the
+// `forgeRepoIdentitySchema` and the publish target now live above `reviewSchema` (the
 // single source of truth `Review.postTarget` also reuses). Alias kept so the
 // publish-command definitions below read unchanged.
 export const publishTargetSchema = forgePublishTargetSchema;
@@ -780,36 +775,44 @@ export const smartListCiSchema = z.enum(["none", "passing", "failing", "pending"
 export type SmartListCi = z.infer<typeof smartListCiSchema>;
 
 /** A local worktree/branch detected for the project — private/local (backlight). */
-export const localWorkSchema = z.object({
-  /** A stable, unique worktree identifier — the clean-up target (unambiguous even
-   * across a workspace and across a reused branch name). */
-  id: z.string().min(1),
-  /**
-   * A stable identity for the repository this worktree belongs to. A workspace holds
-   * several repos, so a branch NAME is unique only within one repo; dedupe keys on the
-   * composite `(repository, branch)`, never the bare branch.
-   */
-  repository: z.string().min(1),
-  /** The branch/worktree name (half of the composite dedupe key). */
-  branch: z.string().min(1),
-  /** The login that owns this local work — matched against the viewer for ownership. */
-  author: z.string().min(1),
-  /** Uncommitted changes present in the worktree. */
-  dirty: z.boolean(),
-  /**
-   * Commits ahead of / behind the primary branch. `null` means the comparison could
-   * NOT be computed (the base ref is unresolvable in this repo) — distinct from `0`,
-   * which is a genuinely even branch. A live source must never collapse an
-   * un-computable comparison to `0/0`, or a branch with an unknown base reads as
-   * "fully merged, nothing to do" (a lying gauge).
-   */
-  ahead: z.number().int().nonnegative().nullable(),
-  behind: z.number().int().nonnegative().nullable(),
-  /** How far along the local pipeline this work sits. */
-  stage: smartListStageSchema,
-  /** Recency of engagement (ISO), the HOT-sort key. */
-  lastActivityAt: z.iso.datetime(),
-});
+export const localWorkSchema = z
+  .object({
+    /** A stable, unique worktree identifier — the clean-up target (unambiguous even
+     * across a workspace and across a reused branch name). */
+    id: z.string().min(1),
+    /**
+     * A stable identity for the repository this worktree belongs to. A workspace holds
+     * several repos, so a branch NAME is unique only within one repo; dedupe keys on the
+     * composite `(repository, branch)`, never the bare branch.
+     */
+    repository: z.string().min(1),
+    /** Provider-qualified identity when the origin remote names a forge. Optional for local-only
+     * repositories and legacy project-detail producers. */
+    forgeRepository: forgeRepoIdentitySchema.optional(),
+    /** The branch/worktree name (half of the composite dedupe key). */
+    branch: z.string().min(1),
+    /** The login that owns this local work — matched against the viewer for ownership. */
+    author: z.string().min(1),
+    /** Uncommitted changes present in the worktree. */
+    dirty: z.boolean(),
+    /**
+     * Commits ahead of / behind the primary branch. `null` means the comparison could
+     * NOT be computed (the base ref is unresolvable in this repo) — distinct from `0`,
+     * which is a genuinely even branch. A live source must never collapse an
+     * un-computable comparison to `0/0`, or a branch with an unknown base reads as
+     * "fully merged, nothing to do" (a lying gauge).
+     */
+    ahead: z.number().int().nonnegative().nullable(),
+    behind: z.number().int().nonnegative().nullable(),
+    /** How far along the local pipeline this work sits. */
+    stage: smartListStageSchema,
+    /** Recency of engagement (ISO), the HOT-sort key. */
+    lastActivityAt: z.iso.datetime(),
+  })
+  .refine((work) => forgeRepositoryMatchesLegacy(work.repository, work.forgeRepository), {
+    path: ["forgeRepository"],
+    message: "forgeRepository must name the same owner/name as repository",
+  });
 export type LocalWork = z.infer<typeof localWorkSchema>;
 
 /** A PR's lifecycle state — also the `project.detail` history filter vocabulary. */
@@ -829,28 +832,40 @@ export const prWorktreeSetupSchema = z.discriminatedUnion("status", [
 export type PrWorktreeSetup = z.infer<typeof prWorktreeSetupSchema>;
 
 /** A pull request on the project — public/what-exists-in-the-world (ink). */
-export const pullRequestSchema = z.object({
-  id: z.string().min(1),
-  number: z.number().int().positive(),
-  title: z.string().min(1),
-  /**
-   * A stable identity for the repository this PR belongs to — the other half of the
-   * composite `(repository, branch)` dedupe key. A workspace PR for `repo-a/feat/x`
-   * must not match a local worktree `repo-b/feat/x`.
-   */
-  repository: z.string().min(1),
-  /** The PR's head branch (half of the composite dedupe key against a local worktree). */
-  branch: z.string().min(1),
-  author: z.string().min(1),
-  state: pullRequestStateSchema,
-  /** The viewer has been asked to review this PR — the relevance boost's core signal. */
-  reviewRequestedFromViewer: z.boolean(),
-  ci: smartListCiSchema,
-  additions: z.number().int().nonnegative(),
-  deletions: z.number().int().nonnegative(),
-  changedFiles: z.number().int().nonnegative(),
-  lastActivityAt: z.iso.datetime(),
-});
+export const pullRequestSchema = z
+  .object({
+    id: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    /**
+     * A stable identity for the repository this PR belongs to — the other half of the
+     * composite `(repository, branch)` dedupe key. A workspace PR for `repo-a/feat/x`
+     * must not match a local worktree `repo-b/feat/x`.
+     */
+    repository: z.string().min(1),
+    /** Provider-qualified identity. Optional only for compatibility with older project-detail
+     * producers; live forge adapters always set it. */
+    forgeRepository: forgeRepoIdentitySchema.optional(),
+    /** The PR's head branch (half of the composite dedupe key against a local worktree). */
+    branch: z.string().min(1),
+    author: z.string().min(1),
+    state: pullRequestStateSchema,
+    /** The viewer has been asked to review this PR — the relevance boost's core signal. */
+    reviewRequestedFromViewer: z.boolean(),
+    ci: smartListCiSchema,
+    additions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+    changedFiles: z.number().int().nonnegative(),
+    lastActivityAt: z.iso.datetime(),
+  })
+  .refine(
+    (pullRequest) =>
+      forgeRepositoryMatchesLegacy(pullRequest.repository, pullRequest.forgeRepository),
+    {
+      path: ["forgeRepository"],
+      message: "forgeRepository must name the same owner/name as repository",
+    },
+  );
 export type PullRequest = z.infer<typeof pullRequestSchema>;
 
 /** The signed-in GitHub user, so the renderer can tag ownership (mine vs theirs). */
@@ -2170,59 +2185,67 @@ export type DaemonHostSection = z.infer<typeof daemonHostSectionSchema>;
  * (a teammate's PR is not knowable from the session record, so it is never guessed);
  * `targetState` and unread activity are likewise absent rather than invented.
  */
-export const sidebarSessionSchema = z.object({
-  id: z.string().min(1),
-  /** The project this session belongs to — the sidebar's grouping key. */
-  projectId: z.string().min(1),
-  /** The reviewer's chosen title, else the claimed branch, else "New review". */
-  title: z.string().min(1),
-  /** Latest completed round receipt, derived server-side from the durable round ledger.
-   * Absent before this session has returned a round. */
-  subtitle: z.string().min(1).optional(),
-  target: z.enum(["your-branch", "your-pr"]),
-  /**
-   * Where the target stands (needs-you / merged / reviewed) and whether the row carries
-   * unread orchestrator activity. The session record proves NEITHER today, so the host
-   * leaves both absent and the row renders without them — the shape carries them so the
-   * surface stays structurally able to show them the moment a source exists, never so a
-   * value can be guessed.
-   */
-  targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
-  unread: z.boolean().optional(),
-  /** Pinned to the top of its project group; absent reads as unpinned. */
-  pinned: z.boolean().optional(),
-  /** Archived (soft-deleted, the only release); absent reads as live. */
-  archived: z.boolean().optional(),
-  /**
-   * The target this session CLAIMED at mint (C21) — a branch and, when the row was a pull
-   * request, its number. A branch and its PR are ONE claimed thing (#466 res. 11), so New
-   * Chat hides every row matching either half while the claim holds. Absent for a
-   * no-target session (the "talk about the project" mint), which claims nothing and
-   * therefore hides nothing. Archive is the only release, so an archived session's rows
-   * come back — the surface reads that off `archived`, not off a second field.
-   */
-  claim: z
-    .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
-    .optional(),
-  /**
-   * The `owner/name` the session was minted for (`SessionModel.repository`, #580). It rides
-   * to the client because the claim alone cannot say WHICH repo it claimed: a workspace
-   * project holds several, so New Chat hiding on branch alone would hide repo-b's `main` for
-   * a session that claimed repo-a's. An identity, never a host path (R19) — `repositoryRoot`
-   * deliberately stays server-side. Absent for a session minted without one, which still
-   * hides its row exactly as before.
-   */
-  repository: z.string().min(1).optional(),
-  /**
-   * The review this session holds (`SessionModel.reviewId`, 1:0..1 — referenced, never
-   * absorbed). New Chat's row click captures the target's change and attaches it here, so
-   * `/s/<sessionId>` resolves to the review workspace rather than the chat-only surface.
-   * Absent for a session nothing has been captured for yet — honestly, there is no diff.
-   */
-  reviewId: z.string().min(1).optional(),
-  /** When the session was minted (epoch ms) — the client renders the relative line. */
-  createdAt: z.number(),
-});
+export const sidebarSessionSchema = z
+  .object({
+    id: z.string().min(1),
+    /** The project this session belongs to — the sidebar's grouping key. */
+    projectId: z.string().min(1),
+    /** The reviewer's chosen title, else the claimed branch, else "New review". */
+    title: z.string().min(1),
+    /** Latest completed round receipt, derived server-side from the durable round ledger.
+     * Absent before this session has returned a round. */
+    subtitle: z.string().min(1).optional(),
+    target: z.enum(["your-branch", "your-pr"]),
+    /**
+     * Where the target stands (needs-you / merged / reviewed) and whether the row carries
+     * unread orchestrator activity. The session record proves NEITHER today, so the host
+     * leaves both absent and the row renders without them — the shape carries them so the
+     * surface stays structurally able to show them the moment a source exists, never so a
+     * value can be guessed.
+     */
+    targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
+    unread: z.boolean().optional(),
+    /** Pinned to the top of its project group; absent reads as unpinned. */
+    pinned: z.boolean().optional(),
+    /** Archived (soft-deleted, the only release); absent reads as live. */
+    archived: z.boolean().optional(),
+    /**
+     * The target this session CLAIMED at mint (C21) — a branch and, when the row was a pull
+     * request, its number. A branch and its PR are ONE claimed thing (#466 res. 11), so New
+     * Chat hides every row matching either half while the claim holds. Absent for a
+     * no-target session (the "talk about the project" mint), which claims nothing and
+     * therefore hides nothing. Archive is the only release, so an archived session's rows
+     * come back — the surface reads that off `archived`, not off a second field.
+     */
+    claim: z
+      .object({ branch: z.string().min(1), prNumber: z.number().int().positive().optional() })
+      .optional(),
+    /**
+     * The `owner/name` the session was minted for (`SessionModel.repository`, #580). It rides
+     * to the client because the claim alone cannot say WHICH repo it claimed: a workspace
+     * project holds several, so New Chat hiding on branch alone would hide repo-b's `main` for
+     * a session that claimed repo-a's. An identity, never a host path (R19) — `repositoryRoot`
+     * deliberately stays server-side. Absent for a session minted without one, which still
+     * hides its row exactly as before.
+     */
+    repository: z.string().min(1).optional(),
+    /** Provider-qualified repository identity for new sessions. Optional so a sidebar reload can
+     * still project sessions persisted before this field existed. */
+    forgeRepository: forgeRepoIdentitySchema.optional(),
+    /**
+     * The review this session holds (`SessionModel.reviewId`, 1:0..1 — referenced, never
+     * absorbed). New Chat's row click captures the target's change and attaches it here, so
+     * `/s/<sessionId>` resolves to the review workspace rather than the chat-only surface.
+     * Absent for a session nothing has been captured for yet — honestly, there is no diff.
+     */
+    reviewId: z.string().min(1).optional(),
+    /** When the session was minted (epoch ms) — the client renders the relative line. */
+    createdAt: z.number(),
+  })
+  .refine((session) => forgeRepositoryMatchesLegacy(session.repository, session.forgeRepository), {
+    path: ["forgeRepository"],
+    message: "forgeRepository must name the same owner/name as repository",
+  });
 export type SidebarSession = z.infer<typeof sidebarSessionSchema>;
 
 /**

@@ -272,7 +272,15 @@ describe("both mints converge on one session, and all four durable reads answer 
 
     // And by PR number alone — a branch and its PR are ONE claimed thing.
     const byPr = reviewFor("review-pr", REPO_A, "some-other-ref");
-    const withPostTarget = { ...byPr, postTarget: { number: 7 } } as unknown as Review;
+    const withPostTarget = {
+      ...byPr,
+      postTarget: {
+        repo: { forge: "github", owner: "acme", name: "widget" },
+        number: 7,
+        forgeRef: "PR_widget_7",
+        headOid: "head",
+      },
+    } satisfies Review;
     expect(resolveRoundSessionId(withPostTarget, sub.sessions.list(), PROJECT_ID)).toBe(
       unstamped.id,
     );
@@ -569,6 +577,36 @@ function preFixEnter(review: Review) {
 }
 
 describe("enterRoundSession — the dispatch's own mint, run for real", () => {
+  it("uses the upstream PR identity when the local clone origin is a fork", async () => {
+    const upstream = { forge: "github", owner: "upstream", name: "widget" } as const;
+    const clicked = sub.entry.enter(PROJECT_ID, {
+      branch: "feature",
+      prNumber: 7,
+      repository: "upstream/widget",
+      forgeRepository: upstream,
+    }).session;
+    const review = {
+      ...reviewFor("review-upstream", REPO_A, "feature"),
+      postTarget: {
+        repo: upstream,
+        number: 7,
+        forgeRef: "PR_upstream_7",
+        headOid: "head",
+      },
+    } satisfies Review;
+
+    const entered = await enterRoundSession(sub.entry, PROJECT_ID, review, gitFor(REPO_A));
+
+    expect(entered.reattached).toBe(true);
+    expect(entered.session.id).toBe(clicked.id);
+    expect(entered.session.repositoryRoot).toBe(REPO_A);
+    expect(entered.session.repository).toBe("upstream/widget");
+    expect(entered.session.forgeRepository).toEqual(upstream);
+    expect(calledGit).toEqual([]);
+    expect(sub.sessions.list()).toHaveLength(1);
+    expect(resolveRoundSessionId(review, sub.sessions.list(), PROJECT_ID)).toBe(clicked.id);
+  });
+
   it("names the repo, so two unstamped New Chat sessions stop being a coin flip", async () => {
     // Two rows, one branch name, two repos of ONE workspace — the fixture shape without which
     // none of this is visible. Both mints are unstamped: a row carries an `owner/name` and

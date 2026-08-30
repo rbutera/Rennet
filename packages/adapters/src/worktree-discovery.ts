@@ -1,3 +1,4 @@
+import type { ForgeRepoIdentity } from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
 
 /**
@@ -22,6 +23,18 @@ export interface LocalWorktree {
   identities: RemoteIdentity[];
 }
 
+/** Provider id for a remote host. Unknown self-hosted forges remain host-qualified. */
+export function forgeForRemoteHost(host: string): string {
+  const normalized = host.toLowerCase();
+  return normalized === "github.com"
+    ? "github"
+    : normalized === "gitlab.com"
+      ? "gitlab"
+      : normalized === "bitbucket.org"
+        ? "bitbucket"
+        : normalized;
+}
+
 /**
  * Parse a git remote URL into a forge identity, or null for a non-forge remote.
  * Handles `https://host/owner/name(.git)`, scp-style `git@host:owner/name(.git)`,
@@ -40,7 +53,11 @@ export function parseRemoteIdentity(url: string): RemoteIdentity | null {
     const rest = strip(scp[2] ?? "");
     const parts = rest.split("/").filter(Boolean);
     if (host && parts.length >= 2) {
-      return { host, owner: parts[parts.length - 2] ?? "", name: parts[parts.length - 1] ?? "" };
+      return {
+        host,
+        owner: parts.slice(0, -1).join("/"),
+        name: parts[parts.length - 1] ?? "",
+      };
     }
     return null;
   }
@@ -53,7 +70,7 @@ export function parseRemoteIdentity(url: string): RemoteIdentity | null {
       if (parsed.hostname && parts.length >= 2) {
         return {
           host: parsed.hostname,
-          owner: parts[parts.length - 2] ?? "",
+          owner: parts.slice(0, -1).join("/"),
           name: parts[parts.length - 1] ?? "",
         };
       }
@@ -138,19 +155,24 @@ export async function resolveForgeRemote(
 }
 
 /**
- * Match a PR's repo onto a discovered worktree by identity (owner/name,
- * case-insensitive). Returns null when nothing matches — the caller then takes the
- * degraded REST-diff path. It NEVER falls back to a path-name guess.
+ * Match a PR's repo onto a discovered worktree by provider-qualified identity
+ * (forge + owner/name, case-insensitive). Returns null when nothing matches — the
+ * caller then takes the degraded REST-diff path. It NEVER falls back to a path-name guess.
  */
 export function matchWorktree(
-  repo: { owner: string; name: string },
+  repo: ForgeRepoIdentity,
   worktrees: readonly LocalWorktree[],
 ): LocalWorktree | null {
+  const forge = repo.forge.toLowerCase();
   const owner = repo.owner.toLowerCase();
   const name = repo.name.toLowerCase();
   for (const worktree of worktrees) {
     for (const identity of worktree.identities) {
-      if (identity.owner.toLowerCase() === owner && identity.name.toLowerCase() === name) {
+      if (
+        forgeForRemoteHost(identity.host) === forge &&
+        identity.owner.toLowerCase() === owner &&
+        identity.name.toLowerCase() === name
+      ) {
         return worktree;
       }
     }

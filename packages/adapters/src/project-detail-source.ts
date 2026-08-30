@@ -1,4 +1,5 @@
 import type {
+  ForgeRepoIdentity,
   LocalWork,
   Project,
   ProjectDetail,
@@ -6,11 +7,12 @@ import type {
   PullRequest,
   PullRequestState,
 } from "@rennet/protocol";
+import { forgeRepositorySlug } from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
 import { isGitHubNetworkError } from "./github-fetch";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
-import { type ProjectPrSource, parseForgeRepository } from "./project-pr-source";
-import { parseRemoteIdentity } from "./worktree-discovery";
+import type { ProjectPrSource } from "./project-pr-source";
+import { forgeForRemoteHost, parseRemoteIdentity, type RemoteIdentity } from "./worktree-discovery";
 
 /**
  * The LIVE local-work half of the project-detail substrate (issue #37, wave B1).
@@ -65,7 +67,12 @@ export interface ProjectDetailSourceDeps {
    * local-only list (also the honest degrade when GitHub auth is unavailable: no
    * token ⇒ no source is wired here, never a failed fetch rendered as "zero PRs").
    */
-  prSource?: ProjectPrSource;
+  forgeRegistry?: ProjectForgeRegistry;
+}
+
+/** The project-detail forges available in this server process. GitHub is the sole entry today. */
+export interface ProjectForgeRegistry {
+  sourceFor(repository: ForgeRepoIdentity): ProjectPrSource | undefined;
 }
 
 /** Trim git stdout and read the first non-empty line. */
@@ -82,16 +89,38 @@ function firstLine(output: string): string {
  * RepoRecord alias `realpath(git-common-dir)` (R19). NEVER the directory basename —
  * that is the path-name guess `worktree-discovery.ts` explicitly forbids.
  */
-export async function repositoryIdentity(git: GitExec, root: string): Promise<string> {
+export interface RepositoryIdentity {
+  repository: string;
+  forgeRepository?: ForgeRepoIdentity;
+}
+
+/** Provider id for a parsed remote. Unknown hosts remain distinct and have no registered source. */
+export function forgeRepositoryFromRemote(identity: RemoteIdentity): ForgeRepoIdentity {
+  return {
+    forge: forgeForRemoteHost(identity.host),
+    owner: identity.owner,
+    name: identity.name,
+  };
+}
+
+export async function repositoryIdentity(git: GitExec, root: string): Promise<RepositoryIdentity> {
   const url = firstLine(await git(root, ["remote", "get-url", "origin"], { reject: false }));
   const identity = url ? parseRemoteIdentity(url) : null;
-  if (identity) return `${identity.owner}/${identity.name}`;
+  if (identity) {
+    const forgeRepository = forgeRepositoryFromRemote(identity);
+    return { repository: forgeRepositorySlug(forgeRepository), forgeRepository };
+  }
   // No forge remote → the durable common-dir identity, not a directory-name guess.
   const commonDir = firstLine(
     await git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { reject: false }),
   );
-  if (commonDir.length > 0) return commonDir;
-  return root; // last resort: not a git work tree, so no branches are emitted anyway.
+  if (commonDir.length > 0) return { repository: commonDir };
+  return { repository: root }; // last resort: not a git work tree, so no branches are emitted anyway.
+}
+
+function repositoryKey(identity: RepositoryIdentity): string {
+  const forge = identity.forgeRepository;
+  return forge === undefined ? identity.repository : `${forge.forge}:${forge.owner}/${forge.name}`;
 }
 
 /** A local branch's last-commit time (unix seconds) and whether it exists locally. */
@@ -199,7 +228,8 @@ async function loadRepoLocalWork(
   primaryBranch: string,
   viewer: string,
 ): Promise<LocalWork[]> {
-  const repository = await repositoryIdentity(git, root);
+  const identity = await repositoryIdentity(git, root);
+  const { repository, forgeRepository } = identity;
   const activity = await readBranchActivity(git, root);
   const worktreesRaw = await git(root, ["worktree", "list", "--porcelain", "-z"], {
     reject: false,
@@ -209,7 +239,7 @@ async function loadRepoLocalWork(
   // Key on the composite (repository, branch) so a checked-out worktree and its own
   // ref never double-count, while a branch name reused across repos stays distinct.
   const byKey = new Map<string, LocalWork>();
-  const keyOf = (branch: string): string => `${repository}\n${branch}`;
+  const keyOf = (branch: string): string => `${repositoryKey(identity)}\n${branch}`;
 
   const activityAt = async (branch: string): Promise<string> => {
     const unix = activity.get(branch);
@@ -235,6 +265,7 @@ async function loadRepoLocalWork(
     byKey.set(key, {
       id: worktree.path, // the clean-up target: `git worktree remove <path>`
       repository,
+      ...(forgeRepository === undefined ? {} : { forgeRepository }),
       branch: worktree.branch,
       author: viewer,
       dirty,
@@ -252,8 +283,9 @@ async function loadRepoLocalWork(
     if (byKey.has(key)) continue;
     const { ahead, behind } = await aheadBehind(git, root, primaryBranch, branch);
     byKey.set(key, {
-      id: `${repository}#${branch}`, // no worktree on disk → a branch-delete target
+      id: `${repositoryKey(identity)}#${branch}`, // no worktree on disk → a branch-delete target
       repository,
+      ...(forgeRepository === undefined ? {} : { forgeRepository }),
       branch,
       author: viewer,
       dirty: false,
@@ -332,26 +364,35 @@ export async function loadProjectDetail(
   const roots = await deps.resolveRepoRoots(project);
   const gitViewer = await resolveViewerLogin(deps.git, roots);
 
-  // The forge repo identities among the roots (`owner/name`), deduped. A local-only
-  // repo's common-dir identity is not a forge identity → no PR fetch attempted.
+  // The provider-qualified forge identities among the roots, deduped. A local-only repo has no
+  // structured identity, and an unregistered provider never falls through to GitHub.
   const identities = await Promise.all(roots.map((root) => repositoryIdentity(deps.git, root)));
-  const forgeRepos = [...new Set(identities)].filter(
-    (identity) => parseForgeRepository(identity) !== null,
-  );
+  const forgeRepos = [
+    ...new Map(
+      identities.flatMap((identity) => {
+        const forge = identity.forgeRepository;
+        return forge === undefined ? [] : [[repositoryKey(identity), forge] as const];
+      }),
+    ).values(),
+  ];
+  const forgeTargets = forgeRepos.flatMap((repository) => {
+    const source = deps.forgeRegistry?.sourceFor(repository);
+    return source === undefined ? [] : [{ repository, source }];
+  });
 
   let viewer = gitViewer;
   let prs: PullRequest[] = [];
   let truncated = false;
   let authUnavailable: "network" | undefined;
-  const prSource = deps.prSource;
-  if (prSource && forgeRepos.length > 0) {
+  if (forgeTargets.length > 0) {
     try {
-      // The GitHub login pins ownership; a null viewer keeps the git identity.
-      const githubViewer = await prSource.resolveViewer();
+      // GitHub is the only registered source today, so its login pins ownership. Keeping source
+      // selection beside each repository prevents a GitLab identity from reaching this call.
+      const githubViewer = await forgeTargets[0]?.source.resolveViewer();
       if (githubViewer) viewer = githubViewer;
       // The determinate total: how many forge repos will be fetched. The renderer
       // turns this into an honest progress fraction (no fabricated percentage).
-      onProgress?.({ kind: "prs-start", total: forgeRepos.length });
+      onProgress?.({ kind: "prs-start", total: forgeTargets.length });
       // Bounded fan-out: each request already carries a 15s deadline, so an
       // unbounded Promise.all over a many-repo workspace would stack one worst
       // case per repo. Four in flight keeps the worst case near one deadline.
@@ -359,18 +400,22 @@ export async function loadProjectDetail(
       // it is on; `fetched` is the running COMPLETION count (JS is single-threaded,
       // so the increment across the four workers never races).
       let fetched = 0;
-      const results = await mapLimit(forgeRepos, MAX_CONCURRENT_PR_FETCHES, async (identity) => {
-        const result = await prSource.listPullRequests(identity, prStates);
-        fetched += 1;
-        onProgress?.({
-          kind: "repo-prs",
-          repo: identity,
-          index: fetched,
-          total: forgeRepos.length,
-          count: result.prs.length,
-        });
-        return result;
-      });
+      const results = await mapLimit(
+        forgeTargets,
+        MAX_CONCURRENT_PR_FETCHES,
+        async ({ repository, source }) => {
+          const result = await source.listPullRequests(repository, prStates);
+          fetched += 1;
+          onProgress?.({
+            kind: "repo-prs",
+            repo: forgeRepositorySlug(repository),
+            index: fetched,
+            total: forgeTargets.length,
+            count: result.prs.length,
+          });
+          return result;
+        },
+      );
       prs = results.flatMap((result) => result.prs);
       truncated = results.some((result) => result.truncated);
     } catch (error) {
@@ -406,11 +451,11 @@ export async function loadProjectDetail(
  */
 export function defaultProjectDetailSourceDeps(
   git: GitExec,
-  prSource?: ProjectPrSource,
+  forgeRegistry?: ProjectForgeRegistry,
 ): ProjectDetailSourceDeps {
   return {
     git,
-    prSource,
+    forgeRegistry,
     async resolveRepoRoots(project: Project): Promise<readonly string[]> {
       if (project.kind === "repo") return [project.openPath || project.path];
       // Honour the user's include/exclude choice, persisted at add time.

@@ -1,5 +1,5 @@
 import { archive } from "@rennet/core";
-import type { SessionModel } from "@rennet/protocol";
+import type { ForgeRepoIdentity, SessionModel } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { type EntryStore, SessionEntry, type Target } from "./session-entry";
 
@@ -27,6 +27,16 @@ function mintDeps(idSeq: string[]) {
 }
 
 const FEAT: Target = { branch: "feat/x", prNumber: 7 };
+const GITHUB_WIDGET = {
+  forge: "github",
+  owner: "acme",
+  name: "widget",
+} satisfies ForgeRepoIdentity;
+const GITLAB_WIDGET = {
+  forge: "gitlab",
+  owner: "acme",
+  name: "widget",
+} satisfies ForgeRepoIdentity;
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
@@ -96,6 +106,78 @@ describe("SessionEntry.enter — re-entry reattaches (never a second session)", 
     expect(entry.enter("proj-a", FEAT).session.id).toBe(inA.session.id);
     expect(store.sessions).toHaveLength(2);
   });
+
+  it("does not cross-attach identical repository coordinates across forges", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["github", "gitlab", "extra"]));
+    const github = entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    });
+    const gitlab = entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITLAB_WIDGET,
+    });
+
+    expect(gitlab.reattached).toBe(false);
+    expect(gitlab.session.id).toBe("gitlab");
+    expect(gitlab.session.id).not.toBe(github.session.id);
+    expect(store.sessions).toHaveLength(2);
+    expect(
+      entry.enter("proj", {
+        branch: "main",
+        prNumber: 7,
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+      }).session.id,
+    ).toBe("github");
+  });
+
+  it("reattaches and provider-stamps a legacy session when owner/name agrees", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["legacy", "extra"]));
+    const legacy = entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+    });
+    const current = entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    });
+
+    expect(current.reattached).toBe(true);
+    expect(current.session.id).toBe(legacy.session.id);
+    expect(current.session.forgeRepository).toEqual(GITHUB_WIDGET);
+    expect(store.sessions).toHaveLength(1);
+  });
+
+  it("does not provider-stamp a contradictory one-sided legacy session", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["legacy", "github"]));
+    const legacy = entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      repository: "other/repo",
+    });
+    const current = entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      forgeRepository: GITHUB_WIDGET,
+    });
+
+    expect(current.reattached).toBe(false);
+    expect(current.session.id).toBe("github");
+    expect(current.session.id).not.toBe(legacy.session.id);
+    expect(current.session.forgeRepository).toEqual(GITHUB_WIDGET);
+    expect(store.sessions).toHaveLength(2);
+  });
 });
 
 describe("SessionEntry.visibleTargets — claim-dedup on resolve", () => {
@@ -128,5 +210,34 @@ describe("SessionEntry.visibleTargets — claim-dedup on resolve", () => {
     expect(entry.visibleTargets("proj-b", [{ branch: "feat/x", prNumber: 7 }])).toEqual([
       { branch: "feat/x", prNumber: 7 },
     ]);
+  });
+
+  it("keeps the other forge visible when coordinates, branch, and PR number are identical", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["github"]));
+    entry.enter("proj", {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    });
+
+    const gitlab = {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITLAB_WIDGET,
+    } satisfies Target;
+    expect(
+      entry.visibleTargets("proj", [
+        {
+          branch: "main",
+          prNumber: 7,
+          repository: "acme/widget",
+          forgeRepository: GITHUB_WIDGET,
+        },
+        gitlab,
+      ]),
+    ).toEqual([gitlab]);
   });
 });

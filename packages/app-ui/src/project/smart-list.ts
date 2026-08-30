@@ -1,10 +1,12 @@
 import type {
+  ForgeRepoIdentity,
   LocalWork,
   ProjectDetail,
   PullRequest,
   SmartListCi,
   SmartListStage,
 } from "@rennet/protocol";
+import { repositoryIdentitiesAgree } from "./forge-repository";
 
 /**
  * The unified smart list (issue #37), pure derivation.
@@ -50,6 +52,8 @@ export interface SmartRow {
     number: number;
     /** The `owner/name` identity, so a click can target `owner/name#number`. */
     repository: string;
+    /** Provider-qualified identity. Absent only for a legacy row. */
+    forgeRepository?: ForgeRepoIdentity;
     ci: SmartListCi;
     reviewRequested: boolean;
     additions: number;
@@ -61,6 +65,8 @@ export interface SmartRow {
     /** The `owner/name` identity — surfaced so the New Chat list can show a repo column
      *  (and drop it for a single-repo workspace) on local rows, not only PR rows. */
     repository: string;
+    /** Provider-qualified identity. Absent for local-only and legacy rows. */
+    forgeRepository?: ForgeRepoIdentity;
     dirty: boolean;
     /** `null` when the ahead/behind comparison could not be computed (base unresolvable). */
     ahead: number | null;
@@ -73,14 +79,24 @@ export interface SmartRow {
    * worktree identifier (the clean-up target); `repository` + `branch` are the
    * composite that matched.
    */
-  checkedOutLocally?: { id: string; repository: string; branch: string; dirty: boolean };
+  checkedOutLocally?: {
+    id: string;
+    repository: string;
+    forgeRepository?: ForgeRepoIdentity;
+    branch: string;
+    dirty: boolean;
+  };
 }
 
-/** The composite dedupe key: repository AND branch, never the bare branch name. */
-function compositeKey(repository: string, branch: string): string {
-  // Newline separator is collision-safe: a git refname cannot contain a control
-  // character, so no (repository, branch) pair can spoof another.
-  return `${repository}\n${branch}`;
+/** Match the same branch in the same repository, preserving legacy unstamped rows. */
+function sameRepositoryBranch(local: LocalWork, pr: PullRequest): boolean {
+  return (
+    local.branch === pr.branch &&
+    repositoryIdentitiesAgree(
+      { repository: local.repository, forgeRepository: local.forgeRepository },
+      { repository: pr.repository, forgeRepository: pr.forgeRepository },
+    )
+  );
 }
 
 /** Fold the raw substrate into unified rows: dedupe, ownership, needs-you, read-only. */
@@ -98,8 +114,7 @@ export function buildSmartRows(detail: ProjectDetail): SmartRow[] {
   const annotationByPrId = new Map<string, LocalWork>();
   const consumedLocalIds = new Set<string>();
   for (const local of detail.locals) {
-    const key = compositeKey(local.repository, local.branch);
-    const candidates = detail.prs.filter((pr) => compositeKey(pr.repository, pr.branch) === key);
+    const candidates = detail.prs.filter((pr) => sameRepositoryBranch(local, pr));
     if (candidates.length === 0) continue;
     const current = candidates.reduce((latest, pr) =>
       pr.lastActivityAt > latest.lastActivityAt ? pr : latest,
@@ -144,6 +159,7 @@ function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined)
     pr: {
       number: pr.number,
       repository: pr.repository,
+      ...(pr.forgeRepository === undefined ? {} : { forgeRepository: pr.forgeRepository }),
       ci: pr.ci,
       reviewRequested: pr.reviewRequestedFromViewer,
       additions: pr.additions,
@@ -155,6 +171,9 @@ function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined)
           checkedOutLocally: {
             id: checkout.id,
             repository: checkout.repository,
+            ...(checkout.forgeRepository === undefined
+              ? {}
+              : { forgeRepository: checkout.forgeRepository }),
             branch: checkout.branch,
             dirty: checkout.dirty,
           },
@@ -178,6 +197,7 @@ function localRow(local: LocalWork, viewer: string): SmartRow {
     lastActivityAt: local.lastActivityAt,
     local: {
       repository: local.repository,
+      ...(local.forgeRepository === undefined ? {} : { forgeRepository: local.forgeRepository }),
       dirty: local.dirty,
       ahead: local.ahead,
       behind: local.behind,

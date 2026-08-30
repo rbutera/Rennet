@@ -12,13 +12,11 @@
  * import it: no `node:*`, no filesystem, no process.
  */
 
-/** A forge repository's stable identity, in forge terms (never a local path). */
-export interface ForgeRepoIdentity {
-  /** The forge name, e.g. `"github"`. */
-  forge: string;
-  owner: string;
-  name: string;
-}
+import type { ForgeRepoIdentity } from "@rennet/protocol";
+
+// Protocol owns the repository identity because it crosses every client boundary. Re-export it
+// here so existing ForgePort consumers keep one import path without a second declaration.
+export type { ForgeRepoIdentity } from "@rennet/protocol";
 
 /** A reference to a pull/merge request on a forge. */
 export interface ForgePullRequestRef {

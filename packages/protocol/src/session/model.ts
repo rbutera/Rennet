@@ -13,6 +13,7 @@ import {
 } from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
+import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
 import { LENS_KINDS } from "../manifests";
 import { sha256Hex } from "../sha256";
 
@@ -1745,44 +1746,52 @@ export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
  * absorbed); a no-target session has no claim and upgrades in place when a
  * target binds. Archive is the only release (v1 soft delete).
  */
-export const SessionModelSchema = z.object({
-  id,
-  projectId: id,
-  /**
-   * The repository root the session's work actually runs in (#580). `projectId` is the
-   * SIDEBAR GROUPING key — a `Project.id` — and a workspace project holds MANY repos, so
-   * that mapping is many-to-one and NOT invertible: the project id alone cannot say which
-   * repo a round ran in. This is where the session keeps it, so per-repo rounds in one
-   * workspace never collapse into a single ledger. Absent until something that KNOWS the
-   * root stamps it (a round dispatch does; a New Chat row click does not know which repo
-   * of a workspace it named), and a later dispatch stamps it in place.
-   */
-  repositoryRoot: z.string().min(1).optional(),
-  /**
-   * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
-   * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
-   * origin remote, else the durable common-dir alias), so it crosses the wire freely where
-   * `repositoryRoot` never could.
-   *
-   * It exists because a New Chat row knows this and cannot know the root: without it, two repos
-   * in one workspace that both have a `main` branch mint ONE session and clicking one row hands
-   * you the other's chat. Absent ⇒ the caller did not name a repository, and matching behaves
-   * exactly as it did before this field existed.
-   */
-  repository: z.string().min(1).optional(),
-  claim: ClaimSchema.optional(),
-  reviewId: id.optional(),
-  harnessCursor: HarnessCursorSchema.optional(),
-  threads: z.array(SessionThreadSchema),
-  createdAt: z.number(),
-  archivedAt: z.number().optional(),
-  /**
-   * The reviewer's own title for this session (C18 `session.rename`). Additive-optional:
-   * an unnamed session has none and the sidebar falls back to the claimed branch, so
-   * clearing a title RESTORES that fallback rather than persisting an empty label.
-   */
-  title: z.string().min(1).optional(),
-  /** Pinned to the top of its project group (C18 `session.setPinned`); absent ⇒ unpinned. */
-  pinned: z.boolean().optional(),
-});
+export const SessionModelSchema = z
+  .object({
+    id,
+    projectId: id,
+    /**
+     * The repository root the session's work actually runs in (#580). `projectId` is the
+     * SIDEBAR GROUPING key — a `Project.id` — and a workspace project holds MANY repos, so
+     * that mapping is many-to-one and NOT invertible: the project id alone cannot say which
+     * repo a round ran in. This is where the session keeps it, so per-repo rounds in one
+     * workspace never collapse into a single ledger. Absent until something that KNOWS the
+     * root stamps it (a round dispatch does; a New Chat row click does not know which repo
+     * of a workspace it named), and a later dispatch stamps it in place.
+     */
+    repositoryRoot: z.string().min(1).optional(),
+    /**
+     * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
+     * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
+     * origin remote, else the durable common-dir alias), so it crosses the wire freely where
+     * `repositoryRoot` never could.
+     *
+     * It exists because a New Chat row knows this and cannot know the root: without it, two repos
+     * in one workspace that both have a `main` branch mint ONE session and clicking one row hands
+     * you the other's chat. Absent ⇒ the caller did not name a repository, and matching behaves
+     * exactly as it did before this field existed.
+     */
+    repository: z.string().min(1).optional(),
+    /** Provider-qualified repository identity for new sessions. Optional so the durable store
+     * still loads sessions written before provider identity existed. */
+    forgeRepository: forgeRepoIdentitySchema.optional(),
+    claim: ClaimSchema.optional(),
+    reviewId: id.optional(),
+    harnessCursor: HarnessCursorSchema.optional(),
+    threads: z.array(SessionThreadSchema),
+    createdAt: z.number(),
+    archivedAt: z.number().optional(),
+    /**
+     * The reviewer's own title for this session (C18 `session.rename`). Additive-optional:
+     * an unnamed session has none and the sidebar falls back to the claimed branch, so
+     * clearing a title RESTORES that fallback rather than persisting an empty label.
+     */
+    title: z.string().min(1).optional(),
+    /** Pinned to the top of its project group (C18 `session.setPinned`); absent ⇒ unpinned. */
+    pinned: z.boolean().optional(),
+  })
+  .refine((session) => forgeRepositoryMatchesLegacy(session.repository, session.forgeRepository), {
+    path: ["forgeRepository"],
+    message: "forgeRepository must name the same owner/name as repository",
+  });
 export type SessionModel = z.infer<typeof SessionModelSchema>;

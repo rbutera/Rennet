@@ -9,6 +9,7 @@ export * from "./delta";
 // payload schemas, split out in B3 task 4.1), sha256.ts (portable hash util).
 // public-schema.ts also parks at root; it was never an index export.
 export * from "./domain";
+export * from "./forge";
 export * from "./manifests";
 export * from "./session";
 export * from "./sha256";

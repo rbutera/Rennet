@@ -143,6 +143,7 @@ import {
   escapePath,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
+  type ForgePullRequestRef,
   findingDispositionMigrationEvents,
   guardSeatTurn,
   type HandoffTurnOutcome,
@@ -184,7 +185,6 @@ import type {
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
-  Project,
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
@@ -197,6 +197,7 @@ import type {
 } from "@rennet/protocol";
 import {
   currentGenerationId,
+  forgeRepositorySlug,
   isRoundOperationTerminal,
   LENS_KINDS,
   roundOperationProgressSnapshot,
@@ -238,6 +239,12 @@ import {
   proactiveRehydrationCommandId,
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
+import {
+  createProjectForgeRegistry,
+  openProjectPullRequest,
+  type ProjectPullRequestOpener,
+  resolveProjectRepositoryRoot,
+} from "./project-forge-registry";
 import { createProjectProcessJournal } from "./project-process-journal";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
@@ -1410,16 +1417,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * egress and the renderer hides the sign affordance. The open path is otherwise
    * identical — one engine, one changeset source.
    */
-  async function openPullRequest(
+  async function openPullRequestRef(
     commandId: string,
-    ref: string,
+    prRef: ForgePullRequestRef,
     repoPath: string | undefined,
     retrospective: boolean,
   ): Promise<Review> {
-    const prRef = parseGitHubPrRef(ref);
-    if (!prRef) {
-      throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
-    }
     const root = await resolvePrRepoRoot(prRef, repoPath);
     const forge = new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() });
     const locus = locusForRepo(root);
@@ -1484,6 +1487,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return review;
   }
 
+  async function openPullRequest(
+    commandId: string,
+    ref: string,
+    repoPath: string | undefined,
+    retrospective: boolean,
+  ): Promise<Review> {
+    const prRef = parseGitHubPrRef(ref);
+    if (!prRef) {
+      throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
+    }
+    return openPullRequestRef(commandId, prRef, repoPath, retrospective);
+  }
+
+  const projectPullRequestOpeners = createProjectForgeRegistry<ProjectPullRequestOpener<Review>>([
+    {
+      forge: "github",
+      implementation: ({ commandId, repository, number, repoPath, retrospective }) =>
+        openPullRequestRef(commandId, { repo: repository, number }, repoPath, retrospective),
+    },
+  ]);
+
   /**
    * Review a local BRANCH (#587) — the New Chat row click's engine. The reviewer clicks
    * `feat/x`; we resolve its head OID and `git merge-base <base> <head>`, then take the
@@ -1503,30 +1527,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * `merge-base == head`, so the range is empty and the review is honestly empty — never
    * a failed click.
    */
-  /**
-   * WHICH repo of a project a row's `owner/name` names (#587). A workspace maps MANY repo
-   * roots to ONE project identity and the mapping is not invertible, so `Project.openPath`
-   * — "the repo, or the FIRST included repo" — answers the wrong question for every row
-   * that is not the first repo's. The row carries an identity and never a path (R19), so
-   * the resolution has to happen here, where the included roots are known.
-   *
-   * `undefined` when nothing matches: a caller falls back to the project path, which is the
-   * pre-existing behaviour and correct for a single-repo project.
-   */
-  async function repoRootForIdentity(
-    project: Project | undefined,
-    identity: string,
-  ): Promise<string | undefined> {
-    if (!project) return undefined;
-    const roots = [
-      ...new Set([...(project.includedRepoPaths ?? []), project.openPath, project.path]),
-    ].filter((root) => root.length > 0);
-    for (const root of roots) {
-      if ((await repositoryIdentity(gitForRepo(root), root)) === identity) return root;
-    }
-    return undefined;
-  }
-
   async function captureBranch(
     commandId: string,
     repoPath: string,
@@ -3180,17 +3180,38 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // rejected capture has claimed nothing and the row stays clickable.
       start: async ({ projectId, commandId, target }) => {
         const project = projectStore.list().find((entry) => entry.id === projectId);
+        const legacyPrRef =
+          target?.prNumber === undefined || target.forgeRepository !== undefined
+            ? null
+            : parseGitHubPrRef(`${target.repository ?? ""}#${target.prNumber}`);
+        const identityTarget =
+          target === undefined || legacyPrRef === null
+            ? target
+            : {
+                ...target,
+                repository: forgeRepositorySlug(legacyPrRef.repo),
+                forgeRepository: legacyPrRef.repo,
+              };
         // WHICH repo this row named. Absent target (the Current Checkout row) is the project
         // as a whole, which is exactly what `openPath` means; a target resolves through its
         // identity. A miss falls back to the default root ONLY when it is unambiguous (a
         // single-repo project, or a legacy row) — in a multi-repo workspace `resolveCaptureRoot`
         // refuses rather than capture the wrong repo under this row's label, and the rejection
         // (before the mint) leaves the row clickable.
-        const resolvedRoot =
-          target?.repository === undefined
+        const rowRepository =
+          identityTarget?.repository ??
+          (identityTarget?.forgeRepository === undefined
             ? undefined
-            : await repoRootForIdentity(project, target.repository);
-        const rootDecision = resolveCaptureRoot(project, target?.repository, resolvedRoot);
+            : forgeRepositorySlug(identityTarget.forgeRepository));
+        const resolvedRoot =
+          identityTarget === undefined
+            ? undefined
+            : await resolveProjectRepositoryRoot({
+                project,
+                target: identityTarget,
+                identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+              });
+        const rootDecision = resolveCaptureRoot(project, rowRepository, resolvedRoot);
         if ("error" in rootDecision) throw new Error(rootDecision.error);
         const root = rootDecision.root;
         // Cleared before the capture, not after (the `checkFreshness` rule): this front
@@ -3198,16 +3219,33 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // so an edit made while the capture runs must survive as dirty.
         if (target === undefined) watcher.setDirty(false);
         // Capture BEFORE the mint, so a rejection claims nothing.
-        const review = await (target === undefined
-          ? service.capture(commandId, root)
-          : target.prNumber === undefined
-            ? captureBranch(commandId, root, target.branch, project?.primaryBranch ?? "HEAD")
-            : openPullRequest(
-                commandId,
-                `${target.repository ?? ""}#${target.prNumber}`,
-                root,
-                false,
-              ));
+        let review: Review;
+        if (target === undefined) {
+          review = await service.capture(commandId, root);
+        } else if (target.prNumber === undefined) {
+          review = await captureBranch(
+            commandId,
+            root,
+            target.branch,
+            project?.primaryBranch ?? "HEAD",
+          );
+        } else {
+          review =
+            target.forgeRepository === undefined
+              ? await openPullRequest(
+                  commandId,
+                  `${target.repository ?? ""}#${target.prNumber}`,
+                  root,
+                  false,
+                )
+              : await openProjectPullRequest(projectPullRequestOpeners, {
+                  commandId,
+                  repository: target.forgeRepository,
+                  number: target.prNumber,
+                  repoPath: root,
+                  retrospective: false,
+                });
+        }
         allowedRoots.add(review.repositoryRoot);
         if (target === undefined) {
           // The working-tree capture is the one that IS watched for freshness — the branch
@@ -3225,7 +3263,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 },
                 reattached: false,
               }
-            : sessionEntry.enter(projectId, target, review.repositoryRoot, review.id);
+            : sessionEntry.enter(
+                projectId,
+                identityTarget ?? target,
+                review.repositoryRoot,
+                review.id,
+              );
         if (!entered.reattached) sessionStore.save(entered.session);
         // Attach, and REPORT WHAT THE STORE HOLDS. `attachReview` keeps an existing review
         // (a session attaches at most one), so a session already bound to another review
@@ -3422,8 +3465,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         );
       }
       const { source, authUnavailable } = await resolveProjectPrSource();
+      const forgeRegistry = createProjectForgeRegistry<ProjectPrSource>(
+        source === null ? [] : [{ forge: "github", implementation: source }],
+      );
       const detail = await loadProjectDetail(
-        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), source ?? undefined),
+        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), forgeRegistry),
         project,
         prStates,
         emit,

@@ -14,16 +14,28 @@ import { describe, expect, it } from "vitest";
 import { hideClaimedRows, type MintTarget } from "./new-chat-mint";
 import type { SmartRow } from "./smart-list";
 
+const GITHUB_WIDGET = { forge: "github", owner: "acme", name: "widget" } as const;
+const GITLAB_WIDGET = { forge: "gitlab", owner: "acme", name: "widget" } as const;
+
 /** A local-work row in `repository`, on `branch`. */
-function localRow(repository: string, branch: string): SmartRow {
+function localRow(
+  repository: string,
+  branch: string,
+  forgeRepository?: { readonly forge: string; readonly owner: string; readonly name: string },
+): SmartRow {
   return {
     kind: "local",
-    id: `${repository}\n${branch}`,
+    id: `${forgeRepository?.forge ?? "legacy"}:${repository}\n${branch}`,
     branch,
     title: branch,
     author: "me",
     mine: true,
-    local: { repository, branch, dirty: false },
+    local: {
+      repository,
+      branch,
+      dirty: false,
+      ...(forgeRepository === undefined ? {} : { forgeRepository }),
+    },
   } as unknown as SmartRow;
 }
 
@@ -65,5 +77,28 @@ describe("hideClaimedRows keeps the hide repo-precise (#580 mirror)", () => {
     // break that, only scope it.
     const claimed: MintTarget[] = [{ branch: "main", prNumber: 7, repository: "acme/alpha" }];
     expect(survivors(rows, claimed)).toEqual(["acme/beta:main"]);
+  });
+
+  it("keeps the same owner/name, branch, and PR number distinct across forges", () => {
+    const forgeRows = [
+      localRow("acme/widget", "main", GITHUB_WIDGET),
+      localRow("acme/widget", "main", GITLAB_WIDGET),
+    ];
+
+    const remaining = hideClaimedRows(forgeRows, [
+      {
+        branch: "main",
+        prNumber: 7,
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+      },
+    ]);
+    expect(remaining.map((row) => row.id)).toEqual(["gitlab:acme/widget\nmain"]);
+
+    // A persisted pre-field session has no structured identity. Keep the legacy
+    // owner/name rule rather than re-offering a target whose session already exists.
+    expect(
+      hideClaimedRows(forgeRows, [{ branch: "main", prNumber: 7, repository: "acme/widget" }]),
+    ).toEqual([]);
   });
 });

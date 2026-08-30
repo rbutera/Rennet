@@ -1,12 +1,20 @@
-import type { Project, ProjectDetailProgressEvent, PullRequest } from "@rennet/protocol";
-import { projectDetailSchema } from "@rennet/protocol";
+import type {
+  ForgeRepoIdentity,
+  Project,
+  ProjectDetailProgressEvent,
+  PullRequest,
+} from "@rennet/protocol";
+import { forgeRepositorySlug, projectDetailSchema } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { createGitHubOctokit } from "./github-octokit";
 import {
   defaultProjectDetailSourceDeps,
+  forgeRepositoryFromRemote,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
+  type ProjectForgeRegistry,
+  repositoryIdentity,
 } from "./project-detail-source";
 import { createGitHubProjectPrSource, type ProjectPrSource } from "./project-pr-source";
 
@@ -26,6 +34,10 @@ const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   changedFiles: 2,
   lastActivityAt: "2026-08-10T00:00:00.000Z",
   ...overrides,
+});
+
+const registryFor = (source: ProjectPrSource): ProjectForgeRegistry => ({
+  sourceFor: (repository) => (repository.forge === "github" ? source : undefined),
 });
 
 /** ISO-Z instant for a unix-seconds time, mirroring the source's own conversion. */
@@ -125,7 +137,65 @@ const twoWorktrees = [
   { path: "/wt/x", branch: "feat/x" },
 ];
 
+describe("repositoryIdentity", () => {
+  it("qualifies known providers and preserves an unknown host without calling it GitHub", async () => {
+    expect(
+      forgeRepositoryFromRemote({ host: "github.com", owner: "acme", name: "widget" }),
+    ).toEqual({ forge: "github", owner: "acme", name: "widget" });
+    expect(
+      forgeRepositoryFromRemote({ host: "gitlab.com", owner: "acme", name: "widget" }),
+    ).toEqual({ forge: "gitlab", owner: "acme", name: "widget" });
+    expect(
+      forgeRepositoryFromRemote({ host: "forge.corp", owner: "acme", name: "widget" }),
+    ).toEqual({ forge: "forge.corp", owner: "acme", name: "widget" });
+
+    const identity = await repositoryIdentity(
+      makeGit({
+        "/repo": {
+          remoteUrl: "git@github.com:acme/widget.git",
+          branches: { main: 1 },
+        },
+      }),
+      "/repo",
+    );
+    expect(identity).toEqual({
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    });
+  });
+});
+
 describe("loadProjectDetail — live local work (B1)", () => {
+  it("keeps identical subgroup/repo names in distinct nested GitLab namespaces", async () => {
+    const git = makeGit({
+      "/division-a": {
+        remoteUrl: "git@gitlab.com:division-a/shared/widget.git",
+        branches: { main: 1, "feat/shared": 2 },
+        aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
+      },
+      "/division-b": {
+        remoteUrl: "https://gitlab.com/division-b/shared/widget.git",
+        branches: { main: 1, "feat/shared": 2 },
+        aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
+      },
+    });
+
+    const detail = await loadProjectDetail(depsWith(git, ["/division-a", "/division-b"]), {
+      ...repoProject("/workspace"),
+      kind: "workspace",
+    });
+
+    expect(detail.locals).toHaveLength(2);
+    expect(detail.locals.map((local) => local.forgeRepository)).toEqual([
+      { forge: "gitlab", owner: "division-a/shared", name: "widget" },
+      { forge: "gitlab", owner: "division-b/shared", name: "widget" },
+    ]);
+    expect(detail.locals.map((local) => local.id)).toEqual([
+      "gitlab:division-a/shared/widget#feat/shared",
+      "gitlab:division-b/shared/widget#feat/shared",
+    ]);
+  });
+
   it("maps worktrees + branches to LocalWork, excluding the primary branch", async () => {
     const git = makeGit({
       "/repo": {
@@ -150,6 +220,7 @@ describe("loadProjectDetail — live local work (B1)", () => {
     expect(byBranch.get("feat/x")).toEqual({
       id: "/wt/x", // the worktree path — the clean-up target
       repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
       branch: "feat/x",
       author: "Rai Butera", // local work is the viewer's
       dirty: true,
@@ -159,8 +230,9 @@ describe("loadProjectDetail — live local work (B1)", () => {
       lastActivityAt: iso(2000),
     });
     expect(byBranch.get("feat/y")).toEqual({
-      id: "acme/widget#feat/y", // no worktree on disk → a branch target
+      id: "github:acme/widget#feat/y", // provider-qualified branch target
       repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
       branch: "feat/y",
       author: "Rai Butera",
       dirty: false,
@@ -328,7 +400,11 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     git: GitExec,
     roots: readonly string[],
     prSource: ProjectPrSource,
-  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+  ): ProjectDetailSourceDeps => ({
+    git,
+    forgeRegistry: registryFor(prSource),
+    resolveRepoRoots: () => Promise.resolve(roots),
+  });
 
   it("wires live PRs and pins the viewer + local author to the GitHub login", async () => {
     const git = makeGit({
@@ -342,8 +418,14 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listPullRequests: async (repository) => ({
-        prs: [pr({ repository, reviewRequestedFromViewer: true })],
+      listPullRequests: async (forgeRepository) => ({
+        prs: [
+          pr({
+            repository: forgeRepositorySlug(forgeRepository),
+            forgeRepository,
+            reviewRequestedFromViewer: true,
+          }),
+        ],
         truncated: false,
       }),
     };
@@ -360,6 +442,63 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     expect(() => projectDetailSchema.parse(detail)).not.toThrow();
   });
 
+  it("never routes a same-slug GitLab repository through the GitHub source", async () => {
+    const git = makeGit({
+      "/github": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/shared": 2 },
+        aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
+      },
+      "/gitlab": {
+        remoteUrl: "git@gitlab.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/shared": 2 },
+        aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
+      },
+    });
+    const listed: ForgeRepoIdentity[] = [];
+    const githubSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listPullRequests: async (forgeRepository) => {
+        listed.push(forgeRepository);
+        return {
+          prs: [
+            pr({
+              repository: forgeRepositorySlug(forgeRepository),
+              forgeRepository,
+              branch: "feat/shared",
+            }),
+          ],
+          truncated: false,
+        };
+      },
+    };
+    const resolved: ForgeRepoIdentity[] = [];
+    const forgeRegistry: ProjectForgeRegistry = {
+      sourceFor: (forgeRepository) => {
+        resolved.push(forgeRepository);
+        return forgeRepository.forge === "github" ? githubSource : undefined;
+      },
+    };
+
+    const detail = await loadProjectDetail(
+      { git, forgeRegistry, resolveRepoRoots: async () => ["/github", "/gitlab"] },
+      { ...repoProject("/workspace"), kind: "workspace" },
+    );
+
+    expect(resolved).toEqual([
+      { forge: "github", owner: "acme", name: "widget" },
+      { forge: "gitlab", owner: "acme", name: "widget" },
+    ]);
+    expect(listed).toEqual([{ forge: "github", owner: "acme", name: "widget" }]);
+    expect(detail.prs.map((pullRequest) => pullRequest.forgeRepository?.forge)).toEqual(["github"]);
+    expect(detail.locals.map((local) => local.forgeRepository?.forge).sort()).toEqual([
+      "github",
+      "gitlab",
+    ]);
+  });
+
   it("streams prs-start then one repo-prs per forge repo as PRs land", async () => {
     const git = makeGit({
       "/repo": {
@@ -372,8 +511,11 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listPullRequests: async (repository) => ({
-        prs: [pr({ repository }), pr({ repository })],
+      listPullRequests: async (forgeRepository) => ({
+        prs: [
+          pr({ repository: forgeRepositorySlug(forgeRepository), forgeRepository }),
+          pr({ repository: forgeRepositorySlug(forgeRepository), forgeRepository }),
+        ],
         truncated: false,
       }),
     };
@@ -405,8 +547,14 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const prSource: ProjectPrSource = {
       resolveViewer: async () => "octocat",
-      listPullRequests: async (repository) => ({
-        prs: [pr({ repository, branch: "feat/x" })],
+      listPullRequests: async (forgeRepository) => ({
+        prs: [
+          pr({
+            repository: forgeRepositorySlug(forgeRepository),
+            forgeRepository,
+            branch: "feat/x",
+          }),
+        ],
         truncated: false,
       }),
     };
@@ -515,7 +663,11 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
     git: GitExec,
     roots: readonly string[],
     prSource: ProjectPrSource,
-  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+  ): ProjectDetailSourceDeps => ({
+    git,
+    forgeRegistry: registryFor(prSource),
+    resolveRepoRoots: () => Promise.resolve(roots),
+  });
 
   const netError = () =>
     Object.assign(new Error("Connect Timeout Error"), { code: "UND_ERR_CONNECT_TIMEOUT" });
@@ -590,7 +742,11 @@ describe("the fan-out cap is SHARED per source instance (overlapping loads)", ()
     git: GitExec,
     roots: readonly string[],
     prSource: ProjectPrSource,
-  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+  ): ProjectDetailSourceDeps => ({
+    git,
+    forgeRegistry: registryFor(prSource),
+    resolveRepoRoots: () => Promise.resolve(roots),
+  });
 
   const eightForgeRepos = (prefix: string) => {
     const roots = Array.from({ length: 8 }, (_, i) => `/${prefix}${i}`);
@@ -656,7 +812,9 @@ describe("the fan-out cap is SHARED per source instance (overlapping loads)", ()
       resolveViewer: async () => "octocat",
       listPullRequests: async (repository) => {
         launches += 1;
-        if (repository === "acme/r0") throw new Error("GraphQL schema drift");
+        if (forgeRepositorySlug(repository) === "acme/r0") {
+          throw new Error("GraphQL schema drift");
+        }
         await new Promise((resolve) => setTimeout(resolve, 10));
         return { prs: [], truncated: false };
       },

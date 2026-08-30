@@ -19,9 +19,40 @@ const codeAnchor = {
 describe("SessionStore (#466 res. 1–2, B09 cluster 1)", () => {
   it("round-trips a session through disk", () => {
     const store = new SessionStore(tmpDir());
-    const session = bindTarget(mintSession("proj-1", fixed), { branch: "feat/x", prNumber: 3 });
+    const session = {
+      ...bindTarget(mintSession("proj-1", fixed), { branch: "feat/x", prNumber: 3 }),
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
     store.save(session);
     expect(store.load("sess-1")).toEqual(session);
+  });
+
+  it("loads and lists legacy repository JSON without inventing a forge", () => {
+    const dir = tmpDir();
+    writeFileSync(
+      join(dir, "legacy.json"),
+      JSON.stringify({
+        id: "legacy",
+        projectId: "proj-1",
+        repository: "acme/widget",
+        claim: { branch: "main", prNumber: 7 },
+        threads: [],
+        createdAt: 900,
+      }),
+    );
+    const store = new SessionStore(dir);
+
+    expect(store.load("legacy")).toEqual({
+      id: "legacy",
+      projectId: "proj-1",
+      repository: "acme/widget",
+      claim: { branch: "main", prNumber: 7 },
+      threads: [],
+      createdAt: 900,
+    });
+    expect(store.list().map((session) => session.id)).toEqual(["legacy"]);
+    expect(store.list()[0]?.forgeRepository).toBeUndefined();
   });
 
   it("returns undefined for an absent or malformed file (fail-safe read)", () => {

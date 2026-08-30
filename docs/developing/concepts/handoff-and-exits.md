@@ -34,15 +34,20 @@ a round created appears under its project like any other. The repository root
 rides alongside it because a workspace project holds several repositories: the
 project alone cannot say which one a round ran in, and without the repository
 two repositories sharing a branch name would collapse into a single rounds
-ledger. A New-chat row cannot know a repository's path, so it names the
-repository by its `owner/name` identity instead — the same composite the smart
-list already dedupes on — and two `main` branches in one workspace stay two
-targets rather than one. A round dispatched on that target reads the same
-`owner/name` back from the repository it is about to run in, so it joins the
-session the click created instead of starting a second one beside it. A
-detached HEAD has no branch to claim, so its session is keyed by the
-review instead — and it is persisted like every other, because a session the
-store does not hold is a session no surface can read back.
+ledger. A New-chat row cannot know a repository's path, so it carries the
+repository's forge identity (`forge`, `owner`, and `name`) alongside the
+existing `owner/name` label. The smart list, target claim, and session matcher
+use that identity when both sides have it. A session saved before the field
+existed falls back to the `owner/name` match, so it still reattaches instead of
+offering a duplicate target. Two forges can therefore carry the same
+`owner/name`, branch, and pull-request number without collapsing into one row
+or session. The registry contains GitHub today; GitLab and Bitbucket adapters
+remain [planned in #484](https://github.com/rbutera/rennet/issues/484). A round
+dispatched on a target reads the same forge identity from the repository it is
+about to run in, so it joins the session the click created instead of starting
+a second one beside it. A detached HEAD has no branch to claim, so its session
+is keyed by the review instead — and it is persisted like every other, because
+a session the store does not hold is a session no surface can read back.
 
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a

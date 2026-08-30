@@ -52,6 +52,7 @@ import {
   type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
+  type ForgeRepoIdentity,
   type FsListDirResult,
   type GitHubAuthStatus,
   type GitHubConnectPoll,
@@ -655,7 +656,12 @@ export interface DispatchDeps {
     start(input: {
       projectId: string;
       commandId: string;
-      target?: { branch: string; prNumber?: number; repository?: string };
+      target?: {
+        branch: string;
+        prNumber?: number;
+        repository?: string;
+        forgeRepository?: ForgeRepoIdentity;
+      };
     }): Promise<{ session: SidebarSession; reattached: boolean }>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;

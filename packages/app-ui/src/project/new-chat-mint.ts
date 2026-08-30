@@ -1,8 +1,9 @@
-import { claimMatchesTarget, newCommandId } from "@rennet/protocol";
+import { claimMatchesTarget, type ForgeRepoIdentity, newCommandId } from "@rennet/protocol";
 import { useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useCommand, useMutation } from "../data";
 import { sessionPath } from "../routes/url";
+import { repositoryIdentitiesAgree } from "./forge-repository";
 import type { SmartRow } from "./smart-list";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,8 +35,7 @@ import type { SmartRow } from "./smart-list";
 // front door opened onto a chat with nothing to review.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The target a New Chat row claims: a branch, for a pull-request row its number, and the
- *  row's `owner/name` repository identity. */
+/** The target a New Chat row claims: a branch, optional PR number, and repository identity. */
 export interface MintTarget {
   readonly branch: string;
   readonly prNumber?: number;
@@ -49,23 +49,27 @@ export interface MintTarget {
    * Optional: a row with no repository (there is none today) mints exactly as before.
    */
   readonly repository?: string;
+  /** Provider-qualified repository identity. Absent for legacy rows. */
+  readonly forgeRepository?: ForgeRepoIdentity;
 }
 
 /** The target a smart-list row resolves to. A PR row carries its number; a local branch
  *  row is the bare branch. Both halves of the composite `(repository, branch)` ride along. */
 export function targetOfRow(row: SmartRow): MintTarget {
   const repository = row.kind === "pr" ? row.pr?.repository : row.local?.repository;
+  const forgeRepository = row.kind === "pr" ? row.pr?.forgeRepository : row.local?.forgeRepository;
   return {
     branch: row.branch,
     ...(row.kind === "pr" && row.pr !== undefined ? { prNumber: row.pr.number } : {}),
     ...(repository === undefined || repository === "" ? {} : { repository }),
+    ...(forgeRepository === undefined ? {} : { forgeRepository }),
   };
 }
 
 /** The live claims held IN this project — the rows New Chat must not offer again. Read off
  *  `session.list`, so archiving a session (which is the only release) puts its rows back on
- *  the next read rather than needing a second signal. Each claim rides with the `owner/name`
- *  its session was minted for (#580), which is what keeps the hide repo-precise below. */
+ *  the next read rather than needing a second signal. Each claim rides with the structured
+ *  identity and legacy `owner/name` its session was minted for, keeping the hide repo-precise. */
 export function useClaimedTargets(projectId: string): readonly MintTarget[] {
   const { data } = useCommand("session.list", {});
   const sessions = data?.sessions;
@@ -79,6 +83,9 @@ export function useClaimedTargets(projectId: string): readonly MintTarget[] {
                 {
                   ...session.claim,
                   ...(session.repository === undefined ? {} : { repository: session.repository }),
+                  ...(session.forgeRepository === undefined
+                    ? {}
+                    : { forgeRepository: session.forgeRepository }),
                 },
               ]
             : [],
@@ -102,10 +109,6 @@ export function useClaimedTargets(projectId: string): readonly MintTarget[] {
  * Treating it as absent anyway would make this test STRICTLY LOOSER than the server's, which
  * is how the two ends drift apart — the failure being guarded against, in the other direction.
  */
-function repositoryAgrees(claimed: string | undefined, row: string | undefined): boolean {
-  return claimed === undefined || row === undefined || claimed === row;
-}
-
 /**
  * Claim-dedup on resolve: the rows that SURVIVE — the ones no live claim already owns.
  *
@@ -129,7 +132,11 @@ export function hideClaimedRows(
     const target = targetOfRow(row);
     return !claimed.some(
       (claim) =>
-        claimMatchesTarget(claim, target) && repositoryAgrees(claim.repository, target.repository),
+        claimMatchesTarget(claim, target) &&
+        repositoryIdentitiesAgree(
+          { repository: claim.repository, forgeRepository: claim.forgeRepository },
+          { repository: target.repository, forgeRepository: target.forgeRepository },
+        ),
     );
   });
 }
@@ -178,9 +185,12 @@ export function useNewChatMint(projectId: string): NewChatMint {
         commandId: newCommandId(),
         ...(target?.branch === undefined ? {} : { branch: target.branch }),
         ...(target?.prNumber === undefined ? {} : { prNumber: target.prNumber }),
-        // The row's `owner/name` (#580, #587): it keeps a workspace's two `main` branches
-        // apart AND is what resolves the capture to the repo the reviewer actually clicked.
+        // Keep the readable owner/name for legacy sessions; the structured identity prevents
+        // identical slugs on different forges from resolving to the wrong repository.
         ...(target?.repository === undefined ? {} : { repository: target.repository }),
+        ...(target?.forgeRepository === undefined
+          ? {}
+          : { forgeRepository: target.forgeRepository }),
       })
         .then(({ session }) => {
           // A host with no session store mints nothing and answers `null`; stay put rather

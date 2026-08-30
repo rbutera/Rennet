@@ -37,6 +37,7 @@ import {
   type HandoffTurnExecution,
   type RoundSourceLandingInjection,
 } from "./create-server";
+import { createGitHubTokenStore } from "./github-token-store";
 import type { RoundExecutionPorts } from "./runtime/round-execution";
 
 describe("publish board-drafting coordination", () => {
@@ -303,6 +304,193 @@ describe("createRennetServer — instance isolation + shutdown (#377)", () => {
       a.shutdown();
     }).not.toThrow();
     expect(() => b.shutdown()).not.toThrow();
+  });
+});
+
+describe("session.mint — provider-qualified PR dispatch", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("keeps legacy repository + PR targets on the GitHub opener", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-legacy-pr-dispatch-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-legacy-pr-workspace-"));
+    const repo = mkdtempSync(join(workspace, "github-"));
+    const gitlabRepo = mkdtempSync(join(workspace, "gitlab-"));
+    dirs.push(dataDir, workspace);
+
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    writeFileSync(join(repo, "widget.txt"), "base\n");
+    git("add", "widget.txt");
+    git("commit", "-m", "base");
+    const baseOid = git("rev-parse", "HEAD");
+    git("checkout", "-b", "feature");
+    writeFileSync(join(repo, "widget.txt"), "base\nfeature\n");
+    git("add", "widget.txt");
+    git("commit", "-m", "feature");
+    const headOid = git("rev-parse", "HEAD");
+    git("remote", "add", "origin", "git@github.com:acme/widget.git");
+    execFileSync("git", ["init", "-b", "main"], { cwd: gitlabRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@gitlab.com:acme/widget.git"], {
+      cwd: gitlabRepo,
+    });
+
+    await createGitHubTokenStore(dataDir).setGitHubCredential({ token: "gho_legacy_target" });
+    const httpFetch = vi.fn<typeof globalThis.fetch>((input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const path = new URL(url).pathname;
+      if (path === "/rate_limit") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ resources: {} }), {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "X-OAuth-Scopes": "repo, workflow",
+              "X-RateLimit-Limit": "5000",
+            },
+          }),
+        );
+      }
+      if (path === "/user") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ login: "rai" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (path === "/graphql") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          variables?: { owner?: string; name?: string; number?: number };
+        };
+        expect(body.variables).toEqual({ owner: "acme", name: "widget", number: 7 });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Legacy target",
+                    body: "",
+                    isDraft: false,
+                    headRefOid: headOid,
+                    baseRefOid: baseOid,
+                    baseRefName: "main",
+                    headRefName: "feature",
+                    changedFiles: 1,
+                    id: "PR_legacy_7",
+                    viewerDidAuthor: true,
+                  },
+                },
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    });
+    const server = await createRennetServer({ dataDir, env: {}, httpFetch });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: workspace,
+        kind: "workspace",
+        repos: [
+          { name: "gitlab", path: gitlabRepo, branches: 1 },
+          { name: "github", path: repo, branches: 2 },
+        ],
+        primaryBranch: "main",
+      },
+      includedRepos: ["gitlab", "github"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "feature",
+      prNumber: 7,
+      repository: "acme/widget.git",
+    })) as {
+      session: {
+        repository?: string;
+        forgeRepository?: { forge: string; owner: string; name: string };
+        reviewId?: string;
+      } | null;
+    };
+
+    expect(minted.session?.repository).toBe("acme/widget");
+    expect(minted.session?.forgeRepository).toEqual({
+      forge: "github",
+      owner: "acme",
+      name: "widget",
+    });
+    expect(minted.session?.reviewId).toBeDefined();
+    expect(httpFetch.mock.calls.some(([input]) => String(input).includes("/graphql"))).toBe(true);
+    const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
+    expect(listed.sessions).toHaveLength(1);
+  });
+
+  it("refuses a same-coordinate GitLab PR before GitHub network or session persistence", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-forge-dispatch-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-forge-workspace-"));
+    const githubRepo = mkdtempSync(join(workspace, "github-"));
+    const gitlabRepo = mkdtempSync(join(workspace, "gitlab-"));
+    dirs.push(dataDir, workspace);
+
+    for (const [repo, remote] of [
+      [githubRepo, "git@github.com:acme/widget.git"],
+      [gitlabRepo, "git@gitlab.com:acme/widget.git"],
+    ] as const) {
+      execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+    }
+
+    const httpFetch = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.reject(new Error("GitHub transport must not be reached")),
+    );
+    const server = await createRennetServer({ dataDir, env: {}, httpFetch });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: workspace,
+        kind: "workspace",
+        repos: [
+          { name: "github", path: githubRepo, branches: 1 },
+          { name: "gitlab", path: gitlabRepo, branches: 1 },
+        ],
+        primaryBranch: "main",
+      },
+      includedRepos: ["github", "gitlab"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+
+    await expect(
+      server.dispatch("session.mint", {
+        projectId: added.project.id,
+        commandId: randomUUID(),
+        branch: "main",
+        prNumber: 7,
+        repository: "acme/widget",
+        forgeRepository: { forge: "gitlab", owner: "acme", name: "widget" },
+      }),
+    ).rejects.toThrow('No pull-request opener is registered for forge "gitlab"');
+    expect(httpFetch).not.toHaveBeenCalled();
+
+    const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
+    expect(listed.sessions).toEqual([]);
   });
 });
 

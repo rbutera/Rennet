@@ -21,10 +21,13 @@ import { bindTarget, type MintSessionDeps, mintSession } from "@rennet/core";
 import {
   type Claim,
   claimMatchesTarget,
+  type ForgeRepoIdentity,
+  forgeRepositorySlug,
   type Project,
   type Review,
   type SessionModel,
 } from "@rennet/protocol";
+import { repositoryIdentityAgrees } from "../project-forge-registry";
 
 // The claim-match rule moved to `@rennet/protocol` (C21) so the client's New-Chat row-hide
 // decides with the SAME predicate this reattach does; re-exported here for its callers.
@@ -43,6 +46,8 @@ export interface Target {
    * semantics are untouched here; the discrimination happens in {@link claimingSession}.
    */
   readonly repository?: string;
+  /** Provider-qualified repository identity. Additive for persisted-session compatibility. */
+  readonly forgeRepository?: ForgeRepoIdentity;
 }
 
 /** The session persistence entry reads claims from and writes new sessions to.
@@ -163,9 +168,7 @@ export function claimingSession(
       s.claim !== undefined &&
       claimMatchesTarget(s.claim, target) &&
       // Excluded only on a positive contradiction — never on either side's silence.
-      (target.repository === undefined ||
-        s.repository === undefined ||
-        s.repository === target.repository),
+      repositoryIdentityAgrees(s, target),
   );
   if (repositoryRoot === undefined) return live[0];
   // An exact repo match wins; an UNSTAMPED session is the fallback (a New Chat mint that could
@@ -215,7 +218,13 @@ export function resolveRoundSessionId(
   if (branch === undefined) return review.id;
   const target: Target = {
     branch,
-    ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
+    ...(review.postTarget
+      ? {
+          prNumber: review.postTarget.number,
+          repository: forgeRepositorySlug(review.postTarget.repo),
+          forgeRepository: review.postTarget.repo,
+        }
+      : {}),
   };
   return claimingSession(sessions, projectId, review.repositoryRoot, target)?.id ?? review.id;
 }
@@ -235,16 +244,11 @@ export function resolveRoundSessionId(
  *     name the two unstamped New Chat sessions were indistinguishable to it, the ambiguous
  *     fallback was declined, and the click's session and the round's session were two rows.
  *
- * The `owner/name` is read HERE rather than taken from a caller, from the SAME
- * `repositoryIdentity` that stamped the row the New Chat click carried — one git call per
- * round, against the review's own root. Measured stable across a repo root, a linked worktree
- * and a symlinked path, with and without an origin remote, so the two strings agree by
- * construction rather than by hope. If they ever did diverge the cost is bounded to today's
- * behaviour: a positive contradiction mints a fresh root-stamped session, which the read side
- * then resolves exactly — a split rather than a wrong or empty ledger, so long as at most one
- * live session per (claim, root) exists. The read's exact-root arm is a `find`, so a second
- * live session on the same claim AND the same root would be settled by store order; the mint
- * is what prevents that pair, since it reattaches before it ever creates the second.
+ * A PR review already carries its authoritative repository on `postTarget`, so the write uses
+ * that identity directly. The clone's origin may be a contributor fork and must not override
+ * the upstream PR identity that {@link resolveRoundSessionId} reads. A branch review has no
+ * post target, so it reads the clone's origin through the same {@link repositoryIdentity} that
+ * stamped the New Chat row.
  */
 export async function enterRoundSession(
   entry: SessionEntry,
@@ -261,12 +265,19 @@ export async function enterRoundSession(
   if (branch === undefined) {
     return entry.enterDetached(projectId, review.id, review.repositoryRoot);
   }
+  const identity =
+    review.postTarget === undefined
+      ? await repositoryIdentity(git, review.repositoryRoot)
+      : {
+          repository: forgeRepositorySlug(review.postTarget.repo),
+          forgeRepository: review.postTarget.repo,
+        };
   return entry.enter(
     projectId,
     {
       branch,
       ...(review.postTarget ? { prNumber: review.postTarget.number } : {}),
-      repository: await repositoryIdentity(git, review.repositoryRoot),
+      ...identity,
     },
     review.repositoryRoot,
     review.id,
@@ -324,6 +335,9 @@ export class SessionEntry {
         ...(target.repository !== undefined && existing.repository === undefined
           ? { repository: target.repository }
           : {}),
+        ...(target.forgeRepository !== undefined && existing.forgeRepository === undefined
+          ? { forgeRepository: target.forgeRepository }
+          : {}),
       };
       if (Object.keys(stamp).length === 0) return { session: existing, reattached: true };
       const stamped: SessionModel = { ...existing, ...stamp };
@@ -339,6 +353,9 @@ export class SessionEntry {
         ...mintSession(projectId, this.mintDeps),
         ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
         ...(target.repository === undefined ? {} : { repository: target.repository }),
+        ...(target.forgeRepository === undefined
+          ? {}
+          : { forgeRepository: target.forgeRepository }),
       },
       claim,
     );
@@ -387,12 +404,18 @@ export class SessionEntry {
    * claimed target's rows disappear while the claim holds (archive is the only release).
    */
   visibleTargets(projectId: string, candidates: readonly Target[]): Target[] {
-    const claims = this.store
+    const sessions = this.store
       .list()
       .filter(
         (s) => s.archivedAt === undefined && s.projectId === projectId && s.claim !== undefined,
-      )
-      .map((s) => s.claim as Claim);
-    return candidates.filter((t) => !claims.some((c) => claimMatchesTarget(c, t)));
+      );
+    return candidates.filter(
+      (target) =>
+        !sessions.some(
+          (session) =>
+            claimMatchesTarget(session.claim as Claim, target) &&
+            repositoryIdentityAgrees(session, target),
+        ),
+    );
   }
 }
