@@ -215,6 +215,70 @@ describe("ContextMapView — the Context Map surface", () => {
     });
   });
 
+  it("asks against the repository selected from a multi-repo workspace", async () => {
+    const asks: unknown[] = [];
+    const repositoryAddress = {
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "gitlab" as const, owner: "acme", name: "repo-b" },
+    };
+    const bridge = new MemoryBridge({
+      "project.contextMap": (input) =>
+        input.repository === repositoryAddress.repository
+          ? { status: "ok" as const, map, knowledge }
+          : {
+              status: "members" as const,
+              members: [
+                {
+                  repository: "acme/repo-a",
+                  forgeRepository: { forge: "github" as const, owner: "acme", name: "repo-a" },
+                },
+                repositoryAddress,
+              ],
+            },
+      "project.contextAsk": (input) => {
+        asks.push(input);
+        return {
+          status: "answered",
+          answer: {
+            answer: "Repository B owns it.",
+            evidence: [],
+            confidence: "high",
+            consulted: [],
+            cost: {
+              turns: 1,
+              model: "claude",
+              effort: null,
+              budgetGranted: true,
+              overage: false,
+              resolution: null,
+            },
+          },
+        };
+      },
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+
+    await waitFor(() => expect(container.querySelectorAll(".context-map-member")).toHaveLength(2));
+    const repoB = [...container.querySelectorAll(".context-map-member")].find((button) =>
+      button.textContent?.includes(repositoryAddress.repository),
+    );
+    fireEvent.click(repoB as Element);
+    await waitFor(() => expect(container.querySelector(".context-map-field")).not.toBeNull());
+    const field = container.querySelector(".context-map-field") as HTMLInputElement;
+    field.value = "what owns this?";
+    fireEvent.input(field, { target: { value: "what owns this?" } });
+    fireEvent.submit(container.querySelector(".context-map-input") as Element);
+
+    await waitFor(() => expect(asks).toHaveLength(1));
+    expect(asks[0]).toEqual({
+      projectId: "project-1",
+      ...repositoryAddress,
+      question: "what owns this?",
+    });
+  });
+
   it("starts the durable project run, renders its live progress, then opens the generated map", async () => {
     let reads = 0;
     const processing = deferred<{ repos: [] }>();
