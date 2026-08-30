@@ -35,7 +35,8 @@ Use a new protocol version for a change that cannot follow the append-only rule.
 
 `PROTOCOL_VERSION` is the version this build speaks.
 `MIN_COMPATIBLE_PROTOCOL_VERSION` is the oldest version it accepts. Both are
-currently `1`.
+currently `2`; version 2 introduced the aggregate, byte-exact review artifact and post
+descriptor used by the publish preview.
 
 Two peers are compatible when each version is at least the other peer's minimum:
 

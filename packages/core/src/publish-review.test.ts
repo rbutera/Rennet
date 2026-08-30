@@ -9,12 +9,16 @@ import {
   DEFAULT_REVIEW_EVENT,
   deriveReviewEvent,
   extractMarker,
+  type ForgeReviewPostDescriptor,
   type ForgeReviewTarget,
+  forgeReviewPostDescriptor,
   forgeTargetKey,
   handoffDispositionsFromProjection,
   markerComment,
+  type ReviewArtifact,
   type ReviewBodyNote,
   type ReviewCommentInput,
+  resolveComposedReviewEvent,
   reviewBodyNotesFromProjection,
   reviewCommentsFromDispositions,
   reviewCommentsFromProjection,
@@ -33,26 +37,39 @@ const CAPS: ForgeCapabilities = {
   supportsFileLevelThreads: true,
 };
 
+const OPENER = "I reviewed the change and checked the points below.";
+
+function artifact(
+  input: {
+    readonly opener?: string;
+    readonly comments?: readonly ReviewCommentInput[];
+    readonly bodyNotes?: readonly ReviewBodyNote[];
+  } = {},
+): ReviewArtifact {
+  return {
+    opener: input.opener ?? OPENER,
+    comments: input.comments ?? [],
+    bodyNotes: input.bodyNotes ?? [],
+  };
+}
+
 describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", () => {
-  it("matches the ui `reviewCommentsPayload` byte-for-byte (pinned exact string)", () => {
-    // ⚠️ This EXACT string is the coupling with `packages/app-ui/src/canvas/publish.ts`
-    // `reviewCommentsPayload`. If this pin ever changes, the ui counterpart must
-    // change with it, or the egress round-trip refuses every legitimate publish.
+  it("serialises the complete review artifact in a pinned field order", () => {
     const comments: ReviewCommentInput[] = [
       { path: "src/a.ts", line: 2, side: "RIGHT", type: "request-change", body: "rename" },
       { path: "README.md", side: "RIGHT", type: "comment", body: "note" },
     ];
-    expect(canonicalReviewPayload(comments)).toBe(
-      '{"kind":"pr-review","comments":[' +
+    expect(canonicalReviewPayload(artifact({ comments }))).toBe(
+      `{"kind":"pr-review","opener":${JSON.stringify(OPENER)},"comments":[` +
         '{"path":"src/a.ts","line":2,"side":"RIGHT","type":"request-change","body":"rename"},' +
-        '{"path":"README.md","line":null,"side":"RIGHT","type":"comment","body":"note"}]}',
+        '{"path":"README.md","line":null,"side":"RIGHT","type":"comment","body":"note"}],"bodyNotes":[]}',
     );
   });
 
   it("serialises a missing line as null (a file-level note)", () => {
-    const payload = canonicalReviewPayload([
-      { path: "x.ts", side: "RIGHT", type: "comment", body: "b" },
-    ]);
+    const payload = canonicalReviewPayload(
+      artifact({ comments: [{ path: "x.ts", side: "RIGHT", type: "comment", body: "b" }] }),
+    );
     expect(payload).toContain('"line":null');
   });
 
@@ -63,7 +80,9 @@ describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", (
     const flipped: ReviewCommentInput[] = [
       { path: "a", line: 1, side: "RIGHT", type: "comment", body: "hellp" },
     ];
-    expect(canonicalReviewPayload(base)).not.toBe(canonicalReviewPayload(flipped));
+    expect(canonicalReviewPayload(artifact({ comments: base }))).not.toBe(
+      canonicalReviewPayload(artifact({ comments: flipped })),
+    );
   });
 
   it("binds review-body-note identity and provenance into the canonical bytes", () => {
@@ -74,11 +93,33 @@ describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", (
       body: "the policy matches its documented boundary",
     } satisfies ReviewBodyNote;
 
-    const payload = canonicalReviewPayload([], [note]);
-    expect(JSON.parse(payload)).toEqual({ kind: "pr-review", comments: [], bodyNotes: [note] });
+    const payload = canonicalReviewPayload(artifact({ bodyNotes: [note] }));
+    expect(JSON.parse(payload)).toEqual({
+      kind: "pr-review",
+      opener: OPENER,
+      comments: [],
+      bodyNotes: [note],
+    });
     expect(payload).not.toBe(
-      canonicalReviewPayload([], [{ ...note, anchor: "Design · Failure policy" }]),
+      canonicalReviewPayload(
+        artifact({ bodyNotes: [{ ...note, anchor: "Design · Failure policy" }] }),
+      ),
     );
+  });
+
+  it("binds the byte-preserved nonblank opener into canonical bytes and the marker", () => {
+    const opener = "  I checked the retry boundary exactly.  ";
+    const exact = artifact({ opener });
+    const mutated = artifact({ opener: `${opener}!` });
+    const payload = canonicalReviewPayload(exact);
+    const mutatedPayload = canonicalReviewPayload(mutated);
+
+    expect(JSON.parse(payload).opener).toBe(opener);
+    expect(mutatedPayload).not.toBe(payload);
+    expect(buildReviewMarker("rev-1", TARGET, mutatedPayload, "COMMENT")).not.toBe(
+      buildReviewMarker("rev-1", TARGET, payload, "COMMENT"),
+    );
+    expect(() => canonicalReviewPayload(artifact({ opener: " \n\t " }))).toThrow(/opener/i);
   });
 });
 
@@ -119,7 +160,7 @@ describe("reviewCommentsFromDispositions (issue #382 M2) — the daemon's one-so
     ];
     const comments = reviewCommentsFromDispositions(dispositions);
     // The bytes the phone previews are the bytes publish.review re-verifies.
-    expect(() => JSON.parse(canonicalReviewPayload(comments))).not.toThrow();
+    expect(() => JSON.parse(canonicalReviewPayload(artifact({ comments })))).not.toThrow();
     expect(deriveReviewEvent(comments)).toBe("COMMENT");
   });
 
@@ -430,8 +471,9 @@ describe("buildForgeReviewPost (issue #21)", () => {
     { path: "src/b.ts", line: 9, side: "LEFT", type: "question", body: "why removed?" },
     { path: "README.md", side: "RIGHT", type: "comment", body: "a file-level note" },
   ];
-  const payload = canonicalReviewPayload(comments);
-  const post = buildForgeReviewPost(comments, {
+  const reviewArtifact = artifact({ comments });
+  const payload = canonicalReviewPayload(reviewArtifact);
+  const post = buildForgeReviewPost(reviewArtifact, {
     reviewId: "rev-1",
     target: TARGET,
     payload,
@@ -453,7 +495,7 @@ describe("buildForgeReviewPost (issue #21)", () => {
     ]);
   });
 
-  it("renders the disposition TYPE into each body (the event stays a neutral comment)", () => {
+  it("renders each disposition TYPE into its body independently of the resolved review event", () => {
     expect(post.threads[0]?.body).toContain("Requested change");
     expect(post.threads[1]?.body).toContain("Question");
   });
@@ -473,8 +515,10 @@ describe("buildForgeReviewPost (issue #21)", () => {
     expect(deriveReviewEvent([{ type: "approve" }, { type: "request-change" }])).toBe(
       "REQUEST_CHANGES",
     );
+    expect(resolveComposedReviewEvent([])).toBe("APPROVE");
+    expect(resolveComposedReviewEvent([], "COMMENT")).toBe("COMMENT");
     // An explicit verdict OVERRIDES the derived one.
-    const overridden = buildForgeReviewPost(at("comment"), {
+    const overridden = buildForgeReviewPost(artifact({ comments: at("comment") }), {
       reviewId: "rev-3",
       target: TARGET,
       payload: "p",
@@ -486,16 +530,30 @@ describe("buildForgeReviewPost (issue #21)", () => {
 
   it("weaves BODY notes into the review body, ledgers them, and escalates the verdict (finding 2)", () => {
     const withBody = buildForgeReviewPost(
-      [{ path: "src/a.ts", line: 1, side: "RIGHT", type: "comment", body: "a line note" }],
+      artifact({
+        comments: [
+          { path: "src/a.ts", line: 1, side: "RIGHT", type: "comment", body: "a line note" },
+        ],
+        bodyNotes: [
+          {
+            id: "ask-boundary",
+            anchor: "Architecture · Module boundary",
+            type: "request-change",
+            body: "restructure the module boundary",
+          },
+          {
+            id: "ask-narrative",
+            anchor: "Summary · Narrative",
+            type: "comment",
+            body: "nice narrative",
+          },
+        ],
+      }),
       {
         reviewId: "rev-body",
         target: TARGET,
         payload: "p",
         capabilities: CAPS,
-        bodyNotes: [
-          { type: "request-change", body: "restructure the module boundary" },
-          { type: "comment", body: "nice narrative" },
-        ],
       },
     );
     // The pathless asks travel in the review body under a "Review notes" heading — not dropped.
@@ -512,10 +570,57 @@ describe("buildForgeReviewPost (issue #21)", () => {
   it("embeds the deterministic idempotency marker in the body", () => {
     expect(post.body).toContain(markerComment(post.marker));
     expect(extractMarker(post.body)).toBe(post.marker);
-    // Deterministic in (reviewId, target, payload): identical inputs ⇒ identical marker.
-    expect(buildReviewMarker("rev-1", TARGET, payload)).toBe(post.marker);
+    // Deterministic in (reviewId, target, event, payload): identical inputs ⇒ identical marker.
+    expect(buildReviewMarker("rev-1", TARGET, payload, post.event)).toBe(post.marker);
     // A different payload ⇒ a different marker (a retry after an edit is a new review).
-    expect(buildReviewMarker("rev-1", TARGET, `${payload} `)).not.toBe(post.marker);
+    expect(buildReviewMarker("rev-1", TARGET, `${payload} `, post.event)).not.toBe(post.marker);
+    // A verdict-only recompose is a distinct GitHub operation even when every body byte matches.
+    expect(buildReviewMarker("rev-1", TARGET, payload, "APPROVE")).not.toBe(post.marker);
+  });
+
+  it("reads the final appended marker when authored prose quotes a marker-shaped comment", () => {
+    const quoted = "f".repeat(64);
+    const quotedArtifact = artifact({
+      opener: `The documentation quotes <!-- rennet:review:${quoted} --> as an example.`,
+    });
+    const quotedPost = buildForgeReviewPost(quotedArtifact, {
+      reviewId: "rev-quoted-marker",
+      target: TARGET,
+      payload: canonicalReviewPayload(quotedArtifact),
+      capabilities: CAPS,
+    });
+
+    expect(quotedPost.marker).not.toBe(quoted);
+    expect(extractMarker(quotedPost.body)).toBe(quotedPost.marker);
+  });
+
+  it("uses the exact opener as the first body block and exposes only the signed descriptor", () => {
+    const opener = "  I checked the published behavior without rewriting this paragraph.  ";
+    const exactArtifact = artifact({ opener, comments });
+    const exactPost = buildForgeReviewPost(exactArtifact, {
+      reviewId: "rev-opener",
+      target: TARGET,
+      payload: canonicalReviewPayload(exactArtifact),
+      capabilities: CAPS,
+    });
+    const descriptor = forgeReviewPostDescriptor(exactPost) satisfies ForgeReviewPostDescriptor;
+
+    expect(exactPost.body.startsWith(`${opener}\n\n`)).toBe(true);
+    expect(exactPost.body).not.toContain("Rennet review.");
+    expect(descriptor).toEqual({
+      event: exactPost.event,
+      body: exactPost.body,
+      threads: exactPost.threads,
+    });
+    expect(Object.keys(descriptor)).toEqual(["event", "body", "threads"]);
+    expect(() =>
+      buildForgeReviewPost(artifact({ opener: " \n " }), {
+        reviewId: "rev-blank",
+        target: TARGET,
+        payload: "p",
+        capabilities: CAPS,
+      }),
+    ).toThrow(/opener/i);
   });
 });
 

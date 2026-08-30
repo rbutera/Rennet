@@ -134,8 +134,8 @@ export interface PublishThread {
  * flip). Present ONLY on a non-retrospective review opened from a real pull request
  * (`review.openPr`): it carries the exact identity a real GitHub egress needs — the
  * repo, the PR number, the forge's opaque PR node id (`forgeRef`), and the reviewed
- * head OID. Mirrors the protocol `publishTargetSchema` byte-for-byte so the renderer
- * hands it straight to `publish.review` with no re-derive.
+ * head OID. MAIN reads this persisted target when `publish.review` addresses the review;
+ * it is never supplied by the renderer.
  *
  * A LOCAL working-tree capture has no PR, so it has NO postTarget — the renderer
  * falls to the local-preview dry-run and genuinely cannot post (there is no PR to

@@ -12,9 +12,8 @@ import { type AskWriteCommand, useRennetStore } from "../store";
 // The reviewer's asks lived in the `review` store slice and nowhere else, so every server
 // path that reads `askLog.readProjection(reviewId)` read an EMPTY log:
 //
-//   • `publish.compose(mode:"review")` composed nothing, and `publish.review` refused with
-//     "Publish refused: the review has no content" — the team-reviewer Post exit could
-//     never succeed.
+//   • `publish.compose(mode:"review")` saw no staged line comments, so the Post exit silently
+//     lost the reviewer's requested changes and could only compose a zero-ask approval.
 //   • `round.dispatch` folded an empty projection into an empty work order.
 //   • `review.reviseSpan` answered "That ask is no longer staged." for every ask.
 //   • A reload lost everything the reviewer had staged.
@@ -72,6 +71,11 @@ export function useAskLog(reviewId: string): void {
     command: { name: "ask.read", input: { sessionId: reviewId } },
     fold: (_previous, next) => {
       if (writing.current.count > 0) writing.current.deferred = next;
+      // A projection push may come from another client or from server-authored round cleanup.
+      // The composed signing preview is frozen against the prior projection, so invalidate it
+      // when the new authority reaches this renderer. Otherwise a held-open preview stays stale
+      // and every post retry fails until the route is reopened.
+      refreshCompose();
       return { projection: next };
     },
   });

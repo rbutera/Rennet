@@ -7,6 +7,7 @@ import type {
   ReviewAskStreamEvent,
   RoundEvent,
 } from "@rennet/protocol";
+import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import {
@@ -523,8 +524,8 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
               JSON.stringify({
                 type: "serverInfo",
                 version: "stub",
-                protocolVersion: 1,
-                minCompatibleProtocolVersion: 1,
+                protocolVersion: PROTOCOL_VERSION,
+                minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
                 features: {},
               }),
             );

@@ -14,13 +14,14 @@ import type { DispositionKind, ReviewState, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import {
-  type ComposedLineComment,
   composeLivingDraft,
   type LineComment,
   type ReviewDraft,
+  type ReviewThread,
   type ReviseSpan,
   reviseDraftSpan,
 } from "./handoff-data";
+import { OutboundMarkdown } from "./outbound-markdown";
 import {
   type ProposedVerdict,
   type VerdictArithmetic,
@@ -45,10 +46,10 @@ import {
 //     the store; only the final sign-click (`onSubmit`) is irreversible. The draft above IS the
 //     preview — no separate preview stage (R31).
 //
-// The spike's synthetic `openerFor()` prose is DROPPED (fabricated demo text): the composed
-// opening is B11's living draft (gated cluster 8). Today the body is the staged body asks.
-// The egress (`publish.compose` → `publish.review`) is cluster 6's wiring — the lane takes it
-// as `onPost`; absent, the CTA renders disabled (honest), never a Post that posts nothing.
+// The spike's synthetic `openerFor()` prose is gone. The daemon drafts a grounded opener from
+// persisted review evidence and returns the exact forge descriptor this lane previews and posts.
+// The egress (`publish.compose` → `publish.review`) arrives as `onPost`; absent, the CTA renders
+// disabled (honest), never a Post that posts nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The three real GitHub review events, with their segmented-control presentation. */
@@ -549,8 +550,8 @@ function ComposedReviewPreview({
     requestChanges: draft.arithmetic.requestChanges,
     comments: draft.arithmetic.comments,
   };
-  const verdictOverride = draft.verdict === draft.proposed ? null : draft.verdict;
-  const lineCommentCount = draft.lineGroups.reduce((n, g) => n + g.comments.length, 0);
+  const verdictOverride = draft.post.event === draft.proposed ? null : draft.post.event;
+  const lineCommentCount = draft.post.threads.length;
 
   if (receipt) {
     return (
@@ -595,16 +596,16 @@ function ComposedReviewPreview({
         {pendingEditCount > 0 && (
           <p className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
             {pendingEditCount} inline edit{pendingEditCount === 1 ? "" : "s"} pending — not in this
-            composed review. Reopen the lane to recompose with your changes.
+            composed review. Revise the underlying ask, then recompose.
           </p>
         )}
 
-        {draft.bodyNotes.length > 0 && (
+        {draft.artifact.bodyNotes.length > 0 && (
           <div className="flex flex-col gap-4">
             <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-              Review Notes
+              Body Note Provenance
             </span>
-            {draft.bodyNotes.map((note, index) => (
+            {draft.artifact.bodyNotes.map((note, index) => (
               <div
                 key={note.id ?? `${note.anchor ?? "note"}-${index}`}
                 className="flex flex-col gap-1"
@@ -627,45 +628,51 @@ function ComposedReviewPreview({
           </div>
         )}
 
-        {/* Review body: the composed file-level comments, read-only — these are the bytes. */}
+        {/* The daemon-built body is the outbound body. Never rebuild it from the artifact. */}
         <div className="flex flex-col gap-4">
           <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
             Review Body
           </span>
-          {draft.body.length === 0 ? (
-            <p className="text-sm text-muted-foreground/70">No review body in this composition.</p>
-          ) : (
-            draft.body.map((comment, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: composed bytes are immutable and never reorder — the index is a stable identity here, and body notes carry no other unique field.
-              <div key={`body-${index}`} className="flex flex-col gap-1">
-                <IntentTag type={comment.type} />
-                <RichText
-                  text={comment.body}
-                  patchsetId={patchsetId}
-                  paragraphClassName="text-base leading-[1.7] text-foreground/90"
-                />
-              </div>
-            ))
-          )}
+          <OutboundMarkdown
+            markdown={draft.post.body}
+            patchsetId={patchsetId}
+            hideFinalReviewMarker
+          />
         </div>
 
-        {/* Line comments: the composed line-anchored comments, grouped by file path. */}
-        {draft.lineGroups.length > 0 && (
+        {/* The exact daemon thread array, in descriptor order and without client regrouping. */}
+        {draft.post.threads.length > 0 && (
           <div className="flex flex-col gap-3 border-t border-border/60 pt-4">
             <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-              Line Comments · {lineCommentCount}
+              Review Threads · {lineCommentCount}
             </span>
-            {draft.lineGroups.map((group) => (
-              <div key={group.path} className="flex flex-col gap-2">
-                <span className="font-mono text-2xs text-muted-foreground">{group.path}</span>
-                {group.comments.map((line) => (
-                  <ComposedLineCard
-                    key={`${line.path}:${line.line}:${line.comment.side}`}
-                    line={line}
-                    patchsetId={patchsetId}
-                  />
-                ))}
-              </div>
+            {draft.post.threads.map((thread, index) => (
+              <ComposedThreadCard
+                // biome-ignore lint/suspicious/noArrayIndexKey: the frozen descriptor permits duplicate threads and never reorders.
+                key={`${thread.path}:${thread.startLine ?? thread.line}:${thread.line}:${thread.side}:${index}`}
+                thread={thread}
+                patchsetId={patchsetId}
+              />
+            ))}
+          </div>
+        )}
+
+        {draft.ledger.length > 0 && (
+          <div className="flex flex-col gap-2 border-t border-border/60 pt-4">
+            <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+              Outbound Accounting
+            </span>
+            {draft.ledger.map((entry, index) => (
+              <p
+                // biome-ignore lint/suspicious/noArrayIndexKey: duplicate accounting entries are valid and the frozen ledger never reorders.
+                key={`${entry.kind}:${entry.path}:${index}`}
+                className="text-xs text-muted-foreground/80"
+              >
+                <span className="font-mono">
+                  {entry.kind} · {entry.path}
+                </span>{" "}
+                · {entry.detail}
+              </p>
             ))}
           </div>
         )}
@@ -693,24 +700,30 @@ function ComposedReviewPreview({
   );
 }
 
-/** One composed line-comment card, read-only: the anchor reveal, its intent tag, and its body. */
-function ComposedLineCard({ line, patchsetId }: { line: ComposedLineComment; patchsetId: string }) {
+/** One exact daemon-built thread, read-only and kept in descriptor order. */
+function ComposedThreadCard({ thread, patchsetId }: { thread: ReviewThread; patchsetId: string }) {
   const codeRef: CodeRef = {
     patchsetId,
-    path: line.path,
-    side: line.comment.side === "LEFT" ? "base" : "head",
-    startLine: line.line,
-    endLine: line.line,
+    path: thread.path,
+    side: thread.side === "LEFT" ? "base" : "head",
+    startLine: thread.startLine ?? thread.line,
+    endLine: thread.line,
   };
   return (
     <div className="rounded-lg border border-border bg-card px-3.5 py-3">
       <div className="flex items-center gap-1.5">
         <AnchorReveal citations={[codeRef]} />
-        <IntentTag type={line.comment.type} />
+        <span className="font-mono text-2xs text-muted-foreground">
+          {thread.path}:{thread.startLine ?? thread.line}
+          {thread.startLine === undefined || thread.startLine === thread.line
+            ? ""
+            : `–${thread.line}`}{" "}
+          · {thread.side}
+        </span>
       </div>
       <div className="mt-1.5">
         <RichText
-          text={line.comment.body}
+          text={thread.body}
           patchsetId={patchsetId}
           paragraphClassName="text-sm leading-relaxed text-foreground/90"
         />

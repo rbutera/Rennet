@@ -377,7 +377,7 @@ describe("GitHub egress bounds (the lancelot hang)", () => {
 });
 
 describe("publish egress rides the SAME bounded transport (unit-level middle ground)", () => {
-  // Full publish.review e2e needs the composed review + consent machinery; this
+  // Full publish.review e2e needs a persisted review and its exact composed artifact; this
   // drives the REAL publish adapter over the REAL create-server transport stack
   // (withRequestTimeout(withConnectResilience(raw))) so that mutating ONLY the
   // publish octokit wiring to an unbounded transport turns this red (it hangs).

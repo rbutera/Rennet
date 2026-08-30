@@ -17,11 +17,13 @@ import {
   RoundOperationStore,
   RoundRecordStore,
 } from "@rennet/adapters";
-import type { Review, RoundOperation } from "@rennet/protocol";
+import type { Generation, LensBoard, Review, RoundOperation } from "@rennet/protocol";
 import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
+  createBoardDraftCoordinator,
+  createCompositionBoardsForReview,
   createRennetServer,
   createRoundSourceLandingPorts,
   createRoundWorkerPort,
@@ -30,6 +32,89 @@ import {
   type RoundSourceLandingInjection,
 } from "./create-server";
 import type { RoundExecutionPorts } from "./runtime/round-execution";
+
+describe("publish board-drafting coordination", () => {
+  const review = {
+    id: "review-boards",
+    activePatchsetId: "patch-1",
+    patchsets: [{ id: "patch-1" }],
+  } as unknown as Review;
+
+  it("shares concurrent work, evicts a failed attempt, and lets the next compose retry", async () => {
+    let release!: (settled: boolean) => void;
+    let calls = 0;
+    const outcomes = [
+      new Promise<boolean>((resolve) => {
+        release = resolve;
+      }),
+      Promise.resolve(false),
+      Promise.resolve(true),
+    ];
+    const ensure = createBoardDraftCoordinator(async () => {
+      const outcome = outcomes[calls];
+      calls += 1;
+      return outcome ?? false;
+    });
+
+    const first = ensure(review);
+    const joined = ensure(review);
+    expect(joined).toBe(first);
+    expect(calls).toBe(1);
+    release(true);
+    await expect(first).resolves.toBeUndefined();
+    await expect(ensure(review)).rejects.toThrow("did not settle");
+    await expect(ensure(review)).resolves.toBeUndefined();
+    expect(calls).toBe(3);
+  });
+
+  it("returns retryable drafting after failure, then exposes the exact settled named boards", async () => {
+    const board = { boardId: "board-design", lens: "design" } as unknown as LensBoard;
+    let stored: Generation | undefined;
+    let attempts = 0;
+    const source = createCompositionBoardsForReview({
+      reviewById: () => review,
+      loadGeneration: () => stored,
+      ensureBoardDrafting: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("transient model failure");
+        stored = {
+          id: "gen:patch-1",
+          patchsetId: "patch-1",
+          lensBoards: { design: board.boardId },
+          status: "live",
+        };
+      },
+      readLensBoard: async () => board,
+    });
+
+    await expect(source(review.id, "gen:patch-1")).resolves.toEqual({ status: "drafting" });
+    await expect(source(review.id, "gen:patch-1")).resolves.toEqual({
+      status: "settled",
+      boards: [board],
+    });
+    expect(attempts).toBe(2);
+  });
+
+  it("asks the caller to retry when generation A races a live review already advanced to B", async () => {
+    const advanced = { ...review, activePatchsetId: "patch-2" } as Review;
+    const generations = new Map<string, Generation>();
+    const source = createCompositionBoardsForReview({
+      reviewById: () => advanced,
+      loadGeneration: (id) => generations.get(id),
+      ensureBoardDrafting: async () => {
+        generations.set("gen:patch-2", {
+          id: "gen:patch-2",
+          patchsetId: "patch-2",
+          lensBoards: {},
+          status: "live",
+        });
+      },
+      readLensBoard: async () => undefined,
+    });
+
+    await expect(source(advanced.id, "gen:patch-1")).resolves.toEqual({ status: "drafting" });
+  });
+});
 
 describe("round worker execution context", () => {
   it("carries a distro-native WSL branch capture through the round planner and worker", async () => {

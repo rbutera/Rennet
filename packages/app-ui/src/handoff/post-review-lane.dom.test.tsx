@@ -292,33 +292,31 @@ describe("PostReviewLane", () => {
     working.unmount();
 
     const draft: ReviewDraft = {
-      bodyNotes: [],
-      body: [],
-      lineGroups: [
-        {
-          path: "src/outbound.ts",
-          comments: [
-            {
-              path: "src/outbound.ts",
-              line: 4,
-              comment: {
-                path: "src/outbound.ts",
-                line: 4,
-                side: "RIGHT",
-                type: "comment",
-                body: "outbound comment",
-              },
-            },
-          ],
-        },
-      ],
-      verdict: "COMMENT",
+      artifact: {
+        opener: "Exact opener.",
+        comments: [
+          {
+            path: "src/outbound.ts",
+            line: 4,
+            side: "RIGHT",
+            type: "comment",
+            body: "outbound comment",
+          },
+        ],
+        bodyNotes: [],
+      },
+      post: {
+        event: "COMMENT",
+        body: "Exact opener.",
+        threads: [{ path: "src/outbound.ts", line: 4, side: "RIGHT", body: "outbound comment" }],
+      },
+      ledger: [],
       proposed: "COMMENT",
       arithmetic: { requestChanges: 0, comments: 1 },
       destination: "acme/orbital#7",
     };
     const composed = mount(<PostReviewLane review={review} draft={draft} />);
-    const lineComments = composed.getByText("Line Comments · 1");
+    const lineComments = composed.getByText("Review Threads · 1");
     const residue = composed.getByText("1 thread · 1 code comment stay local");
     const post = composed.getByRole("button", { name: /Post Review/ });
 
@@ -330,17 +328,20 @@ describe("PostReviewLane", () => {
 
   it("renders each composed review-body note with its intent and source provenance", () => {
     const draft = {
-      bodyNotes: [
-        {
-          id: "ask-overall",
-          anchor: "Design · Retry policy",
-          type: "comment",
-          body: "the policy matches its documented boundary",
-        },
-      ],
-      body: [],
-      lineGroups: [],
-      verdict: "COMMENT",
+      artifact: {
+        opener: "Exact opener.",
+        comments: [],
+        bodyNotes: [
+          {
+            id: "ask-overall",
+            anchor: "Design · Retry policy",
+            type: "comment",
+            body: "the policy matches its documented boundary",
+          },
+        ],
+      },
+      post: { event: "COMMENT", body: "Exact daemon body.", threads: [] },
+      ledger: [],
       proposed: "COMMENT",
       arithmetic: { requestChanges: 0, comments: 1 },
       destination: "acme/orbital#7",
@@ -348,7 +349,7 @@ describe("PostReviewLane", () => {
 
     const r = mount(<PostReviewLane review={review} draft={draft} />);
 
-    expect(r.getByText("Review Notes")).toBeTruthy();
+    expect(r.getByText("Body Note Provenance")).toBeTruthy();
     expect(r.container.querySelector('[data-slot="badge"]')?.textContent).toBe("Comment");
     expect(r.getByText("Design · Retry policy")).toBeTruthy();
     expect(r.getByText("the policy matches its documented boundary")).toBeTruthy();
@@ -380,12 +381,11 @@ describe("PostReviewLane", () => {
         type: "question",
         body: "Question body",
       },
-    ] satisfies ReviewDraft["bodyNotes"];
+    ] satisfies ReviewDraft["artifact"]["bodyNotes"];
     const draft: ReviewDraft = {
-      bodyNotes,
-      body: [],
-      lineGroups: [],
-      verdict: "REQUEST_CHANGES",
+      artifact: { opener: "Exact opener.", comments: [], bodyNotes },
+      post: { event: "REQUEST_CHANGES", body: "Exact daemon body.", threads: [] },
+      ledger: [],
       proposed: "REQUEST_CHANGES",
       arithmetic: { requestChanges: 1, comments: 3 },
       destination: "acme/orbital#7",
@@ -396,5 +396,52 @@ describe("PostReviewLane", () => {
     expect(
       [...r.container.querySelectorAll('[data-slot="badge"]')].map((badge) => badge.textContent),
     ).toEqual(["Approve", "Request Change", "Comment", "Question"]);
+  });
+
+  it("renders the exact daemon body for a zero-ask approval", () => {
+    const body = "Exact daemon approval body.";
+    const draft: ReviewDraft = {
+      artifact: { opener: "Artifact opener provenance.", comments: [], bodyNotes: [] },
+      post: { event: "APPROVE", body, threads: [] },
+      ledger: [],
+      proposed: "APPROVE",
+      arithmetic: { requestChanges: 0, comments: 0 },
+      destination: "acme/orbital#7",
+    };
+
+    const r = mount(<PostReviewLane review={review} draft={draft} />);
+
+    expect(r.getByText(body)).toBeTruthy();
+    expect(r.queryByText("Artifact opener provenance.")).toBeNull();
+    expect(r.queryByText(/Review Threads/)).toBeNull();
+    expect(r.getByText(/proposed from your review/)).toBeTruthy();
+  });
+
+  it("renders the real forge body structurally without exposing its idempotency marker", () => {
+    const quoted =
+      "<!-- rennet:review:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff -->";
+    const marker =
+      "<!-- rennet:review:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->";
+    const draft: ReviewDraft = {
+      artifact: { opener: "Exact opener.", comments: [], bodyNotes: [] },
+      post: {
+        event: "COMMENT",
+        body: `Exact opener quotes ${quoted}.\n\n## Review notes\n- **Comment** — Keep the retry visible.\n\n${marker}`,
+        threads: [],
+      },
+      ledger: [],
+      proposed: "APPROVE",
+      arithmetic: { requestChanges: 0, comments: 0 },
+      destination: "acme/orbital#7",
+    };
+
+    const r = mount(<PostReviewLane review={review} draft={draft} />);
+
+    expect(r.getByText(`Exact opener quotes ${quoted}.`)).toBeTruthy();
+    expect(r.getByRole("heading", { level: 3, name: "Review notes" })).toBeTruthy();
+    expect(r.container.querySelector("strong")?.textContent).toBe("Comment");
+    expect(r.queryByText(/## Review notes/)).toBeNull();
+    expect(r.container.textContent).toContain(quoted);
+    expect(r.container.textContent).not.toContain(marker);
   });
 });

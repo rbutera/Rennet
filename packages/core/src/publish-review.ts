@@ -15,22 +15,14 @@ import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
  *
  * This is the first real egress in Rennet: a decomposed review leaving the
  * machine and landing on a pull request AS THE USER. Everything about that is
- * safety-critical, so this module is written to make the dangerous parts
- * STRUCTURAL rather than promised:
+ * load-bearing, so this module keeps the preview and egress shapes structural:
  *
- *   • The review event is `COMMENT` and ONLY `COMMENT` — there is no value, and no
- *     code path, that emits `APPROVE` or `REQUEST_CHANGES`. Rennet never approves
- *     or requests-changes on the user's behalf (Contracts R33, publish safety #80).
- *     The disposition TYPES (request-change / approve / …) are per-comment
- *     classifications rendered INTO the comment bodies; the review EVENT stays a
- *     single neutral comment — one event, one notification (#21).
- *   • The outbound bytes are DERIVED from the same canonical `pr-review` payload the
- *     UI previews (`reviewCommentsPayload` in the ui layer). `canonicalReviewPayload`
- *     here reproduces those bytes, so the egress boundary can independently verify
- *     "what you see is what leaves" (R33) with a byte-exact round-trip and fail
- *     CLOSED on any disagreement — the MAIN-side analogue of the #106 UI gate.
+ *   • One artifact owns the opener, line comments, and body-note provenance.
+ *   • One post descriptor owns the event, body, and threads the reviewer previews.
+ *   • `canonicalReviewPayload` binds the exact opener and both comment strata, so
+ *     the egress boundary can independently verify "what you see is what leaves".
  *   • Every flattening lands on the degradation ledger, never a silent drop (#21).
- *   • The idempotency marker is deterministic in (reviewId, target, payload), so a
+ *   • The idempotency marker is deterministic in (reviewId, target, event, payload), so a
  *     retry after a dropped outcome finds the prior review and returns it instead of
  *     double-posting (#21 / R17).
  *
@@ -44,8 +36,7 @@ import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
  * be able to post the actual verdict, so this is the full three-value set, not a lock.
  * The VALUE is resolved from the signed review (see {@link resolveReviewEvent}):
  * derived from the dispositions by default, overridable by an explicit verdict on the
- * post descriptor. The human sign + the consent/forgeRef binding are the safety model;
- * the event is the product.
+ * post descriptor. The event shown on the signing surface is the event the forge receives.
  */
 export type ForgeReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
@@ -79,6 +70,18 @@ export function resolveReviewEvent(
 }
 
 /**
+ * Resolve the event for a composed, opener-backed review preview. With no asks, the authored
+ * opener is still real review content and the useful default is approval; any durable override
+ * wins, and a non-empty outbound set keeps the disposition-derived semantics above.
+ */
+export function resolveComposedReviewEvent(
+  outbound: readonly { readonly type: DispositionType }[],
+  verdict?: ForgeReviewEvent,
+): ForgeReviewEvent {
+  return verdict ?? (outbound.length === 0 ? "APPROVE" : deriveReviewEvent(outbound));
+}
+
+/**
  * One review comment in the canonical `pr-review` shape — the SAME logical fields
  * the ui layer serialises in `reviewCommentsPayload`. A path-grained disposition has
  * `line: undefined` (serialised as `null`) and posts as a file-level note (folded
@@ -102,53 +105,50 @@ export interface ReviewCommentInput {
  */
 export interface ReviewBodyNote {
   /** Stable ask identity carried onto the signing surface. */
-  readonly id?: string;
+  readonly id: string;
   readonly type: DispositionType;
   readonly body: string;
   /** Source provenance (the prose span / path), visible before signing. */
-  readonly anchor?: string;
+  readonly anchor: string;
+}
+
+/** The complete signed review artifact. The opener is model-authored but reviewer-owned. */
+export interface ReviewArtifact {
+  readonly opener: string;
+  readonly comments: readonly ReviewCommentInput[];
+  readonly bodyNotes: readonly ReviewBodyNote[];
+}
+
+function assertNonblankReviewOpener(opener: string): void {
+  if (opener.trim().length === 0) throw new Error("Review artifact opener must be nonblank");
 }
 
 /**
  * The canonical outbound bytes for a posted review — reproduced here so the MAIN
  * egress boundary can verify them independently of the renderer.
  *
- * ⚠️ These bytes MUST stay byte-identical to the ui layer's `reviewCommentsPayload`
- * (`packages/app-ui/src/canvas/publish.ts`): same `kind`, same field order, `line ?? null`.
- * The two are separate copies across a layer boundary (ui cannot be imported by
- * core), so a change to one must change the other. The failure direction is SAFE —
- * a drift makes the round-trip check refuse a legitimate publish (fail closed), it
- * never lets a mismatched payload through — but the coupling is pinned by an
- * exact-bytes test (`publish-review.test.ts`) so drift is caught, not merely
- * tolerated. This is the byte-exact contract the #106 fail-closed and this slice
- * both build on.
+ * The field order is intentional and pinned by an exact-bytes test. `opener` is
+ * serialized without trimming, before comments and body notes, so the payload binds
+ * the prose the reviewer previewed as well as both outbound comment strata.
  */
-export function canonicalReviewPayload(
-  comments: readonly ReviewCommentInput[],
-  bodyNotes: readonly ReviewBodyNote[] = [],
-): string {
+export function canonicalReviewPayload(artifact: ReviewArtifact): string {
+  assertNonblankReviewOpener(artifact.opener);
   return JSON.stringify({
     kind: "pr-review",
-    comments: comments.map((comment) => ({
+    opener: artifact.opener,
+    comments: artifact.comments.map((comment) => ({
       path: comment.path,
       line: comment.line ?? null,
       side: comment.side,
       type: comment.type,
       body: comment.body,
     })),
-    // The `bodyNotes` field is OMITTED when empty (B11 finding 2), so a review with only
-    // line comments preserves the pre-finding payload byte-for-byte. Body notes remain an
-    // additive canonical stratum for projected clients that compose them.
-    ...(bodyNotes.length === 0
-      ? {}
-      : {
-          bodyNotes: bodyNotes.map((note) => ({
-            ...(note.id === undefined ? {} : { id: note.id }),
-            ...(note.anchor === undefined ? {} : { anchor: note.anchor }),
-            type: note.type,
-            body: note.body,
-          })),
-        }),
+    bodyNotes: artifact.bodyNotes.map((note) => ({
+      ...(note.id === undefined ? {} : { id: note.id }),
+      ...(note.anchor === undefined ? {} : { anchor: note.anchor }),
+      type: note.type,
+      body: note.body,
+    })),
   });
 }
 
@@ -419,7 +419,7 @@ export interface PublishDegradation {
   readonly detail: string;
 }
 
-/** The forge-neutral batched review post, assembled from the canonical comments. */
+/** The forge-neutral batched review post, assembled from the canonical artifact. */
 export interface ForgeReviewPost {
   readonly target: ForgeReviewTarget;
   /** The resolved review verdict (derived from the dispositions, or an override). */
@@ -434,6 +434,18 @@ export interface ForgeReviewPost {
   readonly ledger: readonly PublishDegradation[];
 }
 
+/** The exact signed post projection carried across the publish wire. */
+export interface ForgeReviewPostDescriptor {
+  readonly event: ForgeReviewEvent;
+  readonly body: string;
+  readonly threads: readonly ForgeReviewThread[];
+}
+
+/** Remove adapter-only target, marker, and ledger fields from a composed post. */
+export function forgeReviewPostDescriptor(post: ForgeReviewPost): ForgeReviewPostDescriptor {
+  return { event: post.event, body: post.body, threads: post.threads };
+}
+
 /** A human label for a disposition type, rendered into the comment body. */
 const TYPE_LABEL: Record<DispositionType, string> = {
   "request-change": "Requested change",
@@ -443,9 +455,8 @@ const TYPE_LABEL: Record<DispositionType, string> = {
 };
 
 /**
- * Render a comment body with its disposition type as a legible prefix. The review
- * EVENT is a neutral comment, so the classification (requested change, question, …)
- * has to live in the body to be visible. An empty body renders as the bare label.
+ * Render a comment body with its disposition type as a legible prefix, so each thread keeps
+ * its own classification within the review-level event. An empty body renders as the bare label.
  */
 function formatCommentBody(type: DispositionType, body: string): string {
   const trimmed = body.trim();
@@ -453,15 +464,13 @@ function formatCommentBody(type: DispositionType, body: string): string {
 }
 
 /**
- * A stable identity string for a target, for the idempotency marker + the consent
- * binding. Includes the head OID so a review pinned to one head cannot be reused to
- * authorise a post against a different head, AND the opaque `forgeRef` (the PR node
+ * A stable identity string for a target and its idempotency marker. Includes the head OID so a
+ * review pinned to one head cannot be reused against a different head, AND the opaque `forgeRef`
+ * (the PR node
  * id). The forgeRef is load-bearing here: the adapter POSTS by `pullRequestId:
  * forgeRef` while `findExistingReview` READS by coordinates, and forgeRef and the
- * coordinates are independent renderer-supplied fields — so a token bound to one PR's
- * coordinates must NOT authorise a post to a different node id. Binding both closes
- * that gap: the consent token and the idempotency marker key on the exact
- * (coordinates, head, node id) the user approved.
+ * coordinates are independent persisted fields. Binding both prevents an outcome from being
+ * reconciled against a different (coordinates, head, node id) target.
  */
 export function forgeTargetKey(target: ForgeReviewTarget): string {
   const { forge, owner, name } = target.ref.repo;
@@ -470,7 +479,7 @@ export function forgeTargetKey(target: ForgeReviewTarget): string {
 
 /**
  * The deterministic idempotency marker for a post (R17 / #21): a content
- * fingerprint over (reviewId, target identity, canonical payload). Identical inputs
+ * fingerprint over (reviewId, target identity, event, canonical payload). Identical inputs
  * ⇒ identical marker, so a retry after a dropped outcome recomputes the same marker,
  * finds the already-created review carrying it, and returns instead of double-posting.
  */
@@ -478,8 +487,9 @@ export function buildReviewMarker(
   reviewId: string,
   target: ForgeReviewTarget,
   payload: string,
+  event: ForgeReviewEvent,
 ): string {
-  return sha256Hex(`${reviewId} ${forgeTargetKey(target)} ${payload}`);
+  return sha256Hex(`${reviewId} ${forgeTargetKey(target)} ${event} ${payload}`);
 }
 
 /** The embedded marker form (an invisible HTML comment on the rendered review body). */
@@ -489,7 +499,8 @@ export function markerComment(marker: string): string {
 
 /** Extract the marker from a review body, or `null` when absent (for read-back). */
 export function extractMarker(body: string): string | null {
-  return body.match(/<!-- rennet:review:([0-9a-f]{64}) -->/)?.[1] ?? null;
+  const matches = [...body.matchAll(/<!-- rennet:review:([0-9a-f]{64}) -->/g)];
+  return matches.at(-1)?.[1] ?? null;
 }
 
 export interface BuildReviewPostOptions {
@@ -497,12 +508,6 @@ export interface BuildReviewPostOptions {
   readonly target: ForgeReviewTarget;
   /** The canonical payload bytes (the marker + round-trip both key off this). */
   readonly payload: string;
-  /**
-   * The review-BODY notes (pathless/prose asks) woven into the review body (B11 finding 2).
-   * Absent ⇒ none. Each is rendered under a "Review notes" heading and ledgered (`body-note`),
-   * and its `type` participates in the derived verdict just like a line comment's.
-   */
-  readonly bodyNotes?: readonly ReviewBodyNote[];
   /** The forge's advertised capabilities (degradation is written against these). */
   readonly capabilities: ForgeCapabilities;
   /**
@@ -515,7 +520,7 @@ export interface BuildReviewPostOptions {
 }
 
 /**
- * Assemble the forge-neutral batched review post from the canonical comments.
+ * Assemble the forge-neutral batched review post from the canonical artifact.
  *
  * Line-anchored comments become threads. A no-line comment cannot be a batched
  * review thread (a `DraftPullRequestReviewThread` requires a line), so it is FOLDED
@@ -527,14 +532,15 @@ export interface BuildReviewPostOptions {
  * `addPullRequestReview` cannot, so it does.
  */
 export function buildForgeReviewPost(
-  comments: readonly ReviewCommentInput[],
+  artifact: ReviewArtifact,
   options: BuildReviewPostOptions,
 ): ForgeReviewPost {
+  assertNonblankReviewOpener(artifact.opener);
   const threads: ForgeReviewThread[] = [];
   const fileLevel: ReviewCommentInput[] = [];
   const ledger: PublishDegradation[] = [];
 
-  for (const comment of comments) {
+  for (const comment of artifact.comments) {
     if (comment.line === undefined) {
       fileLevel.push(comment);
       continue;
@@ -547,13 +553,17 @@ export function buildForgeReviewPost(
     });
   }
 
-  const marker = buildReviewMarker(options.reviewId, options.target, options.payload);
-  const sections: string[] = ["Rennet review."];
+  // The event is part of the outbound operation but not the canonical artifact payload. Resolve
+  // it before the marker so a verdict-only recompose cannot reconcile to an older review whose
+  // body bytes happen to match.
+  const event = resolveReviewEvent([...artifact.comments, ...artifact.bodyNotes], options.verdict);
+  const marker = buildReviewMarker(options.reviewId, options.target, options.payload, event);
+  const sections: string[] = [artifact.opener];
 
   // The BODY stratum (B11 finding 2): a pathless/prose ask has no diff line, so it is woven
   // into the review body under a "Review notes" heading rather than dropped — and each is
   // ledgered (`body-note`), so the reviewer sees it travelled in the body, never a silent drop.
-  const bodyNotes = options.bodyNotes ?? [];
+  const bodyNotes = artifact.bodyNotes;
   if (bodyNotes.length > 0) {
     const notes = bodyNotes.map((note) => {
       ledger.push({
@@ -586,11 +596,6 @@ export function buildForgeReviewPost(
 
   sections.push(markerComment(marker));
   const body = sections.join("\n\n");
-  // The verdict follows the WHOLE outbound set — line comments AND body notes — so a prose
-  // request-change escalates to REQUEST_CHANGES too (handoff-and-exits.md), not just a
-  // code-anchored one.
-  const event = resolveReviewEvent([...comments, ...bodyNotes], options.verdict);
-
   return { target: options.target, event, body, threads, marker, ledger };
 }
 

@@ -501,6 +501,11 @@ export {
   withRepoPref,
 } from "./project-snapshot-store";
 export {
+  PublishCompositionStore,
+  type StoredReviewOpener,
+  type StoredReviewOpenerRead,
+} from "./publish-composition-store";
+export {
   DOSSIER_TOTAL_MAX_CHARS,
   type EnrichmentReport,
   type ExtractedRef,

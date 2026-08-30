@@ -10,6 +10,7 @@
 
 import type { ConnectionStatus, Presence, StoredReplica } from "@rennet/client";
 import type {
+  AskProjection,
   AttentionAction,
   AttentionEventFrame,
   CommandInput,
@@ -51,6 +52,8 @@ export interface DaemonSupervisor {
    * flowing without the consumer re-subscribing (#389). Returns an unsubscribe.
    */
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /** Subscribe to durable ask-projection replacements that invalidate an open publish preview. */
+  onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /** Subscribe to a long-running command's progress (kickoff `onProgress`, #382 M2), by commandId. */
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
   /** The last-known replica surface (offline paint), or undefined if never synced. */

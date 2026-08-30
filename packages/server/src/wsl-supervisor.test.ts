@@ -4,6 +4,7 @@ import {
   WslNodeNotFoundError,
   wslDaemonDataDir,
 } from "@rennet/core";
+import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { FetchLike, WslRunner } from "./wsl-daemon";
 import { ensureWslDaemon } from "./wsl-supervisor";
@@ -54,7 +55,7 @@ function makeRun(state: FakeState): WslRunner {
               pid: d.pid,
               wsPort: d.wsPort,
               version: d.version,
-              protocolVersion: 1,
+              protocolVersion: PROTOCOL_VERSION,
               startedAt: "2026-08-20T00:00:00.000Z",
             }),
             code: 0,
@@ -92,8 +93,8 @@ function makeFetch(state: FakeState): FetchLike {
         pid: d.pid,
         wsPort: d.wsPort,
         version: d.version,
-        protocolVersion: 1,
-        minCompatibleProtocolVersion: 1,
+        protocolVersion: PROTOCOL_VERSION,
+        minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
       }),
     };
   };

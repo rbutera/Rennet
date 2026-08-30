@@ -18,10 +18,10 @@ import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema }
 import { AskProjectionSchema as askProjectionSchema } from "./ask-log";
 import { RoundEventSchema as roundEventSchema } from "./model";
 
-/** The protocol version this build speaks. One integer, bumped append-only. */
-export const PROTOCOL_VERSION = 1;
+/** The protocol version this build speaks. Version 2 owns the aggregate publish-review contract. */
+export const PROTOCOL_VERSION = 2;
 /** The oldest protocol version this build can still talk to. */
-export const MIN_COMPATIBLE_PROTOCOL_VERSION = 1;
+export const MIN_COMPATIBLE_PROTOCOL_VERSION = 2;
 
 /**
  * The `serverInfo.features` key a daemon sets when it consumes client presence and plans

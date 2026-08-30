@@ -143,6 +143,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       deps.setRepositoryDirty(false);
       const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
       raiseReviewFinished(review);
+      deps.onReviewOpened?.(review);
       return parseCommandOutput(name, { review });
     },
     "review.uiEvidence": async (rawInput) => {
@@ -568,8 +569,8 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // just runs; there is no permission gate and no consent token. ⚠️ EGRESS: the
       // raw note plus the anchored diff context IS sent to the harness (codex/claude)
       // — the same per-turn egress every review lens makes; it is NOT "nothing
-      // leaves the machine". What is gated is the PUBLISH: the refined body only
-      // reaches GitHub later, through the same hold-to-sign path as any comment.
+      // leaves the machine". Publication is separate: the refined body reaches GitHub only
+      // when the reviewer later clicks Post on the composed review.
       // With no refiner wired, answer an honest `unavailable` rather than throwing.
       const input = parseCommandInput(name, rawInput);
       const review = requireReviewById(input.reviewId);

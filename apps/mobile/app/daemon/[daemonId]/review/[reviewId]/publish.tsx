@@ -11,9 +11,11 @@
 //   • an own-branch capture composes in `mode: "pr"` and posts via `publish.submitPr`.
 // Idempotency is the engine's — a double tap / retry yields exactly one review (or one PR).
 
+import type { CommandOutput } from "@rennet/protocol";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { type ReactNode, useEffect, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
+import { PreviewMarkdown } from "../../../../../src/components/preview-markdown";
 import {
   Card,
   OutlineButton,
@@ -21,7 +23,9 @@ import {
   Screen,
   SectionLabel,
 } from "../../../../../src/components/ui";
+import { createComposeRefreshController } from "../../../../../src/lib/compose-refresh";
 import { newCommandId } from "../../../../../src/lib/ids";
+import { mobilePublishDecision } from "../../../../../src/lib/publish-mode";
 import {
   useConnection,
   useReviewFocus,
@@ -30,49 +34,7 @@ import {
 import { fontFamily, space, type } from "../../../../../src/theme/tokens";
 import { useTheme } from "../../../../../src/theme/use-theme";
 
-type ReviewComment = {
-  readonly path: string;
-  readonly line?: number;
-  readonly side: "LEFT" | "RIGHT";
-  readonly type: string;
-  readonly body: string;
-};
-type PostTarget = {
-  repo: { forge: string; owner: string; name: string };
-  number: number;
-  forgeRef: string;
-  headOid: string;
-};
-
-type PrSubmission = {
-  readonly title: string;
-  readonly body: string;
-  readonly base: string;
-  readonly head: string;
-  readonly draft: boolean;
-};
-
-type Composed =
-  | { readonly status: "loading" }
-  | {
-      readonly status: "review";
-      readonly comments: readonly ReviewComment[];
-      readonly payload: string;
-      readonly verdict: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
-      readonly destination: string;
-      readonly title: string;
-      readonly target: PostTarget;
-      readonly compositionId: string;
-    }
-  | {
-      readonly status: "pr";
-      readonly submission: PrSubmission;
-      readonly payload: string;
-      readonly destination: string;
-      readonly title: string;
-      readonly compositionId: string;
-    }
-  | { readonly status: "unavailable"; readonly reason: string };
+type Composed = { readonly status: "loading" } | CommandOutput<"publish.compose">;
 
 type Posting =
   | { readonly phase: "idle" }
@@ -103,11 +65,11 @@ export default function Publish(): ReactNode {
   const [composed, setComposed] = useState<Composed>({ status: "loading" });
   const [posting, setPosting] = useState<Posting>({ phase: "idle" });
 
-  // The review determines the loop: a team-PR review (postTarget present) posts a review; an
-  // own-branch capture opens a PR. Wait for the loaded review before composing so the mode fits.
-  const review = loaded.review as { postTarget?: PostTarget } | undefined;
-  const mode: "review" | "pr" | undefined =
-    review === undefined ? undefined : review.postTarget ? "review" : "pr";
+  // The same ownership split as desktop: teammate PRs post a review, a branch capture with no
+  // existing PR opens one, and an authored existing PR stays in the rounds loop.
+  const decision = mobilePublishDecision(loaded.review);
+  const mode = decision.status === "mode" ? decision.mode : undefined;
+  const unavailableReason = decision.status === "unavailable" ? decision.reason : undefined;
 
   useEffect(() => {
     // Reset per-review state on every route/mode change (#382 M2 finding 2): expo-router reuses
@@ -115,8 +77,11 @@ export default function Publish(): ReactNode {
     // stale "posted" screen) would flash while the new one loads. Always start from a clean slate.
     setComposed({ status: "loading" });
     setPosting({ phase: "idle" });
+    if (unavailableReason !== undefined) {
+      setComposed({ status: "unavailable", reason: unavailableReason });
+      return;
+    }
     if (!connection || mode === undefined) return;
-    let cancelled = false;
     // A pre-M2 daemon never advertises `act`, so it has no `publish.compose`. Say so truthfully
     // (like the turn screen's Stop) instead of surfacing a raw "unknown command" throw (#382 M2,
     // Finding C).
@@ -127,76 +92,58 @@ export default function Publish(): ReactNode {
       });
       return;
     }
-    connection.supervisor
-      .invoke("publish.compose", { commandId: newCommandId(), reviewId, mode })
-      .then((result) => {
-        if (cancelled) return;
-        if (result.status === "review") {
-          const target = review?.postTarget;
-          if (!target) {
-            setComposed({
-              status: "unavailable",
-              reason: "This review has no pull request to post to.",
-            });
-            return;
-          }
-          setComposed({
-            status: "review",
-            comments: result.comments,
-            payload: result.payload,
-            verdict: result.verdict,
-            destination: result.destination,
-            title: result.title,
-            target,
-            compositionId: result.compositionId,
-          });
-        } else if (result.status === "pr") {
-          setComposed({
-            status: "pr",
-            submission: result.submission,
-            payload: result.payload,
-            destination: result.destination,
-            title: result.title,
-            compositionId: result.compositionId,
-          });
-        } else {
-          setComposed({ status: "unavailable", reason: result.reason });
-          return;
+    const controller = createComposeRefreshController({
+      compose: () =>
+        connection.supervisor.invoke("publish.compose", {
+          commandId: newCommandId(),
+          reviewId,
+          mode,
+        }),
+      onResult: (result) => {
+        setComposed(result);
+        if (result.status !== "unavailable") {
+          // Clear publish-ready AFTER a successful compose (#382 M2 finding 10): compose itself
+          // re-raised it, so this is the clear-on-view, landing after the raise. Exact id only —
+          // viewing the preview never silences a live ask on the same review.
+          void connection.supervisor
+            .invoke("attention.acknowledge", { attentionId: `publish-ready:${reviewId}` })
+            .catch(() => undefined);
         }
-        // Clear publish-ready AFTER a successful compose (#382 M2 finding 10): compose itself
-        // re-raised it, so this is the clear-on-view, landing after the raise. Exact id only —
-        // viewing the preview never silences a live ask on the same review.
-        void connection.supervisor
-          .invoke("attention.acknowledge", { attentionId: `publish-ready:${reviewId}` })
-          .catch(() => undefined);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled)
-          setComposed({
-            status: "unavailable",
-            reason: error instanceof Error ? error.message : "The preview could not be composed.",
-          });
-      });
+      },
+      onError: (error) =>
+        setComposed({
+          status: "unavailable",
+          reason: error instanceof Error ? error.message : "The preview could not be composed.",
+        }),
+    });
+    // Another client can edit the durable ask projection while this signing view stays open,
+    // and a completed round can clear it server-side. Hide the now-stale bytes immediately and
+    // recompose from that pushed authority; the controller prevents an older in-flight
+    // response from overwriting the newer preview.
+    const unsubscribe = connection.supervisor.onAskProjection(reviewId, () => {
+      setComposed({ status: "loading" });
+      controller.refresh();
+    });
+    controller.start();
     return () => {
-      cancelled = true;
+      unsubscribe();
+      controller.stop();
     };
-  }, [connection, reviewId, mode, review?.postTarget]);
+  }, [connection, reviewId, mode, unavailableReason]);
 
   async function postReview(c: Extract<Composed, { status: "review" }>): Promise<void> {
     if (!connection) return;
     setPosting({ phase: "posting" });
     try {
       // One tap posts — the tap IS the authorization, there is no token and no confirm step.
-      // The composed `compositionId` binds these bytes AND this verdict, so the engine refuses
-      // anything but the composition previewed above. The engine's idempotency marker makes a
-      // double tap / retry reuse the same review — exactly one lands.
+      // Round-trip the frozen aggregate exactly. The addressed review supplies the persisted
+      // forge target; the event exists only in the descriptor the reviewer saw.
       const outcome = await connection.supervisor.invoke("publish.review", {
         commandId: newCommandId(),
         reviewId,
-        target: c.target as never,
-        comments: c.comments as never,
+        artifact: c.artifact,
+        post: c.post,
         payload: c.payload,
-        verdict: c.verdict,
         compositionId: c.compositionId,
         dryRun: false,
       });
@@ -283,41 +230,87 @@ export default function Publish(): ReactNode {
               <Text style={{ color: t.faint, fontSize: type.control }}>{composed.destination}</Text>
               <Text
                 style={{
-                  color: composed.verdict === "REQUEST_CHANGES" ? t.accent : t.green,
+                  color: composed.post.event === "REQUEST_CHANGES" ? t.accent : t.green,
                   fontSize: type.control,
                   fontWeight: "600",
                   marginTop: 4,
                 }}
               >
-                {verdictLabel(composed.verdict)}
+                {verdictLabel(composed.post.event)}
               </Text>
               <Text style={{ color: t.muted, fontSize: type.control, marginTop: space.xs }}>
-                {composed.comments.length} comment{composed.comments.length === 1 ? "" : "s"} ·
-                exactly what posts
+                {composed.post.threads.length} thread
+                {composed.post.threads.length === 1 ? "" : "s"} · exactly what posts
               </Text>
             </Card>
-            {/* Show EVERY comment in full — path (+line) and body — so the preview is the whole
-                outbound review, never a "3 comments collated" summary that hides what posts
-                (#382 M2 finding 1). This is the product's core promise: what you preview is what
-                posts. */}
-            {composed.comments.map((c) => (
-              <Card key={`${c.path}:${c.line ?? "file"}:${c.side}:${c.type}`}>
+            <Card>
+              <Text style={{ color: t.faint, fontSize: type.control }}>Review body</Text>
+              <PreviewMarkdown
+                markdown={composed.post.body}
+                color={t.text}
+                fontSize={type.body}
+                lineHeight={22}
+                marginTop={space.xs}
+                hideFinalReviewMarker
+              />
+            </Card>
+            {composed.post.threads.map((thread, index) => (
+              <Card
+                // biome-ignore lint/suspicious/noArrayIndexKey: the frozen descriptor permits duplicate threads and never reorders.
+                key={`${thread.path}:${thread.startLine ?? thread.line}:${thread.line}:${thread.side}:${index}`}
+              >
                 <Text style={{ color: t.faint, fontSize: type.control }}>
-                  {c.path}
-                  {c.line !== undefined ? `:${c.line}` : ""} · {c.side} · {c.type}
+                  {thread.path}:{thread.startLine ?? thread.line}
+                  {thread.startLine === undefined || thread.startLine === thread.line
+                    ? ""
+                    : `–${thread.line}`}{" "}
+                  · {thread.side}
                 </Text>
-                <Text
-                  style={{
-                    color: t.text,
-                    fontSize: type.body,
-                    lineHeight: 22,
-                    marginTop: space.xs,
-                  }}
-                >
-                  {c.body}
-                </Text>
+                <PreviewMarkdown
+                  markdown={thread.body}
+                  color={t.text}
+                  fontSize={type.body}
+                  lineHeight={22}
+                  marginTop={space.xs}
+                />
               </Card>
             ))}
+            {composed.artifact.bodyNotes.length > 0 ? (
+              <>
+                <SectionLabel>Body note provenance</SectionLabel>
+                {composed.artifact.bodyNotes.map((note, index) => (
+                  <Card key={note.id ?? `${note.anchor ?? "note"}:${index}`}>
+                    <Text style={{ color: t.faint, fontSize: type.control }}>
+                      {note.type}
+                      {note.anchor === undefined ? "" : ` · ${note.anchor}`}
+                    </Text>
+                    <PreviewMarkdown
+                      markdown={note.body}
+                      color={t.text}
+                      fontSize={type.body}
+                      lineHeight={22}
+                      marginTop={space.xs}
+                    />
+                  </Card>
+                ))}
+              </>
+            ) : null}
+            {composed.ledger.length > 0 ? (
+              <>
+                <SectionLabel>Outbound accounting</SectionLabel>
+                {composed.ledger.map((entry, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: duplicate accounting entries are valid and the frozen ledger never reorders.
+                  <Card key={`${entry.kind}:${entry.path}:${index}`}>
+                    <Text style={{ color: t.faint, fontSize: type.control }}>
+                      {entry.kind} · {entry.path}
+                    </Text>
+                    <Text style={{ color: t.text, fontSize: type.control, marginTop: space.xs }}>
+                      {entry.detail}
+                    </Text>
+                  </Card>
+                ))}
+              </>
+            ) : null}
             <PrimaryButton
               label={posting.phase === "posting" ? "Posting…" : "↗ Post review"}
               onPress={() => void postReview(composed)}
@@ -336,11 +329,14 @@ export default function Publish(): ReactNode {
                 {composed.submission.base} ← {composed.submission.head}
                 {composed.submission.draft ? " · draft" : ""}
               </Text>
-              <Text
-                style={{ color: t.text, fontSize: type.body, lineHeight: 22, marginTop: space.sm }}
-              >
-                {composed.submission.body || "(no body)"}
-              </Text>
+              <PreviewMarkdown
+                markdown={composed.submission.body}
+                color={t.text}
+                fontSize={type.body}
+                lineHeight={22}
+                marginTop={space.sm}
+                empty="(no body)"
+              />
             </Card>
             <PrimaryButton
               label={posting.phase === "posting" ? "Posting…" : "↗ Open pull request"}

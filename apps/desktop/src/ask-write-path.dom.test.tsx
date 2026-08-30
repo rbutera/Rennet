@@ -9,9 +9,8 @@
 // and nowhere else, so every exit that reads `askLog.readProjection(reviewId)` — which is all
 // three of them, and nothing else — read an EMPTY log:
 //
-//   • `publish.compose(mode:"review")` composed nothing, so `publish.review` refused with
-//     "Publish refused: the review has no content". The team-reviewer Post exit could never
-//     succeed.
+//   • `publish.compose(mode:"review")` could not carry the reviewer's staged line comment into
+//     the exact post descriptor. The team-reviewer Post exit silently lost the requested change.
 //   • `round.dispatch` folded an empty projection into an empty work order and dispatched
 //     nothing.
 //   • `review.reviseSpan` answered "That ask is no longer staged." for every ask.
@@ -38,7 +37,7 @@ import { join } from "node:path";
 import { AskLogStore, buildGitHubReviewRequest } from "@rennet/adapters";
 import { BridgeProvider, CodeBlock, useAskLog, useRennetStore } from "@rennet/app-ui";
 import type { ForgePublishPort, ForgeReviewPost } from "@rennet/core";
-import type { CommandName, RennetBridge, Review } from "@rennet/protocol";
+import type { CommandName, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { createDispatch, type DispatchDeps } from "@rennet/server";
 import { cleanup, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -127,6 +126,12 @@ beforeEach(() => {
     publishPort,
     raiseAttention: () => "att-1",
     dispatchRound,
+    draftReviewOpener: () =>
+      Promise.resolve({
+        status: "drafted",
+        opener: "This review is grounded in the active patchset and its staged asks.",
+        model: "test-model",
+      }),
     // The rework's one-shot turn, stubbed at the model boundary only — everything between
     // the command and the durable `ask.edit` it lands is the real thing.
     reworkSpan: () => Promise.resolve({ status: "refined", refined: "renameExport", model: "t" }),
@@ -177,42 +182,32 @@ async function requestChangesOnLine2(view: ReturnType<typeof mountSurface>, revi
   });
 }
 
-type Composed = {
-  status: string;
-  reason?: string;
-  comments: { path: string; line?: number; side: string; type: string; body: string }[];
-  bodyNotes: unknown[];
-  payload: string;
-  verdict: string;
-  compositionId: string;
-};
+type Composed = Extract<CommandOutput<"publish.compose">, { status: "review" }>;
 
-describe("harm 1 — the Post exit composes the reviewer's comment instead of refusing as empty", () => {
-  it("goes from 'the review has no content' to a composed, previewable review", async () => {
+describe("harm 1 — the Post exit composes the reviewer's exact outbound artifact", () => {
+  it("keeps a grounded zero-ask approval valid, then carries the staged requested change", async () => {
     const reviewId = PR_REVIEW.id;
 
-    // THE HARM, before the reviewer touches anything: the log is empty, so the compose is
-    // empty, and the exit the team reviewer takes cannot complete.
+    // A zero-ask review is still a real authored review: its grounded opener proposes approval.
     const empty = (await dispatch("publish.compose", {
       commandId: randomUUID(),
       reviewId,
       mode: "review",
     })) as Composed;
     expect(empty.status).toBe("review");
-    expect(empty.comments).toEqual([]);
-    expect(empty.bodyNotes).toEqual([]);
+    expect(empty.artifact.comments).toEqual([]);
+    expect(empty.artifact.bodyNotes).toEqual([]);
+    expect(empty.post.event).toBe("APPROVE");
     await expect(
       dispatch("publish.review", {
         commandId: randomUUID(),
         reviewId,
-        target: POST_TARGET,
-        comments: empty.comments,
-        bodyNotes: empty.bodyNotes,
+        artifact: empty.artifact,
+        post: empty.post,
         payload: empty.payload,
-        verdict: empty.verdict,
         compositionId: empty.compositionId,
       }),
-    ).rejects.toThrow("Publish refused: the review has no content");
+    ).resolves.toMatchObject({ dryRun: true });
 
     // The reviewer requests changes on line 2 of the real code surface.
     const view = mountSurface(reviewId);
@@ -224,21 +219,19 @@ describe("harm 1 — the Post exit composes the reviewer's comment instead of re
       reviewId,
       mode: "review",
     })) as Composed;
-    expect(composed.comments).toEqual([
+    expect(composed.artifact.comments).toEqual([
       { path: PATH, line: 2, side: "RIGHT", type: "request-change", body: ASK_BODY },
     ]);
-    expect(composed.verdict).toBe("REQUEST_CHANGES");
+    expect(composed.post.event).toBe("REQUEST_CHANGES");
 
     // And the exit completes: the preview builds the exact outbound request rather than
     // refusing. `dryRun` defaults true, so nothing leaves the machine.
     const preview = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId,
-      target: POST_TARGET,
-      comments: composed.comments,
-      bodyNotes: composed.bodyNotes,
+      artifact: composed.artifact,
+      post: composed.post,
       payload: composed.payload,
-      verdict: composed.verdict,
       compositionId: composed.compositionId,
     })) as { dryRun: boolean; request: { body: unknown } };
     expect(preview.dryRun).toBe(true);

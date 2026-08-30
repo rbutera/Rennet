@@ -129,50 +129,69 @@ describe("handoff/handoff-data", () => {
     });
   });
 
-  it("carries composed review-body notes onto the exact signing draft", () => {
-    const composed = {
+  it("carries the artifact, exact post descriptor, and ledger onto the signing draft", () => {
+    const composed: Extract<CommandOutput<"publish.compose">, { status: "review" }> = {
       status: "review",
-      comments: [],
-      bodyNotes: [
+      artifact: {
+        opener: "The review opener, byte preserved.",
+        comments: [],
+        bodyNotes: [
+          {
+            id: "ask-overall",
+            anchor: "Design · Retry policy",
+            type: "comment",
+            body: "the policy matches its documented boundary",
+          },
+        ],
+      },
+      post: {
+        event: "COMMENT",
+        body: "The exact daemon-built review body.",
+        threads: [],
+      },
+      ledger: [
         {
-          id: "ask-overall",
-          anchor: "Design · Retry policy",
-          type: "comment",
-          body: "the policy matches its documented boundary",
+          kind: "body-note",
+          path: "Design · Retry policy",
+          detail: "Included in the review body.",
         },
       ],
       payload: "canonical-review-bytes",
-      verdict: "COMMENT",
       destination: "acme/orbital#7",
       title: "acme/orbital#7",
       compositionId: "composition-1",
-    } as Extract<CommandOutput<"publish.compose">, { status: "review" }>;
+    };
 
     const draft = composeReviewDraft(composed);
-    expect(draft.bodyNotes).toEqual(composed.bodyNotes);
-    expect(draft.body).toEqual([]);
+    expect(draft.artifact).toBe(composed.artifact);
+    expect(draft.post).toBe(composed.post);
+    expect(draft.ledger).toBe(composed.ledger);
   });
 
   it("counts request-change and non-request review-body notes in verdict arithmetic", () => {
     const composed: Extract<CommandOutput<"publish.compose">, { status: "review" }> = {
       status: "review",
-      comments: [],
-      bodyNotes: [
-        {
-          id: "ask-blocking",
-          anchor: "Correctness · Retry policy",
-          type: "request-change",
-          body: "bound the retry loop",
-        },
-        {
-          id: "ask-question",
-          anchor: "Design · Retry policy",
-          type: "question",
-          body: "what owns the retry budget?",
-        },
-      ],
+      artifact: {
+        opener: "The review opener.",
+        comments: [],
+        bodyNotes: [
+          {
+            id: "ask-blocking",
+            anchor: "Correctness · Retry policy",
+            type: "request-change",
+            body: "bound the retry loop",
+          },
+          {
+            id: "ask-question",
+            anchor: "Design · Retry policy",
+            type: "question",
+            body: "what owns the retry budget?",
+          },
+        ],
+      },
+      post: { event: "REQUEST_CHANGES", body: "Exact body.", threads: [] },
+      ledger: [],
       payload: "canonical-review-bytes",
-      verdict: "REQUEST_CHANGES",
       destination: "acme/orbital#7",
       title: "acme/orbital#7",
       compositionId: "composition-1",
@@ -182,5 +201,30 @@ describe("handoff/handoff-data", () => {
 
     expect(draft.proposed).toBe("REQUEST_CHANGES");
     expect(draft.arithmetic).toEqual({ requestChanges: 1, comments: 1 });
+  });
+
+  it("preserves an approval descriptor with zero asks", () => {
+    const composed: Extract<CommandOutput<"publish.compose">, { status: "review" }> = {
+      status: "review",
+      artifact: { opener: "Ship it exactly as written.", comments: [], bodyNotes: [] },
+      post: {
+        event: "APPROVE",
+        body: "Ship it exactly as written.\n\n<!-- rennet:review:zero-asks -->",
+        threads: [],
+      },
+      ledger: [],
+      payload: "canonical-zero-ask-approval",
+      destination: "acme/orbital#7",
+      title: "acme/orbital#7",
+      compositionId: "composition-approval",
+    };
+
+    const draft = composeReviewDraft(composed);
+
+    expect(draft.post).toBe(composed.post);
+    expect(draft.post.event).toBe("APPROVE");
+    expect(draft.post.threads).toEqual([]);
+    expect(draft.proposed).toBe("APPROVE");
+    expect(draft.arithmetic).toEqual({ requestChanges: 0, comments: 0 });
   });
 });

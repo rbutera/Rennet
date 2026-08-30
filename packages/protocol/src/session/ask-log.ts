@@ -39,7 +39,7 @@ const lineSchema = z.number().int().min(1);
  */
 export const StagedAskSchema = z.object({
   id,
-  anchor: z.string(),
+  anchor: z.string().min(1),
   type: dispositionTypeSchema,
   body: z.string(),
   threadId: id.optional(),

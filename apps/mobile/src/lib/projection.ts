@@ -4,7 +4,7 @@
 // the display models the screens render, so a host path structurally cannot reach the UI.
 // Pure and framework-free (unit-tested against the checked-in public-schema fixtures).
 
-import { isReviewStale, type PatchsetSource } from "@rennet/protocol";
+import { isReviewStale, type PatchsetSource, type Review } from "@rennet/protocol";
 
 import type { ReviewSummary } from "./review-list";
 
@@ -33,6 +33,8 @@ export interface ProjectedReviewLike {
   readonly activePatchsetId: string;
   readonly pendingPatchsetId?: string;
   readonly status: "current" | "invalid";
+  readonly retrospective?: Review["retrospective"];
+  readonly postTarget?: Review["postTarget"];
   /**
    * COMPAT (#383): the daemon's attention summary, present when the daemon advertises the
    * attention capability. Authoritative on a cold open (a mid-turn ask is in `needsYou` before

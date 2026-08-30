@@ -25,9 +25,8 @@ import { headerGet, requestErrorHeaders, requestErrorStatus } from "./github-oct
  *   • `buildReviewRequest` is PURE and network-free (the primary dry-run evidence)
  *     and never touches the token: the bearer is an Authorization HEADER added only
  *     at real send, so a dry-run descriptor carries no secret.
- *   • The review `event` is the resolved verdict from the signed review (derived from
- *     the dispositions, or an explicit override) — a review tool posts the real
- *     verdict; the safety model is the human sign + the consent/forgeRef binding.
+ *   • The review `event` is the resolved verdict from the signed descriptor (derived from
+ *     the dispositions, or an explicit override), so the previewed verdict is the posted one.
  *   • The token is resolved LAZILY (`resolveOctokit`), so constructing the adapter and
  *     building a dry-run request need no live credential; only `findExistingReview`
  *     and `publishReview` spend one.
@@ -90,7 +89,7 @@ interface AddReviewInput {
  * Pure — no token, no network. This is BOTH the dry-run evidence and the body a real
  * send serialises, so the previewed request equals the sent request by construction.
  * `pullRequestId` is the PR node id (`forgeRef`), `commitOID` pins the reviewed head,
- * and `event` is the post's one-member `COMMENT` union — no `APPROVE` is expressible.
+ * and `event` is the exact APPROVE, REQUEST_CHANGES, or COMMENT value in the descriptor.
  */
 export function buildGitHubReviewRequest(
   post: ForgeReviewPost,
@@ -109,8 +108,7 @@ export function buildGitHubReviewRequest(
     pullRequestId: post.target.forgeRef,
     commitOID: post.target.headOid,
     // The resolved verdict from the signed review (derived from the dispositions, or an
-    // explicit override). A review tool posts the actual verdict; the safety model is
-    // the human sign + the consent/forgeRef binding, not a forced event.
+    // explicit override). A review tool posts the actual previewed verdict.
     event: post.event,
     body: post.body,
     threads,

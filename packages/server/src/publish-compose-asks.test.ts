@@ -221,14 +221,22 @@ describe("reviewCommentsFromProjection (B11 cluster 3) — the two-strata compos
     });
     store.append(sid, { kind: "line-comment-set", path: "src/z.ts", line: 9, body: "z" });
     store.append(sid, { kind: "verdict-override-set", verdict: "APPROVE" });
-    const beforePayload = canonicalReviewPayload(
-      reviewCommentsFromProjection(store.readProjection(sid)),
-    );
+    const opener = "The active review evidence supports this exact draft.";
+    const beforeProjection = store.readProjection(sid);
+    const beforePayload = canonicalReviewPayload({
+      opener,
+      comments: reviewCommentsFromProjection(beforeProjection),
+      bodyNotes: reviewBodyNotesFromProjection(beforeProjection),
+    });
 
     // A fresh store over the SAME dir (a restarted host) folds the same log to the same projection.
     const restarted = new AskLogStore(dir);
     expect(
-      canonicalReviewPayload(reviewCommentsFromProjection(restarted.readProjection(sid))),
+      canonicalReviewPayload({
+        opener,
+        comments: reviewCommentsFromProjection(restarted.readProjection(sid)),
+        bodyNotes: reviewBodyNotesFromProjection(restarted.readProjection(sid)),
+      }),
     ).toBe(beforePayload);
     expect(restarted.readProjection(sid).verdictOverride).toBe("APPROVE");
   });

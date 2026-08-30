@@ -100,6 +100,11 @@ describe("PR-lane ripening (B11 5.2) — re-compose + re-raise publish-ready ide
     });
     const { handlers } = harness({ submitPullRequest });
     const submitPr = handlers["publish.submitPr"];
+    const composed = (await handlers["publish.compose"]({
+      commandId: randomUUID(),
+      reviewId: REVIEW_ID,
+      mode: "pr",
+    })) as ComposePr;
 
     const submission: ForgePrSubmission = {
       title: "feat/x",
@@ -115,12 +120,14 @@ describe("PR-lane ripening (B11 5.2) — re-compose + re-raise publish-ready ide
       reviewId: REVIEW_ID,
       submission,
       payload,
+      compositionId: composed.compositionId,
     })) as ForgePrSubmissionOutcome;
     const second = (await submitPr({
       commandId: randomUUID(),
       reviewId: REVIEW_ID,
       submission,
       payload,
+      compositionId: composed.compositionId,
     })) as ForgePrSubmissionOutcome;
 
     // Exactly one PR: the first opened it, the second reused it (same url + number).

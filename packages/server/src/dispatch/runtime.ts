@@ -8,11 +8,14 @@ import {
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
   type ForgePublishPort,
+  type ForgeReviewEvent,
   type ForgeReviewTarget,
-  forgeTargetKey,
   type HandoffTurnOutcome,
   type HarnessEvent,
+  type ReviewOpenerDraftInput,
+  type ReviewOpenerDraftResult,
   type ReviewService,
+  resolveComposedReviewEvent,
   reviewBodyNotesFromProjection,
   reviewCommentsFromProjection,
 } from "@rennet/core";
@@ -131,10 +134,9 @@ export interface DispatchDeps {
    */
   readonly inFlightReviews?: { enter(reviewId: string): void; leave(reviewId: string): void };
   /**
-   * Fired after a review OPENS (`review.capture` / `review.openPr` return their
-   * review) — the real review-open choke point (#461, B7). The composition root
-   * kicks related-context retrieval here, fire-and-forget: the hook is sync-void
-   * and must never throw; a review never blocks on it.
+   * Fired after a review version becomes current (`review.capture`, `review.openPr`, or
+   * `review.regenerate`). The composition root kicks board drafting and related-context retrieval
+   * here, fire-and-forget; the hook is sync-void and must never throw into the command.
    */
   readonly onReviewOpened?: (review: Review) => void;
   /** Repositories the user has granted review access to (renderer-origin guard). */
@@ -188,7 +190,7 @@ export interface DispatchDeps {
   setRepositoryDirty(dirty: boolean): void;
   /**
    * The forge egress port (issue #21). `buildReviewRequest` is pure and network-free
-   * (the dry-run evidence, no credential); `publishReview` performs the real, gated
+   * (the dry-run evidence, no credential); `publishReview` performs the real
    * post. Read/egress are separate ports, so only the publish command can egress.
    */
   readonly publishPort: ForgePublishPort;
@@ -455,6 +457,16 @@ export interface DispatchDeps {
     decisions?: readonly string[];
   }) => Promise<PrBodyDraftResult>;
   /**
+   * The grounded team-review opener producer (#621). The server supplies only persisted active
+   * board facts and the durable ask projection; the live producer drafts through the
+   * `publish-comment-prose` Council seat and reuses a content-addressed persisted result for
+   * unchanged evidence. It posts nothing.
+   */
+  readonly draftReviewOpener?: (input: {
+    readonly review: Review;
+    readonly draft: ReviewOpenerDraftInput;
+  }) => Promise<ReviewOpenerDraftResult>;
+  /**
    * The delta re-review digest producer (issue #73 / M25): rephrase a successor
    * review's deterministic `successorAccount` into a one/two-sentence TL;DR shown ON TOP
    * of the facts. Optional so a composition without it (no coding harness) answers an
@@ -658,6 +670,19 @@ export interface DispatchDeps {
     generation: string,
     lens: LensKind,
   ) => Promise<LensBoard | undefined>;
+  /**
+   * The settled board evidence a publish opener may describe. An active generation cannot be
+   * previewed, and a settled generation that names an unreadable board is corrupt rather than an
+   * honest failed lens. Absent seam keeps lightweight dispatch embeddings board-free.
+   */
+  readonly compositionBoardsForReview?: (
+    reviewId: string,
+    generation: string,
+  ) => Promise<
+    | { readonly status: "settled"; readonly boards: readonly LensBoard[] }
+    | { readonly status: "drafting" }
+    | { readonly status: "unavailable"; readonly reason: string }
+  >;
   /** A durable successful absence for the same board identity, when no board exists. */
   readonly lensAbsenceForReview?: (
     reviewId: string,
@@ -747,7 +772,7 @@ export function toForgeReviewTarget(target: {
 
 /**
  * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
- * patchset, mode, canonical payload, verdict) — the payload already canonicalises the
+ * patchset, mode, canonical payload, verdict, opener evidence) — the payload already canonicalises the
  * comments/submission, so binding those is enough to pin the artifact to one review AT one
  * revision. `publish.compose` returns it; the post commands recompute it from the CURRENT review
  * and refuse a mismatch, so a cross-review, stale-revision, or verdict-swapped artifact cannot
@@ -765,6 +790,8 @@ export function publishCompositionId(fields: {
    * one fails the freshness check. A `"pr"` submission has no verdict (`undefined`).
    */
   verdict?: string;
+  /** The content identity of the persisted facts that grounded a review opener. */
+  openerSourceId?: string;
 }): string {
   return sha256Hex(
     JSON.stringify([
@@ -773,34 +800,35 @@ export function publishCompositionId(fields: {
       fields.mode,
       fields.payload,
       fields.verdict ?? null,
+      fields.openerSourceId ?? null,
     ]),
   );
 }
 
 /**
- * Refuse a post whose compose binding no longer matches the current review (#382 M2 finding 2).
- * A no-op when `compositionId` is absent (the desktop composes locally and posts without one —
- * additive/back-compat). For a team-PR "review" the expected binding is recomputed from the CURRENT
+ * Refuse a post whose required compose binding no longer matches the current review (#382 M2
+ * finding 2). For a team-PR "review" the expected binding is recomputed from the CURRENT
  * durable ask projection (B11 cluster 3 — the same source `publish.compose` draws from, so the
  * mirror holds), so an ask/line-comment edit that landed between preview and post is caught
  * (stale). For a "pr" submission the payload is model-drafted (not re-derivable), so the binding is
  * recomputed over the posted payload + current patchset — catching a cross-review post or an advanced
  * patchset; the existing byte-exact `canonicalPrSubmissionPayload` check already pins the payload.
  *
- * `verdict` is the caller's RESOLVED post verdict (review mode only). It is the one outbound field
- * the payload bytes do not capture, so it rides in the recomputed binding: posting a verdict other
- * than the previewed one lands on a different id and is refused as stale. That is the whole
- * preview-equals-post guarantee for the event — no token, no dialog, no second confirmation.
+ * `verdict` is the exact previewed post verdict and `opener` is the exact previewed authored prose
+ * (review mode only). The current durable projection independently re-derives the comments, body
+ * notes, verdict, and opener evidence identity; folding those around the previewed opener catches
+ * any durable edit between preview and post without drafting new model prose at the egress boundary.
  */
 export function assertCompositionFresh(
   review: Review,
   mode: "review" | "pr",
   payload: string,
-  compositionId: string | undefined,
+  compositionId: string,
   reviewProjection?: AskProjection,
-  verdict?: string,
+  verdict?: ForgeReviewEvent,
+  opener?: string,
+  openerSourceId?: string,
 ): void {
-  if (compositionId === undefined) return;
   const proj = reviewProjection ?? emptyAskProjection();
   const activePatchset = review.patchsets.find(
     (patchset) => patchset.id === review.activePatchsetId,
@@ -808,21 +836,41 @@ export function assertCompositionFresh(
   if (mode === "review" && activePatchset === undefined) {
     throw new Error("Publish refused: the review's active patchset is missing.");
   }
-  const boundPayload =
+  const currentComments =
+    mode === "review" ? reviewCommentsFromProjection(proj, activePatchset) : [];
+  const currentBodyNotes =
+    mode === "review" ? reviewBodyNotesFromProjection(proj, activePatchset) : [];
+  const currentVerdict =
     mode === "review"
-      ? // BOTH strata (B11 finding 2): the bound payload folds in body notes too, so a
-        // prose ask edited between preview and post is caught as stale like a line comment.
-        canonicalReviewPayload(
-          reviewCommentsFromProjection(proj, activePatchset),
-          reviewBodyNotesFromProjection(proj, activePatchset),
+      ? resolveComposedReviewEvent(
+          [...currentComments, ...currentBodyNotes],
+          proj.verdictOverride ?? undefined,
         )
-      : payload;
+      : undefined;
+  if (mode === "review") {
+    if (opener === undefined || verdict !== currentVerdict) {
+      throw new Error(
+        "Publish refused: this preview is stale or from another review — recompose before posting.",
+      );
+    }
+    const currentPayload = canonicalReviewPayload({
+      opener,
+      comments: currentComments,
+      bodyNotes: currentBodyNotes,
+    });
+    if (payload !== currentPayload) {
+      throw new Error(
+        "Publish refused: this preview is stale or from another review — recompose before posting.",
+      );
+    }
+  }
   const expected = publishCompositionId({
     reviewId: review.id,
     patchsetId: review.activePatchsetId,
     mode,
-    payload: boundPayload,
-    ...(verdict === undefined ? {} : { verdict }),
+    payload,
+    ...(currentVerdict === undefined ? {} : { verdict: currentVerdict }),
+    ...(mode === "review" ? { openerSourceId } : {}),
   });
   if (compositionId !== expected) {
     throw new Error(
@@ -881,7 +929,7 @@ export function createDispatchRuntime(deps: DispatchDeps) {
    * the user's post — the own-branch PR draft becoming ready (`review.draftPrBody` → drafted) is
    * that dispatch point. Destination + title are the substance; it deep-links to the publish
    * preview and clears on the post happening OR on viewing the preview (clear-on-view). Raising
-   * reads only readiness state — no consent internals, no egress, nothing secret (design risk).
+   * reads only readiness state — no egress and nothing secret (design risk).
    */
   const raisePublishReady = (review: Review, destination: string, title: string): void => {
     deps.raiseAttention?.({
@@ -936,26 +984,6 @@ export function createDispatchRuntime(deps: DispatchDeps) {
     assertAllowedRepository(review.repositoryRoot);
   }
 
-  /**
-   * The egress target-binding gate (issue #21, most-permissive-fault): a real post is
-   * legitimate ONLY against the review's OWN pull request. The real `publish.review`
-   * calls this before any egress, so a post to a local capture (no `postTarget`) or to
-   * a mismatched target is refused — even by a hand-crafted call. A single fault (a
-   * renderer bug, a forged target) cannot clear it: the review's stored `postTarget`
-   * is the authority, not the caller's input.
-   * Mirrors the retrospective structural gate exactly.
-   */
-  function assertTargetIsReviewOwn(review: Review, target: ForgeReviewTarget): void {
-    if (!review.postTarget) {
-      throw new Error(
-        "Publish refused: this review has no pull request to post to (a local capture cannot be posted).",
-      );
-    }
-    if (forgeTargetKey(toForgeReviewTarget(review.postTarget)) !== forgeTargetKey(target)) {
-      throw new Error("Publish refused: the target does not match this review's pull request.");
-    }
-  }
-
   const repositoryExists = deps.repositoryExists ?? existsSync;
 
   /**
@@ -996,7 +1024,6 @@ export function createDispatchRuntime(deps: DispatchDeps) {
     attachProjectProgress,
     assertAllowedRepository,
     assertReviewRepository,
-    assertTargetIsReviewOwn,
     repositoryExists,
     requireReviewById,
     activePatchsetOf,
