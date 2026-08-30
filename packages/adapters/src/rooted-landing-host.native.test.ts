@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -21,9 +23,11 @@ import { afterEach, describe, expect, it } from "vitest";
 type InspectResult =
   | { readonly kind: "absent" }
   | { readonly kind: "directory" }
-  | { readonly kind: "regular"; readonly bytes: Buffer; readonly executable: boolean }
+  | { readonly kind: "regular"; readonly descriptor: number; readonly executable: boolean }
   | { readonly kind: "symlink"; readonly bytes: Buffer }
   | { readonly kind: "unsupported"; readonly detail: string };
+
+type RegularInspectResult = Extract<InspectResult, { readonly kind: "regular" }>;
 
 type MoveResult =
   | { readonly kind: "moved" }
@@ -112,6 +116,45 @@ function fixture(): {
 
 function missing(path: string): boolean {
   return !existsSync(path);
+}
+
+function inspectRegular(
+  host: RootedLandingHost,
+  root: "source" | "worker",
+  path: string,
+): RegularInspectResult {
+  const result = host.inspect(root, path);
+  if (
+    result.kind !== "regular" ||
+    !Number.isSafeInteger(result.descriptor) ||
+    result.descriptor < 0
+  ) {
+    throw new Error(`expected a regular-file descriptor for ${root}:${path}`);
+  }
+  return result;
+}
+
+function readRegular(
+  host: RootedLandingHost,
+  root: "source" | "worker",
+  path: string,
+): {
+  readonly kind: "regular";
+  readonly bytes: Buffer;
+  readonly descriptor: number;
+  readonly executable: boolean;
+} {
+  const result = inspectRegular(host, root, path);
+  try {
+    return {
+      kind: "regular",
+      bytes: readFileSync(result.descriptor),
+      descriptor: result.descriptor,
+      executable: result.executable,
+    };
+  } finally {
+    closeSync(result.descriptor);
+  }
 }
 
 function runContender(input: {
@@ -257,6 +300,26 @@ describe.skipIf(process.platform === "win32")("rooted landing addon POSIX semant
     }
   });
 
+  it("returns an owned descriptor anchored to the inspected file", () => {
+    const { sourceRoot, host } = fixture();
+    const inspectedPath = join(sourceRoot, "anchored.txt");
+    const movedPath = join(sourceRoot, "anchored-before-replacement.txt");
+    writeFileSync(inspectedPath, "captured contents\n");
+
+    const result = inspectRegular(host, "source", "anchored.txt");
+    try {
+      expect("bytes" in result).toBe(false);
+      expect(fstatSync(result.descriptor).isFile()).toBe(true);
+      renameSync(inspectedPath, movedPath);
+      writeFileSync(inspectedPath, "replacement contents\n");
+      expect(readFileSync(result.descriptor, "utf8")).toBe("captured contents\n");
+      expect(readFileSync(inspectedPath, "utf8")).toBe("replacement contents\n");
+    } finally {
+      closeSync(result.descriptor);
+    }
+    expect(() => fstatSync(result.descriptor)).toThrow();
+  });
+
   it("creates, snapshots, moves, and removes every supported leaf shape", () => {
     const { sourceRoot, workerRoot, infoExcludePath, host } = fixture();
     const binary = Buffer.from([0x00, 0xff, 0x7f, 0x0a]);
@@ -266,10 +329,12 @@ describe.skipIf(process.platform === "win32")("rooted landing addon POSIX semant
     chmodSync(join(workerRoot, "input", "executable"), 0o755);
     symlinkSync("../target with spaces", join(workerRoot, "input", "link"));
 
-    expect(host.inspect("worker", "input/executable")).toMatchObject({
+    const inputExecutable = readRegular(host, "worker", "input/executable");
+    expect(inputExecutable).toMatchObject({
       kind: "regular",
       executable: true,
     });
+    expect(() => fstatSync(inputExecutable.descriptor)).toThrow();
     expect(host.ensureParent("artifact/binary")).toBeUndefined();
     expect(host.materializeTarget("input/binary", "artifact/binary", "100644")).toBeUndefined();
     expect(
@@ -277,16 +342,18 @@ describe.skipIf(process.platform === "win32")("rooted landing addon POSIX semant
     ).toBeUndefined();
     expect(host.materializeTarget("input/link", "artifact/link", "120000")).toBeUndefined();
 
-    expect(host.inspect("source", "artifact/binary")).toEqual({
-      kind: "regular",
+    const binaryInspection = readRegular(host, "source", "artifact/binary");
+    expect(binaryInspection).toMatchObject({
       bytes: binary,
       executable: false,
     });
-    expect(host.inspect("source", "artifact/executable")).toEqual({
-      kind: "regular",
+    expect(() => fstatSync(binaryInspection.descriptor)).toThrow();
+    const executableInspection = readRegular(host, "source", "artifact/executable");
+    expect(executableInspection).toMatchObject({
       bytes: Buffer.from("#!/bin/sh\nexit 0\n"),
       executable: true,
     });
+    expect(() => fstatSync(executableInspection.descriptor)).toThrow();
     expect(host.inspect("source", "artifact/link")).toEqual({
       kind: "symlink",
       bytes: Buffer.from("../target with spaces"),
