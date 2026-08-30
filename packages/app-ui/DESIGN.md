@@ -48,23 +48,44 @@ The design-ramp test scans `.ts` and `.tsx` files for arbitrary text sizes, radi
 
 ## Type ramp
 
-Use `10 / 11 / 12 / 13 / 14 / 16 / 18 / 20 / 24` px plus the display expression `clamp(34px, 5vw, 56px)`. Source code expresses the scale in `rem`; the pixel values below assume a 16px root. Components use Tailwind utilities instead of raw sizes.
+Use `10 / 11 / 12 / 12.5 / 13 / 14 / 15 / 16 / 18 / 20 / 24` px plus the display expression `clamp(34px, 5vw, 56px)`. Source code expresses the scale in `rem`; the pixel values below assume a 16px root. Components use Tailwind utilities instead of raw sizes.
 
 | px | rem | utility | role | used for |
 |----|-----|---------|------|----------|
 | 10 | 0.625 | `text-10` | badge | inline badges inside a dense list row |
 | 11 | 0.6875 | `text-2xs` | micro | uppercase micro-caps, the smallest legible chrome |
 | 12 | 0.75 | `text-xs` | meta | secondary metadata, counts, pins |
+| 12.5 | 0.78125 | `text-12-5` | dense body | diff and code bodies, quote popovers, dense captions |
 | 13 | 0.8125 | `text-13` | dense | dense picker and list rows (the file picker) |
 | 14 | 0.875 | `text-sm` | chrome | the standard chrome label and control text |
+| 15 | 0.9375 | `text-15` | prose | chat turns and review prose (see the prose voice below) |
 | 16 | 1 | `text-base` | reading | reading text, emphasised labels, inputs |
 | 18 | 1.125 | `text-lg` | body | comfortable body and the annotation serif |
 | 20 | 1.25 | `text-xl` | section | screen and section headings |
 | 24 | 1.5 | `text-2xl` | title | the largest in-app screen title |
 | `clamp(34px, 5vw, 56px)` | responsive | `text-display` | display | the main display headline only |
 
+The half-step `text-12-5` and the prose step `text-15` are the two sizes the
+board prototype reads at, and they are the reason the ramp has a `.5`: 12.5px is
+where a diff body stops looking like chrome, and 15px is the chat and review
+reading size. They are ramp steps like any other — reach for the nearest one
+rather than an arbitrary size.
+
+### Prose voice
+
+`font-prose` is the reading voice for chat and review prose. It aliases the sans
+stack today (`--font-prose: var(--rn-font-sans)` in
+[`packages/theme/src/theme.css`](../theme/src/theme.css)); the alias exists so a
+serif body can be tried by editing one token instead of every surface.
+
 Arbitrary font sizes (`text-[…]`, raw `font-size`) are off-ramp; the package's
-design-ramp test forbids them in `packages/app-ui` sources.
+design-ramp test forbids them in `packages/app-ui` sources — including the `font:`
+shorthand, which sizes type just as surely and is checked alongside `font-size:`.
+Its one exemption is decorative micro-type below the 10px floor: the first-run
+welcome's code-rain (`.rn-code-fragment`, 9px) and theme-preview miniature
+(`.rn-theme-preview code`, 8px), both illegible faux-code rendered as texture.
+The test pins those two selectors to those two exact values; nothing else may
+use them.
 
 ## Radius scale
 

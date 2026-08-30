@@ -395,7 +395,7 @@
   .rn-code-particle {
     position: absolute;
     color: var(--rn-syn-kw);
-    font: 12px var(--font-mono);
+    font: var(--text-xs) var(--font-mono);
     opacity: 0.66;
   }
   .rn-appearance-card {
