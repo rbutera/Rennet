@@ -457,6 +457,12 @@ When a release is ready, an **Update** control appears at the sidebar's foot. It
 opens a dialog listing what the release contains, with **Later** and **Update
 Now**. Rennet never restarts itself without you.
 
+Choosing **Update Now** or **Restart Rennet to update** first stops the local
+daemon that runs from the installed app bundle, then lets the platform updater
+replace that bundle and relaunch Rennet. The new app starts its matching daemon
+and reconnects to the durable review state. If the owned daemon cannot stop,
+Rennet stays open and reports the failure instead of closing without installing.
+
 Closing the window leaves Rennet in the macOS menu bar or the Windows system
 tray, with the local daemon and any running review intact. **Open Rennet**
 restores the window and reconnects it. When the desktop app owns the local
