@@ -1,5 +1,5 @@
 import type { FileChangeStatus, PatchFile } from "@rennet/protocol";
-import { Collapse, cn } from "@rennet/ui";
+import { cn } from "@rennet/ui";
 import {
   Check,
   ChevronDown,
@@ -24,7 +24,7 @@ import {
   useRennetStore,
 } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
-import { fileStats, type Hunk, hunkHeader, numberLines, parsePatch } from "./diff-parse";
+import { fileStats, hunkHeader, type NumberedLine, numberLines, parsePatch } from "./diff-parse";
 import { LineCommentEditor } from "./line-comment-editor";
 import { ProseSelectionLayer } from "./selection-toolbar";
 
@@ -91,22 +91,90 @@ export interface DiffViewProps {
   readonly historical?: boolean;
 }
 
+const DIFF_CARD_GAP = 16;
+const DIFF_CARD_HEADER_HEIGHT = 36;
+const DIFF_ROW_HEIGHT = 24;
+const DIFF_EDITOR_HEIGHT = 148;
+const DIFF_BODY_TOP = 52;
+const DIFF_OVERSCAN = 240;
+const DIFF_VIEWPORT_FALLBACK = 720;
+
+type DiffRenderRow =
+  | { readonly key: string; readonly kind: "hunk"; readonly header: string }
+  | { readonly key: string; readonly kind: "line"; readonly line: NumberedLine };
+
+interface DiffFileModel {
+  readonly file: PatchFile;
+  readonly rows: readonly DiffRenderRow[];
+}
+
+interface DiffFileLayout extends DiffFileModel {
+  readonly top: number;
+  readonly height: number;
+  readonly open: boolean;
+  readonly openLine?: number;
+}
+
+function modelFile(file: PatchFile): DiffFileModel {
+  const rows: DiffRenderRow[] = [];
+  for (const [hunkIndex, hunk] of parsePatch(file.patch).entries()) {
+    rows.push({ key: `hunk:${hunkIndex}`, kind: "hunk", header: hunkHeader(hunk) });
+    for (const [lineIndex, line] of numberLines(hunk).entries()) {
+      rows.push({ key: `line:${hunkIndex}:${lineIndex}`, kind: "line", line });
+    }
+  }
+  return { file, rows };
+}
+
+function layoutFiles(
+  models: readonly DiffFileModel[],
+  viewed: Readonly<Record<string, boolean>>,
+  collapsed: Readonly<Record<string, boolean>>,
+  openLines: Readonly<Record<string, number | undefined>>,
+): { readonly files: readonly DiffFileLayout[]; readonly height: number } {
+  const layouts: DiffFileLayout[] = [];
+  let top = 0;
+  for (const model of models) {
+    const open = !viewed[model.file.path] && !collapsed[model.file.path];
+    const openLine = openLines[model.file.path];
+    const bodyHeight = model.file.binary
+      ? DIFF_ROW_HEIGHT
+      : model.rows.length * DIFF_ROW_HEIGHT +
+        (open && openLine !== undefined ? DIFF_EDITOR_HEIGHT : 0);
+    const height = DIFF_CARD_HEADER_HEIGHT + (open ? bodyHeight : 0);
+    layouts.push({ ...model, top, height, open, openLine });
+    top += height + DIFF_CARD_GAP;
+  }
+  return { files: layouts, height: Math.max(0, top - DIFF_CARD_GAP) };
+}
+
 export function DiffView({ files, patchsetId, historical = false }: DiffViewProps) {
   const [filter, setFilter] = React.useState("");
   const [viewed, setViewed] = React.useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
+  const [openLines, setOpenLines] = React.useState<Record<string, number | undefined>>({});
+  const [bodyFiles, setBodyFiles] = React.useState<readonly PatchFile[]>([]);
+  const [scrollTop, setScrollTop] = React.useState(0);
+  const [viewportHeight, setViewportHeight] = React.useState(DIFF_VIEWPORT_FALLBACK);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const lastDeepLink = React.useRef<string | undefined>(undefined);
   const search = useSearch();
-
-  // ?file=<path> deep-links to one file's card (the code-block / board filename links
-  // here with it). The persistent chat can change the target while Diff stays mounted,
-  // so every distinct address scrolls rather than only the first one.
   const fileParam = readSessionQuery(new URLSearchParams(search)).file;
-  React.useEffect(() => {
-    if (!fileParam) return;
-    document.getElementById(`diff-${fileParam}`)?.scrollIntoView({ block: "start" });
-  }, [fileParam]);
 
   const q = filter.trim().toLowerCase();
-  const shown = files.filter((f) => !q || f.path.toLowerCase().includes(q));
+  const shown = React.useMemo(
+    () => files.filter((file) => !q || file.path.toLowerCase().includes(q)),
+    [files, q],
+  );
+  // The summary and file tree commit before patch parsing. This effect starts the
+  // virtual body after that first paint, so a large patch cannot hold the whole screen
+  // hostage while its row model is built.
+  React.useEffect(() => setBodyFiles(shown), [shown]);
+  const models = React.useMemo(() => bodyFiles.map(modelFile), [bodyFiles]);
+  const layout = React.useMemo(
+    () => layoutFiles(models, viewed, collapsed, openLines),
+    [models, viewed, collapsed, openLines],
+  );
   const totals = files.reduce(
     (acc, f) => {
       const s = fileStats(f);
@@ -116,18 +184,66 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
   );
   const viewedCount = files.filter((f) => viewed[f.path]).length;
 
-  function jumpTo(path: string) {
-    document.getElementById(`diff-${path}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  React.useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const measure = () => {
+      if (element.clientHeight > 0) setViewportHeight(element.clientHeight);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const jumpTo = React.useCallback(
+    (path: string) => {
+      const target = layout.files.find((file) => file.file.path === path);
+      const element = scrollRef.current;
+      if (!target || !element) return false;
+      const top = DIFF_BODY_TOP + target.top;
+      element.scrollTop = top;
+      setScrollTop(top);
+      return true;
+    },
+    [layout.files],
+  );
+
+  // Virtual cards do not exist until they enter the window, so destinations resolve
+  // against the stable file layout rather than an incidental DOM node.
+  React.useEffect(() => {
+    if (!fileParam || lastDeepLink.current === fileParam) return;
+    if (jumpTo(fileParam)) lastDeepLink.current = fileParam;
+  }, [fileParam, jumpTo]);
+
+  const bodyScrollTop = Math.max(0, scrollTop - DIFF_BODY_TOP);
+  const visibleLayouts = layout.files.filter((file) => {
+    const pinned = file.openLine !== undefined;
+    return (
+      pinned ||
+      (file.top + file.height >= bodyScrollTop - DIFF_OVERSCAN &&
+        file.top <= bodyScrollTop + viewportHeight + DIFF_OVERSCAN)
+    );
+  });
+
+  function setOpenLine(path: string, line: number | null) {
+    setOpenLines((current) => ({ ...current, [path]: line ?? undefined }));
   }
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* Scroll frame 1: the diff cards. The selection layer sits INSIDE the frame (its
           plain container div would otherwise break the flex height chain). */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        data-diff-scroll=""
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
         <MaybeSelectionLayer enabled={!historical}>
-          <div className="mx-auto flex w-full max-w-[980px] flex-col gap-4 px-6 py-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="mx-auto w-full max-w-[980px] px-6 py-4">
+            <div className="flex h-5 items-center gap-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">{files.length} files changed</span>
               <span className="text-green">+{totals.additions}</span>
               <span className="text-destructive">−{totals.deletions}</span>
@@ -137,20 +253,43 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
               </span>
             </div>
 
-            {shown.map((file) => (
-              <DiffFileCard
-                key={file.path}
-                file={file}
-                patchsetId={patchsetId}
-                historical={historical}
-                viewed={!!viewed[file.path]}
-                onViewedChange={(value) => setViewed((prev) => ({ ...prev, [file.path]: value }))}
-              />
-            ))}
             {shown.length === 0 && (
-              <span className="py-8 text-center text-sm text-muted-foreground">
+              <div className="py-8 text-center text-sm text-muted-foreground">
                 No files match “{filter.trim()}”.
-              </span>
+              </div>
+            )}
+            {shown.length > 0 && (
+              <div
+                className="relative mt-4"
+                style={{ height: `${layout.height}px` }}
+                data-total-diff-rows={models.reduce((total, model) => total + model.rows.length, 0)}
+              >
+                {visibleLayouts.map((entry) => (
+                  <div
+                    key={entry.file.path}
+                    className="absolute inset-x-0"
+                    style={{ top: `${entry.top}px`, height: `${entry.height}px` }}
+                  >
+                    <DiffFileCard
+                      model={entry}
+                      patchsetId={patchsetId}
+                      historical={historical}
+                      viewed={!!viewed[entry.file.path]}
+                      collapsed={!!collapsed[entry.file.path]}
+                      viewportTop={bodyScrollTop - entry.top}
+                      viewportHeight={viewportHeight}
+                      onCollapsedChange={(value) =>
+                        setCollapsed((current) => ({ ...current, [entry.file.path]: value }))
+                      }
+                      onOpenLineChange={(line) => setOpenLine(entry.file.path, line)}
+                      onViewedChange={(value) => {
+                        setViewed((current) => ({ ...current, [entry.file.path]: value }));
+                        setCollapsed((current) => ({ ...current, [entry.file.path]: value }));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </MaybeSelectionLayer>
@@ -248,27 +387,77 @@ function MaybeSelectionLayer({
 }
 
 function DiffFileCard({
-  file,
+  model,
   patchsetId,
   historical,
   viewed,
+  collapsed,
+  viewportTop,
+  viewportHeight,
+  onCollapsedChange,
+  onOpenLineChange,
   onViewedChange,
 }: {
-  file: PatchFile;
+  model: DiffFileLayout;
   patchsetId?: string;
   historical: boolean;
   viewed: boolean;
+  collapsed: boolean;
+  viewportTop: number;
+  viewportHeight: number;
+  onCollapsedChange: (collapsed: boolean) => void;
+  onOpenLineChange: (line: number | null) => void;
   onViewedChange: (viewed: boolean) => void;
 }) {
-  // Marking a file viewed collapses it, exactly like GitHub. `collapsed` is the user's own
-  // collapse INTENT (toggled by the chevron); `viewed` collapses the display independently.
-  // Toggling Viewed re-syncs the intent so un-viewing reveals the card (below), instead of a
-  // chevron click on a viewed card latching `collapsed=true` and hiding it after un-view.
-  const [collapsed, setCollapsed] = React.useState(false);
-  const open = !collapsed && !viewed;
+  const { file, rows, open, openLine } = model;
   const stats = fileStats(file);
-  const hunks = React.useMemo(() => parsePatch(file.patch), [file.patch]);
   const [copied, setCopied] = React.useState(false);
+  const comments = useRennetStore(selectCodeComments(file.path));
+  const stagedAsks = useRennetStore((state) => state.review.stagedAsks);
+  const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore(
+    (state) => state.reviewActions,
+  );
+  const flight = useFlightBatcher();
+  const language = React.useMemo(() => detectLanguage(file.path), [file.path]);
+  const askPositions = React.useMemo(() => {
+    const positions = new Set<string>();
+    for (const ask of Object.values(stagedAsks)) {
+      if (ask.type !== "request-change") continue;
+      if (ask.codeRef !== undefined && ask.codeRef.patchsetId !== patchsetId) continue;
+      const position = stagedAskCodePosition(ask);
+      if (position !== null) positions.add(codePositionKey(position));
+    }
+    return positions;
+  }, [stagedAsks, patchsetId]);
+
+  const positionedRows = React.useMemo(() => {
+    const positioned: Array<
+      | { readonly kind: "row"; readonly row: DiffRenderRow; readonly top: number }
+      | { readonly kind: "editor"; readonly line: number; readonly top: number }
+    > = [];
+    let top = 0;
+    for (const row of rows) {
+      positioned.push({ kind: "row", row, top });
+      top += DIFF_ROW_HEIGHT;
+      if (row.kind === "line" && row.line.newLine === openLine) {
+        positioned.push({ kind: "editor", line: openLine, top });
+        top += DIFF_EDITOR_HEIGHT;
+      }
+    }
+    return positioned;
+  }, [rows, openLine]);
+  const bodyViewportTop = viewportTop - DIFF_CARD_HEADER_HEIGHT;
+  const visibleRows = positionedRows.filter((positioned) => {
+    const height = positioned.kind === "editor" ? DIFF_EDITOR_HEIGHT : DIFF_ROW_HEIGHT;
+    const pinned =
+      positioned.kind === "editor" ||
+      (positioned.row.kind === "line" && positioned.row.line.newLine === openLine);
+    return (
+      pinned ||
+      (positioned.top + height >= bodyViewportTop - DIFF_OVERSCAN &&
+        positioned.top <= bodyViewportTop + viewportHeight + DIFF_OVERSCAN)
+    );
+  });
 
   async function copyPath() {
     // Silent no-op when the clipboard API is unavailable (insecure context, denied).
@@ -285,17 +474,17 @@ function DiffFileCard({
   return (
     <section
       id={`diff-${file.path}`}
-      className="scroll-mt-4 overflow-hidden rounded-lg border border-border bg-card"
+      className="h-full overflow-hidden rounded-lg border border-border bg-card"
     >
       <div
         className={cn(
-          "flex items-center gap-2 border-b border-border bg-secondary/50 px-2 py-1.5",
+          "flex h-9 items-center gap-2 border-b border-border bg-secondary/50 px-2",
           !open && "border-b-0",
         )}
       >
         <button
           type="button"
-          onClick={() => setCollapsed((value) => !value)}
+          onClick={() => onCollapsedChange(!collapsed)}
           aria-expanded={open}
           aria-label={open ? "Collapse file" : "Expand file"}
           className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -356,9 +545,6 @@ function DiffFileCard({
             checked={viewed}
             onChange={(event) => {
               onViewedChange(event.target.checked);
-              // Re-sync the collapse intent to the Viewed state: checking collapses,
-              // un-checking reveals — so a prior chevron click can't leave it latched shut.
-              setCollapsed(event.target.checked);
             }}
             className="size-3 accent-primary"
           />
@@ -366,223 +552,189 @@ function DiffFileCard({
         </label>
       </div>
 
-      <Collapse open={open}>
-        {file.binary ? (
-          <div className="px-3 py-2.5 text-xs text-muted-foreground">Binary file not shown.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <div className="min-w-max font-mono text-xs leading-[1.7]">
-              {hunks.map((hunk, i) => (
-                <DiffHunkView
-                  // biome-ignore lint/suspicious/noArrayIndexKey: hunks are a fixed positional list within the file.
-                  key={i}
-                  hunk={hunk}
-                  path={file.path}
-                  basePath={file.previousPath ?? file.path}
-                  patchsetId={patchsetId}
-                  historical={historical}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </Collapse>
-    </section>
-  );
-}
+      {open && file.binary && (
+        <div className="flex h-6 items-center px-3 text-xs text-muted-foreground">
+          Binary file not shown.
+        </div>
+      )}
+      {open && !file.binary && (
+        <div className="overflow-x-auto">
+          <div
+            className="relative min-w-full font-mono text-xs"
+            style={{
+              height: `${rows.length * DIFF_ROW_HEIGHT + (openLine === undefined ? 0 : DIFF_EDITOR_HEIGHT)}px`,
+            }}
+          >
+            {visibleRows.map((positioned) => {
+              if (positioned.kind === "editor") {
+                const commentLine = positioned.line;
+                return (
+                  <div
+                    key={`editor:${commentLine}`}
+                    className="absolute inset-x-0 overflow-hidden border-y border-border bg-secondary/40 px-3 py-2.5 font-sans"
+                    style={{ top: `${positioned.top}px`, height: `${DIFF_EDITOR_HEIGHT}px` }}
+                  >
+                    <LineCommentEditor
+                      lineLabel={`L${commentLine}`}
+                      initialText={comments?.[commentLine] ?? ""}
+                      hasComment={comments?.[commentLine] != null}
+                      onCancel={() => onOpenLineChange(null)}
+                      onSave={(text) => {
+                        if (text === null) clearCodeComment(file.path, commentLine);
+                        else setCodeComment(file.path, commentLine, text);
+                        onOpenLineChange(null);
+                      }}
+                      onRequestChanges={(text) => {
+                        setCodeComment(file.path, commentLine, text);
+                        const side = "RIGHT" as const;
+                        stageAsk({
+                          id: codePositionKey({ path: file.path, line: commentLine, side }),
+                          anchor: `${file.path}:${commentLine}`,
+                          type: "request-change",
+                          body: text,
+                          side,
+                          ...(patchsetId === undefined
+                            ? {}
+                            : {
+                                codeRef: {
+                                  patchsetId,
+                                  path: file.path,
+                                  side: "head",
+                                  startLine: commentLine,
+                                  endLine: commentLine,
+                                },
+                              }),
+                        });
+                        flight.signal();
+                        onOpenLineChange(null);
+                      }}
+                    />
+                  </div>
+                );
+              }
 
-function DiffHunkView({
-  hunk,
-  path,
-  basePath,
-  patchsetId,
-  historical,
-}: {
-  hunk: Hunk;
-  path: string;
-  basePath: string;
-  patchsetId?: string;
-  historical: boolean;
-}) {
-  const comments = useRennetStore(selectCodeComments(path));
-  const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
-  const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
-  const flight = useFlightBatcher();
-  const [openLine, setOpenLine] = React.useState<number | null>(null);
+              if (positioned.row.kind === "hunk") {
+                return (
+                  <div
+                    key={positioned.row.key}
+                    className="absolute inset-x-0 flex h-6 items-center gap-2 bg-secondary/40 px-2 text-2xs text-muted-foreground"
+                    style={{ top: `${positioned.top}px` }}
+                  >
+                    <Icon icon={UnfoldVertical} className="size-3 shrink-0" />
+                    <span>{positioned.row.header}</span>
+                  </div>
+                );
+              }
 
-  const language = React.useMemo(() => detectLanguage(path), [path]);
-  const lines = React.useMemo(() => numberLines(hunk), [hunk]);
-  const tokenLines = React.useMemo(
-    () => lines.map((line) => tokenizeDiffLine(line.text, language)),
-    [lines, language],
-  );
-  const askPositions = React.useMemo(() => {
-    const set = new Set<string>();
-    for (const ask of Object.values(stagedAsks)) {
-      if (ask.type !== "request-change") continue;
-      if (ask.codeRef !== undefined && ask.codeRef.patchsetId !== patchsetId) continue;
-      const position = stagedAskCodePosition(ask);
-      if (position !== null) set.add(codePositionKey(position));
-    }
-    return set;
-  }, [stagedAsks, patchsetId]);
+              const line = positioned.row.line;
+              const rowSide = line.type === "del" ? ("LEFT" as const) : ("RIGHT" as const);
+              const rowLine = rowSide === "LEFT" ? line.oldLine : line.newLine;
+              const rowPath = rowSide === "LEFT" ? (file.previousPath ?? file.path) : file.path;
+              const commentLine = line.newLine;
+              const hasComment =
+                !historical &&
+                rowSide === "RIGHT" &&
+                rowLine !== null &&
+                comments?.[rowLine] != null;
+              const hasAsk =
+                !historical &&
+                rowLine !== null &&
+                askPositions.has(codePositionKey({ path: rowPath, line: rowLine, side: rowSide }));
+              const isOpen = commentLine !== null && openLine === commentLine;
+              const state = hasAsk ? "ask" : hasComment ? "comment" : line.type;
+              const tokens = tokenizeDiffLine(line.text, language);
 
-  return (
-    <div className="[container-type:inline-size]">
-      <div className="flex items-center gap-2 bg-secondary/40 px-2 py-1 text-2xs text-muted-foreground">
-        <Icon icon={UnfoldVertical} className="size-3 shrink-0" />
-        <span>{hunkHeader(hunk)}</span>
-      </div>
-      {lines.map((line, i) => {
-        const rowSide = line.type === "del" ? ("LEFT" as const) : ("RIGHT" as const);
-        const rowLine = rowSide === "LEFT" ? line.oldLine : line.newLine;
-        const rowPath = rowSide === "LEFT" ? basePath : path;
-        const commentLine = line.newLine;
-        // The marks are read out of the SAME `path:line` keyspace the writes go into, so a
-        // historical surface must not read them either: a live-diff comment at `foo.ts:42`
-        // would paint line 42 of a past round's diff green over code it was never left on.
-        // Wrong content under the right label, in the read direction (#571).
-        const hasComment =
-          !historical && rowSide === "RIGHT" && rowLine !== null && comments?.[rowLine] != null;
-        const hasAsk =
-          !historical &&
-          rowLine !== null &&
-          askPositions.has(codePositionKey({ path: rowPath, line: rowLine, side: rowSide }));
-        const isOpen = commentLine !== null && openLine === commentLine;
-        // The row state a test reads (same vocabulary code-block exposes): a staged ask
-        // wins (danger red), then a plain comment (evidence green), else the diff line kind.
-        const state = hasAsk ? "ask" : hasComment ? "comment" : line.type;
-        return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: hunk rows are a fixed positional list; the index is the line offset.
-          <React.Fragment key={i}>
-            <div
-              data-line={rowLine ?? ""}
-              data-side={rowSide}
-              data-line-state={state}
-              className={cn(
-                "group flex min-h-[1.7em]",
-                line.type === "add" && "bg-green/10",
-                line.type === "del" && "bg-destructive/10",
-                hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-green/15",
-              )}
-            >
-              <span
-                className={cn(
-                  "w-[5ch] shrink-0 select-none border-r border-transparent py-0 pr-2 text-right text-muted-foreground/50",
-                  line.type === "add" && "bg-green/10",
-                  line.type === "del" && "bg-destructive/15",
-                )}
-              >
-                {line.oldLine ?? ""}
-              </span>
-              <span
-                className={cn(
-                  "relative flex w-[6ch] shrink-0 select-none items-center justify-end gap-1 pr-2 text-right text-muted-foreground/50",
-                  line.type === "add" && "bg-green/15",
-                  line.type === "del" && "bg-destructive/10",
-                )}
-              >
-                {commentLine !== null && !historical && (
-                  <button
-                    type="button"
-                    onClick={() => setOpenLine(isOpen ? null : commentLine)}
-                    aria-label={
-                      hasComment
-                        ? `Edit comment on line ${commentLine}`
-                        : `Comment on line ${commentLine}`
-                    }
+              return (
+                <div
+                  key={positioned.row.key}
+                  data-line={rowLine ?? ""}
+                  data-side={rowSide}
+                  data-line-state={state}
+                  className={cn(
+                    "group absolute inset-x-0 flex h-6 min-w-max items-center",
+                    line.type === "add" && "bg-green/10",
+                    line.type === "del" && "bg-destructive/10",
+                    hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-green/15",
+                  )}
+                  style={{ top: `${positioned.top}px` }}
+                >
+                  <span
                     className={cn(
-                      "size-4 shrink-0 items-center justify-center rounded transition-colors",
-                      hasAsk
-                        ? "bg-destructive text-primary-foreground hover:bg-destructive/90"
-                        : "bg-primary text-primary-foreground hover:bg-primary/90",
-                      hasComment || isOpen ? "flex" : "hidden group-hover:flex",
+                      "flex h-full w-[5ch] shrink-0 select-none items-center justify-end border-r border-transparent pr-2 text-muted-foreground/50",
+                      line.type === "add" && "bg-green/10",
+                      line.type === "del" && "bg-destructive/15",
                     )}
                   >
-                    <Icon
-                      icon={hasComment ? MessageSquare : Plus}
-                      className={hasComment ? "size-2.5" : "size-3"}
-                    />
-                  </button>
-                )}
-                <span
-                  className={cn(
-                    "tabular-nums",
-                    commentLine !== null &&
-                      !historical &&
-                      !hasComment &&
-                      !isOpen &&
-                      "group-hover:hidden",
-                  )}
-                >
-                  {line.newLine ?? ""}
-                </span>
-              </span>
-              <span
-                className={cn(
-                  "w-[2ch] shrink-0 select-none text-center",
-                  line.type === "add" && "text-green",
-                  line.type === "del" && "text-destructive",
-                )}
-              >
-                {line.type === "add" ? "+" : line.type === "del" ? "−" : ""}
-              </span>
-              <span className="whitespace-pre pr-3 text-foreground/90">
-                {tokenLines[i]?.length
-                  ? tokenLines[i]?.map((token, ti) => (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: token order within a line is stable and positional.
-                      <span key={ti} className={`rtok rtok-${token.type}`}>
-                        {token.text}
-                      </span>
-                    ))
-                  : " "}
-              </span>
-            </div>
-            {isOpen && commentLine !== null && (
-              <div className="sticky left-0 w-[100cqw] border-y border-border bg-secondary/40 px-3 py-2.5 font-sans">
-                <LineCommentEditor
-                  lineLabel={`L${commentLine}`}
-                  initialText={comments?.[commentLine] ?? ""}
-                  hasComment={!!hasComment}
-                  onCancel={() => setOpenLine(null)}
-                  onSave={(text) => {
-                    if (text === null) clearCodeComment(path, commentLine);
-                    else setCodeComment(path, commentLine, text);
-                    setOpenLine(null);
-                  }}
-                  onRequestChanges={(text) => {
-                    // Same contract as CodeBlock: the comment saves AND a request-change
-                    // ask stages against `${path}:${line}` — the SAME object a board
-                    // excerpt's editor writes (R36).
-                    setCodeComment(path, commentLine, text);
-                    const side = "RIGHT" as const;
-                    stageAsk({
-                      id: codePositionKey({ path, line: commentLine, side }),
-                      anchor: `${path}:${commentLine}`,
-                      type: "request-change",
-                      body: text,
-                      side,
-                      ...(patchsetId === undefined
-                        ? {}
-                        : {
-                            codeRef: {
-                              patchsetId,
-                              path,
-                              side: "head",
-                              startLine: commentLine,
-                              endLine: commentLine,
-                            },
-                          }),
-                    });
-                    flight.signal(); // the staging act flies one bubble to the FAB
-                    setOpenLine(null);
-                  }}
-                />
-              </div>
-            )}
-          </React.Fragment>
-        );
-      })}
-    </div>
+                    {line.oldLine ?? ""}
+                  </span>
+                  <span
+                    className={cn(
+                      "relative flex h-full w-[6ch] shrink-0 select-none items-center justify-end gap-1 pr-2 text-muted-foreground/50",
+                      line.type === "add" && "bg-green/15",
+                      line.type === "del" && "bg-destructive/10",
+                    )}
+                  >
+                    {commentLine !== null && !historical && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenLineChange(isOpen ? null : commentLine)}
+                        aria-label={
+                          hasComment
+                            ? `Edit comment on line ${commentLine}`
+                            : `Comment on line ${commentLine}`
+                        }
+                        className={cn(
+                          "size-4 shrink-0 items-center justify-center rounded transition-colors",
+                          hasAsk
+                            ? "bg-destructive text-primary-foreground hover:bg-destructive/90"
+                            : "bg-primary text-primary-foreground hover:bg-primary/90",
+                          hasComment || isOpen ? "flex" : "hidden group-hover:flex",
+                        )}
+                      >
+                        <Icon
+                          icon={hasComment ? MessageSquare : Plus}
+                          className={hasComment ? "size-2.5" : "size-3"}
+                        />
+                      </button>
+                    )}
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        commentLine !== null &&
+                          !historical &&
+                          !hasComment &&
+                          !isOpen &&
+                          "group-hover:hidden",
+                      )}
+                    >
+                      {line.newLine ?? ""}
+                    </span>
+                  </span>
+                  <span
+                    className={cn(
+                      "w-[2ch] shrink-0 select-none text-center",
+                      line.type === "add" && "text-green",
+                      line.type === "del" && "text-destructive",
+                    )}
+                  >
+                    {line.type === "add" ? "+" : line.type === "del" ? "−" : ""}
+                  </span>
+                  <span className="whitespace-pre pr-3 text-foreground/90">
+                    {tokens.length
+                      ? tokens.map((token, tokenIndex) => (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: token order within a line is stable and positional.
+                          <span key={tokenIndex} className={`rtok rtok-${token.type}`}>
+                            {token.text}
+                          </span>
+                        ))
+                      : " "}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
