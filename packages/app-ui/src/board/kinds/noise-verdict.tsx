@@ -27,7 +27,7 @@ export function NoiseVerdictElement({ element }: { readonly element: ElementOf<"
       data-kind="noise_verdict"
       data-verdict={verdict}
       data-element-id={element.id}
-      className={cn("flex flex-col gap-1.5", noise && "opacity-70")}
+      className={cn("flex flex-col gap-1.5", noise && "opacity-50")}
     >
       <div className="flex items-center gap-2">
         <span

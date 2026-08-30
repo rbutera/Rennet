@@ -17,8 +17,8 @@ import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from 
 // a callout when present; every finding keeps its actions even without that optional marker.
 
 const SEVERITY_CHIP: Record<"high" | "medium" | "low", string> = {
-  high: "bg-danger-soft text-danger",
-  medium: "bg-primary/15 text-primary",
+  high: "bg-destructive/15 text-destructive",
+  medium: "bg-warn-soft text-warn",
   low: "bg-secondary text-muted-foreground",
 };
 
@@ -31,19 +31,12 @@ function splitFix(concern: string): { body: string; fix: string | null } {
 
 function Concurrence({
   tallies,
-  dimmed,
 }: {
   readonly tallies: readonly { model: string; agree: number; total: number }[];
-  readonly dimmed: boolean;
 }) {
   if (tallies.length === 0) return null;
   return (
-    <span
-      className={cn(
-        "flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground",
-        dimmed && "opacity-60",
-      )}
-    >
+    <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
       {tallies.map((t) => (
         <span key={t.model} title={`${t.model}: ${t.agree} of ${t.total} agree`}>
           {t.model} {t.agree}/{t.total}
@@ -113,7 +106,12 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   }
 
   return (
-    <div data-kind="finding" data-status={status} data-element-id={element.id}>
+    <div
+      data-kind="finding"
+      data-status={status}
+      data-element-id={element.id}
+      className={cn("transition-opacity", dimmed && "opacity-50")}
+    >
       <h3 className="contents">
         <button
           type="button"
@@ -132,21 +130,15 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             className={cn(
               "mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wide",
               SEVERITY_CHIP[severity],
-              dimmed && "opacity-60",
             )}
           >
             {severity}
           </span>
-          <span
-            className={cn(
-              "min-w-0 flex-1 font-semibold text-base text-foreground leading-snug",
-              dimmed && "opacity-60",
-            )}
-          >
+          <span className="min-w-0 flex-1 font-semibold text-base text-foreground leading-snug">
             {summary}
             {status !== "open" && <span className="sr-only">, {status}</span>}
           </span>
-          <Concurrence tallies={concurrence} dimmed={dimmed} />
+          <Concurrence tallies={concurrence} />
         </button>
       </h3>
       <Collapse open={open}>
@@ -155,10 +147,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             text={body}
             elementId={element.id}
             patchsetId={patchsetId}
-            paragraphClassName={cn(
-              "text-foreground/90 text-sm leading-relaxed",
-              dimmed && "opacity-60",
-            )}
+            paragraphClassName="text-foreground/90 text-sm leading-relaxed"
           />
           <div
             className={cn(
@@ -168,17 +157,14 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
           >
             {fix ? (
               <>
-                <h4 className={cn("font-semibold text-sm text-foreground", dimmed && "opacity-60")}>
+                <h4 className="font-medium text-2xs text-muted-foreground uppercase tracking-wide">
                   Fix
                 </h4>
                 <QuoteHighlightLayer
                   text={fix}
                   elementId={element.id}
                   patchsetId={patchsetId}
-                  paragraphClassName={cn(
-                    "text-foreground/90 text-sm leading-relaxed",
-                    dimmed && "opacity-60",
-                  )}
+                  paragraphClassName="text-foreground/90 text-sm leading-relaxed"
                 />
               </>
             ) : null}
@@ -187,7 +173,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
                 <button
                   type="button"
                   onClick={toggleDismissal}
-                  className="rounded border border-border px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-secondary hover:text-foreground"
+                  className="rounded border border-border px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
                   {dismissedByReviewer ? "Dismissed · Undo" : "Dismiss"}
                 </button>
@@ -195,7 +181,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
               <button
                 type="button"
                 onClick={discussFinding}
-                className="rounded border border-border px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-secondary hover:text-foreground"
+                className="rounded border border-border px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               >
                 Discuss
               </button>

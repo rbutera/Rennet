@@ -264,8 +264,11 @@ describe("board kind renderers over the fixture set", () => {
       expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
     });
     if (!finding) throw new Error("missing f1 finding");
-    expect(finding.className).not.toContain("opacity-60");
-    expect(finding.querySelector('[class~="opacity-60"]')).toBeTruthy();
+    // The fade is ONE transition on the finding wrapper, not a per-child opacity snap:
+    // dimming the card as a unit is what makes it cross-fade rather than flicker.
+    expect(finding.className).toContain("opacity-50");
+    expect(finding.className).toContain("transition-opacity");
+    expect(finding.querySelector('[class~="opacity-60"]')).toBeNull();
     expect(finding.textContent).toContain(", dismissed");
 
     if (!disclosure) throw new Error("missing finding disclosure");
@@ -275,12 +278,15 @@ describe("board kind renderers over the fixture set", () => {
     if (!undo) throw new Error("missing dismissal Undo action");
     const [discuss] = getAllByText("Discuss");
     if (!discuss) throw new Error("missing Discuss action");
+    // Peeking a dismissed finding open still reaches its actions — the wrapper fade is
+    // the ONLY dimming, so nothing between them and the card adds a second one.
     expect(undo.closest('[class~="opacity-60"]')).toBeNull();
     expect(discuss.closest('[class~="opacity-60"]')).toBeNull();
     await user.click(undo);
     await waitFor(() => {
       expect(finding?.getAttribute("data-status")).toBe("open");
       expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+      expect(finding?.className).not.toContain("opacity-50");
     });
   });
 

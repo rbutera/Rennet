@@ -16,6 +16,9 @@ export function ProseElement({ element }: { readonly element: ElementOf<"prose">
       text={element.data.markdown}
       elementId={element.id}
       patchsetId={patchsetId}
+      // The 640px measure belongs to the prose element, not the board column: board
+      // rows and chips still run the full width (prototype `lens-board.tsx:149`).
+      className="max-w-[640px]"
       paragraphClassName="text-sm leading-relaxed text-foreground/90"
     />
   );

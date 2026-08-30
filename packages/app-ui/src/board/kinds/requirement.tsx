@@ -9,14 +9,19 @@ import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context"
 import { BoardElement } from "./renderers";
 
 // `requirement` (C05 3.4) — a shall-requirement and how the change covers it. A
-// coverage chip reads the `met | gap | partial` verdict (green / danger / gold); the
+// coverage chip reads the `met | gap | partial` verdict (green for met, copper warn
+// for both the partial and the unimplemented gap — the prototype tints them alike); the
 // `trace` code_refs reveal on click through `AnchorReveal`. `shall` renders with the
 // normative-grammar bolding (SHALL/WHEN/THEN) `RichText` already carries.
 
+// The prototype's chip is a BUTTON that jumps to the claiming hunk; here the hunks are
+// already reachable through the `AnchorReveal` chips below, so this stays a span. A
+// focusable control that does nothing, or a hover tint over nothing, would read as a
+// jump the app cannot make.
 const COVERAGE_CHIP: Record<"met" | "gap" | "partial", string> = {
   met: "border-green-line text-green",
-  gap: "border-accent-line text-accent",
-  partial: "border-primary/40 text-primary",
+  gap: "border-warn-line text-warn",
+  partial: "border-warn-line text-warn",
 };
 
 function countLabel(count: number, singular: string): string {
@@ -116,19 +121,23 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
         paragraphClassName="text-foreground/90 text-sm leading-relaxed"
       />
       {scenarioElements.length > 0 ? (
-        <ul
-          data-kind="requirement-scenarios"
-          className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60"
-        >
+        <ul data-kind="requirement-scenarios" className="flex flex-col gap-1">
           {scenarioElements.map((scenario) => {
             const clauses = scenario.kind === "prose" ? scenarioClauses(scenario) : undefined;
             return (
-              <li key={scenario.id} data-scenario-ref={scenario.id} className="pl-0.5">
+              <li
+                key={scenario.id}
+                data-scenario-ref={scenario.id}
+                className="flex gap-1.5 text-13 text-foreground/75 leading-relaxed"
+              >
+                <span aria-hidden="true" className="select-none text-muted-foreground/60">
+                  ‣
+                </span>
                 {clauses ? (
                   <dl
                     data-kind="scenario-clauses"
                     data-element-id={scenario.id}
-                    className="mt-1 grid gap-x-3 gap-y-1 text-xs sm:grid-cols-[auto_1fr]"
+                    className="grid min-w-0 flex-1 gap-x-3 gap-y-1 text-xs sm:grid-cols-[auto_1fr]"
                   >
                     <dt className="font-medium text-muted-foreground">Trigger</dt>
                     <dd data-scenario-clause="condition" className="text-foreground/80">

@@ -86,10 +86,10 @@ function FoldLine({
 }) {
   const countText = sectionCountText(counts);
   return (
-    <span className="flex min-w-0 flex-1 flex-col items-start gap-2">
+    <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
       <span className="w-full text-muted-foreground text-sm leading-relaxed">{gist}</span>
       {countText.length > 0 ? (
-        <span data-kind="section-counts" className="text-muted-foreground/70 text-xs">
+        <span data-kind="section-counts" className="text-muted-foreground/60 text-xs">
           {countText}
         </span>
       ) : null}
@@ -141,7 +141,7 @@ export function Section({
       {...(entry.delta ? { "data-delta": entry.delta } : {})}
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
       data-open={open}
-      className="flex scroll-mt-16 flex-col gap-4"
+      className="flex scroll-mt-6 flex-col gap-3"
     >
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex min-w-0 flex-1 items-center gap-2">
@@ -173,14 +173,18 @@ export function Section({
             onActivate={interact}
             ariaLabel={headingLabel}
             ariaExpanded={open}
-            className="min-w-0 flex-1 cursor-pointer font-medium text-xl text-foreground"
+            className="min-w-0 flex-1 cursor-pointer font-medium text-foreground text-lg"
           />
           {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         </h2>
         <SourceChips sources={sources ?? []} />
       </div>
       <Collapse open={!open}>
-        <button type="button" onClick={interact} className="flex w-full pl-5 text-left">
+        <button
+          type="button"
+          onClick={interact}
+          className="flex w-full pl-5 text-left transition-colors hover:text-foreground/80"
+        >
           <FoldLine gist={entry.gist} counts={entry.counts} />
         </button>
       </Collapse>
