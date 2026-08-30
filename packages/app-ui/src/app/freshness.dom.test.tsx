@@ -128,6 +128,7 @@ describe("invalidation UX (#576)", () => {
         const suffix = regenerated ? "B" : "A";
         return {
           status: "pr",
+          target: { repo: { forge: "gitlab", owner: "acme", name: "widget" } },
           submission: {
             title: `Patchset ${suffix} pull request`,
             body: `Patchset ${suffix} body.`,
@@ -136,7 +137,7 @@ describe("invalidation UX (#576)", () => {
             draft: true,
           },
           payload: regenerated ? "payload-b" : "payload-a",
-          destination: "widget:feat/widget-refresh → main",
+          destination: "gitlab:acme/widget · feat/widget-refresh → main",
           title: `Patchset ${suffix} pull request`,
           compositionId: regenerated ? "composition-b" : "composition-a",
         };

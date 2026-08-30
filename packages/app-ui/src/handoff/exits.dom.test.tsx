@@ -55,6 +55,10 @@ function review(over: Partial<Review> = {}): Review {
 }
 
 type ReviewCompose = Extract<CommandOutput<"publish.compose">, { status: "review" }>;
+type PrCompose = Extract<CommandOutput<"publish.compose">, { status: "pr" }>;
+const GITLAB_PR_TARGET: NonNullable<PrCompose["target"]> = {
+  repo: { forge: "gitlab", owner: "acme", name: "widget" },
+};
 const COMMENTS: ReviewCompose["artifact"]["comments"] = [
   { path: "src/a.ts", line: 5, side: "RIGHT", type: "request-change", body: "guard the boundary" },
   { path: "src/a.ts", side: "RIGHT", type: "comment", body: "overall this reads clean" },
@@ -642,12 +646,13 @@ describe("hand-off exits (C08 cluster 6)", () => {
   });
 
   it("Open Pull Request composes(pr) → submits, then receipts the PR number + link", async () => {
-    let submittedPayload: string | undefined;
+    const submitted: CommandInput<"publish.submitPr">[] = [];
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": (input) => {
         expect(input.mode).toBe("pr");
         return {
           status: "pr",
+          target: GITLAB_PR_TARGET,
           submission: {
             title: "Harden the retry path",
             body: "## Summary\n\nGuards the boundary.",
@@ -656,14 +661,18 @@ describe("hand-off exits (C08 cluster 6)", () => {
             draft: true,
           },
           payload: PAYLOAD,
-          destination: "atlas:feat/x → main",
+          destination: "gitlab:acme/widget · feat/x → main",
           title: "Harden the retry path",
           compositionId: "comp-pr-1",
         };
       },
       "publish.submitPr": (input: CommandInput<"publish.submitPr">) => {
-        submittedPayload = input.payload;
-        return { url: "https://github.com/acme/orbital/pull/42", number: 42, reused: false };
+        submitted.push(input);
+        return {
+          url: "https://gitlab.com/acme/widget/-/merge_requests/42",
+          number: 42,
+          reused: false,
+        };
       },
     };
     // Own-branch review (no postTarget), nothing staged → the composed PR IS the page.
@@ -671,11 +680,14 @@ describe("hand-off exits (C08 cluster 6)", () => {
     const open = await r.findByRole("button", { name: /Open Pull Request/ });
     expect(r.getByText("Harden the retry path")).toBeTruthy();
     expect(r.getByText("main ← feat/x · Draft")).toBeTruthy();
+    expect(r.getByText("gitlab:acme/widget · feat/x → main")).toBeTruthy();
 
     await r.user.click(open);
-    // The submitted payload is the byte-exact one compose returned (what you preview is what opens).
-    expect(submittedPayload).toBe(PAYLOAD);
+    // The provider-qualified target and payload are the exact values compose returned.
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]?.target).toEqual(GITLAB_PR_TARGET);
+    expect(submitted[0]?.payload).toBe(PAYLOAD);
     expect(await r.findByText(/Pull request opened · #42/)).toBeTruthy();
-    expect(r.getByText("github.com/acme/orbital/pull/42")).toBeTruthy();
+    expect(r.getByText("gitlab.com/acme/widget/-/merge_requests/42")).toBeTruthy();
   });
 });

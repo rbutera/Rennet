@@ -209,6 +209,7 @@ export function useHandoffExits(review: Review): HandoffExits {
     const { url, number } = await submitPr({
       commandId: crypto.randomUUID(),
       reviewId,
+      ...(prComposed.target === undefined ? {} : { target: prComposed.target }),
       submission: prComposed.submission,
       payload: prComposed.payload,
       compositionId: prComposed.compositionId,
@@ -232,7 +233,9 @@ export function useHandoffExits(review: Review): HandoffExits {
     onSetVerdict,
     reviewDraft: reviewComposed ? composeReviewDraft(reviewComposed) : undefined,
     onOpenPr: prComposed ? onOpenPr : undefined,
-    pr: prComposed ? { ...prComposed.submission, ready: true } : undefined,
+    pr: prComposed
+      ? { ...prComposed.submission, destination: prComposed.destination, ready: true }
+      : undefined,
     onRevise,
     ...(unavailable === undefined ? {} : { unavailable }),
   };

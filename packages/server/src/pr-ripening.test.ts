@@ -7,6 +7,7 @@ import {
   canonicalPrSubmissionPayload,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
+  type ForgePrSubmissionTarget,
 } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
@@ -18,6 +19,10 @@ import { publishHandlers } from "./dispatch/publish";
 // (by derived id). `publish.submitPr`'s push+open-PR is unchanged and idempotent by head.
 
 const REVIEW_ID = "review-1";
+const TARGET = {
+  repo: { forge: "github", owner: "acme", name: "widget" },
+} satisfies ForgePrSubmissionTarget;
+const DESTINATION = { remoteName: "origin", target: TARGET };
 const OWN_BRANCH_REVIEW = {
   id: REVIEW_ID,
   repositoryRoot: "/repo",
@@ -45,6 +50,7 @@ function harness(extra: Partial<DispatchDeps> = {}) {
     allowedRoots: new Set(["/repo"]),
     service: { reviewById: (id: string) => (id === REVIEW_ID ? OWN_BRANCH_REVIEW : undefined) },
     raiseAttention,
+    resolvePullRequestDestination: () => Promise.resolve(DESTINATION),
     ...extra,
   } as unknown as DispatchDeps);
   return { store, raiseAttention, handlers: publishHandlers(rt) };
@@ -53,6 +59,7 @@ function harness(extra: Partial<DispatchDeps> = {}) {
 type ComposePr = {
   status: "pr";
   submission: ForgePrSubmission;
+  target: ForgePrSubmissionTarget;
   payload: string;
   compositionId: string;
 };
@@ -91,13 +98,15 @@ describe("PR-lane ripening (B11 5.2) — re-compose + re-raise publish-ready ide
     // A submit port modelling the real idempotency: the first open for a head creates the PR;
     // a second submit of the SAME head reuses it (reused: true), never a second PR.
     const openByHead = new Map<string, ForgePrSubmissionOutcome>();
-    const submitPullRequest = vi.fn(async ({ headRef }: { headRef: string }) => {
-      const existing = openByHead.get(headRef);
-      if (existing) return { ...existing, reused: true };
-      const opened = { url: `https://pr/${headRef}`, number: 42, reused: false } as const;
-      openByHead.set(headRef, opened);
-      return opened;
-    });
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(
+      async ({ headRef }) => {
+        const existing = openByHead.get(headRef);
+        if (existing) return { ...existing, reused: true };
+        const opened = { url: `https://pr/${headRef}`, number: 42, reused: false } as const;
+        openByHead.set(headRef, opened);
+        return opened;
+      },
+    );
     const { handlers } = harness({ submitPullRequest });
     const submitPr = handlers["publish.submitPr"];
     const composed = (await handlers["publish.compose"]({
@@ -118,10 +127,13 @@ describe("PR-lane ripening (B11 5.2) — re-compose + re-raise publish-ready ide
     const first = (await submitPr({
       commandId: randomUUID(),
       reviewId: REVIEW_ID,
+      target: composed.target,
       submission,
       payload,
       compositionId: composed.compositionId,
     })) as ForgePrSubmissionOutcome;
+    // Protocol-v2 peers may omit the additive target field. The daemon recovers the current
+    // destination and validates it against the target-bound composition id before reusing.
     const second = (await submitPr({
       commandId: randomUUID(),
       reviewId: REVIEW_ID,

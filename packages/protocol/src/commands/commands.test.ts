@@ -325,6 +325,47 @@ describe("command registry invariants (#465)", () => {
     });
   });
 
+  it("round-trips a provider-qualified PR target from compose into submit", () => {
+    const target = {
+      repo: { forge: "gitlab", owner: "acme", name: "widget" },
+    };
+    const composed = {
+      status: "pr" as const,
+      target,
+      submission: {
+        title: "Bind the forge destination",
+        body: "The preview names the GitLab repository that receives this merge request.",
+        base: "main",
+        head: "feat/forge-target",
+        draft: true,
+      },
+      payload: "canonical-pr-bytes",
+      destination: "gitlab:acme/widget · feat/forge-target → main",
+      title: "Bind the forge destination",
+      compositionId: "composition-gitlab-1",
+    };
+
+    const parsed = parseCommandOutput("publish.compose", composed);
+    expect(parsed).toEqual(composed);
+    if (parsed.status !== "pr") throw new Error("Expected a composed pull request");
+
+    const submit = {
+      commandId: "00000000-0000-4000-8000-000000000001",
+      reviewId: "review-gitlab-1",
+      target: parsed.target,
+      submission: parsed.submission,
+      payload: parsed.payload,
+      compositionId: parsed.compositionId,
+    };
+    expect(parseCommandInput("publish.submitPr", submit)).toEqual(submit);
+    const { target: _composedTarget, ...legacyComposed } = composed;
+    void _composedTarget;
+    expect(parseCommandOutput("publish.compose", legacyComposed)).toEqual(legacyComposed);
+    const { target: _submitTarget, ...legacySubmit } = submit;
+    void _submitTarget;
+    expect(parseCommandInput("publish.submitPr", legacySubmit)).toEqual(legacySubmit);
+  });
+
   it("requires a byte-preserved opener and exact post with no caller target or verdict", () => {
     const artifact = {
       opener: "  I checked this exact review.  ",

@@ -238,11 +238,14 @@ The preview and the post are the same object. `publish.compose` returns one
 artifact (`opener`, line comments, body notes) and one exact forge descriptor
 (`event`, `body`, `threads`). Before any egress the server reconstructs both in
 `@rennet/core` and compares the descriptor exactly, so the renderer cannot build
-a different body after preview. The server derives the pull-request target from
-the addressed review; it is not client input. A daemon-composed payload carries
-a `compositionId` bound to the review, active patchset, canonical artifact, and
-event. A stale preview or changed verdict is refused as one stale composition,
-not routed through a confirmation step.
+a different body after preview. For a teammate review, the server derives the
+pull-request target from the addressed review. For an own-branch exit,
+`publish.compose` resolves the effective push URL and returns its
+provider-qualified repository; the client can only round-trip that target. A
+daemon-composed payload carries a `compositionId` bound to the review, active
+patchset, canonical artifact, and either its review event or own-branch target.
+A stale preview, changed verdict, or changed forge destination is refused as one
+stale composition, not routed through a confirmation step.
 
 The model-authored opener is content-addressed by the persisted evidence used to
 draft it. Unchanged evidence reuses the exact stored bytes across remounts and
@@ -257,8 +260,8 @@ already landed instead of posting a second one.
 The outbound payload holds only what the reviewer sent. Internal conversation,
 model traces, and draft history never enter it unless their text became
 outbound draft content. There is no hosted Rennet backend: of the exit
-payload, GitHub receives the review or the pull request, and the harness
-provider receives model-turn context.
+payload, the registered forge receives the review or pull request (currently
+GitHub), and the harness provider receives model-turn context.
 
 ## The three exits, as built
 
@@ -297,24 +300,33 @@ The exits themselves:
   with a terminal failure and leaves the checkpoint evidence intact for a
   regeneration-only retry. The worker-to-record interval and durable replay of
   execution-phase receipts remain outside this restart boundary.
-- **The pull request** — `publish.compose(mode:"pr")` feeds the ask set plus the
-  verdict override into the PR body draft, with a **stable derived
-  `compositionId`** so an unchanged draft re-raises the *same* publish-ready.
+- **The pull request** — `publish.compose(mode:"pr")` resolves the effective
+  push URL before drafting and shows its provider-qualified repository on the
+  preview. That target joins the canonical submission in a **stable derived
+  `compositionId`**, so an unchanged draft re-raises the *same* publish-ready.
   As each round lands, the own-branch PR draft **re-composes and re-raises
-  publish-ready idempotently** (PR-lane ripening). `publish.submitPr`'s push +
-  open-PR is idempotent by head: one PR per head, reused on re-submit.
+  publish-ready idempotently** (PR-lane ripening). `publish.submitPr` resolves
+  the destination again, refuses a provider or repository change before push,
+  and gives the same resolved destination to both the named-remote push and the
+  forge create operation. Opening remains idempotent by head: one PR per head,
+  reused on re-submit.
 
 Nothing here posts. Every exit drafts and previews; the branch push that opens a
 PR is not publication, and a GitHub review egresses only when Rai clicks Post.
 
 ## Opening the pull request
 
-The own-branch exit is one action. The server verifies that the previewed head
-matches the branch recorded on the active patchset, resolves the single GitHub
-remote, and pushes the named branch. If an open pull request already exists for
-that head and base it is reused; otherwise one is created from the previewed
-title and body. A detached HEAD fails before the push rather than pushing
-something the preview did not describe.
+The own-branch exit is one action. Before the preview appears, the server
+resolves one registered forge destination from the effective push URL and names
+its provider and repository beside the branch range. The composition binding
+covers that exact target. On sign, the server verifies the previewed head against
+the active patchset, resolves the destination again, and refuses any provider or
+repository drift before mutation. The one resolved object then supplies both the
+named remote to push and the repository passed to the forge adapter. If an open
+pull request already exists for that head and base it is reused; otherwise one is
+created from the previewed title and body. A detached HEAD, unsupported remote,
+ambiguous push URL, or changed destination fails before the push rather than
+sending something the preview did not describe.
 
 ## Rounds: the own-branch loop
 
