@@ -441,25 +441,40 @@ export const detectedForgeSchema = z.object({
 });
 export type DetectedForge = z.infer<typeof detectedForgeSchema>;
 
-// ── The GitHub account (v4.2: OAuth device flow replaces the gh-CLI piggyback) ─
+// ── The GitHub account (v4.2: gh primary, Rennet credential fallback) ───
 // The renderer-safe projection of the host-side auth state. The TOKEN itself is
 // never here — only who is connected, with which scopes, or which distinct
-// problem (with its copy) stands between the user and a connection.
+// problem (with its copy) stands between the user and a connection. A connected
+// state names who owns the credential lifecycle so the client never offers a
+// fallback action while an authoritative `gh` credential is present. Failures
+// carry the source when the host can establish it; not-connected remains source-free.
+const gitHubAuthSourceSchema = z.enum(["gh", "fallback"]);
 export const gitHubAuthStatusSchema = z.discriminatedUnion("state", [
   z.object({
     state: z.literal("connected"),
+    /** `gh` owns its credential; `fallback` is Rennet's device-flow or pasted token. */
+    source: gitHubAuthSourceSchema.default("fallback"),
     /** The signed-in GitHub login (`@user` on the settings row), when resolvable. */
     login: z.string().nullable(),
     scopes: z.array(z.string()),
   }),
   z.object({ state: z.literal("not-connected"), copy: z.string().min(1) }),
-  z.object({ state: z.literal("token-invalid"), copy: z.string().min(1) }),
+  z.object({
+    state: z.literal("token-invalid"),
+    copy: z.string().min(1),
+    source: gitHubAuthSourceSchema.optional(),
+  }),
   /** GitHub is unreachable (timeout/DNS/offline) — says nothing about the token. */
-  z.object({ state: z.literal("network"), copy: z.string().min(1) }),
+  z.object({
+    state: z.literal("network"),
+    copy: z.string().min(1),
+    source: gitHubAuthSourceSchema.optional(),
+  }),
   z.object({
     state: z.literal("insufficient-scope"),
     copy: z.string().min(1),
     scopes: z.array(z.string()),
+    source: gitHubAuthSourceSchema.optional(),
   }),
 ]);
 export type GitHubAuthStatus = z.infer<typeof gitHubAuthStatusSchema>;
@@ -893,6 +908,14 @@ export const projectDetailSchema = z.object({
   authUnavailable: z
     .enum(["not-connected", "token-invalid", "insufficient-scope", "network"])
     .optional(),
+  /**
+   * Who owned the credential that produced `authUnavailable`, when known. Older
+   * fallback-only daemons omit this; current daemons carry it so the renderer never
+   * offers Rennet's fallback reconnect for a `gh` credential the CLI still owns.
+   */
+  authUnavailableSource: gitHubAuthSourceSchema.optional(),
+  /** Renderer-safe repair copy from the same auth resolution as the failure. */
+  authUnavailableCopy: z.string().min(1).optional(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 

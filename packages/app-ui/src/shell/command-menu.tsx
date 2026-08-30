@@ -33,7 +33,7 @@ import { useSidebarTree } from "./sidebar-data";
 //
 // `⌘P` opens search-first, `⌘K` command-first — one component, the mode reorders the
 // groups and swaps the input placeholder. Registry rows come from the live
-// `exposure.commandMenu` inventory — ONE exposed row today; which rows and why is
+// `exposure.commandMenu` inventory — no raw protocol row qualifies today; why is
 // `docs/developing/reference/command-menu-exposure.md`.
 // ─────────────────────────────────────────────────────────────────────────────
 

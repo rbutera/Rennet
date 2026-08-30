@@ -5,10 +5,11 @@
 // hosts state to a second reader (proof it is the seam, not a local copy); the three
 // daemon states render from the projection; the Remove confirmation names the project
 // + session counts and states the machine is untouched.
+import type { GitHubAuthStatus } from "@rennet/protocol";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../../data";
-import { cleanup, mount, within } from "../../test/dom";
+import { cleanup, mount, waitFor, within } from "../../test/dom";
 import { MemoryBridge } from "../../test/memory-bridge";
 import {
   EMPTY_SETTINGS_PROJECTION,
@@ -71,6 +72,41 @@ describe("EnvironmentsPage — cards + daemon", () => {
     );
     expect(getByText("This Machine")).toBeTruthy();
     expect(getByText("Rennet daemon v1.0.1")).toBeTruthy();
+    cleanup();
+  });
+
+  it("mounts the current daemon's GitHub fallback controls and disconnects through them", async () => {
+    let status: GitHubAuthStatus = {
+      state: "connected",
+      source: "fallback",
+      login: "rbutera",
+      scopes: ["repo", "workflow"],
+    };
+    let disconnectCalls = 0;
+    const bridge = new MemoryBridge(
+      {
+        "github.status": () => ({ status }),
+        "github.disconnect": () => {
+          disconnectCalls += 1;
+          status = { state: "not-connected", copy: "No GitHub credential is available." };
+          return {};
+        },
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+    const { getByRole, queryByRole, user } = mount(
+      <BridgeProvider bridge={bridge}>
+        <SettingsProjectionProvider value={{ ...EMPTY_SETTINGS_PROJECTION, hosts: [LOCAL] }}>
+          <EnvironmentsPage />
+        </SettingsProjectionProvider>
+      </BridgeProvider>,
+    );
+
+    await user.click(await waitFor(() => getByRole("button", { name: "Disconnect" })));
+    expect(disconnectCalls).toBe(1);
+    await waitFor(() =>
+      expect(queryByRole("button", { name: "Use fallback sign-in" })).toBeTruthy(),
+    );
     cleanup();
   });
 

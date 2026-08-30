@@ -40,13 +40,8 @@ a result — new UI, deliberately not built.
 
 ## Exposed
 
-| Command | Rationale |
-|---|---|
-| `github.disconnect` | Parameterless, a real user action (sign out of GitHub), reversible by reconnecting, and meaningful from anywhere in the app. |
-
-Selecting it dispatches live through the data seam. The menu stays open until the
-dispatch settles: it closes on success, and on failure it stays put carrying the
-reason. A menu row never reports a success it did not get.
+No raw protocol command is exposed today. Command mode still leads with app actions,
+settings, projects, and sessions.
 
 ## Not exposed
 
@@ -113,6 +108,7 @@ reason. A menu row never reports a success it did not get.
 | `github.connectPoll` | Poll wire inside the connect flow. |
 | `github.connectCancel` | Only meaningful mid-device-flow, which the connect card owns. |
 | `github.setToken` | Needs the pasted token. |
+| `github.disconnect` | Removes only Rennet's fallback credential. Settings → Environments → GitHub account exposes it after proving the live source is the fallback; a context-free command could visibly do nothing while `gh` remains connected. |
 
 ### projects and project
 

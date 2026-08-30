@@ -3,7 +3,8 @@
 // The GitHub connect surfaces (v4.2, wireframes 01 + 15): the SKIPPABLE first-run
 // card and the settings account rows, over a recording fake bridge. Behavioural:
 // the card's skip persists, connect runs the device-flow code → poll → connected
-// journey, the paste side door validates before celebrating, disconnect forgets.
+// journey, the paste fallback validates before celebrating, and only a Rennet-owned
+// fallback offers Disconnect. A `gh` credential stays visibly owned by GitHub CLI.
 import type { GitHubAuthStatus, GitHubConnectPoll, RennetBridge } from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeProvider } from "../data";
@@ -14,8 +15,15 @@ const NOT_CONNECTED: GitHubAuthStatus = {
   state: "not-connected",
   copy: "GitHub is not connected.",
 };
-const CONNECTED: GitHubAuthStatus = {
+const GH_CONNECTED: GitHubAuthStatus = {
   state: "connected",
+  source: "gh",
+  login: "rbutera",
+  scopes: ["repo", "workflow"],
+};
+const FALLBACK_CONNECTED: GitHubAuthStatus = {
+  state: "connected",
+  source: "fallback",
   login: "rbutera",
   scopes: ["repo", "workflow"],
 };
@@ -52,7 +60,7 @@ function fakeBridge(config: FakeConfig = {}) {
         return { poll: next };
       }
       case "github.setToken": {
-        const result = config.setTokenStatus ?? CONNECTED;
+        const result = config.setTokenStatus ?? FALLBACK_CONNECTED;
         if (result.state === "connected") status = result;
         return { status: result };
       }
@@ -75,7 +83,7 @@ beforeEach(() => {
 });
 
 describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
-  it("renders the card when not connected, with Connect and Skip", async () => {
+  it("renders the card when not connected, naming device sign-in as the fallback", async () => {
     const { bridge } = fakeBridge();
     const { container } = mount(
       <BridgeProvider bridge={bridge}>
@@ -83,12 +91,16 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
       </BridgeProvider>,
     );
     await waitFor(() => expect(container.querySelector(".github-card")).not.toBeNull());
-    expect(container.querySelector(".github-card-title")?.textContent).toBe("Connect GitHub");
+    expect(container.querySelector(".github-card-title")?.textContent).toBe("GitHub fallback");
+    expect(container.querySelector(".github-card-sub")?.textContent).toContain(
+      "only when GitHub CLI isn't available",
+    );
+    expect(container.querySelector(".github-btn")?.textContent).toBe("Use fallback");
     expect(container.querySelector(".github-skip")?.textContent).toBe("Skip for now");
   });
 
   it("renders NOTHING when already connected — no nag", async () => {
-    const { bridge, calls } = fakeBridge({ status: CONNECTED });
+    const { bridge, calls } = fakeBridge({ status: GH_CONNECTED });
     const { container } = mount(
       <BridgeProvider bridge={bridge}>
         <GitHubConnectCard />
@@ -137,7 +149,7 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
   it("connect shows the one-time code + verification link, then polls to connected", async () => {
     vi.useFakeTimers();
     const { bridge, calls } = fakeBridge({
-      polls: [{ phase: "pending" }, { phase: "connected", status: CONNECTED }],
+      polls: [{ phase: "pending" }, { phase: "connected", status: FALLBACK_CONNECTED }],
     });
     const { container } = mount(
       <BridgeProvider bridge={bridge}>
@@ -163,6 +175,46 @@ describe("GitHubConnectCard — skippable, never a wall (wireframe 01)", () => {
 });
 
 describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
+  it("offers no fallback action before the credential source resolves", async () => {
+    const calls: string[] = [];
+    const bridge = {
+      invoke: ((name: string) => {
+        calls.push(name);
+        return new Promise(() => undefined);
+      }) as RennetBridge["invoke"],
+    } as RennetBridge;
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
+
+    await waitFor(() => expect(calls).toContain("github.status"));
+    expect(container.textContent).toContain("Checking GitHub credential source");
+    expect(container.querySelector(".github-btn")).toBeNull();
+    expect(container.querySelector(".github-token-input")).toBeNull();
+  });
+
+  it("describes both not-connected paths as fallbacks", async () => {
+    const { bridge } = fakeBridge({ status: NOT_CONNECTED });
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".settings-k")?.textContent).toBe("GitHub fallback"),
+    );
+    expect(container.textContent).toContain("Rennet-managed device sign-in or access token");
+    expect(container.textContent).toContain("Fallback access token");
+    expect(container.textContent).toContain("only when GitHub CLI isn't available");
+    expect(
+      [...container.querySelectorAll(".github-btn")].some(
+        (button) => button.textContent === "Use fallback sign-in",
+      ),
+    ).toBe(true);
+  });
+
   it("shows the honest unreachable copy when GitHub is down — never a connect lie", async () => {
     const { bridge } = fakeBridge({ status: NETWORK });
     const { container } = mount(
@@ -175,10 +227,54 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
         "GitHub is unreachable right now",
       ),
     );
+    expect(container.querySelector(".github-btn")).toBeNull();
+    expect(container.querySelector(".github-token-input")).toBeNull();
   });
 
-  it("shows connected-as fact and Disconnect; disconnect forgets and re-reads", async () => {
-    const { bridge, calls } = fakeBridge({ status: CONNECTED });
+  it("a gh-backed account is labeled GitHub CLI and has no Rennet Disconnect", async () => {
+    const { bridge } = fakeBridge({ status: GH_CONNECTED });
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera"),
+    );
+    expect(container.querySelector(".settings-k")?.textContent).toBe("GitHub CLI");
+    expect(container.textContent).toContain("credential managed by gh");
+    expect(container.querySelector(".github-token-input")).toBeNull();
+    expect(
+      [...container.querySelectorAll(".github-btn")].some(
+        (button) => button.textContent === "Disconnect",
+      ),
+    ).toBe(false);
+  });
+
+  it("a rejected gh credential shows its repair copy without unusable fallback actions", async () => {
+    const { bridge } = fakeBridge({
+      status: {
+        state: "token-invalid",
+        source: "gh",
+        copy: "The GitHub CLI credential was rejected. Run `gh auth login` again.",
+      },
+    });
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <GitHubAccountRows />
+      </BridgeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector(".github-problem")?.textContent).toContain("rejected"),
+    );
+    expect(container.querySelector(".settings-k")?.textContent).toBe("GitHub CLI");
+    expect(container.querySelector(".github-token-input")).toBeNull();
+    expect(container.querySelector(".github-btn")).toBeNull();
+  });
+
+  it("a fallback account keeps Disconnect; disconnect forgets and re-reads", async () => {
+    const { bridge, calls } = fakeBridge({ status: FALLBACK_CONNECTED });
     const { container } = mount(
       <BridgeProvider bridge={bridge}>
         <GitHubAccountRows />
@@ -246,7 +342,7 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
 
   it("a rejected paste NEVER corrupts a connected account's displayed status", async () => {
     const { bridge } = fakeBridge({
-      status: CONNECTED,
+      status: FALLBACK_CONNECTED,
       setTokenStatus: { state: "token-invalid", copy: "That token was revoked." },
     });
     const { container } = mount(
@@ -272,9 +368,14 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
     expect(container.querySelector(".github-connected")?.textContent).toContain("@rbutera");
   });
 
-  it("insufficient-scope renders its own copy as the row's problem, with Connect", async () => {
+  it("a fallback with insufficient scope renders its copy and fallback repair action", async () => {
     const { bridge } = fakeBridge({
-      status: { state: "insufficient-scope", copy: "This token is missing `repo`.", scopes: [] },
+      status: {
+        state: "insufficient-scope",
+        source: "fallback",
+        copy: "This token is missing `repo`.",
+        scopes: [],
+      },
     });
     const { container } = mount(
       <BridgeProvider bridge={bridge}>
@@ -286,7 +387,7 @@ describe("GitHubAccountRows — the settings rows (wireframe 15)", () => {
     );
     expect(
       [...container.querySelectorAll(".github-btn")].some(
-        (button) => button.textContent === "Connect",
+        (button) => button.textContent === "Use fallback sign-in",
       ),
     ).toBe(true);
   });

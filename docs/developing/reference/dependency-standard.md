@@ -213,10 +213,11 @@ The user-installed `git` executable is canonical Git truth. Invoke an exact
 binary with an argv array through Execa. Rennet owns byte-safe, NUL-delimited
 parsing and immutable capture because those details define review correctness.
 
-`@octokit/core` carries GitHub REST and GraphQL requests. Rennet owns OAuth device
-flow, token refresh, request anchoring, idempotency markers, rate-limit handling,
-and outcome reconciliation. Do not add the aggregate `octokit` bundle or global
-retry plugins around publication mutations.
+`@octokit/core` carries GitHub REST and GraphQL requests. The user-installed `gh`
+CLI owns the primary credential lifecycle. Rennet owns its fallback OAuth device
+flow and refresh, plus request anchoring, idempotency markers, rate-limit
+handling, and outcome reconciliation. Do not add the aggregate `octokit` bundle
+or global retry plugins around publication mutations.
 
 The Claude adapter uses `@anthropic-ai/claude-agent-sdk` with the user's installed
 executable. The Codex adapter drives the user's `codex app-server`. Rennet does

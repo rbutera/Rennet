@@ -21,8 +21,9 @@ import { requestErrorStatus } from "./github-octokit";
  * a duplicate (422 "A pull request already exists"), which is caught and resolved to
  * the existing PR rather than surfaced as a failure.
  *
- * The token is resolved LAZILY (`resolveOctokit`) and never leaves the client —
- * never persisted here, never part of a logged descriptor.
+ * The token is resolved LAZILY (`resolveOctokit`) once per submission and never
+ * leaves the client. Lookup, create, and 422 reconciliation therefore cannot change
+ * identity midway through one operation.
  */
 
 export interface GitHubPrSubmissionConfig {
@@ -40,10 +41,10 @@ export class GitHubPrSubmissionAdapter implements ForgePrSubmissionPort {
 
   /** The single OPEN PR from `head` against `base`, or null when none exists. */
   private async findOpenPr(
+    octokit: Octokit,
     target: ForgePrSubmissionTarget,
     submission: ForgePrSubmission,
   ): Promise<RestPr | null> {
-    const octokit = await this.config.resolveOctokit();
     const { owner, name } = target.repo;
     // GitHub filters `head` as `owner:branch` (the head repo's owner). Same-repo
     // own-branch submission is always the target owner's branch.
@@ -64,15 +65,15 @@ export class GitHubPrSubmissionAdapter implements ForgePrSubmissionPort {
   }): Promise<ForgePrSubmissionOutcome> {
     const { target, submission } = input;
     const { owner, name } = target.repo;
+    const octokit = await this.config.resolveOctokit();
 
     // (1) Query-before-create idempotency: reuse an already-open PR from this head.
-    const existing = await this.findOpenPr(target, submission);
+    const existing = await this.findOpenPr(octokit, target, submission);
     if (existing) {
       return { url: existing.html_url, number: existing.number, reused: true };
     }
 
     // (2) Create the PR. `head` is a branch ref (#107), never a SHA.
-    const octokit = await this.config.resolveOctokit();
     try {
       const res = await octokit.request("POST /repos/{owner}/{repo}/pulls", {
         owner,
@@ -89,7 +90,7 @@ export class GitHubPrSubmissionAdapter implements ForgePrSubmissionPort {
       // (3) A 422 means a PR already exists for this head (a race between the lookup
       // and the create) — resolve it to the existing PR rather than failing the sign.
       if (requestErrorStatus(error) === 422) {
-        const raced = await this.findOpenPr(target, submission);
+        const raced = await this.findOpenPr(octokit, target, submission);
         if (raced) return { url: raced.html_url, number: raced.number, reused: true };
       }
       throw error;

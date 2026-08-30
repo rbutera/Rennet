@@ -391,10 +391,11 @@ project's context map and new-chat entry, every settings page, and the
 add-project and add-environment actions. Board and diff content is deliberately
 not searchable from here; the boards are where you read.
 
-The menu also runs commands. A command appears only when it needs no further
-input and does something you would see — today that is `github.disconnect`, which
-signs you out of GitHub. Selecting it runs it: the menu closes when it succeeds,
-and stays open with the reason when it fails.
+Command mode leads with app actions such as **Add Project** and **Add Environment**.
+Raw protocol commands appear only when they need no context and produce a visible
+result; none qualify today. GitHub fallback cleanup stays in **Settings →
+Environments → GitHub account**, which can prove the credential source before
+offering **Disconnect**.
 
 | Shortcut | Action |
 |---|---|

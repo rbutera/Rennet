@@ -382,7 +382,12 @@ function harness(
       connectPoll: () => Promise.resolve({ phase: "idle" as const }),
       connectCancel: () => Promise.resolve(),
       setToken: () =>
-        Promise.resolve({ state: "connected" as const, login: "rai", scopes: ["repo"] }),
+        Promise.resolve({
+          state: "connected" as const,
+          source: "fallback" as const,
+          login: "rai",
+          scopes: ["repo"],
+        }),
       disconnect: () => Promise.resolve(),
     },
     // Project detail (issue #37): a trivial substrate stub; the dedicated smart-list
@@ -2843,7 +2848,12 @@ function frontDoorHarness(seed: {
       connectPoll: () => Promise.resolve({ phase: "idle" as const }),
       connectCancel: () => Promise.resolve(),
       setToken: () =>
-        Promise.resolve({ state: "connected" as const, login: "rai", scopes: ["repo"] }),
+        Promise.resolve({
+          state: "connected" as const,
+          source: "fallback" as const,
+          login: "rai",
+          scopes: ["repo"],
+        }),
       disconnect: () => Promise.resolve(),
     },
     projectDetail: () =>

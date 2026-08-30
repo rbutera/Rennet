@@ -489,7 +489,7 @@ const definitions = {
       error: z.string().optional(),
     }),
   },
-  // ── The GitHub account (v4.2: device flow, no gh CLI) ──────────────────────
+  // ── The GitHub account (v4.2: gh primary, Rennet fallback) ─────────────────
   // Connect is SKIPPABLE everywhere it appears (working-tree review needs no
   // GitHub); these commands exist so the first-run card and the settings rows can
   // show honest state and run the one-time sign-in. The token never crosses this
@@ -522,6 +522,8 @@ const definitions = {
     output: z.object({ status: gitHubAuthStatusSchema }),
   },
   "github.disconnect": {
+    // Remove only the Rennet-managed fallback. A `gh` credential belongs to the
+    // user-installed CLI and is disconnected with `gh auth logout`.
     input: z.object({}),
     output: z.object({}),
   },
@@ -1599,13 +1601,14 @@ const AGENT_EXPOSED = new Set<string>([
  *    (`github.connectStart`'s device code, `pairing.mint`'s code) would be run and
  *    thrown away.
  * 4. It means something outside the surface that owns it — `github.connectCancel`
- *    only makes sense mid-device-flow.
+ *    only makes sense mid-device-flow, while `github.disconnect` only makes sense
+ *    when Settings has established that the live source is Rennet's fallback.
  *
- * That leaves one row today. Under-exposure is honest; an entry that appears to run and
+ * That leaves no rows today. Under-exposure is honest; an entry that appears to run and
  * visibly does nothing is a broken row. Widening this set means giving the menu a way to
  * supply context and show a result — new UI, deliberately not built here.
  */
-const MENU_EXPOSED = new Set<string>(["github.disconnect"]);
+const MENU_EXPOSED = new Set<string>();
 
 /** Where a command executes: the host daemon, or a connected client (#465). Every
  * row today is host-locus; client-locus rows arrive with their commands. */

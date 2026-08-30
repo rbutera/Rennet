@@ -1,6 +1,7 @@
 import { Button } from "@rennet/ui";
 import { Plus } from "lucide-react";
 import { useMemo } from "react";
+import { GitHubAccountRows } from "../../components/github-connect";
 import { Icon } from "../../components/icon";
 import { useBridge } from "../../data";
 import { useRennetStore } from "../../store";
@@ -45,25 +46,31 @@ export function EnvironmentsPage() {
   }, [projection.hosts, bridge.platform, bridge.version]);
 
   return (
-    <Section
-      title="Environments"
-      caption="~/.rennet/daemon-settings.json on each host"
-      bare
-      titleExtra={
-        <Button
-          variant="outline"
-          size="xs"
-          className="ml-2"
-          onClick={() => openDialog("add-environment")}
-        >
-          <Icon icon={Plus} />
-          Add Environment
-        </Button>
-      }
-    >
-      {hosts.map((host) => (
-        <HostCard key={host.id} host={host} />
-      ))}
-    </Section>
+    <div data-settings-page="environments" className="flex flex-col gap-8">
+      <Section
+        title="Environments"
+        caption="~/.rennet/daemon-settings.json on each host"
+        bare
+        titleExtra={
+          <Button
+            variant="outline"
+            size="xs"
+            className="ml-2"
+            onClick={() => openDialog("add-environment")}
+          >
+            <Icon icon={Plus} />
+            Add Environment
+          </Button>
+        }
+      >
+        {hosts.map((host) => (
+          <HostCard key={host.id} host={host} />
+        ))}
+      </Section>
+
+      <Section title="GitHub account">
+        <GitHubAccountRows />
+      </Section>
+    </div>
   );
 }

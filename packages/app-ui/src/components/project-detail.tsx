@@ -264,6 +264,8 @@ export function ProjectDetail({
           {detail.authUnavailable ? (
             <AuthHint
               reason={detail.authUnavailable}
+              source={detail.authUnavailableSource}
+              copy={detail.authUnavailableCopy}
               onReconnected={() => setReloadNonce((nonce) => nonce + 1)}
             />
           ) : null}
@@ -389,6 +391,7 @@ function PrPendingBanner({
 
 /** The auth-unavailable reason the detail substrate reports. */
 type AuthUnavailable = NonNullable<ProjectDetailData["authUnavailable"]>;
+type AuthUnavailableSource = NonNullable<ProjectDetailData["authUnavailableSource"]>;
 
 const AUTH_HINT_COPY: Record<AuthUnavailable, string> = {
   "not-connected": "Pull requests need a GitHub connection.",
@@ -397,13 +400,31 @@ const AUTH_HINT_COPY: Record<AuthUnavailable, string> = {
   network: "GitHub is unreachable right now — showing local work only.",
 };
 
+const GH_AUTH_HINT_COPY: Partial<Record<AuthUnavailable, string>> = {
+  "token-invalid":
+    "The GitHub CLI credential needs repair. Run `gh auth status --hostname github.com`.",
+  "insufficient-scope":
+    "The GitHub CLI credential is missing the `repo` scope. Run `gh auth refresh -s repo`.",
+};
+
 /**
- * The auth-unavailable hint — actionable at the point of failure. A revoked or
- * missing token gets an inline device-flow reconnect right here (not a dead-end
- * "go to Settings"), and a success refetches the PR half in place. A network
- * outage is transient, so it states the fact with no button.
+ * The auth-unavailable hint — actionable at the point of failure. A missing or
+ * fallback-owned credential gets an inline device-flow repair; a `gh`-owned failure
+ * names the CLI command that repairs the authoritative source and never offers a
+ * fallback action that the next auth resolution would ignore. A network outage is
+ * transient, so it states the fact with no button.
  */
-function AuthHint({ reason, onReconnected }: { reason: AuthUnavailable; onReconnected(): void }) {
+function AuthHint({
+  reason,
+  source,
+  copy: resolvedCopy,
+  onReconnected,
+}: {
+  reason: AuthUnavailable;
+  source?: AuthUnavailableSource;
+  copy?: string;
+  onReconnected(): void;
+}) {
   const account = useGitHubAccount();
   // A device flow was in flight → when the account flips to connected, the reconnect
   // succeeded: refetch. The ref keeps a stale `status` from firing it on mount.
@@ -416,18 +437,21 @@ function AuthHint({ reason, onReconnected }: { reason: AuthUnavailable; onReconn
     }
   }, [account.flow, account.status, onReconnected]);
 
-  const canReconnect = reason !== "network";
+  const ghOwned = source === "gh";
+  const canReconnect = reason !== "network" && !ghOwned;
   const label = reason === "not-connected" ? "Connect" : "Reconnect";
+  const copy =
+    resolvedCopy ?? (ghOwned ? GH_AUTH_HINT_COPY[reason] : undefined) ?? AUTH_HINT_COPY[reason];
   return (
     <div
       className="project-detail-auth-hint flex items-center gap-3 mt-2.5 px-3.5 py-2.5 rounded-chip border border-line bg-surface text-ink-soft text-sm"
       role="note"
     >
-      {account.flow ? (
+      {account.flow && !ghOwned ? (
         <DeviceFlowPrompt flow={account.flow} onCancel={() => void account.cancel()} />
       ) : (
         <>
-          <span className="flex-1 min-w-0">{account.error ?? AUTH_HINT_COPY[reason]}</span>
+          <span className="flex-1 min-w-0">{account.error ?? copy}</span>
           {canReconnect ? (
             <Button
               variant="accent"

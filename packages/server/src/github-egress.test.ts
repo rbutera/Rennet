@@ -3,9 +3,9 @@
 // product. Every request through `publishHttp` carries a deadline, so:
 //   1. `project.detail` answers LOCAL-ONLY with `authUnavailable: "network"`
 //      within the bound instead of queueing forever behind a poisoned memo,
-//   2. the network verdict is never memoized — the next detail retries,
-//   3. an outage AFTER the source is established degrades the same way (the
-//      source memo survives; only the fetch failed),
+//   2. every detail resolves current auth — the next detail retries,
+//   3. an outage AFTER one healthy detail degrades the same way, then recovery
+//      resolves and fetches again,
 //   4. `github.disconnect` completes while a validation is still in flight,
 //   5. the device-flow connect fails with plain copy, not a raw undici string,
 //      and a deliberate cancel is NEVER labelled a network problem,
@@ -18,7 +18,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitHubOctokit, GitHubPublishAdapter, isGitHubNetworkError } from "@rennet/adapters";
@@ -60,7 +60,7 @@ function json(body: unknown, headers: Record<string, string> = {}): Response {
 /**
  * A healthy fake GitHub (validation + GraphQL) that can be flipped into a stall
  * mid-test — the post-establishment outage. Counts /rate_limit hits so tests can
- * prove the established source is NOT re-validated after the blip.
+ * prove each top-level detail resolves current auth after the blip.
  */
 function outageFetch(): {
   fetch: typeof globalThis.fetch;
@@ -180,10 +180,12 @@ describe("GitHub egress bounds (the lancelot hang)", () => {
     const detail = (await server.dispatch("project.detail", { projectId })) as {
       prs: unknown[];
       authUnavailable?: string;
+      authUnavailableSource?: string;
     };
     // Bounded: the deadline fired and the surface answered — no forever-pending memo.
     expect(Date.now() - started).toBeLessThan(4_000);
     expect(detail.authUnavailable).toBe("network");
+    expect(detail.authUnavailableSource).toBe("fallback");
     expect(detail.prs).toEqual([]);
 
     // The network verdict is TRANSIENT and never memoized: a second detail hits
@@ -191,17 +193,121 @@ describe("GitHub egress bounds (the lancelot hang)", () => {
     const before = stalling.calls();
     const again = (await server.dispatch("project.detail", { projectId })) as {
       authUnavailable?: string;
+      authUnavailableSource?: string;
     };
     expect(again.authUnavailable).toBe("network");
+    expect(again.authUnavailableSource).toBe("fallback");
     expect(stalling.calls()).toBeGreaterThan(before);
   }, 15_000);
 
-  it("an outage AFTER the source is established degrades to local-only network — memo survives", async () => {
+  it("gh auth is live per operation, wins over stored auth, and needs no token file", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-egress-gh-auth-"));
+    dirs.push(dataDir);
+    let cliToken = "gho_cli_first";
+    let cliTokenReadFails = false;
+    let rejectCliToken = false;
+    const graphqlAuthorizations: (string | null)[] = [];
+    const httpFetch: typeof globalThis.fetch = (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const path = new URL(url).pathname;
+      const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
+      if (path === "/rate_limit") {
+        if (rejectCliToken) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ message: "Bad credentials" }), {
+              status: 401,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }
+        return Promise.resolve(
+          json(
+            { resources: {} },
+            { "X-OAuth-Scopes": "repo, workflow", "X-RateLimit-Limit": "5000" },
+          ),
+        );
+      }
+      if (path === "/user") return Promise.resolve(json({ login: "rbutera" }));
+      if (path === "/graphql") {
+        const body = String(init?.body ?? "");
+        if (!body.includes("pullRequests")) {
+          return Promise.resolve(json({ data: { viewer: { login: "rbutera" } } }));
+        }
+        graphqlAuthorizations.push(headers.get("authorization"));
+        return Promise.resolve(
+          json({
+            data: {
+              repository: {
+                pullRequests: {
+                  totalCount: 0,
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [],
+                },
+              },
+            },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    };
+    const server = await createRennetServer({
+      dataDir,
+      env: {},
+      httpFetch,
+      githubCliToken: async () =>
+        cliTokenReadFails
+          ? ({ kind: "failure" } as const)
+          : ({ kind: "token", token: cliToken } as const),
+    });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, { forgeRemote: true });
+
+    expect(existsSync(join(dataDir, "github-token"))).toBe(false);
+    await server.dispatch("project.detail", { projectId });
+    expect(graphqlAuthorizations).toEqual(["token gho_cli_first"]);
+
+    await createGitHubTokenStore(dataDir).setGitHubCredential({ token: "gho_stored_fallback" });
+    cliToken = "gho_cli_second";
+    await server.dispatch("project.detail", { projectId });
+    expect(graphqlAuthorizations).toEqual(["token gho_cli_first", "token gho_cli_second"]);
+
+    const status = (await server.dispatch("github.status", {})) as {
+      status: { state: string; source?: string };
+    };
+    expect(status.status).toMatchObject({ state: "connected", source: "gh" });
+
+    rejectCliToken = true;
+    const rejected = (await server.dispatch("project.detail", { projectId })) as {
+      authUnavailable?: string;
+      authUnavailableSource?: string;
+      authUnavailableCopy?: string;
+    };
+    expect(rejected).toMatchObject({
+      authUnavailable: "token-invalid",
+      authUnavailableSource: "gh",
+    });
+    expect(rejected.authUnavailableCopy).toContain("gh auth login");
+
+    rejectCliToken = false;
+    cliTokenReadFails = true;
+    const unreadable = (await server.dispatch("project.detail", { projectId })) as {
+      authUnavailable?: string;
+      authUnavailableSource?: string;
+      authUnavailableCopy?: string;
+    };
+    expect(unreadable).toMatchObject({
+      authUnavailable: "token-invalid",
+      authUnavailableSource: "gh",
+    });
+    expect(unreadable.authUnavailableCopy).toContain("gh auth status --hostname github.com");
+  });
+
+  it("an outage AFTER one healthy detail re-resolves auth and degrades to local-only network", async () => {
     const outage = outageFetch();
     const server = await makeServer(outage.fetch);
     const projectId = await addProject(server, { forgeRemote: true });
 
-    // Establish: validation + GraphQL succeed, the PR source memoizes.
+    // Establish: validation + GraphQL succeed.
     const healthy = (await server.dispatch("project.detail", { projectId })) as {
       prs: unknown[];
       authUnavailable?: string;
@@ -218,20 +324,21 @@ describe("GitHub egress bounds (the lancelot hang)", () => {
       prs: unknown[];
       locals: unknown[];
       authUnavailable?: string;
+      authUnavailableSource?: string;
     };
     expect(Date.now() - started).toBeLessThan(4_000);
     expect(degraded.authUnavailable).toBe("network");
+    expect(degraded.authUnavailableSource).toBe("fallback");
     expect(degraded.prs).toEqual([]);
     expect(Array.isArray(degraded.locals)).toBe(true);
 
-    // Recovery: the SOURCE was fine all along (memo kept) — the next detail
-    // fetches PRs again without a single new validation round-trip.
+    // Recovery: the next detail resolves auth again, then fetches PRs.
     outage.stall(false);
     const recovered = (await server.dispatch("project.detail", { projectId })) as {
       authUnavailable?: string;
     };
     expect(recovered.authUnavailable).toBeUndefined();
-    expect(outage.rateLimitCalls()).toBe(validations);
+    expect(outage.rateLimitCalls()).toBe(validations + 1);
   }, 15_000);
 
   it("github.disconnect completes while a validation is still in flight", async () => {
