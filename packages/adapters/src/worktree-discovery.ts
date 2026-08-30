@@ -82,6 +82,10 @@ export function parseRemoteIdentity(url: string): RemoteIdentity | null {
   return null;
 }
 
+function remoteIdentityKey(identity: RemoteIdentity): string {
+  return `${identity.host}/${identity.owner}/${identity.name}`.toLowerCase();
+}
+
 /** Parse the `key\turl (fetch|push)` lines of `git remote -v` into deduped identities. */
 function identitiesFromRemoteVerbose(output: string): RemoteIdentity[] {
   const seen = new Set<string>();
@@ -91,7 +95,7 @@ function identitiesFromRemoteVerbose(output: string): RemoteIdentity[] {
     if (!match) continue;
     const identity = parseRemoteIdentity(match[1] ?? "");
     if (!identity) continue;
-    const key = `${identity.host}/${identity.owner}/${identity.name}`.toLowerCase();
+    const key = remoteIdentityKey(identity);
     if (seen.has(key)) continue;
     seen.add(key);
     identities.push(identity);
@@ -116,19 +120,59 @@ export interface NamedForgeRemote {
   identity: RemoteIdentity;
 }
 
-/** Parse `git remote -v` into named forge remotes, in first-seen order, deduped by name. */
+interface NamedRemoteCandidates {
+  name: string;
+  fetchIdentities: Map<string, RemoteIdentity>;
+  pushIdentities: Map<string, RemoteIdentity>;
+  sawPush: boolean;
+  invalidPush: boolean;
+}
+
+/**
+ * Parse `git remote -v` into named forge remotes in first-seen order. A configured
+ * push URL owns the identity because `git push <name>` uses it; fetch is only the
+ * fallback for partial output without a push line. Ambiguous or unparseable push
+ * destinations cannot supply the single identity shared by push and submission.
+ */
 function namedForgeRemotesFromVerbose(output: string): NamedForgeRemote[] {
-  const seen = new Set<string>();
-  const remotes: NamedForgeRemote[] = [];
+  const candidates = new Map<string, NamedRemoteCandidates>();
   for (const line of output.split("\n")) {
-    const match = /^(\S+)\t(\S+)\s+\((?:fetch|push)\)$/.exec(line.trim());
+    const match = /^(\S+)\t(\S+)\s+\((fetch|push)\)$/.exec(line.trim());
     if (!match) continue;
     const name = match[1] ?? "";
-    if (seen.has(name)) continue;
     const identity = parseRemoteIdentity(match[2] ?? "");
+    const direction = match[3];
+    let candidate = candidates.get(name);
+    if (!candidate) {
+      candidate = {
+        name,
+        fetchIdentities: new Map(),
+        pushIdentities: new Map(),
+        sawPush: false,
+        invalidPush: false,
+      };
+      candidates.set(name, candidate);
+    }
+    if (direction === "push") {
+      candidate.sawPush = true;
+      if (!identity) {
+        candidate.invalidPush = true;
+      } else {
+        candidate.pushIdentities.set(remoteIdentityKey(identity), identity);
+      }
+    } else if (direction === "fetch" && identity) {
+      candidate.fetchIdentities.set(remoteIdentityKey(identity), identity);
+    }
+  }
+
+  const remotes: NamedForgeRemote[] = [];
+  for (const candidate of candidates.values()) {
+    if (candidate.sawPush && candidate.invalidPush) continue;
+    const identities = candidate.sawPush ? candidate.pushIdentities : candidate.fetchIdentities;
+    if (identities.size !== 1) continue;
+    const identity = identities.values().next().value;
     if (!identity) continue;
-    seen.add(name);
-    remotes.push({ name, identity });
+    remotes.push({ name: candidate.name, identity });
   }
   return remotes;
 }
@@ -136,20 +180,27 @@ function namedForgeRemotesFromVerbose(output: string): NamedForgeRemote[] {
 /**
  * Resolve the ONE remote a branch is pushed to AND its PR opened against, so the push
  * destination and the PR repo can never disagree (they share a single source). Picks
- * the remote whose URL points at `host` (default `github.com`), preferring one named
+ * the remote whose provider is supported by the caller, preferring one named
  * `preferName` (default `origin` — the North Star: your own repo), else the first such
- * remote in `git remote -v` order. Returns null when no remote points at the forge —
+ * remote in `git remote -v` order. Without a provider predicate, `host` retains the
+ * original GitHub-only default. Returns null when no remote points at a supported forge —
  * the caller then reports honestly that there is nowhere to open a PR.
  */
 export async function resolveForgeRemote(
   git: GitExec,
   root: string,
-  options: { host?: string; preferName?: string } = {},
+  options: {
+    host?: string;
+    preferName?: string;
+    supportsForge?: (forge: string) => boolean;
+  } = {},
 ): Promise<NamedForgeRemote | null> {
-  const host = (options.host ?? "github.com").toLowerCase();
+  const host = options.host?.toLowerCase() ?? (options.supportsForge ? undefined : "github.com");
   const preferName = options.preferName ?? "origin";
   const remotes = namedForgeRemotesFromVerbose(await git(root, ["remote", "-v"])).filter(
-    (remote) => remote.identity.host.toLowerCase() === host,
+    (remote) =>
+      (host === undefined || remote.identity.host.toLowerCase() === host) &&
+      (options.supportsForge?.(forgeForRemoteHost(remote.identity.host)) ?? true),
   );
   return remotes.find((remote) => remote.name === preferName) ?? remotes[0] ?? null;
 }

@@ -123,7 +123,8 @@ beforeEach(() => {
   dispatch = createDispatch({
     askLog: new AskLogStore(dir),
     service: { reviewById: (id: string) => REVIEWS.find((r) => r.id === id) },
-    publishPort,
+    publishPortFor: (repository: Parameters<DispatchDeps["publishPortFor"]>[0]) =>
+      repository.forge === "github" ? publishPort : undefined,
     raiseAttention: () => "att-1",
     dispatchRound,
     draftReviewOpener: () =>

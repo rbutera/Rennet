@@ -223,7 +223,8 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
     const rt = createDispatchRuntime({
       askLog: store,
       service: { reviewById: (id: string) => (id === SID ? REVIEW_WITH_PR : undefined) },
-      publishPort,
+      publishPortFor: (repository: Parameters<DispatchDeps["publishPortFor"]>[0]) =>
+        repository.forge === POST_TARGET.repo.forge ? publishPort : undefined,
       raiseAttention: () => "att-1",
       draftReviewOpener: () =>
         Promise.resolve({

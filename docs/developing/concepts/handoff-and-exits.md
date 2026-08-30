@@ -3,10 +3,10 @@ title: Hand off and the exits
 description: How Rennet gathers asks, keeps the outbound documents drafted, and runs the three exits — posting a review, dispatching work-order rounds, and opening the pull request.
 ---
 
-A review ends by leaving through an exit: the posted GitHub review, a
-dispatched work-order round, or the pull request. Everything the reviewer
-concludes along the way gathers as asks, and the orchestrator keeps every
-outbound document drafted as it goes.
+A review ends by leaving through an exit: the posted forge review, a dispatched
+work-order round, or the pull request. GitHub is the implemented forge today.
+Everything the reviewer concludes along the way gathers as asks, and the
+orchestrator keeps every outbound document drafted as it goes.
 
 ## The session is the durable root
 
@@ -41,13 +41,16 @@ use that identity when both sides have it. A session saved before the field
 existed falls back to the `owner/name` match, so it still reattaches instead of
 offering a duplicate target. Two forges can therefore carry the same
 `owner/name`, branch, and pull-request number without collapsing into one row
-or session. The registry contains GitHub today; GitLab and Bitbucket adapters
-remain [planned in #484](https://github.com/rbutera/rennet/issues/484). A round
-dispatched on a target reads the same forge identity from the repository it is
-about to run in, so it joins the session the click created instead of starting
-a second one beside it. A detached HEAD has no branch to claim, so its session
-is keyed by the review instead — and it is persisted like every other, because
-a session the store does not hold is a session no surface can read back.
+or session. Provider selection is also the server-side boundary for detailed CI
+status, review publication, and pull-request submission: each operation resolves
+the provider from that repository identity, and an unregistered forge never
+falls through to GitHub. The registry contains GitHub today; GitLab and Bitbucket
+adapters remain [planned in #484](https://github.com/rbutera/rennet/issues/484).
+A round dispatched on a target reads the same forge identity from the repository
+it is about to run in, so it joins the session the click created instead of
+starting a second one beside it. A detached HEAD has no branch to claim, so its
+session is keyed by the review instead — and it is persisted like every other,
+because a session the store does not hold is a session no surface can read back.
 
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a

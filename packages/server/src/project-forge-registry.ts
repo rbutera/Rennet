@@ -1,3 +1,4 @@
+import type { ForgePort, ForgePrSubmissionPort, ForgePublishPort } from "@rennet/core";
 import {
   type ForgeRepoIdentity,
   forgeRepositorySlug,
@@ -5,22 +6,42 @@ import {
   sameForgeRepository,
 } from "@rennet/protocol";
 
-export interface ProjectForgeRegistry<T> {
+export interface ForgeRegistry<T> {
+  has(forge: string): boolean;
   sourceFor(repository: ForgeRepoIdentity): T | undefined;
 }
 
-export interface ProjectForgeRegistration<T> {
+export interface ForgeRegistration<T> {
   readonly forge: string;
   readonly implementation: T;
 }
 
-export function createProjectForgeRegistry<T>(
-  registrations: readonly ProjectForgeRegistration<T>[],
-): ProjectForgeRegistry<T> {
+export function createForgeRegistry<T>(
+  registrations: readonly ForgeRegistration<T>[],
+): ForgeRegistry<T> {
   const byForge = new Map<string, T>(
     registrations.map(({ forge, implementation }) => [forge, implementation] as const),
   );
-  return { sourceFor: (repository) => byForge.get(repository.forge) };
+  return {
+    has: (forge) => byForge.has(forge),
+    sourceFor: (repository) => byForge.get(repository.forge),
+  };
+}
+
+export interface ForgeProvider extends Pick<ForgePort, "fetchCiStatus"> {
+  readonly review: ForgePublishPort;
+  readonly pullRequest: ForgePrSubmissionPort;
+}
+
+export async function fetchForgeCiStatus(
+  registry: ForgeRegistry<Pick<ForgeProvider, "fetchCiStatus">>,
+  ...[ref, headOid, signal]: Parameters<ForgeProvider["fetchCiStatus"]>
+): ReturnType<ForgeProvider["fetchCiStatus"]> {
+  const source = registry.sourceFor(ref.repo);
+  if (source === undefined) {
+    throw new Error(`No CI status source is registered for forge "${ref.repo.forge}"`);
+  }
+  return source.fetchCiStatus(ref, headOid, signal);
 }
 
 export interface RepositoryIdentity {
@@ -87,7 +108,7 @@ export type ProjectPullRequestOpener<TResult> = (
 ) => Promise<TResult>;
 
 export async function openProjectPullRequest<TResult>(
-  registry: ProjectForgeRegistry<ProjectPullRequestOpener<TResult>>,
+  registry: ForgeRegistry<ProjectPullRequestOpener<TResult>>,
   input: ProjectPullRequestOpenInput,
 ): Promise<TResult> {
   const opener = registry.sourceFor(input.repository);

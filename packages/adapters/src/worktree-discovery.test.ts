@@ -143,6 +143,91 @@ describe("resolveForgeRemote — the single source for push + PR-repo", () => {
     });
   });
 
+  it("uses the push URL identity when fetch and push point at different GitHub repos", async () => {
+    const git = gitReturning(
+      "origin\thttps://github.com/acme/widget.git (fetch)\n" +
+        "origin\tgit@github.com:me/widget.git (push)\n",
+    );
+    const remote = await resolveForgeRemote(git, "/src/widget");
+    expect(remote).toEqual({
+      name: "origin",
+      identity: { host: "github.com", owner: "me", name: "widget" },
+    });
+  });
+
+  it("rejects a GitHub fetch remote whose effective push URL is unsupported", async () => {
+    const calls: string[][] = [];
+    const git = (_root: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "remote" && args[1] === "-v") {
+        return Promise.resolve(
+          "origin\thttps://github.com/acme/widget.git (fetch)\n" +
+            "origin\tgit@gitlab.com:acme/widget.git (push)\n",
+        );
+      }
+      throw new Error(`Unexpected mutating git call: ${args.join(" ")}`);
+    };
+
+    expect(await resolveForgeRemote(git, "/src/widget")).toBeNull();
+    expect(calls).toEqual([["remote", "-v"]]);
+  });
+
+  it("rejects a remote with multiple distinct push identities", async () => {
+    const git = gitReturning(
+      "origin\thttps://github.com/acme/widget.git (fetch)\n" +
+        "origin\tgit@github.com:me/widget.git (push)\n" +
+        "origin\tgit@github.com:backup/widget.git (push)\n",
+    );
+
+    expect(await resolveForgeRemote(git, "/src/widget")).toBeNull();
+  });
+
+  it("selects a preferred GitLab origin when its provider is supported", async () => {
+    const git = gitReturning(
+      "upstream\thttps://github.com/acme/widget.git (fetch)\n" +
+        "origin\tgit@gitlab.com:me/widget.git (fetch)\n",
+    );
+    const remote = await resolveForgeRemote(git, "/src/widget", {
+      supportsForge: (forge) => forge === "gitlab",
+    });
+    expect(remote).toEqual({
+      name: "origin",
+      identity: { host: "gitlab.com", owner: "me", name: "widget" },
+    });
+  });
+
+  it("ignores an unsupported GitLab origin in favor of a supported GitHub remote", async () => {
+    const git = gitReturning(
+      "origin\tgit@gitlab.com:me/widget.git (fetch)\n" +
+        "upstream\thttps://github.com/acme/widget.git (fetch)\n",
+    );
+    const remote = await resolveForgeRemote(git, "/src/widget", {
+      supportsForge: (forge) => forge === "github",
+    });
+    expect(remote).toEqual({
+      name: "upstream",
+      identity: { host: "github.com", owner: "acme", name: "widget" },
+    });
+  });
+
+  it("returns null after read-only selection when no remote has a supported provider", async () => {
+    const calls: string[][] = [];
+    const git = (_root: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "remote" && args[1] === "-v") {
+        return Promise.resolve("origin\tgit@gitlab.com:acme/widget.git (fetch)\n");
+      }
+      throw new Error(`Unexpected mutating git call: ${args.join(" ")}`);
+    };
+
+    expect(
+      await resolveForgeRemote(git, "/src/widget", {
+        supportsForge: (forge) => forge === "github",
+      }),
+    ).toBeNull();
+    expect(calls).toEqual([["remote", "-v"]]);
+  });
+
   it("ignores a non-github remote, and returns null when none point at GitHub", async () => {
     const git = gitReturning(
       "origin\tgit@gitlab.com:acme/widget.git (fetch)\n" +

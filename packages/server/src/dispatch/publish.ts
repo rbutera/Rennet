@@ -111,6 +111,12 @@ export function publishHandlers(rt: DispatchRuntime) {
           "Publish refused: this is your existing pull request; continue its review rounds instead.",
         );
       }
+      const publishPort = deps.publishPortFor(addressed.postTarget.repo);
+      if (publishPort === undefined) {
+        throw new Error(
+          `Publish refused: no review publisher is registered for forge "${addressed.postTarget.repo.forge}".`,
+        );
+      }
       const projection = deps.askLog.readProjection(addressed.id);
       const evidence = await reviewCompositionEvidence(addressed, projection);
       if (evidence.status === "unavailable") {
@@ -121,7 +127,12 @@ export function publishHandlers(rt: DispatchRuntime) {
       // authorities after that await so an ask/verdict edit or regenerate that landed while it
       // was held cannot pass against the earlier snapshot and post obsolete reviewer intent.
       const current = requireReviewById(input.reviewId);
-      if (current.retrospective || !current.postTarget || current.postTarget.viewerDidAuthor) {
+      if (
+        current.retrospective ||
+        !current.postTarget ||
+        current.postTarget.viewerDidAuthor ||
+        JSON.stringify(current.postTarget) !== JSON.stringify(addressed.postTarget)
+      ) {
         throw new Error(
           "Publish refused: this review's pull-request destination changed while the preview was checked.",
         );
@@ -179,7 +190,7 @@ export function publishHandlers(rt: DispatchRuntime) {
         reviewId: input.reviewId,
         target,
         payload: input.payload,
-        capabilities: deps.publishPort.capabilities,
+        capabilities: publishPort.capabilities,
         verdict: input.post.event,
       });
       if (JSON.stringify(forgeReviewPostDescriptor(post)) !== JSON.stringify(input.post)) {
@@ -201,13 +212,13 @@ export function publishHandlers(rt: DispatchRuntime) {
         }
         realPostInFlight.add(post.marker);
         try {
-          const outcome = await deps.publishPort.publishReview(post);
+          const outcome = await publishPort.publishReview(post);
           // The post landed — clear any publish-ready attention on this review everywhere
           // (#382 M2). The taxonomy clears publish-ready on the post happening, from any client.
           clearPublishReady(input.reviewId);
           return parseCommandOutput(name, {
             dryRun: false,
-            request: deps.publishPort.buildReviewRequest(post),
+            request: publishPort.buildReviewRequest(post),
             marker: post.marker,
             ledger: post.ledger,
             outcome,
@@ -220,7 +231,7 @@ export function publishHandlers(rt: DispatchRuntime) {
       // Dry-run (the default): construct + return the EXACT request, post NOTHING.
       return parseCommandOutput(name, {
         dryRun: true,
-        request: deps.publishPort.buildReviewRequest(post),
+        request: publishPort.buildReviewRequest(post),
         marker: post.marker,
         ledger: post.ledger,
         outcome: null,
@@ -288,7 +299,7 @@ export function publishHandlers(rt: DispatchRuntime) {
       // fabricated success (no coding harness / no auth composed it).
       if (!deps.submitPullRequest) {
         throw new Error(
-          "Submit refused: no GitHub PR submission is available (authentication or the coding harness is not configured).",
+          "Submit refused: no forge PR submission is available (authentication or the coding harness is not configured).",
         );
       }
       const outcome = await deps.submitPullRequest({
@@ -338,6 +349,13 @@ export function publishHandlers(rt: DispatchRuntime) {
           return parseCommandOutput(name, {
             status: "unavailable",
             reason: "This is your existing pull request; continue its review rounds instead.",
+          });
+        }
+        const publishPort = deps.publishPortFor(review.postTarget.repo);
+        if (publishPort === undefined) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: `No review publisher is registered for forge "${review.postTarget.repo.forge}".`,
           });
         }
         // Compose the DEFAULT (unedited) comments from the durable ask projection — the phone
@@ -421,7 +439,7 @@ export function publishHandlers(rt: DispatchRuntime) {
           reviewId: review.id,
           target: toForgeReviewTarget(target),
           payload,
-          capabilities: deps.publishPort.capabilities,
+          capabilities: publishPort.capabilities,
           verdict,
         });
         const post = forgeReviewPostDescriptor(builtPost);
