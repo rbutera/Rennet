@@ -85,6 +85,50 @@ function renderMap() {
 }
 
 describe("ProjectContextMapView — router-side map (C12 cluster 5)", () => {
+  it("lists workspace members and opens the selected repository map", async () => {
+    const history = memoryHistory(projectMapPath("p1"));
+    const reads: unknown[] = [];
+    const gitlab = { forge: "gitlab", owner: "acme", name: "repo-b" };
+    const bridge = new MemoryBridge({
+      "project.contextMap": (input) => {
+        reads.push(input);
+        return input.repository === "acme/repo-b"
+          ? { status: "ok" as const, map, knowledge }
+          : {
+              status: "members" as const,
+              members: [
+                {
+                  repository: "acme/repo-a",
+                  forgeRepository: { forge: "github", owner: "acme", name: "repo-a" },
+                },
+                { repository: "acme/repo-b", forgeRepository: gitlab },
+              ],
+            };
+      },
+    });
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <ProjectContextMapView projectId="p1" />
+        </Router>
+      </BridgeProvider>,
+    );
+
+    await waitFor(() => expect(container.querySelectorAll(".context-map-member")).toHaveLength(2));
+    const repoB = [...container.querySelectorAll(".context-map-member")].find((button) =>
+      button.textContent?.includes("acme/repo-b"),
+    );
+    fireEvent.click(repoB as Element);
+
+    await waitFor(() =>
+      expect(container.querySelector(".context-map-tree")?.textContent).toContain("@rennet/core"),
+    );
+    expect(reads).toEqual([
+      { projectId: "p1" },
+      { projectId: "p1", repository: "acme/repo-b", forgeRepository: gitlab },
+    ]);
+  });
+
   it("renders scopes from project.contextMap with no ask rail", async () => {
     const { container } = renderMap();
     await waitFor(() =>

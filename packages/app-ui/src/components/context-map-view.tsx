@@ -6,6 +6,7 @@ import {
   type ProjectContextAskResult,
   type ProjectMapPayload,
   type ProjectProcessEvent,
+  type ProjectRepositoryAddress,
 } from "@rennet/protocol";
 import { ArrowLeft, Check, LoaderCircle, RotateCcw, X } from "lucide-react";
 import {
@@ -97,11 +98,13 @@ export function discussPrompt(statement: KnowledgeStatementPayload): string {
 
 export function ContextMapView({
   projectId,
+  repositoryAddress,
   onBack,
   showAskRail = true,
   onDiscuss,
 }: {
   projectId: string;
+  repositoryAddress?: ProjectRepositoryAddress;
   onBack(): void;
   /** The project-scoped ask rail. The router-side map view (C12) hides it — the
    *  session chat column plays that role there — and leaves it on elsewhere. */
@@ -111,7 +114,15 @@ export function ContextMapView({
   onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   const bridge = useBridge();
-  const mapQuery = useCommand("project.contextMap", { projectId });
+  const [selectedRepository, setSelectedRepository] = useState<
+    ProjectRepositoryAddress | undefined
+  >(undefined);
+  const addressedRepository = repositoryAddress ?? selectedRepository;
+  const contextInput = {
+    projectId,
+    ...(addressedRepository === undefined ? {} : addressedRepository),
+  };
+  const mapQuery = useCommand("project.contextMap", contextInput);
   const refreshMap = useRefreshCommand("project.contextMap");
   const { mutate: process } = useMutation("project.process", {
     invalidates: CONTEXT_MAP_INVALIDATES,
@@ -126,7 +137,11 @@ export function ContextMapView({
       setBuild({ kind: "error", message: mapQuery.data.reason, retry: "rebuild" });
       return;
     }
-    const runKey = `${projectId}:${attempt}`;
+    const repositoryKey =
+      addressedRepository?.forgeRepository === undefined
+        ? (addressedRepository?.repository ?? "project")
+        : `${addressedRepository.forgeRepository.forge}:${addressedRepository.repository}`;
+    const runKey = `${projectId}:${repositoryKey}:${attempt}`;
     if (started.current === runKey) return;
     started.current = runKey;
     let live = true;
@@ -160,7 +175,7 @@ export function ContextMapView({
       live = false;
       unsubscribe?.();
     };
-  }, [attempt, bridge, mapQuery.data, process, projectId, retryMode]);
+  }, [addressedRepository, attempt, bridge, mapQuery.data, process, projectId, retryMode]);
 
   useEffect(() => {
     if (
@@ -181,11 +196,26 @@ export function ContextMapView({
     return (
       <ContextMap
         projectId={projectId}
+        repositoryAddress={addressedRepository}
         map={mapQuery.data.map}
         knowledge={mapQuery.data.knowledge}
         onBack={onBack}
         showAskRail={showAskRail}
         onDiscuss={onDiscuss}
+      />
+    );
+  }
+  if (
+    mapQuery.data?.status === "members" &&
+    !mapQuery.error &&
+    !mapQuery.fetching &&
+    !mapQuery.stale
+  ) {
+    return (
+      <ContextMapMembers
+        members={mapQuery.data.members}
+        onBack={onBack}
+        onSelect={setSelectedRepository}
       />
     );
   }
@@ -246,8 +276,60 @@ export function ContextMapView({
   );
 }
 
+function ContextMapMembers({
+  members,
+  onBack,
+  onSelect,
+}: {
+  readonly members: readonly ProjectRepositoryAddress[];
+  readonly onBack: () => void;
+  readonly onSelect: (member: ProjectRepositoryAddress) => void;
+}) {
+  return (
+    <div className="context-map min-h-screen flex flex-col bg-canvas">
+      <header className="context-map-bar flex items-center gap-4 px-6 pt-5 pb-4 border-b border-line">
+        <button
+          type="button"
+          onClick={onBack}
+          className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
+        >
+          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
+          Back
+        </button>
+        <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
+      </header>
+      <div className="context-map-members flex max-w-xl flex-col gap-3 px-8 py-10">
+        <p className="font-serif text-base text-ink-soft">
+          Choose the repository whose Context Map you want to read.
+        </p>
+        <div className="flex flex-col gap-2">
+          {members.map((member) => {
+            const provider = member.forgeRepository?.forge;
+            const key =
+              provider === undefined ? member.repository : `${provider}:${member.repository}`;
+            return (
+              <button
+                key={key}
+                type="button"
+                className="context-map-member rounded-card border border-line px-4 py-3 text-left text-ink hover:bg-raised"
+                onClick={() => onSelect(member)}
+              >
+                <span className="font-mono text-sm">{member.repository}</span>
+                {provider === undefined ? null : (
+                  <span className="ml-2 text-xs text-ink-faint">{provider}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ContextMap({
   projectId,
+  repositoryAddress,
   map,
   knowledge,
   onBack,
@@ -255,6 +337,7 @@ function ContextMap({
   onDiscuss,
 }: {
   projectId: string;
+  repositoryAddress?: ProjectRepositoryAddress;
   map: ProjectMapPayload;
   knowledge: KnowledgeSetPayload | null;
   onBack(): void;
@@ -293,6 +376,7 @@ function ContextMap({
     try {
       const result = (await persistDisposition({
         projectId,
+        ...(repositoryAddress === undefined ? {} : repositoryAddress),
         statementId,
         disposition: next,
       })) as KnowledgeDispositionResult;
@@ -384,7 +468,7 @@ function ContextMap({
             <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
               Orchestrator — project session
             </div>
-            <AskRail ref={askRef} projectId={projectId} />
+            <AskRail ref={askRef} projectId={projectId} repositoryAddress={repositoryAddress} />
           </section>
         ) : null}
       </div>
@@ -877,10 +961,10 @@ function DetailsPanel({
 }
 
 // ---------------------------------------------------------------- rail ----
-const AskRail = forwardRef<{ prefill(text: string): void }, { projectId: string }>(function AskRail(
-  { projectId },
-  ref,
-) {
+const AskRail = forwardRef<
+  { prefill(text: string): void },
+  { projectId: string; repositoryAddress?: ProjectRepositoryAddress }
+>(function AskRail({ projectId, repositoryAddress }, ref) {
   const { mutate: ask } = useMutation("project.contextAsk");
   const [turns, setTurns] = useState<AskTurn[]>([]);
   const [busy, setBusy] = useState(false);
@@ -904,7 +988,11 @@ const AskRail = forwardRef<{ prefill(text: string): void }, { projectId: string 
     setTurns((current) => [...current, question]);
     setBusy(true);
     try {
-      const result = await ask({ projectId, question: text });
+      const result = await ask({
+        projectId,
+        ...(repositoryAddress === undefined ? {} : repositoryAddress),
+        question: text,
+      });
       setTurns((current) => [
         ...current,
         { id: crypto.randomUUID(), role: "orchestrator", result },
