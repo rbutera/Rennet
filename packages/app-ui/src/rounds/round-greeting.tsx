@@ -4,6 +4,7 @@ import type {
   RoundRunReceipt,
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
+import { ArrowRight } from "lucide-react";
 import {
   canRevealNewBoards,
   type LaneRow,
@@ -167,7 +168,7 @@ function RegenerationProgress({
 }) {
   const steps = finishSteps(state, lanes);
   return (
-    <div data-testid="regeneration-progress" className="flex flex-col gap-1.5">
+    <div data-testid="regeneration-progress" className="flex flex-col gap-1">
       <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
         {state.phase === "composed" ? "Regenerated the Boards" : "Regenerating the Boards"}
       </span>
@@ -204,9 +205,9 @@ function RegenerationProgress({
           key={step.id}
           data-step={step.id}
           data-status={step.status}
-          className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground"
+          className="flex items-center gap-1.5 pt-1 text-12-5 text-muted-foreground"
         >
-          <StatusIcon status={step.status} />
+          <StatusIcon status={step.status} compact />
           {step.label}
         </span>
       ))}
@@ -259,6 +260,7 @@ export function RoundGreeting({
           className="self-start"
         >
           View the New Boards
+          <ArrowRight className="size-3.5" aria-hidden="true" />
         </Button>
       )}
     </section>

@@ -1,5 +1,5 @@
 import type { Review } from "@rennet/protocol";
-import { Badge, cn, Toggle, ToggleGroup } from "@rennet/ui";
+import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, GitPullRequest, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -52,10 +52,11 @@ import {
 // disabled (honest), never a Post that posts nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The three real GitHub review events, with their segmented-control presentation. */
+/** The three real GitHub review events, with their segmented-control presentation. Request
+ *  Changes takes the copper warn, not danger red: asking for a change is not an error. */
 const VERDICTS: readonly { value: ProposedVerdict; label: string; dot: string }[] = [
   { value: "APPROVE", label: "Approve", dot: "bg-green" },
-  { value: "REQUEST_CHANGES", label: "Request Changes", dot: "bg-destructive" },
+  { value: "REQUEST_CHANGES", label: "Request Changes", dot: "bg-warn" },
   { value: "COMMENT", label: "Comment", dot: "bg-muted-foreground/50" },
 ];
 
@@ -72,12 +73,21 @@ const INTENT_LABEL = {
   question: "Question",
 } satisfies Record<DispositionKind, string>;
 
+/** Same micro-cap register as the rounds lane's `IntentPill`, and for the same reason:
+ *  a change request is copper, not danger red. Leaving this one red would have put a red
+ *  tag beside the warn verdict dot below, in this same lane. */
 function IntentTag({ type }: { type: DispositionKind }) {
-  const requestChange = type === "request-change";
   return (
-    <Badge variant={requestChange ? "destructive" : "secondary"} className="shrink-0">
+    <span
+      data-kind="intent"
+      data-intent={type}
+      className={cn(
+        "shrink-0 rounded px-1.5 py-0.5 font-semibold text-10 uppercase tracking-wide",
+        type === "request-change" ? "bg-warn-soft text-warn" : "bg-secondary text-muted-foreground",
+      )}
+    >
       {INTENT_LABEL[type]}
-    </Badge>
+    </span>
   );
 }
 
@@ -287,11 +297,11 @@ function WorkingReviewDraft({
   if (receipt) {
     return (
       <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
-        <span className="flex items-center gap-2 text-base font-semibold text-foreground">
+        <span className="flex items-center gap-2 text-15 font-semibold text-foreground">
           <Check className="size-4 text-green" aria-hidden="true" />
           Review posted to {prRef}
         </span>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-13 text-muted-foreground">
           {VERDICT_LABEL[receipt.verdict]} · {receipt.lineCommentCount} line comment
           {receipt.lineCommentCount === 1 ? "" : "s"} · body
         </p>
@@ -299,7 +309,7 @@ function WorkingReviewDraft({
           href={receipt.url}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+          className="text-13 text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
         >
           {receipt.url.replace(/^https?:\/\//, "")}
         </a>
@@ -349,7 +359,7 @@ function WorkingReviewDraft({
                     <RichText
                       text={blockText(ask)}
                       patchsetId={patchsetId}
-                      paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                      paragraphClassName="text-15 leading-[1.7] text-foreground/90"
                     />
                   </div>
                 ))
@@ -398,7 +408,7 @@ function WorkingReviewDraft({
             </span>
             {retired.map((entry) => (
               <span key={entry.ask.id} className="flex items-baseline gap-2">
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground line-through">
+                <span className="min-w-0 flex-1 truncate text-12-5 text-muted-foreground line-through">
                   {entry.ask.body}
                 </span>
                 <span className="shrink-0 text-2xs text-muted-foreground/70">{entry.reason}</span>
@@ -475,7 +485,13 @@ function VerdictControl({
       >
         {VERDICTS.map((option) => (
           <Toggle key={option.value} value={option.value} size="sm">
-            <span className={cn("size-1.5 rounded-full", option.dot)} />
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                option.dot,
+                option.value !== effectiveVerdict && "opacity-40",
+              )}
+            />
             {option.label}
           </Toggle>
         ))}
@@ -556,11 +572,11 @@ function ComposedReviewPreview({
   if (receipt) {
     return (
       <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
-        <span className="flex items-center gap-2 text-base font-semibold text-foreground">
+        <span className="flex items-center gap-2 text-15 font-semibold text-foreground">
           <Check className="size-4 text-green" aria-hidden="true" />
           Review posted to {prRef}
         </span>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-13 text-muted-foreground">
           {VERDICT_LABEL[receipt.verdict]} · {receipt.lineCommentCount} line comment
           {receipt.lineCommentCount === 1 ? "" : "s"} · body
         </p>
@@ -568,7 +584,7 @@ function ComposedReviewPreview({
           href={receipt.url}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+          className="text-13 text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
         >
           {receipt.url.replace(/^https?:\/\//, "")}
         </a>
@@ -621,7 +637,7 @@ function ComposedReviewPreview({
                 <RichText
                   text={note.body}
                   patchsetId={patchsetId}
-                  paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                  paragraphClassName="text-15 leading-[1.7] text-foreground/90"
                 />
               </div>
             ))}
@@ -773,7 +789,7 @@ function LineCommentCard({
             <button
               type="button"
               onClick={onStartEdit}
-              className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
               <Pencil className="size-3" aria-hidden="true" />
               Edit
@@ -781,7 +797,7 @@ function LineCommentCard({
             <button
               type="button"
               onClick={onDelete}
-              className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
               <Trash2 className="size-3" aria-hidden="true" />
               Delete
@@ -805,7 +821,7 @@ function LineCommentCard({
                 if (event.key === "Escape") onCancelEdit();
               }}
               rows={2}
-              className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-sm leading-relaxed text-foreground focus-visible:border-ring focus-visible:outline-none"
+              className="w-full resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-13 leading-relaxed text-foreground focus-visible:border-ring focus-visible:outline-none"
             />
             <div className="mt-1.5 flex items-center justify-end gap-1">
               <button

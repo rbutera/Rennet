@@ -350,7 +350,7 @@ describe("PostReviewLane", () => {
     const r = mount(<PostReviewLane review={review} draft={draft} />);
 
     expect(r.getByText("Body Note Provenance")).toBeTruthy();
-    expect(r.container.querySelector('[data-slot="badge"]')?.textContent).toBe("Comment");
+    expect(r.container.querySelector('[data-kind="intent"]')?.textContent).toBe("Comment");
     expect(r.getByText("Design · Retry policy")).toBeTruthy();
     expect(r.getByText("the policy matches its documented boundary")).toBeTruthy();
   });
@@ -394,8 +394,15 @@ describe("PostReviewLane", () => {
     const r = mount(<PostReviewLane review={review} draft={draft} />);
 
     expect(
-      [...r.container.querySelectorAll('[data-slot="badge"]')].map((badge) => badge.textContent),
+      [...r.container.querySelectorAll('[data-kind="intent"]')].map((tag) => tag.textContent),
     ).toEqual(["Approve", "Request Change", "Comment", "Question"]);
+    // The intent register is copper for a change request, neutral otherwise — never the
+    // danger red the shadcn `destructive` Badge used to paint it.
+    expect(
+      [...r.container.querySelectorAll('[data-kind="intent"]')].map((tag) =>
+        tag.className.includes("text-warn"),
+      ),
+    ).toEqual([false, true, false, false]);
   });
 
   it("renders the exact daemon body for a zero-ask approval", () => {
