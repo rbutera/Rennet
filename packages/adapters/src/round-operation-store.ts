@@ -451,6 +451,9 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.verification, next.failure.verification)
       );
     case "completed":
+      if (next.phase !== "completed") return false;
+      if (current.returnedAt !== undefined || next.returnedAt === undefined) return false;
+      return sameReceipt({ ...current, returnedAt: undefined }, { ...next, returnedAt: undefined });
     case "failed":
       return false;
   }
@@ -537,6 +540,35 @@ export class RoundOperationStore {
       const active = this.read(validated.sessionId);
       if (active !== undefined) return active;
       return this.write(validated);
+    });
+  }
+
+  /** Atomically claim an idle session or replace a completed operation whose Return receipt
+   * is durable. A draining completion and a queued rerun remain the active owner. */
+  claimOrReplaceReturned(operation: RoundOperation): RoundOperation {
+    const validated = RoundOperationSchema.parse(operation);
+    assertInitialOperation(validated);
+    return this.transaction(() => {
+      const active = this.read(validated.sessionId);
+      if (active === undefined) return this.write(validated);
+      if (
+        active.state.phase === "completed" &&
+        active.state.returnedAt !== undefined &&
+        !active.rerunRequested
+      ) {
+        if (validated.operationId === active.operationId) {
+          throw new RoundOperationConflictError(
+            {
+              sessionId: active.sessionId,
+              operationId: active.operationId,
+              revision: active.revision,
+            },
+            "successor must have a distinct operation id",
+          );
+        }
+        return this.write(validated);
+      }
+      return active;
     });
   }
 

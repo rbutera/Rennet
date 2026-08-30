@@ -360,9 +360,13 @@ that host's repair.
    receipt and never re-dispatches. The first round pins one enabled installed
    Claude Code or Codex harness to the session; later rounds use that exact harness,
    and the run receipt names its version. It stays on the run through report drafting
-   and verification, and hands back to the board surface only after the durable
-   operation records verified terminal completion (including a verified
-   unchanged round). A terminal failure stays on the run with its failure
+   and verification. Terminal completion first enters a resumable handback:
+   Rennet records the stable Return turn, consumes the exact dispatched ask
+   occurrences, and cleans up the round source before the durable operation
+   records that the round has returned. Only that return receipt hands the UI
+   back to the board surface. A second Dispatch received during handback is
+   durably queued and replaces the prior operation without exposing round one's
+   completion as the new run. A terminal failure stays on the run with its failure
    receipt. Once a round has returned, the session row carries the durable
    ledger ordinal as *Round N is back*. The display transcript keeps every
    pre-round row and appends two stable lifecycle turns: the reviewer's

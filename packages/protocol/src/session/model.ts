@@ -770,6 +770,8 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
       z.object({ kind: z.literal("unchanged") }),
     ]),
     completedAt: z.number().int().nonnegative(),
+    /** Durable proof that Return, exact ask consumption, and terminal cleanup finished. */
+    returnedAt: z.number().int().nonnegative().optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -971,6 +973,17 @@ export const RoundOperationSchema = z
         code: "custom",
         path: ["state", "result"],
         message: "unchanged result contradicts worker or commit evidence",
+      });
+    }
+    if (
+      operation.state.phase === "completed" &&
+      operation.state.returnedAt !== undefined &&
+      operation.state.returnedAt < operation.state.completedAt
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "returnedAt"],
+        message: "precedes completedAt",
       });
     }
     if (commits !== undefined && commits.baseHead !== commits.from) {
@@ -1196,6 +1209,10 @@ export type RoundOperationProgressState = z.infer<typeof RoundOperationProgressS
 export const RoundOperationProgressSnapshotSchema = z.object({
   operationId: id,
   revision: z.number().int().nonnegative(),
+  /** Optional for progress snapshots emitted by older daemons. */
+  rerunRequested: z.boolean().optional(),
+  /** True while terminal Return and exact ask consumption are still resumable. */
+  draining: z.boolean().optional(),
   createdAt: z.number().int().nonnegative(),
   roundNumber: z.number().int().positive(),
   sourceTarget: RoundSourceTargetSchema,
@@ -1421,6 +1438,8 @@ export function roundOperationProgressSnapshot(
   return {
     operationId: operation.operationId,
     revision: operation.revision,
+    rerunRequested: operation.rerunRequested,
+    draining: operation.state.phase === "completed" && operation.state.returnedAt === undefined,
     createdAt: operation.createdAt,
     roundNumber: operation.roundNumber,
     sourceTarget: operation.sourceTarget,

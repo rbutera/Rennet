@@ -47,8 +47,9 @@ const OPERATION_BASE = {
 function operationEvent(
   state: RoundOperationProgressSnapshot["state"],
   revision: number,
+  progress: Partial<Pick<RoundOperationProgressSnapshot, "draining" | "rerunRequested">> = {},
 ): RoundEvent {
-  return { type: "operation", snapshot: { ...OPERATION_BASE, revision, state } };
+  return { type: "operation", snapshot: { ...OPERATION_BASE, revision, ...progress, state } };
 }
 
 const SETTLED_OPERATION = {
@@ -182,7 +183,12 @@ function TranscriptProbe() {
  *  command round-trip rather than a swallowed rejection. */
 const dispatchAnswer = (
   reviewId: string,
-): { workOrder: ComposedHandoffBundle; dispatched: boolean } => ({
+  acceptedOperation?: RoundOperationProgressSnapshot,
+): {
+  workOrder: ComposedHandoffBundle;
+  dispatched: boolean;
+  acceptedOperation?: RoundOperationProgressSnapshot;
+} => ({
   workOrder: {
     reviewId,
     patchsetId: "ps-1",
@@ -193,6 +199,7 @@ const dispatchAnswer = (
     traceMap: {},
   },
   dispatched: true,
+  ...(acceptedOperation === undefined ? {} : { acceptedOperation }),
 });
 
 function mountLive(bridge: MemoryBridge, path = `/s/${REVIEW}/run`, probeSlug: string = REVIEW) {
@@ -608,6 +615,49 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
       act(() => bridge.emitRoundProgress(REVIEW, { ...event, seq }));
     }
     await waitFor(() => expect(getByText("phase:composed/gen:ps-2")).toBeTruthy());
+  });
+
+  it("folds the accepted rerun before a stale round-one catch-up can navigate away", async () => {
+    const oldTerminal = operationEvent(
+      {
+        phase: "completed",
+        ...SETTLED_OPERATION,
+        result: {
+          kind: "changed",
+          report: {
+            status: "verified",
+            reportBoardId: "report-round-1",
+            generation: "generation-round-1",
+          },
+        },
+      },
+      10,
+      { draining: false, rerunRequested: false },
+    );
+    if (oldTerminal.type !== "operation") throw new Error("expected operation fixture");
+    const queued: RoundOperationProgressSnapshot = {
+      ...oldTerminal.snapshot,
+      revision: 11,
+      draining: true,
+      rerunRequested: true,
+    };
+    let eventReads = 0;
+    const bridge = new MemoryBridge({
+      ...resolutionHandlers,
+      "session.roundEvents": () => {
+        eventReads += 1;
+        return { events: [oldTerminal] };
+      },
+      "session.rounds": () => ({ records: [] }),
+      "round.dispatch": () => dispatchAnswer(REVIEW, queued),
+    });
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+
+    act(() => getByText("dispatch").click());
+
+    await waitFor(() => expect(eventReads).toBeGreaterThan(1));
+    expect(getByText("phase:dispatching")).toBeTruthy();
   });
 });
 
