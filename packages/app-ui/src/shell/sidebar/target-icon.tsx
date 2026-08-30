@@ -6,9 +6,9 @@ import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../si
 // The unified icon language for review targets (R36), ported from the spike's
 // `target-badge.tsx` — JSX only, no state. Branch = your branch, pull-request =
 // your PR, incoming pull-request = teammate PR; merged uses the merge glyph,
-// reviewed is a green tick, and "needs you" tints the target's OWN icon accent —
-// never a badge or pill. Colours come from the theme (accent / green / ink-faint),
-// sizes from the ramp; the tooltip carries the words.
+// reviewed is a green tick, and "needs you" tints the target's OWN icon with the
+// primary — never a badge or pill. Colours come from the theme (primary / green /
+// muted-foreground), sizes from the ramp; the tooltip carries the words.
 
 const TARGET_ICON: Record<SessionTarget, typeof GitBranch> = {
   "your-branch": GitBranch,
@@ -18,16 +18,16 @@ const TARGET_ICON: Record<SessionTarget, typeof GitBranch> = {
 
 function resolve(kind: SessionTarget, state?: SessionTargetState) {
   if (state === "merged") {
-    return { glyph: GitMerge, tone: "text-ink-faint", label: "Merged" };
+    return { glyph: GitMerge, tone: "text-muted-foreground", label: "Merged" };
   }
   if (state === "reviewed") {
     return { glyph: Check, tone: "text-green", label: "Reviewed" };
   }
   const glyph = TARGET_ICON[kind];
   if (state === "needs-you") {
-    return { glyph, tone: "text-accent", label: `${TARGET_LABEL[kind]} — needs you` };
+    return { glyph, tone: "text-primary", label: `${TARGET_LABEL[kind]} — needs you` };
   }
-  return { glyph, tone: "text-ink-faint", label: TARGET_LABEL[kind] };
+  return { glyph, tone: "text-muted-foreground", label: TARGET_LABEL[kind] };
 }
 
 /** Icon-only rendering — the sidebar's compact form. */

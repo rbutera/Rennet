@@ -1,7 +1,14 @@
 import { currentGenerationId, type LensKind } from "@rennet/protocol";
-import { cn, Toggle, ToggleGroup } from "@rennet/ui";
-import { ArrowLeft, MessageSquare } from "lucide-react";
-import { useEffect } from "react";
+import { cn } from "@rennet/ui";
+import {
+  ArrowLeft,
+  FileDiff,
+  History,
+  type LucideIcon,
+  Map as MapIcon,
+  PanelLeft,
+} from "lucide-react";
+import { Fragment, useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
 import { useBoardData, useLensBoards } from "../board/board-data";
@@ -29,8 +36,11 @@ import { Trail, type TrailProps } from "./trail";
 // board; then the app's ONE chat open/close toggle; then the two-line trail —
 // only while the chat dock is SHUT, since the open dock's header carries it), a
 // CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Map · Diff
-// pill — a C2 `ToggleGroup` over `?view`, selection DERIVED from the URL, toggling
-// navigating with `viewToggle` (replace).
+// pills — hand-rolled round buttons over `?view` (History on its own outline, Map
+// and Diff joined by a hairline), selection DERIVED from the URL and pressing one
+// navigating with `viewToggle` (replace). Not a `ToggleGroup`: the kit tray is a
+// raised segmented control and these are outlined chrome pills, and the two halves
+// of Map · Diff share one outline that no tray draws.
 //
 // C20: the chat toggle lives on the RIGHTMOST pane, not in the chat header, and it
 // is present in BOTH directions — one control that opens and closes, never a split
@@ -46,15 +56,51 @@ import { Trail, type TrailProps } from "./trail";
 // by omission. The left chip group clears the floating corner slot horizontally.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The pill's three explicit views, in order, mapped to their labels. */
+/** The pill's three explicit views, in order, with their labels and glyphs. */
 const PILL: ReadonlyArray<{
   readonly view: Extract<ViewKind, "rounds" | "map" | "diff">;
   readonly label: string;
+  readonly icon: LucideIcon;
+  /** The container width below which the label folds away, leaving the glyph. */
+  readonly foldBelow: string;
 }> = [
-  { view: "rounds", label: "History" },
-  { view: "map", label: "Map" },
-  { view: "diff", label: "Diff" },
+  // History folds EARLIER than Map · Diff: it sits nearest the centred lens pill,
+  // and the two look cramped the moment they touch.
+  { view: "rounds", label: "History", icon: History, foldBelow: "hidden @[66rem]:inline" },
+  { view: "map", label: "Map", icon: MapIcon, foldBelow: "hidden @[54rem]:inline" },
+  { view: "diff", label: "Diff", icon: FileDiff, foldBelow: "hidden @[54rem]:inline" },
 ];
+
+/** One pill item: icon, folding label, pressed state carried by `aria-pressed`. */
+function PillButton({
+  entry,
+  pressed,
+  onPress,
+  className,
+}: {
+  readonly entry: (typeof PILL)[number];
+  readonly pressed: boolean;
+  readonly onPress: () => void;
+  readonly className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      aria-label={entry.label}
+      title={entry.label}
+      onClick={onPress}
+      className={cn(
+        "flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors",
+        pressed ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+        className,
+      )}
+    >
+      <Icon icon={entry.icon} className="size-3.5 shrink-0" />
+      <span className={entry.foldBelow}>{entry.label}</span>
+    </button>
+  );
+}
 
 export function TopBar() {
   const [, navigate] = useLocation();
@@ -152,13 +198,11 @@ export function TopBar() {
   // the reviewer would have no way to reach the reason. Presence still tracks the truth —
   // it is just that "unknown" is a different truth from "none".
   const roundsUnavailable = useRoundsUnavailable(slug);
-  const pill =
+  const historyEntry =
     roundRecords.length > 0 || roundsUnavailable !== undefined
-      ? PILL
-      : PILL.filter((p) => p.view !== "rounds");
-  // A pill toggle is selected only for its three explicit views; the board and
-  // handoff select none (value = []), never the "" sentinel (S6).
-  const pillValue = PILL.some((p) => p.view === query.view) ? [query.view] : [];
+      ? PILL.find((p) => p.view === "rounds")
+      : undefined;
+  const mapDiff = PILL.filter((p) => p.view !== "rounds");
 
   // Resolve the trail from the active session row; a slug in no row falls back to the
   // slug alone rather than inventing a project or a target.
@@ -196,16 +240,16 @@ export function TopBar() {
   const chip = "border border-line/60 bg-surface/70 backdrop-blur-md";
   const iconButton = floating
     ? cn("size-8 rounded-full", chip)
-    : "size-7 rounded-chip hover:bg-raised";
+    : "size-6 rounded-md hover:bg-secondary";
   return (
     <header
       data-slot="session-top-bar"
       data-floating={floating}
       className={cn(
-        "grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 @container",
+        "grid grid-cols-[1fr_auto_1fr] items-center px-3 @container",
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-11"
-          : "h-14 shrink-0 border-b border-line bg-canvas",
+          : "h-14 shrink-0 border-b border-line",
       )}
     >
       {/* LEFT slot: back arrow (off-board), the one chat toggle, trail. In state 3 it
@@ -241,7 +285,7 @@ export function TopBar() {
             iconButton,
           )}
         >
-          <Icon icon={MessageSquare} className="size-4" />
+          <Icon icon={PanelLeft} className="size-3.5" />
         </button>
         {/* The trail belongs to whichever pane is leftmost. With the dock open the chat
             header already renders one (`chat/chat-header.tsx`), so showing it here too is
@@ -267,20 +311,40 @@ export function TopBar() {
         />
       </div>
 
-      {/* RIGHT slot: the History · Map · Diff pill. */}
-      <div className={cn("flex items-center justify-end", floating && "pointer-events-auto")}>
-        <ToggleGroup
-          value={pillValue}
-          onValueChange={onPill}
-          aria-label="Session view"
-          className={floating ? chip : undefined}
+      {/* RIGHT slot: the History · Map · Diff pills. Two groups, not one tray —
+          History is a ledger and joins only once a round has completed, so it
+          carries its own outline; Map and Diff are one pill split by a hairline. */}
+      <div
+        className={cn("flex items-center justify-end gap-1.5", floating && "pointer-events-auto")}
+      >
+        {historyEntry ? (
+          <PillButton
+            entry={historyEntry}
+            pressed={query.view === "rounds"}
+            onPress={() => onPill(query.view === "rounds" ? [] : ["rounds"])}
+            className={cn("rounded-full border border-border bg-card", floating && chip)}
+          />
+        ) : null}
+        <div
+          className={cn(
+            "flex overflow-hidden rounded-full border border-border bg-card",
+            floating && chip,
+          )}
         >
-          {pill.map(({ view, label }) => (
-            <Toggle key={view} value={view} size="sm">
-              {label}
-            </Toggle>
+          {mapDiff.map((entry, index) => (
+            <Fragment key={entry.view}>
+              {index > 0 ? (
+                <span className="w-px self-stretch bg-border" aria-hidden="true" />
+              ) : null}
+              <PillButton
+                entry={entry}
+                pressed={query.view === entry.view}
+                onPress={() => onPill(query.view === entry.view ? [] : [entry.view])}
+                className={index > 0 ? "pl-2" : "pr-2"}
+              />
+            </Fragment>
           ))}
-        </ToggleGroup>
+        </div>
       </div>
     </header>
   );
