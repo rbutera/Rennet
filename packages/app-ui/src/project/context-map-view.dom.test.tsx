@@ -87,10 +87,13 @@ function renderMap() {
 describe("ProjectContextMapView — router-side map (C12 cluster 5)", () => {
   it("renders scopes from project.contextMap with no ask rail", async () => {
     const { container } = renderMap();
-    await waitFor(() =>
-      expect(container.querySelector(".context-map-tree")?.textContent).toContain("@rennet/core"),
-    );
-    expect(container.querySelector(".context-map-tree")?.textContent).toContain("@rennet/ui");
+    // Scope rows carry the short name (the graph nodes always did); exact equality on the
+    // row's name span, since "core" would also match an unstripped "@rennet/core".
+    const names = () =>
+      [...container.querySelectorAll(".context-map-tree .context-map-name")].map(
+        (node) => node.textContent,
+      );
+    await waitFor(() => expect(names()).toEqual(["core", "ui"]));
     // The ask rail is absent — the session chat column plays that role here.
     expect(container.querySelector(".context-map-input")).toBeNull();
     expect(container.querySelector(".context-map-field")).toBeNull();
