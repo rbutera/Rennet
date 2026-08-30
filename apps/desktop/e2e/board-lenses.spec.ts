@@ -57,7 +57,11 @@ test("the board is the review workspace, and is honest when no board is drafted"
     // The board is the DEFAULT view of a session route — no `?view` needed to reach it.
     const board = page.locator('[data-kind="lens-board-view"]');
     await expect(board).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(`REVIEW · ${basename(repository)}`)).toBeVisible();
+    // WHICH repository is on screen — the fact the removed `REVIEW · <repo>` eyebrow used
+    // to carry. The session trail carries it now, and the trail is where the app states it.
+    await expect(
+      page.locator('[data-slot="trail"]').getByText(basename(repository)).first(),
+    ).toBeVisible();
 
     // The honest-absent state, and the reason this spec drives the model-free floor rather
     // than treating it as a gap: with no harness there is no board, and the surface SAYS SO

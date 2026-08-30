@@ -75,11 +75,14 @@ describe("ReviewWorkspace ?view=handoff mount (C08 task 5.2)", () => {
   it("the FAB toggles to ?view=handoff from the board", async () => {
     const r = mountWorkspace("/s/x");
     // The board is showing and the FAB is present and clickable (own branch → "Continue").
-    expect(r.getByText(/REVIEW ·/)).toBeTruthy();
+    // The landmark is the board element: the `REVIEW · <repo>` eyebrow it used to be is gone
+    // (the board opens on the board), and the element is what the surface actually is.
+    const board = () => document.querySelector('[data-kind="lens-board-view"]');
+    expect(board()).not.toBeNull();
     await r.user.click(r.getByRole("button", { name: /Continue/ }));
-    // The hand-off is now open — the board header is gone, the rounds surface is shown.
+    // The hand-off is now open — the board is gone, the rounds surface is shown.
     expect(r.getByText("Nothing staged yet.")).toBeTruthy();
-    expect(r.queryByText(/REVIEW ·/)).toBeNull();
+    expect(board()).toBeNull();
   });
 
   it("the FAB yields (inert, data-open) while the hand-off is open", () => {
