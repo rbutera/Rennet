@@ -48,6 +48,28 @@ describe("composer badges read the real review slice (task 4.3)", () => {
     expect(useRennetStore.getState().review.codeComments["src/a.ts"]?.[12]).toBeUndefined();
   });
 
+  it("draws every glyph at Rennet's 1.6px line, not lucide's 2px default", () => {
+    // The composer rendered its lucide elements RAW, so its icons sat a third heavier than
+    // the ones beside them. Mixed weights on one surface is the defect; this asserts the
+    // whole surface, not one icon, so a newly added raw element reddens it.
+    act(() => useRennetStore.getState().reviewActions.setCodeComment("src/a.ts", 12, "off by one"));
+    // WHAT THIS REACHES: the four glyphs a comment badge puts on screen (badge mark, its
+    // remove X, the hover card's path icon, and the send arrow). It is asserted in both
+    // in-flight states because the state changes what is mounted; the presence affordance
+    // itself carries no lucide element (it is a pulsing dot), so nothing new arrives with it.
+    // An icon on a path this never mounts — the image badge's <img>, for one — is an icon
+    // this cannot check.
+    const { container, rerender } = mount(<Composer onSend={() => undefined} inFlight={false} />);
+    const widths = () =>
+      [...container.querySelectorAll("svg.lucide")].map((svg) => svg.getAttribute("stroke-width"));
+    expect(widths().length).toBeGreaterThan(2);
+    expect(new Set(widths())).toEqual(new Set(["1.6"]));
+
+    rerender(<Composer onSend={() => undefined} inFlight={true} />);
+    expect(screen.getByText(/orchestrator is working/)).toBeTruthy();
+    expect(new Set(widths())).toEqual(new Set(["1.6"]));
+  });
+
   it("surfaces a quote badge from review.quoteThreads and clears it on remove", async () => {
     act(() =>
       useRennetStore.getState().reviewActions.addQuoteComment("scoped middleware", "why here?"),
