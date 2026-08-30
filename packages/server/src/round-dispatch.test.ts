@@ -59,6 +59,7 @@ function harness(
     readonly roundRecordsForReview?: DispatchDeps["roundRecordsForReview"];
     readonly broadcastAskProjection?: DispatchDeps["broadcastAskProjection"];
     readonly queueRoundIfActive?: DispatchDeps["queueRoundIfActive"];
+    readonly retryRound?: DispatchDeps["retryRound"];
     readonly composeBundle?: DispatchDeps["composeBundle"];
   } = {},
 ) {
@@ -77,9 +78,11 @@ function harness(
     ...(options.queueRoundIfActive === undefined
       ? {}
       : { queueRoundIfActive: options.queueRoundIfActive }),
+    ...(options.retryRound === undefined ? {} : { retryRound: options.retryRound }),
     ...(options.composeBundle === undefined ? {} : { composeBundle: options.composeBundle }),
   } as unknown as DispatchDeps);
-  return { store, dispatch: roundHandlers(rt)["round.dispatch"] };
+  const handlers = roundHandlers(rt);
+  return { store, dispatch: handlers["round.dispatch"], retry: handlers["round.retry"] };
 }
 
 type DispatchKickInput = Parameters<NonNullable<DispatchDeps["dispatchRound"]>>[0];
@@ -141,6 +144,30 @@ function acceptedOutcome(settled: Promise<void> = Promise.resolve()) {
     settled,
   };
 }
+
+describe("round.retry — retained failure → durable checkpoint", () => {
+  it("forwards the exact review and returns the coordinator's accepted snapshot", async () => {
+    const retryRound = vi.fn<NonNullable<DispatchDeps["retryRound"]>>(async () => ({
+      retry: "regeneration",
+      acceptedOperation: ACCEPTED_OPERATION,
+    }));
+    const { retry } = harness(undefined, { retryRound });
+
+    await expect(retry({ reviewId: REVIEW_ID })).resolves.toEqual({
+      retry: "regeneration",
+      acceptedOperation: ACCEPTED_OPERATION,
+    });
+    expect(retryRound).toHaveBeenCalledWith({ review: REVIEW });
+  });
+
+  it("rejects when no retained failed operation exists", async () => {
+    const { retry } = harness(undefined, { retryRound: async () => undefined });
+
+    await expect(retry({ reviewId: REVIEW_ID })).rejects.toThrow(
+      "Review review-1 has no failed round to retry.",
+    );
+  });
+});
 
 describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () => {
   it("queues behind a durable active round before invoking the model composer", async () => {

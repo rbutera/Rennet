@@ -190,6 +190,7 @@ settings, projects, and sessions.
 | `ask.restoreFinding` | Needs the active session and finding reference. |
 | `ask.read` | Read the review surface drives. |
 | `round.dispatch` | Needs the session's staged asks and council picks. |
+| `round.retry` | Needs the retained failed operation and its exact durable checkpoint. |
 
 ### session
 

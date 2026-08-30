@@ -546,6 +546,34 @@ if (RACE_ROLE !== undefined) {
       ).toThrow(RoundOperationConflictError);
     });
 
+    it("allows only the exact durable checkpoint out of a failed operation", () => {
+      const store = new RoundOperationStore(tempStoreDir());
+      const failed = failDuringPreparation(store, {
+        operationId: "failed-retry",
+        sessionId: "failed-retry",
+      });
+
+      expect(() =>
+        store.compareAndSwap(expectation(failed), {
+          state: {
+            phase: "workspace-preparing",
+            workspace: { ...workspaceAttempt, worktreePath: "/different-worktree" },
+          },
+          updatedAt: 4,
+        }),
+      ).toThrow(RoundOperationConflictError);
+
+      const retrying = store.compareAndSwap(expectation(failed), {
+        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
+        updatedAt: 4,
+      });
+
+      expect(retrying.state).toEqual({
+        phase: "workspace-preparing",
+        workspace: workspaceAttempt,
+      });
+    });
+
     it("rejects a drafted report receipt that rewrites a lens board id", () => {
       const drafting = operation({
         operationId: "draft-board-identity",

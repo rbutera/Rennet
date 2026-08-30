@@ -51,6 +51,7 @@ import type {
 } from "@rennet/protocol";
 import {
   type CommandInput,
+  type CommandOutput,
   type ConversationAnchorWire,
   type DetectedForge,
   type DetectedHarness,
@@ -603,6 +604,10 @@ export interface DispatchDeps {
     review: Review;
     dispatchId: string;
   }) => Promise<RoundOperationProgressSnapshot | undefined>;
+  /** Resume the retained failed operation for this review from its durable checkpoint. */
+  readonly retryRound?: (input: {
+    review: Review;
+  }) => Promise<CommandOutput<"round.retry"> | undefined>;
   /**
    * The rounds-ledger read for `session.rounds`: the `RoundRecord[]` the live rounds runtime
    * recorded for this review's session, resolved read-only (the READ side of `dispatchRound`'s

@@ -208,6 +208,16 @@ export function roundHandlers(rt: DispatchRuntime) {
     consumeCurrentAskOccurrences(deps, reviewId, occurrences);
 
   return {
+    "round.retry": async (rawInput) => {
+      const name = "round.retry" as const;
+      const input = parseCommandInput(name, rawInput);
+      const review = requireReviewById(input.reviewId);
+      const retry = await deps.retryRound?.({ review });
+      if (retry === undefined) {
+        throw new Error(`Review ${review.id} has no failed round to retry.`);
+      }
+      return parseCommandOutput(name, retry);
+    },
     "round.dispatch": async (rawInput) => {
       const name = "round.dispatch" as const;
       const input = parseCommandInput(name, rawInput);
