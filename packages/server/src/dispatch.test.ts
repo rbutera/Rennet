@@ -115,6 +115,12 @@ const SANDBOX_TARGET = {
   headOid: "deadbeefcafe0001",
 };
 
+const GITLAB_SANDBOX_TARGET = {
+  ...SANDBOX_TARGET,
+  repo: { ...SANDBOX_TARGET.repo, forge: "gitlab" },
+  forgeRef: "gid://gitlab/MergeRequest/1",
+};
+
 const PUBLISH_CAPABILITIES: ForgeCapabilities = {
   supportsThreadResolution: true,
   supportsBatchedReview: true,
@@ -194,6 +200,7 @@ function harness(
     raiseAttention?: DispatchDeps["raiseAttention"];
     inFlightReviews?: DispatchDeps["inFlightReviews"];
     threadPersistence?: DispatchDeps["threadPersistence"];
+    publishPortFor?: DispatchDeps["publishPortFor"];
     /** Swap the recording spies for REAL ports (F1's E2E runs the live orchestrator
      *  ask over a fake harness turn port through this seam). */
     reviewAsk?: DispatchDeps["reviewAsk"];
@@ -322,7 +329,9 @@ function harness(
     setRepositoryDirty: (value) => {
       dirty = value;
     },
-    publishPort,
+    publishPortFor:
+      extra.publishPortFor ??
+      ((repository) => (repository.forge === "github" ? publishPort : undefined)),
     ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
     ...(extra.acknowledgeAttention ? { acknowledgeAttention: extra.acknowledgeAttention } : {}),
     ...(extra.raiseAttention ? { raiseAttention: extra.raiseAttention } : {}),
@@ -1151,7 +1160,7 @@ describe("createDispatch — openspec.coverage routing (the Spec view's coverage
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// publish.review — the FIRST real GitHub egress (issue #21).
+// publish.review — the first real forge review egress (issue #21).
 //
 // Posting a review to GitHub is an EXTERNAL act. The user's Post click is the whole
 // authorization; correctness comes from the egress-side exact-payload/composition round-trip,
@@ -1415,6 +1424,79 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     };
     expect(body.variables.input.pullRequestId).toBe(SANDBOX_TARGET.forgeRef);
     expect(body.variables.input.commitOID).toBe(SANDBOX_TARGET.headOid);
+  });
+
+  it("never routes same-coordinate GitLab review egress through the GitHub publisher", async () => {
+    const buildGitHubRequest = vi.fn<ForgePublishPort["buildReviewRequest"]>((post) =>
+      buildGitHubReviewRequest(post),
+    );
+    const publishGitHubReview = vi.fn<ForgePublishPort["publishReview"]>(() =>
+      Promise.resolve({ reviewRef: "PRR_wrong", url: null, reused: false }),
+    );
+    const githubPort = fakePublishPort({
+      buildReviewRequest: buildGitHubRequest,
+      publishReview: publishGitHubReview,
+    });
+    const { dispatch, service } = harness(githubPort);
+    const review = await service.createReviewFromPatchset(randomUUID(), prPatchset(), {
+      postTarget: GITLAB_SANDBOX_TARGET,
+    });
+
+    await expect(
+      dispatch("publish.compose", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "review",
+      }),
+    ).resolves.toEqual({
+      status: "unavailable",
+      reason: 'No review publisher is registered for forge "gitlab".',
+    });
+    await expect(
+      dispatch("publish.review", publishReviewInput(review.id, { dryRun: false })),
+    ).rejects.toThrow(/forge "gitlab"/i);
+
+    expect(buildGitHubRequest).not.toHaveBeenCalled();
+    expect(publishGitHubReview).not.toHaveBeenCalled();
+    expect(githubPort.posts).toHaveLength(0);
+  });
+
+  it("keeps one provider-selected publisher across compose and post", async () => {
+    const buildGitHubRequest = vi.fn<ForgePublishPort["buildReviewRequest"]>((post) =>
+      buildGitHubReviewRequest(post),
+    );
+    const githubPort = fakePublishPort({ buildReviewRequest: buildGitHubRequest });
+    const buildGitLabRequest = vi.fn<ForgePublishPort["buildReviewRequest"]>((post) => ({
+      endpoint: "https://gitlab.test/api/v4/merge_requests/reviews",
+      method: "POST",
+      body: { marker: post.marker },
+    }));
+    const gitlabPort = fakePublishPort({ buildReviewRequest: buildGitLabRequest });
+    const publishPortFor = vi.fn<DispatchDeps["publishPortFor"]>((repository) => {
+      if (repository.forge === "github") return githubPort;
+      if (repository.forge === "gitlab") return gitlabPort;
+      return undefined;
+    });
+    const { dispatch, service } = harness(githubPort, {}, { publishPortFor });
+    const review = await service.createReviewFromPatchset(randomUUID(), prPatchset(), {
+      postTarget: GITLAB_SANDBOX_TARGET,
+    });
+
+    const composed = await composeReview(dispatch, review.id);
+    const posted = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, false),
+    )) as PublishResult;
+
+    expect(posted.request.endpoint).toBe("https://gitlab.test/api/v4/merge_requests/reviews");
+    expect(publishPortFor.mock.calls).toEqual([
+      [GITLAB_SANDBOX_TARGET.repo],
+      [GITLAB_SANDBOX_TARGET.repo],
+    ]);
+    expect(buildGitHubRequest).not.toHaveBeenCalled();
+    expect(githubPort.posts).toHaveLength(0);
+    expect(buildGitLabRequest).toHaveBeenCalledTimes(1);
+    expect(gitlabPort.posts).toHaveLength(1);
   });
 
   it("(e) happy path: the click posts exactly one review — no token, no confirmation step", async () => {
@@ -1863,7 +1945,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         payload: PAYLOAD,
         compositionId: compositionIdFor(review, PAYLOAD),
       }),
-    ).rejects.toThrow(/no GitHub PR submission is available/i);
+    ).rejects.toThrow(/no forge PR submission is available/i);
   });
 });
 
@@ -2795,7 +2877,7 @@ function frontDoorHarness(seed: {
     startWatching: () => undefined,
     isRepositoryDirty: () => false,
     setRepositoryDirty: () => undefined,
-    publishPort: fakePublishPort(),
+    publishPortFor: (repository) => (repository.forge === "github" ? fakePublishPort() : undefined),
     projects: {
       list: () => stored,
       remove: () => ({ projects: stored }),

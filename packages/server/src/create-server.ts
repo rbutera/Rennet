@@ -105,7 +105,6 @@ import {
   repoHasSubmodules,
   repoKeyOf,
   repositoryIdentity,
-  resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
   runConfiguredRoundGate,
@@ -141,8 +140,6 @@ import {
   decompose,
   detectLocus,
   escapePath,
-  type ForgePrSubmission,
-  type ForgePrSubmissionOutcome,
   type ForgePullRequestRef,
   findingDispositionMigrationEvents,
   guardSeatTurn,
@@ -219,6 +216,7 @@ import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
+import { submitForgePullRequest } from "./forge-submission";
 import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
@@ -240,7 +238,9 @@ import {
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
 import {
-  createProjectForgeRegistry,
+  createForgeRegistry,
+  type ForgeProvider,
+  fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
   resolveProjectRepositoryRoot,
@@ -1119,6 +1119,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return createGitHubOctokit({ fetch: publishHttp, token: auth.token });
   }
 
+  // Provider registration is the one composition boundary for forge-specific
+  // status and egress. The registry is daemon-lived, while every credential-bound
+  // operation below resolves its client lazily so a `gh auth` change takes effect
+  // on the next top-level operation.
+  const forgeProviders = createForgeRegistry<ForgeProvider>([
+    {
+      forge: "github",
+      implementation: {
+        fetchCiStatus: async (ref, headOid, signal) =>
+          new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }).fetchCiStatus(
+            ref,
+            headOid,
+            signal,
+          ),
+        review: new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit }),
+        pullRequest: new GitHubPrSubmissionAdapter({
+          resolveOctokit: resolveGitHubOctokit,
+        }),
+      },
+    },
+  ]);
+
   // Account mutations (device-flow store, paste, disconnect) are SERIALIZED so a
   // flow completing mid-disconnect cannot interleave with the token file write and
   // resurrect a token the user just forgot.
@@ -1442,7 +1464,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return openPullRequestRef(commandId, prRef, repoPath, retrospective);
   }
 
-  const projectPullRequestOpeners = createProjectForgeRegistry<ProjectPullRequestOpener<Review>>([
+  const projectPullRequestOpeners = createForgeRegistry<ProjectPullRequestOpener<Review>>([
     {
       forge: "github",
       implementation: ({ commandId, repository, number, repoPath, retrospective }) =>
@@ -1632,12 +1654,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...(review.postTarget === undefined ? {} : { postTarget: review.postTarget }),
       patchset,
       manifest,
-      fetchCiStatus: async (ref, headOid, signal) =>
-        new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }).fetchCiStatus(
-          ref,
-          headOid,
-          signal,
-        ),
+      fetchCiStatus: (ref, headOid, signal) =>
+        fetchForgeCiStatus(forgeProviders, ref, headOid, signal),
       ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
       budget: sharedBudget,
     });
@@ -1977,48 +1995,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Which reviews have a model turn in flight (#383 batch) — the real source of projected
   // `attention.running`, marked by dispatch and read by the projection context below.
   const inFlightReviews = new InFlightReviews();
-  // The publish egress port (issue #21). It constructs requests purely for dry-run and
-  // posts only when the direct `publish.review` action reaches it.
-  const publishPort = new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit });
   const publishCompositionStore = new PublishCompositionStore(
     join(dataDir, "publish-compositions"),
   );
   // The own-branch PR submission (issue #257 / #107): push the review's own branch,
   // then open a real PR. Pushing your own branch is not publishing (AGENTS.md) — the
-  // agent loop pushes freely — so this is a plain git push + a REST create, with the
-  // repo's GitHub identity resolved from its own remotes (never a path-name guess).
-  const prSubmissionAdapter = new GitHubPrSubmissionAdapter({
-    resolveOctokit: resolveGitHubOctokit,
-  });
-  const submitPullRequest = async (input: {
-    repoRoot: string;
-    headRef: string;
-    submission: ForgePrSubmission;
-  }): Promise<ForgePrSubmissionOutcome> => {
+  // agent loop pushes freely — so this is a plain git push + a provider-routed create,
+  // with both operations bound to the same discovered remote identity.
+  const submitPullRequest: NonNullable<DispatchDeps["submitPullRequest"]> = (input) => {
     // Git runs inside the project's locus (add-windows-support): a WSL-locus repo's
     // remote lookup and push execute in the distro, against the distro-native repo.
     const gitInLocus = execaGitFor(locusForRepo(input.repoRoot));
-    // Resolve ONE GitHub remote — the single source for BOTH the push destination and
-    // the PR repo, so they can never disagree (prefer `origin`, the North Star of your
-    // own repo). A repo with no GitHub remote has nowhere to open a PR — say so.
-    const remote = await resolveForgeRemote(gitInLocus, input.repoRoot);
-    if (!remote) {
-      throw new Error(
-        "No GitHub remote is configured for this repository, so there is nowhere to open a pull request.",
-      );
-    }
-    // Push the NAMED reviewed branch, not the current HEAD: the PR must open from the
-    // branch the review is about, even if HEAD has since moved to another branch.
-    await gitInLocus(input.repoRoot, [
-      "push",
-      remote.name,
-      `refs/heads/${input.headRef}:refs/heads/${input.headRef}`,
-    ]);
-    return prSubmissionAdapter.submitPullRequest({
-      target: {
-        repo: { forge: "github", owner: remote.identity.owner, name: remote.identity.name },
-      },
-      submission: input.submission,
+    return submitForgePullRequest({
+      registry: forgeProviders,
+      git: gitInLocus,
+      ...input,
     });
   };
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
@@ -3036,7 +3027,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A review-scoped turn marks its review running for the duration (#383 batch) — the real
     // source of the projected `attention.running`, read by the listener's projection context.
     inFlightReviews,
-    publishPort,
+    publishPortFor: (repository) => forgeProviders.sourceFor(repository)?.review,
     submitPullRequest,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
     // (fully capable, Bash included — Rai's call) with git checkpoints and returns the
@@ -3408,7 +3399,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       const { source, credentialSource, authUnavailable, authUnavailableCopy } =
         await resolveProjectPrSource();
-      const forgeRegistry = createProjectForgeRegistry<ProjectPrSource>(
+      const forgeRegistry = createForgeRegistry<ProjectPrSource>(
         source === null ? [] : [{ forge: "github", implementation: source }],
       );
       const detail = await loadProjectDetail(

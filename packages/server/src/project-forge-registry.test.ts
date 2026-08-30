@@ -1,7 +1,10 @@
+import type { ForgeCiStatus, ForgePort } from "@rennet/core";
 import type { ForgeRepoIdentity, Project } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
-  createProjectForgeRegistry,
+  createForgeRegistry,
+  type ForgeProvider,
+  fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
   repositoryIdentityAgrees,
@@ -33,11 +36,19 @@ const PROJECT = {
   source: "local",
 } satisfies Project;
 
-describe("project forge registry", () => {
+describe("forge registry", () => {
+  it("reports exact provider membership", () => {
+    const registry = createForgeRegistry([{ forge: "github", implementation: "github" }]);
+
+    expect(registry.has("github")).toBe(true);
+    expect(registry.has("gitlab")).toBe(false);
+    expect(registry.has("GitHub")).toBe(false);
+  });
+
   it("never routes a same-coordinate GitLab PR through the GitHub opener", async () => {
     const review = { id: "github-review" };
     const github = vi.fn<ProjectPullRequestOpener<typeof review>>(async () => review);
-    const registry = createProjectForgeRegistry([{ forge: "github", implementation: github }]);
+    const registry = createForgeRegistry([{ forge: "github", implementation: github }]);
 
     await expect(
       openProjectPullRequest(registry, {
@@ -67,6 +78,32 @@ describe("project forge registry", () => {
       repoPath: "/workspace/github",
       retrospective: false,
     });
+  });
+
+  it("routes CI by forge and forwards the exact ref, head OID, and signal", async () => {
+    const status = {
+      checks: [],
+      sso: { kind: "none" },
+      incomplete: false,
+    } satisfies ForgeCiStatus;
+    const githubFetch = vi.fn<ForgePort["fetchCiStatus"]>(async () => status);
+    const registry = createForgeRegistry<Pick<ForgeProvider, "fetchCiStatus">>([
+      { forge: "github", implementation: { fetchCiStatus: githubFetch } },
+    ]);
+    const gitlabRef = { repo: GITLAB_WIDGET, number: 7 };
+
+    await expect(fetchForgeCiStatus(registry, gitlabRef, "gitlab-head")).rejects.toThrow(
+      'No CI status source is registered for forge "gitlab"',
+    );
+    expect(githubFetch).not.toHaveBeenCalled();
+
+    const githubRef = { repo: GITHUB_WIDGET, number: 11 };
+    const controller = new AbortController();
+    await expect(
+      fetchForgeCiStatus(registry, githubRef, "github-head", controller.signal),
+    ).resolves.toBe(status);
+    expect(githubFetch).toHaveBeenCalledOnce();
+    expect(githubFetch).toHaveBeenCalledWith(githubRef, "github-head", controller.signal);
   });
 
   it("resolves the root by forge when two providers share owner/name", async () => {

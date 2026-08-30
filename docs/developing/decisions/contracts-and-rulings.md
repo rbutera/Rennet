@@ -73,7 +73,7 @@ Apply the sources by scope:
 | **R19** | Public protocol is transport-neutral and JSON-Schema-first. Private commands and events are Zod-first. Remote clients receive recipient-specific projections without host paths. |
 | **R20** | The UI splits in two: `@rennet/ui` (the vendored shadcn/Base UI component kit) imports only `protocol` and `theme`; `@rennet/app-ui` (Rennet's composites and screens) imports only `protocol`, `theme`, `ui`, and browser-safe dependencies. Neither imports `core`. |
 | **R21** | Production packages are `protocol`, `theme`, `prompts`, `core`, `adapters`, `server`, `client`, `ui`, and `app-ui`, with apps as composition roots. `protocol` is the base layer: its Zod schemas are the single source of truth for the wire types, which are `z.infer` exports. CI checks the dependency arrows. |
-| **R24** | Forge behavior sits behind capability-based `ForgePort`. Core does not contain scattered GitHub conditionals. |
+| **R24** | Forge behavior sits behind capability-based ports. Server-side consumers select a registered provider from the repository's forge identity; an unregistered provider never falls through to GitHub. Core does not contain scattered GitHub conditionals. |
 | **R28** | A review edition is an immutable patchset. Source movement creates a successor patchset. |
 | **R29** | Exact unaffected analysis may carry forward. Direct changes invalidate; dependency, context, and ambiguity changes become potentially invalid. |
 | **R30** | Project context is fingerprinted by source, config, generator, schema, toolchain, and shards. Non-current context is rebuilt or omitted with explicit degradation. |

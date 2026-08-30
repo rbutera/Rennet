@@ -190,16 +190,18 @@ export interface DispatchDeps {
   isRepositoryDirty(): boolean;
   setRepositoryDirty(dirty: boolean): void;
   /**
-   * The forge egress port (issue #21). `buildReviewRequest` is pure and network-free
-   * (the dry-run evidence, no credential); `publishReview` performs the real
-   * post. Read/egress are separate ports, so only the publish command can egress.
+   * Resolve the forge egress port for the persisted, provider-qualified repository.
+   * `buildReviewRequest` is pure and network-free (the dry-run evidence, no
+   * credential); `publishReview` performs the real post. Read/egress are separate
+   * ports, so only the publish command can egress. An unregistered provider returns
+   * `undefined`; it must never fall through to another forge's implementation.
    */
-  readonly publishPort: ForgePublishPort;
+  readonly publishPortFor: (repository: ForgeRepoIdentity) => ForgePublishPort | undefined;
   /**
    * The own-branch PR submission action (issue #257 / #107): push the review's own
    * branch and open a real pull request. Composed by the root over the host git push
-   * (`git push origin <headRef>`) + the GitHub create-PR adapter, with the repo's
-   * GitHub identity resolved from its remotes. Optional so a composition WITHOUT it
+   * (`git push <remote> <headRef>`) plus the registered provider's create operation,
+   * with the repository identity resolved from that same effective push URL. Optional so a composition WITHOUT it
    * (no coding harness / no auth) answers an honest failure rather than throwing.
    * There is NO consent token: pushing your own branch is not publishing, and the
    * sign-click is the whole authorization.

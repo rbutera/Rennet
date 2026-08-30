@@ -661,6 +661,7 @@ export {
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
 export {
   discoverWorktreeIdentities,
+  forgeForRemoteHost,
   type LocalWorktree,
   matchWorktree,
   type NamedForgeRemote,
