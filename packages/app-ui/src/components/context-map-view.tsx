@@ -132,7 +132,7 @@ export function ContextMapView({
     let live = true;
     const commandId =
       retryMode === "rebuild"
-        ? commandIdFor(`project.process:${projectId}:rebuild:${attempt}`)
+        ? commandIdFor(`project.process:${projectId}:rebuild:${mapQuery.data.run?.id ?? attempt}`)
         : (mapQuery.data.run?.id ?? commandIdFor(`project.process:${projectId}`));
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
       if (!live) return;

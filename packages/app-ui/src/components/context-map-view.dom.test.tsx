@@ -242,7 +242,9 @@ describe("ContextMapView — the Context Map surface", () => {
   it("uses a fresh run identity when a completed journal produced no readable map", async () => {
     const commandIds: string[] = [];
     const rebuilding = deferred<{ repos: [] }>();
-    const completedId = commandIdFor("project.process:project-1");
+    // A remount after an earlier repair sees that completed rebuild in the durable
+    // result. The next repair must derive from it, never repeat local `rebuild:1`.
+    const completedId = commandIdFor("project.process:project-1:rebuild:1");
     const bridge = new MemoryBridge({
       "project.contextMap": () => ({
         status: "absent",
