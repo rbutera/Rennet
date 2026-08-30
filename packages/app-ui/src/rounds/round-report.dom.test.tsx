@@ -37,6 +37,28 @@ describe("RoundReportBoard — the round report as a board", () => {
     );
   });
 
+  it("holds the outcomes in ONE bordered card, and leaves the greeting section unboxed", () => {
+    const { container } = mount(<RoundReportBoard board={reportBoardFixture} />);
+    const cards = container.querySelectorAll('[data-kind="report-outcome-card"]');
+    // Exactly one card: the Outcomes section. The greeting section is prose, so it stays a
+    // plain stack — box it and this reddens, which is the point (the condition is the
+    // section's real content, not its title).
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    if (!card) throw new Error("missing outcome card");
+    expect(card.className).toContain("divide-y");
+    expect(card.className).toContain("border-border");
+    // All four outcomes live inside it, one padded row each.
+    expect(card.querySelectorAll('[data-kind="round_outcome"]')).toHaveLength(4);
+    for (const outcome of card.querySelectorAll('[data-kind="round_outcome"]')) {
+      expect(outcome.parentElement?.className).toContain("px-4");
+      expect(outcome.parentElement?.className).toContain("py-3");
+    }
+    // And the greeting's prose is NOT inside the card.
+    const greeting = container.querySelector('[data-section-id="greeting"]');
+    expect(greeting?.querySelector('[data-kind="report-outcome-card"]')).toBeNull();
+  });
+
   it("reveals a code_ref only for the one outcome that carries one", () => {
     const { container } = mount(<RoundReportBoard board={reportBoardFixture} />);
     // Only the `addressed` outcome carries `ro-cr-observability` ⇒ exactly one reveal chip.

@@ -1,9 +1,10 @@
 import { ROUND_NO_REGEN, type RoundLedgerRecord, type RoundRecord } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { Check } from "lucide-react";
+import { Check, ChevronRight, GitCommitHorizontal, Minus } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { LensBoardView } from "../board";
+import { Icon } from "../components/icon";
 import { readSessionQuery, sessionPath } from "../routes/url";
 import { roundTargetLabel } from "./round-machine";
 import { RoundReportBoard, roundOutcomeTally } from "./round-report";
@@ -53,6 +54,123 @@ export function generationLine(records: readonly RoundRecord[]): readonly string
   return [...new Set(ids.filter((id): id is string => id !== undefined && id !== ROUND_NO_REGEN))];
 }
 
+/** Duration, in the shape the run receipt's millisecond count deserves at a glance. */
+function gateDuration(ms: number): string {
+  return ms < 60_000
+    ? `${Math.round(ms / 1000)}s`
+    : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+}
+
+/**
+ * The retrospective panel a settled round wears (prototype `round-report.tsx:118-158`):
+ * the one-line account is the DISCLOSURE, and opening it shows what the round was
+ * dispatched to do and how its run went.
+ *
+ * Bound only to the durable record. **Trigger Queue** is `asksDispatched` — the exact
+ * field the prototype's `round.triggers` stood in for — read back through the report's
+ * `round_outcome` items so a dispatched ask shows its text rather than its thread id
+ * (the report is the only place the ask's words survive on the record). **Run** is the
+ * immutable run receipt: the gate the round ran and the commits it landed.
+ *
+ * What is NOT here, deliberately: the prototype's "Turn Anatomy" — three sentences
+ * narrating what the orchestrator read, which lenses carried forward, and what the
+ * re-draft marked. No producer writes that account. The per-lens carry/rework verdicts
+ * exist only while a round is LIVE (`LensLane.verdict`, emitted as `RoundEvent`
+ * `{type:"lens"}` from `server/src/runtime/rounds.ts:730`) and are never persisted onto
+ * `RoundRecord`, so a settled round cannot recover them. Narrating them here would be
+ * fiction, so the panel says less than the prototype and everything it says is checked.
+ */
+function ActivityFeed({
+  record,
+  generation,
+  reworks,
+  askText,
+}: {
+  readonly record: RoundLedgerRecord;
+  readonly generation: string;
+  readonly reworks: string;
+  readonly askText: (ref: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const gate = record.run?.gate;
+  const commits = record.workerCommitRange;
+  return (
+    <div
+      data-testid="round-retrospective"
+      data-generation={generation}
+      className="rounded-md border border-border bg-secondary/20"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-4 py-2 text-left text-muted-foreground text-xs transition-colors hover:text-foreground"
+      >
+        <Icon
+          icon={ChevronRight}
+          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+        />
+        <Icon icon={Check} className="size-3.5 shrink-0 text-muted-foreground/70" />
+        Regenerated the boards{reworks} · generation {generation}
+      </button>
+      {open && (
+        <div
+          data-testid="round-retrospective-detail"
+          className="flex flex-col gap-3 px-4 pt-1 pb-3 pl-10"
+        >
+          {record.asksDispatched.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-10 text-muted-foreground/70 uppercase tracking-wide">
+                Trigger Queue
+              </span>
+              {record.asksDispatched.map((ref) => (
+                <span
+                  key={ref}
+                  data-testid="round-trigger"
+                  className="flex items-baseline gap-1.5 text-12-5 text-muted-foreground"
+                >
+                  <span aria-hidden="true" className="select-none text-muted-foreground/50">
+                    ‣
+                  </span>
+                  {askText(ref)}
+                </span>
+              ))}
+            </div>
+          )}
+          {gate !== undefined && (
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-10 text-muted-foreground/70 uppercase tracking-wide">
+                Run
+              </span>
+              <span
+                data-testid="round-gate"
+                className="flex items-center gap-1.5 text-12-5 text-muted-foreground"
+              >
+                <Icon
+                  icon={gate.outcome === "passed" ? Check : Minus}
+                  className="size-3 shrink-0"
+                />
+                {gate.outcome === "passed"
+                  ? `Gate passed · ${gate.command} · ${gateDuration(gate.durationMs)}`
+                  : "No gate configured — the round ran without one"}
+              </span>
+              <span
+                data-testid="round-commits"
+                className="flex items-center gap-1.5 text-12-5 text-muted-foreground"
+              >
+                <Icon icon={GitCommitHorizontal} className="size-3 shrink-0" />
+                {commits.from === commits.to
+                  ? "The worker landed no commits"
+                  : `Committed ${commits.from.slice(0, 7)}…${commits.to.slice(0, 7)}`}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RoundsLedger({
   reviewId,
   slug,
@@ -95,6 +213,17 @@ export function RoundsLedger({
     record.reworkCount === undefined
       ? ""
       : ` · ${record.reworkCount} ${record.reworkCount === 1 ? "rework" : "reworks"}`;
+  // A dispatched ask is a thread id on the record; its WORDS survive only on the round
+  // report's `round_outcome` items (`ask.ref` is the same id space `asksDispatched`
+  // carries — `test/fixtures/rounds/report-board.ts:60-83` shows both halves). An ask
+  // the report never accounted for keeps its id rather than borrowing another ask's text.
+  const askText = (ref: string): string => {
+    if (report.status !== "valid") return ref;
+    for (const el of report.board.elements) {
+      if (el.kind === "round_outcome" && el.data.ask.ref === ref) return el.data.ask.text;
+    }
+    return ref;
+  };
   const line = generationLine(records);
   const position = line.indexOf(liveGeneration);
   const generations = position >= 0 ? line.slice(0, position + 1) : [liveGeneration];
@@ -165,19 +294,15 @@ export function RoundsLedger({
           <p className="text-muted-foreground text-sm">This round has no report.</p>
         )}
 
-        {/* The retrospective activity line a SETTLED report wears (C15 4.3) — the round's
-            own account of the regeneration, off the durable record: the reworks it was
-            dispatched to make and the generation it composed. A round that regenerated
-            nothing (`ROUND_NO_REGEN`) wears no line rather than claiming a regeneration. */}
+        {/* The retrospective activity feed a SETTLED report wears (C15 4.3) — the round's
+            own account of the regeneration, off the durable record. */}
         {report.status === "valid" && regenerated && (
-          <p
-            data-testid="round-retrospective"
-            data-generation={liveGeneration}
-            className="flex items-center gap-2 text-muted-foreground text-xs"
-          >
-            <Check className="size-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-            Regenerated the boards{reworks} · generation {liveGeneration}
-          </p>
+          <ActivityFeed
+            record={record}
+            generation={liveGeneration}
+            reworks={reworks}
+            askText={askText}
+          />
         )}
 
         {/* The round's DIFF — its own change, off the checkpoint the round captured

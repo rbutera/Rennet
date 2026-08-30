@@ -60,20 +60,41 @@ function ReportDocument({ board }: { readonly board: RoundReportBoardModel }) {
 
 /** One report section: its title over its children, each child through the report
  *  registry. Resolves the `section` element through the pool (the machinery), like the
- *  lens `Section` — but readable (no fold) and over the wider report dispatch. */
+ *  lens `Section` — but readable (no fold) and over the wider report dispatch.
+ *
+ *  A section whose children are ALL `round_outcome` items renders as ONE bordered
+ *  `divide-y` card with `px-4 py-3` rows (prototype `round-report.tsx:30-46`): the
+ *  outcomes are a per-ask ledger, and the shared frame is what makes them read as one
+ *  account rather than four loose paragraphs. The condition is the section's real
+ *  content, not its title — a greeting section (prose) keeps the plain stack, because a
+ *  bordered card around one paragraph is chrome. */
 function ReportSection({ entry }: { readonly entry: LensSection }) {
   const el = useElement(entry.ref);
   const childIds = el?.kind === "section" ? el.data.children : NO_CHILDREN;
   const children = useElements(childIds);
   if (el?.kind !== "section") return null;
+  const outcomes = children.length > 0 && children.every((c) => c.kind === "round_outcome");
   return (
     <section data-kind="report-section" data-section-id={entry.ref} className="flex flex-col gap-3">
       <h2 className="font-display text-foreground text-lg leading-snug">{el.data.title}</h2>
-      <div className="flex flex-col gap-3">
-        {children.map((child) => (
-          <ReportElement key={child.id} element={child} />
-        ))}
-      </div>
+      {outcomes ? (
+        <div
+          data-kind="report-outcome-card"
+          className="flex flex-col divide-y divide-border/60 rounded-md border border-border"
+        >
+          {children.map((child) => (
+            <div key={child.id} className="px-4 py-3">
+              <ReportElement element={child} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {children.map((child) => (
+            <ReportElement key={child.id} element={child} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

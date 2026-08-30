@@ -252,6 +252,86 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     expect(line).not.toContain("reworks");
   });
 
+  // The retrospective is a DISCLOSURE (prototype `round-report.tsx:118-158`): the line is
+  // the trigger, and opening it shows the round's trigger queue and run receipt. Both
+  // halves come off the durable record — nothing here narrates what the orchestrator "did".
+  it("opens the retrospective onto the round's trigger queue, named by the report's ask text", async () => {
+    const { r } = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability", "ask-network"], 2)),
+    );
+    const panel = r.getByTestId("round-retrospective");
+    const disclosure = panel.querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!disclosure) throw new Error("missing retrospective disclosure");
+    // Closed by default — the detail is not in the DOM at all, so this cannot pass on a
+    // panel that renders its body and merely hides it.
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(r.queryByTestId("round-retrospective-detail")).toBeNull();
+
+    await r.user.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    const triggers = [...r.container.querySelectorAll('[data-testid="round-trigger"]')];
+    expect(triggers).toHaveLength(2);
+    // The record carries thread IDS; the words live on the report's outcomes, so the queue
+    // reads as asks rather than as identifiers. Point `askText` at the wrong record and the
+    // ids come back instead.
+    expect(triggers[0]?.textContent).toContain("Log every refresh exit without leaking the token.");
+    expect(triggers[1]?.textContent).toContain("Report the post-send failure honestly.");
+    expect(triggers[0]?.textContent).not.toContain("ask-observability");
+  });
+
+  it("keeps an unaccounted ask as its id rather than borrowing another ask's words", async () => {
+    const { r } = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability", "ask-never-reported"], 1)),
+    );
+    const disclosure = r
+      .getByTestId("round-retrospective")
+      .querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!disclosure) throw new Error("missing retrospective disclosure");
+    await r.user.click(disclosure);
+    const triggers = [...r.container.querySelectorAll('[data-testid="round-trigger"]')];
+    expect(triggers[1]?.textContent).toContain("ask-never-reported");
+  });
+
+  // The run receipt is optional on the record (legacy rows omit it). A round with no
+  // receipt shows the trigger queue and NO run group — absent beats invented.
+  it("shows the run group only when the record carries a receipt", async () => {
+    const withoutReceipt = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability"], 1)),
+    );
+    const closed = withoutReceipt.r
+      .getByTestId("round-retrospective")
+      .querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!closed) throw new Error("missing retrospective disclosure");
+    await withoutReceipt.r.user.click(closed);
+    expect(withoutReceipt.r.queryByTestId("round-gate")).toBeNull();
+    withoutReceipt.r.unmount();
+
+    const withReceipt = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor({
+        ...regeneratedRound(["ask-observability"], 1),
+        run: {
+          startedAt: Date.UTC(2026, 7, 29, 9, 30),
+          sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+          gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400 },
+        },
+      }),
+    );
+    const open = withReceipt.r
+      .getByTestId("round-retrospective")
+      .querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!open) throw new Error("missing retrospective disclosure");
+    await withReceipt.r.user.click(open);
+    expect(withReceipt.r.getByTestId("round-gate").textContent).toContain(
+      "Gate passed · pnpm check · 12s",
+    );
+    // `commit-from` → `commit-to` is a real move, so the commit line states the range.
+    expect(withReceipt.r.getByTestId("round-commits").textContent).toContain("Committed commit-");
+  });
+
   it("states the board's generation and round in one quiet intro line", () => {
     const { r } = renderWorkspace("/s/s-1?view=rounds", sourceFor(regeneratedRound(["ask-1"])));
     // gen1 → gen2 is the review's generation line, so this round composed generation 2.
