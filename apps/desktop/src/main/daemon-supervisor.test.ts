@@ -24,6 +24,7 @@ import {
   ensureDaemon,
   ensureDaemonForProject,
   isOwnedDaemonRunning,
+  prepareOwnedDaemonForUpdate,
   stopOwnedDaemon,
 } from "./daemon-supervisor";
 
@@ -77,7 +78,7 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     const kill = vi.fn();
     const warn = vi.fn();
     const removeClaim = vi.fn();
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => ({ kind: "absent" }),
       removeClaim,
       kill,
@@ -87,17 +88,16 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(kill).not.toHaveBeenCalled();
     expect(removeClaim).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ kind: "stopped" });
   });
 
-  it("NEVER signals a stale claim whose pid was reused — it removes the claim instead", async () => {
-    // The claim names pid 4242, but /healthz did not confirm it: the process there may be an
-    // unrelated program that reused the pid. Signalling it could kill someone else's process,
-    // so tray Quit must remove the stale claim and signal nothing (review finding 2).
+  it("removes a stale claim only when its pid is dead", async () => {
     const kill = vi.fn();
     const warn = vi.fn();
     const removeClaim = vi.fn();
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => ({ kind: "stale", claim: { ...claim } }),
+      isAlive: () => false,
       removeClaim,
       kill,
       warn,
@@ -106,15 +106,38 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(kill).not.toHaveBeenCalled();
     expect(removeClaim).toHaveBeenCalledWith("/data", claim.pid);
     expect(warn).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ kind: "stopped" });
+  });
+
+  it("does not signal or remove a stale claim while its pid is still alive", async () => {
+    const kill = vi.fn();
+    const warn = vi.fn();
+    const removeClaim = vi.fn();
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => ({ kind: "stale", claim: { ...claim } }),
+      isAlive: () => true,
+      removeClaim,
+      kill,
+      warn,
+      sleep: immediateSleep,
+    });
+    expect(kill).not.toHaveBeenCalled();
+    expect(removeClaim).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be health-verified"));
+    expect(outcome).toEqual({
+      kind: "failed",
+      message: expect.stringContaining("refusing to signal it or start the installer"),
+    });
   });
 
   it("SIGTERMs the verified owned pid and returns cleanly once the claim clears", async () => {
     const kill = vi.fn();
     const warn = vi.fn();
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: clearingReader(1), // present on the pre-kill read, gone on the first poll
+      isAlive: () => false,
       kill,
       warn,
       sleep: immediateSleep,
@@ -122,29 +145,33 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(kill).toHaveBeenCalledWith(claim.pid, "SIGTERM");
     expect(kill).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ kind: "stopped" });
   });
 
   it("also stops a verified-but-protocol-incompatible owned daemon", async () => {
     const kill = vi.fn();
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => incompatibleVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: clearingReader(1),
+      isAlive: () => false,
       kill,
       warn: vi.fn(),
       sleep: immediateSleep,
     });
     expect(kill).toHaveBeenCalledWith(claim.pid, "SIGTERM");
+    expect(outcome).toEqual({ kind: "stopped" });
   });
 
   it("warns truthfully and returns when the claim never clears within the bounded wait", async () => {
     const kill = vi.fn();
     const warn = vi.fn();
     let clock = 0;
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: () => ({ ...claim }), // claim persists forever
+      isAlive: () => true,
       kill,
       warn,
       sleep: immediateSleep,
@@ -155,12 +182,34 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain("still present");
     expect(warn.mock.calls[0]?.[0]).toContain(String(claim.pid));
+    expect(outcome).toEqual({
+      kind: "failed",
+      message: expect.stringContaining("still present"),
+    });
+  });
+
+  it("waits for the verified daemon pid to exit after its claim clears", async () => {
+    let alive = true;
+    const sleep = vi.fn(async () => {
+      alive = false;
+    });
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => healthyVerdict(claim),
+      removeClaim: vi.fn(),
+      readClaim: () => null,
+      isAlive: () => alive,
+      kill: vi.fn(),
+      warn: vi.fn(),
+      sleep,
+    });
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "stopped" });
   });
 
   it("treats a pid that raced to gone (ESRCH) as a clean stop and clears the claim", async () => {
     const warn = vi.fn();
     const removeClaim = vi.fn();
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim,
       kill: () => {
@@ -173,11 +222,12 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     });
     expect(removeClaim).toHaveBeenCalledWith("/data", claim.pid);
     expect(warn).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ kind: "stopped" });
   });
 
   it("warns (but does not throw) when the kill fails for a reason other than ESRCH", async () => {
     const warn = vi.fn();
-    await stopOwnedDaemon("/data", {
+    const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
       kill: () => {
@@ -190,6 +240,46 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     });
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain("failed to signal");
+    expect(outcome).toEqual({
+      kind: "failed",
+      message: expect.stringContaining("failed to signal"),
+    });
+  });
+
+  it("returns a typed failure when ownership cannot be verified", async () => {
+    const warn = vi.fn();
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => {
+        throw new Error("health endpoint unavailable");
+      },
+      warn,
+    });
+    expect(outcome).toEqual({
+      kind: "failed",
+      message: expect.stringContaining("health endpoint unavailable"),
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to verify"));
+  });
+});
+
+describe("prepareOwnedDaemonForUpdate", () => {
+  it("releases the installer handoff only after a verified stop", async () => {
+    const stop = vi.fn(async () => ({ kind: "stopped" }) as const);
+    await expect(prepareOwnedDaemonForUpdate("/data", stop)).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalledWith("/data");
+  });
+
+  it("refuses the installer handoff when the bundled daemon still owns the app", async () => {
+    const stop = vi.fn(
+      async () =>
+        ({
+          kind: "failed",
+          message: "daemon.json is still present",
+        }) as const,
+    );
+    await expect(prepareOwnedDaemonForUpdate("/data", stop)).rejects.toThrow(
+      "daemon.json is still present",
+    );
   });
 });
 

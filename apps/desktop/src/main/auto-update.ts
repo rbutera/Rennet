@@ -175,15 +175,28 @@ export function isAutoUpdateEligible(
 export interface AutoUpdateHandle {
   /** The live readiness store (also pushed to the renderer badge) — read `.ready` for state. */
   readonly readiness: UpdateReadiness;
-  /** Apply the staged update through the existing restart path (quitAndInstall / stub respawn). */
-  readonly applyUpdate: () => void;
+  /** Prepare the bundle, then apply the staged update through quitAndInstall / stub respawn. */
+  readonly applyUpdate: () => Promise<void>;
+}
+
+export interface AutoUpdateOptions {
+  /** Platform-specific staged-update detection; injected by tests. */
+  readonly detectStaged?: () => string | null;
+  /** Release processes that execute from the app bundle before the installer replaces it. */
+  readonly prepareToApply?: () => Promise<void>;
+  /** Surface an apply failure while the current app remains open. */
+  readonly reportApplyFailure?: (message: string) => void;
 }
 
 export function startAutoUpdate(
   isTrustedUrl: (value: string) => boolean,
   logger: Console = console,
-  detectStaged: () => string | null = () => stagedNewerVersion(process.execPath, app.getVersion()),
+  options: AutoUpdateOptions = {},
 ): AutoUpdateHandle {
+  const detectStaged =
+    options.detectStaged ?? (() => stagedNewerVersion(process.execPath, app.getVersion()));
+  const prepareToApply = options.prepareToApply ?? (async () => undefined);
+  const reportApplyFailure = options.reportApplyFailure ?? (() => undefined);
   // Whether THIS run saw the live update-downloaded event. When readiness was
   // seeded from a previously staged update instead, electron's quitAndInstall
   // may no-op (its internal downloaded flag is unset), so apply falls back to
@@ -197,17 +210,36 @@ export function startAutoUpdate(
   });
 
   // The one apply path, shared by the renderer badge's confirm AND the tray's
-  // "Restart Rennet to update" line — never applies without an explicit choice (spec).
-  const applyUpdate = (): void => {
-    if (!liveDownloadSeen && process.platform === "win32") {
-      const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
-      if (existsSync(stub)) {
-        spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
-        app.quit();
-        return;
+  // "Restart Rennet to update" line. The packaged daemon executes process.execPath from
+  // inside Rennet.app; ShipIt cannot replace that bundle while the daemon is alive. Await the
+  // injected release step before invoking either platform installer, and deduplicate a rapid
+  // tray + renderer double-choice so two install handoffs can never race.
+  let applyInFlight: Promise<void> | null = null;
+  const applyUpdate = (): Promise<void> => {
+    if (applyInFlight) return applyInFlight;
+    const attempt = (async () => {
+      try {
+        await prepareToApply();
+        if (!liveDownloadSeen && process.platform === "win32") {
+          const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
+          if (existsSync(stub)) {
+            spawn(stub, [], { detached: true, stdio: "ignore" }).unref();
+            app.quit();
+            return;
+          }
+        }
+        autoUpdater.quitAndInstall();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("[auto-update] failed to apply update:", message);
+        reportApplyFailure(message);
       }
-    }
-    autoUpdater.quitAndInstall();
+    })();
+    applyInFlight = attempt;
+    void attempt.finally(() => {
+      if (applyInFlight === attempt) applyInFlight = null;
+    });
+    return attempt;
   };
 
   // Replay for late subscribers: the preload invokes this once on load, so a
@@ -221,7 +253,7 @@ export function startAutoUpdate(
   // fires from the renderer's explicit confirm.
   ipcMain.on(UPDATE_APPLY_CHANNEL, (event) => {
     if (!event.senderFrame || !isTrustedUrl(event.senderFrame.url)) return;
-    applyUpdate();
+    void applyUpdate();
   });
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {

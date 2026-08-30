@@ -25,6 +25,7 @@ import {
   ensureDaemon,
   ensureDaemonForProject,
   isOwnedDaemonRunning,
+  prepareOwnedDaemonForUpdate,
   stopOwnedDaemon,
 } from "./daemon-supervisor";
 import { buildStaticMenu } from "./menu";
@@ -374,7 +375,15 @@ app.whenReady().then(async () => {
   // rides, and its update line calls the same apply. Auto-update is packaged-only (dev/test
   // have no feed); the tray always exists.
   const update = isAutoUpdateEligible(app.isPackaged)
-    ? startAutoUpdateOnce(isTrustedAppUrl)
+    ? startAutoUpdateOnce(isTrustedAppUrl, console, {
+        prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
+        reportApplyFailure: (message) => {
+          dialog.showErrorBox(
+            "Rennet couldn't install the update",
+            `The update is downloaded, but Rennet could not complete the install handoff, so the app stayed open.\n\n${message}\n\nUse “Quit Rennet and stop daemon” from the menu bar, reopen Rennet, and try the update again.`,
+          );
+        },
+      })
     : undefined;
   const tray = createTray({
     baseDir: __dirname,
@@ -385,7 +394,7 @@ app.whenReady().then(async () => {
     // Health-verified, cached, and self-refreshing — see createTray / isOwnedDaemonRunning.
     probeOwnedDaemon: () => isOwnedDaemonRunning(dataDir),
     openWindow: () => void ensureWindowShared(),
-    applyUpdate: () => update?.applyUpdate(),
+    applyUpdate: () => void update?.applyUpdate(),
     quitCompletely: () => void quitCompletely(dataDir),
   });
   trayController = tray;

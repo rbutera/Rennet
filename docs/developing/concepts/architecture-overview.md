@@ -70,6 +70,12 @@ the new claim. The daemon removes its claim during graceful shutdown.
 Closing every desktop window leaves the tray process and daemon available. The
 desktop's complete-quit action stops a daemon that the desktop owns.
 
+Update application is the other intentional daemon-stop boundary. The packaged
+daemon executes Electron's binary from inside the installed app bundle, so the
+desktop must await its verified graceful stop before Squirrel can replace that
+bundle. Both the renderer update action and the tray action share this one
+ordered handoff; a failed stop leaves the app open and surfaces the failure.
+
 ## Clients and reconnection
 
 The desktop renderer and served browser client both mount the same

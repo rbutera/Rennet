@@ -106,7 +106,7 @@ describe("startAutoUpdate wiring", () => {
   it("initializes the update client exactly once", () => {
     const start = vi.fn(() => ({
       readiness: createUpdateReadiness(() => undefined),
-      applyUpdate: () => undefined,
+      applyUpdate: async () => undefined,
     }));
     const startOnce = createAutoUpdateStarter(start);
     const first = startOnce(isTrusted, quietLogger);
@@ -159,13 +159,70 @@ describe("startAutoUpdate wiring", () => {
     expect(replay(untrusted)).toBeNull();
   });
 
-  it("applies only from a trusted frame and routes to quitAndInstall", () => {
-    startAutoUpdate(isTrusted, quietLogger);
+  it("applies only from a trusted frame and prepares the bundle before quitAndInstall", async () => {
+    const prepareToApply = vi.fn(async () => undefined);
+    const handle = startAutoUpdate(isTrusted, quietLogger, { prepareToApply });
     const apply = ipcListeners.get(UPDATE_APPLY_CHANNEL);
     if (!apply) throw new Error("apply listener not registered");
     apply(untrusted);
+    await Promise.resolve();
+    expect(prepareToApply).not.toHaveBeenCalled();
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
     apply(trusted);
+    await handle.applyUpdate();
+    expect(prepareToApply).toHaveBeenCalledTimes(1);
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+    expect(prepareToApply.mock.invocationCallOrder[0]).toBeLessThan(
+      autoUpdaterMock.quitAndInstall.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("does not invoke ShipIt until asynchronous bundle preparation completes", async () => {
+    let releasePreparation: (() => void) | undefined;
+    const prepareToApply = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePreparation = resolve;
+        }),
+    );
+    const handle = startAutoUpdate(isTrusted, quietLogger, { prepareToApply });
+    const applying = handle.applyUpdate();
+    await Promise.resolve();
+    expect(prepareToApply).toHaveBeenCalledTimes(1);
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+    releasePreparation?.();
+    await applying;
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Rennet open and reports a preparation failure instead of invoking ShipIt", async () => {
+    const reportApplyFailure = vi.fn();
+    const handle = startAutoUpdate(isTrusted, quietLogger, {
+      prepareToApply: async () => {
+        throw new Error("daemon still owns the app bundle");
+      },
+      reportApplyFailure,
+    });
+    await handle.applyUpdate();
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+    expect(reportApplyFailure).toHaveBeenCalledWith("daemon still owns the app bundle");
+  });
+
+  it("deduplicates simultaneous apply choices from the tray and renderer", async () => {
+    let releasePreparation: (() => void) | undefined;
+    const prepareToApply = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePreparation = resolve;
+        }),
+    );
+    const handle = startAutoUpdate(isTrusted, quietLogger, { prepareToApply });
+    const first = handle.applyUpdate();
+    const second = handle.applyUpdate();
+    expect(second).toBe(first);
+    expect(prepareToApply).toHaveBeenCalledTimes(1);
+    releasePreparation?.();
+    await first;
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
@@ -248,14 +305,14 @@ describe("stagedNewerVersion", () => {
 
 describe("staged-at-boot seeding", () => {
   it("seeds readiness from a detected staged update so the replay badges late renderers", () => {
-    startAutoUpdate(isTrusted, quietLogger, () => "0.2.6");
+    startAutoUpdate(isTrusted, quietLogger, { detectStaged: () => "0.2.6" });
     const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
     if (!replay) throw new Error("replay handler not registered");
     expect(replay(trusted)).toEqual({ version: "0.2.6" });
   });
 
   it("stays unseeded when nothing is staged", () => {
-    startAutoUpdate(isTrusted, quietLogger, () => null);
+    startAutoUpdate(isTrusted, quietLogger, { detectStaged: () => null });
     const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
     if (!replay) throw new Error("replay handler not registered");
     expect(replay(trusted)).toBeNull();
@@ -289,7 +346,7 @@ describe("staged-at-interval polling (the badge is a disk fact)", () => {
     vi.useFakeTimers();
     try {
       let staged: string | null = null;
-      startAutoUpdate(isTrusted, quietLogger, () => staged);
+      startAutoUpdate(isTrusted, quietLogger, { detectStaged: () => staged });
       const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
       if (!replay) throw new Error("replay handler not registered");
       expect(replay(trusted)).toBeNull();
@@ -307,7 +364,7 @@ describe("staged-at-interval polling (the badge is a disk fact)", () => {
       const window = liveWindow();
       harness.windows.push(window);
       let staged: string | null = "0.3.1";
-      startAutoUpdate(isTrusted, quietLogger, () => staged);
+      startAutoUpdate(isTrusted, quietLogger, { detectStaged: () => staged });
       expect(window.webContents.send).toHaveBeenCalledTimes(1);
       vi.advanceTimersByTime(3 * (5 * 60_000 + 10));
       expect(window.webContents.send).toHaveBeenCalledTimes(1);
