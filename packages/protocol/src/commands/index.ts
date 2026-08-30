@@ -1055,10 +1055,11 @@ const definitions = {
   // The counterpart `completeWelcome` never had. Without it the welcome is
   // permanently unreachable after setup — first-run eligibility elects the wizard
   // only for a client with NO projects, so clearing the completion stamp alone
-  // would be a no-op on every machine that has one. So the write REPLACES the
-  // slice with `{ replayRequestedAt }`: the completion stamp is dropped AND the
-  // startup gate honors the request regardless of project count. Finishing the
-  // wizard writes `{ completedAt }` back over it, which clears the request.
+  // would be a no-op on every machine that has one. So the write ADDS
+  // `replayRequestedAt` to the slice and the startup gate honors that request
+  // regardless of project count. An existing `completedAt` is PRESERVED, because an
+  // older v1 build still requires it (see `welcomeStateSchema`). Finishing the
+  // wizard writes `{ completedAt }` back OVER the slice, which clears the request.
   // A plain write, one click, no confirmation (Rule Zero) — refused (throws) only
   // when client settings are malformed, exactly as `completeWelcome`.
   "settings.resetWelcome": {

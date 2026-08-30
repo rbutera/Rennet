@@ -8,11 +8,13 @@ import { commands } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
+import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { sessionHandlers } from "../test/fixtures/sessions";
+import { SettingsStore } from "../test/fixtures/settings";
 import { MemoryBridge } from "../test/memory-bridge";
 import { CommandMenu } from "./command-menu";
 
@@ -171,6 +173,81 @@ describe("command menu (§9)", () => {
     // A registry-command row holds the menu open until the dispatch SETTLES; it closes
     // only on success (a rejection keeps it open carrying the reason).
     await waitFor(() => expect(useRennetStore.getState().ui.commandMenuOpen).toBe(false));
+  });
+
+  it("a daemon that REJECTS settings.resetWelcome shows the failure line and keeps the menu open", async () => {
+    // The mixed-version degrade, executed rather than reasoned about: a client shipping the
+    // Replay row can talk to an OLDER daemon whose command registry has no
+    // `settings.resetWelcome` row, so the dispatch dies at envelope validation. What the
+    // reviewer must not get is a menu that closes as if the welcome had been re-armed.
+    const history = memoryHistory("/");
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project("p1", "atlas")]),
+      "settings.resetWelcome": () => {
+        throw new Error('unknown command "settings.resetWelcome"');
+      },
+    });
+    useRennetStore.setState((s) => ({
+      ui: { ...s.ui, commandMenuOpen: true, commandMenuMode: "command" },
+    }));
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <CommandMenu />
+        </Router>
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("Replay the first-run welcome")).toBeTruthy());
+    act(() => {
+      fireEvent.click(screen.getByText("Replay the first-run welcome"));
+    });
+    // The reason the daemon gave reaches the reviewer verbatim, on the alert line.
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain('unknown command "settings.resetWelcome"');
+    // And the menu is STILL open — a rejected dispatch is never reported as a success.
+    expect(useRennetStore.getState().ui.commandMenuOpen).toBe(true);
+  });
+
+  it("⌘K → Replay, driven through the WHOLE app, reopens the welcome", async () => {
+    // The isolated mount above proves the row dispatches. It cannot prove the reviewer sees
+    // anything change — a CommandMenu-only tree has no startup gate to reopen. So this
+    // drives the real app: shell up on a completed welcome with a project, ⌘K on `window`,
+    // click the row, and the WELCOME has to be on screen.
+    //
+    // What this is CONTROLLED to catch (measured, not reasoned): replace the store's
+    // `settings.resetWelcome` with a handler that returns a stamp WITHOUT recording it and
+    // this goes red — so the assertion is load-bearing on the write actually landing and
+    // the gate actually re-reading it.
+    //
+    // What it does NOT catch, stated because the obvious guess is wrong: deleting
+    // `useInvoke`'s family invalidation leaves this GREEN. Instrumenting the bridge shows
+    // `settings.get` is still read twice with that invalidation disabled — some other
+    // reader in the mounted app re-reads it once the menu closes. Do not cite this test as
+    // the guard on that line; nothing here pins it.
+    const store = new SettingsStore();
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project("p1", "atlas")]),
+      ...store.handlers(),
+      "harness.hosts": () => ({ hosts: [] }),
+      "forge.hosts": () => ({ hosts: [] }),
+    });
+    const { user } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/settings/appearance")} />,
+    );
+    // The shell is up (not the welcome) — the precondition, asserted rather than assumed.
+    await waitFor(() => expect(screen.getByText("Theme Pack")).toBeTruthy());
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "k", metaKey: true });
+    });
+    await waitFor(() => expect(useRennetStore.getState().ui.commandMenuOpen).toBe(true));
+    // Scoped to the MENU row: the Settings page behind it carries a button of the same
+    // name, and clicking that one would prove nothing about the palette.
+    await user.click(await screen.findByRole("option", { name: /Replay the first-run welcome/ }));
+
+    expect(
+      await screen.findByText("You stopped writing the code. You still have to answer for it."),
+    ).toBeTruthy();
   });
 
   it("⌘P (search) and ⌘K (command) default to a different view", async () => {

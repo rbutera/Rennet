@@ -11,6 +11,7 @@ import type {
   SettingsProjectValueKey,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
 // A project factory with sane defaults; override per test.
@@ -501,7 +502,7 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     expect(view.coachmarks).toEqual({ seen: ["new-chat"], skipAll: false });
   });
 
-  it("resetWelcome round-trips: complete, reset, and the view shows the replay request alone", async () => {
+  it("resetWelcome round-trips: the completion stamp SURVIVES the reset, and completing drops the request", async () => {
     let stored: ClientSettings = { version: 1 };
     let clock = "2026-08-28T12:00:00.000Z";
     const { deps } = makeDeps({
@@ -519,17 +520,46 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
 
     clock = "2026-08-29T09:30:00.000Z";
     expect(composition.resetWelcome()).toBe("2026-08-29T09:30:00.000Z");
-    // The completion stamp is GONE, not merely shadowed — the two can never disagree,
-    // and `settings.get` reads back the request the startup gate acts on.
+    // The completion stamp STANDS alongside the request. Dropping it would make the slice
+    // malformed to an older v1 build (`welcome.completedAt` is required there), and a
+    // malformed file refuses every later settings write. The startup gate reads the
+    // request first, so the pair is unambiguous: completed, replay asked for.
     expect((await composition.get()).welcome).toEqual({
+      completedAt: "2026-08-28T12:00:00.000Z",
       replayRequestedAt: "2026-08-29T09:30:00.000Z",
     });
-    expect(stored.welcome?.completedAt).toBeUndefined();
 
-    // Finishing the replayed welcome writes the completion back over the request.
+    // Finishing the replayed welcome REPLACES the slice, so the request is gone.
     clock = "2026-08-29T09:31:00.000Z";
     composition.completeWelcome();
     expect((await composition.get()).welcome).toEqual({ completedAt: "2026-08-29T09:31:00.000Z" });
+    expect(stored.welcome?.replayRequestedAt).toBeUndefined();
+  });
+
+  it("the slice resetWelcome STORES still parses under an older build's completedAt-required schema", () => {
+    // `CLIENT_SETTINGS_VERSION` is still 1, so a downgrade reads this same file with the
+    // OLD v1 shape — where `welcome` was `z.object({ completedAt: z.iso.datetime() })`.
+    // This is that shape, verbatim. A replay-only slice fails it, and a client-settings
+    // file that fails validation refuses every subsequent settings write.
+    const olderClientWelcomeSchema = z.object({ completedAt: z.iso.datetime() });
+    let stored: ClientSettings = { version: 1 };
+    let clock = "2026-08-28T12:00:00.000Z";
+    const { deps } = makeDeps({
+      now: () => new Date(clock),
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    composition.completeWelcome();
+    clock = "2026-08-29T09:30:00.000Z";
+    composition.resetWelcome();
+
+    // Assert against the BYTES the daemon wrote, not the projection it serves.
+    expect(olderClientWelcomeSchema.safeParse(stored.welcome).success).toBe(true);
   });
 
   it("refuses every welcome preference write when client settings are malformed", () => {

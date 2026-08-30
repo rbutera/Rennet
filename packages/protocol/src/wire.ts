@@ -1994,15 +1994,20 @@ export type CouncilScenarioOverrides = z.infer<typeof councilScenarioOverridesSc
  * install is a trivially-valid (or absent) `{ version }`.
  */
 /**
- * The first-run welcome slice. Both stamps are optional and the two writes are
- * mutually exclusive — each REPLACES the slice, so the last one wins:
+ * The first-run welcome slice. Both stamps are optional and the two writes are NOT
+ * symmetric:
  *
- * - `completedAt` — `settings.completeWelcome`, written by the wizard's Ready step.
- * - `replayRequestedAt` — `settings.resetWelcome`, the replay capability. The startup
- *   gate reopens the welcome on this stamp REGARDLESS of project count, because
- *   first-run eligibility only ever elects a fresh, zero-project client; without it a
- *   reset would be a no-op on every machine that already has a project.
+ * - `completedAt` — `settings.completeWelcome`, written by the wizard's Ready step. It
+ *   REPLACES the slice, so finishing a replayed welcome clears the request.
+ * - `replayRequestedAt` — `settings.resetWelcome`, the replay capability. It ADDS to the
+ *   slice, PRESERVING an existing `completedAt`: `CLIENT_SETTINGS_VERSION` is still 1 and
+ *   an older v1 build requires `welcome.completedAt`, so a replay-only slice would read
+ *   as malformed there and refuse every later settings write. The startup gate elects the
+ *   replay on the PRESENCE of `replayRequestedAt`, before it reads `completedAt` — it
+ *   reopens the welcome REGARDLESS of project count, because first-run eligibility only
+ *   ever elects a fresh, zero-project client.
  *
+ * So the two CAN stand together, and that pairing means "completed, replay requested".
  * An untouched install carries neither (the slice is absent) and takes the plain
  * zero-project first-run path.
  */
