@@ -5,6 +5,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  cn,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -26,17 +27,27 @@ import { useSettingsProjection } from "../data";
 // The picker does NOT own the scope: it emits `onChange(projectId)` and the page
 // navigates `?project`, so the URL is the single source of the active project (the
 // structural rule — no shadowed `useState` page scope).
+//
+// TWO call sites, one component: the Projects page's inline scope picker, and New Chat's
+// headline picker (`large`). `large` sets NO text size on purpose — it sits inside the
+// New Chat `<h1>` and inherits that headline's display face and size, which is what
+// "headline-sized inline picker" means.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ProjectPicker({
   hosts,
   value,
   onChange,
+  large,
 }: {
   readonly hosts: readonly SidebarHost[];
   /** The active project id (resolved from `?project`). */
   readonly value: string;
   readonly onChange: (projectId: string) => void;
+  /** Headline-sized trigger — New Chat's "What should we review in <project>?" sits the
+   *  picker INSIDE its headline, so the pill grows to the headline's type and glyph size
+   *  while the popover stays identical (spike `settings-view.tsx` ProjectPicker `large`). */
+  readonly large?: boolean;
 }) {
   const projection = useSettingsProjection();
   const [open, setOpen] = useState(false);
@@ -52,16 +63,19 @@ export function ProjectPicker({
           <button
             type="button"
             aria-label="Choose project"
-            className="flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-13 font-normal text-ink transition-colors hover:bg-raised"
+            className={cn(
+              "flex items-center rounded-md border border-line font-normal text-ink transition-colors hover:bg-raised",
+              large ? "gap-1.5 px-2.5 py-1" : "gap-1.5 px-2 py-0.5 text-13",
+            )}
           />
         }
       >
         <ProjectIcon
           icon={active ? (projection.glyphByProject[active.id] ?? DEFAULT_PROJECT_ICON) : undefined}
-          className="size-3.5 text-ink-soft"
+          className={cn(large ? "size-5" : "size-3.5", "text-ink-soft")}
         />
         {active ? displayName(active.id, active.name) : "No project"}
-        <Icon icon={ChevronDown} className="size-3 text-ink-soft" />
+        <Icon icon={ChevronDown} className={cn(large ? "size-4" : "size-3", "text-ink-soft")} />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-0">
         <Command>

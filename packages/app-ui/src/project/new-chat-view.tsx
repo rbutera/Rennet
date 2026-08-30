@@ -1,10 +1,9 @@
-import type { Project, SmartListCi } from "@rennet/protocol";
-import { cn, Popover, PopoverContent, PopoverTrigger, Toggle, ToggleGroup } from "@rennet/ui";
+import type { SmartListCi } from "@rennet/protocol";
+import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import {
   ArrowLeft,
   ArrowUp,
   Check,
-  ChevronDown,
   ChevronRight,
   GitBranch,
   GitMerge,
@@ -20,8 +19,9 @@ import { Icon } from "../components/icon";
 import { useCommand } from "../data";
 import { newChatPath, projectMapPath } from "../routes/url";
 import { usePriorSurface } from "../settings/prior-surface";
-import { TargetIcon } from "../shell/sidebar/target-icon";
-import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "../shell/sidebar-data";
+import { ProjectPicker } from "../settings/projects/project-picker";
+import { TargetBadge } from "../shell/sidebar/target-icon";
+import { type SessionTarget, type SessionTargetState, useSidebarTree } from "../shell/sidebar-data";
 import { hideClaimedRows, useClaimedTargets, useNewChatMint } from "./new-chat-mint";
 import {
   buildSmartRows,
@@ -31,14 +31,6 @@ import {
   smartListCounts,
   sortSmartRows,
 } from "./smart-list";
-
-/** The unified target vocabulary's STATE labels (R36) — a row with a state reads by its
- *  state, not its bare kind, so "Needs you" / "Merged" / "Reviewed" surface honestly. */
-const STATE_LABEL: Record<SessionTargetState, string> = {
-  "needs-you": "Needs you",
-  merged: "Merged",
-  reviewed: "Reviewed",
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The New Chat view (C12 §10.8, /new-chat?project=…). A full-view takeover — there
@@ -55,6 +47,10 @@ const STATE_LABEL: Record<SessionTargetState, string> = {
 // through `new-chat-mint.ts`. Cluster 6 shipped the picker while `session.*` was gated on
 // B9 and a click did nothing; the gate cleared, and this is the act it was waiting for.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** The pinned checkout row's id, for the "which row is starting" mark. It is not a
+ *  `SmartRow` (it claims nothing), so it needs a name of its own. */
+const CHECKOUT_ROW_ID = "current-checkout";
 
 /** The tab vocabulary → smart-list filter. One list, no zones — the tabs are a filter. */
 const TABS: readonly { readonly filter: SmartFilter; readonly label: string }[] = [
@@ -158,8 +154,10 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const priorSurface = usePriorSurface();
   const search = useSearch();
   const { data: projectsData } = useCommand("projects.list", {});
-  const projects = projectsData?.projects ?? [];
-  const project = projects.find((candidate) => candidate.id === projectId);
+  const project = projectsData?.projects.find((candidate) => candidate.id === projectId);
+  // The picker is host-grouped, so it reads the same sidebar tree the sidebar and the
+  // Projects page do rather than a flat list assembled here.
+  const { hosts } = useSidebarTree();
 
   // Seed the composer from an `?ask=` handoff (the context map's "discuss" lands here with
   // the statement prefilled) — read once on mount; the reviewer edits or sends from there.
@@ -170,6 +168,12 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   // A row click STARTS the session (R26) — mint + claim + land, in one act.
   const mint = useNewChatMint(projectId);
   const claimed = useClaimedTargets(projectId);
+  // WHICH row is being started. The spike marked the row you had SELECTED; this list has no
+  // selection (R26 made the click the start), so the honest thing for that mark to say is
+  // "this is the row now starting" — real state, held only while the mint is in flight, and
+  // cleared by `mint.pending` falling on success or failure rather than by a second signal.
+  const [starting, setStarting] = useState<string | null>(null);
+  const startingId = mint.pending ? starting : null;
 
   const { data: detail } = useCommand("project.detail", { projectId });
   const rows = useMemo(
@@ -245,10 +249,14 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
         <div className="mx-auto flex w-full max-w-[720px] flex-col px-8 pt-[7vh] pb-6">
           <h1 className="flex flex-wrap items-baseline justify-center gap-2.5 text-center font-display text-2xl font-semibold tracking-tight text-ink">
             What should we review in
+            {/* The Projects page's picker, at headline size — the SAME component, so the
+                popover's search, host grouping and glyphs arrive with it and there is one
+                project picker in the product rather than two that drift. */}
             <ProjectPicker
-              projects={projects}
-              current={project}
-              onChange={(next) => navigate(newChatPath(next.id))}
+              large
+              hosts={hosts}
+              value={projectId}
+              onChange={(next) => navigate(newChatPath(next))}
             />
             ?
           </h1>
@@ -320,7 +328,11 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             <CheckoutRow
               branch={branch}
               pending={mint.pending}
-              onStart={() => mint.start(undefined, message)}
+              starting={startingId === CHECKOUT_ROW_ID}
+              onStart={() => {
+                setStarting(CHECKOUT_ROW_ID);
+                mint.start(undefined, message);
+              }}
             />
             {visible.map((row) => (
               <ItemRow
@@ -329,7 +341,11 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                 showRepo={showRepo}
                 showForge={repositoriesWithForge.has(repoOf(row))}
                 pending={mint.pending}
-                onStart={() => mint.start(row, message)}
+                starting={startingId === row.id}
+                onStart={() => {
+                  setStarting(row.id);
+                  mint.start(row, message);
+                }}
               />
             ))}
             {visible.length === 0 ? (
@@ -359,54 +375,6 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
         onSend={() => mint.start(undefined, message)}
       />
     </section>
-  );
-}
-
-/** The headline-sized inline project picker — a Popover of the project list, matching
- *  the Add Project source picker. Choosing a project rewrites the URL (the parent). */
-function ProjectPicker({
-  projects,
-  current,
-  onChange,
-}: {
-  readonly projects: readonly Project[];
-  readonly current: Project | undefined;
-  readonly onChange: (project: Project) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        aria-label={`Project: ${current?.name ?? "none"}`}
-        render={
-          <button
-            type="button"
-            className="inline-flex items-baseline gap-1 rounded-control px-1.5 text-accent underline decoration-accent-line decoration-dotted underline-offset-4 hover:bg-raised"
-          />
-        }
-      >
-        {current?.name ?? "a project"}
-        <Icon icon={ChevronDown} className="size-4 flex-none self-center text-ink-faint" />
-      </PopoverTrigger>
-      <PopoverContent align="center" className="min-w-56 gap-0 p-1">
-        {projects.map((project) => (
-          <button
-            key={project.id}
-            type="button"
-            className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-base text-ink hover:bg-raised"
-            onClick={() => {
-              setOpen(false);
-              if (project.id !== current?.id) onChange(project);
-            }}
-          >
-            <span className="flex-1 truncate">{project.name}</span>
-            {project.id === current?.id ? (
-              <Icon icon={Check} className="size-4 flex-none text-accent" />
-            ) : null}
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -462,15 +430,27 @@ function Composer({
   );
 }
 
-/** The unified target-vocabulary state chip: the R36 icon + its words. A row with a derived
- *  state reads by that state ("Needs you" / "Merged" / "Reviewed"); otherwise by its kind. */
+/** The unified target-vocabulary state chip — `TargetBadge`, which carries the PER-KIND
+ *  treatment (accent pill for "needs you", gold outline for your PR, quiet raised fill
+ *  otherwise, green tint for reviewed) this row used to flatten into one bordered chip. */
 function StateChip({ row }: { readonly row: SmartRow }) {
   const { kind, state } = targetOf(row);
+  return <TargetBadge kind={kind} {...(state === undefined ? {} : { state })} />;
+}
+
+/** The row's own mark column (spike `new-chat-view.tsx` `SelectionMark`): a tick that fades
+ *  in on the row now starting, and holds its width on every other row so the list does not
+ *  shift when it appears. It marks a START, not a selection — see `startingId` above. */
+function SelectionMark({ starting }: { readonly starting: boolean }) {
   return (
-    <span className="flex shrink-0 items-center gap-1 rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-soft">
-      <TargetIcon kind={kind} state={state} className="size-3" />
-      {state ? STATE_LABEL[state] : TARGET_LABEL[kind]}
-    </span>
+    <Icon
+      icon={Check}
+      data-mark="start"
+      className={cn(
+        "size-4 shrink-0 text-accent transition-opacity",
+        starting ? "opacity-100" : "opacity-0",
+      )}
+    />
   );
 }
 
@@ -479,24 +459,31 @@ function StateChip({ row }: { readonly row: SmartRow }) {
 function CheckoutRow({
   branch,
   pending,
+  starting,
   onStart,
 }: {
   readonly branch: string;
   readonly pending: boolean;
+  readonly starting: boolean;
   readonly onStart: () => void;
 }) {
   return (
     <button
       type="button"
       data-row="target"
+      data-starting={starting ? "true" : undefined}
       onClick={onStart}
       disabled={pending}
-      className="flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-60"
+      className={cn(
+        "flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+        starting ? "bg-secondary/60" : "hover:bg-raised/60",
+      )}
     >
       <Icon icon={GitBranch} className="size-3.5 shrink-0 text-ink-faint" />
       <span className="text-sm font-medium text-ink">Current Checkout</span>
       <span className="font-mono text-xs text-ink-soft">{branch}</span>
       <span className="ml-auto text-2xs text-ink-faint">no target — talk about the project</span>
+      <SelectionMark starting={starting} />
     </button>
   );
 }
@@ -507,12 +494,14 @@ function ItemRow({
   showRepo,
   showForge,
   pending,
+  starting,
   onStart,
 }: {
   readonly row: SmartRow;
   readonly showRepo: boolean;
   readonly showForge: boolean;
   readonly pending: boolean;
+  readonly starting: boolean;
   readonly onStart: () => void;
 }) {
   const merged = row.state === "merged";
@@ -520,10 +509,12 @@ function ItemRow({
     <button
       type="button"
       data-row="target"
+      data-starting={starting ? "true" : undefined}
       onClick={onStart}
       disabled={pending}
       className={cn(
-        "flex flex-col gap-1 px-3.5 py-2.5 text-left transition-colors hover:bg-raised/60 disabled:cursor-not-allowed",
+        "flex flex-col gap-1 px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed",
+        starting ? "bg-secondary/60" : "hover:bg-raised/60",
         // Merged rows dim, and lift on hover.
         merged && "opacity-50 hover:opacity-80",
       )}
@@ -558,6 +549,7 @@ function ItemRow({
             ) : null}
             <span className="ml-auto flex shrink-0 items-center gap-2">
               <StateChip row={row} />
+              <SelectionMark starting={starting} />
             </span>
           </span>
           {showRepo ? (
@@ -577,6 +569,7 @@ function ItemRow({
             <span className="ml-auto flex shrink-0 items-center gap-2">
               <CiDot ci={row.pr?.ci} />
               <StateChip row={row} />
+              <SelectionMark starting={starting} />
             </span>
           </span>
           <span className="flex w-full items-center gap-2.5 pl-5.5 text-2xs text-ink-soft">

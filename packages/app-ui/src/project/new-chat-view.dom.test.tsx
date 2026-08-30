@@ -466,10 +466,34 @@ describe("NewChatView", () => {
     const { history, user } = renderView("p1", { p1: detailP1(), p2: EMPTY_DETAIL });
     await screen.findByText("My open change");
 
-    await user.click(screen.getByRole("button", { name: /^Project:/ }));
+    await user.click(screen.getByRole("button", { name: "Choose project" }));
     await user.click(await screen.findByText("whiteboard"));
 
     await waitFor(() => expect(history.history.at(-1)).toBe(newChatPath("p2")));
+  });
+
+  it("the headline picker is a bordered pill with a glyph, over a searchable host-grouped list", async () => {
+    // The picker used to be a borderless gold dotted-underline link over a plain button
+    // list: no glyph, no search, no host grouping. It is the Projects page's picker now,
+    // at headline size, so all three arrive with it — and there is ONE picker to drift.
+    const { user } = renderView("p1", { p1: detailP1(), p2: EMPTY_DETAIL });
+    await screen.findByText("My open change");
+
+    const trigger = screen.getByRole("button", { name: "Choose project" });
+    expect(trigger.className).toContain("border-line");
+    expect(trigger.className).not.toContain("decoration-dotted");
+    // The glyph, at the headline's size step rather than the inline one.
+    expect(trigger.querySelector("svg")?.classList.value).toContain("size-5");
+    // No size class of its own: it INHERITS the `<h1>`'s display face and size.
+    expect(trigger.className).not.toMatch(/\btext-(13|sm|base|xs)\b/);
+
+    await user.click(trigger);
+    // A search box, and the host heading the sidebar groups by.
+    expect(await screen.findByPlaceholderText("Search projects")).toBeTruthy();
+    expect(screen.getByText("This machine")).toBeTruthy();
+    // Every row carries its project glyph.
+    const row = screen.getByText("whiteboard").closest("[data-slot='command-item']");
+    expect(row?.querySelector("svg")).not.toBeNull();
   });
 
   it("merged rows dim (read-only lift), single-repo drops the repo column", async () => {
@@ -713,6 +737,54 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await screen.findByText("My open change");
     expect(screen.queryByText("feat/local-x")).toBeNull();
     expect(store.sessions).toHaveLength(1);
+  });
+
+  it("marks the row that is STARTING, and only that row, while its mint is in flight", async () => {
+    // The spike marked the row you had SELECTED. This list has no selection — R26 made the
+    // click the start — so the mark says "this row is starting". Held on a mint that never
+    // settles, which is the only state in which the mark is on screen at all.
+    const history = memoryHistory(newChatPath("p1"));
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("p1", "rennet")] }),
+      "project.detail": () => detailP1(),
+      "session.list": () => ({ sessions: [] }),
+      "session.mint": () => new Promise(() => undefined),
+    } satisfies MemoryBridgeHandlers);
+
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <PriorSurfaceProvider value={{ current: newChatPath() }}>
+            <NewChatView projectId="p1" />
+          </PriorSurfaceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    await screen.findByText("My open change");
+
+    // Before any click every row reserves the mark column, and none of them wears it — so
+    // the list cannot shift sideways when one appears.
+    const rows = () => screen.getAllByRole("button").filter((b) => b.dataset.row === "target");
+    expect(rows().length).toBeGreaterThan(1);
+    for (const row of rows()) expect(row.dataset.starting).toBeUndefined();
+
+    fireEvent.click(rowButton(/My open change/));
+
+    await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBe("true"));
+    const started = rowButton(/My open change/);
+    expect(started.className).toContain("bg-secondary/60");
+    // The mark itself is the tick that faded IN on this row…
+    expect(started.querySelector('[data-mark="start"]')?.classList.value).toContain("opacity-100");
+    // …and stayed faded OUT everywhere else. Exactly one row is starting.
+    const others = rows().filter((row) => row !== started);
+    expect(others.length).toBeGreaterThan(0);
+    for (const row of others) {
+      expect(row.dataset.starting).toBeUndefined();
+      expect(row.className).not.toContain("bg-secondary/60");
+      const checks = row.querySelectorAll('[data-mark="start"]');
+      expect(checks).toHaveLength(1);
+      expect(checks[0]?.classList.value).toContain("opacity-0");
+    }
   });
 
   it("a failed mint says so and stays put — nothing is claimed to have started", async () => {
