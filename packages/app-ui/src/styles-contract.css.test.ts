@@ -30,23 +30,8 @@ describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
   });
 });
 
-// The hold-to-sign fill contract pinned the deleted `publish-sheet.tsx` component
-// source (B2, #489 — the canvas publish surface is gone); its invariants left with it.
-
-describe("running-review progress track radius (critique review item 1)", () => {
-  // Re-pinned against the component source after the Tailwind conversion (styles.css is
-  // deleted): the track and its fill carry the 4px micro radius utility, never the pill.
-  const source = readFileSync(
-    fileURLToPath(new URL("./components/running-review.tsx", import.meta.url)),
-    "utf8",
-  );
-
-  it("uses the 4px micro radius, not the 999px pill (DESIGN.md: pill = chips/counts only)", () => {
-    const track = source.match(/className="canvas-primer-track[^-][^"]*"/)?.[0] ?? "";
-    const fill = source.match(/className="canvas-primer-track-fill[^"]*"/)?.[0] ?? "";
-    expect(track).toContain("rounded-micro");
-    expect(fill).toContain("rounded-micro");
-    expect(track).not.toContain("rounded-full");
-    expect(fill).not.toContain("rounded-full");
-  });
-});
+// Two component-source contracts used to live here and no longer do, because the
+// components they pinned are gone: the hold-to-sign fill pinned `publish-sheet.tsx`
+// (B2, #489 — the canvas publish surface), and the progress-track radius pinned
+// `running-review.tsx` (the canvas-era indeterminate bar, which had no production
+// consumer left after the board rebuild). Their CSS left with them.

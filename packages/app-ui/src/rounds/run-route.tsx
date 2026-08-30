@@ -157,7 +157,7 @@ function LiveRun({ state }: { readonly state: RoundState }) {
     <section
       data-screen="session-run"
       data-phase={state.phase}
-      className="min-h-0 flex-1 overflow-y-auto"
+      className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto"
     >
       <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[11vh]">
         <span className="font-medium text-13 text-foreground">{header}</span>

@@ -128,7 +128,7 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
     <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* Scroll frame 1: the diff cards. The selection layer sits INSIDE the frame (its
           plain container div would otherwise break the flex height chain). */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
         <MaybeSelectionLayer enabled={!historical}>
           <div className="mx-auto flex w-full max-w-[980px] flex-col gap-4 px-6 py-4">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

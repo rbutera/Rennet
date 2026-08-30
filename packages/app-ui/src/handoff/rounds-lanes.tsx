@@ -166,7 +166,7 @@ export function RoundsLanes({
   if (!gathering && pr?.ready) {
     const changeRequest = CHANGE_REQUEST_COPY[pr.requestKind];
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
           <div className="flex items-center gap-2.5">
             <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
@@ -214,7 +214,7 @@ export function RoundsLanes({
 
   // ── State: changes remain (or nothing staged yet) ────────────────────────────
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
         <div className="flex items-center gap-2.5">
           <Icon icon={GitBranch} className="size-4 text-muted-foreground" />

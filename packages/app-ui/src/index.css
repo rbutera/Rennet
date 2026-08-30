@@ -2,9 +2,13 @@
  *
  * Tailwind v4 + the shared @rennet/theme tokens. Components style themselves
  * with utilities (bg-canvas, text-ink-soft, rounded-control, font-display …);
- * this file holds only what utilities cannot express: the base document
- * material, browser-owned surfaces (scrollbars, selection, caret, focus), the
- * diff/syntax vocabulary consumed by generated code markup, and keyframes.
+ * this file holds only what utilities cannot express: the base document material,
+ * browser-owned surfaces (scrollbars, selection, caret, focus), the app's motion
+ * vocabulary as `@theme --animate-*` (so every keyframe reaches a call site as a real
+ * `animate-…` utility), the `@utility` definitions for properties Tailwind has none for
+ * (`-webkit-app-region`, the floating-chrome clearance), the welcome's sub-ramp
+ * decorative type, the processing orb's masked conic ring, and the diff/syntax
+ * vocabulary consumed by generated code markup.
  *
  * The old styles.css / tokens.css / canvas.css glass world is deleted. One
  * seamless opaque window; separation by surface steps and hairlines.
@@ -110,12 +114,6 @@
     outline: 3px solid var(--rn-accent);
     outline-offset: 1px;
   }
-  /* The full-viewport keyboard canvas region draws its ring INSET — an outset
-   * ring on a min-h-screen element clips off-screen and under the titlebar. */
-  .canvas-app:focus-visible {
-    outline-offset: -3px;
-  }
-
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -130,30 +128,59 @@
   }
 }
 
-/* The in-app titlebar is the window drag surface on macOS (frameless
- * hiddenInset window); its interactive children opt back out. */
-@layer components {
-  .navigation-titlebar {
-    -webkit-app-region: drag;
-  }
-  .navigation-titlebar button,
-  .navigation-titlebar a,
-  .navigation-titlebar input,
-  .navigation-titlebar code {
-    -webkit-app-region: no-drag;
-  }
+/* Window drag regions (macOS frameless `hiddenInset`). The strip standing in for the
+ * titlebar drags the window; every interactive thing inside it opts back out — one
+ * explicit class per control.
+ *
+ * This replaces `.navigation-titlebar` plus a `button, a, input, code` opt-out list.
+ * That list knew four tag names, so anything else interactive inside the strip — a
+ * `div[role="button"]`, a span trigger, a kit control that renders its own wrapper —
+ * stayed a drag surface and swallowed its own clicks. A class the author puts on the
+ * control cannot fall out of date with the markup the way a tag list does.
+ *
+ * `-webkit-app-region` is Electron/Chromium-only and invisible to jsdom/happy-dom, so
+ * a DOM test can assert the class is present but never that the window drags. */
+@utility app-region-drag {
+  -webkit-app-region: drag;
+}
+@utility app-region-no-drag {
+  -webkit-app-region: no-drag;
 }
 
-/* First-run welcome. The wizard styles itself with Tailwind utilities; what stays
- * here is what utilities cannot express — the code rain's sub-ramp decorative type
- * with its syntax tones, the theme-preview miniature's 8px faux-diff, and the two
- * entrance keyframes below (a keyframe is theme vocabulary, not a class). */
+/* The app's authored motion, all of it. A keyframe is theme vocabulary, not a class:
+ * declared here as `--animate-*` it becomes a real `animate-…` utility, so a call site
+ * composes it with variants (`motion-reduce:animate-none`) and twMerge can override it.
+ * Nothing below is hand-wired to a bare class name. */
 @theme {
-  /* The stage entrance. It re-fires because WelcomeShell remounts <main> per step;
-   * a CSS animation on a persistent node plays once and never again. */
+  /* The welcome's stage entrance. It re-fires because WelcomeShell remounts <main> per
+   * step; a CSS animation on a persistent node plays once and never again. */
   --animate-welcome-step: rn-welcome-step-in 460ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
-  /* A tool row dealing itself in. Each row carries its own animation-delay. */
+  /* A welcome tool row dealing itself in. Each row carries its own animation-delay. */
   --animate-welcome-row: rn-welcome-row-in 420ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  /* Streaming prose word reveal (C07 chat transcript): each word of a LIVE orchestrator
+   * turn fades + un-blurs in, staggered by a per-word animation-delay set inline.
+   * Records render with `animate=false`, so this plays only on arrival.
+   *
+   * `forwards` (not `both`) is only safe because `streaming-prose.tsx` puts `opacity-0`
+   * on each animating word as a CLASS, so a word is invisible before its delay elapses.
+   * A `forwards` fill covers the tail, never the head. Delete that `opacity-0` and every
+   * delayed word flashes at full opacity, then restarts — at which point this needs `both`.
+   *
+   * That same `opacity-0` is why the call site must NOT carry `motion-reduce:animate-none`:
+   * with no animation the `forwards` fill never lands and every streamed word stays
+   * invisible. Reduced motion is served by the base rule instead (duration → 0.01ms, the
+   * `forwards` fill retains the `to` frame → opacity 1), which snaps to the settled state. */
+  --animate-word-in: word-in 260ms ease-out forwards;
+  /* Deixis focus pulse: when conversation points at code, the row flashes a gold inset
+   * once (700ms) and settles. The settled state is "no shadow", so dropping the animation
+   * under reduced motion lands on it — `motion-reduce:animate-none` is safe here. */
+  --animate-cv-focus-pulse: cv-focus-pulse 700ms ease-out 1 both;
+  /* The processing orb's glyph pulse — a utility on the icon itself. The orb's RING has
+   * no `--animate-*` partner on purpose: it animates a `::before`, which cannot carry a
+   * class, so the utility would never be used and Tailwind would tree-shake the variable
+   * away. Its keyframe still belongs here (keyframes declared in `@theme` are emitted
+   * whether or not a utility references them) and the pseudo names it directly. */
+  --animate-processing-pulse: processing-pulse 1.6s ease-in-out infinite;
 
   @keyframes rn-welcome-step-in {
     from {
@@ -175,8 +202,50 @@
       transform: translateX(0);
     }
   }
+  @keyframes word-in {
+    from {
+      opacity: 0;
+      filter: blur(2px);
+      transform: translateY(0.15em);
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateY(0);
+    }
+  }
+  @keyframes cv-focus-pulse {
+    0%,
+    35% {
+      box-shadow:
+        inset 3px 0 0 0 var(--rn-accent),
+        inset 0 0 10px 0 var(--rn-accent);
+    }
+    100% {
+      box-shadow:
+        inset 0 0 0 0 transparent,
+        inset 0 0 0 0 transparent;
+    }
+  }
+  @keyframes processing-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes processing-pulse {
+    0%,
+    100% {
+      opacity: 0.65;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
 }
 
+/* First-run welcome. The wizard styles itself with Tailwind utilities; what stays here
+ * is what utilities cannot express — the code rain's sub-ramp decorative type with its
+ * syntax tones, and the theme-preview miniature's 8px faux-diff. */
 @layer components {
   /* The code rain stays hand-written CSS: its 9px type is below the ramp floor (the
    * design-ramp test pins this exact selector and value as decorative micro-type),
@@ -257,50 +326,47 @@
  *    ones pass beneath; `scroll-padding-top` keeps programmatic scroll targets
  *    (anchor jumps, `scrollIntoView`) clear of the chips too.
  *
- * The descendant selector names the repo-wide idiom for a pane's PRIMARY scroller
- * (`min-h-0 flex-1 overflow-y-auto`); secondary scrollers (a diff view's fixed-width
- * aside, the composer's textarea, a bounded list) do not carry all three and are
- * correctly left alone. */
+ * Which scroller gets it is stated at the scroller, with `chrome-scroll-clearance`. It
+ * used to be inferred from a descendant selector on the Tailwind class names a primary
+ * scroller happens to type (`.min-h-0.flex-1.overflow-y-auto`) — a structural contract
+ * written in utility names, which silently changed meaning whenever a pane's layout
+ * classes changed and matched every branch that typed the same three by coincidence. */
 @layer components {
   .rennet-floating-chrome,
   .rennet-floating-chrome-scroll {
     /* The vertical room the chip layer needs (an 11-unit / 44px chip row). Declared
-     * once and inherited by the scroller below. NOT an `--rn-*` name: that prefix
+     * once and inherited by the marked scroller below. NOT an `--rn-*` name: that prefix
      * belongs to `@rennet/theme`'s palette and consumer stylesheets may not define one. */
     --floating-chrome-clearance: 2.75rem;
   }
   .rennet-floating-chrome {
     padding-top: var(--floating-chrome-clearance);
   }
-  .rennet-floating-chrome-scroll .min-h-0.flex-1.overflow-y-auto {
-    padding-top: var(--floating-chrome-clearance);
-    scroll-padding-top: var(--floating-chrome-clearance);
-  }
 }
 
-/* Streaming caret: the assistant's in-flight message blinks a gold caret at
- * the end of its serif body. The is-streaming class is the state hook. */
-@layer components {
-  .thread-message.is-streaming .thread-message-body::after {
-    content: "";
-    display: inline-block;
-    width: 2px;
-    height: 1em;
-    margin-left: 2px;
-    vertical-align: text-bottom;
-    background: var(--rn-accent);
-    animation: thread-stream-caret 1s step-end infinite;
-  }
-  @keyframes thread-stream-caret {
-    50% {
-      opacity: 0;
-    }
-  }
+/* The marker a SESSION pane puts on its primary scroller. The clearance is the inherited
+ * `--floating-chrome-clearance`, which only exists under a floating-chrome region — so the
+ * class is inert in states 1 and 2 (sidebar or chat dock owns the corner) and the same
+ * marked element needs no conditional. The fallback is the whole gate; without it the
+ * padding would apply everywhere.
+ *
+ * It belongs on session surfaces only: a TAKEOVER region already takes its clearance as
+ * padding on the region itself, so a marked scroller inside one would clear the chips twice. */
+@utility chrome-scroll-clearance {
+  padding-top: var(--floating-chrome-clearance, 0px);
+  scroll-padding-top: var(--floating-chrome-clearance, 0px);
 }
 
-/* Processing orb: the one ambient authored moment while a project digests —
- * a gold light ring spins until done/failed stills it. progress-feed's
- * .processing-dot shares processing-pulse. */
+/* Processing orb: the one ambient authored moment while a project digests — a gold light
+ * ring spins until done/failed stills it. The ring is a `::before` drawn from a conic
+ * gradient behind a radial mask, which no utility expresses and no class can reach, so
+ * the pseudo and its state branches stay hand-written here. Its keyframe is theme
+ * vocabulary all the same: `--animate-processing-spin` below, referenced by name.
+ *
+ * The orb's CHILD pulse is a plain animation on a real element, so it is a utility at the
+ * call site (`animate-processing-pulse` in project-processing.tsx, applied only while the
+ * dump is still running) rather than a `.processing-orb > *` rule with `is-done` /
+ * `is-failed` overrides. */
 @layer components {
   .processing-orb::before {
     content: "";
@@ -323,156 +389,11 @@
   }
   .processing-orb > * {
     position: relative;
-    animation: processing-pulse 1.6s ease-in-out infinite;
   }
   .processing-orb.is-done::before,
   .processing-orb.is-failed::before {
     animation: none;
     background: none;
-  }
-  .processing-orb.is-done > *,
-  .processing-orb.is-failed > * {
-    animation: none;
-  }
-  @keyframes processing-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes processing-pulse {
-    0%,
-    100% {
-      opacity: 0.65;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-}
-
-/* Calm roll-up (#62): per-row disposition clusters stay in the DOM and tab
- * order but only paint when the row is engaged (hover or focus-within). The
- * parent relationships cross component files, so the rule lives centrally. */
-@layer components {
-  .flat-element .disposition-bar.is-compact,
-  .decision .disposition-bar.is-compact,
-  .cohort-head .disposition-bar.is-compact {
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .flat-element:hover .disposition-bar.is-compact,
-  .flat-element:focus-within .disposition-bar.is-compact,
-  .decision:hover .disposition-bar.is-compact,
-  .decision:focus-within .disposition-bar.is-compact,
-  .cohort-head:hover .disposition-bar.is-compact,
-  .cohort-head:focus-within .disposition-bar.is-compact {
-    opacity: 1;
-  }
-  .code-view-head .disposition-cluster.is-compact {
-    margin-left: auto;
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .code-view-head:hover .disposition-cluster.is-compact,
-  .code-view-head:focus-within .disposition-cluster.is-compact {
-    opacity: 1;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .flat-element .disposition-bar.is-compact,
-    .decision .disposition-bar.is-compact,
-    .cohort-head .disposition-bar.is-compact,
-    .code-view-head .disposition-cluster.is-compact {
-      transition: none;
-    }
-  }
-}
-
-/* Busy shimmer: indeterminate progress bars slide their fill. */
-@layer components {
-  .busy-bar,
-  .ai-loading-bar-fill {
-    animation: busy 1s ease-in-out infinite alternate;
-  }
-  @keyframes busy {
-    to {
-      transform: translateX(185%);
-    }
-  }
-}
-
-/* Hold-to-sign fill: the publish signature inks in only while held. The
- * resting fill is inert (w-0, no animation) — pinned by styles-contract. */
-@layer components {
-  .publish-sheet-sign.is-arming {
-    opacity: 0.72;
-  }
-  .publish-sheet-sign.is-holding .publish-sheet-sign-fill {
-    animation-name: sign-hold-fill;
-    animation-timing-function: linear;
-    animation-fill-mode: forwards;
-  }
-  @keyframes sign-hold-fill {
-    from {
-      width: 0;
-    }
-    to {
-      width: 100%;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .publish-sheet-sign.is-holding .publish-sheet-sign-fill {
-      animation-timing-function: steps(5, end);
-    }
-  }
-}
-
-/* Streaming prose word reveal (C07 chat transcript): each word of a LIVE
- * orchestrator turn fades + un-blurs in, staggered by a per-word animation-delay
- * set inline. Records render with `animate=false` (no `.animate-word-in`), so this
- * plays only on arrival. The base reduced-motion rule snaps it to the settled state
- * (duration → 0.01ms, the `forwards` fill retains the `to` frame → opacity 1).
- *
- * `forwards` (not `both`) is only safe because `streaming-prose.tsx` puts `opacity-0`
- * on each animating word as a CLASS, so a word is invisible before its delay elapses.
- * A `forwards` fill covers the tail, never the head. Delete that `opacity-0` and every
- * delayed word flashes at full opacity, then restarts — at which point this keyframe
- * needs `both`. */
-@layer components {
-  .animate-word-in {
-    animation: word-in 260ms ease-out forwards;
-  }
-  @keyframes word-in {
-    from {
-      opacity: 0;
-      filter: blur(2px);
-      transform: translateY(0.15em);
-    }
-    to {
-      opacity: 1;
-      filter: blur(0);
-      transform: translateY(0);
-    }
-  }
-}
-
-/* Deixis focus pulse: when conversation points at code, the row flashes a
- * gold inset once (700ms) and settles. */
-@layer components {
-  .code-view-row.cv-focus {
-    animation: cv-focus-pulse 700ms ease-out 1 both;
-  }
-  @keyframes cv-focus-pulse {
-    0%,
-    35% {
-      box-shadow:
-        inset 3px 0 0 0 var(--rn-accent),
-        inset 0 0 10px 0 var(--rn-accent);
-    }
-    100% {
-      box-shadow:
-        inset 0 0 0 0 transparent,
-        inset 0 0 0 0 transparent;
-    }
   }
 }
 
