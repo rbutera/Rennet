@@ -9,15 +9,15 @@ const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const buildScriptPath = join(workspaceRoot, "scripts", "build-exclusive-namespace-move.mjs");
 const binaryName =
   process.platform === "win32" ? "rennet-exclusive-move.exe" : "rennet-exclusive-move";
-const outputPath = join(
+const outputRoot = join(
   workspaceRoot,
   "packages",
   "adapters",
   "dist",
   "native",
   `${process.platform}-${process.arch}`,
-  binaryName,
 );
+const outputPaths = [join(outputRoot, binaryName), join(outputRoot, "rennet-rooted-landing.node")];
 
 function runBuild(temporaryRoot) {
   return new Promise((resolve, reject) => {
@@ -60,22 +60,27 @@ function sha256(contents) {
 const proofRoot = await mkdtemp(join(tmpdir(), "rennet-exclusive-move-determinism-"));
 
 try {
-  const builds = [];
+  const builds = new Map(outputPaths.map((outputPath) => [outputPath, []]));
   for (const name of ["first", "second"]) {
     const temporaryRoot = join(proofRoot, name);
     await mkdir(temporaryRoot, { recursive: true });
     await runBuild(temporaryRoot);
-    builds.push(await readFile(outputPath));
+    for (const outputPath of outputPaths) {
+      builds.get(outputPath).push(await readFile(outputPath));
+    }
   }
 
-  const hashes = builds.map(sha256);
-  if (!builds[0].equals(builds[1])) {
-    throw new Error(
-      `native builds from distinct temporary roots differ: ${hashes[0]} != ${hashes[1]}`,
-    );
+  for (const [outputPath, artifacts] of builds) {
+    const [first, second] = artifacts;
+    if (first === undefined || second === undefined) {
+      throw new Error(`native determinism proof did not produce two builds for ${outputPath}`);
+    }
+    const hashes = [sha256(first), sha256(second)];
+    if (!first.equals(second)) {
+      throw new Error(`${outputPath} differs across temporary roots: ${hashes[0]} != ${hashes[1]}`);
+    }
+    process.stdout.write(`${outputPath} is reproducible: ${hashes[0]}\n`);
   }
-
-  process.stdout.write(`Native build is reproducible: ${hashes[0]}\n`);
 } finally {
   await rm(proofRoot, { force: true, recursive: true });
 }

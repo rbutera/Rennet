@@ -9,8 +9,11 @@ const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const nativeSourceRoot = join(workspaceRoot, "packages", "adapters", "native");
 const binaryName =
   process.platform === "win32" ? "rennet-exclusive-move.exe" : "rennet-exclusive-move";
+const addonName = "rennet-rooted-landing.node";
 const outputRoot = join(workspaceRoot, "packages", "adapters", "dist", "native");
-const outputPath = join(outputRoot, `${process.platform}-${process.arch}`, binaryName);
+const platformOutputRoot = join(outputRoot, `${process.platform}-${process.arch}`);
+const outputPath = join(platformOutputRoot, binaryName);
+const addonOutputPath = join(platformOutputRoot, addonName);
 const require = createRequire(import.meta.url);
 const nodeGypPath = require.resolve("@electron/node-gyp/bin/node-gyp.js");
 const scratchRoot = await mkdtemp(join(tmpdir(), "rennet-exclusive-move-"));
@@ -68,14 +71,15 @@ function runNodeGyp(cwd) {
 
 try {
   await Promise.all(
-    ["binding.gyp", "exclusive-namespace-move.c"].map((filename) =>
+    ["binding.gyp", "exclusive-namespace-move.c", "rooted-landing-host.c"].map((filename) =>
       copyFile(join(nativeSourceRoot, filename), join(scratchRoot, filename)),
     ),
   );
   await runNodeGyp(scratchRoot);
   await rm(outputRoot, { force: true, recursive: true });
-  await mkdir(dirname(outputPath), { recursive: true });
+  await mkdir(platformOutputRoot, { recursive: true });
   await copyFile(join(scratchRoot, "build", "Release", basename(outputPath)), outputPath);
+  await copyFile(join(scratchRoot, "build", "Release", basename(addonOutputPath)), addonOutputPath);
   if (process.platform !== "win32") await chmod(outputPath, 0o755);
 } finally {
   await rm(scratchRoot, { force: true, recursive: true });

@@ -28,6 +28,34 @@
       "conditions": [
         ["OS==\"linux\"", { "ldflags": ["-Wl,--build-id=none"] }]
       ]
+    },
+    {
+      "target_name": "rennet-rooted-landing",
+      "defines": ["NAPI_VERSION=8"],
+      "sources": ["rooted-landing-host.c"],
+      "cflags": ["-std=c11", "-Wall", "-Wextra", "-Werror", "-g0"],
+      "xcode_settings": {
+        "GCC_C_LANGUAGE_STANDARD": "c11",
+        "GCC_GENERATE_DEBUGGING_SYMBOLS": "NO",
+        "GCC_TREAT_WARNINGS_AS_ERRORS": "YES",
+        "WARNING_CFLAGS": ["-Wall", "-Wextra"]
+      },
+      "msvs_settings": {
+        "VCCLCompilerTool": {
+          "AdditionalOptions": ["/Brepro"],
+          "DebugInformationFormat": 0,
+          "WarnAsError": "true",
+          "WarningLevel": 4
+        },
+        "VCLinkerTool": {
+          "AdditionalOptions": ["/Brepro"],
+          "GenerateDebugInformation": "false",
+          "LinkIncremental": 1
+        }
+      },
+      "conditions": [
+        ["OS==\"linux\"", { "ldflags": ["-Wl,--build-id=none"] }]
+      ]
     }
   ]
 }
