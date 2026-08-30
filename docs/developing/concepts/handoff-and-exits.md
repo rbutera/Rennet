@@ -375,7 +375,11 @@ that host's repair.
    back to the board surface. A second Dispatch received during handback is
    durably queued and replaces the prior operation without exposing round one's
    completion as the new run. A terminal failure stays on the run with its failure
-   receipt. Once a round has returned, the session row carries the durable
+   receipt and offers both **Return to Review** and **Retry**. Retry resumes the same
+   operation from the exact failed checkpoint, preserving its worktree, asks, logs,
+   and completed effect receipts. A failure after source landing retries only the
+   recording or board-regeneration tail; it does not repeat worker edits, gates,
+   commits, or board identities. Once a round has returned, the session row carries the durable
    ledger ordinal as *Round N is back*. The display transcript keeps every
    pre-round row and appends two stable lifecycle turns: the reviewer's
    *Dispatch it.* when the operation is claimed, then a receipt-derived

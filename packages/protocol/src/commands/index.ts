@@ -1460,6 +1460,17 @@ const definitions = {
       acceptedOperation: RoundOperationProgressSnapshotSchema.optional(),
     }),
   },
+  // Retry a retained failed round from the checkpoint named by its durable failure
+  // receipt. The operation identity and every completed effect receipt stay unchanged;
+  // `retry` tells the client whether the resumed work is still the coding round or only
+  // the post-landing board regeneration tail.
+  "round.retry": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({
+      retry: z.enum(["round", "regeneration"]),
+      acceptedOperation: RoundOperationProgressSnapshotSchema,
+    }),
+  },
   // ── Session reads (the client seam B9 and B11 opened) ───────────────────────
   // Both are SERVED. `session.transcript` is the chat dock's read (C07): the header
   // trail + the transcript rows + the harness context figure. The harness CLI remains

@@ -53,6 +53,12 @@ export interface RoundsSource {
   readonly reportBoard: (reportBoardId: string) => unknown;
   /** Dispatch a work-order round for `slug`; absent ⇒ no live runtime, button disabled. */
   readonly dispatch?: (slug: string) => void;
+  /** Retry this session's retained failed operation from its durable checkpoint. */
+  readonly retry?: (slug: string) => void;
+  /** True while a retry request for this session is awaiting its durable acceptance. */
+  readonly retryPending?: (slug: string) => boolean;
+  /** The daemon's rejection of the latest retry request, when one exists. */
+  readonly retryError?: (slug: string) => string | undefined;
   /**
    * True while this session's round state has been ASKED for and not yet answered — the
    * honest "not known yet", which is NOT the same fact as `absent`'s "there is no round".
@@ -178,6 +184,18 @@ export function useReportBoard(reportBoardId: string): ReportBoardResolution {
  *  stays inert). `HandoffMount` reads this and threads it to the handoff lanes. */
 export function useRoundDispatch(): ((slug: string) => void) | undefined {
   return useContext(RoundsSourceContext).dispatch;
+}
+
+export function useRoundRetry(): ((slug: string) => void) | undefined {
+  return useContext(RoundsSourceContext).retry;
+}
+
+export function useRoundRetryPending(slug: string): boolean {
+  return useContext(RoundsSourceContext).retryPending?.(slug) ?? false;
+}
+
+export function useRoundRetryError(slug: string): string | undefined {
+  return useContext(RoundsSourceContext).retryError?.(slug);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,6 +327,7 @@ export function useLiveRoundsSource(): RoundsSource {
     pending: recordsPending,
   } = useCommand("session.rounds", { reviewId: reviewId ?? "" }, { enabled });
   const { mutate } = useMutation("round.dispatch");
+  const { mutate: retry, pending: retryPending, error: retryError } = useMutation("round.retry");
 
   // The reviewer's dispatch INTENT, held here and never written into the event log (review
   // finding 7). The old code folded a `{type:"dispatched"}` of its own making into the log
@@ -352,6 +371,27 @@ export function useLiveRoundsSource(): RoundsSource {
       roundsUnavailable: (forSlug: string) => (forSlug === slug ? unavailable : undefined),
       reportBoard: (reportBoardId: string) =>
         records?.findLast((record) => record.reportBoard === reportBoardId)?.report,
+      retry: (forSlug: string) => {
+        if (forSlug !== slug || reviewId === undefined) return;
+        void retry({ reviewId })
+          .then((output) => {
+            const accepted: RoundEvent = {
+              type: "operation",
+              snapshot: output.acceptedOperation,
+            };
+            streamed.current = mergeRoundEvents(streamed.current, [accepted]);
+            cache.setData(
+              commandKey("session.roundEvents", { reviewId }),
+              () => ({ events: [...streamed.current] }),
+              { supersedeInFlight: true },
+            );
+            cache.invalidate(commandKey("session.roundEvents", { reviewId }));
+          })
+          .catch(() => undefined);
+      },
+      retryPending: (forSlug: string) => forSlug === slug && retryPending,
+      retryError: (forSlug: string) =>
+        forSlug === slug && retryError !== undefined ? failureText(retryError) : undefined,
       dispatch: (forSlug: string) => {
         if (reviewId === undefined) return;
         // A new round starts from nothing: drop the finished round's events rather than
@@ -391,6 +431,9 @@ export function useLiveRoundsSource(): RoundsSource {
     slug,
     reviewId,
     mutate,
+    retry,
+    retryPending,
+    retryError,
     cache,
     eventsPending,
     recordsPending,

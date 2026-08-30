@@ -297,6 +297,7 @@ import {
 import {
   createRoundExecutionCoordinator,
   type RoundExecutionPorts,
+  roundRetryMode,
 } from "./runtime/round-execution";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
@@ -3954,6 +3955,25 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         return undefined;
       }
       return stored.failedLenses?.[lens];
+    },
+    retryRound: async ({ review }) => {
+      const sessionId = sessionIdForReview(review);
+      const failed = roundOperationStore.read(sessionId);
+      if (failed?.state.phase !== "failed") return undefined;
+
+      const retry = roundRetryMode(failed.state.failure);
+      const settled = coordinator.retry(sessionId);
+      const accepted = roundOperationStore.read(sessionId);
+      if (accepted === undefined || accepted.operationId !== failed.operationId) {
+        throw new Error("Round retry was not durably accepted.");
+      }
+      void settled.catch((error) => {
+        console.error("Durable round retry failed", error);
+      });
+      return {
+        retry,
+        acceptedOperation: roundOperationProgressSnapshot(accepted),
+      };
     },
     queueRoundIfActive: async ({ review, dispatchId }) => {
       const session = (
