@@ -238,15 +238,17 @@ tail went 149 → **54** slices and the whole run went 201 → **105** slices (5
 module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
 113 ms; the clean build is ~30 s.
 
-105 turns × 78 s is 8,190 s of turn time. At the named concurrency of 8 that is
-**~17 minutes of wall clock** — 17.6 with the build — against a five-minute bar.
+105 turns × 78 s is 8,190 s of turn time. At the named concurrency of 16 that
+projects to **~8.5 minutes of worker wall clock** — 9 minutes with the build —
+against a five-minute bar.
 Turn time ÷ lanes *is* the wall clock; there is no smaller figure to quote. To
 clear the bar at 78 s/turn takes ≥28 lanes (≥31 with the build), and the 16 GB
-host has headroom for 8. The two other routes are unfinished: skeleton-fed packets
-should shorten the turn but have never been timed against a live harness, and the
-scoping seat that would decide an edge-less file does not deserve a turn at all is
-still unbuilt (Stage 1 point 4). So the design's honest cost is 105 turns and
-~17 minutes, and closing the gap is outstanding work rather than a solved problem.
+host's ruled cap is 16, roughly 3.2 GB of measured harness-process RSS. The two
+other routes are unfinished: skeleton-fed packets should shorten the turn but
+have never been timed against a live harness, and the scoping seat that would
+decide an edge-less file does not deserve a turn at all is still unbuilt (Stage
+1 point 4). So the design's honest cost is 105 turns and a projected ~9 minutes;
+a launched run has not yet proved the five-minute bar.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
