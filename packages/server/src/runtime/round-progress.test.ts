@@ -292,6 +292,44 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     ]);
   });
 
+  it("starts the first lane at kickoff when no report gates the run", async () => {
+    // THE BUG: the lanes' first drafter was promoted ONLY by the round report's arrival.
+    // The INITIAL drafting path has no round and drafts no report, so nothing promoted it
+    // — Design read "queued" for its whole run while it was the one lens working, and the
+    // surface only caught up when Design's own draft landed and it jumped to "drafted".
+    //
+    // No successor account and no round ⇒ no report (`draftsRoundReport`), which is what
+    // makes this the initial-drafting shape rather than a copy of the round test above.
+    const events: RoundEvent[] = [];
+    await runtimeWith(() => sectioned("same")).runRound({
+      session: { ...session, id: "initial-draft-session" } as SessionModel,
+      repoRoot: root,
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-landed" }),
+      onProgress: (event) => events.push(event),
+      ...assembleRoundCollation({ patchset: patchset(), knowledge: KNOWLEDGE, dossier: [] }),
+    });
+
+    // No report announced — the premise, asserted rather than assumed.
+    expect(events.some((e) => e.type === "report")).toBe(false);
+
+    // The FIRST lens frame is the kickoff one, and it says Design is running while every
+    // lens behind it is still queued. Asserting the first frame (not "some frame ever")
+    // is the load-bearing part: `drafted()` promotes lanes as boards land, so a later
+    // frame shows Design running-or-past no matter when the run started saying so.
+    const first = events.find((e) => e.type === "lens");
+    if (first?.type !== "lens") throw new Error("no lens lanes were emitted");
+    expect(first.lanes.map((lane) => [lane.id, lane.status])).toEqual([
+      ["design", "running"],
+      ["sequence", "queued"],
+      ["decisions", "queued"],
+      ["flagged", "queued"],
+      ["noise", "queued"],
+    ]);
+    // ...and it arrives before any board has landed: nothing is drafted yet in that frame.
+    expect(first.lanes.some((lane) => lane.status === "drafted")).toBe(false);
+  });
+
   it("emits a TERMINAL failed event when the regeneration throws — never silence", async () => {
     const events: RoundEvent[] = [];
     await expect(

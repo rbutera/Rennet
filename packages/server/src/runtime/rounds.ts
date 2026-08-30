@@ -31,8 +31,9 @@
 //
 // B09 does NOT edit the pipeline's pure logic: the round-report drafts FIRST and
 // gates the regeneration, per-board arrival powers the reveal, and the durable
-// `persistBoardMeta` are all the pipeline's own behavior (`isRound` derived from
-// `deltaPacket.successorAccount`) — this runtime only wires the seams.
+// `persistBoardMeta` are all the pipeline's own behavior (whether a report drafts at
+// all is the pipeline's exported `draftsRoundReport`) — this runtime only wires the
+// seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
@@ -68,6 +69,7 @@ import {
   type BoardArrivalEvent,
   type BoardMeta,
   createDesignCoverageMapper,
+  draftsRoundReport,
   type LensBoardOutcome,
   type LensPipelineDeps,
   type LensPipelineResult,
@@ -117,7 +119,9 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
     if (lanes.has(lens)) lanes.set(lens, { id: lens, label: LENS_LANE_LABEL[lens], ...next });
   };
   return {
-    /** The first drafter is under way (the report gated the regeneration and landed). */
+    /** The first drafter is under way. Called when the round report lands (it gated the
+     *  regeneration), or at pipeline kickoff on a run that drafts no report — exactly one
+     *  of the two happens per run, decided by `draftsRoundReport`. */
     start(): void {
       const first = LENS_KINDS[0];
       if (first !== undefined) set(first, { status: "running" });
@@ -759,7 +763,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             });
           };
 
-    const pipeline = await runLensPipeline({
+    const pipelineInput = {
       claudePort,
       codexExecutor,
       repoRoot: input.repoRoot,
@@ -820,7 +824,22 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       reviewDraftLintCtx: input.reviewDraftLintCtx,
       ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
+    } satisfies Parameters<typeof runLensPipeline>[0];
+
+    // The lanes' first drafter is promoted by the round report's ARRIVAL, because a report
+    // gates the regeneration and lands ahead of the lenses. A run that drafts no report
+    // therefore had nothing to promote it: on the initial drafting path the first lens sat
+    // at "queued" for its entire run — the one lens actually working was the one the
+    // surface said had not started. Here the kickoff is the honest signal, so start them.
+    //
+    // The condition is the PIPELINE's own `draftsRoundReport`, not `input.round ===
+    // undefined`: a round-less input carrying a successor account still draws a report out
+    // of the pipeline, and starting the lanes here on that shape would both emit a `lens`
+    // event ahead of the `report` (which announces first, by contract) and read "running"
+    // on a lens while the report was still drafting.
+    if (!draftsRoundReport(pipelineInput)) lanes?.start();
+
+    const pipeline = await runLensPipeline(pipelineInput);
     // A drafter that produced no board settles its lane as failed. Without this the lane
     // sits at `queued`/`running` after the round is over — the surface reads "still
     // working" forever, which is the same stall a silent crash leaves behind.

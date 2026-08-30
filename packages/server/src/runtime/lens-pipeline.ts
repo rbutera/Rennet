@@ -800,6 +800,32 @@ function pipelineGenerationId(
   return deps.currentGeneration ?? generationIdForPatchset(deps.deltaPacket.patchset.id);
 }
 
+/**
+ * Whether this run drafts a ROUND REPORT ahead of the lens boards — see the R58/D3 note
+ * at the call site for why the two shapes differ.
+ *
+ * Exported because the report is also what promotes the live lens lanes' first drafter:
+ * the arrival of the report calls `lanes.start()`. A run that drafts no report has to
+ * start them at kickoff instead, and the caller can only know which it is by asking the
+ * same question the pipeline asks. Copying the predicate over there would let the two
+ * drift into a run that starts its lanes twice (the first lane reads "running" while the
+ * report is still drafting) or never (the first lens reads "queued" for its whole run,
+ * which is the bug this was extracted for).
+ */
+export function draftsRoundReport(
+  deps: Pick<LensPipelineDeps, "currentGeneration" | "deltaPacket" | "round">,
+): boolean {
+  // R58/D3 — a landed dispatched round is explicit in its generation lineage. The
+  // successor account is useful report material, but it is not the round marker: old
+  // reviews can reconstruct exact durable asks without `review.dispositions`, so their
+  // account may be absent even though the code moved. A same-generation round is the
+  // honest no-code shape and drafts no report. Legacy callers without round context keep
+  // the old successor-account signal.
+  return deps.round === undefined
+    ? deps.deltaPacket.successorAccount !== undefined
+    : deps.round.previousGeneration !== pipelineGenerationId(deps);
+}
+
 // ── Seat resolution (council-routed, the B06 precedent) ──
 
 /** Resolve one job to a concrete board `runTurn`, or an honest failure reason. */
@@ -1124,18 +1150,11 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const postProcessText = await deps.readPrompt(POST_PROCESS_FILE);
   const postProcess = buildPostProcess(deps, council, postProcessText);
 
-  // R58/D3 — a landed dispatched round is explicit in its generation lineage. The
-  // successor account is useful report material, but it is not the round marker: old
-  // reviews can reconstruct exact durable asks without `review.dispositions`, so their
-  // account may be absent even though the code moved. A same-generation round is the
-  // honest no-code shape and drafts no report. Legacy callers without round context keep
-  // the old successor-account signal.
-  const currentGeneration = pipelineGenerationId(deps);
-  const isRound =
-    deps.round === undefined
-      ? deps.deltaPacket.successorAccount !== undefined
-      : deps.round.previousGeneration !== currentGeneration;
-  const report = isRound ? await runRoundReport(deps, council, postProcess) : undefined;
+  // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
+  // predicate); it announces first and gates the lens lanes' start.
+  const report = draftsRoundReport(deps)
+    ? await runRoundReport(deps, council, postProcess)
+    : undefined;
   const reportBoard = report?.board;
 
   const outcomes: LensBoardOutcome[] = [];
