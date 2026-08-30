@@ -133,13 +133,6 @@
 /* The in-app titlebar is the window drag surface on macOS (frameless
  * hiddenInset window); its interactive children opt back out. */
 @layer components {
-  .rn-startup-content {
-    display: contents;
-  }
-  .rn-startup-pending {
-    opacity: 0;
-    pointer-events: none;
-  }
   .navigation-titlebar {
     -webkit-app-region: drag;
   }
@@ -151,829 +144,102 @@
   }
 }
 
-/* First-run welcome. It owns the complete window until setup hands off to New Chat. */
-@layer components {
-  .rn-welcome-shell {
-    min-height: 100dvh;
-    overflow: hidden;
-    background: var(--rn-canvas);
-    color: var(--rn-ink);
-  }
-  .rn-welcome-header {
-    height: 58px;
-    padding: 0 28px;
-    border-bottom: 1px solid var(--rn-line);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--rn-canvas);
-  }
-  .rn-welcome-header > span {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-welcome-main {
-    min-height: calc(100dvh - 58px);
-  }
-  .rn-welcome-shell.is-first-step .rn-welcome-main {
-    min-height: 100dvh;
-  }
-  .rn-welcome-footer {
-    position: fixed;
-    z-index: 50;
-    left: 50%;
-    bottom: 14px;
-    transform: translateX(-50%);
-  }
-  .rn-welcome-progress {
-    padding: 4px 6px;
-    border: 1px solid var(--rn-line);
-    border-radius: 999px;
-    background: var(--rn-surface);
-    display: flex;
-    align-items: center;
-    gap: 3px;
-  }
-  .rn-welcome-progress-item {
-    border: 0;
-    background: none;
-    padding: 6px 8px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--rn-ink-faint);
-  }
-  .rn-welcome-progress-item > span {
-    width: 22px;
-    height: 22px;
-    border: 1px solid var(--rn-line-strong);
-    border-radius: 999px;
-    display: grid;
-    place-items: center;
-    font-size: var(--text-2xs);
-    font-weight: 700;
-  }
-  .rn-welcome-progress-item em {
-    font-style: normal;
-    font-size: var(--text-xs);
-  }
-  .rn-welcome-progress-item.is-active {
-    color: var(--rn-ink);
-  }
-  .rn-welcome-progress-item.is-active > span {
-    border-color: var(--rn-accent-fill);
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-  }
-  .rn-appearance-stage {
-    position: relative;
-    min-height: 100dvh;
-    overflow: hidden;
-    padding: clamp(48px, 6vh, 82px) 4vw 118px;
-  }
-  .rn-welcome-hero {
-    position: relative;
-    z-index: 2;
-    min-height: 292px;
-    display: grid;
-    justify-items: center;
-    align-content: start;
-    text-align: center;
-  }
-  .rn-assembled-logo {
-    width: clamp(360px, 44vw, 640px);
-    height: clamp(88px, 11vw, 126px);
-    margin-top: clamp(42px, 7vh, 72px);
-    display: grid;
-    place-items: center;
-    opacity: 0;
-    transform: scale(0.92);
-    filter: blur(2px);
-  }
-  .rn-assembled-logo svg {
-    width: 100%;
-    height: auto;
-  }
-  .rn-message-stage {
-    position: relative;
-    width: 100vw;
-    min-height: 70px;
-    margin-top: 20px;
-    display: grid;
-    place-items: center;
-  }
-  .rn-opening-tagline,
-  .rn-review-tagline {
-    position: absolute;
-    inset: 0;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.35em;
-    color: var(--rn-ink-soft);
-    font-family: var(--font-sans);
-    font-size: var(--text-lg);
-    letter-spacing: -0.015em;
-    opacity: 0;
-    transform: translateY(10px);
-    white-space: nowrap;
-  }
-  .rn-review-tagline {
-    color: var(--rn-ink);
-  }
-  .rn-review-tagline > span {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  .rn-review-word {
-    min-width: 9.4em;
-    text-align: left;
-    font-weight: 600;
-    animation: rn-word-change 420ms ease-out both;
-  }
-  @keyframes rn-word-change {
+/* First-run welcome. The wizard styles itself with Tailwind utilities; what stays
+ * here is what utilities cannot express — the code rain's sub-ramp decorative type
+ * with its syntax tones, the theme-preview miniature's 8px faux-diff, and the two
+ * entrance keyframes below (a keyframe is theme vocabulary, not a class). */
+@theme {
+  /* The stage entrance. It re-fires because WelcomeShell remounts <main> per step;
+   * a CSS animation on a persistent node plays once and never again. */
+  --animate-welcome-step: rn-welcome-step-in 460ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  /* A tool row dealing itself in. Each row carries its own animation-delay. */
+  --animate-welcome-row: rn-welcome-row-in 420ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+
+  @keyframes rn-welcome-step-in {
     from {
-      opacity: 0;
-      transform: translateY(6px);
-      filter: blur(3px);
+      opacity: 0.2;
+      transform: translateY(12px);
     }
     to {
       opacity: 1;
       transform: translateY(0);
-      filter: blur(0);
     }
   }
-  .rn-intro-arrow {
-    width: 46px;
-    height: 46px;
-    margin-top: 10px;
-    border: 1px solid var(--rn-accent-fill);
-    border-radius: 999px;
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-    display: grid;
-    place-items: center;
-    opacity: 0;
-    transform: scale(0.86);
+  @keyframes rn-welcome-row-in {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
   }
-  .rn-intro-arrow:hover {
-    filter: brightness(0.96);
-    transform: translateX(2px);
-  }
-  .rn-intro-arrow svg {
-    width: 20px;
-    height: 20px;
-  }
-  .rn-code-field {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    overflow: hidden;
-  }
+}
+
+@layer components {
+  /* The code rain stays hand-written CSS: its 9px type is below the ramp floor (the
+   * design-ramp test pins this exact selector and value as decorative micro-type),
+   * and per-fragment placement rides inline styles from the fragment catalogue in
+   * first-run-welcome.tsx. */
   .rn-code-fragment {
     position: absolute;
     margin: 0;
     padding: 7px 9px;
     border-left: 1px solid var(--rn-line-strong);
-    color: var(--rn-syn-var);
+    color: var(--rn-ink-faint);
     font: 9px / 1.62 var(--font-mono);
     white-space: pre;
-    opacity: 0.52;
+    opacity: 0.58;
     will-change: transform, opacity;
   }
-  .rn-code-fragment span {
+  .rn-code-fragment > span {
     display: block;
+    min-height: 1.62em;
   }
-  .rn-code-fragment.fragment-0 {
-    left: 1%;
-    top: 4%;
+  /* The prototype's syntax hues are fixed values chosen against one theme. These ride
+   * the shared --rn-syn-* code palette instead, so the rain retints as the reader
+   * tries theme packs on the very screen it drifts behind. */
+  .rn-code-field [data-tone="keyword"] {
+    color: var(--rn-syn-kw);
   }
-  .rn-code-fragment.fragment-1 {
-    left: 34%;
-    top: 1%;
+  .rn-code-field [data-tone="function"] {
+    color: var(--rn-syn-fn);
   }
-  .rn-code-fragment.fragment-2 {
-    right: 1%;
-    top: 9%;
+  .rn-code-field [data-tone="type"] {
+    color: var(--rn-syn-type);
   }
-  .rn-code-fragment.fragment-3 {
-    left: 7%;
-    top: 36%;
+  .rn-code-field [data-tone="string"] {
+    color: var(--rn-syn-str);
   }
-  .rn-code-fragment.fragment-4 {
-    right: 4%;
-    top: 40%;
-    color: var(--rn-add-ink);
+  .rn-code-field [data-tone="literal"] {
+    color: var(--rn-syn-num);
   }
-  .rn-code-fragment.fragment-5 {
-    left: 26%;
-    top: 25%;
-  }
-  .rn-code-fragment.fragment-6 {
-    right: 24%;
-    top: 30%;
-  }
-  .rn-code-fragment.fragment-7 {
-    left: 2%;
-    bottom: 5%;
+  .rn-code-field [data-tone="comment"] {
     color: var(--rn-syn-cmt);
+    font-style: italic;
   }
-  .rn-code-fragment.fragment-8 {
-    right: 6%;
-    bottom: 9%;
+  .rn-code-field [data-tone="hunk"] {
+    color: var(--rn-ink-faint);
   }
-  .rn-code-fragment.fragment-9 {
-    left: 39%;
-    bottom: 3%;
+  .rn-code-field [data-tone="remove"] {
+    color: var(--rn-del-ink);
+  }
+  .rn-code-field [data-tone="add"] {
+    color: var(--rn-add-ink);
   }
   .rn-code-particle {
     position: absolute;
-    color: var(--rn-syn-kw);
+    color: var(--rn-ink-faint);
     font: var(--text-xs) var(--font-mono);
-    opacity: 0.66;
+    opacity: 0.7;
   }
-  .rn-appearance-card {
-    position: relative;
-    z-index: 3;
-    visibility: hidden;
-    width: min(1160px, 92vw);
-    margin: clamp(20px, 3vh, 34px) auto 0;
-    padding: 30px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-window);
-    background: var(--rn-surface);
-    opacity: 0;
-    transform: translateY(60px) scale(0.98);
-    filter: blur(3px);
-  }
-  .rn-card-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-  }
-  .rn-eyebrow {
-    margin: 0 0 7px;
-    color: var(--rn-accent);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: var(--text-2xs);
-    font-weight: 700;
-  }
-  .rn-card-heading h2 {
-    margin: 0;
-    font-size: var(--text-lg);
-    font-weight: 600;
-  }
-  .rn-scheme-control {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-control);
-    overflow: hidden;
-  }
-  .rn-scheme-control button {
-    min-width: 110px;
-    height: 40px;
-    border: 0;
-    border-right: 1px solid var(--rn-line);
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    color: var(--rn-ink-soft);
-  }
-  .rn-scheme-control button:last-child {
-    border-right: 0;
-  }
-  .rn-scheme-control button.is-selected {
-    background: var(--rn-raised);
-    color: var(--rn-ink);
-    box-shadow: inset 0 -2px var(--rn-accent-fill);
-  }
-  .rn-scheme-control svg {
-    width: 17px;
-    height: 17px;
-  }
-  .rn-theme-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 18px;
-    margin: 24px 0 28px;
-  }
-  .rn-theme-card {
-    position: relative;
-    border: 1px solid transparent;
-    background: transparent;
-    border-radius: var(--radius-surface);
-    padding: 8px 8px 10px;
-  }
-  .rn-theme-card:hover {
-    background: var(--rn-raised);
-  }
-  .rn-theme-card.is-selected {
-    border-color: var(--rn-accent-line);
-    background: var(--rn-accent-soft);
-  }
-  .rn-theme-card > span + span {
-    display: block;
-    margin-top: 10px;
-    color: var(--rn-ink);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-  .rn-theme-card > i {
-    position: absolute;
-    right: 2px;
-    top: 2px;
-    width: 23px;
-    height: 23px;
-    display: grid;
-    place-items: center;
-    border-radius: 999px;
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-  }
-  .rn-theme-card > i svg {
-    width: 13px;
-  }
-  .rn-theme-preview {
-    height: 104px;
-    padding: 11px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-control);
-    display: block;
-    text-align: left;
-  }
-  .rn-theme-preview > i {
-    display: flex;
-    gap: 4px;
-  }
-  .rn-theme-preview > i b {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background: currentColor;
-    opacity: 0.32;
-  }
+  /* The theme-preview miniature's faux diff: 8px, the ramp's other pinned exemption. */
   .rn-theme-preview code {
     display: block;
     margin-top: 17px;
     font: 8px / 1.8 var(--font-mono);
     white-space: nowrap;
-  }
-  .rn-theme-preview code span {
-    color: var(--rn-del-ink);
-  }
-  .rn-theme-preview code strong {
-    color: var(--rn-add-ink);
-  }
-  .rn-card-footer {
-    padding-top: 18px;
-    border-top: 1px solid var(--rn-line);
-    display: flex;
-    justify-content: center;
-  }
-  .rn-content-stage {
-    width: min(900px, calc(100vw - 48px));
-    margin: 0 auto;
-    padding: clamp(54px, 8vh, 94px) 0 120px;
-  }
-  .rn-stage-copy {
-    max-width: 650px;
-    margin-bottom: 36px;
-  }
-  .rn-stage-copy h1,
-  .rn-ready-stage h1 {
-    margin: 0 0 12px;
-    font-family: var(--font-display);
-    font-size: var(--text-display);
-    font-weight: 500;
-    letter-spacing: -0.035em;
-    line-height: 1.05;
-  }
-  .rn-stage-copy > p:last-child,
-  .rn-ready-stage > p {
-    margin: 0;
-    max-width: 610px;
-    color: var(--rn-ink-soft);
-    line-height: 1.65;
-  }
-  .rn-step-actions {
-    margin-top: 30px;
-    padding-top: 22px;
-    border-top: 1px solid var(--rn-line);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .rn-tool-list {
-    display: grid;
-    gap: 10px;
-  }
-  .rn-tool-row {
-    min-height: 84px;
-    padding: 15px 18px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-    display: grid;
-    grid-template-columns: 48px 1fr auto;
-    gap: 16px;
-    align-items: center;
-  }
-  .rn-tool-mark {
-    width: 44px;
-    height: 44px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-control);
-    background: var(--rn-raised);
-    display: grid;
-    place-items: center;
-  }
-  .rn-tool-mark svg {
-    width: 24px;
-    height: 24px;
-  }
-  .rn-tool-row h3 {
-    margin: 0;
-    font-size: var(--text-sm);
-    font-weight: 600;
-  }
-  .rn-tool-row h3 code {
-    margin-left: 10px;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-    font-weight: 400;
-  }
-  .rn-tool-row p {
-    margin: 5px 0 0;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-status-pill {
-    border-radius: 999px;
-    padding: 6px 9px;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    white-space: nowrap;
-  }
-  .rn-status-pill svg {
-    width: 13px;
-    height: 13px;
-  }
-  .rn-status-pill.is-good {
-    color: var(--rn-green);
-    background: var(--rn-green-soft);
-  }
-  .rn-status-pill.is-muted {
-    color: var(--rn-ink-faint);
-    background: var(--rn-raised);
-  }
-  .rn-plain-note {
-    margin-top: 18px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-plain-note svg {
-    width: 18px;
-    height: 18px;
-    color: var(--rn-green);
-  }
-  .rn-harness-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 14px;
-  }
-  .rn-harness-card {
-    position: relative;
-    min-height: 118px;
-    padding: 20px;
-    display: grid;
-    grid-template-columns: 50px 1fr auto;
-    gap: 14px;
-    align-items: center;
-    text-align: left;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-  }
-  .rn-harness-card.is-selected {
-    border-color: var(--rn-accent-line);
-    background: var(--rn-accent-soft);
-  }
-  .rn-harness-card > span:nth-child(2) {
-    display: grid;
-    gap: 5px;
-  }
-  .rn-harness-card small {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-  }
-  .rn-harness-card > i {
-    position: absolute;
-    top: 9px;
-    right: 9px;
-    width: 20px;
-    height: 20px;
-    border-radius: 999px;
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-    display: grid;
-    place-items: center;
-  }
-  .rn-harness-card > i svg {
-    width: 12px;
-  }
-  .rn-orchestrator-note {
-    margin: 14px 0;
-    padding: 13px 16px;
-    border-left: 3px solid var(--rn-accent-fill);
-    background: var(--rn-surface);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .rn-orchestrator-note > svg {
-    color: var(--rn-accent);
-  }
-  .rn-orchestrator-note div {
-    display: grid;
-    gap: 3px;
-  }
-  .rn-orchestrator-note span {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-  }
-  .rn-dual-card {
-    width: 100%;
-    min-height: 126px;
-    padding: 20px 22px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-    display: grid;
-    grid-template-columns: 126px 1fr auto;
-    gap: 20px;
-    align-items: center;
-    text-align: left;
-  }
-  .rn-dual-card.is-selected {
-    border-color: var(--rn-accent-line);
-  }
-  .rn-dual-marks {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-  }
-  .rn-dual-marks svg {
-    width: 34px;
-    height: 34px;
-  }
-  .rn-dual-plus {
-    color: var(--rn-accent);
-    font-size: var(--text-xl);
-  }
-  .rn-dual-card > span:nth-child(2) {
-    display: grid;
-    gap: 7px;
-  }
-  .rn-dual-card > span:nth-child(2) strong {
-    font-family: var(--font-display);
-    font-size: var(--text-xl);
-    font-weight: 500;
-  }
-  .rn-dual-card small {
-    color: var(--rn-ink-soft);
-    line-height: 1.55;
-  }
-  .rn-dual-card > i {
-    width: 42px;
-    height: 24px;
-    padding: 3px;
-    border-radius: 999px;
-    background: var(--rn-line-strong);
-  }
-  .rn-dual-card > i b {
-    display: block;
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    background: var(--rn-surface);
-    transition: transform 180ms ease;
-  }
-  .rn-dual-card > i.is-on {
-    background: var(--rn-accent-fill);
-  }
-  .rn-dual-card > i.is-on b {
-    transform: translateX(18px);
-  }
-  .rn-harness-error {
-    min-height: 370px;
-    padding: 48px;
-    border: 1px solid var(--rn-danger);
-    border-radius: var(--radius-window);
-    background: var(--rn-surface);
-    text-align: center;
-    display: grid;
-    place-items: center;
-    align-content: center;
-  }
-  .rn-harness-error > span {
-    width: 70px;
-    height: 70px;
-    border-radius: var(--radius-window);
-    background: var(--rn-danger-soft);
-    color: var(--rn-danger);
-    display: grid;
-    place-items: center;
-  }
-  .rn-harness-error > span svg {
-    width: 36px;
-    height: 36px;
-  }
-  .rn-harness-error h2 {
-    margin: 22px auto 9px;
-    font-family: var(--font-display);
-    font-size: var(--text-2xl);
-    font-weight: 500;
-  }
-  .rn-harness-error p {
-    max-width: 540px;
-    margin: 0 auto;
-    color: var(--rn-ink-soft);
-    line-height: 1.6;
-  }
-  .rn-harness-error > div {
-    margin-top: 25px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .rn-harness-error a {
-    min-height: 36px;
-    padding: 0 14px;
-    border: 1px solid var(--rn-line-strong);
-    border-radius: var(--radius-control);
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    font-weight: 600;
-  }
-  .rn-harness-error a svg {
-    width: 15px;
-  }
-  .rn-access-note {
-    margin-bottom: 18px;
-    padding: 14px 16px;
-    border-radius: var(--radius-control);
-    background: var(--rn-raised);
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 12px;
-    align-items: center;
-  }
-  .rn-access-note > svg {
-    color: var(--rn-green);
-  }
-  .rn-access-note > div {
-    display: grid;
-    gap: 3px;
-  }
-  .rn-access-note span {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-add-project-flow {
-    padding: 24px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-window);
-    background: var(--rn-surface);
-  }
-  .rn-add-project-flow [role="dialog"] {
-    box-shadow: none;
-  }
-  .rn-inline-error {
-    margin: 12px 0 0;
-    padding: 10px 12px;
-    border: 1px solid var(--rn-danger);
-    border-radius: var(--radius-control);
-    background: var(--rn-danger-soft);
-    color: var(--rn-ink);
-    font-size: var(--text-xs);
-  }
-  .rn-ready-stage {
-    min-height: calc(100dvh - 58px);
-    width: min(780px, calc(100vw - 48px));
-    margin: 0 auto;
-    padding: clamp(70px, 10vh, 120px) 0 120px;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-  .rn-ready-mark {
-    position: relative;
-    width: 280px;
-    height: 80px;
-    margin-bottom: 22px;
-    display: grid;
-    place-items: center;
-  }
-  .rn-ready-mark > i {
-    position: absolute;
-    right: 0;
-    bottom: -4px;
-    width: 31px;
-    height: 31px;
-    border: 4px solid var(--rn-canvas);
-    border-radius: 999px;
-    background: var(--rn-green);
-    color: var(--rn-surface);
-    display: grid;
-    place-items: center;
-  }
-  .rn-ready-mark > i svg {
-    width: 14px;
-  }
-  .rn-ready-stage > p {
-    max-width: 620px;
-  }
-  .rn-ready-summary {
-    width: 100%;
-    margin: 32px 0;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .rn-ready-summary > span {
-    padding: 18px;
-    display: grid;
-    gap: 5px;
-    border-right: 1px solid var(--rn-line);
-  }
-  .rn-ready-summary > span:last-child {
-    border-right: 0;
-  }
-  .rn-ready-summary small {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .rn-ready-stage > button:last-child {
-    margin-top: 10px;
-  }
-
-  @media (max-width: 800px) {
-    .rn-theme-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .rn-card-heading {
-      align-items: stretch;
-      flex-direction: column;
-    }
-    .rn-harness-grid {
-      grid-template-columns: 1fr;
-    }
-    .rn-dual-card {
-      grid-template-columns: 84px 1fr auto;
-    }
-    .rn-welcome-progress-item em {
-      display: none;
-    }
-  }
-  @media (max-height: 760px) {
-    .rn-appearance-stage {
-      padding-top: 20px;
-    }
-    .rn-assembled-logo {
-      margin-top: 20px;
-      height: 88px;
-    }
-    .rn-theme-preview {
-      height: 78px;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .rn-review-word {
-      animation: none;
-    }
   }
 }
 
