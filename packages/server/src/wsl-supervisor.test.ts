@@ -26,6 +26,8 @@ interface FakeState {
   copied?: boolean;
   /** Set true once the copied Linux mover receives its required executable mode. */
   madeExecutable?: boolean;
+  /** Set true only after the copied payload has passed every post-copy check. */
+  completionMarker?: boolean;
   /** What `cat daemon.json` + `/healthz` currently reflect (null ⇒ no daemon). */
   daemon: FakeDaemon | null;
   /** Pids `kill` was asked to signal, in order. */
@@ -65,12 +67,24 @@ function makeRun(state: FakeState): WslRunner {
         : { stdout: "", code: 1 };
     }
     if (program === "test") {
-      const code = state.copied
-        ? progArgs[0] === "-x" && !state.madeExecutable
-          ? 1
-          : 0
-        : state.testExit;
+      const isCompletionMarker = progArgs[1]?.endsWith("/.rennet-bundle-complete") === true;
+      const code = isCompletionMarker
+        ? state.completionMarker
+          ? 0
+          : 1
+        : state.copied
+          ? progArgs[0] === "-x" && !state.madeExecutable
+            ? 1
+            : 0
+          : state.testExit;
       return { stdout: "", code };
+    }
+    if (program === "rm") {
+      if (progArgs[0] !== "-f" || !progArgs[1]?.endsWith("/.rennet-bundle-complete")) {
+        throw new Error(`unexpected rm arguments: ${joined}`);
+      }
+      state.completionMarker = false;
+      return { stdout: "", code: 0 };
     }
     if (program === "mkdir") return { stdout: "", code: 0 };
     if (program === "wslpath") return { stdout: "/mnt/c/rennet/dist/server/index.cjs\n", code: 0 };
@@ -86,6 +100,13 @@ function makeRun(state: FakeState): WslRunner {
         throw new Error(`unexpected chmod arguments: ${joined}`);
       }
       state.madeExecutable = true;
+      return { stdout: "", code: 0 };
+    }
+    if (program === "touch") {
+      if (!progArgs[0]?.endsWith("/.rennet-bundle-complete")) {
+        throw new Error(`unexpected touch arguments: ${joined}`);
+      }
+      state.completionMarker = true;
       return { stdout: "", code: 0 };
     }
     if (program === "kill") {
