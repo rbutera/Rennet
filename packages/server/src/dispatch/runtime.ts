@@ -709,6 +709,12 @@ export interface DispatchDeps {
     generation: string,
     lens: LensKind,
   ) => Promise<LensAbsenceReason | undefined>;
+  /** A durable terminal drafting failure for this exact review generation and lens. */
+  readonly lensFailureForReview?: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => Promise<string | undefined>;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

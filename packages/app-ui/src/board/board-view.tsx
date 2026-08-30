@@ -181,6 +181,11 @@ export function LensBoardView({
               : "This generation has no material to project into the selected board."}
           </p>
         </div>
+      ) : shown.status === "failed" ? (
+        <div data-kind="board-failed" role="alert" className="text-danger text-sm">
+          <p className="font-medium">This lens failed to generate.</p>
+          <p className="text-muted-foreground">{shown.reason}</p>
+        </div>
       ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">
           No board for this generation yet.

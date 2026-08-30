@@ -128,6 +128,8 @@ export const GenerationSchema = z.object({
   draftingReportBoardId: id.optional(),
   /** Successful per-lens absences, distinct from a board that has not arrived yet. */
   absentLenses: z.partialRecord(z.enum(LENS_KINDS), LensAbsenceReasonSchema).optional(),
+  /** Terminal failures from the most recent drafting attempt, in the drafter's own words. */
+  failedLenses: z.partialRecord(z.enum(LENS_KINDS), z.string().min(1)).optional(),
   /** The orchestrator-authored composition board (L3), once composed. */
   compositionBoardId: id.optional(),
   status: z.enum(["live", "frozen"]),

@@ -53,6 +53,7 @@ export type BoardInvalidReason = "shape" | "identity" | "excluded-kind" | "unrea
 export type BoardResolution =
   | { readonly status: "valid"; readonly board: LensBoard }
   | { readonly status: "absent"; readonly reason: LensAbsenceReason }
+  | { readonly status: "failed"; readonly reason: string }
   | { readonly status: "missing" }
   | { readonly status: "pending" }
   | { readonly status: "invalid"; readonly reason: BoardInvalidReason; readonly detail: unknown };
@@ -87,7 +88,7 @@ export function resolveBoard(raw: unknown, expected: BoardIdentity): BoardResolu
  *  through {@link resolveBoard} so shape and identity are still proven client-side. */
 function resolveRead(
   result: {
-    data?: { board: LensBoard | null; absence?: LensAbsenceReason };
+    data?: { board: LensBoard | null; absence?: LensAbsenceReason; failure?: string };
     error: unknown;
     pending: boolean;
   },
@@ -99,6 +100,9 @@ function resolveRead(
   if (result.pending) return { status: "pending" };
   if (result.data?.board == null && result.data?.absence !== undefined) {
     return { status: "absent", reason: result.data.absence };
+  }
+  if (result.data?.board == null && result.data?.failure !== undefined) {
+    return { status: "failed", reason: result.data.failure };
   }
   return resolveBoard(result.data?.board, expected);
 }

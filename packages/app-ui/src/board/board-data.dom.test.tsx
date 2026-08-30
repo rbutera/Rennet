@@ -17,6 +17,7 @@ function BoardProbe({ generation, lens }: { generation: string; lens: LensKind }
   const r = useBoardData(REVIEW, generation, lens);
   if (r.status === "invalid") return <span>invalid:{r.reason}</span>;
   if (r.status === "absent") return <span>absent:{r.reason}</span>;
+  if (r.status === "failed") return <span>failed:{r.reason}</span>;
   if (r.status === "missing") return <span>missing</span>;
   if (r.status === "pending") return <span>pending</span>;
   return (
@@ -33,6 +34,7 @@ function probe(
   served: (input: { generation: string; lens: LensKind }) => {
     board: LensBoard | null;
     absence?: "no-material";
+    failure?: string;
   },
 ) {
   return mount(
@@ -58,6 +60,14 @@ describe("board-data seam — the single board resolution point", () => {
     };
     expect(lensReadsSettled(resolutions)).toBe(true);
     expect(lensReadsSettled({ ...resolutions, design: { status: "missing" } })).toBe(false);
+  });
+
+  it("renders a durable lens failure instead of polling it as an empty board", async () => {
+    const { findByText } = probe("gen1", "flagged", () => ({
+      board: null,
+      failure: "The structured response did not validate.",
+    }));
+    expect(await findByText("failed:The structured response did not validate.")).toBeTruthy();
   });
 
   it("resolves a board for a (generation, lens) pair, validated against LensBoardSchema", async () => {

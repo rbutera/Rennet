@@ -3385,6 +3385,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       return stored.absentLenses?.[lens];
     },
+    lensFailureForReview: async (reviewId: string, generation: string, lens: LensKind) => {
+      const review = service.reviewById(reviewId);
+      if (!review) return undefined;
+      const stored = generationStore.load(generation);
+      if (
+        stored === undefined ||
+        !review.patchsets.some((patchset) => patchset.id === stored.patchsetId)
+      ) {
+        return undefined;
+      }
+      return stored.failedLenses?.[lens];
+    },
     queueRoundIfActive: async ({ review, dispatchId }) => {
       const session = (
         await enterRoundSession(

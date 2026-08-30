@@ -25,7 +25,15 @@ export function boardHandlers(rt: DispatchRuntime) {
         board === null
           ? await rt.deps.lensAbsenceForReview?.(input.reviewId, input.generation, input.lens)
           : undefined;
-      return parseCommandOutput(name, { board, ...(absence === undefined ? {} : { absence }) });
+      const failure =
+        board === null && absence === undefined
+          ? await rt.deps.lensFailureForReview?.(input.reviewId, input.generation, input.lens)
+          : undefined;
+      return parseCommandOutput(name, {
+        board,
+        ...(absence === undefined ? {} : { absence }),
+        ...(failure === undefined ? {} : { failure }),
+      });
     },
   } satisfies Record<string, CommandHandler>;
 }

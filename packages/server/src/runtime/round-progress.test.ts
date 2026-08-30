@@ -11,6 +11,7 @@ import type { CodexExecutor, HarnessPort, LintTarget } from "@rennet/core";
 import type {
   ComposableAsk,
   DraftBoard,
+  Generation,
   KnowledgeSet,
   LensLane,
   PatchFile,
@@ -367,6 +368,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   // ledger as if the report seat had written it.
   it("no seat resolves: terminal failed, and no report is recorded that was never written", async () => {
     const events: RoundEvent[] = [];
+    const persisted: Generation[] = [];
     const noSeats = createRoundsRuntime({
       // Neither harness is installed, so every drafter fails to resolve a seat.
       resolveClaudePort: async () => null,
@@ -376,6 +378,9 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
         createRennetBoard: boards.createRennetBoard,
       }),
       readPrompt,
+      persistGeneration: (generation) => {
+        persisted.push(generation);
+      },
     });
     await expect(
       noSeats.runRound({
@@ -394,6 +399,15 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
     // No real-generation record is filed for pre-minted empty boards or a report-only result.
     expect(noSeats.ledger("no-seat-session")).toEqual([]);
+    const failedGeneration = persisted.at(-1);
+    expect(failedGeneration?.draftingBoardIds).toBeUndefined();
+    expect(failedGeneration?.failedLenses).toEqual({
+      design: expect.any(String),
+      sequence: expect.any(String),
+      decisions: expect.any(String),
+      flagged: expect.any(String),
+      noise: expect.any(String),
+    });
     // The round terminates as failed, never `composed` over a regeneration that is not there.
     const terminal = events.at(-1);
     expect(terminal?.type).toBe("failed");

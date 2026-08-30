@@ -149,6 +149,11 @@ is the generation's `absentLenses` map. `board.read` pairs `board: null` with th
 `no-material` code for that case, keeping it distinct from a board that has not
 arrived yet.
 
+A drafter that terminally fails also has no board row. The generation records the
+reason in `failedLenses`, and `board.read` pairs `board: null` with that exact
+failure. This is restart-safe: an all-lens failure cannot fall back to an eternal
+“no board yet” after the process that saw the harness errors exits.
+
 ### Write and broadcast path
 
 ```mermaid
