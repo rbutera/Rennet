@@ -80,10 +80,18 @@ export async function assertNativeArtifactLayout(root, platformArchitectures) {
 const invokedPath = process.argv[1];
 if (invokedPath !== undefined && resolve(invokedPath) === fileURLToPath(import.meta.url)) {
   try {
-    const platformArchitectures = process.argv.slice(2);
-    await assertNativeArtifactLayout(nativeArtifactRoot, platformArchitectures);
+    const arguments_ = process.argv.slice(2);
+    let root = nativeArtifactRoot;
+    if (arguments_[0] === "--root") {
+      const explicitRoot = arguments_[1];
+      if (explicitRoot === undefined) throw new Error("--root requires a path");
+      root = resolve(explicitRoot);
+      arguments_.splice(0, 2);
+    }
+    const platformArchitectures = arguments_;
+    await assertNativeArtifactLayout(root, platformArchitectures);
     process.stdout.write(
-      `native artifacts have the exact ${platformArchitectures.sort().join(" + ")} layout\n`,
+      `native artifacts at ${root} have the exact ${platformArchitectures.sort().join(" + ")} layout\n`,
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

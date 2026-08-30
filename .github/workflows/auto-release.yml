@@ -105,64 +105,63 @@ jobs:
 
       - name: Bump version, tag, push
         id: bump
+        env:
+          GATED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Retry once to survive a race where main moved between fetch and push.
-          for attempt in 1 2; do
-            git fetch --force --tags origin main
-            git reset --hard origin/main
+          actual_sha=$(git rev-parse HEAD)
+          if [ "$actual_sha" != "$GATED_SHA" ]; then
+            echo "::error title=Release checkout drifted::expected gated SHA ${GATED_SHA}, got ${actual_sha}"
+            exit 1
+          fi
 
-            latest=$(git describe --tags --match "v*" --abbrev=0)
-            IFS=. read -r maj min pat <<< "${latest#v}"
-            case "${{ github.event.inputs.bump || 'patch' }}" in
-              major) next="$((maj + 1)).0.0" ;;
-              minor) next="${maj}.$((min + 1)).0" ;;
-              *)     next="${maj}.${min}.$((pat + 1))" ;;
-            esac
-            tag="v${next}"
-            echo "latest=${latest} -> next=${tag} (attempt ${attempt})"
+          latest=$(git describe --tags --match "v*" --abbrev=0)
+          IFS=. read -r maj min pat <<< "${latest#v}"
+          case "${{ github.event.inputs.bump || 'patch' }}" in
+            major) next="$((maj + 1)).0.0" ;;
+            minor) next="${maj}.$((min + 1)).0" ;;
+            *)     next="${maj}.${min}.$((pat + 1))" ;;
+          esac
+          tag="v${next}"
+          echo "latest=${latest} -> next=${tag}"
 
-            node scripts/set-version.mjs "${next}"
-            git add -A
-            # [skip ci]: the bump only rewrites version fields, but it touches
-            # package.json files that would otherwise trigger CI + Docs runs.
-            git commit -m "chore(release): ${tag} [skip ci]"
-            git tag -a "${tag}" -m "${tag}"
+          node scripts/set-version.mjs "${next}"
+          git add -A
+          # [skip ci]: the bump only rewrites version fields, but it touches
+          # package.json files that would otherwise trigger CI + Docs runs.
+          git commit -m "chore(release): ${tag} [skip ci]"
+          git tag -a "${tag}" -m "${tag}"
 
-            # --atomic: main + tag land together or not at all.
-            if git push --atomic origin HEAD:main "refs/tags/${tag}"; then
-              {
-                echo "version=${next}"
-                echo "tag=${tag}"
-                echo "sha=$(git rev-parse HEAD)"
-              } >> "$GITHUB_OUTPUT"
-              echo "pushed ${tag}"
-              exit 0
-            fi
+          # The release commit descends from the already-gated SHA. If main moved,
+          # this atomic fast-forward push rejects both branch and tag together.
+          if ! git push --atomic origin HEAD:main "refs/tags/${tag}"; then
+            echo "::error title=Release push failed::main moved after the gated workflow SHA"
+            exit 1
+          fi
 
-            echo "push rejected (main moved); discarding tag and retrying"
-            git tag -d "${tag}" || true
-          done
+          {
+            echo "version=${next}"
+            echo "tag=${tag}"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "pushed ${tag}"
 
-          echo "::error title=Release push failed::main kept moving under the release; giving up after retries"
-          exit 1
-
-  # 3. Build the Linux x64 native payload from the TAGGED commit. The version
-  #    job may retry on a newer main than the reusable check saw, so release
-  #    packaging never consumes that earlier CI artifact. Windows downloads
-  #    this exact tagged payload for its WSL daemon bundle.
+  # 3. Build the Linux x64 native payload from the exact release SHA descended
+  #    from the gated workflow SHA. Windows downloads this same release payload
+  #    for its WSL daemon bundle.
   build-linux-native:
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout tag
+      - name: Checkout release SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -195,7 +194,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 4. Build the macOS installers from the TAGGED commit (dmg + darwin zip) and
+  # 4. Build the macOS installers from the release SHA (dmg + darwin zip) and
   #    smoke the packaged app before it can ship.
   #    Timeout: normal runs take ~7 min; 20 caps a hung run at 200 billed
   #    minutes (10x macOS multiplier) instead of 400.
@@ -205,10 +204,11 @@ jobs:
     timeout-minutes: 45
     environment: release
     steps:
-      - name: Checkout tag
+      - name: Checkout release SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -293,7 +293,7 @@ jobs:
             rm -f "$RELEASE_CERTIFICATE_PATH"
           fi
 
-  # 5. Build the Windows installers from the TAGGED commit. MakerSquirrel only
+  # 5. Build the Windows installers from the release SHA. MakerSquirrel only
   #    runs on Windows, so this must be a native windows runner. Produces the
   #    Squirrel feed (Setup.exe, *-full.nupkg, RELEASES) plus the win32 zip.
   build-windows:
@@ -303,10 +303,11 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
-      - name: Checkout tag
+      - name: Checkout release SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -338,8 +339,11 @@ jobs:
       - name: Make installers (squirrel + zip)
         run: pnpm nx run rennet-desktop:make
 
-      - name: Verify native payloads survived packaging
+      - name: Verify aggregated native payloads
         run: node scripts/check-native-artifact-layout.mjs win32-x64 linux-x64
+
+      - name: Verify packaged native payloads
+        run: node scripts/check-native-artifact-layout.mjs --root "apps/desktop/out/Rennet-win32-x64/resources/app.asar.unpacked/dist/server/native" win32-x64 linux-x64
 
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4
@@ -359,10 +363,24 @@ jobs:
     permissions:
       contents: write # create the release
     steps:
-      - name: Checkout tag
+      - name: Checkout release SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Assert tag matches release SHA
+        env:
+          RELEASE_SHA: ${{ needs.version.outputs.sha }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          head_sha=$(git rev-parse HEAD)
+          tag_sha=$(git rev-parse "${TAG}^{commit}")
+          if [ "$head_sha" != "$RELEASE_SHA" ] || [ "$tag_sha" != "$RELEASE_SHA" ]; then
+            echo "::error title=Release identity mismatch::HEAD=${head_sha}, ${TAG}=${tag_sha}, expected ${RELEASE_SHA}"
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -405,7 +423,7 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-          # No checkout in this job — gh cannot infer the repo from git, so name it.
+          # Name the repository explicitly so release publication never depends on inference.
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
@@ -481,10 +499,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout tag
+      - name: Checkout release SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Assert tag matches release SHA
+        env:
+          RELEASE_SHA: ${{ needs.version.outputs.sha }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          head_sha=$(git rev-parse HEAD)
+          tag_sha=$(git rev-parse "${TAG}^{commit}")
+          if [ "$head_sha" != "$RELEASE_SHA" ] || [ "$tag_sha" != "$RELEASE_SHA" ]; then
+            echo "::error title=Release identity mismatch::HEAD=${head_sha}, ${TAG}=${tag_sha}, expected ${RELEASE_SHA}"
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
