@@ -188,10 +188,8 @@ export type ReviseSpan = (args: {
  * bridge failure), or `undefined` when it did — never a silent success. No call site reworks a
  * span itself; every Revise routes through here.
  *
- * `land` receives the ask with its reworked body. It is the LANE's job because a lane may render
- * the ask through a shadow the store's `stagedAsks` does not own (the post-review lane's inline
- * `draftEdits`): landing only the ask there would leave a stale shadow on screen while the panel
- * closed as success — a fabricated success. Every lane's `land` must make the rework VISIBLE.
+ * `land` receives the ask with its reworked body. The lane applies it immediately so the visible
+ * body agrees with the durable edit the command already recorded.
  */
 export async function reviseDraftSpan(
   revise: ReviseSpan,

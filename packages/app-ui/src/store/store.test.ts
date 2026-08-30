@@ -86,26 +86,24 @@ describe("rennet store", () => {
       expect(bodies).toContain("also note this");
     });
 
-    it("a deleted ask's edit never haunts a later ask at the same anchor (finding 6)", () => {
+    it("a deleted ask's durable edit never haunts a later ask at the same anchor", () => {
       const store = createRennetStore();
       const a = store.getState().reviewActions;
-      // Stage, edit inline (draftEdits keyed by id), then delete (retire + unstage).
       a.stageAsk({ id: "src/a.ts:5", anchor: "src/a.ts:5", type: "request-change", body: "orig" });
-      a.setDraftEdit("src/a.ts:5", "MY EDIT");
+      a.editAsk("src/a.ts:5", "MY EDIT");
+      expect(store.getState().review.stagedAsks["src/a.ts:5"]?.body).toBe("MY EDIT");
       a.retire(
-        { id: "src/a.ts:5", anchor: "src/a.ts:5", type: "request-change", body: "orig" },
+        { id: "src/a.ts:5", anchor: "src/a.ts:5", type: "request-change", body: "MY EDIT" },
         "deleted",
       );
       a.unstageAsk("src/a.ts:5");
-      // The edit is gone — unstage dropped it, so a fresh ask at the same anchor inherits nothing.
-      expect(store.getState().review.draftEdits["src/a.ts:5"]).toBeUndefined();
       a.stageAsk({
         id: "src/a.ts:5",
         anchor: "src/a.ts:5",
         type: "request-change",
         body: "brand new",
       });
-      expect(store.getState().review.draftEdits["src/a.ts:5"]).toBeUndefined();
+      expect(store.getState().review.stagedAsks["src/a.ts:5"]?.body).toBe("brand new");
     });
 
     it("mints quote threads, appends replies, and removes them; explain carries its kind", () => {
@@ -223,7 +221,7 @@ describe("rennet store", () => {
         "dropped by you",
       );
       a.setVerdictOverride("REQUEST_CHANGES");
-      a.setDraftEdit("pr-body", "draft text");
+      a.editAsk("src/x.ts:3", "draft text");
       a.setFocusedThread("qt-existing");
       const seeded = store.getState().review;
       const snapshot = {
@@ -231,7 +229,6 @@ describe("rennet store", () => {
         codeComments: seeded.codeComments,
         retired: seeded.retired,
         verdictOverride: seeded.verdictOverride,
-        draftEdits: seeded.draftEdits,
         focusedThreadId: seeded.focusedThreadId,
       };
       // Exercise every NEW (C04) quote action.
@@ -244,7 +241,6 @@ describe("rennet store", () => {
       expect(after.codeComments).toBe(snapshot.codeComments);
       expect(after.retired).toBe(snapshot.retired);
       expect(after.verdictOverride).toBe(snapshot.verdictOverride);
-      expect(after.draftEdits).toBe(snapshot.draftEdits);
       expect(after.focusedThreadId).toBe(snapshot.focusedThreadId);
     });
   });

@@ -177,8 +177,13 @@ comment, dismissal, or thread conclusion queues a rework. A rework runs as a
 **one-shot worker outside the interactive session**, and reworks are
 **serialized per document** — two edits to one board queue behind each other so
 their writes never race, while edits to different documents run in parallel. The
-reviewer never types into a draft; steering happens by talking or by
-highlighting a span.
+orchestrator owns the initial structure and model reworks. The reviewer may also
+save a direct block edit. Save appends one durable `ask.edit`, replaces that
+block in the canonical ask projection, and invalidates the composed preview.
+Reload, work-order dispatch, review preview, and review post all read that same
+body. Editing and saving never posts; Post or Dispatch remains a separate act.
+Conversation and highlighted spans remain the normal steering paths for broader
+rewrites.
 
 - Folding a staged ask into a draft is near-instant assembly; its only
   visibility is the affected block streaming in place. The **drafting
