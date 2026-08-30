@@ -77,8 +77,9 @@ export type StopOwnedDaemonOutcome =
  * design D3): HEALTH-VERIFY the claim first, then SIGTERM only a pid the probe confirmed is
  * our daemon (which triggers its graceful shutdown — in-flight turns persist as resumable
  * `interrupted`), and poll — bounded — for the claim to clear. It NEVER signals an unverified
- * pid: a stale claim (dead pid, or a pid the OS reused for an unrelated process) is REMOVED,
- * not killed (review finding 2), so tray Quit can never take down someone else's process.
+ * pid: a stale claim is never killed, so tray Quit can never take down a process it could not
+ * verify. A dead stale pid is removed; a live stale pid blocks update installation because it
+ * could still be the bundle-backed daemon holding the app open.
  * No claim/absent ⇒ nothing to stop. A pid that races to gone (ESRCH) is success. On timeout
  * it warns truthfully and returns a typed failure. Complete quit still exits regardless, while
  * update application refuses to hand a bundle-backed live process to the platform installer.
@@ -118,8 +119,11 @@ export async function stopOwnedDaemon(
   }
   if (verdict.kind === "absent") return { kind: "stopped" };
   if (verdict.kind === "stale") {
-    // The pid did not answer /healthz (dead, or reused by an unrelated process): remove the
-    // claim, signal NOTHING. Mirrors `rennet stop`'s stale-pidfile branch.
+    if (deps.isAlive(verdict.claim.pid)) {
+      const message = `rennet: daemon claim pid ${verdict.claim.pid} is still alive but could not be health-verified; refusing to signal it or start the installer`;
+      deps.warn(message);
+      return { kind: "failed", message };
+    }
     deps.removeClaim(dataDir, verdict.claim.pid);
     return { kind: "stopped" };
   }

@@ -91,15 +91,13 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(outcome).toEqual({ kind: "stopped" });
   });
 
-  it("NEVER signals a stale claim whose pid was reused — it removes the claim instead", async () => {
-    // The claim names pid 4242, but /healthz did not confirm it: the process there may be an
-    // unrelated program that reused the pid. Signalling it could kill someone else's process,
-    // so tray Quit must remove the stale claim and signal nothing (review finding 2).
+  it("removes a stale claim only when its pid is dead", async () => {
     const kill = vi.fn();
     const warn = vi.fn();
     const removeClaim = vi.fn();
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => ({ kind: "stale", claim: { ...claim } }),
+      isAlive: () => false,
       removeClaim,
       kill,
       warn,
@@ -109,6 +107,27 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(removeClaim).toHaveBeenCalledWith("/data", claim.pid);
     expect(warn).not.toHaveBeenCalled();
     expect(outcome).toEqual({ kind: "stopped" });
+  });
+
+  it("does not signal or remove a stale claim while its pid is still alive", async () => {
+    const kill = vi.fn();
+    const warn = vi.fn();
+    const removeClaim = vi.fn();
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => ({ kind: "stale", claim: { ...claim } }),
+      isAlive: () => true,
+      removeClaim,
+      kill,
+      warn,
+      sleep: immediateSleep,
+    });
+    expect(kill).not.toHaveBeenCalled();
+    expect(removeClaim).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be health-verified"));
+    expect(outcome).toEqual({
+      kind: "failed",
+      message: expect.stringContaining("refusing to signal it or start the installer"),
+    });
   });
 
   it("SIGTERMs the verified owned pid and returns cleanly once the claim clears", async () => {
