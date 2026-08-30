@@ -46,6 +46,7 @@ export interface ScoutFact {
 export interface ScoutFacts {
   readonly trackerKind?: ScoutFact;
   readonly trackerProjectKey?: ScoutFact;
+  readonly defaultBranch?: ScoutFact;
   readonly worktreeBaseDir?: ScoutFact;
   readonly gateCommand?: ScoutFact;
   readonly logoPath?: ScoutFact;
@@ -63,13 +64,23 @@ export interface ScoutResult {
 
 type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
 
+export interface ProjectScoutProgress {
+  readonly step: "remotes" | "config" | "guidance";
+  readonly status: "running" | "done";
+  readonly detail?: string;
+}
+
 export interface ProjectScoutDeps {
   readonly repoRoot: string;
   readonly git: GitExec;
+  /** The branch already confirmed during project discovery, when available. */
+  readonly knownDefaultBranch?: string;
   /** The `project-scout` council seat, resolved by the caller. Absent → deterministic only. */
   readonly runTurn?: RunTurn | null;
   /** Tracker endpoints already configured — silences the missing-config ask. */
   readonly trackerConfig?: TrackerConfig;
+  /** Exact deterministic/model boundaries for the project-run timeline. */
+  readonly onProgress?: (event: ProjectScoutProgress) => void;
 }
 
 const JIRA_KEY = /\b([A-Z][A-Z0-9]{1,9})-\d+\b/g;
@@ -137,14 +148,34 @@ function dominantJiraPrefix(
  * on GitHub whose commits speak ABC-123 tracks in JIRA.
  */
 export async function scoutDeterministic(
-  deps: Pick<ProjectScoutDeps, "repoRoot" | "git">,
+  deps: Pick<ProjectScoutDeps, "repoRoot" | "git" | "knownDefaultBranch" | "onProgress">,
 ): Promise<ScoutFacts> {
   const { repoRoot, git } = deps;
   const facts: Record<string, ScoutFact> = {};
 
+  deps.onProgress?.({ step: "remotes", status: "running" });
   const remoteUrl = await tryGit(git, repoRoot, ["config", "--get", "remote.origin.url"]);
   const github = remoteUrl ? parseGithubRemote(remoteUrl) : undefined;
+  deps.onProgress?.({
+    step: "remotes",
+    status: "done",
+    detail: github ? `origin is ${github.owner}/${github.name}` : "no GitHub origin detected",
+  });
 
+  const knownDefaultBranch = deps.knownDefaultBranch?.trim();
+  const remoteHead = knownDefaultBranch
+    ? undefined
+    : await tryGit(git, repoRoot, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+  const defaultBranch = knownDefaultBranch || remoteHead?.replace(/^origin\//, "");
+  if (defaultBranch) {
+    facts.defaultBranch = {
+      value: defaultBranch,
+      provenance: "detected",
+      source: knownDefaultBranch ? "confirmed during project discovery" : "origin/HEAD",
+    };
+  }
+
+  deps.onProgress?.({ step: "config", status: "running" });
   const readme = readIfPresent(repoRoot, "README.md", 32_000) ?? "";
   const subjects = (await tryGit(git, repoRoot, ["log", "--format=%s", "-n", "50"])) ?? "";
   const markerTexts = [readme, subjects];
@@ -225,6 +256,13 @@ export async function scoutDeterministic(
     }
   }
 
+  const detected = Object.keys(facts).length;
+  deps.onProgress?.({
+    step: "config",
+    status: "done",
+    detail: `${detected} ${detected === 1 ? "fact" : "facts"} detected`,
+  });
+
   return facts as ScoutFacts;
 }
 
@@ -239,6 +277,7 @@ export const PROJECT_SCOUT_SCHEMA = {
       properties: {
         trackerKind: { type: "string", enum: ["github", "jira", "linear"] },
         trackerProjectKey: { type: "string" },
+        defaultBranch: { type: "string" },
         worktreeBaseDir: { type: "string" },
         gateCommand: { type: "string" },
         logoPath: { type: "string" },
@@ -284,10 +323,22 @@ const TRACKER_KINDS: readonly TrackerKind[] = ["none", "github", "jira", "linear
 const SCOUT_FACT_KEYS = [
   "trackerKind",
   "trackerProjectKey",
+  "defaultBranch",
   "worktreeBaseDir",
   "gateCommand",
   "logoPath",
 ] as const;
+
+const SCOUT_FALLBACKS: Record<
+  Exclude<(typeof SCOUT_FACT_KEYS)[number], "trackerProjectKey">,
+  { readonly value: string; readonly source: string }
+> = {
+  trackerKind: { value: "none", source: "no issue-tracker marker found" },
+  defaultBranch: { value: "main", source: "no default-branch evidence found" },
+  worktreeBaseDir: { value: "~/.rennet/worktrees", source: "no worktree convention found" },
+  gateCommand: { value: "", source: "no repository gate command found" },
+  logoPath: { value: "", source: "no repository logo found" },
+};
 
 /**
  * Run the scout: deterministic pass, then the council seat fills only the gaps.
@@ -298,6 +349,7 @@ export async function runProjectScout(deps: ProjectScoutDeps): Promise<ScoutResu
   const detected = await scoutDeterministic(deps);
   const facts: Record<string, ScoutFact> = { ...detected };
 
+  deps.onProgress?.({ step: "guidance", status: "running" });
   const guidanceTexts = GUIDANCE_DOCS.map((doc): { doc: string; text: string | undefined } => ({
     doc,
     text: readIfPresent(deps.repoRoot, doc),
@@ -364,6 +416,19 @@ export async function runProjectScout(deps: ProjectScoutDeps): Promise<ScoutResu
   } else if (!catalogueAbsent) {
     guidanceSkipped = "existing-catalogue";
   }
+  deps.onProgress?.({
+    step: "guidance",
+    status: "done",
+    detail: deps.runTurn ? "repository guidance read" : "deterministic evidence only",
+  });
+
+  // The questionnaire is total even with no harness. Empty cosmetic/config values
+  // are honest guessed defaults with an explicit source, not invented detections.
+  for (const [key, fallback] of Object.entries(SCOUT_FALLBACKS)) {
+    if (facts[key] === undefined) {
+      facts[key] = { ...fallback, provenance: "guessed" };
+    }
+  }
 
   // A JIRA/Linear tracker without endpoint config → the typed ask (rec 7).
   const missingConfig: MissingConfigFact[] = [];
@@ -410,6 +475,7 @@ const scoutRecordSchema = z.object({
     .object({
       trackerKind: scoutFactSchema.optional(),
       trackerProjectKey: scoutFactSchema.optional(),
+      defaultBranch: scoutFactSchema.optional(),
       worktreeBaseDir: scoutFactSchema.optional(),
       gateCommand: scoutFactSchema.optional(),
       logoPath: scoutFactSchema.optional(),

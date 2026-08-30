@@ -62,6 +62,14 @@ Project processing writes its canonical state beneath
 `~/.rennet/projects/<escaped-path>/`. Promotion to `.rennet/map/` or
 `.rennet/knowledge/` is explicit and never stages or commits those files.
 
+An add-project run is one durable scout → structural-map → knowledge sequence.
+Its stable command identity and per-repository checkpoints live in
+`project-process.json` beside the snapshot. The coordinator persists each phase
+before advancing, replays the latest state of each logical progress step, and
+resumes the first incomplete checkpoint after a daemon restart. Only the terminal
+`done` record carries the scope, file, confirmed, and rejected totals that the UI
+may call ready.
+
 ## Provenance
 
 Model-produced review documents use the Rennet Structured Protocol. The envelope

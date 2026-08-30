@@ -2742,7 +2742,7 @@ function frontDoorHarness(seed: {
   allowedRoots: Set<string>;
   addCalls: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }[];
   discoverCalls: { path: string; kind: ProjectKind }[];
-  processCalls: { projectId: string }[];
+  processCalls: { projectId: string; commandId: string }[];
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -2751,7 +2751,7 @@ function frontDoorHarness(seed: {
   const addCalls: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }[] =
     [];
   const discoverCalls: { path: string; kind: ProjectKind }[] = [];
-  const processCalls: { projectId: string }[] = [];
+  const processCalls: { projectId: string; commandId: string }[] = [];
   const discovery: DiscoveryResult = seed.discovery ?? {
     path: "/orbital",
     kind: "workspace",
@@ -3028,13 +3028,14 @@ describe("createDispatch — front door (issue #29)", () => {
     });
 
     const streamed: ProjectProgressEvent[] = [];
+    const commandId = randomUUID();
     const out = (await dispatch(
       "project.process",
-      { commandId: randomUUID(), projectId: "p1" },
+      { commandId, projectId: "p1" },
       { emitProgress: (event) => streamed.push(event) },
     )) as { repos: ProcessedRepoSummary[] };
 
-    expect(processCalls).toEqual([{ projectId: "p1" }]);
+    expect(processCalls).toEqual([{ projectId: "p1", commandId }]);
     // The host's three narration events reached the sink, and dispatch appended the
     // terminal `done` carrying the same summaries it resolves with.
     expect(streamed.map((event) => event.kind)).toEqual([
@@ -3075,7 +3076,7 @@ describe("createDispatch — front door (issue #29)", () => {
     };
     let emitFromBuild: ((event: ProjectProcessEvent) => void) | undefined;
     let finishBuild: ((value: { repos: ProcessedRepoSummary[] }) => void) | undefined;
-    const processCalls: { projectId: string }[] = [];
+    const processCalls: { projectId: string; commandId: string }[] = [];
     const buildResult = new Promise<{ repos: ProcessedRepoSummary[] }>((resolve) => {
       finishBuild = resolve;
     });
@@ -3112,7 +3113,7 @@ describe("createDispatch — front door (issue #29)", () => {
       },
     );
     await vi.waitFor(() => expect(afterRemount.map((event) => event.kind)).toEqual(["repo-start"]));
-    expect(processCalls).toEqual([{ projectId: "p1" }]);
+    expect(processCalls).toEqual([{ projectId: "p1", commandId }]);
 
     emitFromBuild?.({
       kind: "repo-done",

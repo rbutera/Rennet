@@ -705,6 +705,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "projects.add.input.discovery.path",
     "projects.add.input.discovery.repos.path",
     "project.process.output.repos.path",
+    "project.process.output.run.repos.path",
     "settings.get.output.projects.repoPath",
     "settings.guidance.input.repoPath",
     "settings.setRepoVisibility.input.repoPath",
@@ -717,6 +718,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "settings.setGuidance.input.repoPath",
     "progressEvent.summary.path",
     "progressEvent.repos.path",
+    "progressEvent.run.repos.path",
     // The reviewed PR's worktree lives under MAIN's data dir — a host path the
     // renderer shows and a remote projection must translate like any other root.
     "review.prWorktree.output.worktree.path",

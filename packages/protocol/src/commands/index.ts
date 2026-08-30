@@ -53,6 +53,7 @@ import {
   projectContextMapResultSchema,
   projectDetailSchema,
   projectKindSchema,
+  projectProcessRunSchema,
   projectSchema,
   projectVisibilitySchema,
   prSubmissionSchema,
@@ -626,7 +627,14 @@ const definitions = {
       commandId: commandIdSchema,
       projectId: z.string().min(1),
     }),
-    output: z.object({ repos: z.array(processedRepoSummarySchema) }),
+    output: z.object({
+      repos: z.array(processedRepoSummarySchema),
+      /**
+       * The durable scout → map → knowledge run. Optional only for compatibility
+       * with older daemons; current servers always return it.
+       */
+      run: projectProcessRunSchema.optional(),
+    }),
   },
   // ── Project detail: the unified smart list (issue #37) ─────────────────────
   // The raw substrate a project row opens into: local work + pull requests +

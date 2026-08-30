@@ -43,6 +43,10 @@ export interface KnowledgeSwarmRunInput {
   readonly repoRoot: string;
   /** The base OID the snapshot is fresh at (the run's target). */
   readonly toOid: string;
+  /** Foreground project-run identity. Absent for baseline rehydration. */
+  readonly runId?: string;
+  /** Foreground progress sink. When present it replaces the background channel. */
+  readonly narrate?: (event: ProjectProcessEvent) => void;
 }
 
 export interface KnowledgeSwarmRuntime {
@@ -120,6 +124,57 @@ export function knowledgeOutcomeLine(
   return { kind: "stage", repo, stage: "knowledge", note, detail: outcome.reason };
 }
 
+function projectRunKnowledgeLine(
+  runId: string,
+  repo: string,
+  event: KnowledgeSwarmProgress,
+): ProjectProcessEvent {
+  if (event.kind === "verify") {
+    return {
+      kind: "step",
+      runId,
+      repo,
+      phase: "knowledge",
+      step: "verify",
+      status: event.status,
+      note:
+        event.status === "running"
+          ? "Verifying hypotheses against cited evidence"
+          : event.status === "done"
+            ? "Verified hypotheses against cited evidence"
+            : "Knowledge verification failed",
+      ...(event.status === "done"
+        ? {
+            detail: `${event.confirmed ?? 0} confirmed, ${event.rejected ?? 0} rejected`,
+          }
+        : {}),
+    };
+  }
+  const status = event.status === "reused" ? "done" : event.status;
+  return {
+    kind: "step",
+    runId,
+    repo,
+    phase: "knowledge",
+    step: `worker:${event.sliceId}`,
+    status,
+    note:
+      event.status === "queued"
+        ? `Knowledge worker ${event.index}/${event.total} queued`
+        : event.status === "running"
+          ? `Knowledge workers reading scopes ${event.index}/${event.total}`
+          : event.status === "reused"
+            ? `Knowledge worker ${event.index}/${event.total} reused from the journal`
+            : event.status === "done"
+              ? `Knowledge worker ${event.index}/${event.total} finished`
+              : `Knowledge worker ${event.index}/${event.total} failed`,
+    detail:
+      event.statements === undefined
+        ? event.sliceId
+        : `${event.sliceId}: ${event.statements} statements`,
+  };
+}
+
 /** Build the scheduler over the composition root's stores and harness probes. */
 export function createKnowledgeSwarmRuntime(
   deps: KnowledgeSwarmRuntimeDeps,
@@ -127,9 +182,39 @@ export function createKnowledgeSwarmRuntime(
   return {
     async runForRepo(input: KnowledgeSwarmRunInput): Promise<KnowledgeSwarmOutcome> {
       const repoLabel = basename(input.repoRoot);
+      const narrate = (event: ProjectProcessEvent): void => {
+        if (input.narrate) input.narrate(event);
+        else deps.narrate(input.projectId, event);
+      };
       const narrated = (outcome: KnowledgeSwarmOutcome): KnowledgeSwarmOutcome => {
-        const line = knowledgeOutcomeLine(repoLabel, outcome);
-        if (line) deps.narrate(input.projectId, line);
+        if (input.runId) {
+          if (outcome.status === "ok" || outcome.status === "skipped") {
+            narrate({
+              kind: "step",
+              runId: input.runId,
+              repo: repoLabel,
+              phase: "knowledge",
+              step: "connect",
+              status: "done",
+              note: "Connected the dots across scopes",
+              ...(outcome.status === "skipped" ? { detail: outcome.reason } : {}),
+            });
+          } else {
+            narrate({
+              kind: "step",
+              runId: input.runId,
+              repo: repoLabel,
+              phase: "knowledge",
+              step: "connect",
+              status: "failed",
+              note: "Knowledge pass failed",
+              detail: outcome.reason,
+            });
+          }
+        } else {
+          const line = knowledgeOutcomeLine(repoLabel, outcome);
+          if (line) narrate(line);
+        }
         return outcome;
       };
       // Every THROWN failure becomes the same typed, narrated outcome the
@@ -160,7 +245,11 @@ export function createKnowledgeSwarmRuntime(
             repoRoot: input.repoRoot,
             baseOid: input.toOid,
             onProgress: (event) =>
-              deps.narrate(input.projectId, knowledgeStageLine(repoLabel, event)),
+              narrate(
+                input.runId
+                  ? projectRunKnowledgeLine(input.runId, repoLabel, event)
+                  : knowledgeStageLine(repoLabel, event),
+              ),
           }),
         );
       } catch (error) {

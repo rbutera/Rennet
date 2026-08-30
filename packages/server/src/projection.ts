@@ -382,6 +382,15 @@ export function projectCommandOutput(
       o.discovery = projectDiscovery(o.discovery as Record<string, unknown>, ctx);
     if (Array.isArray(o.repos))
       o.repos = (o.repos as Record<string, unknown>[]).map((s) => projectSummary(s, ctx));
+    if (o.run && typeof o.run === "object" && !Array.isArray(o.run)) {
+      const run = { ...(o.run as Record<string, unknown>) };
+      if (Array.isArray(run.repos)) {
+        run.repos = (run.repos as Record<string, unknown>[]).map((summary) =>
+          projectSummary(summary, ctx),
+        );
+      }
+      o.run = run;
+    }
     // `repository.choose` returns a top-level host `path` string (nullable).
     if (typeof o.path === "string") o.path = toRepoReference(o.path, ctx);
     // The display transcript (`session.transcript`) is stored RAW — the capture sink keeps the
@@ -437,6 +446,16 @@ export function projectProgressEvent(
           repos: event.repos.map((s) =>
             projectSummary(s as unknown as Record<string, unknown>, ctx),
           ),
+          ...(event.run
+            ? {
+                run: {
+                  ...event.run,
+                  repos: event.run.repos.map((summary) =>
+                    projectSummary(summary as unknown as Record<string, unknown>, ctx),
+                  ),
+                },
+              }
+            : {}),
         };
       // project.detail's prs-start / repo-prs carry a forge identity, not a host
       // path — no projection needed; scrubbing below is a no-op on them.

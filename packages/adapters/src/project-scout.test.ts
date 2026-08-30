@@ -92,6 +92,37 @@ describe("scoutDeterministic", () => {
 });
 
 describe("runProjectScout", () => {
+  it("emits deterministic boundaries before guidance and returns a total five-answer floor", async () => {
+    const progress: import("./project-scout").ProjectScoutProgress[] = [];
+    const result = await runProjectScout({
+      repoRoot: tempRepo(),
+      git: gitStub({}),
+      knownDefaultBranch: "trunk",
+      runTurn: null,
+      onProgress: (event) => progress.push(event),
+    });
+
+    expect(progress.map((event) => `${event.step}:${event.status}`)).toEqual([
+      "remotes:running",
+      "remotes:done",
+      "config:running",
+      "config:done",
+      "guidance:running",
+      "guidance:done",
+    ]);
+    expect(result.facts.defaultBranch).toEqual({
+      value: "trunk",
+      provenance: "detected",
+      source: "confirmed during project discovery",
+    });
+    expect(result.facts).toMatchObject({
+      trackerKind: { value: "none", provenance: "guessed" },
+      worktreeBaseDir: { value: "~/.rennet/worktrees", provenance: "guessed" },
+      gateCommand: { value: "", provenance: "guessed" },
+      logoPath: { value: "", provenance: "guessed" },
+    });
+  });
+
   it("the seat fills ONLY gaps — a detected value is never overwritten", async () => {
     const repo = tempRepo();
     const result = await runProjectScout({
