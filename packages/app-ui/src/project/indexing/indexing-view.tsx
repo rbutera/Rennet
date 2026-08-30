@@ -166,15 +166,15 @@ function legacyRun(
 function StepLine({ label, detail, status }: TimelineLine) {
   const running = status === "running" || status === "queued";
   return (
-    <div className="flex items-center gap-2 text-sm" data-step-status={status}>
+    <div className="flex items-center gap-1.5 text-12-5" data-step-status={status}>
       {running ? (
         // Decorative: every running step would otherwise announce "Loading" as its own
         // live region, and the step's own label is what carries the state.
-        <Spinner className="size-3.5 shrink-0 text-model" aria-hidden="true" />
+        <Spinner className="size-3 shrink-0 text-model" aria-hidden="true" />
       ) : status === "failed" ? (
-        <Icon icon={TriangleAlert} className="size-3.5 shrink-0 text-danger" />
+        <Icon icon={TriangleAlert} className="size-3 shrink-0 text-danger" />
       ) : (
-        <Icon icon={Check} className="size-3.5 shrink-0 text-ink-faint" />
+        <Icon icon={Check} className="size-3 shrink-0 text-muted-foreground/70" />
       )}
       <span className={running ? "truncate text-ink" : "truncate text-ink-soft"}>
         {label}
@@ -265,14 +265,14 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
     <section
       data-screen="project-indexing"
       data-status={status}
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas"
     >
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
         <button
           type="button"
           onClick={() => navigate(newChatPath())}
           aria-label="Back"
-          className="flex size-6 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
+          className="flex size-6 items-center justify-center rounded-control text-ink-faint transition-colors hover:bg-raised hover:text-ink"
         >
           {/* Back is a back arrow. This control rendered a MAP glyph — a label that told
               the reviewer it opened the Context Map while it navigated to New Chat. */}
@@ -343,29 +343,34 @@ function CompletionBlock({
 
   return (
     <>
-      <div className="flex flex-col gap-1.5 rounded-surface border border-line px-4 py-3.5">
+      <div className="flex flex-col gap-3 rounded-lg border border-line px-4 py-3.5">
         <div className="flex items-center gap-2">
           <Icon
             icon={ready ? Check : TriangleAlert}
             className={`size-4 shrink-0 ${ready ? "text-green" : "text-danger"}`}
           />
-          <span className="text-sm font-medium text-ink">
+          <span className="text-13 font-medium text-ink">
             {ready ? "Context Map Ready" : `Project ${run.phase} failed`}
           </span>
           {counts ? <span className="truncate text-xs text-ink-soft">{counts}</span> : null}
-          {hasMap ? (
+        </div>
+        {run.status === "failed" ? (
+          <span className="text-xs text-ink-soft">{run.reason}</span>
+        ) : null}
+        {/* The map control sits on its OWN line, not `ml-auto` on the heading row: pushed
+            to the far right it read as chrome belonging to the card, and the counts
+            beside it truncated to make room for it. */}
+        {hasMap ? (
+          <div>
             <button
               type="button"
               onClick={() => navigate(projectMapPath(run.projectId))}
-              className="ml-auto flex shrink-0 items-center gap-1.5 rounded-control border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised"
+              className="flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-12-5 font-medium text-foreground/90 transition-colors hover:bg-raised"
             >
               <Icon icon={MapIcon} className="size-3.5" />
               View Context Map
             </button>
-          ) : null}
-        </div>
-        {run.status === "failed" ? (
-          <span className="text-xs text-ink-soft">{run.reason}</span>
+          </div>
         ) : null}
       </div>
 
@@ -373,7 +378,7 @@ function CompletionBlock({
         ref={startReviewRef}
         type="button"
         onClick={() => navigate(newChatPath(run.projectId))}
-        className="flex w-full items-center justify-center gap-2 rounded-surface bg-accent-fill px-6 py-4 text-base font-medium text-accent-ink hover:opacity-90"
+        className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-fill px-6 py-4 text-15 font-medium text-accent-ink transition-opacity hover:opacity-90"
       >
         <Icon icon={MessageSquarePlus} className="size-5" />
         Start a Review
@@ -395,8 +400,8 @@ function ProvenanceChip({ provenance }: { readonly provenance: ProjectScoutAnswe
     <span
       className={
         provenance === "detected"
-          ? "shrink-0 rounded-chip border border-line px-1.5 py-px text-2xs uppercase tracking-wide text-ink-faint"
-          : "shrink-0 rounded-chip border border-model/40 px-1.5 py-px text-2xs uppercase tracking-wide text-model"
+          ? "shrink-0 rounded border border-line px-1 py-px text-10 uppercase tracking-wide text-ink-faint"
+          : "shrink-0 rounded border border-model/40 px-1 py-px text-10 uppercase tracking-wide text-model"
       }
     >
       {provenance}
@@ -424,7 +429,7 @@ function ScoutQuestionnaire({
 
   if (dismissed) {
     return (
-      <div className="flex items-center gap-2 rounded-surface border border-line px-4 py-3">
+      <div className="flex items-center gap-2 rounded-lg border border-line px-4 py-3">
         <Icon icon={Check} className="size-3.5 shrink-0 text-green" />
         <span className="text-sm text-ink-soft">Set these anytime in Settings → Projects</span>
       </div>
@@ -432,7 +437,7 @@ function ScoutQuestionnaire({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-surface border border-line px-4 py-3.5">
+    <div className="flex flex-col gap-3 rounded-lg border border-line px-4 py-3.5">
       <div className="flex flex-col">
         <span className="flex items-center gap-2 text-sm font-medium text-ink">
           Scout finished — does this look right?
@@ -440,7 +445,7 @@ function ScoutQuestionnaire({
             {questionnaire.detected} detected · {questionnaire.guessed} guessed
           </span>
         </span>
-        <span className="text-sm text-ink-soft">
+        <span className="text-xs text-ink-soft">
           The map is already continuing. Skipping is fine; everything stays editable in Settings.
         </span>
       </div>
@@ -491,7 +496,7 @@ function ScoutQuestionnaire({
         <button
           type="button"
           onClick={() => setDismissed(true)}
-          className="rounded-control border border-line px-3 py-1.5 text-sm font-medium text-ink hover:bg-raised"
+          className="rounded-control border border-line px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-raised"
         >
           Looks right
         </button>
