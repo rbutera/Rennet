@@ -235,7 +235,10 @@ raw patchset in the familiar files-changed shape: a filterable file tree on the
 right, per-file cards with unified hunks and dual line-number gutters on the
 left, a summary line reading files changed with total additions and deletions,
 and a per-file **Viewed** checkbox that collapses the card and ticks the tally.
-Diff is not a board — it is the raw source, always one click away.
+Diff is not a board — it is the raw source, always one click away. Large
+patchsets keep the summary and complete file tree responsive while Rennet
+windows the file cards and diff rows; choosing any file still lands on its
+exact virtual position.
 
 ## Raise what you find
 
