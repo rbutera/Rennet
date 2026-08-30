@@ -49,6 +49,7 @@ import {
   type DraftBoard,
   DraftBoardSchema,
   type DraftElement,
+  type FindingAccord,
   type FindingAgreement,
   type FindingDisposition,
   type FindingElement,
@@ -240,6 +241,21 @@ export function foldConcurrence(
   }));
 }
 
+/**
+ * The agreement KIND, as the wire's `accord` — the fact {@link foldConcurrence}'s
+ * tallies structurally cannot express.
+ *
+ * A concurring pair folds to `[{a,1,1},{b,1,1}]`. So does a CONFLICT: two seats that
+ * both raised the finding at materially different severities, where NEITHER answer is
+ * `NO_CONCERN_ANSWER` (`core/src/finding-reconcile.ts` — the conflict arm of
+ * `reconcileFindings`). The two tally sets are byte-identical, so a client reading the
+ * arithmetic alone renders a disagreement as agreement. This stamp is the difference.
+ */
+function accordOf(agreement: FindingAgreement): FindingAccord {
+  if (agreement.kind === "concur") return "concur";
+  return agreement.answers.some((ans) => ans.answer === NO_CONCERN_ANSWER) ? "split" : "conflict";
+}
+
 /** Merge accumulated skippedHunks from both boards (dedup by hunk id). */
 function mergeSkips(boardA: DraftBoard, boardB: DraftBoard): { hunk: string; reason: string }[] {
   const read = (b: DraftBoard) =>
@@ -367,7 +383,11 @@ export function reconcileFlaggedBoards(
     if (r === undefined) return el;
     return {
       ...el,
-      data: { ...(el.data as object), concurrence: foldConcurrence(r.agreement, labels) },
+      data: {
+        ...(el.data as object),
+        concurrence: foldConcurrence(r.agreement, labels),
+        accord: accordOf(r.agreement),
+      },
     } as DraftElement;
   };
 
@@ -395,7 +415,12 @@ export function reconcileFlaggedBoards(
   } as DraftBoard;
 }
 
-/** Stamp single-seat concurrence on every finding (the honest degrade — one harness only). */
+/**
+ * Stamp single-seat concurrence on every finding (the honest degrade — one harness only).
+ *
+ * No `accord`: one seat has no agreement to report. Stamping `concur` here would claim a
+ * second opinion that never ran, and `split` would name a disagreement with nobody.
+ */
 export function stampSingleSeatConcurrence(board: DraftBoard, label: string): DraftBoard {
   const elements = board.elements.map((el) =>
     el.kind === "finding"

@@ -1,3 +1,4 @@
+import type { FindingAccord } from "@rennet/protocol";
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -29,51 +30,82 @@ function splitFix(concern: string): { body: string; fix: string | null } {
   return { body: body.trim(), fix: rest.join("**Fix:**").trim() };
 }
 
+/** What the pill can actually claim, once the tallies AND the accord stamp are in. */
+type ConcurrenceRead = "concur" | "split" | "conflict" | "solo" | "unstamped";
+
+const CONCURRENCE_TONE: Record<ConcurrenceRead, string> = {
+  // Every seat raised it, at comparable severity — the one green claim.
+  concur: "border-green-line text-green",
+  // A real disagreement between seats: the verdigris model register.
+  split: "border-model-line text-model",
+  conflict: "border-model-line text-model",
+  // Nothing to compare (one seat) or nothing verifiable (no stamp): state it, quietly.
+  solo: "border-border text-muted-foreground",
+  unstamped: "border-border text-muted-foreground",
+};
+
 /**
- * The cross-model concurrence tally, as ONE bordered tinted pill (prototype
+ * The cross-model concurrence read, as ONE bordered tinted pill (prototype
  * `lens-board.tsx:503-516`) rather than a row of plain per-model counts.
  *
- * The prototype had a two-model boolean (`{claude, codex}`); the wire carries
- * per-model `{model, agree, total}` tallies folded by the pipeline
- * (`server/runtime/lens-pipeline.ts:226-241` — a concurring pair stamps
- * `agree === total` for both seats, a disagreement stamps `agree: 0` for the
- * seat that answered "no concern", and a single-harness run degrades to one
- * tally at `:398-404`). So "every seat agreed" is `sum(agree) === sum(total)`
- * across MORE THAN ONE seat — green. Anything else names the seats that did
- * raise it, in the verdigris model register.
+ * **The tallies alone cannot answer the question this pill asks.** `foldConcurrence`
+ * (`server/runtime/lens-pipeline.ts:226-241`) stamps `[{a,1,1},{b,1,1}]` for a concurring
+ * pair — and for a severity CONFLICT, where both seats raised the finding at materially
+ * different severities and neither answered "no concern" (`core/finding-reconcile.ts`,
+ * the conflict arm of `reconcileFindings`). Byte-identical. Reading `sum(agree) ===
+ * sum(total)` as agreement therefore printed a green "concur 2/2" over a disagreement.
+ *
+ * So the pipeline also stamps `accord`, and the green concurrence claim is made ONLY on
+ * `accord === "concur"`. The other reads:
+ *
+ * - `conflict` — both raised it, incompatible severities. Named, in the model register.
+ * - `split` — one seat raised it, another answered "no concern" (`agree: 0`). Names who did.
+ * - `solo` — ONE tally, the single-harness degrade (`stampSingleSeatConcurrence`, `:398-410`).
+ *   No second opinion exists, so there is no split to report: it reads as the seat, muted.
+ * - `unstamped` — a board drafted before `accord`, whose tallies are the ambiguous pair.
+ *   It may be either, so it states the tally and claims nothing. Never green.
  */
 function Concurrence({
   tallies,
+  accord,
 }: {
   readonly tallies: readonly { model: string; agree: number; total: number }[];
+  readonly accord: FindingAccord | undefined;
 }) {
   if (tallies.length === 0) return null;
   const agree = tallies.reduce((sum, t) => sum + t.agree, 0);
   const total = tallies.reduce((sum, t) => sum + t.total, 0);
-  const concur = tallies.length > 1 && agree === total;
   const raisers = tallies.filter((t) => t.agree > 0).map((t) => t.model);
   const detail = tallies.map((t) => `${t.model}: ${t.agree} of ${t.total} agree`).join(", ");
+  // Absent accord: a partial tally is unambiguously a split (a seat said no concern), but a
+  // FULL one is exactly the pair a conflict produces — so it degrades, it does not guess.
+  const read: ConcurrenceRead =
+    tallies.length === 1 ? "solo" : (accord ?? (agree === total ? "unstamped" : "split"));
+  const label =
+    read === "solo"
+      ? (tallies[0]?.model ?? "")
+      : read === "concur"
+        ? `concur ${agree}/${total}`
+        : read === "conflict"
+          ? "severity split"
+          : read === "split" && raisers.length > 0
+            ? `${raisers.join(" · ")} only`
+            : `${agree}/${total} flagged`;
   return (
     <span
       data-kind="finding-concurrence"
-      data-concur={concur}
-      className={cn(
-        "shrink-0 rounded border px-1.5 py-0.5 text-10",
-        concur ? "border-green-line text-green" : "border-model-line text-model",
-      )}
+      data-accord={read}
+      data-concur={read === "concur"}
+      className={cn("shrink-0 rounded border px-1.5 py-0.5 text-10", CONCURRENCE_TONE[read])}
       title={detail}
     >
-      {concur
-        ? `concur ${agree}/${total}`
-        : raisers.length > 0
-          ? `${raisers.join(" · ")} only`
-          : `${agree}/${total}`}
+      {label}
     </span>
   );
 }
 
 export function FindingElement({ element }: { readonly element: ElementOf<"finding"> }) {
-  const { severity, concern, status: boardStatus, code, concurrence } = element.data;
+  const { severity, concern, status: boardStatus, code, concurrence, accord } = element.data;
   const generation = useBoardGeneration();
   const boardId = useBoardId();
   const patchsetId = useBoardPatchsetId();
@@ -164,7 +196,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             {summary}
             {status !== "open" && <span className="sr-only">, {status}</span>}
           </span>
-          <Concurrence tallies={concurrence} />
+          <Concurrence tallies={concurrence} accord={accord} />
         </button>
       </h3>
       <Collapse open={open}>
