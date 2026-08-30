@@ -1,16 +1,21 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
+import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertTestOnlyLandingRelativePath } from "./round-source-landing.test-only-unsafe-host";
 import {
@@ -22,8 +27,17 @@ import {
 } from "./round-source-landing-native-host";
 
 const roots: string[] = [];
+const descriptors = new Set<number>();
 
 afterEach(() => {
+  for (const descriptor of descriptors) {
+    try {
+      closeSync(descriptor);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EBADF")) throw error;
+    }
+  }
+  descriptors.clear();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
@@ -40,21 +54,21 @@ function isolatedGitEnvironment(): NodeJS.ProcessEnv {
 
 function boundGit(
   root: string,
-  observe?: (arguments_: readonly string[], input: Buffer | undefined) => void,
+  observe?: (arguments_: readonly string[], input: Buffer | Readable | undefined) => void,
 ): BoundRoundSourceLandingGitWithInput {
   return async (arguments_, options) => {
     observe?.(arguments_, options?.input);
-    const result = spawnSync("git", [...arguments_], {
+    const result = await execa("git", [...arguments_], {
       cwd: root,
       encoding: "utf8",
       env: isolatedGitEnvironment(),
       input: options?.input,
+      reject: false,
       shell: false,
     });
-    if (result.error !== undefined) throw result.error;
-    if (result.status !== 0 && options?.reject !== false) {
+    if (result.exitCode !== 0 && options?.reject !== false) {
       throw new Error(
-        `git ${arguments_.join(" ")} exited ${result.status}: ${result.stderr.trimEnd()}`,
+        `git ${arguments_.join(" ")} exited ${result.exitCode}: ${result.stderr.trimEnd()}`,
       );
     }
     return result.stdout;
@@ -173,8 +187,9 @@ async function gitFixture(): Promise<{
   readonly infoExcludePath: string;
   readonly attrSource: string;
 }> {
-  const sourceRoot = mkdtempSync(join(tmpdir(), "rennet-native-source-"));
-  const workerRoot = mkdtempSync(join(tmpdir(), "rennet-native-worker-"));
+  const temporaryRoot = realpathSync(tmpdir());
+  const sourceRoot = mkdtempSync(join(temporaryRoot, "rennet-native-source-"));
+  const workerRoot = mkdtempSync(join(temporaryRoot, "rennet-native-worker-"));
   roots.push(sourceRoot, workerRoot);
   for (const root of [sourceRoot, workerRoot]) {
     await runGit(root, ["init", "-b", "main"]);
@@ -195,19 +210,24 @@ describe("native rooted round source landing host", () => {
   it("hashes a regular native snapshot through worker Git attributes", async () => {
     const fixture = await gitFixture();
     const snapshot = Buffer.from("line\r\n");
+    const snapshotPath = join(fixture.workerRoot, "snapshot.bin");
+    writeFileSync(snapshotPath, snapshot);
+    const descriptor = openSync(snapshotPath, "r");
+    descriptors.add(descriptor);
     const state = behavior({
-      inspectResult: { kind: "regular", bytes: snapshot, executable: true },
+      inspectResult: { kind: "regular", descriptor, executable: true },
     });
-    const gitCalls: Array<{ readonly arguments_: readonly string[]; readonly input?: Buffer }> = [];
+    const gitCalls: Array<{
+      readonly arguments_: readonly string[];
+      readonly streamed: boolean;
+    }> = [];
     const runWorkerGit = boundGit(fixture.workerRoot);
     const workerGit: BoundRoundSourceLandingGitWithInput = async (arguments_, options) => {
       gitCalls.push({
         arguments_: [...arguments_],
-        ...(options?.input === undefined ? {} : { input: Buffer.from(options.input) }),
+        streamed: options?.input instanceof Readable,
       });
-      const result = await runWorkerGit(arguments_, options);
-      options?.input?.fill(0x78);
-      return result;
+      return runWorkerGit(arguments_, options);
     };
     const { fileSystem, close } = createNativeRoundSourceLandingFileSystem({
       ...fixture,
@@ -223,6 +243,7 @@ describe("native rooted round source landing host", () => {
       attrSource: fixture.attrSource,
       oidLength: 40,
     });
+    expect(() => fstatSync(descriptor)).toThrow();
     const normalizedOid = (
       await runGit(fixture.workerRoot, ["hash-object", "--stdin"], Buffer.from("line\n"))
     ).trim();
@@ -245,9 +266,51 @@ describe("native rooted round source landing host", () => {
       "--stdin",
       "--path=filtered.txt",
     ]);
-    expect(gitCalls[0]?.input).toEqual(Buffer.from("line\r\n"));
+    expect(gitCalls[0]?.streamed).toBe(true);
     close();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "streams the real addon's anchored regular-file descriptor into Git",
+    async () => {
+      const fixture = await gitFixture();
+      const snapshot = Buffer.from("native line\r\n");
+      writeFileSync(join(fixture.workerRoot, "filtered.txt"), snapshot);
+      const gitInputs: boolean[] = [];
+      const runWorkerGit = boundGit(fixture.workerRoot);
+      const handle = createNativeRoundSourceLandingFileSystem({
+        ...fixture,
+        sourceGit: boundGit(fixture.sourceRoot),
+        workerGit: async (arguments_, options) => {
+          gitInputs.push(options?.input instanceof Readable);
+          return runWorkerGit(arguments_, options);
+        },
+      });
+
+      try {
+        const observed = await handle.fileSystem.inspect({
+          root: "worker",
+          path: assertTestOnlyLandingRelativePath("filtered.txt"),
+          repoPath: assertTestOnlyLandingRelativePath("filtered.txt"),
+          attrSource: fixture.attrSource,
+          oidLength: 40,
+        });
+        const normalizedOid = (
+          await runGit(fixture.workerRoot, ["hash-object", "--stdin"], Buffer.from("native line\n"))
+        ).trim();
+
+        expect(observed).toEqual({
+          kind: "git",
+          mode: "100644",
+          oid: normalizedOid,
+          rawSha256: createHash("sha256").update(snapshot).digest("hex"),
+        });
+        expect(gitInputs).toEqual([true]);
+      } finally {
+        handle.close();
+      }
+    },
+  );
 
   it("computes symlink identity without asking Git to read the filesystem", async () => {
     const fixture = await gitFixture();
@@ -384,7 +447,7 @@ describe("native rooted round source landing host", () => {
   it("rejects malformed native and Git results at the adapter boundary", async () => {
     const fixture = await gitFixture();
     const malformedInspect = behavior({
-      inspectResult: { kind: "regular", bytes: "not bytes", executable: false },
+      inspectResult: { kind: "regular", descriptor: "not a descriptor", executable: false },
     });
     const first = createNativeRoundSourceLandingFileSystem({
       ...fixture,
@@ -402,6 +465,35 @@ describe("native rooted round source landing host", () => {
       }),
     ).rejects.toThrow("malformed regular snapshot");
     first.close();
+
+    const malformedExecutablePath = join(fixture.workerRoot, "malformed-executable-input");
+    writeFileSync(malformedExecutablePath, "content\n");
+    const malformedExecutableDescriptor = openSync(malformedExecutablePath, "r");
+    descriptors.add(malformedExecutableDescriptor);
+    const malformedExecutable = behavior({
+      inspectResult: {
+        kind: "regular",
+        descriptor: malformedExecutableDescriptor,
+        executable: "not a boolean",
+      },
+    });
+    const malformedExecutableHandle = createNativeRoundSourceLandingFileSystem({
+      ...fixture,
+      sourceGit: boundGit(fixture.sourceRoot),
+      workerGit: boundGit(fixture.workerRoot),
+      binding: fakeBinding(malformedExecutable),
+    });
+    await expect(
+      malformedExecutableHandle.fileSystem.inspect({
+        root: "source",
+        path: assertTestOnlyLandingRelativePath("file"),
+        repoPath: assertTestOnlyLandingRelativePath("file"),
+        attrSource: fixture.attrSource,
+        oidLength: 40,
+      }),
+    ).rejects.toThrow("malformed regular snapshot");
+    expect(() => fstatSync(malformedExecutableDescriptor)).toThrow();
+    malformedExecutableHandle.close();
 
     const malformedVoid = behavior({ voidResult: true });
     const second = createNativeRoundSourceLandingFileSystem({
@@ -430,8 +522,16 @@ describe("native rooted round source landing host", () => {
     ).rejects.toThrow("invalid nativeCode");
     third.close();
 
+    const invalidOidPath = join(fixture.workerRoot, "invalid-oid-input");
+    writeFileSync(invalidOidPath, "content\n");
+    const invalidOidDescriptor = openSync(invalidOidPath, "r");
+    descriptors.add(invalidOidDescriptor);
     const invalidOid = behavior({
-      inspectResult: { kind: "regular", bytes: Buffer.from("content\n"), executable: false },
+      inspectResult: {
+        kind: "regular",
+        descriptor: invalidOidDescriptor,
+        executable: false,
+      },
     });
     const fourth = createNativeRoundSourceLandingFileSystem({
       ...fixture,
@@ -448,6 +548,7 @@ describe("native rooted round source landing host", () => {
         oidLength: 40,
       }),
     ).rejects.toThrow("invalid 40-character object id");
+    expect(() => fstatSync(invalidOidDescriptor)).toThrow();
     fourth.close();
   });
 

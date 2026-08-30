@@ -154,10 +154,13 @@ temporary roots and requires both host artifacts to be byte-identical.
 
 On POSIX hosts, the addon captures repository and worker roots by walking every
 absolute-path component without following symlinks, then performs later work
-relative to those captured descriptors. The Windows artifact currently exposes
-an explicit unsupported constructor. The server, CLI, and desktop do not yet
-construct this host; production composition and cross-platform delivery remain
-separate work.
+relative to those captured descriptors. Regular-file inspection transfers an
+owned, no-follow descriptor to the TypeScript adapter, which streams that one
+anchored snapshot through the raw digest and Git attribute-aware object hash
+without buffering the file in native or JavaScript memory. The Windows artifact
+currently exposes an explicit unsupported constructor. The server, CLI, and
+desktop do not yet construct this host; production composition and
+cross-platform delivery remain separate work.
 
 Native artifacts and their semantic verdicts depend on the operating system,
 architecture, compiler, linker, SDK, and generator environment. The adapter's
