@@ -1142,6 +1142,42 @@ describe("projectDesignTaskProgress", () => {
   });
 });
 
+function decisionStringCollisionBody(): DraftBoard {
+  const author = { kind: "lens-agent" as const, id: "decisions-seat" };
+  return {
+    elements: [
+      {
+        id: "code",
+        kind: "code_ref",
+        data: {
+          author,
+          patchset_id: "ps-1",
+          path: "src/a.ts",
+          side: "head",
+          start_line: 1,
+          end_line: 2,
+        },
+      },
+      {
+        id: "alternative",
+        kind: "prose",
+        data: { author, markdown: "decision" },
+      },
+      {
+        id: "decision",
+        kind: "decision",
+        data: {
+          author,
+          statement: "Keep the decision explicit.",
+          evidence: ["code"],
+          alternatives: ["alternative"],
+          why: "The schema references determine persistence order.",
+        },
+      },
+    ],
+  } as unknown as DraftBoard;
+}
+
 describe("draftToOps", () => {
   it("projects each draft element into one create op (the host is the sole op writer)", () => {
     const board = { elements: [{ id: "a", kind: "prose", data: {} }] } as unknown as DraftBoard;
@@ -1154,6 +1190,14 @@ describe("draftToOps", () => {
     const board = mkBoard([mkFinding("f1", "cites c1", ["c1"]), mkCodeRef("c1", "src/a.ts", 1, 2)]);
     const ids = draftToOps(board).map((o) => o.element.id);
     expect(ids.indexOf("c1")).toBeLessThan(ids.indexOf("f1"));
+  });
+
+  it("ignores ordinary strings when ordering schema-declared references", () => {
+    expect(draftToOps(decisionStringCollisionBody()).map(({ element }) => element.id)).toEqual([
+      "code",
+      "alternative",
+      "decision",
+    ]);
   });
 });
 
@@ -1409,6 +1453,142 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(arrivals.map((a) => a.lens)).toEqual(lenses);
     // Coverage: no hunks ⇒ nothing uncovered.
     expect(result.coverage).toEqual([]);
+  });
+
+  it("repairs dangling Sequence and Decisions references before the real board service write", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lens-reference-repair-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const captures: { model?: string; prompt?: string }[] = [];
+      const arrivals: BoardArrivalEvent[] = [];
+      const lensAuthor = (lens: string) => ({ kind: "lens-agent" as const, id: `${lens}-seat` });
+      const lensCodeRef = (lens: string, id: string): DraftBoard["elements"][number] => {
+        const element = mkCodeRef(id, "src/auth.ts", 11, 12);
+        return {
+          ...element,
+          data: { ...element.data, author: lensAuthor(lens) },
+        } as DraftBoard["elements"][number];
+      };
+      const sequenceDraft = (span: string): DraftBoard =>
+        ({
+          elements: [
+            {
+              id: "sequence-step",
+              kind: "order_step",
+              data: {
+                author: lensAuthor("sequence"),
+                title: "Read the entry point",
+                span,
+                children: [],
+              },
+            },
+            ...(span === "sequence-code" ? [lensCodeRef("sequence", "sequence-code")] : []),
+          ],
+          skippedHunks: [],
+        }) as unknown as DraftBoard;
+      const decisionsDraft = (evidence: string): DraftBoard =>
+        ({
+          elements: [
+            {
+              id: "decision",
+              kind: "decision",
+              data: {
+                author: lensAuthor("decisions"),
+                statement: "Keep writes atomic.",
+                evidence: [evidence],
+                alternatives: ["alternative"],
+                why: "Readers never observe a partial batch.",
+              },
+            },
+            {
+              id: "alternative",
+              kind: "prose",
+              data: {
+                author: lensAuthor("decisions"),
+                markdown: "Write each event independently.",
+              },
+            },
+            ...(evidence === "decision-code" ? [lensCodeRef("decisions", "decision-code")] : []),
+          ],
+          skippedHunks: [],
+        }) as unknown as DraftBoard;
+
+      const rawId = await runtime.createRennetBoard();
+      const raw = await client.apply(
+        rawId,
+        draftToOps(sequenceDraft("missing-sequence-code")) as never,
+        "lens:sequence",
+      );
+      expect(raw.response).toMatchObject({ ok: false, code: "bad-ref" });
+
+      const boardIds = new Map<LintTarget, string>();
+      for (const lens of ["design", "sequence", "decisions", "flagged", "noise"] as const) {
+        boardIds.set(lens, await runtime.createRennetBoard());
+      }
+      const bodyFor = (prompt: string): unknown => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        const isReferenceRetry = prompt.includes("element-reference-resolves");
+        if (lens === "sequence") {
+          return sequenceDraft(isReferenceRetry ? "sequence-code" : "missing-sequence-code");
+        }
+        if (lens === "decisions") {
+          return decisionsDraft(isReferenceRetry ? "decision-code" : "missing-decision-code");
+        }
+        return cleanBody(lens);
+      };
+
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort(captures, bodyFor),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [],
+        lintContextFor: (lens) => ({
+          lens,
+          hunks: [],
+          files: new Map([["src/auth.ts", 200]]),
+          patchsetId: "ps-1",
+        }),
+        readPrompt,
+        whiteboard: client,
+        boardIdFor: (lens) => boardIds.get(lens) ?? "",
+        onBoardArrival: (event) => arrivals.push(event),
+      });
+
+      for (const lens of ["sequence", "decisions"] as const) {
+        const outcome = result.boards.find((board) => board.lens === lens);
+        expect(outcome?.failure).toBeUndefined();
+        expect(arrivals.map(({ lens: arrived }) => arrived)).toContain(lens);
+      }
+      expect(
+        captures.filter(
+          ({ prompt }) =>
+            prompt?.includes("PROMPT_FILE:prompts/sequence.md") &&
+            prompt.includes("element-reference-resolves"),
+        ),
+      ).toHaveLength(1);
+      expect(
+        captures.filter(
+          ({ prompt }) =>
+            prompt?.includes("PROMPT_FILE:prompts/decisions.md") &&
+            prompt.includes("element-reference-resolves"),
+        ),
+      ).toHaveLength(1);
+
+      const sequenceState = await runtime.service.getState(boardIds.get("sequence") ?? "");
+      const decisionsState = await runtime.service.getState(boardIds.get("decisions") ?? "");
+      expect(sequenceState.has("sequence-step")).toBe(true);
+      expect(sequenceState.has("sequence-code")).toBe(true);
+      expect(decisionsState.has("decision")).toBe(true);
+      expect(decisionsState.has("decision-code")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("treats a deterministically empty Design artifact set as a successful absent lane", async () => {
@@ -3114,6 +3294,14 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       const okId = await runtime.createRennetBoard();
       const ok = await client.apply(okId, draftToOps(board) as never, "lens:flagged");
       expect(ok.response.ok).toBe(true);
+
+      const collisionId = await runtime.createRennetBoard();
+      const collision = await client.apply(
+        collisionId,
+        draftToOps(decisionStringCollisionBody()) as never,
+        "lens:decisions",
+      );
+      expect(collision.response.ok).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
