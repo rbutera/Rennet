@@ -262,6 +262,34 @@ describe("validateDraft — gate ordering", () => {
     expect(checkImmutability(before, after)).toEqual([]);
   });
 
+  it("discards a post-process result that invents a dangling element reference", async () => {
+    const before = board(
+      [
+        el("a1", "annotation", {
+          code_ref: "c1",
+          body: "The refresh path is annotated.",
+        }),
+        codeRef("c1", "src/auth.ts", 11, 12),
+      ],
+      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical noise." }] },
+    );
+    const result = await validateDraft(before, ctx(), {
+      runTurn: noRetry,
+      postProcess: (draft) => ({
+        ...draft,
+        elements: draft.elements.map((element) =>
+          element.id === "a1"
+            ? { ...element, data: { ...element.data, code_ref: "missing" } }
+            : element,
+        ),
+      }),
+    });
+
+    expect(result.board).toEqual(before);
+    expect(result.blemishes).toEqual([]);
+    expect(result.immutability).toEqual([]);
+  });
+
   it("checkImmutability flags a dropped typed element", () => {
     const before = cleanBoard();
     // The finding vanishes; the skip set is kept, so only the drop fires.

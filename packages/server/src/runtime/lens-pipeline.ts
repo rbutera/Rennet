@@ -14,6 +14,8 @@ import {
   type DeltaPacket,
   type DesignTaskProgressSource,
   deriveDesignTaskProgress,
+  elementReferenceFields,
+  elementReferences,
   type FindingResolution,
   type HarnessPort,
   type HarnessTurnResult,
@@ -130,18 +132,6 @@ function designDraftOutputSchema(): unknown {
 
 // ── Draft → board ops (the host writes ops on the drafter's behalf, D2) ──
 
-/** The element ids an element references (a string field, or array entry, that is a live element id). */
-function referencedIds(el: DraftElement, liveIds: ReadonlySet<string>): string[] {
-  const refs: string[] = [];
-  for (const value of Object.values(el.data as Record<string, unknown>)) {
-    if (typeof value === "string" && liveIds.has(value)) refs.push(value);
-    else if (Array.isArray(value)) {
-      for (const v of value) if (typeof v === "string" && liveIds.has(v)) refs.push(v);
-    }
-  }
-  return refs;
-}
-
 /**
  * Project a validated draft board into the flat `create` ops the whiteboard
  * client applies. The wire element shape `{ id, kind, data }` IS the draft
@@ -168,7 +158,8 @@ export function draftToOps(
   const visit = (el: DraftElement): void => {
     if (done.has(el.id) || onStack.has(el.id)) return; // done, or a cycle — break
     onStack.add(el.id);
-    for (const refId of referencedIds(el, liveIds)) {
+    for (const { targetId: refId } of elementReferences(el)) {
+      if (!liveIds.has(refId)) continue;
       const dep = byId.get(refId);
       if (dep !== undefined && dep.id !== el.id) visit(dep);
     }
@@ -1001,6 +992,18 @@ function preservePostProcessDocument(before: DraftBoard, edited: unknown): unkno
   }
   const isProtectedOriginal = (element: DraftElement): boolean =>
     preservedIds.has(element.id) || !POST_PROCESS_NARRATIVE_KINDS.has(element.kind);
+  const preserveReferenceFields = (
+    original: DraftElement,
+    editedElement: DraftElement,
+  ): DraftElement => {
+    const data = { ...(editedElement.data as Record<string, unknown>) };
+    const originalData = original.data as Record<string, unknown>;
+    for (const field of elementReferenceFields(original)) {
+      if (Object.hasOwn(originalData, field)) data[field] = originalData[field];
+      else delete data[field];
+    }
+    return { ...editedElement, data } as DraftElement;
+  };
   const editedById = new Map(parsed.data.elements.map((element) => [element.id, element]));
   const originalIds = new Set(before.elements.map((element) => element.id));
   const elements: DraftElement[] = [];
@@ -1011,7 +1014,11 @@ function preservePostProcessDocument(before: DraftBoard, edited: unknown): unkno
     }
     const editedElement = editedById.get(original.id);
     if (editedElement === undefined) continue;
-    elements.push(POST_PROCESS_NARRATIVE_KINDS.has(editedElement.kind) ? editedElement : original);
+    elements.push(
+      POST_PROCESS_NARRATIVE_KINDS.has(editedElement.kind)
+        ? preserveReferenceFields(original, editedElement)
+        : original,
+    );
   }
   for (const element of parsed.data.elements) {
     if (originalIds.has(element.id) || !POST_PROCESS_NARRATIVE_KINDS.has(element.kind)) continue;
