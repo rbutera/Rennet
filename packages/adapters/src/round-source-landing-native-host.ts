@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { closeSync, createReadStream } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
+import { type Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import type { ExclusiveNamespaceMoveOutcome } from "./exclusive-namespace-move";
 import type {
@@ -16,7 +19,7 @@ const INFO_EXCLUDE_PROBE = `${ARTIFACT_ROOT}/.rennet-exclusion-probe`;
 type NativeInspectResult =
   | { readonly kind: "absent" }
   | { readonly kind: "directory" }
-  | { readonly kind: "regular"; readonly bytes: Buffer; readonly executable: boolean }
+  | { readonly kind: "regular"; readonly descriptor: number; readonly executable: boolean }
   | { readonly kind: "symlink"; readonly bytes: Buffer }
   | { readonly kind: "unsupported"; readonly detail: string };
 
@@ -46,7 +49,7 @@ export type LoadRootedLandingNativeBinding = (addonPath: string) => unknown;
 export type BoundRoundSourceLandingGitWithInput = (
   arguments_: Parameters<BoundRoundSourceLandingGit>[0],
   options?: NonNullable<Parameters<BoundRoundSourceLandingGit>[1]> & {
-    readonly input?: Buffer;
+    readonly input?: Buffer | Readable;
   },
 ) => ReturnType<BoundRoundSourceLandingGit>;
 
@@ -175,12 +178,28 @@ function nativeInspectResult(value: unknown): NativeInspectResult {
     case "directory":
       return { kind: "directory" };
     case "regular":
-      if (!Buffer.isBuffer(value.bytes) || typeof value.executable !== "boolean") {
+      if (
+        typeof value.descriptor !== "number" ||
+        !Number.isSafeInteger(value.descriptor) ||
+        value.descriptor < 0 ||
+        typeof value.executable !== "boolean"
+      ) {
+        if (
+          typeof value.descriptor === "number" &&
+          Number.isSafeInteger(value.descriptor) &&
+          value.descriptor >= 0
+        ) {
+          try {
+            closeSync(value.descriptor);
+          } catch {
+            // Preserve the malformed-ABI error when the returned descriptor is already invalid.
+          }
+        }
         throw new Error("rooted landing addon inspect() returned a malformed regular snapshot");
       }
       return {
         kind: "regular",
-        bytes: Buffer.from(value.bytes),
+        descriptor: value.descriptor,
         executable: value.executable,
       };
     case "symlink":
@@ -222,6 +241,38 @@ function nativeLeafPaths(value: unknown, base: string): readonly string[] {
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function hashRegularSnapshot(input: {
+  readonly descriptor: number;
+  readonly workerGit: BoundRoundSourceLandingGitWithInput;
+  readonly arguments_: readonly string[];
+  readonly oidLength: 40 | 64;
+}): Promise<{ readonly oid: string; readonly rawSha256: string }> {
+  const rawHash = createHash("sha256");
+  const source = createReadStream("", { autoClose: true, fd: input.descriptor });
+  const hashingInput = new Transform({
+    transform(chunk, _encoding, callback) {
+      rawHash.update(chunk);
+      callback(null, chunk);
+    },
+  });
+  const streaming = pipeline(source, hashingInput);
+  try {
+    const [output] = await Promise.all([
+      input.workerGit(input.arguments_, { input: hashingInput }),
+      streaming,
+    ]);
+    return {
+      oid: parseGitOid(output, input.oidLength),
+      rawSha256: rawHash.digest("hex"),
+    };
+  } catch (error) {
+    source.destroy();
+    hashingInput.destroy();
+    await Promise.allSettled([streaming]);
+    throw error;
+  }
 }
 
 function symlinkOid(bytes: Buffer, oidLength: 40 | 64): string {
@@ -378,20 +429,18 @@ export function createNativeRoundSourceLandingFileSystem(
         case "unsupported":
           return captured;
         case "regular": {
-          const rawSha256 = sha256(captured.bytes);
-          const oid = parseGitOid(
-            await input.workerGit(
-              [
-                "-c",
-                `attr.tree=${attrSource}`,
-                "hash-object",
-                "--stdin",
-                `--path=${nativeRepoPath}`,
-              ],
-              { input: Buffer.from(captured.bytes) },
-            ),
+          const { oid, rawSha256 } = await hashRegularSnapshot({
+            descriptor: captured.descriptor,
+            workerGit: input.workerGit,
+            arguments_: [
+              "-c",
+              `attr.tree=${attrSource}`,
+              "hash-object",
+              "--stdin",
+              `--path=${nativeRepoPath}`,
+            ],
             oidLength,
-          );
+          });
           return {
             kind: "git",
             mode: captured.executable ? "100755" : "100644",

@@ -923,10 +923,8 @@ static napi_value inspect_path(napi_env env, napi_callback_info info) {
   if (S_ISDIR(stats.st_mode)) {
     object = kind_object(env, "directory");
   } else if (S_ISREG(stats.st_mode)) {
-    int file_fd;
-    unsigned char *bytes = NULL;
-    size_t byte_length = 0;
-    napi_value buffer;
+    int file_fd = -1;
+    napi_value descriptor;
     napi_value executable;
     do {
       file_fd = openat(parent_fd, leaf, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
@@ -946,27 +944,20 @@ static napi_value inspect_path(napi_env env, napi_callback_info info) {
       object = throw_errno(env, "inspected path changed type", EINVAL);
       goto done;
     }
-    result = read_all_fd(file_fd, &bytes, &byte_length);
-    close(file_fd);
-    if (result != 0) {
-      object = throw_errno(env, "failed to read regular path", result);
-      goto done;
-    }
     object = kind_object(env, "regular");
     if (object == NULL ||
-        !check_napi(env, napi_create_buffer_copy(env, byte_length, bytes, NULL, &buffer),
-                    "failed to create regular path bytes") ||
-        !check_napi(env, napi_set_named_property(env, object, "bytes", buffer),
-                    "failed to set regular path bytes") ||
+        !check_napi(env, napi_create_int32(env, file_fd, &descriptor),
+                    "failed to create regular path descriptor") ||
+        !check_napi(env, napi_set_named_property(env, object, "descriptor", descriptor),
+                    "failed to set regular path descriptor") ||
         !check_napi(env, napi_get_boolean(env, (stats.st_mode & 0111) != 0, &executable),
                     "failed to create executable flag") ||
         !check_napi(env, napi_set_named_property(env, object, "executable", executable),
                     "failed to set executable flag")) {
-      free(bytes);
+      close(file_fd);
       object = NULL;
       goto done;
     }
-    free(bytes);
   } else if (S_ISLNK(stats.st_mode)) {
     unsigned char *bytes = NULL;
     size_t byte_length = 0;
