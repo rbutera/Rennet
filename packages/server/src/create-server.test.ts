@@ -18,9 +18,11 @@ import {
   type GitLabPrSubmissionCommand,
   RoundOperationStore,
   RoundRecordStore,
+  SessionStore,
   SqliteReviewStore,
   TranscriptStore,
 } from "@rennet/adapters";
+import { type HarnessPort, mintSession } from "@rennet/core";
 import type {
   Generation,
   LensBoard,
@@ -46,6 +48,8 @@ import {
   createRoundWorkspacePlanner,
   type HandoffTurnExecution,
   type RoundSourceLandingInjection,
+  resolveCodingHarness,
+  runResolvedCodingHarnessTurn,
 } from "./create-server";
 import { createGitHubTokenStore } from "./github-token-store";
 import type { RoundExecutionPorts } from "./runtime/round-execution";
@@ -56,6 +60,154 @@ type PreparationSession = {
   reviewId?: string;
   preparation?: SidebarSession["preparation"];
 };
+
+function codingPort(id: "claude-code" | "codex", version: string): HarnessPort {
+  return {
+    descriptor: { id, version },
+  } as unknown as HarnessPort;
+}
+
+describe("coding-harness resolution", () => {
+  it("selects Claude Code for a Claude-only host and reports the exact version", async () => {
+    const claude = codingPort("claude-code", "2.1.220");
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => claude,
+      resolveCodex: async () => null,
+    });
+
+    expect(resolution).toEqual({
+      status: "ready",
+      selection: { id: "claude-code", version: "2.1.220" },
+      port: claude,
+    });
+  });
+
+  it("pins the first provider before running and refuses to substitute it on the next turn", async () => {
+    const store = new SessionStore(mkdtempSync(join(tmpdir(), "rennet-harness-pin-")));
+    store.save({
+      ...mintSession("project-1", { id: () => "session-1", now: () => 1 }),
+      harnessCursor: {
+        harnessSessionId: "legacy-claude-session",
+        lastAssistantMessageAnchor: "message-1",
+        turnCount: 2,
+      },
+    });
+    const codex = codingPort("codex", "0.146.0");
+    const firstRun = vi.fn(async () => {
+      expect(store.load("session-1")?.codingHarness).toEqual({
+        id: "codex",
+        version: "0.146.0",
+      });
+      expect(store.load("session-1")?.harnessCursor).toBeUndefined();
+      return {
+        status: "completed" as const,
+        finalText: "done",
+        turnDiff: "diff",
+        filesTouched: ["a.ts"],
+      };
+    });
+
+    const first = await runResolvedCodingHarnessTurn({
+      sessionId: "session-1",
+      sessionStore: store,
+      resolveClaude: async () => null,
+      resolveCodex: async () => codex,
+      run: firstRun,
+    });
+
+    expect(firstRun).toHaveBeenCalledWith(codex, "session-1");
+    expect(first.harness).toEqual({ id: "codex", version: "0.146.0" });
+    expect(store.load("session-1")?.codingHarness).toEqual({
+      id: "codex",
+      version: "0.146.0",
+    });
+    expect(store.load("session-1")?.harnessCursor).toBeUndefined();
+
+    const resolveClaude = vi.fn(async () => codingPort("claude-code", "2.1.220"));
+    const secondRun = vi.fn(async () => ({
+      status: "completed" as const,
+      finalText: "wrong provider",
+      turnDiff: "",
+      filesTouched: [],
+    }));
+    const second = await runResolvedCodingHarnessTurn({
+      sessionId: "session-1",
+      sessionStore: store,
+      resolveClaude,
+      resolveCodex: async () => null,
+      run: secondRun,
+    });
+
+    expect(second).toEqual({
+      status: "failed",
+      reason: "Codex is selected for this session but is not available on its execution host.",
+      turnDiff: "",
+      filesTouched: [],
+    });
+    expect(resolveClaude).not.toHaveBeenCalled();
+    expect(secondRun).not.toHaveBeenCalled();
+  });
+
+  it("selects Codex for a Codex-only host and reports the exact version", async () => {
+    const codex = codingPort("codex", "0.146.0");
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => null,
+      resolveCodex: async () => codex,
+    });
+
+    expect(resolution).toEqual({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+      port: codex,
+    });
+  });
+
+  it("keeps a session's pinned provider and never falls back when it disappears", async () => {
+    const resolveCodex = vi.fn(async () => codingPort("codex", "0.146.0"));
+    const resolution = await resolveCodingHarness({
+      pinned: { id: "claude-code", version: "2.1.220" },
+      resolveClaude: async () => null,
+      resolveCodex,
+    });
+
+    expect(resolution).toEqual({
+      status: "unavailable",
+      reason:
+        "Claude Code is selected for this session but is not available on its execution host.",
+    });
+    expect(resolveCodex).not.toHaveBeenCalled();
+  });
+
+  it("honors the host's enabled-harness configuration before choosing", async () => {
+    const codex = codingPort("codex", "0.146.0");
+    const resolution = await resolveCodingHarness({
+      disabledHarnesses: ["claude"],
+      resolveClaude: async () => codingPort("claude-code", "2.1.220"),
+      resolveCodex: async () => codex,
+    });
+
+    expect(resolution).toMatchObject({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+    });
+  });
+
+  it("uses the available provider when the other provider's discovery throws", async () => {
+    const codex = codingPort("codex", "0.146.0");
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => {
+        throw new Error("broken claude executable");
+      },
+      resolveCodex: async () => codex,
+    });
+
+    expect(resolution).toEqual({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+      port: codex,
+    });
+  });
+});
 
 async function waitForReviewSession(
   server: TestServer,
@@ -275,8 +427,9 @@ describe("round worker execution context", () => {
       finalText: "done",
       turnDiff: "",
       filesTouched: [],
+      harness: { id: "codex" as const, version: "0.146.0" },
     }));
-    await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
+    const receipt = await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
       operation: workerRunning,
       attempt: workerAttempt,
     });
@@ -291,6 +444,7 @@ describe("round worker execution context", () => {
         cwd: `/home/rai/repo/.git/rennet-round-worktrees/${key}`,
       },
     });
+    expect(receipt.harness).toEqual({ id: "codex", version: "0.146.0" });
   });
 });
 
@@ -1119,6 +1273,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           finalText: "done",
           turnDiff: "diff --git a/a.txt b/a.txt\n+worker change",
           filesTouched: ["a.txt"],
+          harness: { id: "codex", version: "0.146.0" },
         };
       },
       onRoundPlaceholderCommitted: ({ sessionId, dispatchId }) => {
@@ -1166,6 +1321,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         expect(record?.run).toEqual({
           startedAt: operation.createdAt,
           sourceTarget: operation.sourceTarget,
+          harness: { id: "codex", version: "0.146.0" },
           gate: { outcome: "skipped", reason: "not-configured" },
         });
         // This hook runs before create-server enters PR-draft ripening. If placeholder

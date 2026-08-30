@@ -19,6 +19,13 @@ import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
 
+/** The coding harness one own-branch session is pinned to for its work-order rounds. */
+export const CodingHarnessSelectionSchema = z.object({
+  id: z.enum(["claude-code", "codex"]),
+  version: id,
+});
+export type CodingHarnessSelection = z.infer<typeof CodingHarnessSelectionSchema>;
+
 /**
  * The harness cursor (#466 res. 3, the T3 cursor-resume shape): interactive
  * turns run fresh-process-per-turn + `resume`, so the durable session persists
@@ -188,6 +195,8 @@ const completedWorkerBase = {
   completedAt: z.number().int().nonnegative(),
   diff: z.string(),
   changedPaths: z.array(z.string()),
+  /** Exact harness/version that executed this worker. Optional only for legacy operations. */
+  harness: CodingHarnessSelectionSchema.optional(),
 };
 
 export const RoundTerminationSchema = z.discriminatedUnion("kind", [
@@ -788,6 +797,8 @@ export type RoundRunGateReceipt = z.infer<typeof RoundRunGateReceiptSchema>;
 export const RoundRunReceiptSchema = z.object({
   startedAt: z.number().int().nonnegative(),
   sourceTarget: RoundSourceTargetSchema,
+  /** Exact coding harness selected before the worker started. Absent only on legacy rows. */
+  harness: CodingHarnessSelectionSchema.optional(),
   gate: RoundRunGateReceiptSchema,
 });
 export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;
@@ -1819,6 +1830,11 @@ export const SessionModelSchema = z
     /** Present while New Chat capture/board preparation is running or when it stopped before
      * completion. Cleared only after the attached review's first generation settles. */
     preparation: SessionPreparationSchema.optional(),
+    /**
+     * The harness selected for this session's coding rounds. The first dispatch resolves one
+     * enabled installed harness and persists it; later rounds resolve this exact id or fail.
+     */
+    codingHarness: CodingHarnessSelectionSchema.optional(),
     harnessCursor: HarnessCursorSchema.optional(),
     threads: z.array(SessionThreadSchema),
     createdAt: z.number(),

@@ -143,6 +143,7 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     expect(roundTwo?.querySelector("time")?.getAttribute("dateTime")).toBe(
       "2026-08-29T09:30:00.000Z",
     );
+    expect(roundTwo?.textContent).toContain("Codex 0.146.0");
     expect(roundTwo?.textContent).toContain("fix/token-refresh-observability");
     expect(roundTwo?.textContent).toContain("1 addressed");
     expect(roundOne?.textContent).not.toContain("2 asks");

@@ -41,6 +41,12 @@ const ROUND_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
+function roundHarnessLabel(run: RoundLedgerRecord["run"]): string {
+  if (run?.harness === undefined) return "";
+  const name = run.harness.id === "claude-code" ? "Claude Code" : "Codex";
+  return ` · ${name} ${run.harness.version}`;
+}
+
 /**
  * The review's generation line, oldest→newest, walked out of the durable records (C15 4.4).
  * Each record contributes its frozen predecessor (when the round moved code) and then its own
@@ -144,6 +150,7 @@ export function RoundsLedger({
                       </time>
                       {" · on "}
                       {roundTargetLabel(r.run.sourceTarget)}
+                      {roundHarnessLabel(r.run)}
                     </span>
                   )}
                 </span>

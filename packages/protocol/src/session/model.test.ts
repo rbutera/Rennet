@@ -231,6 +231,7 @@ describe("session/ durable shapes (#466/#457)", () => {
       run: {
         startedAt: 1_777_777_777_000,
         sourceTarget: { kind: "branch", branch: "feat/receipts" },
+        harness: { id: "codex", version: "0.146.0" },
         gate: {
           outcome: "passed",
           command: "pnpm check",
@@ -259,6 +260,7 @@ describe("session/ durable shapes (#466/#457)", () => {
       RoundRunReceiptSchema.safeParse({
         startedAt: 10,
         sourceTarget: { kind: "detached", head: "abc123" },
+        harness: { id: "claude-code", version: "2.1.220" },
         gate: { outcome: "skipped", reason: "not-configured" },
       }).success,
     ).toBe(true);

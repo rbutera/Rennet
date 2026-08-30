@@ -60,6 +60,12 @@ function gateSummary(gate: RoundRunReceipt["gate"]) {
   }
 }
 
+function harnessSummary(harness: RoundRunReceipt["harness"]): string {
+  if (harness === undefined) return "";
+  const name = harness.id === "claude-code" ? "Claude Code" : "Codex";
+  return ` using ${name} ${harness.version}`;
+}
+
 function RunReceiptSummary({
   record,
   roundNumber,
@@ -76,7 +82,8 @@ function RunReceiptSummary({
     >
       <p>
         Round {roundNumber} ran {askCount} {askCount === 1 ? "ask" : "asks"} on{" "}
-        {roundTargetLabel(record.run.sourceTarget)}.
+        {roundTargetLabel(record.run.sourceTarget)}
+        {harnessSummary(record.run.harness)}.
       </p>
       <p>{gateSummary(record.run.gate)}</p>
     </div>

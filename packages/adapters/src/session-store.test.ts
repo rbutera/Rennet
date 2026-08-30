@@ -55,6 +55,46 @@ describe("SessionStore (#466 res. 1–2, B09 cluster 1)", () => {
     expect(store.list()[0]?.forgeRepository).toBeUndefined();
   });
 
+  it("pins a coding harness and clears a legacy Claude cursor when Codex is selected", () => {
+    const store = new SessionStore(tmpDir());
+    store.save({
+      ...mintSession("proj-1", fixed),
+      harnessCursor: {
+        harnessSessionId: "legacy-claude-session",
+        lastAssistantMessageAnchor: "message-1",
+        turnCount: 2,
+      },
+    });
+
+    const selected = store.setCodingHarness("sess-1", { id: "codex", version: "0.146.0" });
+
+    expect(selected?.codingHarness).toEqual({ id: "codex", version: "0.146.0" });
+    expect(selected?.harnessCursor).toBeUndefined();
+    expect(store.load("sess-1")?.codingHarness).toEqual({ id: "codex", version: "0.146.0" });
+  });
+
+  it("keeps a same-provider cursor while refreshing the recorded harness version", () => {
+    const store = new SessionStore(tmpDir());
+    const harnessCursor = {
+      harnessSessionId: "claude-session",
+      lastAssistantMessageAnchor: "message-1",
+      turnCount: 2,
+    };
+    store.save({
+      ...mintSession("proj-1", fixed),
+      codingHarness: { id: "claude-code", version: "2.1.219" },
+      harnessCursor,
+    });
+
+    const selected = store.setCodingHarness("sess-1", {
+      id: "claude-code",
+      version: "2.1.220",
+    });
+
+    expect(selected?.codingHarness).toEqual({ id: "claude-code", version: "2.1.220" });
+    expect(selected?.harnessCursor).toEqual(harnessCursor);
+  });
+
   it("returns undefined for an absent or malformed file (fail-safe read)", () => {
     const dir = tmpDir();
     const store = new SessionStore(dir);
