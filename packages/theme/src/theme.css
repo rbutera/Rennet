@@ -134,6 +134,9 @@
   --color-muted-foreground: var(--rn-ink-soft);
   --color-destructive: var(--rn-danger);
   --color-destructive-foreground: var(--rn-surface);
+  /* digits/glyphs sitting ON the danger fill stay white in both schemes
+     (destructive-foreground tracks surface, which goes near-black in dark) */
+  --color-on-danger: var(--rn-on-danger);
   --color-border: var(--rn-line);
   --color-input: var(--rn-line-strong);
   --color-ring: var(--rn-accent-line);
