@@ -243,7 +243,12 @@ hardcoded hex; `hex-lint`/`design-ramp` enforce the type/radius ramp). Other
 registries are admitted per component and license-verified at pull time; the
 license blocklist (mixed-licence Origin UI, proprietary Aceternity, Commons-Clause
 animate-ui) is checked then. Syntax highlighting uses `shiki`; icons use
-`lucide-react`; prose uses `react-markdown`.
+`lucide-react`. Prose takes **no markdown dependency**: Rennet renders a deliberate
+subset, not a general parser, so `packages/app-ui/src/review/rich-text.tsx` tokenizes
+the R45 grammar (bold, backtick spans, `file.ts:244` citations) by hand and
+`packages/app-ui/src/chat/streaming-prose.tsx` reveals live turns word by word. The
+absence is executable, not a convention: `review/import-boundary.test.ts` fails on any
+`react-markdown`, `remark-*`, or `rehype-*` import.
 
 `wouter` owns renderer routing: it removes the route-matching and
 history-integration subsystem, its history is host-injected (hash in the Electron

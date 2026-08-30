@@ -159,7 +159,7 @@ meaning needs it.
 - Give unfamiliar icons a tooltip and accessible name.
 - Use shared icon components for controls instead of emoji or text glyphs.
 - Use the shared radius and color tokens instead of one-off values.
-- Take segmented controls (pick one of N) from the kit's `ToggleGroup`/`Toggle`; hand-rolling `aria-pressed` or `role="radiogroup"` in a surface is banned by lint, not left to review. Independent toggles are a different thing and stay hand-rolled: the top bar's History · Map · Diff pills are three separate on/off controls over `?view` — none of them is pressed on the board — so each carries its own `aria-pressed` and no group semantics are owed. The test is whether exactly one member is always chosen; if it is, it is a segment and belongs to the kit.
+- Take segmented controls (pick one of N) from the kit's `ToggleGroup`/`Toggle`; hand-rolling `aria-pressed` or `role="radiogroup"` in a surface is banned by lint, not left to review. A skin is not a reason to leave the kit: the top bar's History · Map · Diff pills wear the prototype's outlined-pill look as `className` overrides on `ToggleGroup`/`Toggle`, and keep the group label, roving focus, and empty-selection state the kit already owns.
 
 ## Accessibility is part of the component
 

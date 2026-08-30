@@ -68,7 +68,7 @@ components:
 
 **Creative direction: "The Affineur's Bench"**
 
-Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for review prose.
+Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for annotations and quoted excerpts.
 
 Desktop, browser, mobile, marketing, and documentation use the same palette and type families. Each application can choose its own density and layout.
 
@@ -227,8 +227,12 @@ render at the same **1.6px identity stroke** as the app-ui `Icon` wrapper, so th
 whole app reads at one line weight.
 
 The kit is authored in shadcn's semantic Tailwind vocabulary, and
-`packages/theme` aliases that vocabulary onto the `--rn-*` palette above — no new
-colour or radius exists in the alias layer, it is a rename:
+`packages/theme` aliases that vocabulary onto the `--rn-*` palette above — the alias
+layer is a rename, with one documented exception: an *interaction* state that the
+`--rn-*` palette does not carry may be DERIVED from a palette value with
+`color-mix`, never invented. Today that is `--color-secondary-hover` (raised mixed
+with 5% ink), because a secondary button whose hover is the same fill as its rest
+state has no hover at all. Every base colour and every radius is still a rename:
 
 - **Semantic colour:** `background`→canvas, `foreground`→ink, `card`→surface,
   `popover`→overlay, `primary`→accent-fill (`primary-foreground`→accent-ink),
@@ -245,7 +249,7 @@ The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme
 
 - Keep one ground color from title bar to canvas.
 - Reserve gold for selection, decisions, focus, and primary actions.
-- Use serif for annotations and review prose. Use sans serif for controls and data.
+- Use serif for annotations and quoted prose excerpts. Use sans serif for the review body, conversations, controls, and data (amended 2026-08-26 — see Typography).
 - Test light and dark schemes.
 - Preserve the full review and all important claims at every breakpoint.
 - Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state. Chrome floating over content in the full-bleed state may use a translucent, blurred ground — the one sanctioned exception (see Material, Rai 2026-08-28); opaque grounds remain the rule everywhere else.
