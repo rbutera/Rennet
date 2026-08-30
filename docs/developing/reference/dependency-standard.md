@@ -161,7 +161,9 @@ without buffering the file in native or JavaScript memory. The Windows artifact
 currently exposes an explicit unsupported constructor. Desktop and CLI builds
 stage every available platform directory at
 `<server-bundle>/native/<platform>-<architecture>/`; the Windows release bundle
-also carries `linux-x64` for its WSL daemon. The server does not yet construct
+also carries `linux-x64` for its WSL daemon. Those bundle builds remain uncached:
+they copy platform- and toolchain-dependent native outputs whose bytes do not
+exist when Nx hashes the dependent task graph. The server does not yet construct
 this host, so production composition remains separate work.
 
 Native artifacts and their semantic verdicts depend on the operating system,

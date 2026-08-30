@@ -20,7 +20,7 @@
       "command": "pnpm exec tsc -p packages/server/tsconfig.json && node scripts/build-server-cli.mjs",
       "inputs": ["default", "^production", { "input": "serverCliBuildScripts" }],
       "outputs": ["{projectRoot}/dist"],
-      "cache": true
+      "cache": false
     },
     "lint": {
       "command": "pnpm exec eslint packages/server/src --max-warnings=0 && pnpm exec biome check packages/server/src"
