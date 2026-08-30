@@ -170,7 +170,7 @@ describe("FirstRunWelcome", () => {
     expect(
       await screen.findByText("You stopped writing the code. You still have to answer for it."),
     ).toBeTruthy();
-    expect(container.querySelector("[data-welcome-header]")).toBeNull();
+    expect(container.querySelector("header")).toBeNull();
     const fragments = [...container.querySelectorAll("[data-fragment]")];
     expect(fragments).toHaveLength(10);
     expect(new Set(fragments.map((fragment) => fragment.textContent?.length)).size).toBeGreaterThan(

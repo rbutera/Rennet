@@ -186,7 +186,7 @@
     position: absolute;
     margin: 0;
     padding: 7px 9px;
-    border-left: 1px solid var(--rn-line-strong);
+    border-left: 1px solid color-mix(in srgb, var(--rn-line-strong) 65%, transparent);
     color: var(--rn-ink-faint);
     font: 9px / 1.62 var(--font-mono);
     white-space: pre;

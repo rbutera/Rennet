@@ -340,10 +340,7 @@ function WelcomeShell({
   return (
     <div className="min-h-dvh overflow-hidden bg-canvas text-ink">
       {step > 0 ? (
-        <header
-          className="flex h-[58px] items-center justify-between border-b border-line bg-canvas px-7"
-          data-welcome-header
-        >
+        <header className="flex h-[58px] items-center justify-between border-b border-line bg-canvas px-7">
           <RennetLockup size={24} />
           <span className="flex items-center gap-1.5 text-xs text-ink-faint">
             <ShieldCheck className="size-3.5 text-green" /> Local by default
@@ -371,7 +368,10 @@ function WelcomeShell({
 function CodeField() {
   return (
     <div
-      className="rn-code-field pointer-events-none absolute inset-0 overflow-hidden max-md:opacity-20"
+      // The field dims as a whole (the prototype's `.diff-field { opacity: .72 }`) on top
+      // of the per-fragment .58, so the rain reads as texture behind the stage, not as a
+      // second column of text competing with it.
+      className="rn-code-field pointer-events-none absolute inset-0 overflow-hidden opacity-[.72] max-md:opacity-20"
       aria-hidden="true"
     >
       {CODE_FRAGMENTS.map((fragment, index) => (
@@ -420,8 +420,10 @@ function CodeField() {
 const REVIEW_WORD_REEL = [...REVIEW_WORDS, REVIEW_WORDS[0]];
 
 /** Hand-built reel keyframes: hold each sentence still, then move one row. `times` is
- *  normalised over the whole cycle, so the pair (hold, move) repeats per word. */
-function reelKeyframes(): { positions: string[]; times: number[] } {
+ *  normalised over the whole cycle, so the pair (hold, move) repeats per word — which
+ *  means `cycle` (the animation's duration in seconds) has to come from here too, or a
+ *  change to hold/move silently rescales every hold against a stale duration. */
+function reelKeyframes(): { positions: string[]; times: number[]; cycle: number } {
   const hold = 1.55;
   const move = 0.35;
   const segment = hold + move;
@@ -438,10 +440,9 @@ function reelKeyframes(): { positions: string[]; times: number[] } {
     positions.push(current, next);
     times.push((index * segment + hold) / cycle, ((index + 1) * segment) / cycle);
   }
-  return { positions, times };
+  return { positions, times, cycle };
 }
 
-const REEL_CYCLE_SECONDS = REVIEW_WORDS.length * 1.9;
 /** Where the reel sits once it has scrolled through every word — the offset the
  *  reduced-motion path jumps straight to, so the sentence still reads complete. */
 const REEL_FINAL_OFFSET = `${-((REVIEW_WORD_REEL.length - 1) / REVIEW_WORD_REEL.length) * 100}%`;
@@ -686,7 +687,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
       { y: reel.positions },
       {
         delay: 1.68,
-        duration: REEL_CYCLE_SECONDS,
+        duration: reel.cycle,
         times: reel.times,
         repeat: Infinity,
         ease: "linear",
@@ -759,9 +760,12 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
             You stopped writing the code. You still have to answer for it.
           </p>
           {/* One reel row per sentence, scrolled under a one-line window: the whole
-           *  line moves, so the words never reflow around a changing tail. */}
+           *  line moves, so the words never reflow around a changing tail. The rows stay
+           *  `nowrap` at EVERY width — the window is hard-sized to one line (1.35em), so a
+           *  wrapped row is a clipped row. Narrow screens overflow horizontally instead,
+           *  which the full-bleed `w-screen` row absorbs. */}
           <p
-            className="absolute inset-y-0 left-[calc(50%-50vw)] grid w-screen place-items-center whitespace-nowrap text-lg leading-[1.35] tracking-[-0.015em] text-ink max-md:whitespace-normal"
+            className="absolute inset-y-0 left-[calc(50%-50vw)] grid w-screen place-items-center whitespace-nowrap text-lg leading-[1.35] tracking-[-0.015em] text-ink"
             data-review-tagline
             style={{ opacity: 0, transform: "translateY(10px)" }}
           >
@@ -781,7 +785,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
               >
                 {REVIEW_WORD_REEL.map((word, index) => (
                   <strong
-                    className="flex w-full items-center justify-center whitespace-nowrap font-semibold max-md:whitespace-normal"
+                    className="flex w-full items-center justify-center whitespace-nowrap font-semibold"
                     // biome-ignore lint/suspicious/noArrayIndexKey: row 0 repeats at the end for the seamless wrap, so the word alone is not unique
                     key={`${word}-${index}`}
                   >
@@ -1408,8 +1412,11 @@ function ReadyStage({
   }
   return (
     <section className="mx-auto flex min-h-[calc(100dvh-58px)] w-[min(780px,calc(100vw-48px))] flex-col items-center pt-[clamp(70px,10vh,120px)] pb-[120px] text-center">
-      <span className="relative mb-[22px] grid h-20 w-[280px] place-items-center">
-        <RennetLockup size={46} />
+      {/* The ready badge is the MARK alone, and the box hugs it: the tick pins to the
+       *  artwork's own corner rather than to the far end of a wordmark-wide strip. A
+       *  `part` is decorative, so the assembly carries the accessible name. */}
+      <span className="relative mb-[22px] grid place-items-center" role="img" aria-label="Rennet">
+        <RennetLockup size={72} part="mark" />
         <i className="absolute right-0 -bottom-1 grid size-[31px] place-items-center rounded-full border-4 border-canvas bg-green text-surface [&_svg]:size-3.5">
           <Check />
         </i>
