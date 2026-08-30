@@ -751,6 +751,7 @@ async function moveAndReconcile(input: {
   readonly destinationPath: string;
   readonly descriptor: RoundSourceLandingPathDescriptor;
   readonly inspect: (path: string) => Promise<ObservedPathDescriptor>;
+  readonly sourceAdvancedToTarget?: () => Promise<boolean>;
   readonly restoreUnexpectedDestination?: boolean;
 }): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -761,6 +762,13 @@ async function moveAndReconcile(input: {
     const source = await input.inspect(input.sourcePath);
     const destination = await input.inspect(input.destinationPath);
     if (source.kind === "absent" && sameDescriptor(destination, input.descriptor)) return;
+    if (
+      sameDescriptor(destination, input.descriptor) &&
+      input.sourceAdvancedToTarget !== undefined &&
+      (await input.sourceAdvancedToTarget())
+    ) {
+      return;
+    }
     if (
       source.kind === "absent" &&
       destination.kind !== "absent" &&
@@ -1010,6 +1018,8 @@ export async function landTransactionalRoundSourceUnit(input: {
       destinationPath: backup,
       descriptor: input.unit.baseline,
       inspect: inspectBaseline,
+      sourceAdvancedToTarget: async () =>
+        sameDescriptor(await inspectTarget(destination), input.unit.target),
       restoreUnexpectedDestination: true,
     });
     await input.fileSystem.removeEmptyParents({ path: landingRelativePath(destination) });
