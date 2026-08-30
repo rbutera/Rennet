@@ -102,6 +102,9 @@ function fakeBridge(
     switch (name) {
       case "project.contextMap":
         return mapResult;
+      // The takeover header names the project it belongs to, so the surface asks for it.
+      case "projects.list":
+        return { projects: [{ id: "project-1", name: "atlas" }] };
       case "project.knowledgeDisposition": {
         // The store is authoritative: echo the persisted statement with the flipped
         // status (not the pre-disposition hypothesis) — the reconciliation the UI relies on.
@@ -159,7 +162,25 @@ describe("ContextMapView — the Context Map surface", () => {
           .length,
       ).toBeGreaterThan(0),
     );
-    expect(calls[0]).toEqual({ name: "project.contextMap", input: { projectId: "project-1" } });
+    // The map is read for the project under review. (Not `calls[0]`: the header's own
+    // `projects.list` is a child, and a child's effect runs before its parent's, so the
+    // ORDER of these two is React's, not this surface's — only their presence is ours.)
+    expect(calls).toContainEqual({
+      name: "project.contextMap",
+      input: { projectId: "project-1" },
+    });
+    // The 40px takeover header: an icon Back, the `project › Context Map` trail, `esc`.
+    const bar = container.querySelector(".context-map-bar");
+    expect(bar?.className).toContain("h-10");
+    expect(bar?.textContent).toContain("atlas");
+    expect(bar?.textContent).toContain("Context Map");
+    expect(bar?.textContent).toContain("esc");
+    expect(bar?.querySelector('[aria-label="Back"]')).not.toBeNull();
+    // The base the map was built from is its OWN strip under the header, not folded in.
+    expect(bar?.textContent).not.toContain("abcdef012345");
+    expect(container.querySelector(".context-map-base-strip")?.textContent).toContain(
+      "abcdef012345",
+    );
     const tree = container.querySelector(".context-map-tree");
     expect(tree?.textContent).toContain("@rennet/core");
     expect(tree?.textContent).toContain("@rennet/ui");

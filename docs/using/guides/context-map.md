@@ -11,7 +11,9 @@ your confirmation.
 
 Reach the map from **View Context Map** on the ready summary shown when a new
 project finishes indexing, or from the **Map** control in a project's New Chat
-header. It opens as a full view; leaving it lands on that project's New Chat.
+header. It opens as a full view, and the back arrow in its header or Escape leaves
+it for that project's New Chat. When the ask field contains text, the first Escape
+clears it and the next leaves.
 
 **Map** in a session's top bar opens the same map for that session's project,
 without leaving the session. Leaving it there returns to the board rather than to

@@ -7,7 +7,7 @@ import {
   type ProjectMapPayload,
   type ProjectProcessEvent,
 } from "@rennet/protocol";
-import { ArrowLeft, Check, LoaderCircle, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, LoaderCircle, RotateCcw, X } from "lucide-react";
 import {
   type FormEvent,
   forwardRef,
@@ -95,6 +95,41 @@ export function discussPrompt(statement: KnowledgeStatementPayload): string {
   return `About "${statement.subject}": the claim "${statement.claim}" — is this right? Revise it against the evidence.`;
 }
 
+/**
+ * The Context Map's takeover header — the 40px tier every takeover surface carries
+ * (board prototype `components/context-map.tsx`): an icon back button, the
+ * `project › Context Map` trail, and the `esc` hint that `ContextMapView`'s window
+ * handler makes true. It renders identically over the loading/error state and the
+ * loaded map, so the header does not resize under the reviewer when the map arrives.
+ */
+function MapHeader({ projectId, onBack }: { projectId: string; onBack(): void }) {
+  const { data: projectsData } = useCommand("projects.list", {});
+  // The id is the honest fallback until the list resolves — never a placeholder name.
+  const projectName =
+    (projectsData?.projects ?? []).find((candidate) => candidate.id === projectId)?.name ??
+    projectId;
+  return (
+    <header className="context-map-bar flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-3">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label="Back"
+        className="context-map-back mr-0.5 flex size-6 items-center justify-center rounded-control text-ink-soft hover:bg-raised hover:text-ink"
+      >
+        <Icon icon={ArrowLeft} className="size-3.5" />
+      </button>
+      <span className="flex min-w-0 items-center gap-1.5 text-sm">
+        <span className="shrink-0 font-medium text-ink">{projectName}</span>
+        <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
+        <span className="context-map-title text-ink-soft">Context Map</span>
+      </span>
+      <kbd className="ml-auto rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-faint">
+        esc
+      </kbd>
+    </header>
+  );
+}
+
 export function ContextMapView({
   projectId,
   onBack,
@@ -173,6 +208,17 @@ export function ContextMapView({
     }
   }, [build, mapQuery.data, mapQuery.fetching, mapQuery.stale]);
 
+  // Escape leaves the map, the way every other takeover surface behaves — which is what
+  // makes the header's `esc` hint true rather than decoration. The ask field's own
+  // Escape clears its text first and stops there (`AskRail`), so a bare Escape leaves.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onBack();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack]);
+
   if (mapQuery.data?.status === "ok" && !mapQuery.error && !mapQuery.fetching && !mapQuery.stale) {
     return (
       <ContextMap
@@ -186,18 +232,8 @@ export function ContextMapView({
     );
   }
   return (
-    <div className="context-map min-h-screen flex flex-col bg-canvas">
-      <header className="context-map-bar flex items-center gap-4 px-6 pt-5 pb-4 border-b border-line">
-        <button
-          type="button"
-          onClick={onBack}
-          className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
-        >
-          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
-          Back
-        </button>
-        <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
-      </header>
+    <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
+      <MapHeader projectId={projectId} onBack={onBack} />
       <div className="context-map-status flex max-w-xl flex-col gap-3 px-8 py-10 text-ink-soft">
         <div className="flex items-center gap-2 font-serif text-base">
           {mapQuery.pending || build.kind === "processing" || build.kind === "refreshing" ? (
@@ -320,32 +356,28 @@ function ContextMap({
   // and enrichment trails structure, so a lagging set must not read as "current".
   const knowledgeBehind = knowledge !== null && knowledge.baseOid !== map.baseOid;
   return (
-    <div className="context-map min-h-screen flex flex-col bg-canvas">
-      <header className="context-map-bar flex items-center gap-4 px-6 pt-5 pb-4 border-b border-line">
-        <button
-          type="button"
-          onClick={onBack}
-          className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
-        >
-          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
-          Back
-        </button>
-        <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
-        <span className="context-map-base font-mono text-sm text-ink-faint truncate">
+    <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
+      <MapHeader projectId={projectId} onBack={onBack} />
+      {/* The base strip is its OWN row under the 40px header (prototype `MapBaseLine`),
+          never folded into it: the header is the takeover tier, and what the map was
+          built from is content about the map. */}
+      <div className="context-map-base-strip flex shrink-0 items-center gap-2 border-b border-line px-4 py-2">
+        <span className="shrink-0 text-sm font-medium text-ink">Context Map</span>
+        <span className="context-map-base truncate font-mono text-sm text-ink-faint">
           {knowledge?.repoKey ?? map.baseRef} · {map.baseRef} @ {map.baseOid.slice(0, 12)}
         </span>
         {knowledgeBehind ? (
-          <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-2xs font-semibold">
+          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-2xs font-semibold">
             ◐ knowledge behind map
           </span>
         ) : (
-          <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-2xs font-semibold">
+          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-2xs font-semibold">
             ● current
           </span>
         )}
-      </header>
+      </div>
       <div className="context-map-main flex flex-1 min-h-0">
-        <section className="context-map-col flex flex-col min-w-0 w-[26rem] border-r border-line">
+        <section className="context-map-col flex flex-col min-w-0 w-64 border-r border-line">
           <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
             Structure — {map.scopes.length} scopes · {fileCount.toLocaleString()} files
           </div>
@@ -948,6 +980,15 @@ const AskRail = forwardRef<{ prefill(text: string): void }, { projectId: string 
           ref={inputRef}
           placeholder="Ask about this project…"
           aria-label="Message the orchestrator"
+          onKeyDown={(event) => {
+            // Escape clears a half-typed question BEFORE it can bubble to the view's
+            // window handler and close the map out from under it (archived-view's
+            // two-stage pattern). With the field empty, Escape leaves.
+            if (event.key === "Escape" && event.currentTarget.value) {
+              event.stopPropagation();
+              event.currentTarget.value = "";
+            }
+          }}
           className="context-map-field flex-1 min-w-0 px-3 py-2 rounded-control border border-line bg-surface text-ink text-base"
         />
         <button
