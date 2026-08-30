@@ -41,7 +41,7 @@ function sessionDispatch(dir: string) {
       // The composition root's own start, verbatim in SHAPE (create-server.ts) — so the
       // front door this test drives is the front door the app runs. The capture the real
       // root performs is stubbed to a fixed review id: this suite is about the claim and
-      // the durability of the mint, and `capture-then-mint` ordering has its own test.
+      // the durability of the mint; background preparation has composition-root tests.
       start: async ({
         projectId,
         target,

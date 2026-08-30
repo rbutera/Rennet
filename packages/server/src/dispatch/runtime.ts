@@ -645,14 +645,11 @@ export interface DispatchDeps {
   readonly sessions?: {
     list(): readonly SidebarSession[];
     /**
-     * The New Chat front door (C21, #587): start a session on a target — capture what
-     * changed, mint, claim, and attach the review — as ONE host-owned act.
+     * The New Chat front door (C21, #587/#668): mint and claim a target immediately, then
+     * capture and draft into that durable session in the background.
      *
-     * It is one act because the client cannot make it one. The renderer can issue mint,
-     * then capture, then attach, but it cannot make that sequence atomic: a capture that
-     * rejects after the mint leaves a claim standing over a review-less session, and the
-     * claim hides the row that would retry it. So the ORDER here is capture FIRST, mint
-     * second — a rejected capture has claimed nothing and the row stays clickable.
+     * The session's preparation state makes capture failure, cancellation, daemon restart,
+     * and retry durable instead of hiding them behind a blocked row click.
      *
      * The client also cannot resolve WHICH repo a row belongs to. `Project.openPath` is
      * "the repo, or the FIRST included repo" (`wire.ts`), while the row list spans every
@@ -674,6 +671,8 @@ export interface DispatchDeps {
         forgeRepository?: ForgeRepoIdentity;
       };
     }): Promise<{ session: SidebarSession; reattached: boolean }>;
+    cancelPreparation(sessionId: string): SidebarSession | undefined;
+    retryPreparation(sessionId: string, commandId: string): Promise<SidebarSession | undefined>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;

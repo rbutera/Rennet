@@ -110,6 +110,7 @@ export function sidebarSessionOf(
     // binds it here, so `/s/<sessionId>` resolves to the review workspace. Absent means
     // nothing has been captured for this session — honestly, there is no diff.
     ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
+    ...(session.preparation === undefined ? {} : { preparation: session.preparation }),
     ...(completedRoundNumber === undefined
       ? {}
       : { subtitle: `Round ${completedRoundNumber} is back` }),
@@ -189,9 +190,9 @@ export function sessionHandlers(rt: DispatchRuntime) {
     },
     "session.mint": async (rawInput) => {
       const name = "session.mint" as const;
-      // The New Chat front door (C21, #587). Starting a session is ONE host-owned act —
-      // capture, mint, claim, attach — because the client cannot make that sequence
-      // atomic and cannot resolve which repo of a workspace the row named. No store
+      // The New Chat front door (C21, #587/#668). Starting a session is ONE host-owned act:
+      // mint and claim durably, return immediately, then capture and draft behind the
+      // session's preparation state. The client cannot resolve which repo a workspace row named. No store
       // wired ⇒ `session: null`: nothing was started, said in the same honest language
       // the sibling writes use, never a fabricated row the client would navigate into.
       const input = parseCommandInput(name, rawInput);
@@ -217,6 +218,19 @@ export function sessionHandlers(rt: DispatchRuntime) {
         session: started?.session ?? null,
         reattached: started?.reattached ?? false,
       });
+    },
+    "session.cancelPreparation": async (rawInput) => {
+      const name = "session.cancelPreparation" as const;
+      const input = parseCommandInput(name, rawInput);
+      const session = rt.deps.sessions?.cancelPreparation(input.sessionId) ?? null;
+      return parseCommandOutput(name, { session });
+    },
+    "session.retryPreparation": async (rawInput) => {
+      const name = "session.retryPreparation" as const;
+      const input = parseCommandInput(name, rawInput);
+      const session =
+        (await rt.deps.sessions?.retryPreparation(input.sessionId, input.commandId)) ?? null;
+      return parseCommandOutput(name, { session });
     },
     "session.rename": async (rawInput) => {
       const name = "session.rename" as const;

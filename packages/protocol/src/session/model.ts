@@ -1564,6 +1564,38 @@ export const LensLaneSchema = z.discriminatedUnion("status", [
 export type LensLane = z.infer<typeof LensLaneSchema>;
 
 /**
+ * The durable preparation state for a session opened from New Chat. The session is minted
+ * before capture starts so the client can navigate immediately; this record is the honest
+ * account of what the daemon is doing after that navigation. Board lanes are snapshots folded
+ * from the real lens-pipeline events, not client timers.
+ */
+export const SessionPreparationSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("capturing"),
+    step: z.enum(["resolving-repository", "capturing-change"]),
+  }),
+  z.object({
+    status: z.literal("drafting"),
+    reviewId: id,
+    lanes: z.array(LensLaneSchema),
+  }),
+  z.object({
+    status: z.literal("failed"),
+    stage: z.enum(["capture", "boards"]),
+    reason: z.string().min(1),
+    reviewId: id.optional(),
+    lanes: z.array(LensLaneSchema).optional(),
+  }),
+  z.object({
+    status: z.literal("cancelled"),
+    stage: z.enum(["capture", "boards"]),
+    reviewId: id.optional(),
+    lanes: z.array(LensLaneSchema).optional(),
+  }),
+]);
+export type SessionPreparation = z.infer<typeof SessionPreparationSchema>;
+
+/**
  * The event's position in its review's progress log — monotonic across rounds, assigned
  * by the emitting hub. It exists so a client can MERGE the catch-up read with the live
  * push without either clobbering the other: an event already folded is recognised by its
@@ -1779,6 +1811,9 @@ export const SessionModelSchema = z
     forgeRepository: forgeRepoIdentitySchema.optional(),
     claim: ClaimSchema.optional(),
     reviewId: id.optional(),
+    /** Present while New Chat capture/board preparation is running or when it stopped before
+     * completion. Cleared only after the attached review's first generation settles. */
+    preparation: SessionPreparationSchema.optional(),
     harnessCursor: HarnessCursorSchema.optional(),
     threads: z.array(SessionThreadSchema),
     createdAt: z.number(),

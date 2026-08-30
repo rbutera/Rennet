@@ -144,15 +144,15 @@ export function hideClaimedRows(
 export interface NewChatMint {
   /**
    * Start the session AND the review for a row (or, with no row, the "talk about the
-   * project" checkout row): mint + claim, capture the clicked target's change, attach it
-   * to the minted session, then land on it carrying the typed ask. A host with no session
+   * project" checkout row): mint + claim, land on the durable preparation page immediately,
+   * then let the host capture and draft into that session. A host with no session
    * store mints nothing and answers `null` — this then stays put rather than navigating
    * to a session that does not exist.
    */
   readonly start: (row: SmartRow | undefined, ask: string) => void;
   /** A start is in flight — the surface disables its rows so one click is one session. */
   readonly pending: boolean;
-  /** The reason the start failed, shown as-is; nothing is claimed to have started. */
+  /** The reason the mint command itself failed before a session route could open. */
   readonly error: unknown;
 }
 
@@ -163,14 +163,14 @@ function noop(): void {
 
 export function useNewChatMint(projectId: string): NewChatMint {
   const [, navigate] = useLocation();
-  // ONE command. Starting a session is one host-owned act (#587) — capture, mint, claim,
-  // attach — so the client issues it and navigates to what came back.
+  // ONE command. Starting a session is one host-owned act (#587/#668): mint, claim and
+  // schedule durable capture/drafting — so the client navigates as soon as the session exists.
   //
   // It used to be three calls the renderer sequenced, and every one of this seam's defects
   // lived in that sequencing: a capture skipped because the async `projects.list` read had
   // not settled while the navigate ran anyway (a review-less session, the exact bug this
-  // closes), a claim minted before a capture that could reject (stranding the target behind
-  // a hidden row with no retry), and `project.openPath` sent as the repo for a row that
+  // closes), a capture failure that had no durable surface to report or retry, and
+  // `project.openPath` sent as the repo for a row that
   // might belong to any of a workspace's repos. None of them are reachable from here now,
   // because none of those steps happen here.
   const mint = useMutation("session.mint", { invalidates: ["session.list"] });
@@ -199,8 +199,8 @@ export function useNewChatMint(projectId: string): NewChatMint {
           navigate(sessionPath(session.id, typed === "" ? {} : { ask: typed }));
         })
         // `useMutation` already holds the reason in `error`, which the surface renders.
-        // Absorbing it here only stops an unhandled rejection, never the reporting. A
-        // rejection means nothing was claimed, so the row is still there to click again.
+        // Absorbing it here only stops an unhandled rejection, never the reporting. Capture
+        // failures arrive after navigation on the durable preparation surface.
         .catch(noop);
     },
     [mintMutate, navigate, projectId],

@@ -20,7 +20,13 @@ import {
   RoundRecordStore,
   TranscriptStore,
 } from "@rennet/adapters";
-import type { Generation, LensBoard, Review, RoundOperation } from "@rennet/protocol";
+import type {
+  Generation,
+  LensBoard,
+  Review,
+  RoundOperation,
+  SidebarSession,
+} from "@rennet/protocol";
 import {
   generationIdForPatchset,
   ROUND_NO_REGEN,
@@ -42,6 +48,31 @@ import {
 } from "./create-server";
 import { createGitHubTokenStore } from "./github-token-store";
 import type { RoundExecutionPorts } from "./runtime/round-execution";
+
+type TestServer = Awaited<ReturnType<typeof createRennetServer>>;
+type PreparationSession = {
+  id: string;
+  reviewId?: string;
+  preparation?: SidebarSession["preparation"];
+};
+
+async function waitForReviewSession(
+  server: TestServer,
+  sessionId: string,
+): Promise<PreparationSession> {
+  let prepared: PreparationSession | undefined;
+  await vi.waitFor(
+    async () => {
+      const listed = (await server.dispatch("session.list", {})) as {
+        sessions: PreparationSession[];
+      };
+      prepared = listed.sessions.find((session) => session.id === sessionId);
+      expect(prepared?.reviewId).toBeDefined();
+    },
+    { timeout: 15_000, interval: 20 },
+  );
+  return prepared as PreparationSession;
+}
 
 describe("publish board-drafting coordination", () => {
   const review = {
@@ -336,6 +367,123 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
+  it("returns the durable session before a held capture and cancels it in place", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-immediate-mint-state-"));
+    const repo = mkdtempSync(join(tmpdir(), "rennet-immediate-mint-repo-"));
+    dirs.push(dataDir, repo);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    execFileSync("git", ["add", "a.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000" },
+    });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+    expect(minted.session?.preparation).toEqual({
+      status: "capturing",
+      step: "resolving-repository",
+    });
+
+    const cancelled = (await server.dispatch("session.cancelPreparation", {
+      sessionId: minted.session?.id ?? "",
+    })) as { session: PreparationSession | null };
+    expect(cancelled.session?.preparation?.status).toBe("cancelled");
+    expect(cancelled.session?.reviewId).toBeUndefined();
+
+    const retried = (await server.dispatch("session.retryPreparation", {
+      sessionId: minted.session?.id ?? "",
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+    expect(retried.session?.preparation).toEqual({
+      status: "capturing",
+      step: "resolving-repository",
+    });
+    await server.dispatch("session.cancelPreparation", {
+      sessionId: minted.session?.id ?? "",
+    });
+  });
+
+  it("turns an interrupted preparation into a retryable failure after restart", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-preparation-restart-state-"));
+    const repo = mkdtempSync(join(tmpdir(), "rennet-preparation-restart-repo-"));
+    dirs.push(dataDir, repo);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    execFileSync("git", ["add", "a.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+
+    const first = await createRennetServer({
+      dataDir,
+      env: { RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000" },
+    });
+    shutdowns.push(first.shutdown);
+    const added = (await first.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await first.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+    expect(minted.session?.preparation?.status).toBe("capturing");
+    first.shutdown();
+
+    const restarted = await createRennetServer({
+      dataDir,
+      env: { RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000" },
+    });
+    shutdowns.push(restarted.shutdown);
+    const listed = (await restarted.dispatch("session.list", {})) as {
+      sessions: PreparationSession[];
+    };
+    const recovered = listed.sessions.find((session) => session.id === minted.session?.id);
+    expect(recovered?.preparation).toEqual({
+      status: "failed",
+      stage: "capture",
+      reason: "Rennet restarted before preparation finished. Retry to continue.",
+    });
+
+    const retried = (await restarted.dispatch("session.retryPreparation", {
+      sessionId: minted.session?.id ?? "",
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+    expect(retried.session?.preparation?.status).toBe("capturing");
+    await restarted.dispatch("session.cancelPreparation", {
+      sessionId: minted.session?.id ?? "",
+    });
+  });
+
   it("keeps legacy repository + PR targets on the GitHub opener", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-legacy-pr-dispatch-"));
     const workspace = mkdtempSync(join(tmpdir(), "rennet-legacy-pr-workspace-"));
@@ -444,6 +592,7 @@ describe("session.mint — provider-qualified PR dispatch", () => {
       repository: "acme/widget.git",
     })) as {
       session: {
+        id: string;
         repository?: string;
         forgeRepository?: { forge: string; owner: string; name: string };
         reviewId?: string;
@@ -456,7 +605,8 @@ describe("session.mint — provider-qualified PR dispatch", () => {
       owner: "acme",
       name: "widget",
     });
-    expect(minted.session?.reviewId).toBeDefined();
+    const prepared = await waitForReviewSession(server, minted.session?.id ?? "");
+    expect(prepared.reviewId).toBeDefined();
     expect(httpFetch.mock.calls.some(([input]) => String(input).includes("/graphql"))).toBe(true);
     const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
     expect(listed.sessions).toHaveLength(1);
@@ -497,20 +647,33 @@ describe("session.mint — provider-qualified PR dispatch", () => {
       primaryBranch: "main",
     })) as { project: { id: string } };
 
-    await expect(
-      server.dispatch("session.mint", {
-        projectId: added.project.id,
-        commandId: randomUUID(),
-        branch: "main",
-        prNumber: 7,
-        repository: "acme/widget",
-        forgeRepository: { forge: "gitlab", owner: "acme", name: "widget" },
-      }),
-    ).rejects.toThrow("GitLab CLI is unavailable. Install `glab`");
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "widget" },
+    })) as { session: PreparationSession | null };
+    expect(minted.session?.preparation?.status).toBe("capturing");
+    let failed: PreparationSession | undefined;
+    await vi.waitFor(
+      async () => {
+        const listed = (await server.dispatch("session.list", {})) as {
+          sessions: PreparationSession[];
+        };
+        failed = listed.sessions.find((session) => session.id === minted.session?.id);
+        expect(failed?.preparation?.status).toBe("failed");
+      },
+      { timeout: 4_000, interval: 20 },
+    );
+    const failedPreparation = failed?.preparation;
+    if (failedPreparation?.status !== "failed") throw new Error("capture did not fail");
+    expect(failedPreparation.reason).toContain("GitLab CLI is unavailable. Install `glab`");
     expect(httpFetch).not.toHaveBeenCalled();
 
     const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
-    expect(listed.sessions).toEqual([]);
+    expect(listed.sessions).toHaveLength(1);
   });
 });
 
@@ -655,8 +818,8 @@ describe("createRennetServer — GitLab submission composition", () => {
     const minted = (await server.dispatch("session.mint", {
       projectId: added.project.id,
       commandId: randomUUID(),
-    })) as { session: { reviewId?: string } | null };
-    const reviewId = minted.session?.reviewId ?? "";
+    })) as { session: { id: string; reviewId?: string } | null };
+    const reviewId = (await waitForReviewSession(server, minted.session?.id ?? "")).reviewId ?? "";
     expect(reviewId).not.toBe("");
 
     const composed = (await server.dispatch("publish.compose", {
@@ -786,7 +949,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     })) as { session: { id: string; reviewId?: string } | null };
     expect(minted.session).not.toBeNull();
     const checkoutId = minted.session?.id ?? "";
-    const reviewId = minted.session?.reviewId ?? "";
+    const reviewId = (await waitForReviewSession(server, checkoutId)).reviewId ?? "";
     expect(reviewId).not.toBe(""); // the front door captured and ATTACHED
     expect(checkoutId).not.toBe(reviewId); // a randomUUID id, never the review's id
 
@@ -931,7 +1094,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       commandId: randomUUID(),
     })) as { session: { id: string; reviewId?: string } | null };
     const sessionId = minted.session?.id ?? "";
-    const reviewId = minted.session?.reviewId ?? "";
+    const reviewId = (await waitForReviewSession(server, sessionId)).reviewId ?? "";
     const before = (await server.dispatch("review.load", {
       commandId: randomUUID(),
       reviewId,
@@ -1045,7 +1208,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       commandId: randomUUID(),
     })) as { session: { id: string; reviewId?: string } | null };
     const sessionId = minted.session?.id ?? "";
-    const reviewId = minted.session?.reviewId ?? "";
+    const reviewId = (await waitForReviewSession(first, sessionId)).reviewId ?? "";
     new TranscriptStore(join(dataDir, "transcripts")).append(sessionId, [
       {
         kind: "turn",

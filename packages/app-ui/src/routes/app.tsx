@@ -1,17 +1,23 @@
-import type { RennetBridge, SettingsView, SidebarSession } from "@rennet/protocol";
+import {
+  newCommandId,
+  type RennetBridge,
+  type SessionPreparation,
+  type SettingsView,
+  type SidebarSession,
+} from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { FolderPlus } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
-import { BridgeProvider, useCommand, useMutation } from "../data";
+import { BridgeProvider, useCommand, useMutation, useRefreshCommand } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { BackgroundNarration } from "../project/indexing/background-narration";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
 import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
-import { RunRoute } from "../rounds/run-route";
+import { RunRoute, StatusIcon } from "../rounds/run-route";
 import {
   LiveSettingsProjectionProvider,
   PriorSurfaceTracker,
@@ -135,13 +141,10 @@ function EmptyProjectEntry() {
 /**
  * The chat-only session — a real, minted session with no review attached yet.
  *
- * This is what the front door opens onto: `session.mint` creates the session and claims
- * its target, but nothing attaches a review, so there is no diff to show. The surface
- * says exactly that. It does NOT pretend a review is on its way (no spinner, no
- * "preparing…", no skeleton of a board that will not arrive) and it is NOT an error —
- * the click genuinely worked. The chat dock is mounted by the layout OUTSIDE this
- * outlet, so the reviewer can talk to the orchestrator here; this pane is the rest of
- * the room.
+ * A real session with neither an attached review nor active preparation. New Chat now
+ * opens its durable preparation screen immediately; this remains the honest surface for
+ * older and intentionally bare sessions. The chat dock is mounted by the layout outside
+ * this outlet, so the reviewer can still talk to the orchestrator here.
  */
 function ChatOnlySession({ session }: { readonly session: SidebarSession }) {
   return (
@@ -155,6 +158,118 @@ function ChatOnlySession({ session }: { readonly session: SidebarSession }) {
         {session.claim ? ` ${session.claim.branch}` : " this project"}. Nothing has been captured to
         review yet, so there is no change to show.
       </p>
+    </section>
+  );
+}
+
+function preparationLaneNote(
+  lane: Extract<SessionPreparation, { status: "drafting" }>["lanes"][number],
+): string {
+  if (lane.status === "done")
+    return lane.verdict === "carrying-forward" ? "carrying forward" : "ready";
+  if (lane.status === "absent" || lane.status === "failed") return lane.reason;
+  if (lane.status === "drafted") return "drafted";
+  return lane.status;
+}
+
+function PreparationLanes({ preparation }: { readonly preparation: SessionPreparation }) {
+  const lanes = "lanes" in preparation ? preparation.lanes : undefined;
+  if (lanes === undefined) return null;
+  return (
+    <div className="flex w-full flex-col divide-y divide-border/60 rounded-lg border border-border">
+      {lanes.map((lane) => (
+        <div
+          key={lane.id}
+          data-row={lane.id}
+          data-status={lane.status}
+          className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
+        >
+          <StatusIcon status={lane.status} />
+          <span className="text-foreground">{lane.label}</span>
+          <span
+            className={
+              lane.status === "failed"
+                ? "ml-auto max-w-[55%] truncate text-2xs text-destructive"
+                : "ml-auto max-w-[55%] truncate text-2xs text-muted-foreground"
+            }
+          >
+            {preparationLaneNote(lane)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SessionPreparationScreen({ session }: { readonly session: SidebarSession }) {
+  const preparation = session.preparation;
+  const refreshSessions = useRefreshCommand("session.list");
+  const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
+  const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
+  const active = preparation?.status === "capturing" || preparation?.status === "drafting";
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(refreshSessions, 400);
+    return () => window.clearInterval(timer);
+  }, [active, refreshSessions]);
+
+  if (preparation === undefined) return <ChatOnlySession session={session} />;
+  const failed = preparation.status === "failed";
+  const cancelled = preparation.status === "cancelled";
+  const stage =
+    preparation.status === "capturing"
+      ? preparation.step === "resolving-repository"
+        ? "Resolving the repository"
+        : "Capturing the change"
+      : preparation.status === "drafting"
+        ? "Generating the Boards"
+        : preparation.stage === "capture"
+          ? "Capture"
+          : "Board generation";
+
+  return (
+    <section
+      data-screen="session-preparation"
+      data-status={preparation.status}
+      role={failed ? "alert" : "status"}
+      className="mx-auto flex h-full w-full max-w-[720px] flex-col justify-center gap-5 p-8"
+    >
+      <div className="flex flex-col gap-1">
+        <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
+          {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
+        </span>
+        <h1 className="font-display text-2xl font-medium text-ink">{session.title}</h1>
+        <p className="font-serif text-ink-soft">
+          {failed
+            ? preparation.reason
+            : cancelled
+              ? "The review is still here. Retry when you’re ready."
+              : preparation.status === "capturing"
+                ? "The review route is open while Rennet pins the exact change."
+                : "Boards appear here as each lens finishes."}
+        </p>
+      </div>
+      <PreparationLanes preparation={preparation} />
+      <div className="flex gap-2">
+        {active ? (
+          <Button
+            variant="outline"
+            disabled={cancel.pending}
+            onClick={() => void cancel.mutate({ sessionId: session.id })}
+          >
+            Cancel
+          </Button>
+        ) : (
+          <Button
+            variant="accent"
+            disabled={retry.pending}
+            onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
+          >
+            Retry
+          </Button>
+        )}
+      </div>
     </section>
   );
 }
@@ -237,8 +352,10 @@ function FirstRunEligibility({
  *  attached yet, or an honest not-found / load-error. */
 function SessionScreen({ slug }: { readonly slug: string }) {
   const { data: sessions } = useCommand("session.list", {});
-  useRememberProject(sessions?.sessions.find((session) => session.id === slug)?.projectId);
+  const session = sessions?.sessions.find((candidate) => candidate.id === slug);
+  useRememberProject(session?.projectId);
   const resolution = useSlugResolution(slug);
+  if (session?.preparation !== undefined) return <SessionPreparationScreen session={session} />;
   if (resolution.status === "pending") {
     return <p className="p-10 font-serif text-ink-soft">Opening…</p>;
   }

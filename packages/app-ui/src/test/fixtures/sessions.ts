@@ -21,6 +21,8 @@ export interface SessionSeed {
   readonly unread?: boolean;
   readonly pinned?: boolean;
   readonly archived?: boolean;
+  readonly reviewId?: string;
+  readonly preparation?: SidebarSession["preparation"];
   readonly createdAt?: number;
 }
 
@@ -33,6 +35,8 @@ const rowOf = (seed: SessionSeed): SidebarSession => ({
   ...(seed.unread ? { unread: true } : {}),
   ...(seed.pinned ? { pinned: true } : {}),
   ...(seed.archived ? { archived: true } : {}),
+  ...(seed.reviewId === undefined ? {} : { reviewId: seed.reviewId }),
+  ...(seed.preparation === undefined ? {} : { preparation: seed.preparation }),
   createdAt: seed.createdAt ?? Date.now(),
 });
 
@@ -70,6 +74,34 @@ export function sessionHandlers(seeds: readonly SessionSeed[] = []): MemoryBridg
         if (archived) next.archived = true;
         else delete next.archived;
         return next;
+      }),
+    "session.cancelPreparation": ({ sessionId }) =>
+      patch(sessionId, (row) => {
+        const preparation = row.preparation;
+        if (preparation?.status !== "capturing" && preparation?.status !== "drafting") return row;
+        return {
+          ...row,
+          preparation: {
+            status: "cancelled",
+            stage: preparation.status === "capturing" ? "capture" : "boards",
+            ...(preparation.status === "drafting"
+              ? { reviewId: preparation.reviewId, lanes: preparation.lanes }
+              : {}),
+          },
+        };
+      }),
+    "session.retryPreparation": ({ sessionId }) =>
+      patch(sessionId, (row) => {
+        const lanes =
+          row.preparation !== undefined && "lanes" in row.preparation
+            ? (row.preparation.lanes ?? [])
+            : [];
+        return {
+          ...row,
+          preparation: row.reviewId
+            ? { status: "drafting", reviewId: row.reviewId, lanes }
+            : { status: "capturing", step: "resolving-repository" },
+        };
       }),
   };
 }
