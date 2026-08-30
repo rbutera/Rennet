@@ -130,6 +130,12 @@
   --color-primary-foreground: var(--rn-accent-ink);
   --color-secondary: var(--rn-raised);
   --color-secondary-foreground: var(--rn-ink);
+  /* the raised fill under a pointer: 5% of the scheme's ink mixed in, so hover
+   * DARKENS on light and LIGHTENS on dark. A brightness filter only ever goes
+   * one way and washes the light scheme out. Derived here, not in palette.css,
+   * because it is a function of two palette colours rather than a new one —
+   * every theme pack inherits it by rebinding raised and ink. */
+  --color-secondary-hover: color-mix(in oklch, var(--rn-raised), var(--rn-ink) 5%);
   --color-muted: var(--rn-raised);
   --color-muted-foreground: var(--rn-ink-soft);
   --color-destructive: var(--rn-danger);
