@@ -135,6 +135,7 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
       forgeRepository: GITHUB_REPOSITORY,
       branch: "feat/glass",
       author: "octocat",
+      viewerDidAuthor: true,
       state: "open",
       reviewRequestedFromViewer: false,
       ci: "passing",

@@ -270,6 +270,20 @@ export function ProjectDetail({
             />
           ) : null}
 
+          {detail.forgeUnavailable?.map((unavailable) => (
+            <p
+              key={`${unavailable.repository.forge}:${unavailable.repository.owner}/${unavailable.repository.name}`}
+              className="project-detail-forge-unavailable flex items-center gap-2 mt-3.5 px-3.5 py-2.5 rounded-chip border border-accent-line bg-accent-surface text-ink text-base"
+              role="note"
+            >
+              <Icon icon={TriangleAlert} className="size-3.5" />
+              <span>
+                {unavailable.repository.owner}/{unavailable.repository.name} could not load from{" "}
+                {unavailable.repository.forge}: {unavailable.repair}
+              </span>
+            </p>
+          ))}
+
           <div className="smart-list flex flex-col gap-2 mt-1">
             {shown.length === 0 ? (
               <p className="smart-list-empty my-6 mx-1 text-ink-faint">

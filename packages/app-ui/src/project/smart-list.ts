@@ -132,7 +132,7 @@ export function buildSmartRows(detail: ProjectDetail): SmartRow[] {
 }
 
 function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined): SmartRow {
-  const mine = pr.author === viewer;
+  const mine = pr.viewerDidAuthor ?? pr.author === viewer;
   const readOnly = pr.state !== "open";
   // Needs you: your review was requested, or it is your own open PR with red CI.
   // A merged/closed PR never needs you.

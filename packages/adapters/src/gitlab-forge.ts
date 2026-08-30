@@ -23,7 +23,7 @@ import type {
 import { execa } from "execa";
 import { z } from "zod";
 import { type ForgeDetectionDeps, gitlabForge, resolveForgeBinary } from "./forge-discovery";
-import type { ProjectPrSource } from "./project-pr-source";
+import { type ProjectPrSource, ProjectPrSourceUnavailable } from "./project-pr-source";
 
 const userSchema = z.object({ username: z.string().min(1) });
 const pipelineSchema = z
@@ -191,18 +191,35 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
   ): Promise<string> {
     const binary = await resolveForgeBinary(gitlabForge, await this.config.detectionDeps);
     if (binary === null) {
-      throw new Error("GitLab CLI is unavailable. Install `glab` and run `glab auth login`.");
+      throw new ProjectPrSourceUnavailable(
+        "gitlab",
+        "tooling",
+        "GitLab CLI is unavailable. Install `glab` and run `glab auth login`.",
+      );
     }
     const command = locusCommand(this.config.locus, binary.path, args, this.config.repositoryRoot);
-    const result = await this.run({
-      file: command.file,
-      args: command.args,
-      ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
-      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
+    let result: GitLabForgeCommandResult;
+    try {
+      result = await this.run({
+        file: command.file,
+        args: command.args,
+        ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
+        ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+    } catch {
+      throw new ProjectPrSourceUnavailable(
+        "gitlab",
+        "network",
+        "GitLab is unreachable right now. Check the selected host and try again.",
+      );
+    }
     if (result.exitCode !== 0) {
-      throw new Error("GitLab request failed. Run `glab auth status --hostname gitlab.com`.");
+      throw new ProjectPrSourceUnavailable(
+        "gitlab",
+        "authentication",
+        "GitLab authentication failed. Run `glab auth status --hostname gitlab.com`.",
+      );
     }
     return result.stdout;
   }
@@ -250,6 +267,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
           forgeRepository: repository,
           branch: mergeRequest.source_branch,
           author: mergeRequest.author.username,
+          viewerDidAuthor: viewer === mergeRequest.author.username,
           state: pullRequestState(mergeRequest.state),
           reviewRequestedFromViewer:
             viewer !== null &&
@@ -385,10 +403,23 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
 
   buildReviewRequest(post: ForgeReviewPost): ForgeRequestDescriptor {
     this.assertRepository(post.target.ref.repo);
-    return {
+    const note = {
       endpoint: `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}/notes`,
       method: "POST",
       body: { body: reviewBody(post) },
+    };
+    return {
+      requests:
+        post.event === "APPROVE"
+          ? [
+              note,
+              {
+                endpoint: `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}/approve`,
+                method: "POST",
+                body: { sha: post.target.headOid },
+              },
+            ]
+          : [note],
     };
   }
 
@@ -416,35 +447,50 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
 
   async publishReview(post: ForgeReviewPost): Promise<ForgePublishOutcome> {
     const existing = await this.findExistingReview(post.target, post.marker);
-    if (existing !== null) return existing;
-    if (post.event === "APPROVE") {
-      await this.execute([
-        "api",
-        `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}/approve`,
-        "--hostname",
-        "gitlab.com",
-        "--method",
-        "POST",
-      ]);
+    const requests = this.buildReviewRequest(post).requests;
+    const noteRequest = requests[0];
+    if (noteRequest === undefined) throw new Error("GitLab review note request is missing.");
+
+    let outcome = existing;
+    if (outcome === null) {
+      const stdout = await this.execute(
+        [
+          "api",
+          noteRequest.endpoint,
+          "--hostname",
+          "gitlab.com",
+          "--method",
+          noteRequest.method,
+          "--input",
+          "-",
+          "--output",
+          "json",
+        ],
+        { stdin: JSON.stringify(noteRequest.body) },
+      );
+      const note: Note = decodeJson(stdout, noteSchema, "GitLab review note");
+      outcome = { reviewRef: String(note.id), url: note.web_url ?? null, reused: false };
     }
-    const request = this.buildReviewRequest(post);
-    const stdout = await this.execute(
-      [
-        "api",
-        request.endpoint,
-        "--hostname",
-        "gitlab.com",
-        "--method",
-        "POST",
-        "--input",
-        "-",
-        "--output",
-        "json",
-      ],
-      { stdin: JSON.stringify(request.body) },
-    );
-    const note: Note = decodeJson(stdout, noteSchema, "GitLab review note");
-    return { reviewRef: String(note.id), url: note.web_url ?? null, reused: false };
+
+    const approvalRequest = requests[1];
+    if (approvalRequest !== undefined) {
+      await this.execute(
+        [
+          "api",
+          approvalRequest.endpoint,
+          "--hostname",
+          "gitlab.com",
+          "--method",
+          approvalRequest.method,
+          "--input",
+          "-",
+          "--output",
+          "json",
+        ],
+        { stdin: JSON.stringify(approvalRequest.body) },
+      );
+    }
+    return outcome;
   }
 
   private assertRepository(repository: ForgeRepoIdentity): void {

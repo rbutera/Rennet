@@ -213,7 +213,11 @@ type ComposeReview = {
   payload: string;
   compositionId: string;
 };
-type DryRun = { dryRun: boolean; outcome: unknown; request: { body: unknown } };
+type DryRun = {
+  dryRun: boolean;
+  outcome: unknown;
+  request: { requests: { body: unknown }[] };
+};
 
 describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts (6.4)", () => {
   it("previews the composed bytes without egress; a mutated payload fails the exact-preview", async () => {
@@ -282,7 +286,7 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
     expect(dry.outcome).toBeNull();
     // The prose note appears EXACTLY ONCE in the outbound review body, and nowhere in the line
     // comments — proving the body stratum posts, once, where it belongs (finding 2 / 10c).
-    const requestJson = JSON.stringify(dry.request.body);
+    const requestJson = JSON.stringify(dry.request);
     expect(requestJson.split("PROSE NOTE").length - 1).toBe(1);
     // NOTHING left the machine — the recording port saw zero real posts.
     expect(publishPort.posts).toHaveLength(0);

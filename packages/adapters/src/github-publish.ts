@@ -114,9 +114,13 @@ export function buildGitHubReviewRequest(
     threads,
   };
   return {
-    endpoint: graphqlUrl,
-    method: "POST",
-    body: { query: ADD_REVIEW_MUTATION, variables: { input } },
+    requests: [
+      {
+        endpoint: graphqlUrl,
+        method: "POST",
+        body: { query: ADD_REVIEW_MUTATION, variables: { input } },
+      },
+    ],
   };
 }
 
@@ -267,7 +271,8 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     const existing = await this.findExistingReviewWith(octokit, post.target, post.marker);
     if (existing) return existing;
 
-    const request = this.buildReviewRequest(post);
+    const request = this.buildReviewRequest(post).requests[0];
+    if (request === undefined) throw new Error("GitHub review request is missing.");
     const { data } = await this.graphql<AddReviewResult>(
       octokit,
       ADD_REVIEW_MUTATION,

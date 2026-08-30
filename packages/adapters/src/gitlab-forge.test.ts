@@ -90,6 +90,7 @@ describe("GitLabForgeAdapter", () => {
           number: 42,
           forgeRepository: REPOSITORY,
           reviewRequestedFromViewer: true,
+          viewerDidAuthor: false,
           ci: "passing",
           changedFiles: 7,
         }),
@@ -162,7 +163,7 @@ describe("GitLabForgeAdapter", () => {
 
     expect(post.threads).toEqual([]);
     expect(post.body).toContain("`src/a.ts:4`");
-    expect(adapter.buildReviewRequest(post)).toMatchObject({
+    expect(adapter.buildReviewRequest(post).requests[0]).toMatchObject({
       endpoint: "projects/acme%2Fplatform%2Fwidget/merge_requests/42/notes",
       method: "POST",
       body: { body: expect.stringContaining("Changes requested") },
@@ -176,6 +177,69 @@ describe("GitLabForgeAdapter", () => {
     expect(JSON.stringify(adapter.buildReviewRequest(post))).not.toMatch(
       /authorization|bearer|token/i,
     );
+  });
+
+  it("previews and sends a marker note before a head-pinned approval, then reconciles retries", async () => {
+    const artifact = { opener: "The reviewed head is ready.", comments: [], bodyNotes: [] };
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      verdict: "APPROVE",
+      capabilities: new GitLabForgeAdapter({
+        detectionDeps: detection(),
+        locus: { kind: "host" },
+        repositoryRoot: "/code/widget",
+        run: vi.fn(),
+      }).capabilities,
+    });
+    expect(post.event).toBe("APPROVE");
+
+    const { adapter, calls } = scripted([
+      ok(""),
+      ok({ id: 88, body: post.body, web_url: null }),
+      ok({ approved: true }),
+    ]);
+    const request = adapter.buildReviewRequest(post);
+    expect(request.requests).toEqual([
+      expect.objectContaining({
+        endpoint: "projects/acme%2Fplatform%2Fwidget/merge_requests/42/notes",
+        body: { body: expect.stringContaining(post.marker) },
+      }),
+      {
+        endpoint: "projects/acme%2Fplatform%2Fwidget/merge_requests/42/approve",
+        method: "POST",
+        body: { sha: "head42" },
+      },
+    ]);
+
+    await expect(adapter.publishReview(post)).resolves.toEqual({
+      reviewRef: "88",
+      url: null,
+      reused: false,
+    });
+    expect(calls.map((call) => call.args[1])).toEqual([
+      expect.stringContaining("/notes?"),
+      expect.stringContaining("/notes"),
+      expect.stringContaining("/approve"),
+    ]);
+    expect(calls[2]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
+
+    const existing = {
+      id: 88,
+      body: `landed\n\n<!-- rennet:review:${post.marker} -->`,
+      web_url: null,
+    };
+    const retry = scripted([ok(existing), ok({ approved: true })]);
+    await expect(retry.adapter.publishReview(post)).resolves.toMatchObject({
+      reviewRef: "88",
+      reused: true,
+    });
+    expect(retry.calls).toHaveLength(2);
+    expect(retry.calls[1]?.args).toContain(
+      "projects/acme%2Fplatform%2Fwidget/merge_requests/42/approve",
+    );
+    expect(retry.calls[1]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
   });
 
   it("fails honestly before execution when glab is absent", async () => {

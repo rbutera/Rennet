@@ -619,16 +619,23 @@ export function buildForgeReviewPost(
 // ── The forge-neutral egress port (issue #21) ────────────────────────────────
 
 /**
- * The exact forge request a post would send, WITHOUT sending it — the primary
- * dry-run evidence. The `body` is the request payload the adapter constructed (a
- * `{ query, variables }` GraphQL document for GitHub). It carries NO secret: the
+ * One exact HTTP mutation in a forge publish operation. It carries NO secret: the
  * bearer token is an Authorization HEADER added only at real send time, never part
  * of this descriptor, so a dry-run descriptor is safe to surface and log.
  */
-export interface ForgeRequestDescriptor {
+export interface ForgeHttpRequestDescriptor {
   readonly endpoint: string;
   readonly method: string;
   readonly body: unknown;
+}
+
+/**
+ * The complete ordered mutation sequence a post would send, WITHOUT sending it.
+ * GitHub uses one GraphQL request; GitLab approval uses a note followed by a
+ * head-pinned approval request. The real send consumes these same descriptors.
+ */
+export interface ForgeRequestDescriptor {
+  readonly requests: readonly ForgeHttpRequestDescriptor[];
 }
 
 /** The outcome of a real (or reconciled) publish. */
@@ -665,8 +672,9 @@ export class ForgeRateLimited extends Error {
 export interface ForgePublishPort {
   readonly capabilities: ForgeCapabilities;
   /**
-   * Construct the exact forge request for `post` WITHOUT sending it. Pure and
-   * network-free: the primary dry-run evidence and the same bytes a real send uses.
+   * Construct the complete ordered forge mutation sequence for `post` WITHOUT
+   * sending it. Pure and network-free: the primary dry-run evidence and the same
+   * bytes a real send uses.
    */
   buildReviewRequest(post: ForgeReviewPost): ForgeRequestDescriptor;
   /**
@@ -678,11 +686,11 @@ export interface ForgePublishPort {
     marker: string,
   ): Promise<ForgePublishOutcome | null>;
   /**
-   * Post the review as ONE batched review event (one notification). Idempotent:
-   * queries for the marker first and returns the existing review (reused: true)
-   * rather than double-posting, so a retry after a dropped outcome yields exactly one
-   * review. Throws {@link ForgeRateLimited} on a secondary rate limit — never retries
-   * into a storm.
+   * Post the provider-specific review operation. Idempotent: queries for the marker
+   * first and reuses its review note rather than double-posting. Providers with a
+   * separate approval mutation reconcile that mutation against the reused note.
+   * Throws {@link ForgeRateLimited} on a secondary rate limit — never retries into a
+   * storm.
    */
   publishReview(post: ForgeReviewPost): Promise<ForgePublishOutcome>;
 }

@@ -234,9 +234,9 @@ describe("harm 1 — the Post exit composes the reviewer's exact outbound artifa
       post: composed.post,
       payload: composed.payload,
       compositionId: composed.compositionId,
-    })) as { dryRun: boolean; request: { body: unknown } };
+    })) as { dryRun: boolean; request: { requests: { body: unknown }[] } };
     expect(preview.dryRun).toBe(true);
-    expect(JSON.stringify(preview.request.body)).toContain(ASK_BODY);
+    expect(JSON.stringify(preview.request)).toContain(ASK_BODY);
     expect(publishPort.posts).toHaveLength(0);
   });
 });

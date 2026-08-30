@@ -106,6 +106,43 @@ describe("buildSmartRows — dedupe + ownership + state", () => {
     expect(byId(rows, "pr-131").mine).toBe(false); // emma's
   });
 
+  it("uses each forge's authenticated ownership fact in a mixed-provider workspace", () => {
+    const rows = buildSmartRows({
+      viewer: { login: "github-rai" },
+      truncated: false,
+      locals: [],
+      prs: [
+        pr({
+          number: 201,
+          branch: "github-work",
+          author: "github-rai",
+          forgeRepository: GITHUB_WIDGET,
+          viewerDidAuthor: true,
+        }),
+        pr({
+          number: 202,
+          branch: "gitlab-work",
+          author: "gitlab-rai",
+          forgeRepository: GITLAB_WIDGET,
+          viewerDidAuthor: true,
+          ci: "failing",
+        }),
+        pr({
+          number: 203,
+          branch: "teammate-work",
+          author: "github-rai",
+          forgeRepository: GITLAB_WIDGET,
+          viewerDidAuthor: false,
+        }),
+      ],
+    });
+
+    expect(byId(rows, "pr-201").mine).toBe(true);
+    expect(byId(rows, "pr-202").mine).toBe(true);
+    expect(byId(rows, "pr-202").needsYou).toBe(true);
+    expect(byId(rows, "pr-203").mine).toBe(false);
+  });
+
   it("marks a merged PR read-only", () => {
     const rows = buildSmartRows(detail);
     const merged = byId(rows, "pr-124");

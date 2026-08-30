@@ -16,7 +16,11 @@ import {
   type ProjectForgeRegistry,
   repositoryIdentity,
 } from "./project-detail-source";
-import { createGitHubProjectPrSource, type ProjectPrSource } from "./project-pr-source";
+import {
+  createGitHubProjectPrSource,
+  type ProjectPrSource,
+  ProjectPrSourceUnavailable,
+} from "./project-pr-source";
 
 /** A canned PullRequest for the B2 merge tests. */
 const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
@@ -497,6 +501,66 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       "github",
       "gitlab",
     ]);
+  });
+
+  it("keeps local and GitHub rows when GitLab tooling is unavailable", async () => {
+    const git = makeGit({
+      "/github": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/github": 2 },
+        aheadBehind: { "feat/github": { ahead: 1, behind: 0 } },
+      },
+      "/gitlab": {
+        remoteUrl: "git@gitlab.com:acme/platform.git",
+        userName: "rai",
+        branches: { main: 1, "feat/gitlab": 2 },
+        aheadBehind: { "feat/gitlab": { ahead: 1, behind: 0 } },
+      },
+    });
+    const githubSource: ProjectPrSource = {
+      resolveViewer: async () => "github-rai",
+      listPullRequests: async (forgeRepository) => ({
+        prs: [
+          pr({
+            repository: forgeRepositorySlug(forgeRepository),
+            forgeRepository,
+            viewerDidAuthor: true,
+          }),
+        ],
+        truncated: false,
+      }),
+    };
+    const gitlabSource: ProjectPrSource = {
+      resolveViewer: () =>
+        Promise.reject(
+          new ProjectPrSourceUnavailable(
+            "gitlab",
+            "tooling",
+            "Install `glab` and run `glab auth login`.",
+          ),
+        ),
+      listPullRequests: async () => ({ prs: [], truncated: false }),
+    };
+    const forgeRegistry: ProjectForgeRegistry = {
+      sourceFor: (repository) => (repository.forge === "github" ? githubSource : gitlabSource),
+    };
+
+    const detail = await loadProjectDetail(
+      { git, forgeRegistry, resolveRepoRoots: async () => ["/github", "/gitlab"] },
+      { ...repoProject("/workspace"), kind: "workspace" },
+    );
+
+    expect(detail.prs.map((pullRequest) => pullRequest.forgeRepository?.forge)).toEqual(["github"]);
+    expect(detail.locals).toHaveLength(2);
+    expect(detail.forgeUnavailable).toEqual([
+      {
+        repository: { forge: "gitlab", owner: "acme", name: "platform" },
+        reason: "tooling",
+        repair: "Install `glab` and run `glab auth login`.",
+      },
+    ]);
+    expect(() => projectDetailSchema.parse(detail)).not.toThrow();
   });
 
   it("streams prs-start then one repo-prs per forge repo as PRs land", async () => {

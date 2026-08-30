@@ -176,6 +176,37 @@ describe("ProjectDetail — the unified smart list", () => {
     expect(container.querySelectorAll(".smart-row").length).toBeGreaterThan(0);
   });
 
+  it("names an unavailable GitLab repository without hiding healthy rows", async () => {
+    const { bridge } = fakeBridge(
+      detail({
+        forgeUnavailable: [
+          {
+            repository: { forge: "gitlab", owner: "acme", name: "platform" },
+            reason: "tooling",
+            repair: "Install `glab` and run `glab auth login`.",
+          },
+        ],
+      }),
+    );
+    const { container } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector(".project-detail-forge-unavailable")?.textContent).toContain(
+        "acme/platform could not load from gitlab",
+      ),
+    );
+    expect(container.textContent).toContain("Install `glab`");
+    expect(container.querySelectorAll(".smart-row").length).toBeGreaterThan(0);
+  });
+
   it("shows the exact CLI repair for a gh-owned failure without offering fallback reconnect", async () => {
     const { bridge, calls } = fakeBridge(
       detail({
