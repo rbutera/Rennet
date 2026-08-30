@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 // electron is never used on the server path, and the SDK is loaded lazily from node_modules
 // only when a real review turn fires.
 import { build } from "esbuild";
+import { stageNativeArtifacts } from "./native-artifact-staging.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverRoot = resolve(here, "../packages/server");
@@ -23,12 +24,13 @@ await build({
   format: "cjs",
   target: "node24",
   external: ["electron", "@anthropic-ai/claude-agent-sdk"],
-  // Two adapters call `new URL("./x.json", import.meta.url)` in LAZY calibration-tooling
-  // functions (never on the daemon's serve/status/stop path). Under CJS esbuild leaves
-  // import.meta.url empty and warns; that's harmless here because the daemon never calls
-  // those functions. The committed calibration tables are static `import`s and inline
-  // regardless. logLevel keeps the warning visible without failing the build.
-  banner: { js: "#!/usr/bin/env node" },
+  define: {
+    "import.meta.url": "__rennetBundledImportMetaUrl",
+  },
+  banner: {
+    js: `#!/usr/bin/env node
+const __rennetBundledImportMetaUrl = require("node:url").pathToFileURL(__filename).href;`,
+  },
   logLevel: "warning",
 });
 
@@ -40,6 +42,12 @@ chmodSync(outfile, 0o755);
 // this, every lens drafter hits ENOENT and a captured review never gets a board.
 cpSync(resolve(here, "../packages/prompts/src/prompts"), resolve(serverRoot, "dist/prompts"), {
   recursive: true,
+});
+stageNativeArtifacts({
+  sourceNativeRoot: resolve(here, "../packages/adapters/dist/native"),
+  bundleDirectory: dirname(outfile),
+  platform: process.platform,
+  arch: process.arch,
 });
 
 console.log(`built ${outfile}`);

@@ -2,6 +2,7 @@ const { MakerDMG } = require("@electron-forge/maker-dmg");
 const { MakerSquirrel } = require("@electron-forge/maker-squirrel");
 const { MakerZIP } = require("@electron-forge/maker-zip");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { flipFuses, FuseV1Options, FuseVersion } = require("@electron/fuses");
 
 // R2 packaging requirement: the Claude adapter uses @anthropic-ai/claude-agent-sdk,
@@ -66,6 +67,28 @@ const osxNotarize = canNotarize
       teamId: process.env.APPLE_TEAM_ID,
     }
   : undefined;
+
+function packagedNativeRoot(outputPath, platform) {
+  const resourcesRoot =
+    platform === "darwin"
+      ? path.join(outputPath, "Rennet.app", "Contents", "Resources")
+      : path.join(outputPath, "resources");
+  return path.join(resourcesRoot, "app.asar.unpacked", "dist", "server", "native");
+}
+
+async function verifyPackagedNativePayload(_forgeConfig, packageResult) {
+  const { platform, arch, outputPaths } = packageResult;
+  if (platform !== "darwin" && platform !== "win32") return;
+  if (outputPaths.length === 0) throw new Error(`Forge produced no ${platform}-${arch} package`);
+
+  const checkerPath = path.join(__dirname, "../../scripts/check-native-artifact-layout.mjs");
+  const { assertNativeArtifactLayout } = await import(pathToFileURL(checkerPath).href);
+  const expectedPlatforms =
+    platform === "win32" ? [`win32-${arch}`, "linux-x64"] : [`darwin-${arch}`];
+  for (const outputPath of outputPaths) {
+    await assertNativeArtifactLayout(packagedNativeRoot(outputPath, platform), expectedPlatforms);
+  }
+}
 
 // The app icon, per the platform the packaging RUNS on (add-windows-support). The
 // path is given WITHOUT extension so @electron/packager appends `.icns` on macOS and
@@ -166,5 +189,6 @@ module.exports = {
         [FuseV1Options.WasmTrapHandlers]: true,
       });
     },
+    postPackage: verifyPackagedNativePayload,
   },
 };

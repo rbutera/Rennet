@@ -76,7 +76,7 @@ try {
     ),
   );
   await runNodeGyp(scratchRoot);
-  await rm(outputRoot, { force: true, recursive: true });
+  await rm(platformOutputRoot, { force: true, recursive: true });
   await mkdir(platformOutputRoot, { recursive: true });
   await copyFile(join(scratchRoot, "build", "Release", basename(outputPath)), outputPath);
   await copyFile(join(scratchRoot, "build", "Release", basename(addonOutputPath)), addonOutputPath);

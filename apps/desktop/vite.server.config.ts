@@ -3,6 +3,7 @@ import { builtinModules } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+import { stageNativeArtifacts } from "../../scripts/native-artifact-staging.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +26,20 @@ function copyPromptFiles(): Plugin {
   };
 }
 
+function copyNativeArtifacts(): Plugin {
+  return {
+    name: "rennet-copy-native-artifacts",
+    closeBundle() {
+      stageNativeArtifacts({
+        sourceNativeRoot: resolve(here, "../../packages/adapters/dist/native"),
+        bundleDirectory: resolve(here, "dist/server"),
+        platform: process.platform,
+        arch: process.arch,
+      });
+    },
+  };
+}
+
 // The detached daemon bundle (#379, design D5): the 4th desktop lib build. The packaged
 // app spawns this with `ELECTRON_RUN_AS_NODE=1` (plain Node, no window), so it is bundled
 // exactly like the main process — CJS, electron + node builtins external, everything else
@@ -35,7 +50,7 @@ export default defineConfig({
   define: {
     "import.meta.url": 'require("node:url").pathToFileURL(__filename).href',
   },
-  plugins: [copyPromptFiles()],
+  plugins: [copyPromptFiles(), copyNativeArtifacts()],
   build: {
     emptyOutDir: true,
     lib: {

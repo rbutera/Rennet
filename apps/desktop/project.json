@@ -4,9 +4,18 @@
   "sourceRoot": "apps/desktop/src",
   "projectType": "application",
   "tags": ["scope:rennet", "layer:app", "platform:desktop"],
+  "namedInputs": {
+    "nativeArtifactStaging": [
+      "{workspaceRoot}/scripts/native-artifact-staging.mjs",
+      "{workspaceRoot}/scripts/native-artifact-staging.d.mts"
+    ],
+    "packagedAppSmokeScript": ["{workspaceRoot}/scripts/smoke-packaged-app.mjs"]
+  },
   "targets": {
     "build": {
-      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts && pnpm exec vite build -c apps/desktop/vite.browser.config.ts && pnpm exec vite build -c apps/desktop/vite.server.config.ts && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/main && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/server"
+      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts && pnpm exec vite build -c apps/desktop/vite.browser.config.ts && pnpm exec vite build -c apps/desktop/vite.server.config.ts && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/main && node scripts/verify-desktop-main-chunks.mjs apps/desktop/dist/server",
+      "inputs": ["default", "^production", { "input": "nativeArtifactStaging" }],
+      "cache": false
     },
     "dev": {
       "cache": false,
@@ -15,10 +24,14 @@
     "lint": {
       "command": "pnpm exec eslint apps/desktop/src apps/desktop/e2e --max-warnings=0 && pnpm exec biome check apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json"
     },
-    "typecheck": { "command": "pnpm exec tsc -p apps/desktop/tsconfig.json" },
+    "typecheck": {
+      "command": "pnpm exec tsc -p apps/desktop/tsconfig.json",
+      "inputs": ["default", "^production", { "input": "nativeArtifactStaging" }]
+    },
     "test": {
       "command": "pnpm exec vitest run --passWithNoTests -c apps/desktop/vitest.config.ts",
-      "dependsOn": ["build"]
+      "dependsOn": ["build"],
+      "inputs": ["default", "^production", { "input": "packagedAppSmokeScript" }]
     },
     "e2e": { "command": "pnpm exec playwright test -c apps/desktop/playwright.config.ts" },
     "package": {

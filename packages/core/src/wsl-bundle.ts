@@ -74,12 +74,91 @@ export class WslBundleDeliveryError extends Error {
   override readonly name = "WslBundleDeliveryError";
 }
 
+interface RequiredWslBundleFile {
+  readonly path: string;
+  readonly testFlag: "-f" | "-x";
+}
+
+const WSL_BUNDLE_COMPLETION_MARKER = ".rennet-bundle-complete";
+
+function requiredWslBundleFiles(targetDir: string, entry: string): RequiredWslBundleFile[] {
+  return [
+    { path: entry, testFlag: "-f" },
+    {
+      path: `${targetDir}/native/linux-x64/rennet-rooted-landing.node`,
+      testFlag: "-f",
+    },
+    {
+      path: `${targetDir}/native/linux-x64/rennet-exclusive-move`,
+      testFlag: "-x",
+    },
+  ];
+}
+
+async function firstMissingRequiredFile(
+  distro: string,
+  files: readonly RequiredWslBundleFile[],
+  run: (command: LocusCommand) => Promise<WslRunResult>,
+): Promise<string | null> {
+  const locus = { kind: "wsl", distro } as const;
+  for (const file of files) {
+    const probe = await run(locusCommand(locus, "test", [file.testFlag, file.path]));
+    if (probe.code === 0) continue;
+    if (probe.code === 1) return file.path;
+    throw new WslBundleDeliveryError(
+      `could not probe required bundle file ${file.path} in "${distro}" (test exited ${probe.code})`,
+    );
+  }
+  return null;
+}
+
+async function removeCompletionMarker(
+  distro: string,
+  markerPath: string,
+  run: (command: LocusCommand) => Promise<WslRunResult>,
+): Promise<void> {
+  const locus = { kind: "wsl", distro } as const;
+  const removed = await run(locusCommand(locus, "rm", ["-f", markerPath]));
+  if (removed.code !== 0) {
+    throw new WslBundleDeliveryError(
+      `could not remove bundle completion marker ${markerPath} in "${distro}" (rm exited ${removed.code})`,
+    );
+  }
+}
+
+async function publishCompletionMarker(
+  distro: string,
+  markerPath: string,
+  run: (command: LocusCommand) => Promise<WslRunResult>,
+): Promise<void> {
+  const locus = { kind: "wsl", distro } as const;
+  const created = await run(locusCommand(locus, "touch", [markerPath]));
+  if (created.code !== 0) {
+    await removeCompletionMarker(distro, markerPath, run);
+    throw new WslBundleDeliveryError(
+      `could not create bundle completion marker ${markerPath} in "${distro}" (touch exited ${created.code})`,
+    );
+  }
+
+  const verified = await run(locusCommand(locus, "test", ["-f", markerPath]));
+  if (verified.code === 0) return;
+
+  await removeCompletionMarker(distro, markerPath, run);
+  throw new WslBundleDeliveryError(
+    verified.code === 1
+      ? `bundle completion marker ${markerPath} is missing after creation in "${distro}"`
+      : `could not verify bundle completion marker ${markerPath} in "${distro}" (test exited ${verified.code})`,
+  );
+}
+
 /**
  * Ensure the versioned bundle exists in the distro's native fs, returning its
- * absolute distro-native path. Copy-once-per-version (design.md Decision 1):
- * `test -f` the target — present ⇒ no-op; absent ⇒ `mkdir -p` its dir, translate
- * the host path with `wslpath -u`, then `cp` it in. Only copies into native fs;
- * it never runs the bundle over 9P. `run` executes a `LocusCommand` (desktop
+ * absolute distro-native path. Copy-once-per-complete-version (design.md Decision 1):
+ * probe the entry, Linux x64 rooted addon, executable move helper, and a marker
+ * created only after their post-copy checks — complete means no-op. Any missing
+ * member removes the marker before `mkdir -p`, path translation, and the whole-dir
+ * copy, so an interrupted overlay retries on the next call. Only copies into native
+ * fs; it never runs the bundle over 9P. `run` executes a `LocusCommand` (desktop
  * injects an `execa`-backed runner; tests inject a fake).
  *
  * FAILS LOUDLY at this boundary: every command's exit code is checked and the
@@ -100,16 +179,23 @@ export async function ensureWslBundleDelivered(
   const locus = { kind: "wsl", distro } as const;
   const targetDir = wslServerDir(distroHome, version);
   const entry = `${targetDir}/${hostBundleBasename(hostBundlePath)}`;
+  const requiredPayloadFiles = requiredWslBundleFiles(targetDir, entry);
+  const exclusiveMovePath = `${targetDir}/native/linux-x64/rennet-exclusive-move`;
+  const completionMarkerPath = `${targetDir}/${WSL_BUNDLE_COMPLETION_MARKER}`;
+  const completionMarkerFile: RequiredWslBundleFile = {
+    path: completionMarkerPath,
+    testFlag: "-f",
+  };
+  const requiredCompletedBundleFiles = [...requiredPayloadFiles, completionMarkerFile];
 
-  // `test -f` the ENTRY: exit 0 ⇒ present, 1 ⇒ absent, anything else ⇒ the probe failed.
-  const present = await run(locusCommand(locus, "test", ["-f", entry]));
-  if (present.code === 0) return entry; // already delivered this version — skip the copy.
-  if (present.code !== 1) {
-    throw new WslBundleDeliveryError(
-      `could not probe the bundle path in "${distro}" (test exited ${present.code})`,
-    );
-  }
+  const missingBeforeCopy = await firstMissingRequiredFile(
+    distro,
+    requiredCompletedBundleFiles,
+    run,
+  );
+  if (missingBeforeCopy === null) return entry;
 
+  await removeCompletionMarker(distro, completionMarkerPath, run);
   const made = await run(locusCommand(locus, "mkdir", ["-p", targetDir]));
   if (made.code !== 0) {
     throw new WslBundleDeliveryError(
@@ -134,10 +220,20 @@ export async function ensureWslBundleDelivered(
       `bundle copy failed in "${distro}" (cp exited ${copied.code})`,
     );
   }
-  // A failed/partial copy must not read as delivered — confirm the entry landed.
-  const verify = await run(locusCommand(locus, "test", ["-f", entry]));
-  if (verify.code !== 0) {
-    throw new WslBundleDeliveryError(`bundle entry ${entry} is missing after copy in "${distro}"`);
+
+  const madeExecutable = await run(locusCommand(locus, "chmod", ["0755", exclusiveMovePath]));
+  if (madeExecutable.code !== 0) {
+    throw new WslBundleDeliveryError(
+      `could not make copied Linux helper executable at ${exclusiveMovePath} in "${distro}" (chmod exited ${madeExecutable.code})`,
+    );
   }
+
+  const missingAfterCopy = await firstMissingRequiredFile(distro, requiredPayloadFiles, run);
+  if (missingAfterCopy !== null) {
+    throw new WslBundleDeliveryError(
+      `required bundle file ${missingAfterCopy} is missing or unusable after copy in "${distro}"`,
+    );
+  }
+  await publishCompletionMarker(distro, completionMarkerPath, run);
   return entry;
 }
