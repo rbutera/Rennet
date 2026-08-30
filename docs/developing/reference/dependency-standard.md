@@ -73,7 +73,7 @@ executables because Rennet runs the user's installed `claude`.
 | Electron journeys | Playwright |
 | Desktop packaging and release | Electron Forge |
 | Desktop runtime | Electron |
-| First-party native executable builds | `@electron/node-gyp` and the platform C toolchain |
+| First-party native artifact builds | `@electron/node-gyp` and the platform C toolchain |
 | Documentation site | Astro and Starlight |
 | Native mobile app | Expo and expo-router |
 
@@ -131,22 +131,33 @@ Long-running development servers, watch processes, interactive Electron tasks,
 and end-to-end tests remain uncached. Local Nx caching is the default; the
 workspace does not use Nx Cloud.
 
-## First-party native executables
+## First-party native artifacts
 
-`@rennet/adapters` owns the small FSL-1.1-MIT C executable that asks the host
-filesystem for an exclusive, no-replace namespace move. Its Nx `build` target
-invokes the workspace's exact-SHA `@electron/node-gyp` directly and writes the
-host artifact to
-`packages/adapters/dist/native/<platform>-<architecture>/rennet-exclusive-move`
-(`.exe` on Windows). This is a repository build command, not a dependency
-lifecycle script, so it does not belong in pnpm's `onlyBuiltDependencies` list.
+`@rennet/adapters` owns two small FSL-1.1-MIT C artifacts: an executable that
+asks the host filesystem for an exclusive, no-replace namespace move, and a
+Node-API addon that supplies descriptor-rooted filesystem operations to the
+transactional round landing engine. Its Nx `build` target invokes the
+workspace's exact-SHA `@electron/node-gyp` directly and writes both artifacts
+under `packages/adapters/dist/native/<platform>-<architecture>/` as
+`rennet-exclusive-move` (`.exe` on Windows) and
+`rennet-rooted-landing.node`. This is a repository build command, not a
+dependency lifecycle script, so it does not belong in pnpm's
+`onlyBuiltDependencies` list.
 
 Run `pnpm nx run rennet-adapters:native-test` for the typed adapter contract and
-real file, symlink, directory, existing-destination, and contention semantics.
-CI runs that target on Ubuntu, macOS, and Windows because no one host can compile
-or execute all three syscall implementations. The focused matrix also runs
+real file, symlink, directory, existing-destination, contention, rooted-path,
+and Git snapshot semantics. CI runs that target on Ubuntu, macOS, and Windows
+because no one host can compile or execute all platform implementations. The
+focused matrix also runs
 `rennet-adapters:native-determinism-test`, which rebuilds under two distinct
-temporary roots and requires byte-identical host executables.
+temporary roots and requires both host artifacts to be byte-identical.
+
+On POSIX hosts, the addon captures repository and worker roots by walking every
+absolute-path component without following symlinks, then performs later work
+relative to those captured descriptors. The Windows artifact currently exposes
+an explicit unsupported constructor. The server, CLI, and desktop do not yet
+construct this host; production composition and cross-platform delivery remain
+separate work.
 
 Native artifacts and their semantic verdicts depend on the operating system,
 architecture, compiler, linker, SDK, and generator environment. The adapter's

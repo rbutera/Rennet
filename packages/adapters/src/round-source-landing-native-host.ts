@@ -99,7 +99,7 @@ function nativeMethod(host: Record<string, unknown>, name: keyof BoundNativeHost
   if (typeof candidate !== "function") {
     throw new Error(`rooted landing addon host is missing ${name}()`);
   }
-  return (...arguments_) => Reflect.apply(candidate, host, arguments_);
+  return (candidate as NativeMethod).bind(host);
 }
 
 function bindNativeHost(
@@ -126,7 +126,7 @@ function bindNativeHost(
     };
   } catch (error) {
     const close = instance.close;
-    if (typeof close === "function") Reflect.apply(close, instance, []);
+    if (typeof close === "function") close.call(instance);
     throw error;
   }
 }
@@ -378,6 +378,7 @@ export function createNativeRoundSourceLandingFileSystem(
         case "unsupported":
           return captured;
         case "regular": {
+          const rawSha256 = sha256(captured.bytes);
           const oid = parseGitOid(
             await input.workerGit(
               [
@@ -387,7 +388,7 @@ export function createNativeRoundSourceLandingFileSystem(
                 "--stdin",
                 `--path=${nativeRepoPath}`,
               ],
-              { input: captured.bytes },
+              { input: Buffer.from(captured.bytes) },
             ),
             oidLength,
           );
@@ -395,7 +396,7 @@ export function createNativeRoundSourceLandingFileSystem(
             kind: "git",
             mode: captured.executable ? "100755" : "100644",
             oid,
-            rawSha256: sha256(captured.bytes),
+            rawSha256,
           } satisfies RoundSourceLandingObservedPathDescriptor;
         }
         case "symlink":

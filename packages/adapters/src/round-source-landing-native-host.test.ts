@@ -199,10 +199,16 @@ describe("native rooted round source landing host", () => {
       inspectResult: { kind: "regular", bytes: snapshot, executable: true },
     });
     const gitCalls: Array<{ readonly arguments_: readonly string[]; readonly input?: Buffer }> = [];
-    const workerGit = boundGit(fixture.workerRoot, (arguments_, input) => {
-      gitCalls.push({ arguments_: [...arguments_], ...(input === undefined ? {} : { input }) });
-      snapshot.fill(0x78);
-    });
+    const runWorkerGit = boundGit(fixture.workerRoot);
+    const workerGit: BoundRoundSourceLandingGitWithInput = async (arguments_, options) => {
+      gitCalls.push({
+        arguments_: [...arguments_],
+        ...(options?.input === undefined ? {} : { input: Buffer.from(options.input) }),
+      });
+      const result = await runWorkerGit(arguments_, options);
+      options?.input?.fill(0x78);
+      return result;
+    };
     const { fileSystem, close } = createNativeRoundSourceLandingFileSystem({
       ...fixture,
       sourceGit: boundGit(fixture.sourceRoot),

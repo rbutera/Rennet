@@ -32,7 +32,7 @@
       "cache": false,
       "dependsOn": ["build"],
       "inputs": ["default", "^production", "nativeHelper"],
-      "command": "pnpm exec vitest run packages/adapters/src/exclusive-namespace-move.test.ts packages/adapters/src/exclusive-namespace-move.native.test.ts packages/adapters/src/round-source-landing-native-host.test.ts"
+      "command": "pnpm exec vitest run packages/adapters/src/exclusive-namespace-move.test.ts packages/adapters/src/exclusive-namespace-move.native.test.ts packages/adapters/src/rooted-landing-host.native.test.ts packages/adapters/src/round-source-landing-native-host.test.ts"
     },
     "native-determinism-test": {
       "cache": false,
