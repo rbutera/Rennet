@@ -583,7 +583,7 @@ function ItemRow({
               <StateChip row={row} />
             </span>
           </span>
-          <span className="flex w-full items-center gap-2.5 pl-[22px] text-2xs text-ink-soft">
+          <span className="flex w-full items-center gap-2.5 pl-5.5 text-2xs text-ink-soft">
             <span className="shrink-0 font-mono text-ink-faint">
               {requestPrefix(row.pr?.forgeRepository?.forge)}
               {row.pr?.number}

@@ -157,19 +157,25 @@ export function ShortcutsPage() {
           const colliding = chordKey ? conflicts.get(chordKey) : undefined;
           const others = colliding?.filter((other) => other !== def.id) ?? [];
           const overridden = overrides[def.id] !== undefined;
+          // An ordinary row is the prototype's single 32px line. Only the two exceptional
+          // states expand it: recording (an input taller than a keycap) and a conflict
+          // warning (a sentence that wraps). Everything else — including the group, which
+          // is inlined after the label rather than stacked under it — fits `h-8`.
+          const expanded = recording === def.id || others.length > 0;
           return (
             <div
               key={def.id}
+              data-slot="shortcut-row"
               // A ruled row per binding turned a long catalogue into a ladder. The
               // prototype's rows are hover-lit slabs with no dividers, at 32px rather
-              // than 44px. `min-h-8`, not `h-8`: this row carries a group sublabel and a
-              // wrapping conflict warning the prototype's single-line row never has, and
-              // a fixed height would clip both.
-              className="group flex min-h-8 flex-wrap items-center gap-3 rounded-md px-2 py-1 transition-colors hover:bg-secondary/50"
+              // than 44px.
+              className={`group flex items-center gap-3 rounded-md px-2 transition-colors hover:bg-secondary/50 ${
+                expanded ? "min-h-8 flex-wrap py-1" : "h-8"
+              }`}
             >
-              <div className="flex min-w-0 flex-col">
-                <span className="text-13 text-foreground/90">{catalogueLabel(def)}</span>
-                <span className="text-2xs text-ink-faint">{def.group}</span>
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span className="shrink-0 text-13 text-foreground/90">{catalogueLabel(def)}</span>
+                <span className="min-w-0 truncate text-2xs text-ink-faint">{def.group}</span>
               </div>
               <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
                 {recording === def.id ? (

@@ -24,7 +24,7 @@ import { UnbackedNote } from "./unbacked-note";
 // Severity reads in three registers, none of them gold: danger for high, copper
 // `warn` for medium (a flag to weigh), quiet raised for low.
 const SEVERITY_CHIP: Record<GuidanceSeverity, string> = {
-  high: "bg-destructive/15 text-destructive",
+  high: "bg-danger-soft text-danger",
   medium: "bg-warn-soft text-warn",
   low: "bg-raised text-ink-soft",
 };
