@@ -3310,6 +3310,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,
+        // A completed round can make a non-content-addressed generation current for this
+        // patchset. Context refresh must redraft the generation the board route actually reads.
+        priorGenerationId: currentGenerationId(
+          roundRecordStore.read(session.id),
+          review.activePatchsetId,
+        ),
         asksDispatched: [],
         worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
         ...(signal === undefined ? {} : { signal }),
