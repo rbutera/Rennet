@@ -702,6 +702,42 @@ export function createRoundWorkerPort(input: {
   };
 }
 
+function createRoundWorkerRecoveryPort(): NonNullable<RoundExecutionPorts["observeWorker"]> {
+  return async ({ operation, attempt }) => {
+    if (operation.state.phase !== "worker-running") {
+      throw new Error("Round worker recovery started outside its durable running phase.");
+    }
+    const checkpoint = new GitCheckpointStore(
+      operation.state.workspace.worktreePath,
+      detectedLocusForRepo(operation.repoRoot),
+    );
+    const current = await checkpoint.capture();
+    const source = {
+      ref: operation.state.workspace.sourceHead,
+      commit: operation.state.workspace.sourceHead,
+    };
+    try {
+      const [diff, changedPaths] = await Promise.all([
+        checkpoint.diff(source, current),
+        checkpoint.changedPaths(source, current),
+      ]);
+      return {
+        ...attempt,
+        completedAt: Date.now(),
+        outcome: "failed",
+        termination: {
+          kind: "error",
+          reason: `Rennet restarted while this worker was running. Its partial edits remain in ${operation.state.workspace.worktreePath}; inspect them there before retrying the asks.`,
+        },
+        diff,
+        changedPaths: [...changedPaths],
+      };
+    } finally {
+      await checkpoint.discard(current).catch(() => undefined);
+    }
+  };
+}
+
 export function createRoundSourceLandingPorts(input: {
   readonly planLegacy: RoundExecutionPorts["planSourceLanding"];
   readonly landLegacy: RoundExecutionPorts["landSourceChanges"];
@@ -2874,6 +2910,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     sourceRepositoryFor: (operation) => sourcePatchsetFor(operation).repository,
   });
   const runRoundWorker = createRoundWorkerPort({ runHandoffTurn });
+  const recoverRoundWorker = createRoundWorkerRecoveryPort();
+  const runRoundGate: RoundExecutionPorts["runGate"] = async ({ operation, attempt }) => {
+    if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
+      throw new Error("Configured round gate started without a durable gate plan.");
+    }
+    const result = await runConfiguredRoundGate({
+      locus: locusForRepo(operation.repoRoot),
+      cwd: operation.state.workspace.worktreePath,
+      command: operation.gatePlan.command,
+      executionId: attempt.executionId,
+      startedAt: attempt.startedAt,
+    });
+    const common = {
+      executionId: result.executionId,
+      startedAt: result.startedAt,
+      completedAt: result.completedAt,
+      ...(result.projectCount === undefined ? {} : { projectCount: result.projectCount }),
+    };
+    return result.outcome === "passed"
+      ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
+      : { ...common, outcome: "failed" as const, termination: result.termination };
+  };
   const roundSourceLandingPorts = createRoundSourceLandingPorts({
     planLegacy: (operation) => {
       if (operation.state.phase !== "commits-settled") {
@@ -2933,28 +2991,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         }),
       planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       runWorker: runRoundWorker,
+      observeWorker: recoverRoundWorker,
       planGate: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
-      runGate: async ({ operation, attempt }) => {
-        if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
-          throw new Error("Configured round gate started without a durable gate plan.");
-        }
-        const result = await runConfiguredRoundGate({
-          locus: locusForRepo(operation.repoRoot),
-          cwd: operation.state.workspace.worktreePath,
-          command: operation.gatePlan.command,
-          executionId: attempt.executionId,
-          startedAt: attempt.startedAt,
-        });
-        const common = {
-          executionId: result.executionId,
-          startedAt: result.startedAt,
-          completedAt: result.completedAt,
-          ...(result.projectCount === undefined ? {} : { projectCount: result.projectCount }),
-        };
-        return result.outcome === "passed"
-          ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
-          : { ...common, outcome: "failed" as const, termination: result.termination };
-      },
+      runGate: runRoundGate,
+      observeGate: runRoundGate,
       planCommit: (operation) => {
         if (operation.state.phase !== "gate-settled") {
           throw new Error("Round commit planned before its gate settled.");

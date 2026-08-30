@@ -1242,6 +1242,150 @@ describe("createRennetServer — GitLab submission composition", () => {
   }, 30_000);
 });
 
+describe("durable round execution recovery", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("recovers a worker-running operation into preserved partial evidence without a second turn", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-recovery-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-recovery-repo-")));
+    const worktreeParent = mkdtempSync(join(tmpdir(), "rennet-round-recovery-worktree-"));
+    const worktree = join(worktreeParent, "worker");
+    dirs.push(dataDir, repo, worktreeParent);
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, { cwd }).toString().trim();
+    git(repo, "init", "-b", "main");
+    git(repo, "config", "user.email", "t@t");
+    git(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "a.ts"), "export const value = 1;\n");
+    git(repo, "add", "a.ts");
+    git(repo, "commit", "-m", "base");
+    const sourceHead = git(repo, "rev-parse", "HEAD");
+    const sourceTreeOid = git(repo, "rev-parse", `${sourceHead}^{tree}`);
+    git(repo, "worktree", "add", "--detach", worktree, sourceHead);
+    writeFileSync(join(worktree, "a.ts"), "export const value = 2;\n");
+    const prompt = "apply the round";
+    const attempt = { executionId: "worker-recovery", startedAt: 4 };
+    const operation: RoundOperation = {
+      operationId: "operation-recovery",
+      sessionId: "session-recovery",
+      reviewId: "review-recovery",
+      dispatchId: "dispatch-recovery",
+      sourcePatchsetId: "patchset-recovery",
+      askOccurrences: [{ id: "ask-recovery", revision: 1 }],
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "main" },
+      repoRoot: repo,
+      workOrderPrompt: prompt,
+      workOrderDigest: sha256Hex(prompt),
+      gatePlan: { kind: "absent" },
+      revision: 0,
+      rerunRequested: false,
+      createdAt: 1,
+      updatedAt: 4,
+      state: {
+        phase: "worker-running",
+        workspace: {
+          kind: "detached-worktree",
+          worktreePath: worktree,
+          sourceTreeOid,
+          sourceParentHead: sourceHead,
+          sourceHead,
+          startedAt: 2,
+          preparedAt: 3,
+        },
+        worker: attempt,
+      },
+    };
+    const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+    const claimed = operationStore.claimIfIdle({
+      ...operation,
+      updatedAt: 1,
+      state: { phase: "claimed" },
+    });
+    const workspaceAttempt = {
+      kind: "detached-worktree" as const,
+      worktreePath: worktree,
+      sourceTreeOid,
+      sourceParentHead: sourceHead,
+      startedAt: 2,
+    };
+    const preparing = operationStore.compareAndSwap(
+      {
+        sessionId: claimed.sessionId,
+        operationId: claimed.operationId,
+        revision: claimed.revision,
+      },
+      {
+        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
+        updatedAt: 2,
+      },
+    );
+    const workspace = { ...workspaceAttempt, sourceHead, preparedAt: 3 };
+    const prepared = operationStore.compareAndSwap(
+      {
+        sessionId: preparing.sessionId,
+        operationId: preparing.operationId,
+        revision: preparing.revision,
+      },
+      { state: { phase: "prepared", workspace }, updatedAt: 3 },
+    );
+    operationStore.compareAndSwap(
+      {
+        sessionId: prepared.sessionId,
+        operationId: prepared.operationId,
+        revision: prepared.revision,
+      },
+      { state: { phase: "worker-running", workspace, worker: attempt }, updatedAt: 4 },
+    );
+    operationStore.close();
+    const runHandoffTurn = vi.fn(async () => {
+      throw new Error("duplicate worker execution");
+    });
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn,
+    });
+    shutdowns.push(server.shutdown);
+
+    await vi.waitFor(
+      () => {
+        const store = new RoundOperationStore(join(dataDir, "round-operations"));
+        const recovered = store.read(operation.sessionId);
+        store.close();
+        expect(recovered?.state.phase).toBe("failed");
+      },
+      { timeout: 10_000, interval: 50 },
+    );
+
+    const recoveredStore = new RoundOperationStore(join(dataDir, "round-operations"));
+    const recovered = recoveredStore.read(operation.sessionId);
+    recoveredStore.close();
+    expect(runHandoffTurn).not.toHaveBeenCalled();
+    expect(recovered?.state.phase).toBe("failed");
+    if (recovered?.state.phase !== "failed" || recovered.state.failure.at !== "worker") {
+      throw new Error("expected interrupted worker recovery");
+    }
+    expect(recovered.state.failure.worker).toMatchObject({
+      executionId: attempt.executionId,
+      outcome: "failed",
+      changedPaths: ["a.ts"],
+    });
+    if (!("outcome" in recovered.state.failure.worker)) {
+      throw new Error("expected reconstructed worker receipt");
+    }
+    expect(recovered.state.failure.worker.diff).toContain("+export const value = 2;");
+    expect(recovered.state.failure.reason).toContain(worktree);
+    expect(readFileSync(join(worktree, "a.ts"), "utf8")).toBe("export const value = 2;\n");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The round dispatch's session, executed through the REAL server.
 //
