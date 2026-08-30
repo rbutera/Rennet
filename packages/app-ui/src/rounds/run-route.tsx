@@ -2,6 +2,7 @@ import { cn, Spinner } from "@rennet/ui";
 import { Check, Minus } from "lucide-react";
 import { useEffect } from "react";
 import { Redirect } from "wouter";
+import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import {
   type LaneRow,
@@ -57,13 +58,13 @@ export function StatusIcon({
   if (status === "failed")
     return <span className={cn(size, "shrink-0 rounded-full bg-destructive")} aria-hidden="true" />;
   if (status === "absent")
-    return <Minus className={cn(size, "shrink-0 text-muted-foreground")} aria-hidden="true" />;
+    return <Icon icon={Minus} className={cn(size, "shrink-0 text-muted-foreground")} />;
   // `drafted` and `done` are both "this one is finished" — a lens lane's verdict is the
   // thing that differs, and it renders beside the glyph, not as a second glyph.
   return (
-    <Check
+    <Icon
+      icon={Check}
       className={cn(size, "shrink-0", compact ? "text-muted-foreground/70" : "text-green")}
-      aria-hidden="true"
     />
   );
 }

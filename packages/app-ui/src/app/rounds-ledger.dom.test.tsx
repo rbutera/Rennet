@@ -14,6 +14,7 @@ import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
+import { gateDuration } from "../rounds/rounds-ledger";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
@@ -250,6 +251,115 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     const line = r.getByTestId("round-retrospective").textContent ?? "";
     expect(line).toContain("Regenerated the boards · generation gen2");
     expect(line).not.toContain("reworks");
+  });
+
+  // The retrospective is a DISCLOSURE (prototype `round-report.tsx:118-158`): the line is
+  // the trigger, and opening it shows the round's trigger queue and run receipt. Both
+  // halves come off the durable record — nothing here narrates what the orchestrator "did".
+  it("opens the retrospective onto the round's trigger queue, named by the report's ask text", async () => {
+    const { r } = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability", "ask-network"], 2)),
+    );
+    const panel = r.getByTestId("round-retrospective");
+    const disclosure = panel.querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!disclosure) throw new Error("missing retrospective disclosure");
+    // Closed by default — the detail is not in the DOM at all, so this cannot pass on a
+    // panel that renders its body and merely hides it.
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    expect(r.queryByTestId("round-retrospective-detail")).toBeNull();
+
+    await r.user.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    const triggers = [...r.container.querySelectorAll('[data-testid="round-trigger"]')];
+    expect(triggers).toHaveLength(2);
+    // The record carries thread IDS; the words live on the report's outcomes, so the queue
+    // reads as asks rather than as identifiers. Point `askText` at the wrong record and the
+    // ids come back instead.
+    expect(triggers[0]?.textContent).toContain("Log every refresh exit without leaking the token.");
+    expect(triggers[1]?.textContent).toContain("Report the post-send failure honestly.");
+    expect(triggers[0]?.textContent).not.toContain("ask-observability");
+  });
+
+  it("keeps an unaccounted ask as its id rather than borrowing another ask's words", async () => {
+    const { r } = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability", "ask-never-reported"], 1)),
+    );
+    const disclosure = r
+      .getByTestId("round-retrospective")
+      .querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!disclosure) throw new Error("missing retrospective disclosure");
+    await r.user.click(disclosure);
+    const triggers = [...r.container.querySelectorAll('[data-testid="round-trigger"]')];
+    expect(triggers[1]?.textContent).toContain("ask-never-reported");
+  });
+
+  // The run RECEIPT is the optional half (legacy rows omit it), and the GATE line is the
+  // only thing that depends on it. `workerCommitRange` is record-level and always present,
+  // so the commit range must survive a missing receipt — it used to be nested inside the
+  // gate's guard, which hid a legacy round's real commits because nobody had written down
+  // which gate command ran.
+  it("shows the gate line only with a receipt, and the commit range either way", async () => {
+    const withoutReceipt = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor(regeneratedRound(["ask-observability"], 1)),
+    );
+    const closed = withoutReceipt.r
+      .getByTestId("round-retrospective")
+      .querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!closed) throw new Error("missing retrospective disclosure");
+    await withoutReceipt.r.user.click(closed);
+    expect(withoutReceipt.r.queryByTestId("round-gate")).toBeNull();
+    // …and the commits the round DID land are still stated. Re-nest the commit line under
+    // `gate !== undefined` and this reddens.
+    expect(withoutReceipt.r.getByTestId("round-commits").textContent).toContain(
+      "Committed commit-…commit-",
+    );
+    withoutReceipt.r.unmount();
+
+    const withReceipt = renderWorkspace(
+      "/s/s-1?view=rounds",
+      sourceFor({
+        ...regeneratedRound(["ask-observability"], 1),
+        run: {
+          startedAt: Date.UTC(2026, 7, 29, 9, 30),
+          sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+          gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400 },
+        },
+      }),
+    );
+    const open = withReceipt.r
+      .getByTestId("round-retrospective")
+      .querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!open) throw new Error("missing retrospective disclosure");
+    await withReceipt.r.user.click(open);
+    expect(withReceipt.r.getByTestId("round-gate").textContent).toContain(
+      "Gate passed · pnpm check · 12s",
+    );
+    // `commit-from` → `commit-to` is a real move, so the commit line states the range.
+    expect(withReceipt.r.getByTestId("round-commits").textContent).toContain("Committed commit-");
+  });
+
+  // The gate duration used to round the SECONDS remainder after splitting off the minutes,
+  // so the remainder could round up into a value its own unit cannot hold: 59_999ms read
+  // "60s" (not "1m 0s") and 359_999ms read "5m 60s" (not "6m 0s"). Rounding to total
+  // seconds first removes the carry entirely. The boundaries are the whole claim, so they
+  // are what is asserted — the interior values were already right.
+  it.each([
+    [0, "<1s"],
+    [499, "<1s"],
+    [999, "<1s"],
+    [1000, "1s"],
+    [12_400, "12s"],
+    [59_499, "59s"],
+    [59_500, "1m 0s"],
+    [59_999, "1m 0s"],
+    [359_499, "5m 59s"],
+    [359_500, "6m 0s"],
+    [359_999, "6m 0s"],
+  ])("renders %ims as %s", (ms, expected) => {
+    expect(gateDuration(ms)).toBe(expected);
   });
 
   it("states the board's generation and round in one quiet intro line", () => {

@@ -220,9 +220,12 @@ citation is a chip: click it and the real lines unfold below the paragraph;
 click again and they fold away.
 
 A finding reads as flowing document text, not a boxed card: a severity chip, the
-claim as its title, a concurrence badge reading "concur 2/2" when both review
-seats raised it or naming the single seat when they disagree, then the body and
-the proposed fix as its own callout. **Request This Change** stages that fix for
+claim as its title, a concurrence badge, then the body and the proposed fix as
+its own callout. The badge reads "concur 2/2" only when both review seats raised
+the finding at comparable severity; "severity split" when both raised it but
+disagreed on how much it matters; the seat's name and "only" when one raised it
+and the other did not; and the seat's name alone, quietly, when a single harness
+ran and there was no second opinion to compare. **Request This Change** stages that fix for
 the hand-off; the same control becomes a **Staged · Request Change** receipt and
 unstages it when clicked again.
 

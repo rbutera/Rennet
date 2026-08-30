@@ -63,6 +63,39 @@ describe("DiffView — the raw-diff surface", () => {
     expect(container.textContent).toContain("const y = 3");
   });
 
+  // ONE diff tint system: the row grounds are the palette's `bg-add`/`bg-del` and the
+  // markers the matching inks, the same pair `components/code-view.tsx:141-148` paints.
+  // The gutters carry NO tint of their own — a changed line is one continuous band, and a
+  // second alpha step on the number columns is what made the two surfaces read apart.
+  //
+  // What this CANNOT catch: whether those tokens resolve to a readable colour, in either
+  // scheme. It is a class-name assertion; the contrast is not in the DOM.
+  it("tints a changed row on the shared diff tokens, gutters included in the one band", () => {
+    const { container } = mountDiff([FILE_A]);
+    const added = container.querySelector<HTMLElement>('[data-line-state="add"]');
+    const deleted = container.querySelector<HTMLElement>('[data-line-state="del"]');
+    if (!added || !deleted) throw new Error("missing changed rows");
+    expect(added.className).toContain("bg-add");
+    expect(deleted.className).toContain("bg-del");
+    expect(added.className).not.toContain("bg-green/10");
+    expect(deleted.className).not.toContain("bg-destructive/10");
+    // The two gutter columns and the marker cell: no background of their own anywhere.
+    for (const row of [added, deleted]) {
+      for (const cell of row.querySelectorAll<HTMLElement>("span")) {
+        expect(cell.className).not.toMatch(/\bbg-(add|del|green|destructive)/);
+      }
+    }
+    // The +/− marker takes the diff INK, not the interface green/red.
+    const markers = [...added.querySelectorAll<HTMLElement>("span")].filter(
+      (s) => s.textContent === "+",
+    );
+    expect(markers[0]?.className).toContain("text-add-ink");
+    const minus = [...deleted.querySelectorAll<HTMLElement>("span")].filter(
+      (s) => s.textContent === "−",
+    );
+    expect(minus[0]?.className).toContain("text-del-ink");
+  });
+
   it("the filter narrows both the cards and the tree", async () => {
     const { getByLabelText, queryByText, user } = mountDiff([FILE_A, FILE_B]);
     await user.type(getByLabelText("Filter changed files"), "b.tsx");

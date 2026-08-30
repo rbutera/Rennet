@@ -444,7 +444,13 @@ that host's repair.
    against the round's own diff, not the asks that went out — a round can
    dispatch five asks and rework nothing, and the number has to be able to say
    so. A round whose report never drafted states no number rather than a zero it
-   cannot stand behind.
+   cannot stand behind. That line is a disclosure: opening it shows the round's
+   **trigger queue** (the asks it dispatched, named by the words the report's
+   outcomes recorded, and by their thread id when the report never accounted for
+   one) and its **run** (the gate the round ran and the commit range the worker
+   landed). Nothing there narrates what the drafters did: the per-lens carry and
+   rework verdicts exist only while a round is live and are never persisted onto
+   the record, so a settled round cannot recover them and does not pretend to.
 7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
    — a header control beside Map · Diff that exists exactly when a round has
    completed, never a disabled tab. One row per round; each opens that round's

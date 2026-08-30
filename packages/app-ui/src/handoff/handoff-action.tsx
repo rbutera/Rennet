@@ -1,6 +1,7 @@
 import { Button, Spinner } from "@rennet/ui";
 import { AlertTriangle, type LucideIcon } from "lucide-react";
 import { useState } from "react";
+import { Icon } from "../components/icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The hand-off's one exit CTA, shared by both modes (C08 cluster 4, Objective clause 3, R31):
@@ -30,7 +31,7 @@ function rejectionReason(error: unknown): string {
   return "The submission failed. Nothing left the machine — try again.";
 }
 
-export function HandoffAction({ label, pendingLabel, icon: Icon, onSubmit }: HandoffActionProps) {
+export function HandoffAction({ label, pendingLabel, icon: glyph, onSubmit }: HandoffActionProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -57,13 +58,13 @@ export function HandoffAction({ label, pendingLabel, icon: Icon, onSubmit }: Han
         {submitting ? (
           <Spinner className="size-4.5" aria-hidden="true" />
         ) : (
-          <Icon className="size-4.5" aria-hidden="true" />
+          <Icon icon={glyph} className="size-4.5" />
         )}
         {submitting ? pendingLabel : label}
       </Button>
       {error !== null && (
         <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <Icon icon={AlertTriangle} className="mt-0.5 size-4 shrink-0" />
           {error}
         </p>
       )}

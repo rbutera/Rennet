@@ -2,6 +2,7 @@ import type { Review } from "@rennet/protocol";
 import { Check, GitBranch, GitPullRequest } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { Icon } from "../components/icon";
 import {
   AnchorReveal,
   type CodeRef,
@@ -168,7 +169,7 @@ export function RoundsLanes({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
           <div className="flex items-center gap-2.5">
-            <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+            <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
             <h1 className="text-xl font-semibold tracking-tight text-foreground">{pr.title}</h1>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -179,7 +180,7 @@ export function RoundsLanes({
           {receipt ? (
             <div className="flex flex-col gap-1 pt-1">
               <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Check className="size-4 text-green" aria-hidden="true" />
+                <Icon icon={Check} className="size-4 text-green" />
                 {changeRequest.opened} · {changeRequest.numberPrefix}
                 {receipt.number}
               </span>
@@ -216,7 +217,7 @@ export function RoundsLanes({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
         <div className="flex items-center gap-2.5">
-          <GitBranch className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Icon icon={GitBranch} className="size-4 text-muted-foreground" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Changes</h1>
           {gathering && <span className="text-xs text-muted-foreground">{asks.length}</span>}
         </div>
@@ -257,10 +258,7 @@ export function RoundsLanes({
         {/* The destination, held quietly until the changes are gone. */}
         {pr && (
           <div className="mt-2 flex items-center gap-2 border-t border-border/60 pt-4">
-            <GitPullRequest
-              className="size-3.5 shrink-0 text-muted-foreground/50"
-              aria-hidden="true"
-            />
+            <Icon icon={GitPullRequest} className="size-3.5 shrink-0 text-muted-foreground/50" />
             <span className="min-w-0 truncate text-xs text-muted-foreground/60">{pr.title}</span>
           </div>
         )}

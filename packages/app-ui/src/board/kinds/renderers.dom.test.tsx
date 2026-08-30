@@ -359,4 +359,231 @@ describe("board kind renderers over the fixture set", () => {
     const asks = Object.values(useRennetStore.getState().review.stagedAsks);
     expect(asks.some((a) => a.type === "comment")).toBe(true);
   });
+
+  // ── W3 structural restorations (prototype `lens-board.tsx`) ────────────────────
+
+  it("stamps the inferred badge ONLY on a decision the wire marks reconstructed", () => {
+    const firstDecision = decisionsBoard.elements.find((el) => el.kind === "decision");
+    if (!firstDecision) throw new Error("the decisions fixture carries no decision");
+    const inferred: LensBoard = {
+      ...decisionsBoard,
+      elements: decisionsBoard.elements.map((element) =>
+        element.id === firstDecision.id && element.kind === "decision"
+          ? { ...element, data: { ...element.data, inferred: true } }
+          : element,
+      ),
+    };
+    const marked = renderBoard(inferred);
+    // A section renders its children too, so an element appears once loose and once nested.
+    // The claim is about WHICH decision wears the badge, so compare element ids, not counts.
+    const badged = new Set(
+      [...marked.container.querySelectorAll('[data-kind="decision-inferred"]')].map((badge) =>
+        badge.closest('[data-kind="decision"]')?.getAttribute("data-element-id"),
+      ),
+    );
+    expect([...badged]).toEqual([firstDecision.id]);
+    const badge = marked.container.querySelector('[data-kind="decision-inferred"]');
+    expect(badge?.textContent).toBe("inferred");
+    // …and its card is the bordered decision, not loose prose.
+    expect(badge?.closest('[data-kind="decision"]')?.className).toContain(
+      "rounded-md border border-border",
+    );
+    marked.unmount();
+
+    // The fixture set carries NO `inferred` stamp, and absence is not a mark: a decision
+    // read straight off an artifact must never wear the reconstruction warning. Flip the
+    // renderer's `inferred === true` to a truthiness check and this stays green — flip it
+    // to `inferred !== true` and it reddens, which is the direction that would lie.
+    const plain = renderBoard(decisionsBoard);
+    expect(plain.container.querySelectorAll('[data-kind="decision-inferred"]')).toHaveLength(0);
+    expect(plain.container.querySelector('[data-kind="decision"]')?.className).toContain(
+      "rounded-md border border-border",
+    );
+  });
+
+  /** Re-stamp `f1`'s concurrence data — the one axis these pill tests vary. */
+  const withF1Concurrence = (data: Record<string, unknown>): LensBoard => ({
+    ...flaggedBoard,
+    elements: flaggedBoard.elements.map((element) =>
+      element.kind === "finding" && element.id === "f1"
+        ? { ...element, data: { ...element.data, ...data } }
+        : element,
+    ),
+  });
+  const f1Pill = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>(
+      '[data-element-id="f1"] [data-kind="finding-concurrence"]',
+    );
+
+  it("reads concurrence as ONE pill: green when every seat agreed, verdigris when they split", () => {
+    // The fixture's findings carry both seats agreeing, `accord: "concur"` (`flagged.ts:7-11`).
+    const both = renderBoard(flaggedBoard);
+    const pill = both.container.querySelector<HTMLElement>('[data-kind="finding-concurrence"]');
+    expect(pill?.textContent).toBe("concur 2/2");
+    expect(pill?.getAttribute("data-concur")).toBe("true");
+    expect(pill?.className).toContain("border-green-line");
+    expect(pill?.className).toContain("text-green");
+    both.unmount();
+
+    // A split: the pipeline stamps `agree: 0` for the seat that answered "no concern"
+    // (`server/runtime/lens-pipeline.ts:236-240`), so the pill names who DID raise it and
+    // drops out of the evidence register. Same tally shape, different verdict.
+    const disagree = renderBoard(
+      withF1Concurrence({
+        concurrence: [
+          { model: "claude", agree: 1, total: 1 },
+          { model: "codex", agree: 0, total: 1 },
+        ],
+        accord: "split",
+      }),
+    );
+    const f1 = f1Pill(disagree.container);
+    expect(f1?.textContent).toBe("claude only");
+    expect(f1?.getAttribute("data-concur")).toBe("false");
+    expect(f1?.className).toContain("border-model-line");
+    expect(f1?.className).not.toContain("border-green-line");
+  });
+
+  // THE LIE THIS GUARDS: a severity CONFLICT — both seats raised the finding, at
+  // materially different severities, so `reconcileFindings` emits `disagree` with NEITHER
+  // answer being `NO_CONCERN_ANSWER` — folds to `[{claude,1,1},{codex,1,1}]`, the
+  // BYTE-IDENTICAL tally a real concurrence produces. Read from the arithmetic alone the
+  // pill went green and said "concur 2/2" over a disagreement. Only `accord` separates them.
+  it("does not call a severity conflict a concurrence, though its tallies are identical", () => {
+    const conflict = renderBoard(
+      withF1Concurrence({
+        concurrence: [
+          { model: "claude", agree: 1, total: 1 },
+          { model: "codex", agree: 1, total: 1 },
+        ],
+        accord: "conflict",
+      }),
+    );
+    const pill = f1Pill(conflict.container);
+    expect(pill?.textContent).toBe("severity split");
+    expect(pill?.getAttribute("data-concur")).toBe("false");
+    expect(pill?.className).not.toContain("border-green-line");
+    expect(pill?.className).toContain("border-model-line");
+  });
+
+  // A board drafted before `accord` carries the same ambiguous tallies and no stamp. It
+  // may be a concurrence and it may be a conflict; the pill cannot tell, so it states the
+  // tally and makes no claim. The one thing it must never do is go green.
+  it("states the tally, never a green concurrence, on a board that carries no accord", () => {
+    const unstamped = renderBoard(
+      withF1Concurrence({
+        concurrence: [
+          { model: "claude", agree: 1, total: 1 },
+          { model: "codex", agree: 1, total: 1 },
+        ],
+        accord: undefined,
+      }),
+    );
+    const pill = f1Pill(unstamped.container);
+    expect(pill?.textContent).toBe("2/2 flagged");
+    expect(pill?.textContent).not.toContain("concur");
+    expect(pill?.getAttribute("data-concur")).toBe("false");
+    expect(pill?.className).not.toContain("border-green-line");
+    expect(pill?.className).not.toContain("text-green");
+  });
+
+  // A single-harness run (`stampSingleSeatConcurrence`) leaves ONE tally and no accord.
+  // There is no second opinion, so there is nothing to split: the verdigris "claude only"
+  // register named a disagreement that never happened. It reads as the seat, muted.
+  it("reads a single-harness run as the seat's name, not as a split", () => {
+    const solo = renderBoard(
+      withF1Concurrence({ concurrence: [{ model: "claude", agree: 1, total: 1 }] }),
+    );
+    const pill = f1Pill(solo.container);
+    expect(pill?.textContent).toBe("claude");
+    expect(pill?.textContent).not.toContain("only");
+    expect(pill?.getAttribute("data-concur")).toBe("false");
+    expect(pill?.className).toContain("text-muted-foreground");
+    expect(pill?.className).not.toContain("text-model");
+    expect(pill?.className).not.toContain("border-green-line");
+  });
+
+  // `message.tsx:19` claims a `detached` ask "must remain legible" through the demotion to
+  // a caption line. That is a claim about what RENDERS, so it gets executed rather than
+  // reasoned about: the word is in the DOM, in its own span, in the danger register — not
+  // merely implied by the container's dashed border and 70% opacity, which is the half a
+  // reader can miss. Strip the `text-danger`/`font-medium` from the lifecycle span, or drop
+  // the span entirely, and this reddens; the container styling alone will not carry it.
+  it("keeps a detached ask legible: the caption NAMES the lifecycle, it is not just dimmed", () => {
+    const detachedBoard: LensBoard = {
+      ...flaggedBoard,
+      elements: flaggedBoard.elements.map((element) =>
+        element.kind === "message" && element.id === "f2-discuss"
+          ? { ...element, data: { ...element.data, lifecycle: "detached" as const } }
+          : element,
+      ),
+    };
+    const { container } = renderBoard(detachedBoard);
+    const message = container.querySelector<HTMLElement>('[data-kind="message"]');
+    expect(message?.getAttribute("data-lifecycle")).toBe("detached");
+    const caption = message?.querySelector("p");
+    if (!message || !caption) throw new Error("missing detached message caption");
+    // The caption names the role AND the lifecycle — the word survives the demotion.
+    expect(caption.textContent).toContain("Discuss");
+    expect(caption.textContent).toContain("detached");
+    const mark = [...caption.querySelectorAll("span")].find((s) => s.textContent === "detached");
+    expect(mark?.className).toContain("text-danger");
+    expect(mark?.className).toContain("font-medium");
+    // …and the quoted words still LEAD: the caption follows the bubble in document order.
+    const bubble = message.querySelector('[data-kind="message-bubble"]');
+    if (!bubble) throw new Error("missing message bubble");
+    expect(bubble.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("renders a noise verdict as a bordered card whose header names the hunk and its judge", () => {
+    const { container } = renderBoard(noiseBoard);
+    const card = container.querySelector<HTMLElement>(
+      '[data-kind="noise_verdict"][data-element-id="nv-barrel"]',
+    );
+    if (!card) throw new Error("missing nv-barrel verdict");
+    expect(card.className).toContain("border-border");
+    // The header row is separated from the reason by the card's own rule.
+    const header = card.querySelector<HTMLElement>(".border-b");
+    expect(header).not.toBeNull();
+    // The hunk's own path is the label — the wire carries no group label to use instead.
+    expect(header?.textContent).toContain("packages/adapters/src/index.ts");
+    // A `deterministic` judge reads "rule" and carries NO Sparkles; only `llm` earns it.
+    const judge = card.querySelector<HTMLElement>('[data-kind="noise-judge"]');
+    expect(judge?.textContent).toBe("rule");
+    expect(judge?.querySelector("svg")).toBeNull();
+
+    const llm: LensBoard = {
+      ...noiseBoard,
+      elements: noiseBoard.elements.map((element) =>
+        element.kind === "noise_verdict" && element.id === "nv-barrel"
+          ? { ...element, data: { ...element.data, judge: "llm" as const } }
+          : element,
+      ),
+    };
+    const judged = renderBoard(llm);
+    const chip = judged.container.querySelector<HTMLElement>(
+      '[data-element-id="nv-barrel"] [data-kind="noise-judge"]',
+    );
+    expect(chip?.textContent).toBe("model judged");
+    expect(chip?.querySelector("svg")?.getAttribute("class")).toContain("lucide-sparkles");
+  });
+
+  it("renders a message as a railed exchange, the human's quote in a bubble", () => {
+    const { container } = renderBoard(flaggedBoard);
+    const message = container.querySelector<HTMLElement>('[data-kind="message"]');
+    if (!message) throw new Error("missing message element");
+    // The rail replaced the bordered ROLE-pill card.
+    expect(message.className).toContain("border-l-2");
+    expect(message.className).toContain("pl-3");
+    // The fixture's message is human-authored (`boards/helpers.ts:188`), so its quote
+    // reads as the reviewer's side of the exchange, not as a plain paragraph.
+    const bubble = message.querySelector<HTMLElement>('[data-kind="message-bubble"]');
+    expect(bubble?.textContent).toContain("connection and token are untouched");
+    expect(bubble?.className).toContain("bg-secondary");
+    expect(bubble?.className).toContain("rounded-lg");
+    // The role survives the restyle — it is what the exchange was FOR.
+    expect(message.textContent).toContain("Discuss");
+  });
 });
