@@ -52,7 +52,7 @@ Carry is decided by evidence, never by resemblance.
 |---|---|
 | Board content on an element id a regenerated lens keeps | Carried verbatim, with no delta stamp |
 | Board-native data — marks, groupings, arrangement, notes | Carried with the element id it sits on |
-| An ask, thread, or highlight anchored into board prose | Re-anchored by quote match; a casualty stays visible in the Detached list |
+| An ask, thread, or highlight anchored into board prose | Re-anchored only by one exact quote match in the corresponding successor lens; zero or multiple matches preserve the thread as detached and suppress its stale highlight |
 | A code ref whose cited bytes are identical, including through a Git-proven rename | Resolves against the successor patchset |
 | A code ref whose cited content changed | Redrafted, and its section carries a `new` or `reworked` stamp |
 | A code ref whose source is gone | Orphaned, kept with its reason rather than reattached nearby |

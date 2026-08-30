@@ -1,4 +1,5 @@
 import type {
+  AskProjection,
   ReattachResult,
   ReviewAskStreamEvent,
   SessionTranscriptRow,
@@ -15,6 +16,7 @@ import { useBridgeContext } from "../data/bridge";
 import type { CommandCache } from "../data/cache";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES, readSessionQuery } from "../routes/url";
+import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The chat dock's SINGLE data-resolution point (C07, proposal reconciliation 3), the
@@ -137,6 +139,18 @@ export interface AnchoredThreadRow {
   readonly boardRef: string;
 }
 
+export interface DetachedThreadRef {
+  readonly threadId: string;
+  /** The last real board target retained by the detached durable thread. */
+  readonly boardRef: string;
+}
+
+/** One transcript group for every durable thread whose exact quote no longer re-anchors. */
+export interface DetachedThreadsRow {
+  readonly kind: "detached-threads";
+  readonly threads: readonly DetachedThreadRef[];
+}
+
 /** A `context-rebuilt` marker — the harness no longer had the conversation Rennet's cursor
  *  pointed at, so the turn ran on a fresh session. Dropping it would let the transcript read
  *  as one unbroken conversation across a real discontinuity. */
@@ -146,7 +160,12 @@ export interface ContextRebuiltRow {
   readonly reason: string;
 }
 
-export type TranscriptRow = TurnRow | CompactBoundaryRow | AnchoredThreadRow | ContextRebuiltRow;
+export type TranscriptRow =
+  | TurnRow
+  | CompactBoundaryRow
+  | AnchoredThreadRow
+  | DetachedThreadsRow
+  | ContextRebuiltRow;
 
 // ── The wire transcript → the dock's rows ─────────────────────────────────────
 
@@ -285,12 +304,29 @@ export function reattachToRows(result: ReattachResult): TranscriptRow[] {
   return rows;
 }
 
+/** Project the durable ask log's detached quote threads into one visible transcript group. */
+export function detachedThreadRowsOf(threads: AskProjection["quoteThreads"]): DetachedThreadsRow[] {
+  const detached = Object.entries(threads).flatMap(([threadId, thread]) =>
+    thread.lifecycle === "detached" && thread.target !== undefined
+      ? [{ threadId, boardRef: thread.target } satisfies DetachedThreadRef]
+      : [],
+  );
+  return detached.length === 0 ? [] : [{ kind: "detached-threads", threads: detached }];
+}
+
 function transcriptRowKey(row: TranscriptRow): string {
-  return row.kind === "anchored-thread" ? `anchored:${row.threadId}` : `${row.kind}:${row.id}`;
+  if (row.kind === "anchored-thread") return `anchored:${row.threadId}`;
+  if (row.kind === "detached-threads") return row.kind;
+  return `${row.kind}:${row.id}`;
 }
 
 function transcriptRowTime(row: TranscriptRow): number | undefined {
-  if (row.kind === "anchored-thread" || row.kind === "context-rebuilt" || !row.time) {
+  if (
+    row.kind === "anchored-thread" ||
+    row.kind === "detached-threads" ||
+    row.kind === "context-rebuilt" ||
+    !row.time
+  ) {
     return undefined;
   }
   const value = Date.parse(row.time);
@@ -665,6 +701,7 @@ function useRouteReviewId(): string | undefined {
  */
 export function useChatDock(): ChatDockModel {
   const projection = useSessionTranscript();
+  const quoteThreads = useRennetStore((state) => state.review.quoteThreads);
   // The LIVE review id comes from the route: `/s/:slug` resolves the slug to a review
   // (or to a review-less chat-only session, which yields `undefined` — the dock then
   // stays honestly empty rather than reading a review that does not exist). The context
@@ -787,7 +824,14 @@ export function useChatDock(): ChatDockModel {
     () => projection.rows ?? transcriptRowsOf(session?.rows ?? []),
     [projection.rows, session],
   );
-  const rows = useMemo(() => mergeTranscriptRows(historyRows, liveRows), [historyRows, liveRows]);
+  const detachedRows = useMemo(
+    () => (reviewId === undefined ? [] : detachedThreadRowsOf(quoteThreads)),
+    [quoteThreads, reviewId],
+  );
+  const rows = useMemo(
+    () => [...mergeTranscriptRows(historyRows, liveRows), ...detachedRows],
+    [detachedRows, historyRows, liveRows],
+  );
   const inFlight = liveRows.some((row) => row.kind === "turn" && row.status === "streaming");
 
   const send = useCallback(

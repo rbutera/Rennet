@@ -1,4 +1,5 @@
 import { DesignSectionMetadata, SourceChips, SpecDeltaBadge } from "../design-meta";
+import { InlineQuoteHighlight } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { BoardChildren } from "./renderers";
 
@@ -19,7 +20,9 @@ export function SectionElement({ element }: { readonly element: ElementOf<"secti
       className="flex scroll-mt-16 flex-col gap-2"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-semibold text-base text-foreground">{title}</h3>
+        <h3 className="font-semibold text-base text-foreground">
+          <InlineQuoteHighlight text={title} elementId={element.id} />
+        </h3>
         {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         <SourceChips sources={sources ?? []} className="ml-auto" />
       </div>

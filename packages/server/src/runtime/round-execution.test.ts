@@ -1217,4 +1217,31 @@ describe("createRoundExecutionCoordinator", () => {
     expect(runWorker).toHaveBeenCalledTimes(2);
     expect(test.store.read(initial.sessionId)?.state.phase).toBe("completed");
   });
+
+  it("retries a failed terminal drain before a fresh dispatch can replace its receipt", async () => {
+    const test = scenario();
+    let drainAttempts = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        async drainTerminal() {
+          drainAttempts += 1;
+          if (drainAttempts === 1) throw new Error("transcript append failed");
+          return { kind: "retain" };
+        },
+      },
+    });
+    const initial = operation();
+
+    await expect(coordinator.submit(initial)).rejects.toThrow("transcript append failed");
+    expect(test.store.read(initial.sessionId)?.state.phase).toBe("completed");
+
+    const completed = await coordinator.submit(initial);
+    expect(completed.state.phase).toBe("completed");
+    expect(drainAttempts).toBe(3);
+    expect(runWorker).toHaveBeenCalledTimes(2);
+  });
 });

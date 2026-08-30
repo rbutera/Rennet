@@ -58,6 +58,30 @@ describe("composer badges read the real review slice (task 4.3)", () => {
     await user.click(screen.getByLabelText(/Remove quoted-text comment reference/));
     expect(Object.keys(useRennetStore.getState().review.quoteThreads).length).toBe(0);
   });
+
+  it("labels a detached quote badge instead of dropping the thread", () => {
+    act(() => {
+      const id = useRennetStore
+        .getState()
+        .reviewActions.addQuoteComment("removed prose", "where did this go?", "comment", {
+          target: "old-prose",
+          generation: "gen-1",
+        });
+      const state = useRennetStore.getState();
+      const thread = state.review.quoteThreads[id];
+      if (!thread || thread.target === undefined || thread.generation === undefined) return;
+      useRennetStore.setState({
+        review: {
+          ...state.review,
+          quoteThreads: { [id]: { ...thread, lifecycle: "detached" } },
+        },
+      });
+    });
+
+    mount(<Composer onSend={() => undefined} />);
+    expect(screen.getByText("Detached")).toBeTruthy();
+    expect(screen.getByText(/removed prose/)).toBeTruthy();
+  });
 });
 
 describe("composer send + image + presence (task 4.3)", () => {

@@ -155,6 +155,7 @@ import {
   LocusPathUntranslatableError,
   mechanicalComposition,
   mintSession,
+  planQuoteThreadReanchors,
   queryKnowledge,
   queryProjectMap,
   ReviewService,
@@ -271,7 +272,10 @@ import {
   type DispatchRoundResult,
   type PersistedBoardMeta,
 } from "./runtime/rounds";
+import { verifyStoredRoundReport } from "./runtime/stored-round-report-verification";
 import { resolveCaptureRoot } from "./session/capture-root";
+import { roundNumberForDispatch } from "./session/round-number";
+import { roundDispatchTranscriptRow, roundReturnTranscriptRow } from "./session/round-transcript";
 import {
   enterRoundSession,
   projectIdForRepoRoot,
@@ -2083,8 +2087,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // the sidebar lists both live here.
   const sessionStore = new SessionStore(join(dataDir, "sessions"));
   // The display-transcript store (issue-set B): the durable read-model behind
-  // `session.transcript`. The turn loop's `recordTranscript` sink (below) is its only writer.
+  // `session.transcript`. Coding turns and round lifecycle receipts append here.
   const transcriptStore = new TranscriptStore(join(dataDir, "transcripts"));
+  const appendRoundTranscript = (
+    sessionId: string,
+    rows: readonly ReturnType<typeof roundDispatchTranscriptRow>[],
+  ): void => {
+    transcriptStore.appendUnique(sessionId, rows);
+  };
   // ── The session turn loop, instantiated (B09 cluster 2's loop, wired here) ───────────────
   //
   // Every coding turn a round dispatches now runs THROUGH the loop. TWO of the loop's
@@ -2274,6 +2284,50 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
     readRounds: (sessionId) => roundRecordStore.read(sessionId),
     loadGeneration: (id) => generationStore.load(id),
+    onGenerationTransition: async ({
+      repoRoot,
+      reviewId,
+      sessionId,
+      sourceGeneration,
+      successorGeneration,
+    }) => {
+      const readers = {
+        loadGeneration: (id: string) => generationStore.load(id),
+        listBoardMeta: (ownedSessionId: string, generation: string) =>
+          boardMetaStore.listForGeneration(ownedSessionId, generation),
+        boardElements: async (boardId: string) => [
+          ...(await boardsRuntimeFor(repoRoot).service.getState(boardId)).values(),
+        ],
+      };
+      const [previous, successor] = await Promise.all([
+        readPriorGeneration(readers, sessionId, sourceGeneration),
+        readPriorGeneration(readers, sessionId, successorGeneration),
+      ]);
+      if (previous === undefined || successor === undefined) {
+        throw new Error("Quote-thread reconciliation could not read both board generations.");
+      }
+      const events = planQuoteThreadReanchors({
+        projection: askLogStore.readProjection(reviewId),
+        sourceGeneration,
+        successorGeneration,
+        previous: new Map(
+          LENS_KINDS.flatMap((lens) => {
+            const board = previous.boards.get(lens);
+            return board === undefined ? [] : [[lens, board] as const];
+          }),
+        ),
+        successor: new Map(
+          LENS_KINDS.flatMap((lens) => {
+            const board = successor.boards.get(lens);
+            return board === undefined ? [] : [[lens, board] as const];
+          }),
+        ),
+      });
+      askLogStore.appendMany(reviewId, events);
+      if (events.length > 0) {
+        wsListener?.broadcastAskProjection(reviewId, askLogStore.readProjection(reviewId));
+      }
+    },
   });
 
   /**
@@ -2455,6 +2509,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       repoKeyForRoot(input.review.repositoryRoot),
     ).gateCommand?.trim();
     const createdAt = Date.now();
+    const records = roundRecordStore.read(input.session.id);
     return {
       operationId: randomUUID(),
       sessionId: input.session.id,
@@ -2462,7 +2517,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       dispatchId: input.dispatchId,
       sourcePatchsetId: input.sourcePatchsetId,
       askOccurrences: [...input.askOccurrences],
-      roundNumber: roundRecordStore.read(input.session.id).length + 1,
+      roundNumber: roundNumberForDispatch(records, input.dispatchId),
       sourceTarget:
         patchset.repository.headRef === undefined
           ? { kind: "detached", head: patchset.repository.headOid }
@@ -2529,6 +2584,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     ...(options.roundSourceLanding === undefined ? {} : { injection: options.roundSourceLanding }),
   });
+
+  const storedRoundReportVerification = {
+    reviewById: (reviewId: string) => service.reviewById(reviewId),
+    loadGeneration: (generation: string) => generationStore.load(generation),
+    loadBoardElements: async (repoRoot: string, boardId: string) => [
+      ...(await boardsRuntimeFor(repoRoot).service.getState(boardId)).values(),
+    ],
+    loadBoardMeta: (boardId: string) => boardMetaStore.load(boardId),
+  };
 
   const coordinator = createRoundExecutionCoordinator({
     store: roundOperationStore,
@@ -2716,6 +2780,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               diff: operation.state.worker.diff,
               changedPaths: operation.state.worker.changedPaths,
             },
+            verifyDraftedReport: async ({ reportBoardId, generation, patchsetId }) => {
+              if (reportBoardId !== attempt.reportBoardId || generation !== attempt.generation) {
+                throw new Error("Round regeneration drafted outside its reserved report identity.");
+              }
+              await verifyStoredRoundReport(storedRoundReportVerification, operation, {
+                point: "precommit",
+                reportBoardId,
+                generation,
+                expectedPatchsetId: patchsetId,
+              });
+            },
             draftPlan: { generation: attempt.generation, boardIds: attempt.boardIds },
             recaptured: true,
           },
@@ -2734,28 +2809,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       },
       planReportVerification: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       verifyReport: async ({ operation, report, attempt }) => {
-        const elements = [
-          ...(
-            await boardsRuntimeFor(operation.repoRoot).service.getState(report.reportBoardId)
-          ).values(),
-        ];
-        const reportedAskIds = new Set<string>();
-        for (const element of elements) {
-          if (element.kind !== "round_outcome") continue;
-          const data = element.data as {
-            readonly status?: unknown;
-            readonly ask?: { readonly ref?: unknown };
-          };
-          if (data.status !== "beyond" && typeof data.ask?.ref === "string") {
-            reportedAskIds.add(data.ask.ref);
-          }
+        if (operation.state.phase !== "report-verifying") {
+          throw new Error(
+            "Round report verification started outside its durable verification phase.",
+          );
         }
-        const missing = operation.askOccurrences
-          .map((occurrence) => occurrence.id)
-          .filter((id) => !reportedAskIds.has(id));
-        if (missing.length > 0) {
-          throw new Error(`Round report omitted dispatched asks: ${missing.join(", ")}`);
+        const generation = generationStore.load(report.generation);
+        if (generation === undefined) {
+          throw new Error("Round report verification lost its persisted generation.");
         }
+        await verifyStoredRoundReport(storedRoundReportVerification, operation, {
+          point: "persisted",
+          reportBoardId: report.reportBoardId,
+          generation: report.generation,
+          expectedPatchsetId: generation.patchsetId,
+        });
         return {
           ...report,
           verificationExecutionId: attempt.executionId,
@@ -2767,6 +2835,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       drainTerminal: async ({ operation }) => {
         if (operation.state.phase === "completed") {
           const session = sessionForOperation(operation);
+          const returnRow = roundReturnTranscriptRow(operation);
           if (operation.state.result.kind === "unchanged") {
             await roundsRuntime.finalizeUnchanged({
               session,
@@ -2778,8 +2847,25 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 from: operation.state.commits.from,
                 to: operation.state.commits.to,
               },
-              onProgress: (event) => roundProgress.emit(operation.reviewId, event),
+              onProgress: (event) => {
+                if (event.type === "failed") roundProgress.emit(operation.reviewId, event);
+              },
             });
+          }
+          if (returnRow !== undefined) appendRoundTranscript(session.id, [returnRow]);
+          // This is the transcript commit receipt. `completed` was published before terminal
+          // drain, so it cannot invalidate Return; composed/unchanged is emitted only after
+          // Return is durable (and, for unchanged, after its ledger row is finalized too).
+          if (returnRow !== undefined) {
+            roundProgress.emit(
+              operation.reviewId,
+              operation.state.result.kind === "changed"
+                ? {
+                    type: "composed",
+                    generation: operation.state.result.report.generation,
+                  }
+                : { type: "unchanged" },
+            );
           }
           consumeCurrentAskOccurrences(
             {
@@ -2817,17 +2903,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           bundle: draft.bundle,
           repoRoot: review.repositoryRoot,
         });
-        return {
-          kind: "replace",
-          operation: createRoundOperation({
-            session: sessionForOperation(operation),
-            review,
-            workOrder,
-            dispatchId: draft.dispatchId,
-            sourcePatchsetId: draft.bundle.patchsetId,
-            askOccurrences: draft.askOccurrences,
-          }),
-        };
+        const replacement = createRoundOperation({
+          session: sessionForOperation(operation),
+          review,
+          workOrder,
+          dispatchId: draft.dispatchId,
+          sourcePatchsetId: draft.bundle.patchsetId,
+          askOccurrences: draft.askOccurrences,
+        });
+        appendRoundTranscript(replacement.sessionId, [roundDispatchTranscriptRow(replacement)]);
+        return { kind: "replace", operation: replacement };
       },
     },
   });
@@ -3228,16 +3313,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           gitForRepo(review.repositoryRoot),
         )
       ).session;
-      await coordinator.submit(
-        createRoundOperation({
-          session,
-          review,
-          workOrder,
-          dispatchId,
-          sourcePatchsetId,
-          askOccurrences,
-        }),
-      );
+      const operation = createRoundOperation({
+        session,
+        review,
+        workOrder,
+        dispatchId,
+        sourcePatchsetId,
+        askOccurrences,
+      });
+      appendRoundTranscript(session.id, [roundDispatchTranscriptRow(operation)]);
+      await coordinator.submit(operation);
       return { askDrain: "coordinator" };
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that

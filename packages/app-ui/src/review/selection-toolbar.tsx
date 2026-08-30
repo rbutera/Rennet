@@ -22,18 +22,17 @@ const EXPLAIN_OPENER = "Explain this passage.";
 
 /**
  * The board-anchor identity of a selection (finding 2): the element id it landed in
- * (`data-element-id`) and the board generation (`data-generation`), read from the DOM
+ * (`data-quote-target`) and the board generation (`data-generation`), read from the DOM
  * so a minted quote thread is scoped to exactly this element in this generation. A
  * selection outside a board (draft mode) resolves neither, so its thread carries no
  * durable board highlight.
  */
-function scopeOfRange(range: Range): { target?: string; generation?: string } {
+function scopeOfRange(range: Range): { target: string; generation: string } | undefined {
   const node = range.commonAncestorContainer;
   const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  return {
-    target: el?.closest("[data-element-id]")?.getAttribute("data-element-id") ?? undefined,
-    generation: el?.closest("[data-generation]")?.getAttribute("data-generation") ?? undefined,
-  };
+  const target = el?.closest("[data-quote-target]")?.getAttribute("data-quote-target") ?? undefined;
+  const generation = el?.closest("[data-generation]")?.getAttribute("data-generation") ?? undefined;
+  return target === undefined || generation === undefined ? undefined : { target, generation };
 }
 
 /** Resolve the displayed browser selection back to the renderer's exact markdown bytes. */
@@ -79,8 +78,7 @@ export function ProseSelectionLayer({
     quote: string;
     placement: "above" | "below";
     /** The board-anchor identity of the selection (finding 2), if it landed in a board. */
-    target?: string;
-    generation?: string;
+    scope?: { readonly target: string; readonly generation: string };
   } | null>(null);
   const [mode, setMode] = useState<Mode>("toolbar");
   const [draft, setDraft] = useState("");
@@ -143,7 +141,7 @@ export function ProseSelectionLayer({
         left: rect.left - wrapRect.left + rect.width / 2,
         quote,
         placement,
-        ...scope,
+        ...(scope === undefined ? {} : { scope }),
       });
     }
 
@@ -161,18 +159,14 @@ export function ProseSelectionLayer({
 
   function startThread(opener: string, kind: "comment" | "explain" = "comment") {
     if (!anchor) return;
-    const id = addQuoteComment(anchor.quote, opener, kind, {
-      target: anchor.target,
-      generation: anchor.generation,
-    });
+    const id = addQuoteComment(anchor.quote, opener, kind, anchor.scope);
     setFocusedThread(id);
     if (kind === "explain") {
       void sendAnchoredAsk?.({
         threadId: id,
         question: opener,
         excerpt: anchor.quote,
-        ...(anchor.target === undefined ? {} : { target: anchor.target }),
-        ...(anchor.generation === undefined ? {} : { generation: anchor.generation }),
+        ...(anchor.scope === undefined ? {} : anchor.scope),
       });
     }
     window.getSelection()?.removeAllRanges();
@@ -191,10 +185,7 @@ export function ProseSelectionLayer({
     // Mint the thread, then stage an ask that keeps the quoted span as its source
     // provenance (`anchor`) AND names the thread it CLAIMS (`threadId`) — so the exit
     // tally counts the claimed thread once, without conflating source with claim.
-    const id = addQuoteComment(anchor.quote, text, "comment", {
-      target: anchor.target,
-      generation: anchor.generation,
-    });
+    const id = addQuoteComment(anchor.quote, text, "comment", anchor.scope);
     // Identity is the minted thread id — unique per selection, so two request-changes on identical
     // prose (or the same span twice) stay separate asks instead of collapsing on the quote text.
     stageAsk({ id, anchor: anchor.quote, type: "request-change", body: text, threadId: id });

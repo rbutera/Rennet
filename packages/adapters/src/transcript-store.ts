@@ -145,4 +145,28 @@ export class TranscriptStore {
     }
     this.write(sessionId, [...state.file.rows, ...rows]);
   }
+
+  /**
+   * Append only rows whose stable ids are not already present. Round lifecycle rows use this
+   * because terminal drain and daemon recovery are deliberately repeatable; replaying either
+   * must not duplicate a user dispatch or orchestrator return in the display transcript.
+   */
+  appendUnique(sessionId: string, rows: readonly SessionTranscriptRow[]): void {
+    if (rows.length === 0) return;
+    const state = this.readState(sessionId);
+    if (state.status === "corrupt") {
+      throw new TranscriptStoreCorruptError(
+        sessionId,
+        `${state.detail ?? "unknown"} — refusing to append over unread history`,
+      );
+    }
+    const known = new Set(state.file.rows.map((row) => row.id));
+    const additions = rows.filter((row) => {
+      if (known.has(row.id)) return false;
+      known.add(row.id);
+      return true;
+    });
+    if (additions.length === 0) return;
+    this.write(sessionId, [...state.file.rows, ...additions]);
+  }
 }

@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { AnchoredThread } from "./anchored-thread";
 import type { ContextWindow, TranscriptRow } from "./chat-data";
 import { CompactionRow, ContextRebuiltMarker } from "./compaction-row";
+import { DetachedThreads } from "./detached-threads";
 import { Turn } from "./turn";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,8 @@ export function ConversationPane({
         return <CompactionRow key={row.id} row={row} contextWindow={contextWindow} />;
       case "anchored-thread":
         return <AnchoredThread key={row.threadId} row={row} />;
+      case "detached-threads":
+        return <DetachedThreads key={row.kind} row={row} />;
       case "context-rebuilt":
         return <ContextRebuiltMarker key={row.id} row={row} />;
     }

@@ -3,7 +3,7 @@ import { Link2 } from "lucide-react";
 import { Icon } from "../../components/icon";
 import { AnchorReveal } from "../../review";
 import { SourceChips, SpecDeltaBadge, StoryStatus } from "../design-meta";
-import { QuoteHighlightLayer } from "../quote-highlight";
+import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context";
 import { BoardElement } from "./renderers";
@@ -92,9 +92,17 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
     >
       {name || capability || specDelta || status ? (
         <div className="flex flex-wrap items-center gap-2">
-          {name ? <h3 className="font-semibold text-base text-foreground">{name}</h3> : null}
+          {name ? (
+            <h3 className="font-semibold text-base text-foreground">
+              <InlineQuoteHighlight text={name} elementId={element.id} />
+            </h3>
+          ) : null}
           {capability ? (
-            <span className="font-mono text-xs text-muted-foreground">{capability}</span>
+            <InlineQuoteHighlight
+              text={capability}
+              elementId={element.id}
+              className="font-mono text-xs text-muted-foreground"
+            />
           ) : null}
           <StoryStatus status={status} />
           {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
@@ -124,11 +132,11 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
                   >
                     <dt className="font-medium text-muted-foreground">Trigger</dt>
                     <dd data-scenario-clause="condition" className="text-foreground/80">
-                      {clauses.condition}
+                      <InlineQuoteHighlight text={clauses.condition} elementId={scenario.id} />
                     </dd>
                     <dt className="font-medium text-muted-foreground">Outcome</dt>
                     <dd data-scenario-clause="response" className="text-foreground/80">
-                      {clauses.response}
+                      <InlineQuoteHighlight text={clauses.response} elementId={scenario.id} />
                     </dd>
                   </dl>
                 ) : (

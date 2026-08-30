@@ -1,5 +1,5 @@
 import { CodeTabs } from "../../review";
-import { QuoteHighlightLayer } from "../quote-highlight";
+import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId, useCodeRefs } from "./element-context";
 
@@ -13,7 +13,9 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
   const citations = useCodeRefs(evidence);
   return (
     <div data-kind="decision" data-element-id={element.id} className="flex flex-col gap-1.5">
-      <h3 className="font-semibold text-base text-foreground leading-snug">{statement}</h3>
+      <h3 className="font-semibold text-base text-foreground leading-snug">
+        <InlineQuoteHighlight text={statement} elementId={element.id} />
+      </h3>
       <QuoteHighlightLayer
         text={why}
         elementId={element.id}
@@ -25,7 +27,9 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
           <h4 className="font-medium text-sm text-foreground">Alternatives considered</h4>
           <ul className="flex list-disc flex-col gap-0.5 pl-5 text-foreground/80 text-sm marker:text-muted-foreground/60">
             {alternatives.map((alt) => (
-              <li key={alt}>{alt}</li>
+              <li key={alt}>
+                <InlineQuoteHighlight text={alt} elementId={element.id} />
+              </li>
             ))}
           </ul>
         </div>

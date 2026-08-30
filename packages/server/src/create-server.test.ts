@@ -16,6 +16,7 @@ import {
   type GitExec,
   RoundOperationStore,
   RoundRecordStore,
+  TranscriptStore,
 } from "@rennet/adapters";
 import type { Generation, LensBoard, Review, RoundOperation } from "@rennet/protocol";
 import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
@@ -586,8 +587,18 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const minted = (await first.dispatch("session.mint", {
       projectId: added.project.id,
       commandId: randomUUID(),
-    })) as { session: { reviewId?: string } | null };
+    })) as { session: { id: string; reviewId?: string } | null };
+    const sessionId = minted.session?.id ?? "";
     const reviewId = minted.session?.reviewId ?? "";
+    new TranscriptStore(join(dataDir, "transcripts")).append(sessionId, [
+      {
+        kind: "turn",
+        id: "pre-round-history",
+        speaker: "orchestrator",
+        status: "complete",
+        paragraphs: ["The review was already in progress."],
+      },
+    ]);
     const loaded = (await first.dispatch("review.load", {
       commandId: randomUUID(),
       reviewId,
@@ -614,6 +625,13 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           projection: { stagedAsks: Record<string, unknown> };
         };
         expect(asks.projection.stagedAsks["restart-ask"]).toBeDefined();
+        const transcript = (await first.dispatch("session.transcript", { reviewId })) as {
+          rows: { id: string; paragraphs?: string[] }[];
+        };
+        expect(transcript.rows.map((row) => row.id)).toEqual([
+          "pre-round-history",
+          expect.stringMatching(/^round:.+:dispatch$/),
+        ]);
       },
       { timeout: 15_000, interval: 50 },
     );
@@ -657,5 +675,17 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     // Production control: deleting create-server's completed-record lookup calls the
     // injected coding worker again here, changing this from one to two.
     expect(workerCalls).toBe(1);
+    const transcript = (await restarted.dispatch("session.transcript", { reviewId })) as {
+      rows: { id: string; paragraphs?: string[] }[];
+    };
+    expect(transcript.rows.map((row) => row.id)).toEqual([
+      "pre-round-history",
+      expect.stringMatching(/^round:.+:dispatch$/),
+      expect.stringMatching(/^round:.+:return$/),
+    ]);
+    expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain("Round 1 is back");
+    expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain(
+      "no code changes, so no successor report was drafted",
+    );
   }, 30_000);
 });

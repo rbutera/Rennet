@@ -8,7 +8,7 @@ import type {
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
-import { BridgeProvider } from "../data";
+import { BridgeProvider, useCommand } from "../data";
 import { memoryHistory } from "../routes/history";
 import { act, mount, waitFor } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
@@ -173,6 +173,11 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
   );
 }
 
+function TranscriptProbe() {
+  useCommand("session.transcript", { reviewId: REVIEW });
+  return null;
+}
+
 /** A schema-real `round.dispatch` answer — the UI ignores it, but the write is a real
  *  command round-trip rather than a swallowed rejection. */
 const dispatchAnswer = (
@@ -197,6 +202,19 @@ function mountLive(bridge: MemoryBridge, path = `/s/${REVIEW}/run`, probeSlug: s
       <Router hook={history.hook} searchHook={history.searchHook}>
         <LiveScope>
           <PhaseProbe slug={probeSlug} />
+        </LiveScope>
+      </Router>
+    </BridgeProvider>,
+  );
+}
+
+function mountLiveTranscript(bridge: MemoryBridge) {
+  const history = memoryHistory(`/s/${REVIEW}/run`);
+  return mount(
+    <BridgeProvider bridge={bridge}>
+      <Router hook={history.hook} searchHook={history.searchHook}>
+        <LiveScope>
+          <TranscriptProbe />
         </LiveScope>
       </Router>
     </BridgeProvider>,
@@ -314,18 +332,28 @@ describe("the live rounds seam (C15 3.2)", () => {
 describe("the durable ledger refresh receipt", () => {
   function ledgerReads(): {
     readonly bridge: MemoryBridge;
-    readonly count: () => number;
+    readonly ledgerCount: () => number;
+    readonly sessionCount: () => number;
   } {
-    let count = 0;
+    let ledgerCount = 0;
+    let sessionCount = 0;
     const bridge = new MemoryBridge({
       ...resolutionHandlers,
+      "session.list": () => {
+        sessionCount += 1;
+        return { sessions: [SESSION_ROW] };
+      },
       "session.roundEvents": () => ({ events: [] }),
       "session.rounds": () => {
-        count += 1;
+        ledgerCount += 1;
         return { records: [] };
       },
     });
-    return { bridge, count: () => count };
+    return {
+      bridge,
+      ledgerCount: () => ledgerCount,
+      sessionCount: () => sessionCount,
+    };
   }
 
   it.each([
@@ -363,19 +391,26 @@ describe("the durable ledger refresh receipt", () => {
   ])("refreshes the exact ledger key on a durable $name operation", async ({ event }) => {
     const reads = ledgerReads();
     mountLive(reads.bridge);
-    await waitFor(() => expect(reads.count()).toBeGreaterThan(0));
-    const beforeTerminal = reads.count();
+    await waitFor(() => {
+      expect(reads.ledgerCount()).toBeGreaterThan(0);
+      expect(reads.sessionCount()).toBeGreaterThan(0);
+    });
+    const ledgerBeforeTerminal = reads.ledgerCount();
+    const sessionBeforeTerminal = reads.sessionCount();
 
     act(() => reads.bridge.emitRoundProgress(REVIEW, event));
 
-    await waitFor(() => expect(reads.count()).toBeGreaterThan(beforeTerminal));
+    await waitFor(() => {
+      expect(reads.ledgerCount()).toBeGreaterThan(ledgerBeforeTerminal);
+      expect(reads.sessionCount()).toBeGreaterThan(sessionBeforeTerminal);
+    });
   });
 
   it("waits for the post-write unchanged receipt before refreshing the ledger", async () => {
     const reads = ledgerReads();
     mountLive(reads.bridge);
-    await waitFor(() => expect(reads.count()).toBeGreaterThan(0));
-    const beforeTerminal = reads.count();
+    await waitFor(() => expect(reads.ledgerCount()).toBeGreaterThan(0));
+    const beforeTerminal = reads.ledgerCount();
 
     act(() =>
       reads.bridge.emitRoundProgress(
@@ -393,11 +428,127 @@ describe("the durable ledger refresh receipt", () => {
       ),
     );
     await act(async () => Promise.resolve());
-    expect(reads.count()).toBe(beforeTerminal);
+    expect(reads.ledgerCount()).toBe(beforeTerminal);
 
     act(() => reads.bridge.emitRoundProgress(REVIEW, { type: "unchanged" }));
-    await waitFor(() => expect(reads.count()).toBeGreaterThan(beforeTerminal));
+    await waitFor(() => expect(reads.ledgerCount()).toBeGreaterThan(beforeTerminal));
   });
+});
+
+describe("the mounted transcript refresh receipts", () => {
+  function transcriptReads(): {
+    readonly bridge: MemoryBridge;
+    readonly count: () => number;
+  } {
+    let count = 0;
+    const bridge = new MemoryBridge({
+      ...resolutionHandlers,
+      "session.roundEvents": () => ({ events: [] }),
+      "session.rounds": () => ({ records: [] }),
+      "session.transcript": () => {
+        count += 1;
+        return { trail: { title: "Live review" }, rows: [] };
+      },
+    });
+    return { bridge, count: () => count };
+  }
+
+  it.each([
+    {
+      name: "direct or queued Dispatch",
+      event: operationEvent({ phase: "claimed" }, 0),
+    },
+    {
+      name: "captured successful worker",
+      event: operationEvent(
+        {
+          phase: "worker-settled",
+          workspace: { status: "done" },
+          worker: { status: "done", fileCount: 2 },
+        },
+        4,
+      ),
+    },
+    {
+      name: "captured failed worker",
+      event: operationEvent(
+        {
+          phase: "failed",
+          failure: {
+            at: "worker",
+            workspace: { status: "done" },
+            worker: { status: "failed", reason: "worker stopped", fileCount: 1 },
+          },
+        },
+        4,
+      ),
+    },
+    { name: "changed Return", event: { type: "composed", generation: "generation-live" } },
+    { name: "unchanged Return", event: { type: "unchanged" } },
+  ] satisfies readonly { readonly name: string; readonly event: RoundEvent }[])(
+    "refreshes session.transcript after the durable $name receipt",
+    async ({ event }) => {
+      const reads = transcriptReads();
+      mountLiveTranscript(reads.bridge);
+      await waitFor(() => expect(reads.count()).toBeGreaterThan(0));
+      const beforeReceipt = reads.count();
+
+      act(() => reads.bridge.emitRoundProgress(REVIEW, event));
+
+      await waitFor(() => expect(reads.count()).toBeGreaterThan(beforeReceipt));
+    },
+  );
+
+  it.each([
+    {
+      name: "workspace preparation",
+      event: operationEvent({ phase: "workspace-preparing", workspace: { status: "running" } }, 1),
+    },
+    {
+      name: "pre-worker failure",
+      event: operationEvent(
+        {
+          phase: "failed",
+          failure: {
+            at: "preparing",
+            workspace: { status: "failed", reason: "worktree failed" },
+          },
+        },
+        2,
+      ),
+    },
+    {
+      name: "the coordinator's pre-append completed snapshot",
+      event: operationEvent(
+        {
+          phase: "completed",
+          ...SETTLED_OPERATION,
+          result: {
+            kind: "changed",
+            report: {
+              status: "verified",
+              reportBoardId: "report-live",
+              generation: "generation-live",
+            },
+          },
+        },
+        10,
+      ),
+    },
+  ] satisfies readonly { readonly name: string; readonly event: RoundEvent }[])(
+    "does not refresh session.transcript at $name",
+    async ({ event }) => {
+      const reads = transcriptReads();
+      mountLiveTranscript(reads.bridge);
+      await waitFor(() => expect(reads.count()).toBeGreaterThan(0));
+      const beforeReceipt = reads.count();
+
+      act(() => reads.bridge.emitRoundProgress(REVIEW, event));
+      await act(async () => Promise.resolve());
+
+      expect(reads.count()).toBe(beforeReceipt);
+    },
+  );
 });
 
 // ── The dispatch INTENT and the daemon's receipt (review finding 7) ────────────

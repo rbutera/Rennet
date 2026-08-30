@@ -319,6 +319,49 @@ const transcriptOf = (body: string) => ({
 });
 
 describe("a reopened session shows the daemon's transcript, not the one it left with", () => {
+  it("restores detached quote exchanges into the production chat transcript after reload", async () => {
+    const projection: AskProjection = {
+      stagedAsks: {},
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {
+        "detached-thread": {
+          anchor: "the sentence removed by the round",
+          kind: "explain",
+          lifecycle: "detached",
+          target: "old-prose",
+          generation: "gen-1",
+          messages: [
+            { author: "user", text: "Why did this disappear?" },
+            { author: "orchestrator", text: "The replacement made that claim obsolete." },
+          ],
+        },
+      },
+      retired: {},
+      verdictOverride: null,
+    };
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([{ id: "rev-1", projectId: "proj-1" }]),
+      "review.load": () => ({ review: REVIEW }),
+      "review.reattach": () => ({ threads: [], inFlight: [] }),
+      "session.transcript": () => ({ trail: { title: "Review" }, rows: [] }),
+      "ask.read": () => ({ projection }),
+    } as never);
+    act(() => {
+      useRennetStore.getState().reviewActions.resetReview();
+      useRennetStore.getState().uiActions.setChatOpen(true);
+    });
+
+    mount(<RennetRouterApp bridge={bridge} history={memoryHistory("/s/rev-1")} />);
+
+    const detached = await screen.findByTestId("detached-threads");
+    expect(detached.textContent).toContain("Detached");
+    expect(detached.textContent).toContain("Why did this disappear?");
+    expect(detached.textContent).toContain("The replacement made that claim obsolete.");
+    expect(detached.querySelector('[data-thread-id="detached-thread"]')).toBeTruthy();
+  });
+
   it("re-reads review.reattach on reopen, so a turn that landed while away is not hidden", async () => {
     // Codex P1. The dock's reattach `commandId` is stable per review by design (two readers,
     // one fetch), so the cache key is the SAME one the reviewer left behind. Nothing evicted

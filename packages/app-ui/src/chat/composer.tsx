@@ -34,7 +34,13 @@ type ComposerBadge =
       readonly line: number;
       readonly text: string;
     }
-  | { readonly id: string; readonly kind: "quote"; readonly quote: string; readonly text: string };
+  | {
+      readonly id: string;
+      readonly kind: "quote";
+      readonly quote: string;
+      readonly text: string;
+      readonly detached: boolean;
+    };
 
 function commentBadgeId(path: string, line: number): string {
   return `comment-${path}-${line}`;
@@ -61,6 +67,9 @@ function ComposerBadgePill({
             ? `“${badge.quote}”`
             : "1 comment"}
       </span>
+      {badge.kind === "quote" && badge.detached && (
+        <span className="shrink-0 font-medium text-danger text-2xs">Detached</span>
+      )}
       <button
         type="button"
         onClick={onRemove}
@@ -162,6 +171,7 @@ export function Composer({
     kind: "quote" as const,
     quote: thread.anchor,
     text: thread.messages[0]?.text ?? "",
+    detached: thread.lifecycle === "detached",
   }));
   const badges: ComposerBadge[] = [...commentBadges, ...quoteBadges, ...imageBadges];
 

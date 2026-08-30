@@ -305,6 +305,14 @@ export interface RoundInput {
   readonly readFindingDispositions?: LensPipelineDeps["readFindingDispositions"];
   /** Persist reviewer-owned finding reattachments before Flagged is written. */
   readonly persistFindingResolutions?: LensPipelineDeps["persistFindingResolutions"];
+  /** Validate the exact drafted report before any successor generation, quote migration,
+   * or real-generation ledger row becomes authoritative. A throw leaves the durable
+   * completed placeholder retryable and preserves the dispatched asks. */
+  readonly verifyDraftedReport?: (report: {
+    readonly reportBoardId: string;
+    readonly generation: string;
+    readonly patchsetId: string;
+  }) => void | Promise<void>;
   /** Run the dispatched work WATCHED LIVE — the injected worker turn (a coding-agent
    *  loop upstream); this runtime owns serialization + recording, not the exec. */
   readonly runWorkers: () => Promise<WorkerReturn>;
@@ -416,6 +424,16 @@ export interface RoundsRuntimeDeps {
    *  ledger uses to open the frozen predecessor. Absent/never-persisted ⇒ `undefined`
    *  (honest); the store throws on a corrupt file. */
   readonly loadGeneration?: (id: string) => Generation | undefined;
+  /** Reconcile durable quote threads after both ends of a real generation transition have
+   *  landed. The callback is retry-safe: a crash before the round record causes the same
+   *  transition to run again, and its event planner emits only missing overwrites. */
+  readonly onGenerationTransition?: (transition: {
+    readonly repoRoot: string;
+    readonly reviewId: string;
+    readonly sessionId: string;
+    readonly sourceGeneration: string;
+    readonly successorGeneration: string;
+  }) => void | Promise<void>;
 }
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
@@ -896,6 +914,16 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     if (draftedLensBoards.length === 0) {
       throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
     }
+    if (input.verifyDraftedReport !== undefined) {
+      if (reportBoard === ROUND_NO_REGEN) {
+        throw new Error("The regeneration drafted no round report to verify.");
+      }
+      await input.verifyDraftedReport({
+        reportBoardId: reportBoard,
+        generation: boardGeneration.id,
+        patchsetId: boardGeneration.patchsetId,
+      });
+    }
     // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
     // prior generation exists, it freezes and its id is the earlier generation the ledger's
     // switcher drills back to. Absent on a no-move round and on a first generation —
@@ -927,6 +955,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     await deps.persistGeneration?.(liveSuccessor);
     const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
+    if (frozenPrevious !== undefined && input.session.reviewId !== undefined) {
+      await deps.onGenerationTransition?.({
+        repoRoot: input.repoRoot,
+        reviewId: input.session.reviewId,
+        sessionId: input.session.id,
+        sourceGeneration: frozenPrevious.id,
+        successorGeneration: liveSuccessor.id,
+      });
+    }
 
     // A drafting pass that dispatched NO asks and moved NO code is not a round — it is the
     // first read of a change, drafted when the review was opened. Recording it would put a

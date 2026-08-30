@@ -17,6 +17,8 @@ export type {
   ContentBlock,
   ContextRebuiltRow,
   ContextWindow,
+  DetachedThreadRef,
+  DetachedThreadsRow,
   ProseBlock,
   SessionTranscriptProjection,
   Speaker,

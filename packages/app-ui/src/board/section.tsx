@@ -13,6 +13,7 @@ import { SourceChips, SpecDeltaBadge } from "./design-meta";
 import { DesignSectionBody } from "./design-structure";
 import { useBoardId, useElement } from "./kinds/element-context";
 import { BoardChildren } from "./kinds/renderers";
+import { InlineQuoteHighlight } from "./quote-highlight";
 import { selectDeltaViewed } from "./viewed-delta";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -143,13 +144,13 @@ export function Section({
       className="flex scroll-mt-16 flex-col gap-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="min-w-0 flex-1">
+        <h2 className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
             onClick={interact}
             aria-expanded={open}
-            aria-label={headingLabel}
-            className="flex w-full items-center gap-2 text-left"
+            aria-label={`Toggle ${title}`}
+            className="flex shrink-0 items-center gap-2 text-left"
           >
             <Icon
               icon={ChevronDown}
@@ -165,9 +166,16 @@ export function Section({
                 className="size-1.5 shrink-0 rounded-full bg-primary"
               />
             ) : null}
-            <span className="min-w-0 font-medium text-xl text-foreground">{title}</span>
-            {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
           </button>
+          <InlineQuoteHighlight
+            text={title}
+            elementId={entry.ref}
+            onActivate={interact}
+            ariaLabel={headingLabel}
+            ariaExpanded={open}
+            className="min-w-0 flex-1 cursor-pointer font-medium text-xl text-foreground"
+          />
+          {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         </h2>
         <SourceChips sources={sources ?? []} />
       </div>
