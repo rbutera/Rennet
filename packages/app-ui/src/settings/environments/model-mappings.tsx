@@ -285,7 +285,7 @@ function ModeHeader({
     >
       <span className="flex flex-col">
         {label}
-        {sub && <span className="text-2xs font-normal text-ink-faint">{sub}</span>}
+        {sub && <span className="text-10 font-normal text-ink-faint">{sub}</span>}
       </span>
       {selected && <Icon icon={Check} strokeWidth={3} className="size-4 shrink-0 text-green" />}
     </button>

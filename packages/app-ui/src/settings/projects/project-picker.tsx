@@ -52,7 +52,7 @@ export function ProjectPicker({
           <button
             type="button"
             aria-label="Choose project"
-            className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-sm font-normal text-ink transition-colors hover:bg-raised"
+            className="flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-13 font-normal text-ink transition-colors hover:bg-raised"
           />
         }
       >

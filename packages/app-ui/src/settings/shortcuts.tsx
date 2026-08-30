@@ -160,10 +160,15 @@ export function ShortcutsPage() {
           return (
             <div
               key={def.id}
-              className="group flex min-h-11 flex-wrap items-center gap-3 py-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-line"
+              // A ruled row per binding turned a long catalogue into a ladder. The
+              // prototype's rows are hover-lit slabs with no dividers, at 32px rather
+              // than 44px. `min-h-8`, not `h-8`: this row carries a group sublabel and a
+              // wrapping conflict warning the prototype's single-line row never has, and
+              // a fixed height would clip both.
+              className="group flex min-h-8 flex-wrap items-center gap-3 rounded-md px-2 py-1 transition-colors hover:bg-secondary/50"
             >
               <div className="flex min-w-0 flex-col">
-                <span className="text-xs font-medium text-ink">{catalogueLabel(def)}</span>
+                <span className="text-13 text-foreground/90">{catalogueLabel(def)}</span>
                 <span className="text-2xs text-ink-faint">{def.group}</span>
               </div>
               <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -184,10 +189,12 @@ export function ShortcutsPage() {
                   />
                 ) : token ? (
                   <kbd
+                    // Unfilled: a keycap in a list of keycaps does not need a fill to
+                    // read as one, and the fill was what made the row look ruled.
                     className={`rounded border px-1.5 py-0.5 font-mono text-2xs ${
                       others.length > 0
-                        ? "border-accent-line bg-raised text-ink"
-                        : "border-line bg-raised text-ink"
+                        ? "border-accent-line text-ink"
+                        : "border-line text-ink-soft"
                     }`}
                     title={
                       others.length > 0
@@ -212,6 +219,7 @@ export function ShortcutsPage() {
                   <Button
                     variant="ghost"
                     size="xs"
+                    className="text-2xs"
                     aria-label={`Change ${catalogueLabel(def)}`}
                     onClick={() => {
                       setRecordingNote(undefined);
@@ -224,6 +232,7 @@ export function ShortcutsPage() {
                   <Button
                     variant="ghost"
                     size="xs"
+                    className="text-2xs"
                     aria-label={`Unbind ${catalogueLabel(def)}`}
                     onClick={() => void write(def.id, null)}
                     disabled={pending || malformed}
@@ -234,6 +243,7 @@ export function ShortcutsPage() {
                     <Button
                       variant="ghost"
                       size="xs"
+                      className="text-2xs"
                       aria-label={`Reset ${catalogueLabel(def)}`}
                       onClick={() => void write(def.id, undefined)}
                       disabled={pending || malformed}

@@ -37,7 +37,7 @@ export function Section({
   return (
     <section data-slot="settings-section" className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="flex items-center gap-2 text-sm font-medium text-ink">
+        <span className="flex items-center gap-2 text-15 font-medium text-ink">
           {title}
           {titleExtra}
         </span>
@@ -77,7 +77,7 @@ export function Row({
     return (
       <div className="flex flex-col gap-1.5 py-2.5">
         <div className="flex flex-col">
-          <span className="text-xs font-medium text-ink">{label}</span>
+          <span className="text-13 font-medium text-ink">{label}</span>
           {hint ? <span className="text-xs text-ink-soft">{hint}</span> : null}
         </div>
         {children}
@@ -87,7 +87,7 @@ export function Row({
   return (
     <div className="flex min-h-11 items-center gap-3 py-2">
       <div className="flex min-w-0 flex-col">
-        <span className="text-xs font-medium text-ink">{label}</span>
+        <span className="text-13 font-medium text-ink">{label}</span>
         {hint ? <span className="text-xs text-ink-soft">{hint}</span> : null}
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>
@@ -171,6 +171,8 @@ export function PillChoice<T extends string>({
           value={option.id}
           size="sm"
           variant="outline"
+          // Already the prototype's `border-ring bg-secondary` lit pill: `ring` aliases
+          // accent-line and `secondary` aliases raised, so these name the same values.
           className="rounded-md border-line px-2.5 text-xs text-ink-soft hover:bg-raised/50 hover:text-ink data-pressed:border-accent-line data-pressed:bg-raised data-pressed:text-ink"
         >
           {option.label}

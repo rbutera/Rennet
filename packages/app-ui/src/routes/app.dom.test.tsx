@@ -88,7 +88,7 @@ describe("RennetRouterApp", () => {
     });
     const history = memoryHistory("/new-chat");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
   });
@@ -103,7 +103,7 @@ describe("RennetRouterApp", () => {
     });
     const history = memoryHistory("/new-chat");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p1"));
   });
 
@@ -119,7 +119,7 @@ describe("RennetRouterApp", () => {
     const history = memoryHistory("/new-chat?project=beta");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
   });
@@ -136,7 +136,7 @@ describe("RennetRouterApp", () => {
     const history = memoryHistory("/new-chat?project=p1");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(remember).toHaveBeenCalledOnce());
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p1" });
     expect(history.history.at(-1)).toBe("/new-chat?project=p1");
@@ -154,7 +154,7 @@ describe("RennetRouterApp", () => {
     const history = memoryHistory("/new-chat?project=shared");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
   });

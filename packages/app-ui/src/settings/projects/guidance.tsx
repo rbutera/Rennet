@@ -184,7 +184,7 @@ function GuidanceList({
             >
               {rule.severity}
             </span>
-            <span className="text-xs text-ink">{rule.rule}</span>
+            <span className="text-13 text-foreground/90">{rule.rule}</span>
             {disabled ? null : (
               <button
                 type="button"

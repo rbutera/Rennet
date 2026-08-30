@@ -8,7 +8,7 @@
 
 export function BackingFile({ file }: { readonly file: string }) {
   return (
-    <span data-slot="backing-file" className="font-mono text-2xs text-ink-faint">
+    <span data-slot="backing-file" className="font-mono text-2xs text-muted-foreground/60">
       {file}
     </span>
   );
