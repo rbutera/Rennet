@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, posix, resolve } from "node:path";
+import type { Readable } from "node:stream";
 import {
   HOST_LOCUS,
   type Locus,
@@ -47,7 +48,7 @@ export const FILE_VISIBLE_BYTE_LIMIT = 256 * 1024;
 export type GitExec = (
   root: string,
   arguments_: string[],
-  options?: { reject?: boolean },
+  options?: { readonly input?: Buffer | Readable; readonly reject?: boolean },
 ) => Promise<string>;
 
 /**
@@ -62,6 +63,7 @@ export function execaGitFor(locus: Locus): GitExec {
     const { file, args, cwd } = locusCommand(locus, "git", arguments_, root);
     const result = await execa(file, [...args], {
       ...(cwd === undefined ? {} : { cwd }),
+      ...(options?.input === undefined ? {} : { input: options.input }),
       reject: options?.reject ?? true,
       shell: false,
       stripFinalNewline: false,

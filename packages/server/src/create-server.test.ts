@@ -19,7 +19,12 @@ import {
   TranscriptStore,
 } from "@rennet/adapters";
 import type { Generation, LensBoard, Review, RoundOperation } from "@rennet/protocol";
-import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
+import {
+  generationIdForPatchset,
+  ROUND_NO_REGEN,
+  roundSourceLandingTransactionPath,
+  sha256Hex,
+} from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
@@ -455,6 +460,30 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           throw new Error("round placeholder was recorded outside its durable recording attempt");
         }
         expect(operation.state.landing.outcome).toBe("applied");
+        if (process.platform !== "win32") {
+          expect(operation.state.landing.strategy).toBe("exclusive-move-v1");
+          if (operation.state.landing.strategy !== "exclusive-move-v1") {
+            throw new Error("POSIX production round did not use rooted transactional landing");
+          }
+          expect(operation.state.landing.units.map((unit) => unit.path)).toEqual(["a.txt"]);
+          expect(operation.state.landing.unitReceipts).toHaveLength(1);
+          expect(
+            existsSync(
+              join(repo, roundSourceLandingTransactionPath(operation.state.landing.executionId)),
+            ),
+          ).toBe(false);
+          const infoExcludePath = git(
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+          );
+          expect(
+            readFileSync(infoExcludePath, "utf8")
+              .split(/\r?\n/)
+              .filter((line) => line === "/.rennet/round-landings/"),
+          ).toHaveLength(1);
+        }
         expect(operation.state.recording.effect).toBe("round-recording");
         expect(readFileSync(join(repo, "a.txt"), "utf8")).toContain("worker change");
         const record = new RoundRecordStore(join(dataDir, "rounds"))
@@ -488,7 +517,8 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const minted = (await server.dispatch("session.mint", {
       projectId: added.project.id,
       commandId: randomUUID(),
-    })) as { session: { reviewId?: string } | null };
+    })) as { session: { id: string; reviewId?: string } | null };
+    const sessionId = minted.session?.id ?? "";
     const reviewId = minted.session?.reviewId ?? "";
     const before = (await server.dispatch("review.load", {
       commandId: randomUUID(),
@@ -506,7 +536,18 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     });
     await server.dispatch("round.dispatch", { reviewId });
 
-    await vi.waitFor(() => expect(placeholderObserved).toBe(true), { timeout: 15_000 });
+    await vi.waitFor(
+      () => {
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const current = operationStore.read(sessionId);
+        operationStore.close();
+        if (current?.state.phase === "failed") {
+          throw new Error(`controlled round failed: ${current.state.failure.reason}`);
+        }
+        expect(placeholderObserved).toBe(true);
+      },
+      { timeout: 15_000 },
+    );
     await vi.waitFor(
       async () => {
         const loaded = (await server.dispatch("review.load", {
@@ -617,6 +658,12 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
 
     await vi.waitFor(
       async () => {
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const current = operationStore.read(sessionId);
+        operationStore.close();
+        if (current?.state.phase === "failed") {
+          throw new Error(`controlled no-code round failed: ${current.state.failure.reason}`);
+        }
         expect(crashedSessionId).toBeDefined();
         const records = new RoundRecordStore(join(dataDir, "rounds")).read(crashedSessionId ?? "");
         expect(records).toHaveLength(1);

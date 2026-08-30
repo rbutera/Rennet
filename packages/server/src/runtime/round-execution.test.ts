@@ -834,6 +834,88 @@ describe("createRoundExecutionCoordinator", () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a failed transactional unit resumable until a fresh drive lands the same attempt", async () => {
+    const test = scenario();
+    const attempt = transactionalLandingAttempt();
+    let sourcePathState: "baseline-live" | "backup-only" | "target-live" = "baseline-live";
+    const firstLandSourceUnit = vi.fn(
+      async (
+        input: Parameters<NonNullable<RoundExecutionPorts["landSourceUnit"]>>[0],
+      ): Promise<RoundSourceLandingUnitReceipt> => {
+        expect(input.attempt).toEqual(attempt);
+        expect(input.unit.id).toBe(TRANSACTIONAL_UNIT_A_ID);
+        expect(input.fullPreflight).toBe(true);
+        sourcePathState = "backup-only";
+        throw new Error("controlled publish failure after baseline move");
+      },
+    );
+    const cleanupBeforeRecovery = vi.fn();
+
+    await expect(
+      createRoundExecutionCoordinator({
+        store: test.store,
+        ports: {
+          ...test.ports,
+          planSourceLanding: () => attempt,
+          landSourceUnit: firstLandSourceUnit,
+          cleanupSourceLanding: cleanupBeforeRecovery,
+          async drainTerminal() {
+            return { kind: "retain" };
+          },
+        },
+      }).submit(operation()),
+    ).rejects.toThrow("controlled publish failure after baseline move");
+
+    expect(sourcePathState).toBe("backup-only");
+    expect(firstLandSourceUnit).toHaveBeenCalledOnce();
+    expect(cleanupBeforeRecovery).not.toHaveBeenCalled();
+    const interrupted = test.store.read("session-1");
+    expect(interrupted?.state.phase).toBe("source-landing");
+    if (
+      interrupted?.state.phase !== "source-landing" ||
+      interrupted.state.landing.strategy !== "exclusive-move-v1"
+    ) {
+      throw new Error("failed transactional unit did not retain its durable attempt");
+    }
+    expect(interrupted.state.landing.executionId).toBe(attempt.executionId);
+    expect(interrupted.state.landing.unitReceipts).toEqual([]);
+
+    const replayedPlan = vi.fn(() => attempt);
+    const resumedUnits: string[] = [];
+    const resumedFullPreflights: boolean[] = [];
+    const cleanup = vi.fn();
+    const recovered = await createRoundExecutionCoordinator({
+      store: new RoundOperationStore(test.dir),
+      ports: {
+        ...test.ports,
+        planSourceLanding: replayedPlan,
+        async landSourceUnit(input) {
+          resumedUnits.push(input.unit.id);
+          resumedFullPreflights.push(input.fullPreflight);
+          if (input.unit.id === TRANSACTIONAL_UNIT_A_ID) {
+            expect(input.attempt).toEqual(attempt);
+            expect(sourcePathState).toBe("backup-only");
+            sourcePathState = "target-live";
+          }
+          return {
+            unitId: input.unit.id,
+            outcome: "applied",
+            landedAt: 31 + resumedUnits.length,
+          } satisfies RoundSourceLandingUnitReceipt;
+        },
+        cleanupSourceLanding: cleanup,
+      },
+    }).recover();
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.state.phase).toBe("completed");
+    expect(replayedPlan).not.toHaveBeenCalled();
+    expect(resumedUnits).toEqual([TRANSACTIONAL_UNIT_A_ID, TRANSACTIONAL_UNIT_B_ID]);
+    expect(resumedFullPreflights).toEqual([true, false]);
+    expect(sourcePathState).toBe("target-live");
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
   it("runs one full transactional preflight per coordinator drive", async () => {
     const test = scenario();
     const fullPreflights: boolean[] = [];

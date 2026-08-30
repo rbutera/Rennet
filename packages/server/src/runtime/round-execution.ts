@@ -686,7 +686,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               });
               break;
             }
-            let unitFailed = false;
             let fullPreflight = true;
             while (operation.state.phase === "source-landing") {
               const landing = operation.state.landing;
@@ -695,29 +694,13 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               }
               const unit = landing.units[landing.unitReceipts.length];
               if (unit === undefined) break;
-              let unitReceipt: RoundSourceLandingUnitReceipt;
-              try {
-                unitReceipt = await landSourceUnit({
-                  operation,
-                  attempt: landing,
-                  unit,
-                  fullPreflight,
-                });
-                fullPreflight = false;
-              } catch (error) {
-                operation = this.fail(operation, {
-                  at: "source-landing",
-                  reason: errorReason(error),
-                  failedAt: Math.max(this.now(), operation.updatedAt),
-                  workspace: operation.state.workspace,
-                  worker: operation.state.worker,
-                  gate: operation.state.gate,
-                  commits: operation.state.commits,
-                  landing,
-                });
-                unitFailed = true;
-                break;
-              }
+              const unitReceipt: RoundSourceLandingUnitReceipt = await landSourceUnit({
+                operation,
+                attempt: landing,
+                unit,
+                fullPreflight,
+              });
+              fullPreflight = false;
               operation = this.persist(
                 operation,
                 {
@@ -734,7 +717,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 unitReceipt.landedAt,
               ).operation;
             }
-            if (unitFailed || operation.state.phase !== "source-landing") break;
+            if (operation.state.phase !== "source-landing") break;
             if (operation.state.landing.strategy !== "exclusive-move-v1") {
               throw new Error("transactional source landing settled with a legacy attempt");
             }
