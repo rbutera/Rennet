@@ -10,6 +10,7 @@ export {
   useGuidance,
   usePinRepoValue,
   useResetRepoValue,
+  useResetWelcome,
   useSetAppearance,
   useSetKeybinding,
   useSetRepoVisibility,

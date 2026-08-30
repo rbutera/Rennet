@@ -893,11 +893,13 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
 function StepActions({
   onBack,
   onContinue,
+  continueLabel = "Continue",
   busy,
   disabled,
 }: {
   onBack(): void;
   onContinue?(): void;
+  continueLabel?: string;
   busy?: boolean;
   disabled?: boolean;
 }) {
@@ -909,7 +911,7 @@ function StepActions({
       </Button>
       {onContinue ? (
         <Button disabled={busy || disabled} onClick={onContinue}>
-          {busy ? "Saving…" : "Continue"}
+          {busy ? "Saving…" : continueLabel}
           <ArrowRight />
         </Button>
       ) : null}
@@ -1299,7 +1301,17 @@ function ReviewSetupStage({
   );
 }
 
-function ProjectStage({ onBack, onAdded }: { onBack(): void; onAdded(project: Project): void }) {
+function ProjectStage({
+  onBack,
+  onAdded,
+  existing,
+}: {
+  onBack(): void;
+  onAdded(project: Project): void;
+  /** A project this client ALREADY has (a replay, not a fresh install). Undefined on the
+   *  zero-project first run, which is the path this step was originally written for. */
+  existing?: Project;
+}) {
   const bridge = useBridge();
   const [accessError, setAccessError] = useState<string>();
   async function openAccess(): Promise<void> {
@@ -1315,9 +1327,13 @@ function ProjectStage({ onBack, onAdded }: { onBack(): void; onAdded(project: Pr
     <section className={CONTENT_STAGE}>
       <div className="mb-9 max-w-[650px]">
         <p className={EYEBROW}>First project</p>
-        <h1 className={STAGE_H1}>Add the code you’re responsible for.</h1>
+        <h1 className={STAGE_H1}>
+          {existing ? "Pick up where you left off." : "Add the code you’re responsible for."}
+        </h1>
         <p className={STAGE_P}>
-          Choose a repository or a workspace. Rennet scouts its structure and opens it in New Chat.
+          {existing
+            ? "Continue with a project you already have, or add another. Rennet scouts a new one’s structure and opens it in New Chat."
+            : "Choose a repository or a workspace. Rennet scouts its structure and opens it in New Chat."}
         </p>
       </div>
       {bridge.platform === "darwin" && bridge.openFullDiskAccessSettings ? (
@@ -1346,9 +1362,10 @@ function ProjectStage({ onBack, onAdded }: { onBack(): void; onAdded(project: Pr
       <div className="rounded-window border border-line bg-surface p-6 [&_[role=dialog]]:shadow-none">
         <AddProjectFlow onAdded={onAdded} showAddEnvironment={false} embedded />
       </div>
-      {/* No `onContinue`, so no Continue button — deliberately, and NOT the bug that review
-       *  setup had. The shape is identical, which is exactly why this note exists: someone
-       *  will find it, recognise the gate one step back, and "fix" it the same way.
+      {/* With NO existing project there is no `onContinue`, so no Continue button —
+       *  deliberately, and NOT the bug that review setup had. The shape is identical, which
+       *  is exactly why this note exists: someone will find it, recognise the gate one step
+       *  back, and "fix" it the same way.
        *
        *  What made review setup a GATE: it refused the reviewer over a fact about their
        *  machine they could only change OUTSIDE Rennet — install a harness, sign in with its
@@ -1362,8 +1379,18 @@ function ProjectStage({ onBack, onAdded }: { onBack(): void; onAdded(project: Pr
        *
        *  So: if a step withholds progress over something the user cannot resolve on that
        *  screen, that is a gate and Rule Zero kills it. If it withholds progress until they
-       *  perform the step's own action, that is a form. Do not collapse the two. */}
-      <StepActions onBack={onBack} />
+       *  perform the step's own action, that is a form. Do not collapse the two.
+       *
+       *  `existing` is the REPLAY path, and there the same form would be a trap: the wizard's
+       *  only exit ran through `projects.add`, so replaying on a real machine meant adding a
+       *  DUPLICATE row (and re-indexing it) to get back to the shell — with no way out, since
+       *  the replay stamp survives a relaunch. Continuing with a project the client already
+       *  has is the step performed, not skipped. */}
+      <StepActions
+        onBack={onBack}
+        onContinue={existing ? () => onAdded(existing) : undefined}
+        continueLabel={existing ? `Continue with ${existing.name}` : undefined}
+      />
     </section>
   );
 }
@@ -1487,6 +1514,24 @@ export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
   });
   const harnessQuery = useCommand("harness.hosts", {});
   const forgeQuery = useCommand("forge.hosts", {});
+  const projectsQuery = useCommand("projects.list", {});
+
+  // On a REPLAY the client already has projects, and the wizard's only exit used to run
+  // through `projects.add` — so getting back to the shell meant adding a duplicate row and
+  // paying for a redundant re-index, on a stamp that survives a relaunch. Seeding the
+  // wizard's project with one it already has makes Ready reachable without adding anything.
+  // Preference order matches the shell's own (`NewChatScreen`): the last-used project for
+  // the active source, else the first listed. On a genuine first run the list is empty and
+  // nothing is seeded — the Project step is exactly the form it always was.
+  const listed = projectsQuery.data?.projects;
+  const rememberedId = settings.navigation?.lastProjectBySource?.[activeSource];
+  useEffect(() => {
+    if (!listed?.length) return;
+    setProject(
+      (current) =>
+        current ?? listed.find((candidate) => candidate.id === rememberedId) ?? listed[0],
+    );
+  }, [listed, rememberedId]);
   const refreshHarnesses = useRefreshCommand("harness.hosts");
   const refreshForges = useRefreshCommand("forge.hosts");
   const harnesses =
@@ -1530,6 +1575,7 @@ export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
       case 3:
         return (
           <ProjectStage
+            existing={project}
             onBack={() => setStep(2)}
             onAdded={(added) => {
               setProject(added);
@@ -1541,6 +1587,8 @@ export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
         return project ? (
           <ReadyStage project={project} reviewChoice={reviewChoice} onBack={() => setStep(3)} />
         ) : (
+          // No project yet, so Ready has nothing to summarise — fall back to the step that
+          // produces one. `existing` is deliberately omitted: `project` is undefined here.
           <ProjectStage
             onBack={() => setStep(2)}
             onAdded={(added) => {

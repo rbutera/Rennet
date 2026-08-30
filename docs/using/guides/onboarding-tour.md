@@ -56,6 +56,11 @@ you move through the app, starting with the first one on whatever surface you ar
 on. Opening a Rennet route with `?tour=reset` performs the same persisted reset
 once when that route loads; a normal route leaves the saved tour state alone.
 
+The tour and the [first-run welcome](./getting-started.md#first-run) replay
+separately, from different controls: **Replay Tour** under Help re-arms the coach
+marks, and **Settings → Appearance → First Run** reopens the welcome. Neither one
+touches the other's saved state.
+
 ## Where the tour's memory lives
 
 What you have seen and whether you skipped are saved to

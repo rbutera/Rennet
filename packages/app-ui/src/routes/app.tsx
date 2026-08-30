@@ -311,7 +311,17 @@ function StartupGate({ children }: { readonly children: ReactNode }) {
   if (settingsError) return <div className="contents">{children}</div>;
   if (settingsPending || !settings)
     return <div className="contents opacity-0 pointer-events-none">{children}</div>;
-  if (settings.welcome) return <div className="contents">{children}</div>;
+  // A replay request (`settings.resetWelcome`, from Settings or ⌘K) reopens the welcome
+  // even on a machine full of projects. It has to bypass FirstRunEligibility entirely:
+  // that resolver elects the wizard only for a client with NO projects, so a reset that
+  // merely cleared the completion stamp would be a no-op on every real install — which
+  // is exactly the state that made the welcome unreachable before this branch existed.
+  // The ORDER of these two lines is load-bearing: `resetWelcome` PRESERVES an existing
+  // `completedAt` (an older v1 build requires that field), so the two stamps stand
+  // together and the request has to win. Finishing the wizard writes `{ completedAt }`
+  // over the whole slice, which drops the request and lets the second line through.
+  if (settings.welcome?.replayRequestedAt) return <FirstRunWelcome settings={settings} />;
+  if (settings.welcome?.completedAt) return <div className="contents">{children}</div>;
   return <FirstRunEligibility settings={settings}>{children}</FirstRunEligibility>;
 }
 

@@ -1,6 +1,6 @@
 ---
 title: Command menu exposure
-description: Which of the 104 registered commands the ⌘K menu lists, and the rationale for every row.
+description: Which of the 105 registered commands the ⌘K menu lists, and the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -20,7 +20,7 @@ boolean flag has no input channel, and the dialog has no result surface. So a
 command earns `commandMenu: true` only when all four hold:
 
 1. **Its schema accepts `{}`.** Nothing required that the menu cannot supply.
-   18 of the 104 commands pass this; the rest need a review, session, project,
+   19 of the 105 commands pass this; the rest need a review, session, project,
    span, host, or path the menu has no way to name. A protocol test asserts the
    invariant, so an exposed row can never be one that only fails.
 2. **It is an action, not a read the UI already drives.** `settings.get`,
@@ -40,8 +40,14 @@ a result — new UI, deliberately not built.
 
 ## Exposed
 
-No raw protocol command is exposed today. Command mode still leads with app actions,
-settings, projects, and sessions.
+No raw protocol command is exposed today — no row carries `commandMenu: true`. Command
+mode leads with app actions, settings, projects, and sessions.
+
+One of those app actions dispatches a protocol command directly rather than opening a
+dialog: **Replay the first-run welcome** runs `settings.resetWelcome`. It is authored in
+`packages/app-ui/src/shell/command-menu-entries.ts` with a readable title, because the
+registry's label is the command id (#465) and an id makes a poor menu row. The dispatch
+still goes through the one seam; only the label is hand-written.
 
 ## Not exposed
 
@@ -159,6 +165,10 @@ settings, projects, and sessions.
 | `settings.pinRepoValue` | Needs the repository, key, and value. |
 | `settings.setProjectValue` | Needs the project, key, and value. |
 | `settings.setGuidance` | Needs the guidance text and its scope. |
+| `settings.setThemePack` | Needs the pack being selected. |
+| `settings.setLastProject` | Needs the project being remembered; the app writes it as you navigate. |
+| `settings.completeWelcome` | Only means something inside the welcome wizard, whose Ready step runs it. |
+| `settings.resetWelcome` | Reachable from the menu, but as the **Replay the first-run welcome** action row, not a raw registry row: the registry label is the command id, and `settings.resetWelcome` is not a thing to read in a menu. |
 
 ### pairing, device, attention
 

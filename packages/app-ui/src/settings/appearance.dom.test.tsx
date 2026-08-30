@@ -10,11 +10,14 @@
 // rebound under `[data-rn-code-theme]`) with no JS; happy-dom has no style engine, so it is
 // asserted at the DOM seam the recolour rides — the root attribute governing a mounted
 // code surface.
+import type { Project } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { cleanup, mount, waitFor, within } from "../test/dom";
-import { settingsBridge } from "../test/fixtures/settings";
+import { frontDoorHandlers } from "../test/fixtures/front-door";
+import { SettingsStore, settingsBridge } from "../test/fixtures/settings";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 
 function root(): HTMLElement {
   return document.documentElement;
@@ -102,5 +105,100 @@ describe("AppearancePage — Theme Pack + Code Theme (app-global, live)", () => 
     cleanup();
     root().removeAttribute("data-rn-theme");
     root().removeAttribute("data-rn-code-theme");
+  });
+});
+
+// The First Run section (wave 4 task 4.1). `settings.completeWelcome` shipped with no
+// counterpart, so once setup finished the welcome was unreachable on every machine —
+// first-run eligibility elects the wizard only for a client with NO projects. These drive
+// the whole capability through the real app: the Settings row writes the replay stamp, the
+// `settings.get` refetch reopens the wizard OVER a client that has a project, and the
+// wizard's own Ready step is what puts it away again.
+describe("AppearancePage — replay the first-run welcome", () => {
+  const project: Project = {
+    id: "p1",
+    name: "atlas",
+    path: "/repos/p1",
+    kind: "repo",
+    repoCount: 1,
+    branchCount: 1,
+    primaryBranch: "main",
+    openPath: "/repos/p1",
+    addedAt: "2026-08-27T00:00:00.000Z",
+    source: "local",
+  };
+
+  /** A returning install: a COMPLETED welcome and a real project behind the front door. */
+  function returningClient(extra: MemoryBridgeHandlers = {}): MemoryBridge {
+    const store = new SettingsStore();
+    return new MemoryBridge({
+      ...frontDoorHandlers([project]),
+      ...store.handlers(),
+      "harness.hosts": () => ({ hosts: [] }),
+      "forge.hosts": () => ({ hosts: [] }),
+      ...extra,
+    });
+  }
+
+  it("one click reopens the welcome on a client that already has a project", async () => {
+    const { user, findByText } = mount(
+      <RennetRouterApp
+        bridge={returningClient()}
+        history={memoryHistory("/settings/appearance")}
+      />,
+    );
+    await user.click(await findByText("Replay the first-run welcome"));
+    expect(
+      await findByText("You stopped writing the code. You still have to answer for it."),
+    ).toBeTruthy();
+    cleanup();
+  });
+
+  it("the replayed welcome reaches Ready and dismisses WITHOUT adding a second project", async () => {
+    // The trap this pins: the wizard's only exit ran through `projects.add`, so a replay on
+    // a real machine meant a DUPLICATE project row plus a redundant re-index just to get the
+    // shell back — and the replay stamp survives a relaunch, so there was no other way out.
+    // Every step below is driven for real; nothing is asserted from a stamp alone.
+    const added: unknown[] = [];
+    const bridge = returningClient({
+      "projects.add": (input) => {
+        added.push(input);
+        throw new Error("the replay must not add a project");
+      },
+    });
+    const { user, findByText, findAllByText, findByLabelText } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/settings/appearance")} />,
+    );
+
+    await user.click(await findByText("Replay the first-run welcome"));
+    await findByText("You stopped writing the code. You still have to answer for it.");
+
+    // Appearance → Tools → Review setup → Project. The intro arrow reveals the appearance
+    // card; from there every step is its own Continue.
+    await user.click(await findByLabelText("Continue to Rennet"));
+    await user.click(await findByText("Continue"));
+    await user.click(await findByText("Continue"));
+    await user.click(await findByText("Continue"));
+
+    // The Project step offers the project this client ALREADY has — no picker required.
+    await user.click(await findByText("Continue with atlas"));
+
+    // Ready summarises that same project, and its button writes the completion stamp.
+    await findByText("Make the next change digestible.");
+    expect((await findAllByText("atlas")).length).toBeGreaterThan(0);
+    await user.click(await findByText("Start a new chat"));
+
+    // The shell is back: the `settings.get` refetch after `completeWelcome` cleared the
+    // replay request, so the startup gate stops electing the wizard. The welcome's own
+    // headline is gone — the assertion is about what MOUNTED, not about a settings field.
+    await waitFor(() =>
+      expect(
+        document.body.textContent?.includes(
+          "You stopped writing the code. You still have to answer for it.",
+        ),
+      ).toBe(false),
+    );
+    expect(added).toEqual([]);
+    cleanup();
   });
 });
