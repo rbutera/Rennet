@@ -312,6 +312,37 @@ describe("native rooted round source landing host", () => {
     },
   );
 
+  it("closes the regular descriptor before surfacing an immediate Git failure", async () => {
+    const fixture = await gitFixture();
+    const snapshotPath = join(fixture.workerRoot, "rejected-snapshot.bin");
+    writeFileSync(snapshotPath, "content\n");
+    const descriptor = openSync(snapshotPath, "r");
+    descriptors.add(descriptor);
+    const state = behavior({
+      inspectResult: { kind: "regular", descriptor, executable: false },
+    });
+    const { fileSystem, close } = createNativeRoundSourceLandingFileSystem({
+      ...fixture,
+      sourceGit: boundGit(fixture.sourceRoot),
+      workerGit: () => {
+        throw new Error("git unavailable");
+      },
+      binding: fakeBinding(state),
+    });
+
+    await expect(
+      fileSystem.inspect({
+        root: "worker",
+        path: assertTestOnlyLandingRelativePath("file"),
+        repoPath: assertTestOnlyLandingRelativePath("file"),
+        attrSource: fixture.attrSource,
+        oidLength: 40,
+      }),
+    ).rejects.toThrow("git unavailable");
+    expect(() => fstatSync(descriptor)).toThrow();
+    close();
+  });
+
   it("computes symlink identity without asking Git to read the filesystem", async () => {
     const fixture = await gitFixture();
     const payload = Buffer.from("target\n");

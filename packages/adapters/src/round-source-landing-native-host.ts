@@ -270,6 +270,7 @@ async function hashRegularSnapshot(input: {
   } catch (error) {
     source.destroy();
     hashingInput.destroy();
+    await Promise.allSettled([streaming]);
     throw error;
   }
 }
