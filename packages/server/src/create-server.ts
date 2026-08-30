@@ -209,7 +209,6 @@ import {
   canonicalize,
   currentGenerationId,
   forgeRepositorySlug,
-  isRoundOperationTerminal,
   LENS_KINDS,
   roundOperationProgressSnapshot,
   sha256Hex,
@@ -3161,6 +3160,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       publish: publishRoundOperation,
       drainTerminal: async ({ operation }) => {
         if (operation.state.phase === "completed") {
+          if (operation.state.returnedAt !== undefined) return { kind: "retain" };
           const session = sessionForOperation(operation);
           const returnRow = roundReturnTranscriptRow(operation);
           if (operation.state.result.kind === "unchanged") {
@@ -3180,9 +3180,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             });
           }
           if (returnRow !== undefined) appendRoundTranscript(session.id, [returnRow]);
-          // This is the transcript commit receipt. `completed` was published before terminal
-          // drain, so it cannot invalidate Return; composed/unchanged is emitted only after
-          // Return is durable (and, for unchanged, after its ledger row is finalized too).
+          consumeCurrentAskOccurrences(
+            {
+              askLog: askLogStore,
+              broadcastAskProjection: (reviewId, projection) =>
+                wsListener?.broadcastAskProjection(reviewId, projection),
+            },
+            operation.reviewId,
+            operation.askOccurrences,
+          );
+          // This legacy receipt follows both durable Return and exact ask consumption.
+          // New clients wait for `returnedAt`; older clients still see the same event order.
           if (returnRow !== undefined) {
             roundProgress.emit(
               operation.reviewId,
@@ -3194,15 +3202,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 : { type: "unchanged" },
             );
           }
-          consumeCurrentAskOccurrences(
-            {
-              askLog: askLogStore,
-              broadcastAskProjection: (reviewId, projection) =>
-                wsListener?.broadcastAskProjection(reviewId, projection),
-            },
-            operation.reviewId,
-            operation.askOccurrences,
-          );
           await removeRoundWorktree({
             git: gitForRepo(operation.repoRoot),
             locus: locusForRepo(operation.repoRoot),
@@ -3217,7 +3216,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             commit: operation.state.workspace.sourceHead,
           });
         }
-        if (!operation.rerunRequested) return { kind: "retain" };
+        if (!operation.rerunRequested) {
+          if (operation.state.phase !== "completed") return { kind: "retain" };
+          return {
+            kind: "return",
+            returnedAt: Math.max(Date.now(), operation.state.completedAt),
+          };
+        }
         const review = service.reviewById(operation.reviewId);
         if (review === null) throw new Error("Queued round lost its review.");
         const draft = activeRoundDraft(
@@ -3921,17 +3926,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ).session;
       for (;;) {
         const active = roundOperationStore.read(session.id);
-        if (active === undefined || isRoundOperationTerminal(active)) return false;
-        if (active.dispatchId === dispatchId || active.rerunRequested) return true;
+        if (
+          active === undefined ||
+          active.state.phase === "failed" ||
+          (active.state.phase === "completed" && active.state.returnedAt !== undefined)
+        ) {
+          return undefined;
+        }
+        if (active.dispatchId === dispatchId || active.rerunRequested) {
+          void coordinator.resume(session.id).catch((error) => {
+            console.error("Durable round resume failed", error);
+          });
+          return roundOperationProgressSnapshot(active);
+        }
         try {
-          publishRoundOperation(
-            roundOperationStore.requestRerun({
-              sessionId: active.sessionId,
-              operationId: active.operationId,
-              revision: active.revision,
-            }),
-          );
-          return true;
+          const queued = roundOperationStore.requestRerun({
+            sessionId: active.sessionId,
+            operationId: active.operationId,
+            revision: active.revision,
+          });
+          publishRoundOperation(queued);
+          void coordinator.resume(session.id).catch((error) => {
+            console.error("Queued durable round recovery failed", error);
+          });
+          return roundOperationProgressSnapshot(queued);
         } catch (error) {
           if (!(error instanceof RoundOperationConflictError)) throw error;
         }
@@ -3955,8 +3973,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         askOccurrences,
       });
       appendRoundTranscript(session.id, [roundDispatchTranscriptRow(operation)]);
-      await coordinator.submit(operation);
-      return { askDrain: "coordinator" };
+      const settled = coordinator.submit(operation);
+      const accepted = roundOperationStore.read(session.id);
+      if (accepted === undefined) {
+        throw new Error("Round dispatch was not durably accepted.");
+      }
+      return {
+        askDrain: "coordinator",
+        acceptedOperation: roundOperationProgressSnapshot(accepted),
+        settled: settled.then(() => undefined),
+      };
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that
     // reworks one staged ask's body per the reviewer's instruction, on WHICHEVER seat the

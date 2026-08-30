@@ -12,6 +12,7 @@ import {
   QuoteThreadSchema,
   RoundEventSchema,
   RoundLedgerRecordSchema,
+  RoundOperationProgressSnapshotSchema,
   SessionTranscriptSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
@@ -1453,7 +1454,11 @@ const definitions = {
   // no addressed asks — an honest "nothing to dispatch", never a fabricated run.
   "round.dispatch": {
     input: z.object({ reviewId: z.string().min(1) }),
-    output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
+    output: z.object({
+      workOrder: composedHandoffBundleSchema,
+      dispatched: z.boolean(),
+      acceptedOperation: RoundOperationProgressSnapshotSchema.optional(),
+    }),
   },
   // ── Session reads (the client seam B9 and B11 opened) ───────────────────────
   // Both are SERVED. `session.transcript` is the chat dock's read (C07): the header

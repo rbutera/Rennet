@@ -41,6 +41,7 @@ import type {
   RefinementResult,
   Review,
   RoundEvent,
+  RoundOperationProgressSnapshot,
   RoundRecord,
   RoundReportBoard,
   SessionTranscriptRow,
@@ -590,12 +591,18 @@ export interface DispatchDeps {
     dispatchId: string;
     sourcePatchsetId: string;
     askOccurrences: readonly AskOccurrence[];
-    // biome-ignore lint/suspicious/noConfusingVoidType: legacy compositions return void
-  }) => Promise<void | { readonly askDrain: "coordinator" }>;
+  }) => Promise<void | {
+    readonly askDrain: "coordinator";
+    readonly acceptedOperation: RoundOperationProgressSnapshot;
+    readonly settled: Promise<void>;
+  }>;
   /** Before the model composer runs, coalesce an exact re-dispatch or mark one queued
-   * behind the session's durable operation. `true` means the active operation owns it,
-   * so this command returns the mechanical preview without composing or starting work. */
-  readonly queueRoundIfActive?: (input: { review: Review; dispatchId: string }) => Promise<boolean>;
+   * behind the session's durable operation. A snapshot means that operation owns it,
+   * so this command returns the mechanical preview and durable acceptance receipt. */
+  readonly queueRoundIfActive?: (input: {
+    review: Review;
+    dispatchId: string;
+  }) => Promise<RoundOperationProgressSnapshot | undefined>;
   /**
    * The rounds-ledger read for `session.rounds`: the `RoundRecord[]` the live rounds runtime
    * recorded for this review's session, resolved read-only (the READ side of `dispatchRound`'s
