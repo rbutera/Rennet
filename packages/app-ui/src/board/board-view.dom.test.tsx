@@ -136,7 +136,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(sections.length).toBeGreaterThan(0);
     expect(article?.querySelectorAll("h2 > button").length).toBe(sections.length);
     expect(sections.every((section) => section.id.length > 0)).toBe(true);
-    expect(sections.every((section) => section.className.includes("scroll-mt-16"))).toBe(true);
+    expect(sections.every((section) => section.className.includes("scroll-mt-6"))).toBe(true);
   });
 
   it("selects the normal reading measure for a prose board", async () => {

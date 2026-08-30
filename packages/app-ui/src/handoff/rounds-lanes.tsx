@@ -1,5 +1,4 @@
 import type { Review } from "@rennet/protocol";
-import { Badge } from "@rennet/ui";
 import { Check, GitBranch, GitPullRequest } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -10,10 +9,11 @@ import {
   ProseSelectionLayer,
   RichText,
 } from "../review";
-import type { DispositionKind, StagedAsk } from "../store";
+import type { StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import { type ReviseSpan, reviseDraftSpan } from "./handoff-data";
+import { IntentPill } from "./intent-pill";
 import { OutboundMarkdown } from "./outbound-markdown";
 import { parseLineAnchor } from "./selectors";
 
@@ -43,21 +43,6 @@ import { parseLineAnchor } from "./selectors";
 // draft): absent them the lane is fully live over the store — every card, Drop, and the Dispatch
 // gating are real — it simply cannot become the pull request until a drafted, ready PR is handed in.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const INTENT_LABEL: Record<DispositionKind, string> = {
-  "request-change": "Request Change",
-  comment: "Comment",
-  question: "Question",
-  approve: "Approve",
-};
-
-function IntentPill({ type }: { type: DispositionKind }) {
-  return (
-    <Badge variant={type === "request-change" ? "destructive" : "secondary"} className="shrink-0">
-      {INTENT_LABEL[type]}
-    </Badge>
-  );
-}
 
 /** The receipt the egress returns once the own-branch change request opens. */
 export interface PrReceipt {
@@ -181,7 +166,7 @@ export function RoundsLanes({
     const changeRequest = CHANGE_REQUEST_COPY[pr.requestKind];
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-8 py-8">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
           <div className="flex items-center gap-2.5">
             <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
             <h1 className="text-xl font-semibold tracking-tight text-foreground">{pr.title}</h1>
@@ -193,7 +178,7 @@ export function RoundsLanes({
           <p className="text-xs text-muted-foreground">{pr.destination}</p>
           {receipt ? (
             <div className="flex flex-col gap-1 pt-1">
-              <span className="flex items-center gap-2 text-base font-medium text-foreground">
+              <span className="flex items-center gap-2 text-sm font-medium text-foreground">
                 <Check className="size-4 text-green" aria-hidden="true" />
                 {changeRequest.opened} · {changeRequest.numberPrefix}
                 {receipt.number}
@@ -202,7 +187,7 @@ export function RoundsLanes({
                 href={receipt.url}
                 target="_blank"
                 rel="noreferrer"
-                className="w-fit text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+                className="w-fit text-12-5 text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
               >
                 {receipt.url.replace(/^https?:\/\//, "")}
               </a>
@@ -229,7 +214,7 @@ export function RoundsLanes({
   // ── State: changes remain (or nothing staged yet) ────────────────────────────
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-8 py-8">
+      <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
         <div className="flex items-center gap-2.5">
           <GitBranch className="size-4 text-muted-foreground" aria-hidden="true" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Changes</h1>
@@ -302,7 +287,7 @@ function AskCard({ ask, patchsetId }: { ask: StagedAsk; patchsetId: string }) {
     <div className="flex flex-col gap-1.5 rounded-md border border-border px-4 py-3">
       <span className="flex items-center gap-1.5">
         <IntentPill type={ask.type} />
-        <span className="truncate text-2xs text-muted-foreground/80 italic">{ask.anchor}</span>
+        <span className="truncate text-2xs text-muted-foreground/80">{ask.anchor}</span>
       </span>
       <RichText
         text={ask.body}

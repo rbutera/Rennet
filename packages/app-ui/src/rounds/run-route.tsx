@@ -34,21 +34,38 @@ const NO_ROWS: readonly LaneRow[] = Object.freeze([]);
 /** The status glyph for a live row — queued ring, running spinner, done check, absent
  *  dash, failed dot.
  *  Shared with the greeting's regeneration lanes (finding 5) so a queued/failed drafter reads
- *  the same everywhere, never a false green check. */
-export function StatusIcon({ status }: { readonly status: RowStatus }) {
+ *  the same everywhere, never a false green check.
+ *
+ *  `compact` is the flat step-line register (prototype `run-view.tsx:67-72`): smaller, and
+ *  a settled step reads MUTED rather than green. A prep line finishing is not an outcome —
+ *  a wall of green checks for "made a directory" spends the evidence colour on nothing, and
+ *  leaves none for the lane list, where a finished lens IS the result. */
+export function StatusIcon({
+  status,
+  compact = false,
+}: {
+  readonly status: RowStatus;
+  readonly compact?: boolean;
+}) {
+  const size = compact ? "size-3" : "size-3.5";
   if (status === "running")
-    return <Spinner className="size-3.5 shrink-0 text-model" aria-hidden="true" />;
+    return <Spinner className={cn(size, "shrink-0 text-model")} aria-hidden="true" />;
   if (status === "queued")
     return (
-      <span className="size-3.5 shrink-0 rounded-full border border-border" aria-hidden="true" />
+      <span className={cn(size, "shrink-0 rounded-full border border-border")} aria-hidden="true" />
     );
   if (status === "failed")
-    return <span className="size-3.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />;
+    return <span className={cn(size, "shrink-0 rounded-full bg-destructive")} aria-hidden="true" />;
   if (status === "absent")
-    return <Minus className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />;
+    return <Minus className={cn(size, "shrink-0 text-muted-foreground")} aria-hidden="true" />;
   // `drafted` and `done` are both "this one is finished" — a lens lane's verdict is the
   // thing that differs, and it renders beside the glyph, not as a second glyph.
-  return <Check className="size-3.5 shrink-0 text-green-500" aria-hidden="true" />;
+  return (
+    <Check
+      className={cn(size, "shrink-0", compact ? "text-muted-foreground/70" : "text-green")}
+      aria-hidden="true"
+    />
+  );
 }
 
 /** A flat prep/tail line (the spike's `StepLine`), driven by the row's status, not a clock. */
@@ -58,8 +75,8 @@ function StepLine({ row }: { readonly row: LaneRow }) {
   // detail, a failed step's reason. The unstarted arms carry neither, by construction.
   const note = stepNote(row);
   return (
-    <div className="flex items-center gap-1.5 text-xs" data-row={row.id}>
-      <StatusIcon status={row.status} />
+    <div className="flex items-center gap-1.5 text-12-5" data-row={row.id}>
+      <StatusIcon status={row.status} compact />
       <span className={cn("truncate", running ? "text-foreground" : "text-muted-foreground")}>
         {row.label}
         {note ? ` · ${note}` : ""}
@@ -88,7 +105,7 @@ function LaneList({ title, rows }: { readonly title: string; readonly rows: read
             <StatusIcon status={row.status} />
             <span
               className={cn(
-                "text-sm font-medium",
+                "font-medium text-13",
                 row.status === "queued" ? "text-muted-foreground/50" : "text-foreground",
               )}
             >
@@ -142,7 +159,7 @@ function LiveRun({ state }: { readonly state: RoundState }) {
       className="min-h-0 flex-1 overflow-y-auto"
     >
       <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[11vh]">
-        <span className="font-display text-sm font-medium text-foreground">{header}</span>
+        <span className="font-medium text-13 text-foreground">{header}</span>
 
         {prep.length > 0 && (
           <div className="flex flex-col gap-1.5">

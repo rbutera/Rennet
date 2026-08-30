@@ -6,11 +6,14 @@ import { Icon } from "../components/icon";
 import { useMutation } from "../data";
 import { useBoardReviewId } from "./kinds/element-context";
 
+// Soft fill, no border (prototype `lens-board.tsx:678-690`). Gold is the reserve accent, so
+// "modified" reads neutral — a spec that moved is not an event worth an accent. "renamed"
+// has no prototype counterpart and takes the same neutral; its word carries the difference.
 const SPEC_DELTA_TONE: Readonly<Record<SpecDelta, string>> = {
-  added: "border-green-line bg-green-soft text-green",
-  modified: "border-accent-line bg-accent-soft text-accent",
-  removed: "border-danger bg-danger-soft text-danger",
-  renamed: "border-line bg-raised text-ink-soft",
+  added: "bg-green-soft text-green",
+  modified: "bg-secondary text-muted-foreground",
+  removed: "bg-destructive/15 text-destructive",
+  renamed: "bg-secondary text-muted-foreground",
 };
 
 export function SpecDeltaBadge({ delta }: { readonly delta: SpecDelta }) {
@@ -19,7 +22,7 @@ export function SpecDeltaBadge({ delta }: { readonly delta: SpecDelta }) {
       data-kind="spec-delta"
       data-spec-delta={delta}
       className={cn(
-        "shrink-0 rounded-chip border px-1.5 py-0.5 font-medium text-2xs",
+        "shrink-0 rounded px-1.5 py-0.5 font-semibold text-10 uppercase tracking-wide",
         SPEC_DELTA_TONE[delta],
       )}
     >

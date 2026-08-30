@@ -47,7 +47,11 @@ const STATUS_LABEL: Record<FileChangeStatus, string> = {
   renamed: "renamed",
 };
 
-/** GitHub's five-square add/delete proportion chip. */
+/** GitHub's five-square add/delete proportion chip. The squares carry the 4px `micro`
+ *  radius, not the prototype's 2px: Rennet's named radius ramp STARTS at micro
+ *  (`DESIGN.md` — micro/chip/control/surface/window). Tailwind's own `rounded-xs` would
+ *  render 2px here only because `theme.css` never resets the `--radius-*` namespace, and
+ *  no test guards it — a 2px step is a ramp decision, not a per-component nudge. */
 function StatSquares({ additions, deletions }: { additions: number; deletions: number }) {
   const total = additions + deletions;
   const greens = total === 0 ? 0 : Math.round((additions / total) * 5);
@@ -221,7 +225,7 @@ function FileTree({
                 >
                   {name}
                 </span>
-                <span className="ml-auto flex shrink-0 items-center gap-1 text-2xs tabular-nums">
+                <span className="ml-auto flex shrink-0 items-center gap-1 text-10 tabular-nums">
                   <span className="text-green">+{stats.additions}</span>
                   <span className="text-destructive">−{stats.deletions}</span>
                 </span>
@@ -325,7 +329,7 @@ function DiffFileCard({
         {STATUS_LABEL[file.status] && (
           <span
             className={cn(
-              "shrink-0 rounded border px-1 py-px text-2xs uppercase tracking-wide",
+              "shrink-0 rounded border px-1 py-px text-10 uppercase tracking-wide",
               file.status === "added"
                 ? "border-green/40 text-green"
                 : file.status === "deleted"
@@ -371,7 +375,7 @@ function DiffFileCard({
           <div className="px-3 py-2.5 text-xs text-muted-foreground">Binary file not shown.</div>
         ) : (
           <div className="overflow-x-auto">
-            <div className="min-w-max font-mono text-xs leading-[1.7]">
+            <div className="min-w-max font-mono text-12-5 leading-[1.7]">
               {hunks.map((hunk, i) => (
                 <DiffHunkView
                   // biome-ignore lint/suspicious/noArrayIndexKey: hunks are a fixed positional list within the file.
@@ -494,7 +498,7 @@ function DiffHunkView({
                     className={cn(
                       "size-4 shrink-0 items-center justify-center rounded transition-colors",
                       hasAsk
-                        ? "bg-destructive text-primary-foreground hover:bg-destructive/90"
+                        ? "bg-destructive text-on-danger hover:bg-destructive/90"
                         : "bg-primary text-primary-foreground hover:bg-primary/90",
                       hasComment || isOpen ? "flex" : "hidden group-hover:flex",
                     )}

@@ -107,7 +107,7 @@ export function RoundsLedger({
   return (
     <section
       data-screen="rounds-ledger"
-      className="mx-auto flex w-full max-w-[820px] flex-col gap-6 p-6"
+      className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-8 py-10"
     >
       <header className="flex flex-col gap-1">
         <h1 className="font-display text-foreground text-xl">Rounds</h1>
@@ -118,7 +118,7 @@ export function RoundsLedger({
 
       <ul
         data-testid="rounds-ledger-rows"
-        className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-lg border border-border"
+        className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-md border border-border"
       >
         {rows.map(({ record: r, round }) => {
           const active = round === selectedRound;
@@ -131,8 +131,8 @@ export function RoundsLedger({
                 aria-current={active ? "true" : undefined}
                 onClick={() => setSelectedRound(round)}
                 className={cn(
-                  "flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-sm transition-colors",
-                  active ? "bg-secondary" : "hover:bg-secondary/50",
+                  "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors",
+                  active ? "bg-secondary/40" : "hover:bg-secondary/20",
                 )}
               >
                 <span className="flex min-w-0 flex-col gap-0.5">

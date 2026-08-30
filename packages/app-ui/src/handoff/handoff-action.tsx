@@ -52,12 +52,12 @@ export function HandoffAction({ label, pendingLabel, icon: Icon, onSubmit }: Han
           }
         }}
         // In flight keeps full contrast — a live state, not an inert control (R31).
-        className="h-12 w-fit gap-2.5 px-7 text-base font-semibold disabled:opacity-100"
+        className="h-12 w-fit gap-2.5 px-7 text-15 font-semibold disabled:opacity-100"
       >
         {submitting ? (
-          <Spinner className="size-5" aria-hidden="true" />
+          <Spinner className="size-4.5" aria-hidden="true" />
         ) : (
-          <Icon className="size-5" aria-hidden="true" />
+          <Icon className="size-4.5" aria-hidden="true" />
         )}
         {submitting ? pendingLabel : label}
       </Button>

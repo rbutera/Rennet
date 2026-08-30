@@ -51,7 +51,7 @@ function ReportDocument({ board }: { readonly board: RoundReportBoardModel }) {
           text={board.document.introMarkdown}
           patchsetId={patchsetId}
           className="max-w-[640px]"
-          paragraphClassName="text-base leading-relaxed text-foreground/85"
+          paragraphClassName="text-15 leading-relaxed text-foreground/85"
         />
       )}
     </header>

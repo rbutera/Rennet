@@ -264,8 +264,13 @@ describe("board kind renderers over the fixture set", () => {
       expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
     });
     if (!finding) throw new Error("missing f1 finding");
-    expect(finding.className).not.toContain("opacity-60");
-    expect(finding.querySelector('[class~="opacity-60"]')).toBeTruthy();
+    // The fade is ONE transition on the finding wrapper, not a per-child opacity snap:
+    // dimming the card as a unit is what makes it cross-fade rather than flicker. So the
+    // dimming class exists on the wrapper and NOWHERE inside it — put `opacity-50` on any
+    // descendant and this reddens.
+    expect(finding.className).toContain("opacity-50");
+    expect(finding.className).toContain("transition-opacity");
+    expect([...finding.querySelectorAll('[class~="opacity-50"]')]).toEqual([]);
     expect(finding.textContent).toContain(", dismissed");
 
     if (!disclosure) throw new Error("missing finding disclosure");
@@ -275,12 +280,21 @@ describe("board kind renderers over the fixture set", () => {
     if (!undo) throw new Error("missing dismissal Undo action");
     const [discuss] = getAllByText("Discuss");
     if (!discuss) throw new Error("missing Discuss action");
-    expect(undo.closest('[class~="opacity-60"]')).toBeNull();
-    expect(discuss.closest('[class~="opacity-60"]')).toBeNull();
+    // Peeking a dismissed finding open still reaches its actions, and the wrapper fade is
+    // the only dimming BETWEEN them and the card: the nearest dimmed ancestor of each
+    // action IS the finding wrapper itself. Wrap an action in a second `opacity-50` and
+    // `closest` returns that inner element instead, so this reddens.
+    //
+    // What it does NOT cover: a dim expressed any other way — a different opacity step, an
+    // inline style, a colour token at reduced alpha. Those are invisible to a class-name
+    // assertion, here and anywhere else in this file.
+    expect(undo.closest('[class~="opacity-50"]')).toBe(finding);
+    expect(discuss.closest('[class~="opacity-50"]')).toBe(finding);
     await user.click(undo);
     await waitFor(() => {
       expect(finding?.getAttribute("data-status")).toBe("open");
       expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+      expect(finding?.className).not.toContain("opacity-50");
     });
   });
 

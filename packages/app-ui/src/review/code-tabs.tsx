@@ -1,3 +1,4 @@
+import { cn } from "@rennet/ui";
 import { useState } from "react";
 import { basename } from "../canvas/symbol";
 import { type CodeRef, refKey, spanToBlock, useSpanRead } from "./citations";
@@ -49,6 +50,41 @@ export function CitationBlock({ citation }: { citation: CodeRef }) {
   );
 }
 
+/** A CodeTabs tab: a quiet sans pill, not a bordered mono chip. The tabs sit directly
+ *  above the card they switch — a border and a code face on each one competed with the
+ *  code inside (prototype `code-tabs.tsx:31-36`). `AnchorReveal` keeps `ReferenceChip`:
+ *  its chips stand alone in prose and need the border to read as citations. */
+function TabPill({
+  citation,
+  active,
+  onClick,
+}: {
+  readonly citation: CodeRef;
+  readonly active: boolean;
+  readonly onClick: () => void;
+}) {
+  const range =
+    citation.endLine != null && citation.endLine !== citation.startLine
+      ? `${citation.startLine}-${citation.endLine}`
+      : `${citation.startLine}`;
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={citation.path}
+      onClick={onClick}
+      className={cn(
+        "rounded-md px-2 py-1 text-xs transition-colors",
+        active
+          ? "bg-secondary font-medium text-foreground"
+          : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+      )}
+    >
+      {basename(citation.path)}:{range}
+    </button>
+  );
+}
+
 /** Tabbed evidence viewer: one tab per cited site, one visible card. */
 export function CodeTabs({ citations }: { citations: readonly CodeRef[] }) {
   // Track the selected TAB by ref identity, not array index: shrinking or reordering the
@@ -64,11 +100,9 @@ export function CodeTabs({ citations }: { citations: readonly CodeRef[] }) {
           {citations.map((tab) => {
             const key = refKey(tab);
             return (
-              <ReferenceChip
+              <TabPill
                 key={key}
-                path={tab.path}
-                startLine={tab.startLine}
-                endLine={tab.endLine}
+                citation={tab}
                 active={key === currentKey}
                 onClick={() => setActiveKey(key)}
               />

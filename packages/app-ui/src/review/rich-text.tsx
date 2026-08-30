@@ -1,8 +1,8 @@
 import { cn } from "@rennet/ui";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
+import { basename } from "../canvas/symbol";
 import { lineRef } from "./citations";
 import { CitationBlock } from "./code-tabs";
-import { ReferenceChip } from "./reference-chip";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The R45 markdown subset, base tier (C4, reconciliation 6/7): a DELIBERATE subset, not
@@ -277,19 +277,31 @@ export function RichText({
     if (segment.kind === "citation") {
       const refId = `${paragraphIndex}:${segment.value}`;
       const parsed = parseRef(segment.value);
+      // Inline and borderless: a citation is a word in the sentence, and a bordered chip
+      // broke the line it sat in (prototype `rich-text.tsx:298-301`). The prototype sizes
+      // this em-relative (0.86em) so it tracks whatever prose holds it; the design ramp
+      // admits no arbitrary bracketed size, so this takes the nearest ramp step below the
+      // 14px body — and does NOT shrink with a smaller run the way the prototype's does.
       node = (
-        <ReferenceChip
-          path={parsed.path}
-          startLine={parsed.startLine}
-          endLine={parsed.endLine}
-          active={activeRef === refId}
+        <button
+          type="button"
+          aria-pressed={activeRef === refId}
           title={segment.value}
-          className="inline-block underline decoration-dotted underline-offset-2"
           onClick={() => setActiveRef((current) => (current === refId ? null : refId))}
-        />
+          className={cn(
+            "rounded bg-secondary/60 px-1 py-px font-mono text-xs underline decoration-dotted underline-offset-2 transition-colors",
+            activeRef === refId ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {basename(parsed.path)}:
+          {parsed.endLine !== parsed.startLine
+            ? `${parsed.startLine}-${parsed.endLine}`
+            : parsed.startLine}
+        </button>
       );
     } else {
-      node = <code className="font-mono text-foreground">{segment.display}</code>;
+      // Same em-relative caveat: the prototype's 0.9em becomes the nearest ramp step.
+      node = <code className="font-mono text-12-5 text-foreground">{segment.display}</code>;
     }
     if (segment.bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
     return decorate(node, segment.start, segment.end, `${segment.start}:${segment.end}`);
