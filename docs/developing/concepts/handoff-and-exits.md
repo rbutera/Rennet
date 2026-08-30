@@ -308,8 +308,13 @@ The exits themselves:
   one. A failure after that commit point — no active patchset to regenerate
   over, or a regeneration that throws — closes the round's progress channel
   with a terminal failure and leaves the checkpoint evidence intact for a
-  regeneration-only retry. The worker-to-record interval and durable replay of
-  execution-phase receipts remain outside this restart boundary.
+  regeneration-only retry. Recovery also owns the earlier execution phases. If
+  the daemon restarts while the coding worker is running, it reconstructs the
+  worker's partial diff and changed-path evidence from the preserved detached
+  worktree, records an actionable failed receipt, and never invokes that worker
+  again. If the restart interrupts the configured gate, it runs the same gate
+  command over that preserved worktree under the durable gate execution identity
+  and continues only from the resulting receipt.
 - **The pull or merge request** — `publish.compose(mode:"pr")` resolves the effective
   push URL before drafting and shows its provider-qualified repository on the
   preview. That target joins the canonical submission in a **stable derived

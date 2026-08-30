@@ -1136,6 +1136,71 @@ describe("createRoundExecutionCoordinator", () => {
     expect(settleCommits.mock.calls[0]?.[0].attempt.executionId).toBe("commit-recovery");
   });
 
+  it("uses the worker observer on recovery and never dispatches the worker twice", async () => {
+    const test = scenario();
+    seedWorkerRunning(test.store, operation());
+    const runWorker = vi.fn(async () => {
+      throw new Error("duplicate worker execution");
+    });
+    const observeWorker = vi.fn(async ({ attempt }) => ({
+      ...attempt,
+      completedAt: 20,
+      outcome: "failed" as const,
+      termination: { kind: "error" as const, reason: "worker interrupted by daemon restart" },
+      diff: "diff --git a/a.ts b/a.ts\n+partial edit\n",
+      changedPaths: ["a.ts"],
+    }));
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        observeWorker,
+        async drainTerminal() {
+          throw new Error("retain recovered worker evidence");
+        },
+      },
+      now: () => 20,
+    });
+
+    await expect(coordinator.recover()).rejects.toThrow("retain recovered worker evidence");
+    expect(runWorker).not.toHaveBeenCalled();
+    expect(observeWorker).toHaveBeenCalledTimes(1);
+    expect(observeWorker.mock.calls[0]?.[0].attempt.executionId).toBe("worker-recovery");
+    const failed = test.store.read("session-1");
+    expect(failed?.state.phase).toBe("failed");
+    if (failed?.state.phase !== "failed" || failed.state.failure.at !== "worker") {
+      throw new Error("expected recovered worker evidence");
+    }
+    expect(failed.state.failure.worker).toMatchObject({
+      outcome: "failed",
+      diff: "diff --git a/a.ts b/a.ts\n+partial edit\n",
+      changedPaths: ["a.ts"],
+    });
+  });
+
+  it("re-runs an interrupted gate through its observer without re-running the worker", async () => {
+    const test = scenario({ commitCount: 0 });
+    seedGateRunning(test.store, operation({ gatePlan: { kind: "configured", command: "check" } }));
+    const runWorker = vi.fn(async () => {
+      throw new Error("duplicate worker execution");
+    });
+    const runGate = vi.fn(async () => {
+      throw new Error("new gate execution");
+    });
+    const observeGate = vi.fn(test.ports.runGate);
+    const recovered = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: { ...test.ports, runWorker, runGate, observeGate },
+    }).recover();
+
+    expect(recovered[0]?.state.phase).toBe("completed");
+    expect(runWorker).not.toHaveBeenCalled();
+    expect(runGate).not.toHaveBeenCalled();
+    expect(observeGate).toHaveBeenCalledTimes(1);
+    expect(observeGate.mock.calls[0]?.[0].attempt.executionId).toBe("gate-recovery");
+  });
+
   it("marks an unobservable recovered worker as interrupted without dispatching it again", async () => {
     const test = scenario();
     seedWorkerRunning(test.store, operation());
