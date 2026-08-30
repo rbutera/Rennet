@@ -47,7 +47,10 @@ the Microsoft Store ChatGPT package.
 ## Let Rennet detect it
 
 Return to the first-run welcome and choose **Check again**, or open **Settings →
-Environments** after setup. Detection runs separately on this machine, each WSL
+Environments** after setup. If you already finished the welcome, reopen it with
+**Settings → Appearance → First Run →
+[Replay the first-run welcome](./getting-started.md#replaying-the-welcome)**.
+Detection runs separately on this machine, each WSL
 distro, and every paired environment. A harness installed on the host does not
 stand in for one missing inside WSL or on a remote machine.
 

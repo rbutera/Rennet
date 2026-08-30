@@ -25,6 +25,17 @@ The welcome ends by opening the same **Add Project** browser described below.
 After the project is added, **Start a new chat** opens the real New Chat screen
 for it.
 
+### Replaying the welcome
+
+The welcome is not a one-time event you can only see on a clean install. Open
+**Settings → Appearance → First Run** and choose **Replay the first-run welcome**,
+or run the same action from the command menu (`⌘K`). It reopens immediately, over
+whatever you were doing, on a client that already has projects. There is no
+confirmation, because nothing is destroyed: your projects, appearance, and
+sessions are untouched, and finishing the welcome puts it away again. Replaying
+the welcome does not re-arm the [onboarding tour](./onboarding-tour.md), and
+replaying the tour does not reopen the welcome.
+
 ## The review loop
 
 ```mermaid
