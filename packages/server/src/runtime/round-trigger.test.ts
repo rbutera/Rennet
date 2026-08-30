@@ -3,16 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DESIGN_ARTIFACT_LIMITS } from "@rennet/adapters";
 import { type CodexExecutor, type HarnessPort, lintReviewDraft } from "@rennet/core";
-import type {
-  DraftBoard,
-  Generation,
-  KnowledgeSet,
-  PatchFile,
-  Patchset,
-  Review,
-  RoundEvent,
-  SessionModel,
-  SuccessorAccount,
+import {
+  currentGenerationId,
+  type DraftBoard,
+  type Generation,
+  type KnowledgeSet,
+  type PatchFile,
+  type Patchset,
+  type Review,
+  type RoundEvent,
+  type RoundRecord,
+  type SessionModel,
+  type SuccessorAccount,
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
@@ -398,6 +400,43 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     const ctx = seen[0]?.lintContextFor("design");
     expect(ctx?.files.get("src/untouched.ts")).toBe(400);
     expect(ctx?.baseFiles?.get("src/untouched.ts")).toBe(380);
+  });
+
+  it("refreshes the ledger-selected visible generation after a completed round", async () => {
+    const { deps, seen } = reviewHarness();
+    const visibleGeneration = {
+      id: "round-generation",
+      patchsetId: "ps-pre",
+      lensBoards: {},
+      status: "live",
+    } as Generation;
+    const completedRound: RoundRecord = {
+      asksDispatched: ["ask-1"],
+      workerCommitRange: { from: "commit-a", to: "commit-b" },
+      resultPatchsetId: "ps-pre",
+      boardGeneration: visibleGeneration.id,
+      reportBoard: "round-report",
+    };
+
+    await runBoardRegeneration(
+      {
+        ...deps,
+        priorGeneration: async (generationId) =>
+          generationId === visibleGeneration.id
+            ? { generation: visibleGeneration, boards: new Map() }
+            : undefined,
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        priorGenerationId: currentGenerationId([completedRound], "ps-pre"),
+        asksDispatched: [],
+        worked: NO_WORK,
+      },
+    );
+
+    expect(seen[0]?.previousGeneration?.id).toBe(visibleGeneration.id);
   });
 
   // W5 finding 2 — the composed review draft is the surface the reviewer READS, and it

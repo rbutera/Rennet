@@ -26,6 +26,7 @@ import { type HarnessPort, mintSession } from "@rennet/core";
 import type {
   Generation,
   LensBoard,
+  Project,
   Review,
   RoundOperation,
   SidebarSession,
@@ -47,11 +48,14 @@ import {
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
   type HandoffTurnExecution,
+  projectContextUnavailableForProcess,
   type RoundSourceLandingInjection,
   resolveCodingHarness,
   runResolvedCodingHarnessTurn,
+  startProjectContextMaintenance,
 } from "./create-server";
 import { createGitHubTokenStore } from "./github-token-store";
+import type { ProjectProcessJournalRecord } from "./project-process-journal";
 import type { RoundExecutionPorts } from "./runtime/round-execution";
 
 type TestServer = Awaited<ReturnType<typeof createRennetServer>>;
@@ -227,6 +231,83 @@ async function waitForReviewSession(
   return prepared as PreparationSession;
 }
 
+describe("project context maintenance", () => {
+  const project = {
+    id: "project-1",
+    name: "Rennet",
+    path: "/repo",
+    openPath: "/repo",
+  } as Project;
+
+  const journal = (
+    status: ProjectProcessJournalRecord["status"],
+    phase: ProjectProcessJournalRecord["phase"],
+  ): ProjectProcessJournalRecord => ({
+    version: 1,
+    runId: randomUUID(),
+    projectId: project.id,
+    status,
+    phase,
+    repos: [],
+    failures:
+      status === "failed"
+        ? [{ repo: "rennet", path: "/repo", phase: "knowledge", reason: "worker exited" }]
+        : [],
+    events: [],
+  });
+
+  it("resumes an interrupted run under its durable identity before starting rehydration", async () => {
+    const interrupted = journal("running", "map");
+    const resume = vi.fn(async () => ({ run: { status: "done" } }));
+    const rehydrate = vi.fn(async () => undefined);
+    const onError = vi.fn();
+
+    startProjectContextMaintenance({
+      projects: [project],
+      loadRun: () => interrupted,
+      resume,
+      rehydrate,
+      onError,
+    });
+
+    await vi.waitFor(() => expect(rehydrate).toHaveBeenCalledWith(project));
+    expect(resume).toHaveBeenCalledWith(project, interrupted.runId);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed work retryable and reports its failed phase instead of serving a current map", () => {
+    const failed = journal("failed", "knowledge");
+    const resume = vi.fn(async () => ({ run: { status: "done" } }));
+    const rehydrate = vi.fn(async () => undefined);
+
+    startProjectContextMaintenance({
+      projects: [project],
+      loadRun: () => failed,
+      resume,
+      rehydrate,
+      onError: vi.fn(),
+    });
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(rehydrate).not.toHaveBeenCalled();
+    expect(projectContextUnavailableForProcess(failed)).toMatchObject({
+      status: "absent",
+      reason: "Context Map knowledge failed: rennet: worker exited",
+      run: { id: failed.runId, status: "failed", phase: "knowledge" },
+    });
+  });
+
+  it("reports active processing and allows only a completed journal through to map reads", () => {
+    const running = journal("running", "map");
+    expect(projectContextUnavailableForProcess(running)).toMatchObject({
+      status: "absent",
+      reason: "Context Map map is still running",
+      run: { id: running.runId, status: "running", phase: "map" },
+    });
+    expect(projectContextUnavailableForProcess(journal("done", "complete"))).toBeNull();
+  });
+});
+
 describe("publish board-drafting coordination", () => {
   const review = {
     id: "review-boards",
@@ -287,6 +368,36 @@ describe("publish board-drafting coordination", () => {
     await expect(first).rejects.toThrow("did not settle");
     await expect(retry).resolves.toBeUndefined();
     expect(calls).toBe(2);
+  });
+
+  it("queues a fresh draft behind in-flight work when project context advances", async () => {
+    let revision = "context-a";
+    let releaseFirst!: () => void;
+    const seen: string[] = [];
+    const ensure = createBoardDraftCoordinator(
+      async () => {
+        seen.push(revision);
+        if (seen.length === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return true;
+      },
+      () => revision,
+    );
+
+    const first = ensure(review);
+    await vi.waitFor(() => expect(seen).toEqual(["context-a"]));
+    revision = "context-b";
+    const refreshed = ensure(review);
+
+    expect(refreshed).not.toBe(first);
+    expect(seen).toEqual(["context-a"]);
+    releaseFirst();
+    await expect(first).resolves.toBeUndefined();
+    await expect(refreshed).resolves.toBeUndefined();
+    expect(seen).toEqual(["context-a", "context-b"]);
   });
 
   it("returns retryable drafting after failure, then exposes the exact settled named boards", async () => {

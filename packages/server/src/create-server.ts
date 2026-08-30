@@ -192,6 +192,7 @@ import type {
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
+  Project,
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
@@ -204,6 +205,7 @@ import type {
   SessionPreparation,
 } from "@rennet/protocol";
 import {
+  canonicalize,
   currentGenerationId,
   forgeRepositorySlug,
   isRoundOperationTerminal,
@@ -259,7 +261,10 @@ import {
   type ProjectPullRequestOpener,
   resolveProjectRepositoryRoot,
 } from "./project-forge-registry";
-import { createProjectProcessJournal } from "./project-process-journal";
+import {
+  createProjectProcessJournal,
+  type ProjectProcessJournalRecord,
+} from "./project-process-journal";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
@@ -725,16 +730,21 @@ export function createBoardDraftCoordinator(
     emit?: (event: RoundEvent) => void,
     signal?: AbortSignal,
   ) => Promise<boolean>,
+  revisionFor: (review: Review) => string = () => "legacy",
 ): (review: Review, emit?: (event: RoundEvent) => void, signal?: AbortSignal) => Promise<void> {
   type DraftAttempt = {
     readonly promise: Promise<void>;
     readonly signal?: AbortSignal;
+    readonly revision: string;
   };
   const inFlight = new Map<string, DraftAttempt>();
   return (review, emit, signal) => {
     const key = `${review.id}:${review.activePatchsetId}`;
+    const revision = revisionFor(review);
     const existing = inFlight.get(key);
-    if (existing && !existing.signal?.aborted) return existing.promise;
+    if (existing && !existing.signal?.aborted && existing.revision === revision) {
+      return existing.promise;
+    }
     const attempt =
       existing === undefined
         ? draft(review, emit, signal)
@@ -746,9 +756,53 @@ export function createBoardDraftCoordinator(
       .finally(() => {
         if (inFlight.get(key)?.promise === tracked) inFlight.delete(key);
       });
-    inFlight.set(key, { promise: tracked, ...(signal === undefined ? {} : { signal }) });
+    inFlight.set(key, {
+      promise: tracked,
+      revision,
+      ...(signal === undefined ? {} : { signal }),
+    });
     return tracked;
   };
+}
+
+export function projectContextUnavailableForProcess(
+  record: ProjectProcessJournalRecord | null,
+): ProjectContextMapResult | null {
+  if (record === null || record.status === "done") return null;
+  const run = projectProcessRunFromRecord(record);
+  return {
+    status: "absent",
+    reason:
+      run.status === "failed"
+        ? `Context Map ${run.phase} failed: ${run.reason}`
+        : `Context Map ${run.phase} is still running`,
+    run,
+  };
+}
+
+export function startProjectContextMaintenance(input: {
+  readonly projects: readonly Project[];
+  readonly loadRun: (project: Project) => ProjectProcessJournalRecord | null;
+  readonly resume: (
+    project: Project,
+    runId: string,
+  ) => Promise<{ readonly run: { readonly status: string } }>;
+  readonly rehydrate: (project: Project) => Promise<void>;
+  readonly onError: (error: unknown) => void;
+}): void {
+  for (const project of input.projects) {
+    const initialRun = input.loadRun(project);
+    if (initialRun?.status === "queued" || initialRun?.status === "running") {
+      void input
+        .resume(project, initialRun.runId)
+        .then(async (result) => {
+          if (result.run.status === "done") await input.rehydrate(project);
+        })
+        .catch(input.onError);
+    } else if (initialRun === null || initialRun.status === "done") {
+      void input.rehydrate(project).catch(input.onError);
+    }
+  }
 }
 
 type CompositionBoardsForReview = NonNullable<DispatchDeps["compositionBoardsForReview"]>;
@@ -2182,6 +2236,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
   };
+  // Bound after board drafting is composed below. Context production starts earlier in
+  // the composition root, so its completion callbacks need a late-bound, synchronous kick.
+  let refreshBoardsForProjectContext: (repoRoot: string) => void = () => undefined;
   const knowledgeSwarmRuntime = createKnowledgeSwarmRuntime({
     store: snapshotStore,
     resolveClaudePort: claudeAdapterForRepo,
@@ -2212,19 +2269,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // identity, and its per-partition + verify lines ride the SAME rehydration
     // progress push as the narrate above. The typed outcome reaches the caller
     // INTACT — collapsing it to a boolean dropped every failure reason.
-    runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) =>
-      knowledgeSwarmRuntime.runForRepo({ projectId, repoKey, repoRoot, toOid }),
+    runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) => {
+      const outcome = await knowledgeSwarmRuntime.runForRepo({
+        projectId,
+        repoKey,
+        repoRoot,
+        toOid,
+      });
+      if (
+        outcome.status === "ok" ||
+        (outcome.status === "skipped" && new KnowledgeStore(snapshotStore).loadLocal(repoKey))
+      ) {
+        refreshBoardsForProjectContext(repoRoot);
+      }
+      return outcome;
+    },
   });
-  // At launch, resume warming established projects. An interrupted initial run owns
-  // its own first knowledge pass; the stable `project.process` command reattaches and
-  // resumes that journal instead of racing the background rehydrator.
-  for (const project of projectStore.list()) {
-    const primaryPath = project.openPath || project.path;
-    const initialRun = projectProcessJournal.load(repoKeyForRoot(primaryPath));
-    if (!initialRun || initialRun.status === "done") {
-      void rehydration.ensureForProject(project);
-    }
-  }
   // One durable add-project run owns scout → structural map → knowledge. Its journal
   // lives beside the map so a daemon restart replays completed steps and resumes the
   // first incomplete phase under the same stable command identity.
@@ -2245,15 +2305,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
       return result ? scoutQuestionnaire(basename(input.repoRoot), result) : null;
     },
-    runKnowledge: (input) =>
-      knowledgeSwarmRuntime.runForRepo({
+    runKnowledge: async (input) => {
+      const outcome = await knowledgeSwarmRuntime.runForRepo({
         projectId: input.projectId,
         repoKey: input.repoKey,
         repoRoot: input.repoRoot,
         toOid: input.toOid,
         runId: input.runId,
         narrate: input.narrate,
-      }),
+      });
+      if (
+        outcome.status === "ok" ||
+        (outcome.status === "skipped" && projectProcessKnowledge.loadLocal(input.repoKey))
+      ) {
+        refreshBoardsForProjectContext(input.repoRoot);
+      }
+      return outcome;
+    },
     loadKnowledge: (repoKey) => projectProcessKnowledge.loadLocal(repoKey),
   });
   // The app-side settings stores (B10 #476): viewer preferences (appearance,
@@ -2584,6 +2652,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * lint resolves against, the prior generation carry is decided by, and the rounds runtime
    * itself are identical either way, and were identical when they were written twice.
    */
+  const projectContextForBoards = (review: Review, patchset: Patchset) => {
+    const repoKey = repoKeyForRoot(review.repositoryRoot);
+    const overlayReader = new SnapshotOverlayReader({
+      store: liveSnapshotStore,
+      overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
+    });
+    const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
+      repoKey,
+      patchset.repository.baseOid,
+    );
+    const set = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null;
+    const snapshot = gated.ok ? gated.snapshot : null;
+    return {
+      set,
+      snapshot,
+      revision: sha256Hex(
+        canonicalize({
+          snapshot: snapshot?.manifest.fingerprint ?? null,
+          knowledge: set,
+        }),
+      ),
+    };
+  };
+
   const boardDraftingDeps = (
     review: Review,
     session: SessionModel,
@@ -2607,21 +2699,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // would refuse it as stale. Without this the packet could degrade to
     // `unprojected` on a review whose context tools were answering fine —
     // two readers disagreeing about the same review's snapshot.
-    knowledgeFor: (patchset: Patchset) => {
-      const repoKey = repoKeyForRoot(review.repositoryRoot);
-      const overlayReader = new SnapshotOverlayReader({
-        store: liveSnapshotStore,
-        overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
-      });
-      const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
-        repoKey,
-        patchset.repository.baseOid,
-      );
-      return {
-        set: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null,
-        snapshot: gated.ok ? gated.snapshot : null,
-      };
-    },
+    knowledgeFor: (patchset: Patchset) => projectContextForBoards(review, patchset),
     // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
     // lint resolves citations against every text file at the reviewed head and
     // base, not only the changed ones. Two `git grep -c` passes over the repo's
@@ -3232,6 +3310,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,
+        // A completed round can make a non-content-addressed generation current for this
+        // patchset. Context refresh must redraft the generation the board route actually reads.
+        priorGenerationId: currentGenerationId(
+          roundRecordStore.read(session.id),
+          review.activePatchsetId,
+        ),
         asksDispatched: [],
         worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
         ...(signal === undefined ? {} : { signal }),
@@ -3240,7 +3324,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return settled && service.reviewById(review.id)?.activePatchsetId === review.activePatchsetId;
   }
 
-  const ensureBoardDrafting = createBoardDraftCoordinator(draftBoardsForReview);
+  const ensureBoardDrafting = createBoardDraftCoordinator(draftBoardsForReview, (review) => {
+    const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
+    return patchset === undefined
+      ? `missing:${review.activePatchsetId}`
+      : projectContextForBoards(review, patchset).revision;
+  });
 
   /** Kick board drafting behind a review version becoming current. The command has already
    *  persisted the version; drafting is single-flight and never turns capture/regenerate into a
@@ -3248,6 +3337,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const kickBoardDrafting = (review: Review): void => {
     void ensureBoardDrafting(review).catch(() => undefined);
   };
+
+  refreshBoardsForProjectContext = (repoRoot) => {
+    for (const session of sessionStore.list()) {
+      if (session.reviewId === undefined) continue;
+      const review = service.reviewById(session.reviewId);
+      if (review?.repositoryRoot === repoRoot) kickBoardDrafting(review);
+    }
+  };
+
+  // Start background maintenance only after the board refresh callback is live. A queued or
+  // running initial journal resumes under its durable command id; completed/legacy projects
+  // enter the normal baseline watcher. Failed runs stay visible for the in-place Retry action.
+  startProjectContextMaintenance({
+    projects: projectStore.list(),
+    loadRun: (project) => {
+      const primaryPath = project.openPath || project.path;
+      return projectProcessJournal.load(repoKeyForRoot(primaryPath));
+    },
+    resume: (project, runId) =>
+      processProjectCore({ projectId: project.id, commandId: runId }, (event) => {
+        options.broadcastProgress?.(runId, event);
+        wsListener?.broadcastProgress(runId, event);
+      }),
+    rehydrate: (project) => rehydration.ensureForProject(project),
+    onError: (error) => console.error("Project processing resume failed", error),
+  });
 
   type PreparationTarget = {
     readonly branch: string;
@@ -3985,6 +4100,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         reason,
         ...(processRecord ? { run: projectProcessRunFromRecord(processRecord) } : {}),
       });
+      const processing = projectContextUnavailableForProcess(processRecord);
+      if (processing) return processing;
       const manifest = liveSnapshotStore.loadManifest(repoKey);
       if (!manifest) {
         return absent(

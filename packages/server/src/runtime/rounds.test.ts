@@ -995,6 +995,38 @@ describe("createRoundsRuntime", () => {
     expect(outcome.pipeline.boards.some((board) => board.boardId !== undefined)).toBe(true);
   });
 
+  it("redrafts an unchanged patchset when its consumed project context revision advances", async () => {
+    const captures: { prompt?: string }[] = [];
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-context-generation-")),
+    );
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-context-meta-")));
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => fakeClaudePort(captures),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    );
+    const inputFor = (projectContextRevision: string): RoundInput =>
+      roundInput({
+        previousGeneration: undefined,
+        asksDispatched: [],
+        runWorkers: async () => ({ commitRange: { from: "c0", to: "c0" } }),
+        projectContextRevision,
+      });
+
+    await runtime.runRound(inputFor("context-a"));
+    const firstDraftTurns = captures.length;
+    await runtime.runRound(inputFor("context-b"));
+
+    expect(captures.length).toBeGreaterThan(firstDraftTurns);
+    expect(generations.load("gen:ps-1")?.projectContextRevision).toBe("context-b");
+  });
+
   it("keeps regeneration pending when only the report drafts, then retries without a worker record", async () => {
     const roundStore = new RoundRecordStore(mkdtempSync(join(tmpdir(), "rounds-report-only-")));
     const generationStore = new GenerationStore(

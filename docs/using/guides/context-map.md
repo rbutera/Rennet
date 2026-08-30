@@ -97,6 +97,13 @@ The stored knowledge layer is only replaced when a run finishes whole, and the
 processing view reports ready only after that verified set is readable. A
 half-finished run never presents itself as a complete map.
 
+Review boards record the exact structural snapshot and knowledge set they consumed.
+If a review starts while project processing is still running, its first draft can
+appear immediately with the context available at that moment. When processing
+finishes, Rennet queues a fresh draft for the same patchset; it never keeps the
+earlier degraded boards as the settled result. Reopening the app resumes the same
+project run and preserves this relationship between the map and its boards.
+
 There is no file cap, but there is a policy exclusion. Lockfiles, vendored trees,
 build output, generated files, and binaries are not sent to a worker: reading them
 costs a turn and teaches nothing. Excluded files stay in the map's file inventory

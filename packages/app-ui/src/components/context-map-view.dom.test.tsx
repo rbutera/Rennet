@@ -324,7 +324,7 @@ describe("ContextMapView — the Context Map surface", () => {
     await waitFor(() => expect(commandIds).toHaveLength(1));
     await waitFor(() =>
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "rebuild worker exited",
+        "Context Map map failed: rebuild worker exited",
       ),
     );
     fireEvent.click(container.querySelector(".context-map-status button") as Element);

@@ -177,8 +177,18 @@ export interface PersistedBoardMeta extends BoardMeta {
 // ── Generation lifecycle (#457 append-then-freeze) — pure state machine ──
 
 /** Mint a fresh LIVE generation for a patchset (append-only boards until frozen). */
-export function mintGeneration(id: string, patchsetId: string): Generation {
-  return { id, patchsetId, lensBoards: {}, status: "live" };
+export function mintGeneration(
+  id: string,
+  patchsetId: string,
+  projectContextRevision?: string,
+): Generation {
+  return {
+    id,
+    patchsetId,
+    ...(projectContextRevision === undefined ? {} : { projectContextRevision }),
+    lensBoards: {},
+    status: "live",
+  };
 }
 
 /** Freeze a generation immutable — called on the prior generation when code moves. */
@@ -310,6 +320,9 @@ export interface RoundInput {
    * stamps `new` against boards that were never drafted).
    */
   readonly previousGeneration?: Generation;
+  /** Exact structural-map + knowledge revision the drafters consume. A different revision
+   * invalidates durable evidence for the same patchset and starts a replacement attempt. */
+  readonly projectContextRevision?: string;
   /** Thread ids of the asks this round dispatched (pinned into the `RoundRecord`). */
   readonly asksDispatched: readonly string[];
   /** Stable identity of the exact staged-ask occurrence this regeneration completes. */
@@ -879,15 +892,28 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           (input.dispatchId === undefined
             ? newGenerationId(landedPatchsetId)
             : generationIdForDispatch(landedPatchsetId, input.dispatchId)));
-    const boardGeneration =
+    const selectedGeneration =
       landedPatchsetId !== undefined && landedGenerationId !== undefined
         ? (deps.loadGeneration?.(landedGenerationId) ??
-          mintGeneration(landedGenerationId, landedPatchsetId))
+          mintGeneration(landedGenerationId, landedPatchsetId, input.projectContextRevision))
         : (input.previousGeneration ??
           mintGeneration(
             newGenerationId(input.deltaPacket.patchset.id),
             input.deltaPacket.patchset.id,
+            input.projectContextRevision,
           ));
+    // Context is part of the durable generation identity even when the patchset is
+    // unchanged. Keep the stable address clients already hold, but replace the attempt
+    // and named boards so stale BoardMeta cannot satisfy the new revision.
+    const boardGeneration =
+      input.projectContextRevision !== undefined &&
+      selectedGeneration.projectContextRevision !== input.projectContextRevision
+        ? mintGeneration(
+            selectedGeneration.id,
+            selectedGeneration.patchsetId,
+            input.projectContextRevision,
+          )
+        : selectedGeneration;
 
     // Durable idempotency across the crash boundary (F1): a fresh runtime after a
     // restart has an EMPTY in-memory guard. BoardMeta presence alone is insufficient —
@@ -914,8 +940,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         }
       : hasPartialDurableState
         ? await draft(draftingInput, boardGeneration)
-        : await guard.start(input.session.id, boardGeneration.id, () =>
-            draft(draftingInput, boardGeneration),
+        : await guard.start(
+            input.session.id,
+            `${boardGeneration.id}:${boardGeneration.projectContextRevision ?? "legacy"}`,
+            () => draft(draftingInput, boardGeneration),
           );
     // Durable BoardMeta is keyed only by generation, so evidence for an existing
     // generation may contain the report from the round that minted it. A no-code round
