@@ -29,6 +29,7 @@ const draftedPr = {
   base: "main",
   head: "feat/retry",
   draft: true,
+  destination: "gitlab:acme/widget · feat/retry → main",
   ready: true,
 };
 
@@ -76,6 +77,11 @@ describe("RoundsLanes", () => {
     expect(r.getByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
     expect(r.getByText("Guards the boundary.")).toBeTruthy(); // the drafted body renders
     expect(r.getByText("main ← feat/retry · Draft")).toBeTruthy();
+    const destination = r.getByText("gitlab:acme/widget · feat/retry → main");
+    const open = r.getByRole("button", { name: /Open Pull Request/ });
+    expect(
+      destination.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(r.queryByRole("heading", { name: "Changes" })).toBeNull();
   });
 

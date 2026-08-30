@@ -83,6 +83,9 @@ import {
 } from "../wire";
 
 const commandIdSchema = z.uuid();
+const forgePrSubmissionTargetSchema = z.object({
+  repo: forgeRepoIdentitySchema,
+});
 
 /**
  * The ONE way a client mints a `commandId`.
@@ -300,6 +303,13 @@ const definitions = {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
+      /**
+       * The provider-qualified repository the reviewer saw in the composed preview.
+       * COMPAT(protocol v2): optional while independently updated clients may omit the new
+       * field. A current daemon recovers it from the live destination and verifies the
+       * target-bound composition id. Remove when MIN_COMPATIBLE_PROTOCOL_VERSION is at least 3.
+       */
+      target: forgePrSubmissionTargetSchema.optional(),
       /** The PR to open — title/body (with the human's edits)/base/head/draft. */
       submission: prSubmissionSchema,
       /** The canonical `pr-submission` bytes the sheet previewed + signed (round-trip check). */
@@ -370,6 +380,12 @@ const definitions = {
       }),
       z.object({
         status: z.literal("pr"),
+        /**
+         * The provider-qualified repository `publish.submitPr` must resolve again before push.
+         * COMPAT(protocol v2): optional so a current client can still consume an older daemon;
+         * current daemons always return it. Remove when MIN_COMPATIBLE_PROTOCOL_VERSION is 3.
+         */
+        target: forgePrSubmissionTargetSchema.optional(),
         /** The composed own-branch submission the phone posts verbatim via `publish.submitPr`. */
         submission: prSubmissionSchema,
         /** The canonical bytes, derived from `submission` — the round-trip `publish.submitPr` verifies. */

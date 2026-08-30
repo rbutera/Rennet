@@ -216,7 +216,7 @@ import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
-import { submitForgePullRequest } from "./forge-submission";
+import { resolveForgePullRequestDestination, submitForgePullRequest } from "./forge-submission";
 import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
@@ -1998,13 +1998,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const publishCompositionStore = new PublishCompositionStore(
     join(dataDir, "publish-compositions"),
   );
-  // The own-branch PR submission (issue #257 / #107): push the review's own branch,
-  // then open a real PR. Pushing your own branch is not publishing (AGENTS.md) — the
-  // agent loop pushes freely — so this is a plain git push + a provider-routed create,
-  // with both operations bound to the same discovered remote identity.
+  // The own-branch PR destination is resolved once for the preview and again immediately
+  // before sign-click mutation. Both reads execute inside the repository's locus and use the
+  // effective push URL; no forge credential is touched while composing the preview.
+  const resolvePullRequestDestination: NonNullable<
+    DispatchDeps["resolvePullRequestDestination"]
+  > = (repoRoot) => {
+    const gitInLocus = execaGitFor(locusForRepo(repoRoot));
+    return resolveForgePullRequestDestination({
+      registry: forgeProviders,
+      git: gitInLocus,
+      repoRoot,
+    });
+  };
+  // The sign-click consumes the exact destination object resolved immediately beforehand.
+  // Pushing your own branch is not publishing (AGENTS.md); the provider create remains the
+  // only external publication and resolves credentials lazily inside that operation.
   const submitPullRequest: NonNullable<DispatchDeps["submitPullRequest"]> = (input) => {
-    // Git runs inside the project's locus (add-windows-support): a WSL-locus repo's
-    // remote lookup and push execute in the distro, against the distro-native repo.
     const gitInLocus = execaGitFor(locusForRepo(input.repoRoot));
     return submitForgePullRequest({
       registry: forgeProviders,
@@ -3028,6 +3038,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // source of the projected `attention.running`, read by the listener's projection context.
     inFlightReviews,
     publishPortFor: (repository) => forgeProviders.sourceFor(repository)?.review,
+    resolvePullRequestDestination,
     submitPullRequest,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
     // (fully capable, Bash included — Rai's call) with git checkpoints and returns the

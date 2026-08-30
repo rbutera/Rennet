@@ -22,6 +22,13 @@ older patchset omits it and repository-wide reads fall back to immutable
 similarly gain optional candidate identity, and stated Design decisions may add
 optional `inferred` and `source` fields without changing legacy boards.
 
+Own-branch publish composition adds an optional provider-qualified `target` to
+both `publish.compose` and `publish.submitPr`. Current daemons always return it;
+an older client may omit it on submit, in which case the daemon resolves the
+live destination and verifies that it reproduces the target-bound composition
+identifier before any push. A current client can still consume an older daemon's
+target-free preview and submit it back to that same daemon.
+
 The `commands` registry (`packages/protocol/src/commands/`) is the single
 validation authority for request inputs and response outputs: one table keyed by
 command id, each row carrying its input and output schema alongside label,

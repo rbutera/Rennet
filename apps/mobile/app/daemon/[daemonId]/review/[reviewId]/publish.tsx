@@ -168,7 +168,8 @@ export default function Publish(): ReactNode {
       const outcome = await connection.supervisor.invoke("publish.submitPr", {
         commandId: newCommandId(),
         reviewId,
-        submission: c.submission as never,
+        ...(c.target === undefined ? {} : { target: c.target }),
+        submission: c.submission,
         payload: c.payload,
         compositionId: c.compositionId,
       });

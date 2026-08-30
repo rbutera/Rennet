@@ -72,6 +72,8 @@ export interface DraftedPr {
   readonly base: string;
   readonly head: string;
   readonly draft: boolean;
+  /** The provider-qualified repository and branch range resolved for this exact preview. */
+  readonly destination: string;
   /** Whether the PR is ready to open (nothing left to ask, the branch pushed). */
   readonly ready: boolean;
 }
@@ -163,6 +165,7 @@ export function RoundsLanes({
             {pr.base} ← {pr.head} · {pr.draft ? "Draft" : "Ready for review"}
           </p>
           <OutboundMarkdown markdown={pr.body} patchsetId={patchsetId} />
+          <p className="text-xs text-muted-foreground">{pr.destination}</p>
           {receipt ? (
             <div className="flex flex-col gap-1 pt-1">
               <span className="flex items-center gap-2 text-base font-medium text-foreground">

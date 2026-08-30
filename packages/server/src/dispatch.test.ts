@@ -13,6 +13,7 @@ import {
   decompose,
   deriveReviewEvent,
   type ForgeCapabilities,
+  type ForgePrSubmissionTarget,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -65,6 +66,20 @@ import {
 } from "./review-ask-live";
 
 const REPO = "/repo";
+const DEFAULT_PR_TARGET = {
+  repo: { forge: "github", owner: "acme", name: "widget" },
+} satisfies ForgePrSubmissionTarget;
+const DEFAULT_PR_DESTINATION = {
+  remoteName: "origin",
+  target: DEFAULT_PR_TARGET,
+};
+const GITLAB_PR_TARGET = {
+  repo: { forge: "gitlab", owner: "acme", name: "widget" },
+} satisfies ForgePrSubmissionTarget;
+const GITLAB_PR_DESTINATION = {
+  remoteName: "origin",
+  target: GITLAB_PR_TARGET,
+};
 
 function patchset(): Patchset {
   return {
@@ -189,6 +204,7 @@ function harness(
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
     composeBundle?: DispatchDeps["composeBundle"];
     liveTurns?: DispatchDeps["liveTurns"];
+    resolvePullRequestDestination?: DispatchDeps["resolvePullRequestDestination"];
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftPrBody?: DispatchDeps["draftPrBody"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
@@ -332,6 +348,8 @@ function harness(
     publishPortFor:
       extra.publishPortFor ??
       ((repository) => (repository.forge === "github" ? publishPort : undefined)),
+    resolvePullRequestDestination:
+      extra.resolvePullRequestDestination ?? (() => Promise.resolve(DEFAULT_PR_DESTINATION)),
     ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
     ...(extra.acknowledgeAttention ? { acknowledgeAttention: extra.acknowledgeAttention } : {}),
     ...(extra.raiseAttention ? { raiseAttention: extra.raiseAttention } : {}),
@@ -1760,6 +1778,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       patchsetId: review.activePatchsetId,
       mode: "pr",
       payload,
+      target: DEFAULT_PR_TARGET,
     });
 
   it("pushes the branch and opens the PR, returning the URL (the sign-click is the whole authorization)", async () => {
@@ -1781,6 +1800,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
     const out = (await dispatch("publish.submitPr", {
       commandId: randomUUID(),
       reviewId: review.id,
+      target: DEFAULT_PR_TARGET,
       submission: SUBMISSION,
       payload: PAYLOAD,
       compositionId: compositionIdFor(review, PAYLOAD),
@@ -1793,6 +1813,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       repoRoot: REPO,
       headRef: "feat/reviewed",
       submission: SUBMISSION,
+      destination: DEFAULT_PR_DESTINATION,
     });
   });
 
@@ -1814,6 +1835,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: DEFAULT_PR_TARGET,
         submission: SUBMISSION,
         payload: PAYLOAD,
         compositionId: compositionIdFor(review, PAYLOAD),
@@ -1838,6 +1860,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: DEFAULT_PR_TARGET,
         submission: SUBMISSION,
         payload: canonicalPrSubmissionPayload({ ...SUBMISSION, title: "A DIFFERENT title" }),
         compositionId: compositionIdFor(
@@ -1866,6 +1889,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: DEFAULT_PR_TARGET,
         submission: wrong,
         payload: canonicalPrSubmissionPayload(wrong),
         compositionId: compositionIdFor(review, canonicalPrSubmissionPayload(wrong)),
@@ -1884,6 +1908,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: DEFAULT_PR_TARGET,
         submission: detached,
         payload: canonicalPrSubmissionPayload(detached),
         compositionId: compositionIdFor(review, canonicalPrSubmissionPayload(detached)),
@@ -1909,6 +1934,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: opened.review.id,
+        target: DEFAULT_PR_TARGET,
         submission: SUBMISSION,
         payload: PAYLOAD,
         compositionId: compositionIdFor(opened.review, PAYLOAD),
@@ -1926,6 +1952,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: DEFAULT_PR_TARGET,
         submission: SUBMISSION,
         payload: PAYLOAD,
         compositionId: compositionIdFor(review, PAYLOAD),
@@ -1941,11 +1968,54 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: DEFAULT_PR_TARGET,
         submission: SUBMISSION,
         payload: PAYLOAD,
         compositionId: compositionIdFor(review, PAYLOAD),
       }),
     ).rejects.toThrow(/no forge PR submission is available/i);
+  });
+
+  it("refuses before push when an ask lands while the forge destination is resolving", async () => {
+    let releaseDestination!: () => void;
+    const resolvingDestination = new Promise<typeof DEFAULT_PR_DESTINATION>((resolve) => {
+      releaseDestination = () => resolve(DEFAULT_PR_DESTINATION);
+    });
+    const resolvePullRequestDestination = vi.fn(() => resolvingDestination);
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        resolvePullRequestDestination,
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const submitting = dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: DEFAULT_PR_TARGET,
+      submission: SUBMISSION,
+      payload: PAYLOAD,
+      compositionId: compositionIdFor(review, PAYLOAD),
+    });
+    await vi.waitFor(() => expect(resolvePullRequestDestination).toHaveBeenCalledTimes(1));
+
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "ask-during-destination-resolution",
+        anchor: "src/a.ts:1",
+        type: "request-change",
+        body: "finish this round first",
+      },
+    });
+    releaseDestination();
+
+    await expect(submitting).rejects.toThrow(/1 staged ask remains/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
   });
 });
 
@@ -1960,16 +2030,20 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     };
   }
 
-  it("publish.compose composes an own-branch submission the engine's publish.submitPr round-trips exactly", async () => {
+  it("publish.compose binds the exact provider-qualified target through publish.submitPr", async () => {
     const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
-      url: "https://github.com/acme/widget/pull/9",
+      url: "https://gitlab.com/acme/widget/-/merge_requests/9",
       number: 9,
       reused: false,
     }));
     const { dispatch } = harness(
       fakePublishPort(),
       {},
-      { capturePort: ownBranchCapture(), submitPullRequest },
+      {
+        capturePort: ownBranchCapture(),
+        resolvePullRequestDestination: () => Promise.resolve(GITLAB_PR_DESTINATION),
+        submitPullRequest,
+      },
     );
     const review = await capturedReview(dispatch);
 
@@ -1980,6 +2054,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     })) as {
       status: string;
       submission: unknown;
+      target: ForgePrSubmissionTarget;
       payload: string;
       destination: string;
       compositionId: string;
@@ -1987,18 +2062,26 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(composed.status).toBe("pr");
     // The payload is byte-consistent with the composed submission — so posting it round-trips.
     expect(composed.payload).toBe(canonicalPrSubmissionPayload(composed.submission as never));
-    expect(composed.destination).toContain("feat/reviewed");
+    expect(composed.target).toEqual(GITLAB_PR_TARGET);
+    expect(composed.destination).toBe("gitlab:acme/widget · feat/reviewed → main");
 
     // The phone posts EXACTLY what compose returned — the engine accepts it and opens one PR.
     const out = (await dispatch("publish.submitPr", {
       commandId: randomUUID(),
       reviewId: review.id,
+      target: composed.target,
       submission: composed.submission as never,
       payload: composed.payload,
       compositionId: composed.compositionId,
     })) as { url: string };
-    expect(out.url).toBe("https://github.com/acme/widget/pull/9");
+    expect(out.url).toBe("https://gitlab.com/acme/widget/-/merge_requests/9");
     expect(submitPullRequest).toHaveBeenCalledTimes(1);
+    expect(submitPullRequest).toHaveBeenCalledWith({
+      repoRoot: REPO,
+      headRef: "feat/reviewed",
+      submission: composed.submission,
+      destination: GITLAB_PR_DESTINATION,
+    });
   });
 
   it("server-owns zero-ask PR readiness and refuses a preview made stale by a remote ask", async () => {
@@ -2042,6 +2125,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       dispatch("publish.submitPr", {
         commandId: randomUUID(),
         reviewId: review.id,
+        target: ready.target,
         submission: ready.submission,
         payload: ready.payload,
         compositionId: ready.compositionId,
@@ -2095,6 +2179,156 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       status: "unavailable",
       reason: expect.stringMatching(/1 staged ask remains/),
     });
+  });
+
+  it("never returns an already-ready PR when an ask lands during final destination resolution", async () => {
+    let releaseFinalDestination!: () => void;
+    const finalDestination = new Promise<typeof DEFAULT_PR_DESTINATION>((resolve) => {
+      releaseFinalDestination = () => resolve(DEFAULT_PR_DESTINATION);
+    });
+    let resolutionCount = 0;
+    const resolvePullRequestDestination = vi.fn(() => {
+      resolutionCount += 1;
+      return resolutionCount === 1 ? Promise.resolve(DEFAULT_PR_DESTINATION) : finalDestination;
+    });
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      { capturePort: ownBranchCapture(), resolvePullRequestDestination },
+    );
+    const review = await capturedReview(dispatch);
+    const composing = dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    });
+    await vi.waitFor(() => expect(resolvePullRequestDestination).toHaveBeenCalledTimes(2));
+
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "ask-during-final-destination-resolution",
+        anchor: "src/a.ts:1",
+        type: "request-change",
+        body: "not ready yet",
+      },
+    });
+    releaseFinalDestination();
+
+    await expect(composing).resolves.toMatchObject({
+      status: "unavailable",
+      reason: expect.stringMatching(/1 staged ask remains/),
+    });
+  });
+
+  it("never returns a preview when its provider-qualified target changes during drafting", async () => {
+    let release!: () => void;
+    const draft = new Promise<{
+      status: "drafted";
+      title: string;
+      body: string;
+      model: string;
+    }>((resolve) => {
+      release = () =>
+        resolve({ status: "drafted", title: "Bound destination", body: "body", model: "test" });
+    });
+    let destination = GITLAB_PR_DESTINATION;
+    let drafts = 0;
+    const resolvePullRequestDestination = vi.fn(async () => destination);
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        draftPrBody: () => {
+          drafts += 1;
+          return draft;
+        },
+        resolvePullRequestDestination,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const composing = dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    });
+    await vi.waitFor(() => expect(drafts).toBe(1));
+    destination = DEFAULT_PR_DESTINATION;
+    release();
+
+    await expect(composing).resolves.toMatchObject({
+      status: "unavailable",
+      reason: expect.stringMatching(/destination changed/i),
+      retryable: true,
+    });
+    expect(resolvePullRequestDestination).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses before submission when the effective target changed after preview", async () => {
+    let destination = GITLAB_PR_DESTINATION;
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        resolvePullRequestDestination: () => Promise.resolve(destination),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as Extract<CommandOutput<"publish.compose">, { status: "pr" }>;
+    expect(composed.target).toEqual(GITLAB_PR_TARGET);
+
+    destination = DEFAULT_PR_DESTINATION;
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: composed.target,
+        submission: composed.submission,
+        payload: composed.payload,
+        compositionId: composed.compositionId,
+      }),
+    ).rejects.toThrow(/destination changed/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("still refuses destination drift when a protocol-v2 client omits the new target field", async () => {
+    let destination = GITLAB_PR_DESTINATION;
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        resolvePullRequestDestination: () => Promise.resolve(destination),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as Extract<CommandOutput<"publish.compose">, { status: "pr" }>;
+
+    destination = DEFAULT_PR_DESTINATION;
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: composed.submission,
+        payload: composed.payload,
+        compositionId: composed.compositionId,
+      }),
+    ).rejects.toThrow(/stale|another review/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
   });
 
   it("publish.compose is honestly unavailable when HEAD is detached (no own branch)", async () => {
@@ -2728,6 +2962,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     await dispatch("publish.submitPr", {
       commandId: randomUUID(),
       reviewId: review.id,
+      target: composed.target,
       submission: composed.submission,
       payload: composed.payload,
       compositionId: composed.compositionId,

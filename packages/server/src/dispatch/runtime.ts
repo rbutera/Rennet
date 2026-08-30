@@ -7,6 +7,7 @@ import {
   emptyAskProjection,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
+  type ForgePrSubmissionTarget,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewTarget,
@@ -75,6 +76,7 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
+import type { ResolvedForgePullRequestDestination } from "../forge-submission";
 import {
   createReviewIntelligenceSessions,
   type ReviewIntelligenceSession,
@@ -197,12 +199,16 @@ export interface DispatchDeps {
    * `undefined`; it must never fall through to another forge's implementation.
    */
   readonly publishPortFor: (repository: ForgeRepoIdentity) => ForgePublishPort | undefined;
+  /** Resolve the exact provider-qualified push destination without mutating the repository. */
+  readonly resolvePullRequestDestination?: (
+    repoRoot: string,
+  ) => Promise<ResolvedForgePullRequestDestination | null>;
   /**
    * The own-branch PR submission action (issue #257 / #107): push the review's own
-   * branch and open a real pull request. Composed by the root over the host git push
-   * (`git push <remote> <headRef>`) plus the registered provider's create operation,
-   * with the repository identity resolved from that same effective push URL. Optional so a composition WITHOUT it
-   * (no coding harness / no auth) answers an honest failure rather than throwing.
+   * branch and open a real pull request. The destination was resolved immediately
+   * before this call and matched against the target carried by the signed preview;
+   * the same resolved object owns both the named-remote push and provider create.
+   * Optional so a composition WITHOUT it answers an honest failure rather than throwing.
    * There is NO consent token: pushing your own branch is not publishing, and the
    * sign-click is the whole authorization.
    */
@@ -211,6 +217,7 @@ export interface DispatchDeps {
     /** The head branch ref to push and open the PR against (#107). */
     headRef: string;
     submission: ForgePrSubmission;
+    destination: ResolvedForgePullRequestDestination;
   }) => Promise<ForgePrSubmissionOutcome>;
   /**
    * The write-enabled handoff turn (issue #18): brackets a coding-harness write turn
@@ -785,37 +792,52 @@ export function toForgeReviewTarget(target: {
 
 /**
  * The compose integrity binding (#382 M2 finding 2). A deterministic id over (reviewId, active
- * patchset, mode, canonical payload, verdict, opener evidence) — the payload already canonicalises the
- * comments/submission, so binding those is enough to pin the artifact to one review AT one
- * revision. `publish.compose` returns it; the post commands recompute it from the CURRENT review
- * and refuse a mismatch, so a cross-review, stale-revision, or verdict-swapped artifact cannot
- * post. Pure integrity (recomputable, not a secret): it catches accidental drift and confusion,
- * not adversarial forgery — Rennet is single-user.
+ * patchset, mode, canonical payload, destination, verdict, opener evidence). A PR composition
+ * MUST carry its provider-qualified target, so same-coordinate repositories on different forges
+ * cannot share a signing identity. `publish.compose` returns the digest; the post commands
+ * recompute it from current evidence and refuse a mismatch. Pure integrity (recomputable, not a
+ * secret): it catches accidental drift and confusion, not adversarial forgery — Rennet is
+ * single-user.
  */
-export function publishCompositionId(fields: {
-  reviewId: string;
-  patchsetId: string;
-  mode: "review" | "pr";
-  payload: string;
-  /**
-   * The resolved review VERDICT for `mode: "review"` — the one outbound field the payload bytes
-   * do not capture, so it rides in the binding: a post whose verdict differs from the previewed
-   * one fails the freshness check. A `"pr"` submission has no verdict (`undefined`).
-   */
-  verdict?: string;
-  /** The content identity of the persisted facts that grounded a review opener. */
-  openerSourceId?: string;
-}): string {
-  return sha256Hex(
-    JSON.stringify([
-      fields.reviewId,
-      fields.patchsetId,
-      fields.mode,
-      fields.payload,
-      fields.verdict ?? null,
-      fields.openerSourceId ?? null,
-    ]),
-  );
+export function publishCompositionId(
+  fields:
+    | {
+        reviewId: string;
+        patchsetId: string;
+        mode: "review";
+        payload: string;
+        /** The exact review event previewed outside the canonical artifact payload. */
+        verdict?: string;
+        /** The content identity of the persisted facts that grounded a review opener. */
+        openerSourceId?: string;
+      }
+    | {
+        reviewId: string;
+        patchsetId: string;
+        mode: "pr";
+        payload: string;
+        /** The exact provider-qualified repository named on the signing preview. */
+        target: ForgePrSubmissionTarget;
+      },
+): string {
+  const identity =
+    fields.mode === "pr"
+      ? [
+          fields.reviewId,
+          fields.patchsetId,
+          fields.mode,
+          fields.payload,
+          [fields.target.repo.forge, fields.target.repo.owner, fields.target.repo.name],
+        ]
+      : [
+          fields.reviewId,
+          fields.patchsetId,
+          fields.mode,
+          fields.payload,
+          fields.verdict ?? null,
+          fields.openerSourceId ?? null,
+        ];
+  return sha256Hex(JSON.stringify(identity));
 }
 
 /**
@@ -834,40 +856,44 @@ export function publishCompositionId(fields: {
  */
 export function assertCompositionFresh(
   review: Review,
-  mode: "review" | "pr",
   payload: string,
   compositionId: string,
-  reviewProjection?: AskProjection,
-  verdict?: ForgeReviewEvent,
-  opener?: string,
-  openerSourceId?: string,
+  context:
+    | {
+        mode: "review";
+        reviewProjection: AskProjection;
+        verdict: ForgeReviewEvent;
+        opener: string;
+        openerSourceId: string;
+      }
+    | { mode: "pr"; target: ForgePrSubmissionTarget },
 ): void {
-  const proj = reviewProjection ?? emptyAskProjection();
+  const proj = context.mode === "review" ? context.reviewProjection : emptyAskProjection();
   const activePatchset = review.patchsets.find(
     (patchset) => patchset.id === review.activePatchsetId,
   );
-  if (mode === "review" && activePatchset === undefined) {
+  if (context.mode === "review" && activePatchset === undefined) {
     throw new Error("Publish refused: the review's active patchset is missing.");
   }
   const currentComments =
-    mode === "review" ? reviewCommentsFromProjection(proj, activePatchset) : [];
+    context.mode === "review" ? reviewCommentsFromProjection(proj, activePatchset) : [];
   const currentBodyNotes =
-    mode === "review" ? reviewBodyNotesFromProjection(proj, activePatchset) : [];
+    context.mode === "review" ? reviewBodyNotesFromProjection(proj, activePatchset) : [];
   const currentVerdict =
-    mode === "review"
+    context.mode === "review"
       ? resolveComposedReviewEvent(
           [...currentComments, ...currentBodyNotes],
           proj.verdictOverride ?? undefined,
         )
       : undefined;
-  if (mode === "review") {
-    if (opener === undefined || verdict !== currentVerdict) {
+  if (context.mode === "review") {
+    if (context.verdict !== currentVerdict) {
       throw new Error(
         "Publish refused: this preview is stale or from another review — recompose before posting.",
       );
     }
     const currentPayload = canonicalReviewPayload({
-      opener,
+      opener: context.opener,
       comments: currentComments,
       bodyNotes: currentBodyNotes,
     });
@@ -877,17 +903,26 @@ export function assertCompositionFresh(
       );
     }
   }
-  const expected = publishCompositionId({
-    reviewId: review.id,
-    patchsetId: review.activePatchsetId,
-    mode,
-    payload,
-    ...(currentVerdict === undefined ? {} : { verdict: currentVerdict }),
-    ...(mode === "review" ? { openerSourceId } : {}),
-  });
+  const expected =
+    context.mode === "pr"
+      ? publishCompositionId({
+          reviewId: review.id,
+          patchsetId: review.activePatchsetId,
+          mode: context.mode,
+          payload,
+          target: context.target,
+        })
+      : publishCompositionId({
+          reviewId: review.id,
+          patchsetId: review.activePatchsetId,
+          mode: context.mode,
+          payload,
+          ...(currentVerdict === undefined ? {} : { verdict: currentVerdict }),
+          openerSourceId: context.openerSourceId,
+        });
   if (compositionId !== expected) {
     throw new Error(
-      mode === "review"
+      context.mode === "review"
         ? "Publish refused: this preview is stale or from another review — recompose before posting."
         : "Submit refused: this preview is stale or from another review — recompose before submitting.",
     );

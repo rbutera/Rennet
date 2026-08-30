@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import {
   buildForgeReviewPost,
   canonicalPrSubmissionPayload,
@@ -17,6 +16,7 @@ import {
   parseCommandInput,
   parseCommandOutput,
   type Review,
+  sameForgeRepository,
 } from "@rennet/protocol";
 import {
   assertCompositionFresh,
@@ -173,16 +173,13 @@ export function publishHandlers(rt: DispatchRuntime) {
       // (dry-run included, so the fault surfaces as a refusal rather than a plausible request).
       // The VERDICT is folded in, so "what you previewed is what posts" covers the event too —
       // an APPROVE cannot be swapped onto a preview the reviewer read as a COMMENT.
-      assertCompositionFresh(
-        current,
-        "review",
-        input.payload,
-        input.compositionId,
-        currentProjection,
-        input.post.event,
-        input.artifact.opener,
-        currentSourceId,
-      );
+      assertCompositionFresh(current, input.payload, input.compositionId, {
+        mode: "review",
+        reviewProjection: currentProjection,
+        verdict: input.post.event,
+        opener: input.artifact.opener,
+        openerSourceId: currentSourceId,
+      });
 
       // (2) Rebuild the forge-neutral post and compare the exact signed descriptor before any
       // egress. Approve with zero asks is valid because the required grounded opener is content.
@@ -275,11 +272,6 @@ export function publishHandlers(rt: DispatchRuntime) {
       if (canonicalPrSubmissionPayload(input.submission) !== input.payload) {
         throw new Error("Submit refused: the PR submission payload does not match its content");
       }
-      // Compose-binding integrity (#382 M2 finding 2): a daemon-composed submission carries its
-      // binding; recompute it over the posted payload + current patchset and refuse a
-      // cross-review or advanced-patchset (stale) submission before pushing anything.
-      assertCompositionFresh(review, "pr", input.payload, input.compositionId);
-
       // (2) The head must be a real BRANCH ref (#107) — a detached HEAD has no branch
       // to open a PR from. MAIN is authoritative on the branch to push: the persisted
       // provenance's `headRef`, which must match the previewed `submission.head`
@@ -295,21 +287,67 @@ export function publishHandlers(rt: DispatchRuntime) {
         throw new Error("Submit refused: the PR head does not match the review's own branch.");
       }
 
-      // (3) Push the branch + open the PR. Absent action ⇒ an honest failure, never a
-      // fabricated success (no coding harness / no auth composed it).
-      if (!deps.submitPullRequest) {
+      // (3) Resolve the effective push URL again immediately before mutation. The exact
+      // provider-qualified target must still be the one the preview named; then the SAME
+      // resolved object drives both the named-remote push and provider submission.
+      if (!deps.resolvePullRequestDestination || !deps.submitPullRequest) {
         throw new Error(
           "Submit refused: no forge PR submission is available (authentication or the coding harness is not configured).",
         );
       }
+      const destination = await deps.resolvePullRequestDestination(patchset.repository.root);
+      if (destination === null) {
+        throw new Error(
+          "Submit refused: no supported forge destination is configured for this repository.",
+        );
+      }
+      // Destination discovery can await git. Re-read the mutable review authorities after it
+      // returns so an ask, recapture, or PR association that landed in flight cannot reach push
+      // under the older ready snapshot.
+      const current = requireReviewById(input.reviewId);
+      if (
+        current.retrospective ||
+        current.postTarget !== undefined ||
+        current.activePatchsetId !== review.activePatchsetId
+      ) {
+        throw new Error(
+          "Submit refused: the review changed while its forge destination was being checked — recompose before submitting.",
+        );
+      }
+      const currentProjection = deps.askLog.readProjection(current.id);
+      const currentAskCount = Object.keys(currentProjection.stagedAsks).length;
+      if (currentAskCount > 0) {
+        throw new Error(
+          `Submit refused: ${currentAskCount} staged ${
+            currentAskCount === 1 ? "ask remains" : "asks remain"
+          }; finish the review round before opening the pull request.`,
+        );
+      }
+      if (
+        input.target !== undefined &&
+        !sameForgeRepository(destination.target.repo, input.target.repo)
+      ) {
+        throw new Error(
+          "Submit refused: the forge destination changed after this preview was composed — recompose before submitting.",
+        );
+      }
+      // Compose-binding integrity (#382 M2 finding 2): the provider-qualified repository is
+      // part of the signed preview, alongside the payload and current patchset. A protocol-v2
+      // client may omit the new field; in that case the freshly resolved target must reproduce
+      // the target-bound digest, so remote drift still refuses before push.
+      assertCompositionFresh(current, input.payload, input.compositionId, {
+        mode: "pr",
+        target: input.target ?? destination.target,
+      });
       const outcome = await deps.submitPullRequest({
         repoRoot: patchset.repository.root,
         headRef,
         submission: input.submission,
+        destination,
       });
       // The PR opened (or was reused) — clear any publish-ready attention on this review
       // everywhere (#382 M2), the same clear-on-post the review egress does.
-      clearPublishReady(review.id);
+      clearPublishReady(current.id);
       return parseCommandOutput(name, outcome);
     },
     "publish.compose": async (rawInput) => {
@@ -496,6 +534,22 @@ export function publishHandlers(rt: DispatchRuntime) {
         });
       }
       const base = patchset.repository.baseRef;
+      if (!deps.resolvePullRequestDestination) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: "Pull-request destination discovery is not available on this daemon.",
+        });
+      }
+      const resolvedDestination = await deps.resolvePullRequestDestination(
+        patchset.repository.root,
+      );
+      if (resolvedDestination === null) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason:
+            "No supported forge destination is configured for this repository, so there is nowhere to open a pull request.",
+        });
+      }
       // Draft the PR body (daemon-composed) when a drafter is wired; else a deterministic
       // title/body. Either way the payload is derived from the SAME submission returned, so
       // publish.submitPr round-trips it exactly (self-consistent, R33-honest).
@@ -511,6 +565,13 @@ export function publishHandlers(rt: DispatchRuntime) {
             dispositions: [],
           })
         : undefined;
+      const reviewAtDestinationCheck = requireReviewById(review.id);
+      const currentPatchset = activePatchsetOf(reviewAtDestinationCheck);
+      const currentDestination = await deps.resolvePullRequestDestination(
+        currentPatchset.repository.root,
+      );
+      // Both drafting and destination discovery can await. Finalize readiness from a fresh
+      // review and ask projection after the last await, immediately before raising attention.
       const current = requireReviewById(review.id);
       if (
         current.retrospective ||
@@ -532,23 +593,36 @@ export function publishHandlers(rt: DispatchRuntime) {
           }; finish the review round before opening the pull request.`,
         });
       }
+      if (
+        currentDestination === null ||
+        !sameForgeRepository(currentDestination.target.repo, resolvedDestination.target.repo)
+      ) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: "The forge destination changed while its pull-request preview was composing.",
+          retryable: true,
+        });
+      }
       const title = drafted?.status === "drafted" ? drafted.title : headRef;
       const body = drafted?.status === "drafted" ? drafted.body : "";
       const submission = { title, body, base, head: headRef, draft: true };
       const payload = canonicalPrSubmissionPayload(submission);
-      const destination = `${basename(review.repositoryRoot)}:${headRef} → ${base}`;
+      const target = resolvedDestination.target;
+      const destination = `${target.repo.forge}:${target.repo.owner}/${target.repo.name} · ${headRef} → ${base}`;
       const compositionId = publishCompositionId({
         reviewId: review.id,
         patchsetId: review.activePatchsetId,
         mode: "pr",
         payload,
+        target,
       });
       // A composed own-branch draft is now ready to post (#382 M2, both modes): raise
       // publish-ready. Idempotent by derived id with the review.draftPrBody raise.
-      raisePublishReady(review, destination, title);
+      raisePublishReady(current, destination, title);
       return parseCommandOutput(name, {
         status: "pr",
         submission,
+        target,
         payload,
         destination,
         title,

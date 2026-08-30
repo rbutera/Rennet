@@ -121,10 +121,12 @@ flowchart LR
   exit -->|Nothing left to ask| pr["Push the branch and open the pull request"]
 ```
 
-Rennet composes the outbound artifact before the GitHub call. The preview and
-post commands use the same canonical payload. Pushing a source branch is part of
-the own-branch loop; it is not the act that publishes review prose under the
-user's identity.
+Rennet composes the outbound artifact before the forge call. The preview and
+post commands use the same canonical payload. An own-branch preview also names
+and binds the provider-qualified repository resolved from the effective push
+URL; the server resolves it again immediately before push and refuses a changed
+destination. Pushing a source branch is part of the own-branch loop; it is not
+the act that publishes review prose under the user's identity.
 
 Publication is one explicit Post over the current canonical preview. There is no
 press-and-hold control and no consent token: a second confirmation over a payload
