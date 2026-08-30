@@ -184,17 +184,19 @@ takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
 #### The five-minute bar is not met yet
 
-105 slices is 105 worker turns. At the last measured 78 s per turn that is 8,190
-seconds of turn time; at the named concurrency of 8 it is **about 17 minutes of
-wall clock**, or 17.6 with the 30-second deterministic build in front of it.
+105 slices is 105 worker turns. At the last conservative 78 s per turn that is
+8,190 seconds of turn time; at the named concurrency of 16 it projects to **about
+8.5 minutes of worker wall clock**, or 9 minutes with the 30-second deterministic
+build in front of it.
 Dividing turn time by lanes gives wall clock — there is no separate, smaller
 "wall" figure to quote, and the target is five minutes.
 
 Three things could close that gap, and none of them is done:
 
 - **More lanes.** At 78 s/turn the bar needs 28 concurrent workers, or 31 once
-  the build is counted. The 16 GB development host has headroom for 8 alongside
-  the harness processes each lane spawns; the ceiling here is the machine.
+  the build is counted. The ruled cap is 16: measured harness-process RSS puts
+  those lanes at roughly 3.2 GB on the 16 GB development host, and the machine
+  is the ceiling.
 - **Shorter turns.** Workers are fed a symbol skeleton and their slice's own
   import edges rather than a bare path list, which should cut the turn
   substantially. It has not been timed against a live harness, so it buys an
@@ -202,9 +204,10 @@ Three things could close that gap, and none of them is done:
 - **Fewer turns.** The scoping seat (deciding that an edge-less file does not
   deserve a turn at all) is unbuilt.
 
-So the honest statement of this design's cost is **105 turns, ~17 minutes wall at
-concurrency 8**, on a per-turn figure measured against the old, bare-path-list
-prompt. It is arithmetic, not a stopwatch reading, and it is over the bar.
+So the honest statement of this design's cost is **105 turns, a projected ~9
+minutes wall at concurrency 16**, on a per-turn figure measured against the old,
+bare-path-list prompt. It is arithmetic, not a stopwatch reading. A launched run
+has not yet proved the five-minute bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -408,9 +411,14 @@ store write re-reads the store's identity first: a run whose prior moved
 underneath it refuses to save, reports **superseded**, and keeps its journal so
 the retry costs no turns.
 
-Worker fan-out runs at a named default concurrency of 8 — a policy, not an
+Worker fan-out runs at a named default concurrency of 16 — a policy, not an
 unrevisited literal, and overridable per run. It is deliberately not adaptive: a
 number that changes with ambient load makes a run's cost unreproducible.
+
+Verify concurrency stays at 4 by a separate policy. W3 changed that pass from a
+second fan-out over every worker statement to a residue-only pass, normally one
+or two chunks with larger prompts and cited-span reads. Raising its bound would
+not raise worker throughput or implement the 16-lane ruling.
 
 The first pass is part of the awaited add-project run: readiness, the sidebar
 spinner, and the verified statement counts all wait for its typed outcome. Later

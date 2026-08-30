@@ -19,7 +19,7 @@ import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
-import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import { DEFAULT_SWARM_CONCURRENCY, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,7 +193,85 @@ const workerBody = (req?: { prompt?: string }): Record<string, unknown> => ({
 
 const verifyBody = (): Record<string, unknown> => ({ verdicts: [], crossCutting: [] });
 
+function wideSnapshot(partitions: number): LoadedSnapshot {
+  const files = Array.from({ length: partitions }, (_, index) => ({
+    path: `scope-${index}/file.ts`,
+    blobOid: `blob-${index}`,
+  }));
+  return {
+    manifest: { repoKey: "repo", baseOid: "oid-wide", fingerprint: "fp-wide" },
+    files,
+    scopes: files.map((_, index) => ({ name: `scope-${index}`, root: `scope-${index}` })),
+    entryPoints: [],
+    symbolDigestByBlob: new Map<string, string>(),
+    referenceDigestByBlob: new Map<string, string>(),
+    importDigestByBlob: new Map<string, string>(),
+    load: () => undefined,
+  } as unknown as LoadedSnapshot;
+}
+
+async function measureWorkerConcurrency(concurrency?: number): Promise<{
+  readonly startedBeforeRelease: number;
+  readonly peak: number;
+  readonly outcome: Awaited<ReturnType<typeof runKnowledgeSwarmForRepo>>;
+}> {
+  let releaseWorkers: () => void = () => {
+    throw new Error("worker gate was not initialised");
+  };
+  const workerGate = new Promise<void>((resolve) => {
+    releaseWorkers = resolve;
+  });
+  let active = 0;
+  let peak = 0;
+  let started = 0;
+  const { store } = makeStore();
+  const outcomePromise = runKnowledgeSwarmForRepo({
+    reader: { loadFresh: () => ({ ok: true as const, snapshot: wideSnapshot(17) }) },
+    knowledgeStore: store,
+    claudePort: fakeClaudePort([], verifyBody),
+    codexExecutor: async () => {
+      started += 1;
+      active += 1;
+      peak = Math.max(peak, active);
+      await workerGate;
+      active -= 1;
+      return { output: { statements: [] } };
+    },
+    repoKey: "repo",
+    repoRoot: "/repo",
+    baseOid: "oid-wide",
+    ...(concurrency === undefined ? {} : { concurrency }),
+  });
+
+  const startedBeforeRelease = started;
+  releaseWorkers();
+  const outcome = await outcomePromise;
+  return { startedBeforeRelease, peak, outcome };
+}
+
 describe("knowledge swarm — council-routed contract (no live model)", () => {
+  it("starts sixteen worker turns by default and never exceeds that bound", async () => {
+    expect(DEFAULT_SWARM_CONCURRENCY).toBe(16);
+
+    const measured = await measureWorkerConcurrency();
+
+    expect(measured.startedBeforeRelease).toBe(16);
+    expect(measured.peak).toBe(16);
+    expect(measured.outcome).toMatchObject({
+      status: "ok",
+      ranPartitions: 17,
+      totalPartitions: 17,
+    });
+  });
+
+  it("keeps the per-run worker limit load-bearing", async () => {
+    const measured = await measureWorkerConcurrency(3);
+
+    expect(measured.startedBeforeRelease).toBe(3);
+    expect(measured.peak).toBe(3);
+    expect(measured.outcome.status).toBe("ok");
+  });
+
   it("both-scenario: workers land on codex (luna/low), verify on claude (sonnet-5), each with its schema", async () => {
     const claudeCaptures: ClaudeCapture[] = [];
     const codexCaptures: CodexExecRequest[] = [];
