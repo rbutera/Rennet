@@ -9,13 +9,15 @@ export const MIN_CHAT_WIDTH = 320;
 export const MIN_SURFACE_WIDTH = 400;
 export const DEFAULT_CHAT_WIDTH = 420;
 
-/** The gutter the dock's wrapper carries beyond the chat width, so the straddling
- *  (net-zero-footprint) divider has room at the seam — the prototype's `chatWidth + 4`
- *  (`spikes/board-prototype/components/shell.tsx`). */
+/** The bare canvas between the chat's right hairline and the main surface — the dock's
+ *  wrapper is `chatWidth + 4` and pads these 4px off, so the chat itself renders at
+ *  `chatWidth` (the prototype's `chatWidth + 4` wrapper over a `chatWidth` column,
+ *  `spikes/board-prototype/components/shell.tsx` + `components/chat-column.tsx`). The
+ *  divider is not what needs them: it is 6px wide on -3px margins, a net-zero footprint. */
 export const DOCK_DIVIDER_GUTTER = 4;
 
-/** How long after a divider drag stops before the dock's width transition re-arms
- *  (INVENTORY §1). Suppressed for the drag's lifetime, then this trailing tail. */
+/** How long after the LAST divider width change before the dock's width transition
+ *  re-arms (INVENTORY §1) — a trailing debounce, exactly as the prototype writes it. */
 export const DOCK_TRANSITION_REARM_MS = 200;
 
 /** The expanded sidebar's width. Collapsed is 0 — C20 deleted the 48px icon rail,

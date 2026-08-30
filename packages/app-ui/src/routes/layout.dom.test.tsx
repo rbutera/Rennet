@@ -48,8 +48,37 @@ describe("frame chat-dock slot (R47 amendment)", () => {
     await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
     const dockAfter = getByTestId("chat-dock-slot");
     expect(dockAfter).toBe(dock); // identity preserved across the navigation
-    // 420 chat + the 4px divider gutter the wrapper carries (prototype `chatWidth + 4`).
+    // 420 chat + the 4px canvas gutter the wrapper carries (prototype `chatWidth + 4`).
     expect(dockAfter.style.width).toBe("424px");
+  });
+});
+
+describe("frame dock gutter (the chat renders at chatWidth, the 4px is canvas beside it)", () => {
+  it("pads the gutter off the wrapper and puts the hairline on the inner dock", async () => {
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    const { getByTestId } = mount(
+      <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
+    );
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
+    const wrapper = getByTestId("chat-dock-slot");
+    // happy-dom has no layout engine, so this is the geometry as DECLARED, not measured:
+    // border-box width minus the right padding IS the inner dock's width. It is the
+    // arithmetic Codex's finding turned on — drop the padding and the chat renders 424.
+    expect(wrapper.style.width).toBe("424px");
+    expect(wrapper.style.paddingRight).toBe("4px");
+    expect(
+      Number.parseInt(wrapper.style.width, 10) - Number.parseInt(wrapper.style.paddingRight, 10),
+    ).toBe(useRennetStore.getState().ui.chatWidth);
+    // ...and the hairline moved WITH the chat: on the inner dock, at chatWidth, with the
+    // gutter of bare canvas to its right. On the wrapper it would sit at 424.
+    const inner = wrapper.firstElementChild as HTMLElement;
+    expect(wrapper.className).not.toContain("border-r");
+    expect(inner.className).toContain("border-r");
+    // Closed, the padding goes too — a 0-width border-box would otherwise floor at 4px
+    // and leave a permanent sliver of dock on screen.
+    act(() => useRennetStore.getState().uiActions.setChatOpen(false));
+    await waitFor(() => expect(getByTestId("chat-dock-slot").style.width).toBe("0px"));
+    expect(getByTestId("chat-dock-slot").style.paddingRight).toBe("0px");
   });
 });
 
@@ -92,8 +121,16 @@ describe("frame chat-width clamp (400px surface minimum + ARIA range)", () => {
   });
 });
 
-describe("frame width-transition suppression (drag lifetime + a 200ms trailing re-arm)", () => {
-  it("drops the transition on pointer-down and re-arms it 200ms after pointer-up", async () => {
+// ─────────────────────────────────────────────────────────────────────────────
+// The width-transition suppression is a TRAILING DEBOUNCE off each width CHANGE — the
+// prototype's shape verbatim (`spikes/board-prototype/components/shell.tsx`: `onChange`
+// sets `resizingChat`, clears the pending timer and sets a fresh 200ms one). It is NOT
+// keyed on the pointer being down, so a mid-drag pause re-arms; that is the prototype's
+// accepted trade and it is also what stops an interrupted drag stranding the suppression.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("frame width-transition suppression (a 200ms trailing debounce off each change)", () => {
+  it("suppresses on a width change and re-arms 200ms after the LAST one, pointer still down", async () => {
     act(() => useRennetStore.getState().uiActions.setChatOpen(true));
     const { getByTestId, getByLabelText } = mount(
       <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
@@ -102,21 +139,56 @@ describe("frame width-transition suppression (drag lifetime + a 200ms trailing r
     const dock = getByTestId("chat-dock-slot");
     const handle = getByLabelText("Resize chat column");
     expect(dock.className).toContain("transition-[width]");
-    // Pointer down begins the drag: the transition is suppressed for its whole lifetime.
     vi.useFakeTimers();
     try {
-      fireEvent.pointerDown(handle, { button: 0, pointerId: 1 });
+      // Pointer DOWN alone changes no width, so it suppresses nothing — the divider that
+      // is merely clicked never animates the dock.
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 0 });
+      expect(dock.className).toContain("transition-[width]");
+      // The first move is the first width change: suppressed from here.
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 40 });
       expect(dock.className).not.toContain("transition-[width]");
-      // A long mid-drag pause does NOT re-arm it — the timer starts at pointer-UP only,
-      // so a paused pointer that is still down keeps the transition off.
-      act(() => void vi.advanceTimersByTime(1_000));
-      expect(dock.className).not.toContain("transition-[width]");
-      // Pointer up starts the 200ms tail; the transition is still off just before it.
-      fireEvent.pointerUp(handle, { pointerId: 1 });
+      expect(dock.style.width).toBe("464px"); // 420 + 40, + the 4px gutter
+      // A mid-drag PAUSE re-arms on the trailing timer even under a held pointer.
       act(() => void vi.advanceTimersByTime(199));
       expect(dock.className).not.toContain("transition-[width]");
       act(() => void vi.advanceTimersByTime(1));
       expect(dock.className).toContain("transition-[width]");
+      // ...and the next move suppresses it again, resetting the tail: 199ms after move A
+      // plus another move B leaves it suppressed at 199ms past B, not re-armed at 200 past A.
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 80 });
+      act(() => void vi.advanceTimersByTime(199));
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 120 });
+      act(() => void vi.advanceTimersByTime(199));
+      expect(dock.className).not.toContain("transition-[width]");
+      act(() => void vi.advanceTimersByTime(1));
+      expect(dock.className).toContain("transition-[width]");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the suppression when the chat closes mid-drag, so the dock slides shut", async () => {
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    const { getByTestId, getByLabelText } = mount(
+      <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
+    );
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
+    const dock = getByTestId("chat-dock-slot");
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerDown(getByLabelText("Resize chat column"), {
+        button: 0,
+        pointerId: 1,
+        clientX: 0,
+      });
+      fireEvent.pointerMove(getByLabelText("Resize chat column"), { pointerId: 1, clientX: 40 });
+      expect(dock.className).not.toContain("transition-[width]");
+      // The divider unmounts with the dock and no pointer event ever arrives. WITHOUT
+      // advancing the tail: the close must not snap shut on a stranded suppression.
+      act(() => useRennetStore.getState().uiActions.setChatOpen(false));
+      expect(dock.className).toContain("transition-[width]");
+      expect(dock.style.width).toBe("0px");
     } finally {
       vi.useRealTimers();
     }
