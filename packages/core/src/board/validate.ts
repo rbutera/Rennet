@@ -16,10 +16,11 @@
  * 10; on exhaustion the board ships with labeled `blemishes[]` (`Violation` +
  * `attempts`) — visible, never blocking (Rule Zero: no gate).
  *
- * Three gates, in order: **lint** (the loop above, pre-post-process) →
- * **immutability** (typed lens-output data is byte-identical across the editor
- * pass — L19) → **composition** every-hunk coverage (cluster-4 mechanics; wired
- * here as an injected seam, defaulting to a no-op until `compose` lands).
+ * Three gates, in order: **lint** (the loop above, plus a reference check after
+ * post-process) → **immutability** (typed lens-output data is byte-identical
+ * across the editor pass — L19) → **composition** every-hunk coverage
+ * (cluster-4 mechanics; wired here as an injected seam, defaulting to a no-op
+ * until `compose` lands).
  */
 
 import type { Blemish, DraftBoard, DraftElement, Violation } from "@rennet/protocol";
@@ -585,13 +586,16 @@ export async function validateDraft(
     }
   }
 
-  // Gate 2 — post-process editor pass, then typed-data immutability across it.
+  // Gate 2 — post-process editor pass, reference safety, then typed-data immutability.
   const beforeEditor = current;
   const editedRaw = seams.postProcess ? await seams.postProcess(current) : current;
   const edited = coerceBoard(editedRaw);
   const afterEditor = edited.ok ? edited.board : current;
-  current = afterEditor;
-  const immutability = checkImmutability(beforeEditor, afterEditor);
+  const editorReferenceViolations = lint(afterEditor, ctx).filter(
+    ({ ruleId }) => ruleId === "element-reference-resolves",
+  );
+  current = editorReferenceViolations.length === 0 ? afterEditor : beforeEditor;
+  const immutability = checkImmutability(beforeEditor, current);
 
   // Gate 3 — composition every-hunk coverage (cluster-4 seam).
   const composition = seams.compositionGate ? seams.compositionGate(current, ctx) : [];

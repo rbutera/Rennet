@@ -108,6 +108,9 @@ and calls board regeneration through this runtime.
      identifiers and patchset ids are exempt);
    - **citation resolves** — every citation is well-formed and resolves against
      the correct side of the patchset;
+   - **element references resolve** — every schema-declared element reference
+     names an element in that exact board, and the reference graph is acyclic so
+     the host can create each target before its citer;
    - **`skippedHunks` present** and its reasons specific;
    - **decision-grounded** — a decision carries non-empty evidence and
      alternatives;
