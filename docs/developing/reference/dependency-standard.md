@@ -158,9 +158,11 @@ relative to those captured descriptors. Regular-file inspection transfers an
 owned, no-follow descriptor to the TypeScript adapter, which streams that one
 anchored snapshot through the raw digest and Git attribute-aware object hash
 without buffering the file in native or JavaScript memory. The Windows artifact
-currently exposes an explicit unsupported constructor. The server, CLI, and
-desktop do not yet construct this host; production composition and
-cross-platform delivery remain separate work.
+currently exposes an explicit unsupported constructor. Desktop and CLI builds
+stage every available platform directory at
+`<server-bundle>/native/<platform>-<architecture>/`; the Windows release bundle
+also carries `linux-x64` for its WSL daemon. The server does not yet construct
+this host, so production composition remains separate work.
 
 Native artifacts and their semantic verdicts depend on the operating system,
 architecture, compiler, linker, SDK, and generator environment. The adapter's
