@@ -134,7 +134,8 @@ describe("AddProjectDialog", () => {
     act(() => add.click());
 
     await waitFor(() => expect(history.history.at(-1)).toBe(projectIndexingPath("proj-1")));
-    // No orchestrator turn: only the discover/add commands ran, and the dialog closed.
+    // No orchestrator turn: projects.add owns the daemon-side background start, so navigation
+    // does not wait for a second renderer command.
     expect(added).toHaveLength(1);
     expect(useRennetStore.getState().ui.openDialogs).not.toContain("add-project");
   });

@@ -1,14 +1,68 @@
-import { type ProjectProcessEvent, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
-import type { CommandHandler, DispatchRuntime } from "./runtime";
+import {
+  type CommandInput,
+  type CommandOutput,
+  type ProjectProcessEvent,
+  parseCommandInput,
+  parseCommandOutput,
+} from "@rennet/protocol";
+import type { CommandHandler, DispatchContext, DispatchRuntime } from "./runtime";
+
+export function runProjectProcess(
+  rt: DispatchRuntime,
+  input: CommandInput<"project.process">,
+  ctx?: DispatchContext,
+): Promise<CommandOutput<"project.process">> {
+  const { deps, liveProjectRuns, attachProjectProgress, progressReplayLimit } = rt;
+  const existing = liveProjectRuns.get(input.commandId);
+  if (existing) {
+    if (existing.projectId !== input.projectId)
+      return Promise.reject(
+        new Error("A live project.process command ID cannot address another project"),
+      );
+    attachProjectProgress(existing, ctx);
+    return existing.result;
+  }
+
+  const events: ProjectProcessEvent[] = [];
+  const recipients = new Map<unknown, (event: ProjectProcessEvent) => void>();
+  const emit = (event: ProjectProcessEvent): void => {
+    events.push(event);
+    if (events.length > progressReplayLimit) events.splice(0, events.length - progressReplayLimit);
+    for (const recipient of recipients.values()) recipient(event);
+  };
+  let resolve!: (result: CommandOutput<"project.process">) => void;
+  let reject!: (reason: unknown) => void;
+  const result = new Promise<CommandOutput<"project.process">>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  const run = { projectId: input.projectId, events, recipients, result };
+  liveProjectRuns.set(input.commandId, run);
+  attachProjectProgress(run, ctx);
+
+  try {
+    void deps
+      .processProject({ projectId: input.projectId, commandId: input.commandId }, emit)
+      .then((processed) => {
+        emit({
+          kind: "done",
+          repos: processed.repos,
+          ...(processed.run ? { run: processed.run } : {}),
+        });
+        resolve(processed);
+      }, reject);
+  } catch (reason) {
+    reject(reason);
+  }
+  const cleanup = (): void => {
+    if (liveProjectRuns.get(input.commandId) === run) liveProjectRuns.delete(input.commandId);
+  };
+  void result.then(cleanup, cleanup);
+  return result;
+}
 
 export function projectHandlers(rt: DispatchRuntime) {
-  const {
-    deps,
-    assertAllowedRepository,
-    liveProjectRuns,
-    attachProjectProgress,
-    progressReplayLimit,
-  } = rt;
+  const { deps, assertAllowedRepository } = rt;
   return {
     "project.rename": async (rawInput) => {
       const name = "project.rename" as const;
@@ -45,38 +99,7 @@ export function projectHandlers(rt: DispatchRuntime) {
       // resolved value, so both always agree. Soft per-repo failures are carried
       // in the summaries (never a throw), so one bad repo never aborts the rest.
       const input = parseCommandInput(name, rawInput);
-      const existing = liveProjectRuns.get(input.commandId);
-      if (existing) {
-        if (existing.projectId !== input.projectId)
-          throw new Error("A live project.process command ID cannot address another project");
-        attachProjectProgress(existing, ctx);
-        return parseCommandOutput(name, await existing.result);
-      }
-
-      const events: ProjectProcessEvent[] = [];
-      const recipients = new Map<unknown, (event: ProjectProcessEvent) => void>();
-      const emit = (event: ProjectProcessEvent): void => {
-        events.push(event);
-        if (events.length > progressReplayLimit)
-          events.splice(0, events.length - progressReplayLimit);
-        for (const recipient of recipients.values()) recipient(event);
-      };
-      const result = Promise.resolve().then(async () => {
-        try {
-          const result = await deps.processProject(
-            { projectId: input.projectId, commandId: input.commandId },
-            emit,
-          );
-          emit({ kind: "done", repos: result.repos, ...(result.run ? { run: result.run } : {}) });
-          return result;
-        } finally {
-          liveProjectRuns.delete(input.commandId);
-        }
-      });
-      const run = { projectId: input.projectId, events, recipients, result };
-      liveProjectRuns.set(input.commandId, run);
-      attachProjectProgress(run, ctx);
-      return parseCommandOutput(name, await result);
+      return parseCommandOutput(name, await runProjectProcess(rt, input, ctx));
     },
     "project.detail": async (rawInput, ctx) => {
       const name = "project.detail" as const;

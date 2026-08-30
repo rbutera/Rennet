@@ -1,4 +1,5 @@
-import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import { commandIdFor, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import { runProjectProcess } from "./project";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 export function projectsHandlers(rt: DispatchRuntime) {
@@ -28,6 +29,12 @@ export function projectsHandlers(rt: DispatchRuntime) {
         primaryBranch: input.primaryBranch,
       });
       allowedRoots.add(project.openPath);
+      void runProjectProcess(rt, {
+        commandId: commandIdFor(`project.process:${project.id}`),
+        projectId: project.id,
+      }).catch((reason: unknown) => {
+        console.error(`Project processing failed to start for ${project.id}`, reason);
+      });
       return parseCommandOutput(name, { project, projects });
     },
     "projects.remove": async (rawInput) => {

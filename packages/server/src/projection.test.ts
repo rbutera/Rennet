@@ -706,6 +706,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "projects.add.input.discovery.repos.path",
     "project.process.output.repos.path",
     "project.process.output.run.repos.path",
+    "project.contextMap.output.run.repos.path",
     "settings.get.output.projects.repoPath",
     "settings.guidance.input.repoPath",
     "settings.setRepoVisibility.input.repoPath",

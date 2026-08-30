@@ -4,11 +4,6 @@
       "count": 1
     }
   },
-  "packages/app-ui/src/components/context-map-view.tsx": {
-    "rennet/no-direct-invoke": {
-      "count": 3
-    }
-  },
   "packages/app-ui/src/components/directory-browser.tsx": {
     "rennet/no-direct-invoke": {
       "count": 1

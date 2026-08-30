@@ -1,6 +1,5 @@
 import { useLocation } from "wouter";
 import { ContextMapView, discussPrompt } from "../components/context-map-view";
-import { useBridge } from "../data";
 import { newChatPath } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,11 +21,9 @@ export function ProjectContextMapView({
    *  for New Chat would drop the reviewer out of the session they were reading. */
   readonly onBack?: () => void;
 }) {
-  const bridge = useBridge();
   const [, navigate] = useLocation();
   return (
     <ContextMapView
-      bridge={bridge}
       projectId={projectId}
       showAskRail={false}
       onBack={onBack ?? (() => navigate(newChatPath(projectId)))}

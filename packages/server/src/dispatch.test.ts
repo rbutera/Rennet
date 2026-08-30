@@ -42,6 +42,7 @@ import type {
 } from "@rennet/protocol";
 import {
   type CoachMarks,
+  commandIdFor,
   type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
@@ -3248,7 +3249,7 @@ describe("createDispatch — front door (issue #29)", () => {
   });
 
   it("projects.add derives + persists from the confirmed discovery and grants the open target", async () => {
-    const { dispatch, allowedRoots, addCalls } = frontDoorHarness({});
+    const { dispatch, allowedRoots, addCalls, processCalls } = frontDoorHarness({});
     const discovery: DiscoveryResult = {
       path: "/orbital",
       kind: "workspace",
@@ -3269,6 +3270,12 @@ describe("createDispatch — front door (issue #29)", () => {
     expect(addCalls).toEqual([{ discovery, includedRepos: ["atlas"], primaryBranch: "trunk" }]);
     expect(out.project.openPath).toBe("/orbital/atlas");
     expect(out.projects).toHaveLength(1);
+    expect(processCalls).toEqual([
+      {
+        commandId: commandIdFor("project.process:added-1"),
+        projectId: "added-1",
+      },
+    ]);
     // The freshly added project is immediately openable.
     expect(allowedRoots.has("/orbital/atlas")).toBe(true);
   });

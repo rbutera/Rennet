@@ -190,7 +190,8 @@ export function AddProjectFlow({
       // close the reopened dialog or hijack the route — bail before any post-await UI effect.
       if (!alive.current) return;
       // Persisted with no orchestrator turn; the sidebar (projects.list, invalidated above)
-      // carries it. Straight to the indexing view — scout + map generation live there.
+      // carries it. The daemon already owns the durable processing run started by projects.add;
+      // the indexing view joins it without making navigation wait.
       onClose?.();
       if (onAdded) onAdded(project);
       else navigate(projectIndexingPath(project.id));
