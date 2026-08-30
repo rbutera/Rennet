@@ -1,5 +1,5 @@
 import { cn, ResizeHandle } from "@rennet/ui";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { ChatDock } from "../chat/chat-dock";
 import { Coachmark } from "../coach/coachmark";
@@ -9,6 +9,8 @@ import { AppDialogs } from "../shell/app-dialogs";
 import { CommandMenu } from "../shell/command-menu";
 import {
   DEFAULT_CHAT_WIDTH,
+  DOCK_DIVIDER_GUTTER,
+  DOCK_TRANSITION_REARM_MS,
   MIN_CHAT_WIDTH,
   MIN_SURFACE_WIDTH,
   SIDEBAR_PANEL_WIDTH,
@@ -32,8 +34,8 @@ import { ROUTES } from "./url";
 // whenever the chat is closed or the route is a takeover — mounted, out of the tab
 // order, its transcript identity preserved for C7 (R47 amendment). The divider
 // between dock and surface is C2's `ResizeHandle` with the consumer-owned constants;
-// dragging suppresses the width transition for the LIFETIME of the drag, re-armed the
-// instant the pointer lifts.
+// dragging suppresses the width transition for the LIFETIME of the drag, re-armed 200ms
+// after the pointer lifts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function AppLayout({ children }: { readonly children: ReactNode }) {
@@ -53,9 +55,33 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   const owner = cornerSlotOwner({ sidebarOpen, dockOpen });
 
   // Suppress the width transition for the LIFETIME of a drag (it would lag the pointer),
-  // keyed on the pointer being DOWN — set on pointer-down, cleared on up/cancel/lost-
-  // capture — not on a trailing timer that mis-reads a mid-drag pause as "settled".
+  // keyed on the pointer being DOWN — set on pointer-down, and on up/cancel/lost-capture
+  // re-armed on a 200ms TRAILING timer, which is the behaviour INVENTORY §1 records
+  // ("suppresses the width transition, which re-arms 200ms after the drag stops",
+  // `components/shell.tsx`). The timer starts at pointer-UP, never on each move, so a
+  // mid-drag pause can never re-arm the transition under a still-held pointer.
   const [resizing, setResizing] = useState(false);
+  const rearm = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (rearm.current) clearTimeout(rearm.current);
+    },
+    [],
+  );
+  const startResize = useCallback(() => {
+    if (rearm.current) {
+      clearTimeout(rearm.current);
+      rearm.current = null;
+    }
+    setResizing(true);
+  }, []);
+  const endResize = useCallback(() => {
+    if (rearm.current) clearTimeout(rearm.current);
+    rearm.current = setTimeout(() => {
+      rearm.current = null;
+      setResizing(false);
+    }, DOCK_TRANSITION_REARM_MS);
+  }, []);
 
   // The chat's maximum is whatever the container leaves once the sidebar keeps its
   // width and the surface keeps its minimum — measured off the viewport (the frame
@@ -70,7 +96,13 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   }, []);
   // Collapsed contributes zero width — C20 deleted the 48px rail.
   const sidebarWidth = sidebarOpen ? SIDEBAR_PANEL_WIDTH : 0;
-  const maxChatWidth = Math.max(MIN_CHAT_WIDTH, viewportWidth - sidebarWidth - MIN_SURFACE_WIDTH);
+  // The dock's wrapper renders `width + DOCK_DIVIDER_GUTTER`, so the gutter comes out of
+  // the maximum too — otherwise a fully-dragged dock leaves the surface four pixels under
+  // its 400px floor, which is the one number this whole computation exists to protect.
+  const maxChatWidth = Math.max(
+    MIN_CHAT_WIDTH,
+    viewportWidth - sidebarWidth - MIN_SURFACE_WIDTH - DOCK_DIVIDER_GUTTER,
+  );
   // The STORED width can outlive the room for it: a narrower viewport or an expanding
   // sidebar shrinks the maximum below what was saved, which would render the dock over
   // the surface's 400px floor AND report aria-valuenow > aria-valuemax. Clamp the width
@@ -107,9 +139,14 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
               data-testid="chat-dock-slot"
               data-open={dockOpen}
               inert={!dockOpen}
-              style={{ width: dockOpen ? effectiveChatWidth : 0 }}
+              // +4: the prototype's wrapper is `chatWidth + 4` (`components/shell.tsx`)
+              // — the divider straddles the seam with a net-zero footprint, so the four
+              // pixels are the gutter it needs. `effectiveChatWidth` alone runs the dock
+              // 4px narrow against the prototype.
+              style={{ width: dockOpen ? effectiveChatWidth + DOCK_DIVIDER_GUTTER : 0 }}
               className={cn(
-                "rennet-chat-dock flex-none overflow-hidden border-r border-line bg-surface",
+                // No ground of its own — the dock shares the frame's one seamless canvas.
+                "rennet-chat-dock flex-none overflow-hidden border-r border-line",
                 !resizing &&
                   "transition-[width] duration-200 ease-out motion-reduce:transition-none",
               )}
@@ -132,10 +169,10 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
                 min={MIN_CHAT_WIDTH}
                 max={maxChatWidth}
                 defaultValue={DEFAULT_CHAT_WIDTH}
-                onPointerDown={() => setResizing(true)}
-                onPointerUp={() => setResizing(false)}
-                onPointerCancel={() => setResizing(false)}
-                onLostPointerCapture={() => setResizing(false)}
+                onPointerDown={startResize}
+                onPointerUp={endResize}
+                onPointerCancel={endResize}
+                onLostPointerCapture={endResize}
                 onChange={setChatWidth}
               />
             ) : null}
