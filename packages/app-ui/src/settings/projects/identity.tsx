@@ -104,7 +104,7 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
             const picked = next[0] as ProjectIconName | undefined;
             if (picked) projection.setProjectGlyph(project.id, picked);
           }}
-          className="flex w-auto flex-wrap gap-1 bg-transparent p-0"
+          className="flex w-auto flex-wrap gap-1 border-transparent bg-transparent p-0"
         >
           {PROJECT_ICON_NAMES.map((iconName) => (
             <Toggle
