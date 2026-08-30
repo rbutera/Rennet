@@ -15,7 +15,7 @@ import {
   PopoverTrigger,
 } from "@rennet/ui";
 import { Check, RotateCcw } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
 import { CLAUDE_MODELS, CODEX_MODELS } from "../assets/model-council";
 import { Row } from "../atoms";
@@ -334,6 +334,11 @@ function ModelCell({
   readonly onChange: (model: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // cmdk listens for ArrowDown/ArrowUp/Enter on its ROOT (it renders one with `tabIndex=-1`),
+  // and keydown does not travel DOWN the tree. With the search box removed there is nothing
+  // focusable inside the popup, so Base UI's default initial focus landed on the popup itself
+  // and every arrow key fired above cmdk — a keyboard-opened picker could not be driven at all.
+  const commandRef = useRef<HTMLDivElement>(null);
 
   // The provenance chip (C16, #485): a cell only carries it when a routing override
   // actually won. An unchipped cell IS the council table — the chip is the whole
@@ -377,10 +382,11 @@ function ModelCell({
         {display}
       </PopoverTrigger>
       {/* No search box. A host offers a handful of models, all of them on screen at once,
-          so a filter over a list you can already read is chrome — and it steals the focus
-          the arrow keys want. The popover narrows to the width the model names need. */}
-      <PopoverContent className="w-44 p-1" align="start">
-        <Command>
+          so a filter over a list you can already read is chrome. The popover narrows to the
+          width the model names need — and `initialFocus` hands the keyboard to cmdk's root
+          on open, which is the job the removed input used to be doing by accident. */}
+      <PopoverContent className="w-44 p-1" align="start" initialFocus={commandRef}>
+        <Command ref={commandRef} className="outline-none">
           <CommandList>
             <CommandGroup>
               {models.map((model) => (

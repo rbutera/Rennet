@@ -172,8 +172,21 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   // selection (R26 made the click the start), so the honest thing for that mark to say is
   // "this is the row now starting" — real state, held only while the mint is in flight, and
   // cleared by `mint.pending` falling on success or failure rather than by a second signal.
+  //
+  // `mint.pending` gates whether the mark is DRAWN; it never said which row it names, and a
+  // stale id is a mark on the wrong row. Two ways that surfaced: a settled mint (resolved or
+  // rejected) left the id set, so the composer's next send — which starts the CHECKOUT row —
+  // re-lit whichever row had gone before it; and a project switch mid-flight kept the old
+  // project's id, which for the constant `CHECKOUT_ROW_ID` collides by construction. So the
+  // id is PROJECT-QUALIFIED (a row id identifies a row within one project, never across
+  // them — the same many-to-one rule the mint target follows), which makes a project change
+  // miss every comparison without a second effect, and the flight's end clears it outright.
   const [starting, setStarting] = useState<string | null>(null);
+  const markId = (rowId: string) => `${projectId}:${rowId}`;
   const startingId = mint.pending ? starting : null;
+  useEffect(() => {
+    if (!mint.pending) setStarting(null);
+  }, [mint.pending]);
 
   const { data: detail } = useCommand("project.detail", { projectId });
   const rows = useMemo(
@@ -328,9 +341,9 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             <CheckoutRow
               branch={branch}
               pending={mint.pending}
-              starting={startingId === CHECKOUT_ROW_ID}
+              starting={startingId === markId(CHECKOUT_ROW_ID)}
               onStart={() => {
-                setStarting(CHECKOUT_ROW_ID);
+                setStarting(markId(CHECKOUT_ROW_ID));
                 mint.start(undefined, message);
               }}
             />
@@ -341,9 +354,9 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                 showRepo={showRepo}
                 showForge={repositoriesWithForge.has(repoOf(row))}
                 pending={mint.pending}
-                starting={startingId === row.id}
+                starting={startingId === markId(row.id)}
                 onStart={() => {
-                  setStarting(row.id);
+                  setStarting(markId(row.id));
                   mint.start(row, message);
                 }}
               />
@@ -372,7 +385,12 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
         message={message}
         onMessage={setMessage}
         pending={mint.pending}
-        onSend={() => mint.start(undefined, message)}
+        onSend={() => {
+          // The composer starts the CHECKOUT row (`mint.start(undefined, …)`), so it names
+          // that row rather than inheriting whatever the last click left behind.
+          setStarting(markId(CHECKOUT_ROW_ID));
+          mint.start(undefined, message);
+        }}
       />
     </section>
   );

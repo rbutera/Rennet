@@ -87,7 +87,17 @@ export function ProjectPicker({
                 {host.projects.map((project) => (
                   <CommandItem
                     key={project.id}
-                    value={displayName(project.id, project.name)}
+                    // cmdk's `value` is the row's IDENTITY, not its label: it decides which
+                    // row is highlighted (`aria-selected` compares the store value to the
+                    // item's) and which one Enter selects. Two projects with the same display
+                    // name on different hosts — a workspace and its clone, `rennet` on local
+                    // and on lancelot — collapsed into one identity under the name: both rows
+                    // lit, ArrowDown could not move between them, and Enter always took the
+                    // first. Host-qualified, so identity is unique even when the label is not.
+                    value={`${host.id}/${project.id}`}
+                    // Search still matches what the reviewer can READ. cmdk scores value +
+                    // keywords, and the value is now an id nobody types.
+                    keywords={[displayName(project.id, project.name), host.label]}
                     // The tick is the kit's own trailing column now (CommandItem renders it
                     // off `data-checked`), so the row no longer carries a second one.
                     data-checked={project.id === value}

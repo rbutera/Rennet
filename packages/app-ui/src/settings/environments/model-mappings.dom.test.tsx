@@ -8,7 +8,7 @@
 // default" and resetting flows through the setRoleAssignment seam.
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { cleanup, mount, within } from "../../test/dom";
+import { cleanup, mount, waitFor, within } from "../../test/dom";
 import { REVIEW_ROLE_DEFAULTS } from "../assets/model-council";
 import {
   type DetectedTool,
@@ -301,6 +301,48 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
     const popover = options[0]?.closest('[data-slot="popover-content"]');
     expect(popover?.className).toContain("w-44");
     expect(popover?.className).not.toContain("p-0");
+    cleanup();
+  });
+
+  it("is drivable from the keyboard alone: open, ArrowDown, Enter writes the second model", async () => {
+    // Deleting the search box deleted the only focusable node inside the popup, and cmdk
+    // listens for ArrowDown/Enter on its ROOT — keydown does not travel down the tree, so
+    // the keys fired on the popup, above cmdk, and the picker was mouse-only. `initialFocus`
+    // hands the keyboard to that root instead. Nothing here touches the mouse.
+    const writes: { roleId: string; scenario: string; assignment: RoleAssignment | null }[] = [];
+    const { getByRole, user } = mount(
+      withReview(
+        {
+          agentsByHost: { h1: BOTH_AGENTS },
+          reviewRoles: REVIEW_ROLE_DEFAULTS,
+          setRoleAssignment: (roleId, scenario, assignment) => {
+            writes.push({ roleId, scenario, assignment });
+          },
+        },
+        ["claude"],
+      ),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    const trigger = body().getByRole("button", { name: "Orchestrator model" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+
+    // Executed, not reasoned: the popup is open AND the cmdk root actually holds focus.
+    // Without the second half the arrow keys below would land somewhere else and this
+    // test would be describing a control flow it never entered.
+    await waitFor(() => expect(body().getAllByRole("option").length).toBeGreaterThan(1));
+    expect(document.activeElement?.hasAttribute("cmdk-root")).toBe(true);
+
+    // Single = Claude-only, so the list is CLAUDE_MODELS. cmdk highlights the first row on
+    // mount; one ArrowDown moves to the second, and Enter commits THAT one.
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(writes).toEqual([
+      {
+        roleId: "orchestrator",
+        scenario: "claudeOnly",
+        assignment: { model: "sonnet-5", effort: "high" },
+      },
+    ]);
     cleanup();
   });
 });
