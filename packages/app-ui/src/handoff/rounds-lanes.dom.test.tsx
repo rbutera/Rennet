@@ -15,7 +15,7 @@ import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount } from "../test/dom";
 import { MemoryBridge } from "../test/memory-bridge";
-import { type PrReceipt, RoundsLanes } from "./rounds-lanes";
+import { type DraftedPr, type PrReceipt, RoundsLanes } from "./rounds-lanes";
 import { selectExitPipCount } from "./selectors";
 
 const store = () => useRennetStore.getState();
@@ -23,15 +23,24 @@ const pip = () => selectExitPipCount(useRennetStore.getState());
 
 // An own-branch review — no `postTarget`. The lane reads only `activePatchsetId`.
 const review = { activePatchsetId: "ps-1" } as unknown as Review;
-const draftedPr = {
+const draftedPr: DraftedPr = {
+  requestKind: "pull-request",
   title: "Harden the retry path",
   body: "## Summary\n\nGuards the boundary.",
   base: "main",
   head: "feat/retry",
   draft: true,
-  destination: "gitlab:acme/widget · feat/retry → main",
+  destination: "github:acme/widget · feat/retry → main",
   ready: true,
 };
+
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
 
 function stage(
   anchor: string,
@@ -77,7 +86,7 @@ describe("RoundsLanes", () => {
     expect(r.getByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
     expect(r.getByText("Guards the boundary.")).toBeTruthy(); // the drafted body renders
     expect(r.getByText("main ← feat/retry · Draft")).toBeTruthy();
-    const destination = r.getByText("gitlab:acme/widget · feat/retry → main");
+    const destination = r.getByText("github:acme/widget · feat/retry → main");
     const open = r.getByRole("button", { name: /Open Pull Request/ });
     expect(
       destination.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -144,6 +153,28 @@ describe("RoundsLanes", () => {
     await r.user.click(r.getByRole("button", { name: /Open Pull Request/ }));
     expect(await r.findByText(/Pull request opened · #438/)).toBeTruthy();
     expect(r.getByText("github.com/rbutera/rennet/pull/438")).toBeTruthy();
+  });
+
+  it("uses merge-request vocabulary and numbering for a GitLab draft", async () => {
+    const receipt: PrReceipt = {
+      number: 42,
+      url: "https://gitlab.com/acme/widget/-/merge_requests/42",
+    };
+    const opening = deferred<PrReceipt>();
+    const mergeRequest: DraftedPr = {
+      ...draftedPr,
+      requestKind: "merge-request",
+      destination: "gitlab:acme/widget · feat/retry → main",
+    };
+    const r = mount(
+      <RoundsLanes review={review} pr={mergeRequest} onOpenPr={() => opening.promise} />,
+    );
+
+    await r.user.click(r.getByRole("button", { name: "Open Merge Request" }));
+    expect(r.getByRole("button", { name: "Opening merge request…" })).toBeTruthy();
+    opening.resolve(receipt);
+    expect(await r.findByText("Merge request opened · !42")).toBeTruthy();
+    expect(r.queryByText(/Pull request opened/)).toBeNull();
   });
 
   it("with NO rounds source in the tree the workspace degrades honestly (Dispatch Round disabled)", () => {

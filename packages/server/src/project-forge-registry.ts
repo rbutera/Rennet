@@ -1,4 +1,4 @@
-import type { ForgePort, ForgePrSubmissionPort, ForgePublishPort } from "@rennet/core";
+import type { ForgePort } from "@rennet/core";
 import {
   type ForgeRepoIdentity,
   forgeRepositorySlug,
@@ -26,11 +26,6 @@ export function createForgeRegistry<T>(
     has: (forge) => byForge.has(forge),
     sourceFor: (repository) => byForge.get(repository.forge),
   };
-}
-
-export interface ForgeProvider {
-  readonly review: ForgePublishPort;
-  readonly pullRequest: ForgePrSubmissionPort;
 }
 
 export async function fetchForgeCiStatus(

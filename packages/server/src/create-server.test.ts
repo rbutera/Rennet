@@ -12,8 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type ForgeDetectionDeps,
   GenerationStore,
   type GitExec,
+  type GitLabPrSubmissionCommand,
   RoundOperationStore,
   RoundRecordStore,
   TranscriptStore,
@@ -30,6 +32,7 @@ import {
   captureBranchPatchset,
   createBoardDraftCoordinator,
   createCompositionBoardsForReview,
+  createGitLabPrSubmissionResolver,
   createRennetServer,
   createRoundSourceLandingPorts,
   createRoundWorkerPort,
@@ -122,6 +125,23 @@ describe("publish board-drafting coordination", () => {
     await expect(source(advanced.id, "gen:patch-1")).resolves.toEqual({ status: "drafting" });
   });
 });
+
+function provenGlab(
+  path = "/usr/bin/glab",
+  platform: NodeJS.Platform = process.platform,
+): ForgeDetectionDeps {
+  const directory = path.slice(0, path.lastIndexOf("/"));
+  return {
+    loginShellPath: async () => directory,
+    envPath: directory,
+    home: "/Users/rai",
+    listDir: async (candidate) => (candidate === directory ? ["glab"] : []),
+    isExecutable: async (candidate) => candidate === path,
+    probeVersion: async (candidate) => (candidate === path ? "1.80.0" : null),
+    probeAuth: async () => ({ kind: "authenticated" }),
+    platform,
+  };
+}
 
 describe("round worker execution context", () => {
   it("carries a distro-native WSL branch capture through the round planner and worker", async () => {
@@ -492,6 +512,210 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
     expect(listed.sessions).toEqual([]);
   });
+});
+
+describe("createRennetServer — GitLab submission composition", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("carries a WSL repository through the production GitLab resolver", async () => {
+    const repositoryRoot = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\widget";
+    const commands: GitLabPrSubmissionCommand[] = [];
+    const detectionDepsForLocus = vi.fn(async () => provenGlab("/usr/bin/glab", "linux"));
+    const resolver = createGitLabPrSubmissionResolver({
+      locusForRepo: () => ({ kind: "wsl", distro: "Ubuntu" }),
+      detectionDepsForLocus,
+      run: async (command) => {
+        commands.push(command);
+        return {
+          exitCode: 0,
+          stdout: `${JSON.stringify({
+            iid: 42,
+            web_url: "https://gitlab.com/acme/widget/-/merge_requests/42",
+            state: "opened",
+            source_branch: "feat/reviewed",
+            target_branch: "main",
+            source_project_id: 101,
+            target_project_id: 101,
+          })}\n`,
+        };
+      },
+    });
+
+    const submitter = await resolver(repositoryRoot);
+    await expect(
+      submitter.submitPullRequest({
+        target: { repo: { forge: "gitlab", owner: "acme", name: "widget" } },
+        submission: {
+          title: "Reviewed change",
+          body: "",
+          base: "main",
+          head: "feat/reviewed",
+          draft: true,
+        },
+      }),
+    ).resolves.toMatchObject({ number: 42, reused: true });
+
+    expect(detectionDepsForLocus).toHaveBeenCalledWith({ kind: "wsl", distro: "Ubuntu" });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.file).toBe("wsl.exe");
+    expect(commands[0]?.args.slice(0, 7)).toEqual([
+      "-d",
+      "Ubuntu",
+      "--cd",
+      "/home/rai/widget",
+      "-e",
+      "/usr/bin/glab",
+      "api",
+    ]);
+  });
+
+  it("opens a GitLab merge request through the real registry and dispatch closure", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-gitlab-submit-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-gitlab-submit-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+    git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    writeFileSync(join(repo, "widget.txt"), "base\n");
+    git("add", "widget.txt");
+    git("commit", "-m", "base");
+    git("checkout", "-b", "feat/reviewed");
+    writeFileSync(join(repo, "widget.txt"), "base\nfeature\n");
+    git("add", "widget.txt");
+    git("commit", "-m", "feature");
+    git("remote", "add", "origin", "git@gitlab.com:acme/widget.git");
+
+    const submissionGit = vi.fn<GitExec>(async (root, arguments_) => {
+      expect(root).toBe(repo);
+      if (arguments_[0] === "remote") {
+        return [
+          "origin\tgit@gitlab.com:acme/widget.git (fetch)",
+          "origin\tgit@gitlab.com:acme/widget.git (push)",
+        ].join("\n");
+      }
+      if (arguments_[0] === "push") return "";
+      throw new Error(`Unexpected forge-submission git call: ${arguments_.join(" ")}`);
+    });
+    const forgeSubmissionGitForLocus = vi.fn(() => submissionGit);
+    const detectionDepsForLocus = vi.fn(async () => provenGlab());
+    const commands: GitLabPrSubmissionCommand[] = [];
+    let queryCount = 0;
+
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      forgeSubmissionGitForLocus,
+      gitLabPrSubmissionEffects: {
+        detectionDepsForLocus,
+        run: async (command) => {
+          commands.push(command);
+          if (command.args.includes("--paginate")) {
+            queryCount += 1;
+            return {
+              exitCode: 0,
+              stdout:
+                queryCount === 1
+                  ? ""
+                  : `${JSON.stringify({
+                      iid: 17,
+                      web_url: "https://gitlab.com/acme/widget/-/merge_requests/17",
+                      state: "opened",
+                      source_branch: "feat/reviewed",
+                      target_branch: "main",
+                      source_project_id: 101,
+                      target_project_id: 101,
+                    })}\n`,
+            };
+          }
+          if (command.args.includes("--method")) return { exitCode: 0, stdout: "{}" };
+          throw new Error(`Unexpected glab command: ${command.args.join(" ")}`);
+        },
+      },
+    });
+    shutdowns.push(server.shutdown);
+
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "widget", path: repo, branches: 2 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["widget"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: { reviewId?: string } | null };
+    const reviewId = minted.session?.reviewId ?? "";
+    expect(reviewId).not.toBe("");
+
+    const composed = (await server.dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId,
+      mode: "pr",
+    })) as {
+      status: string;
+      target: { repo: { forge: string; owner: string; name: string } };
+      submission: {
+        title: string;
+        body: string;
+        base: string;
+        head: string;
+        draft: boolean;
+      };
+      payload: string;
+      compositionId: string;
+    };
+    expect(composed.status).toBe("pr");
+    expect(composed.target).toEqual({
+      repo: { forge: "gitlab", owner: "acme", name: "widget" },
+    });
+
+    await expect(
+      server.dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId,
+        target: composed.target,
+        submission: composed.submission,
+        payload: composed.payload,
+        compositionId: composed.compositionId,
+      }),
+    ).resolves.toEqual({
+      url: "https://gitlab.com/acme/widget/-/merge_requests/17",
+      number: 17,
+      reused: false,
+    });
+
+    expect(detectionDepsForLocus).toHaveBeenCalledWith({ kind: "host" });
+    expect(forgeSubmissionGitForLocus).toHaveBeenCalledWith({ kind: "host" });
+    expect(submissionGit.mock.calls).toEqual([
+      [repo, ["remote", "-v"]],
+      [repo, ["remote", "-v"]],
+      [repo, ["remote", "-v"]],
+      [repo, ["push", "origin", "refs/heads/feat/reviewed:refs/heads/feat/reviewed"]],
+    ]);
+    expect(commands).toHaveLength(3);
+    expect(commands[1]).toMatchObject({
+      file: "/usr/bin/glab",
+      cwd: repo,
+      stdin: JSON.stringify({
+        source_branch: "feat/reviewed",
+        target_branch: "main",
+        title: "Draft: feat/reviewed",
+        description: "",
+      }),
+    });
+  }, 30_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

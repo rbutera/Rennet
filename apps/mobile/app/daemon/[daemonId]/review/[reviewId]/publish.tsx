@@ -23,6 +23,7 @@ import {
   Screen,
   SectionLabel,
 } from "../../../../../src/components/ui";
+import { changeRequestCopy } from "../../../../../src/lib/change-request-copy";
 import { createComposeRefreshController } from "../../../../../src/lib/compose-refresh";
 import { newCommandId } from "../../../../../src/lib/ids";
 import { mobilePublishDecision } from "../../../../../src/lib/publish-mode";
@@ -39,7 +40,11 @@ type Composed = { readonly status: "loading" } | CommandOutput<"publish.compose"
 type Posting =
   | { readonly phase: "idle" }
   | { readonly phase: "posting" }
-  | { readonly phase: "posted"; readonly url: string }
+  | {
+      readonly phase: "posted";
+      readonly url: string;
+      readonly request?: { readonly forge: string | undefined; readonly number: number };
+    }
   | { readonly phase: "failed"; readonly reason: string };
 
 /** Human label for the GitHub review event the post will carry. */
@@ -164,7 +169,7 @@ export default function Publish(): ReactNode {
     if (!connection) return;
     setPosting({ phase: "posting" });
     try {
-      // One tap posts. Idempotent by head branch: a double tap / retry yields exactly one PR.
+      // One tap posts. Idempotent by head branch: a double tap / retry yields one change request.
       const outcome = await connection.supervisor.invoke("publish.submitPr", {
         commandId: newCommandId(),
         reviewId,
@@ -173,7 +178,11 @@ export default function Publish(): ReactNode {
         payload: c.payload,
         compositionId: c.compositionId,
       });
-      setPosting({ phase: "posted", url: outcome.url });
+      setPosting({
+        phase: "posted",
+        url: outcome.url,
+        request: { forge: c.target?.repo.forge, number: outcome.number },
+      });
     } catch (error) {
       setPosting({
         phase: "failed",
@@ -183,6 +192,10 @@ export default function Publish(): ReactNode {
   }
 
   if (posting.phase === "posted") {
+    const receipt =
+      posting.request === undefined
+        ? undefined
+        : { ...changeRequestCopy(posting.request.forge), number: posting.request.number };
     return (
       <Screen>
         <View style={{ alignItems: "center", marginTop: space.xxl }}>
@@ -195,7 +208,9 @@ export default function Publish(): ReactNode {
               marginTop: space.md,
             }}
           >
-            Posted
+            {receipt === undefined
+              ? "Posted"
+              : `${receipt.opened} · ${receipt.sigil}${receipt.number}`}
           </Text>
           <Text
             style={{
@@ -324,8 +339,8 @@ export default function Publish(): ReactNode {
               <Text style={{ color: t.text, fontSize: type.body, fontWeight: "600", marginTop: 4 }}>
                 {composed.submission.title}
               </Text>
-              {/* The full PR the phone opens: base ← head, draft flag, and the whole drafted body —
-                  the preview IS the pull request, nothing hidden (#382 M2 finding 1). */}
+              {/* The full change request the phone opens: base ← head, draft flag, and the whole
+                  drafted body — the preview is the request, nothing hidden (#382 M2 finding 1). */}
               <Text style={{ color: t.faint, fontSize: type.control, marginTop: space.xs }}>
                 {composed.submission.base} ← {composed.submission.head}
                 {composed.submission.draft ? " · draft" : ""}
@@ -340,7 +355,11 @@ export default function Publish(): ReactNode {
               />
             </Card>
             <PrimaryButton
-              label={posting.phase === "posting" ? "Posting…" : "↗ Open pull request"}
+              label={
+                posting.phase === "posting"
+                  ? changeRequestCopy(composed.target?.repo.forge).opening
+                  : `↗ Open ${changeRequestCopy(composed.target?.repo.forge).noun}`
+              }
               onPress={() => void postPr(composed)}
             />
           </>

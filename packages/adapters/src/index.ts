@@ -288,6 +288,13 @@ export {
   type GitLabCiCommandResult,
   type GitLabCiCommandRunner,
 } from "./gitlab-ci";
+export {
+  createGitLabPrSubmissionAdapter,
+  type GitLabPrSubmissionCommand,
+  type GitLabPrSubmissionCommandResult,
+  type GitLabPrSubmissionCommandRunner,
+  type GitLabPrSubmissionConfig,
+} from "./gitlab-pr-submission";
 export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,

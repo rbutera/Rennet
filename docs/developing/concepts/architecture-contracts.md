@@ -177,18 +177,20 @@ scrubs known-root and home-directory prefixes from every string the same way
 it scrubs other free text. Board prose attributes are model-authored and get
 only that blanket pass.
 
-## Posting to GitHub
+## Outbound forge actions
 
-The reviewer sees the exact outbound GitHub payload before the external
-mutation.
+The reviewer sees the exact outbound review or change-request payload before the
+external mutation.
 
 For someone else's pull request, Rennet submits the previewed review. A
 deterministic marker and GitHub read-back make retries idempotent. The renderer
 does not construct a different review body after preview.
 
-For the user's own branch, posting pushes the named branch and opens a pull
-request from the previewed title and body. If an open pull request already exists
-for that head branch, Rennet reuses it rather than opening a duplicate.
+For the user's own branch, posting pushes the named branch to the effective push
+remote and opens a GitHub pull request or GitLab.com merge request from the
+previewed title and body. If an exact open request already exists for that source
+and target branch in the repository, Rennet reuses it rather than opening a
+duplicate. Each CLI runs in the repository's execution locus.
 
 A retrospective review has no outbound post operation. Its findings and
 conversation remain local.

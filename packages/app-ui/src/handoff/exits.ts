@@ -234,7 +234,13 @@ export function useHandoffExits(review: Review): HandoffExits {
     reviewDraft: reviewComposed ? composeReviewDraft(reviewComposed) : undefined,
     onOpenPr: prComposed ? onOpenPr : undefined,
     pr: prComposed
-      ? { ...prComposed.submission, destination: prComposed.destination, ready: true }
+      ? {
+          ...prComposed.submission,
+          destination: prComposed.destination,
+          ready: true,
+          requestKind:
+            prComposed.target?.repo.forge === "gitlab" ? "merge-request" : "pull-request",
+        }
       : undefined,
     onRevise,
     ...(unavailable === undefined ? {} : { unavailable }),

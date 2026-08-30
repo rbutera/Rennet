@@ -87,8 +87,8 @@ asks" rather than hidden.
 The boards then regenerate over the successor patchset. Sections the round
 touched open expanded and marked; sections it left alone carry forward folded,
 and the previous generation stays readable. Repeat until nothing is left to ask,
-at which point the same surface pushes the branch and opens the pull request
-from the description it has been drafting all along.
+at which point the same surface pushes the branch and opens a GitHub pull request
+or GitLab.com merge request from the description it has been drafting all along.
 
 ## What if the code changes while I am reading the review?
 

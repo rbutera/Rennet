@@ -59,14 +59,16 @@ function IntentPill({ type }: { type: DispositionKind }) {
   );
 }
 
-/** The receipt the egress returns once the own-branch PR opens (number + link). */
+/** The receipt the egress returns once the own-branch change request opens. */
 export interface PrReceipt {
   readonly number: number;
   readonly url: string;
 }
 
-/** The drafted own-branch pull request — the destination the rounds drain toward. */
+/** The drafted own-branch change request — the destination the rounds drain toward. */
 export interface DraftedPr {
+  /** The forge's name for the outbound change request. */
+  readonly requestKind: "pull-request" | "merge-request";
   readonly title: string;
   readonly body: string;
   readonly base: string;
@@ -74,9 +76,31 @@ export interface DraftedPr {
   readonly draft: boolean;
   /** The provider-qualified repository and branch range resolved for this exact preview. */
   readonly destination: string;
-  /** Whether the PR is ready to open (nothing left to ask, the branch pushed). */
+  /** Whether the change request is ready to open. */
   readonly ready: boolean;
 }
+
+type ChangeRequestCopy = {
+  readonly opened: string;
+  readonly open: string;
+  readonly opening: string;
+  readonly numberPrefix: string;
+};
+
+const CHANGE_REQUEST_COPY = {
+  "pull-request": {
+    opened: "Pull request opened",
+    open: "Open Pull Request",
+    opening: "Opening pull request…",
+    numberPrefix: "#",
+  },
+  "merge-request": {
+    opened: "Merge request opened",
+    open: "Open Merge Request",
+    opening: "Opening merge request…",
+    numberPrefix: "!",
+  },
+} satisfies Record<DraftedPr["requestKind"], ChangeRequestCopy>;
 
 export interface RoundsLanesProps {
   readonly review: Review;
@@ -154,6 +178,7 @@ export function RoundsLanes({
 
   // ── State: the pull request is the page ──────────────────────────────────────
   if (!gathering && pr?.ready) {
+    const changeRequest = CHANGE_REQUEST_COPY[pr.requestKind];
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-8 py-8">
@@ -170,7 +195,8 @@ export function RoundsLanes({
             <div className="flex flex-col gap-1 pt-1">
               <span className="flex items-center gap-2 text-base font-medium text-foreground">
                 <Check className="size-4 text-green" aria-hidden="true" />
-                Pull request opened · #{receipt.number}
+                {changeRequest.opened} · {changeRequest.numberPrefix}
+                {receipt.number}
               </span>
               <a
                 href={receipt.url}
@@ -183,8 +209,8 @@ export function RoundsLanes({
             </div>
           ) : (
             <HandoffAction
-              label="Open Pull Request"
-              pendingLabel="Opening pull request…"
+              label={changeRequest.open}
+              pendingLabel={changeRequest.opening}
               icon={GitPullRequest}
               onSubmit={
                 onOpenPr

@@ -2,9 +2,15 @@ import { forgeForRemoteHost, type GitExec, resolveForgeRemote } from "@rennet/ad
 import type {
   ForgePrSubmission,
   ForgePrSubmissionOutcome,
+  ForgePrSubmissionPort,
   ForgePrSubmissionTarget,
 } from "@rennet/core";
-import type { ForgeProvider, ForgeRegistry } from "./project-forge-registry";
+import type { ForgeRegistry } from "./project-forge-registry";
+
+/** Resolve the submitter in the repository's execution locus before mutating git. */
+export type ForgePrSubmissionResolver = (
+  repoRoot: string,
+) => ForgePrSubmissionPort | Promise<ForgePrSubmissionPort>;
 
 export interface ResolvedForgePullRequestDestination {
   readonly remoteName: string;
@@ -12,7 +18,7 @@ export interface ResolvedForgePullRequestDestination {
 }
 
 export async function resolveForgePullRequestDestination(input: {
-  readonly registry: ForgeRegistry<Pick<ForgeProvider, "pullRequest">>;
+  readonly registry: ForgeRegistry<ForgePrSubmissionResolver>;
   readonly git: GitExec;
   readonly repoRoot: string;
 }): Promise<ResolvedForgePullRequestDestination | null> {
@@ -34,26 +40,27 @@ export async function resolveForgePullRequestDestination(input: {
 }
 
 export async function submitForgePullRequest(input: {
-  readonly registry: ForgeRegistry<Pick<ForgeProvider, "pullRequest">>;
+  readonly registry: ForgeRegistry<ForgePrSubmissionResolver>;
   readonly git: GitExec;
   readonly repoRoot: string;
   readonly headRef: string;
   readonly submission: ForgePrSubmission;
   readonly destination: ResolvedForgePullRequestDestination;
 }): Promise<ForgePrSubmissionOutcome> {
-  const provider = input.registry.sourceFor(input.destination.target.repo);
-  if (provider === undefined) {
+  const resolveSubmitter = input.registry.sourceFor(input.destination.target.repo);
+  if (resolveSubmitter === undefined) {
     throw new Error(
       `No pull-request submitter is registered for forge "${input.destination.target.repo.forge}"`,
     );
   }
 
+  const submitter = await resolveSubmitter(input.repoRoot);
   await input.git(input.repoRoot, [
     "push",
     input.destination.remoteName,
     `refs/heads/${input.headRef}:refs/heads/${input.headRef}`,
   ]);
-  return provider.pullRequest.submitPullRequest({
+  return submitter.submitPullRequest({
     target: input.destination.target,
     submission: input.submission,
   });

@@ -145,10 +145,11 @@ One review moves through the system as follows:
 4. Deterministic analysis and drafting agents produce the Design, Sequence,
    Decisions, Flagged, and Noise lens boards for that generation.
 5. The reviewer reads the boards, asks questions, stages asks, and previews any
-   outbound GitHub result.
+   outbound review or change-request result.
 6. The outbound action for a review submits the previewed review. The outbound
    action for an own-branch change pushes the named branch and opens or reuses
-   its pull request.
+   its GitHub pull request or GitLab.com merge request, selected from the
+   effective push remote.
 
 Recapture creates a successor patchset. It does not mutate the patchset already
 under review: the current generation of boards freezes and a successor

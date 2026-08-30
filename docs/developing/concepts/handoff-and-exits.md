@@ -1,10 +1,11 @@
 ---
 title: Hand off and the exits
-description: How Rennet gathers asks, keeps the outbound documents drafted, and runs the three exits — posting a review, dispatching work-order rounds, and opening the pull request.
+description: How Rennet gathers asks, keeps the outbound documents drafted, and runs the three exits — posting a review, dispatching work-order rounds, and opening the pull or merge request.
 ---
 
 A review ends by leaving through an exit: the posted forge review, a dispatched
-work-order round, or the pull request. GitHub is the implemented forge today.
+work-order round, or the pull or merge request. GitHub review publication and
+own-branch change-request submission for GitHub and GitLab.com are implemented.
 Everything the reviewer concludes along the way gathers as asks, and the
 orchestrator keeps every outbound document drafted as it goes.
 
@@ -42,12 +43,14 @@ existed falls back to the `owner/name` match, so it still reattaches instead of
 offering a duplicate target. Two forges can therefore carry the same
 `owner/name`, branch, and pull-request number without collapsing into one row
 or session. Provider selection is also the server-side boundary for detailed CI
-status, review publication, and pull-request submission: each operation resolves
+status, review publication, and change-request submission: each operation resolves
 the provider from that repository identity, and an unregistered forge never
-falls through to GitHub. The registered providers contain GitHub today. A GitLab.com
-CI adapter exists behind the narrower status capability, but stays unregistered until
-an intake path supplies both a GitLab target and its repository execution locus;
-GitLab intake and egress and all Bitbucket adapters remain
+falls through to GitHub. GitHub provides review publication, CI status, and
+pull-request submission. GitLab.com provides own-branch merge-request submission
+through the `glab` CLI in the repository's execution environment. Its CI adapter
+exists behind the narrower status capability, but stays unregistered until an
+intake path attaches a GitLab target to that repository environment. GitLab
+intake, review publication, self-managed GitLab, and all Bitbucket adapters remain
 [planned in #484](https://github.com/rbutera/rennet/issues/484).
 A round dispatched on a target reads the same forge identity from the repository
 it is about to run in, so it joins the session the click created instead of
@@ -152,24 +155,24 @@ lanes depend on the entry mode:
 - **Teammate PR** — one lane: *Post review*. Work orders are own-branch only.
 - **Own branch** — one goal with two states, and the page's shape states
   which one holds: while asks remain the surface is **Changes** (one entry per
-  ask, Dispatch Round) and the pull request is a single muted destination
-  line; when nothing is left to ask, the surface IS the pull request — title,
-  drafted description, Open Pull Request. Primacy flips with the state;
-  nothing explains the flip.
+  ask, Dispatch Round) and the change request is a single muted destination
+  line; when nothing is left to ask, the surface IS the change request — title,
+  drafted description, and **Open Pull Request** or **Open Merge Request** for
+  the resolved provider. Primacy flips with the state; nothing explains the flip.
 - **Retrospective** — no exits.
 
 When the daemon **refuses to compose** an exit — a comment carrying a path that
-would post outside the repository, a detached HEAD with no branch to open a pull
-request from — the lane states that reason where the exit would have been and
+would post outside the repository, or a detached HEAD with no branch to open a
+change request from — the lane states that reason where the exit would have been and
 carries on. There is nothing to dismiss and nothing to retry past: a refusal is a
 fact about this review, not a step in a ceremony. What it replaces is worse than
 the refusal itself, which is a Post Review that renders dead with no account of
-why, or a Changes surface that simply never becomes the pull request.
+why, or a Changes surface that simply never becomes the change request.
 
 ## Living drafts
 
-The orchestrator continuously redrafts every outbound document — the review
-text, the work order, the PR description — as the review progresses. Each
+The orchestrator continuously redrafts every outbound document — the review text,
+the work order, the change-request description — as the review progresses. Each
 comment, dismissal, or thread conclusion queues a rework. A rework runs as a
 **one-shot worker outside the interactive session**, and reworks are
 **serialized per document** — two edits to one board queue behind each other so
@@ -263,8 +266,9 @@ already landed instead of posting a second one.
 The outbound payload holds only what the reviewer sent. Internal conversation,
 model traces, and draft history never enter it unless their text became
 outbound draft content. There is no hosted Rennet backend: of the exit
-payload, the registered forge receives the review or pull request (currently
-GitHub), and the harness provider receives model-turn context.
+payload, the registered forge receives the review or change request (GitHub
+reviews and pull requests, or GitLab.com merge requests), and the harness
+provider receives model-turn context.
 
 ## The three exits, as built
 
@@ -303,7 +307,7 @@ The exits themselves:
   with a terminal failure and leaves the checkpoint evidence intact for a
   regeneration-only retry. The worker-to-record interval and durable replay of
   execution-phase receipts remain outside this restart boundary.
-- **The pull request** — `publish.compose(mode:"pr")` resolves the effective
+- **The pull or merge request** — `publish.compose(mode:"pr")` resolves the effective
   push URL before drafting and shows its provider-qualified repository on the
   preview. That target joins the canonical submission in a **stable derived
   `compositionId`**, so an unchanged draft re-raises the *same* publish-ready.
@@ -311,13 +315,14 @@ The exits themselves:
   publish-ready idempotently** (PR-lane ripening). `publish.submitPr` resolves
   the destination again, refuses a provider or repository change before push,
   and gives the same resolved destination to both the named-remote push and the
-  forge create operation. Opening remains idempotent by head: one PR per head,
-  reused on re-submit.
+  forge create operation. Opening remains idempotent by head and base, with an
+  existing change request reused on re-submit.
 
 Nothing here posts. Every exit drafts and previews; the branch push that opens a
-PR is not publication, and a GitHub review egresses only when Rai clicks Post.
+pull or merge request is not publication, and a GitHub review egresses only when
+Rai clicks Post.
 
-## Opening the pull request
+## Opening the pull or merge request
 
 The own-branch exit is one action. Before the preview appears, the server
 resolves one registered forge destination from the effective push URL and names
@@ -325,11 +330,17 @@ its provider and repository beside the branch range. The composition binding
 covers that exact target. On sign, the server verifies the previewed head against
 the active patchset, resolves the destination again, and refuses any provider or
 repository drift before mutation. The one resolved object then supplies both the
-named remote to push and the repository passed to the forge adapter. If an open
-pull request already exists for that head and base it is reused; otherwise one is
-created from the previewed title and body. A detached HEAD, unsupported remote,
-ambiguous push URL, or changed destination fails before the push rather than
-sending something the preview did not describe.
+named remote to push and the repository passed to the forge adapter. GitHub opens
+a pull request through its registered adapter; GitLab.com opens a merge request
+through `glab` in the repository's own host or WSL environment. The UI follows
+each provider's vocabulary and number marker: **Pull Request #42** or **Merge
+Request !42**. If an open change request already exists for that head and base it
+is reused; otherwise one is created from the previewed title and body. A detached
+HEAD, unsupported remote, ambiguous push URL, or changed destination fails before
+the push rather than sending something the preview did not describe. An unavailable
+`glab` is discovered after the branch push but before merge-request creation; it
+fails without borrowing a CLI from another host, and the Settings health row names
+that host's repair.
 
 ## Rounds: the own-branch loop
 
@@ -467,10 +478,10 @@ sending something the preview did not describe.
    at the same line. So the round surface carries no comment gutter and no
    selection toolbar, and does not paint the review's marks either — the read
    direction of the same mismatch.
-8. Repeat until nothing is left to ask. The surface becomes the pull
+8. Repeat until nothing is left to ask. The surface becomes the pull or merge
    request — one action pushes the branch and opens it, idempotently. After
-   the PR exists, rounds continue identically; there is no self-review lane
-   on one's own pull request.
+   the change request exists, rounds continue identically; there is no
+   self-review lane on one's own change request.
 
 ### Carry-forward is a verdict, not a skip
 
@@ -535,7 +546,7 @@ the baseline the successor is compared against.
 The worker runs at the repository root with the harness's default tool set. Its
 checkpoint diff and changed-path list are the work signal even when HEAD stays
 unchanged; the rounds ledger records that evidence and the observed HEAD range.
-Pushing and opening the pull request remain the pull-request exit's job.
+Pushing and opening the pull or merge request remain the change-request exit's job.
 Repositories containing submodules are unsupported
 here — a gitlink can escape the checkpoint diff — and the run fails before it
 starts rather than reporting a diff it cannot trust.

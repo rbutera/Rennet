@@ -39,6 +39,7 @@ import {
   createDaemonSettingsStore,
   createGitHubOctokit,
   createGitHubProjectPrSource,
+  createGitLabPrSubmissionAdapter,
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
@@ -64,6 +65,7 @@ import {
   executeExternalCommand,
   FileProjectStore,
   FileThreadStore,
+  type ForgeDetectionDeps,
   GenerationStore,
   GITHUB_REQUEST_TIMEOUT_MS,
   GitCaptureAdapter,
@@ -74,6 +76,7 @@ import {
   GitHubForgeAdapter,
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
+  type GitLabPrSubmissionCommandRunner,
   gitForRepoFactory,
   isGitHubNetworkError,
   KnowledgeStore,
@@ -141,6 +144,7 @@ import {
   detectLocus,
   escapePath,
   type ForgePort,
+  type ForgePublishPort,
   type ForgePullRequestRef,
   findingDispositionMigrationEvents,
   guardSeatTurn,
@@ -217,7 +221,11 @@ import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
-import { resolveForgePullRequestDestination, submitForgePullRequest } from "./forge-submission";
+import {
+  type ForgePrSubmissionResolver,
+  resolveForgePullRequestDestination,
+  submitForgePullRequest,
+} from "./forge-submission";
 import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
@@ -240,7 +248,6 @@ import {
 import { createProcessProject } from "./process-project";
 import {
   createForgeRegistry,
-  type ForgeProvider,
   fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
@@ -421,6 +428,28 @@ export async function captureBranchPatchset(input: {
 
 function detectedLocusForRepo(repoRoot: string): Locus {
   return resolveLocus(detectLocus(repoRoot)).value;
+}
+
+export interface GitLabPrSubmissionResolverDeps {
+  readonly locusForRepo: (repoRoot: string) => Locus;
+  readonly detectionDepsForLocus: (
+    locus: Locus,
+  ) => ForgeDetectionDeps | Promise<ForgeDetectionDeps>;
+  readonly run?: GitLabPrSubmissionCommandRunner;
+}
+
+export function createGitLabPrSubmissionResolver(
+  deps: GitLabPrSubmissionResolverDeps,
+): ForgePrSubmissionResolver {
+  return async (repoRoot) => {
+    const locus = deps.locusForRepo(repoRoot);
+    return createGitLabPrSubmissionAdapter({
+      detectionDeps: await deps.detectionDepsForLocus(locus),
+      locus,
+      repositoryRoot: repoRoot,
+      ...(deps.run === undefined ? {} : { run: deps.run }),
+    });
+  };
 }
 
 function handoffTurnExecution(locus: Locus, repoRoot: string): HandoffTurnExecution {
@@ -661,6 +690,15 @@ export interface RennetServerOptions {
     readonly sessionId: string;
     readonly dispatchId: string;
   }) => void | Promise<void>;
+  /** Hermetic seam for destination reads and the named-remote branch push. */
+  readonly forgeSubmissionGitForLocus?: (locus: Locus) => GitExec;
+  /** Hermetic seam for GitLab CLI discovery and execution through the production resolver. */
+  readonly gitLabPrSubmissionEffects?: {
+    readonly detectionDepsForLocus: (
+      locus: Locus,
+    ) => ForgeDetectionDeps | Promise<ForgeDetectionDeps>;
+    readonly run: GitLabPrSubmissionCommandRunner;
+  };
 }
 
 export interface RennetServer {
@@ -1129,24 +1167,38 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
   };
 
-  // Publication and pull-request submission remain GitHub-only. This registry's type
-  // does not carry read capabilities, so it cannot accidentally satisfy the CI path.
-  const forgeProviders = createForgeRegistry<ForgeProvider>([
+  // Review publication is independently capability-routed. GitLab submission below
+  // does not imply that GitLab review posting exists.
+  const forgeReviewPublishers = createForgeRegistry<ForgePublishPort>([
     {
       forge: "github",
-      implementation: {
-        review: new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit }),
-        pullRequest: new GitHubPrSubmissionAdapter({
-          resolveOctokit: resolveGitHubOctokit,
-        }),
-      },
+      implementation: new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit }),
     },
   ]);
 
-  // CI is independently capability-routed so a read implementation never implies
-  // publish or PR submission. GitLab stays deliberately unregistered here until a
-  // production path can supply both its target identity and repository execution
-  // locus; otherwise a WSL review would silently borrow the Windows host's `glab`.
+  const githubPrSubmission = new GitHubPrSubmissionAdapter({
+    resolveOctokit: resolveGitHubOctokit,
+  });
+  // Submission is repository-scoped because a WSL repository must use that distro's
+  // proven `glab`, never a similarly named binary from the Windows host.
+  const gitLabPrSubmissionResolver = createGitLabPrSubmissionResolver({
+    locusForRepo,
+    detectionDepsForLocus:
+      options.gitLabPrSubmissionEffects?.detectionDepsForLocus ??
+      (async (locus) =>
+        locus.kind === "wsl" ? wslForgeDetectionDeps(locus.distro) : defaultForgeDetectionDeps()),
+    ...(options.gitLabPrSubmissionEffects === undefined
+      ? {}
+      : { run: options.gitLabPrSubmissionEffects.run }),
+  });
+  const forgePrSubmissionResolvers = createForgeRegistry<ForgePrSubmissionResolver>([
+    { forge: "github", implementation: () => githubPrSubmission },
+    { forge: "gitlab", implementation: gitLabPrSubmissionResolver },
+  ]);
+
+  // CI is independently capability-routed so submission never implies a CI read.
+  // GitLab stays unregistered until intake (or a durable post-submit association)
+  // gives the review an exact MR target; own-branch submission alone does not.
   const forgeCiStatusSources = createForgeRegistry<Pick<ForgePort, "fetchCiStatus">>([
     { forge: "github", implementation: githubCiStatusSource },
   ]);
@@ -2014,9 +2066,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const resolvePullRequestDestination: NonNullable<
     DispatchDeps["resolvePullRequestDestination"]
   > = (repoRoot) => {
-    const gitInLocus = execaGitFor(locusForRepo(repoRoot));
+    const locus = locusForRepo(repoRoot);
+    const gitInLocus = options.forgeSubmissionGitForLocus?.(locus) ?? execaGitFor(locus);
     return resolveForgePullRequestDestination({
-      registry: forgeProviders,
+      registry: forgePrSubmissionResolvers,
       git: gitInLocus,
       repoRoot,
     });
@@ -2025,9 +2078,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Pushing your own branch is not publishing (AGENTS.md); the provider create remains the
   // only external publication and resolves credentials lazily inside that operation.
   const submitPullRequest: NonNullable<DispatchDeps["submitPullRequest"]> = (input) => {
-    const gitInLocus = execaGitFor(locusForRepo(input.repoRoot));
+    const locus = locusForRepo(input.repoRoot);
+    const gitInLocus = options.forgeSubmissionGitForLocus?.(locus) ?? execaGitFor(locus);
     return submitForgePullRequest({
-      registry: forgeProviders,
+      registry: forgePrSubmissionResolvers,
       git: gitInLocus,
       ...input,
     });
@@ -3047,7 +3101,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A review-scoped turn marks its review running for the duration (#383 batch) — the real
     // source of the projected `attention.running`, read by the listener's projection context.
     inFlightReviews,
-    publishPortFor: (repository) => forgeProviders.sourceFor(repository)?.review,
+    publishPortFor: (repository) => forgeReviewPublishers.sourceFor(repository),
     resolvePullRequestDestination,
     submitPullRequest,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn

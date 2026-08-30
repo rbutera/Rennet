@@ -33,7 +33,7 @@ flowchart LR
   session --> boards[Read the boards]
   boards --> raise[Comment, question, request changes]
   raise --> asks[Staged asks]
-  asks --> exit[Post review · Dispatch round · Open pull request]
+  asks --> exit[Post review · Dispatch round · Open pull or merge request]
   exit -->|a round returns| boards
 ```
 
@@ -311,19 +311,21 @@ tells you which one you are in.
 While asks remain, the page is **Changes**: one card per ask with its intent,
 provenance, text, and anchor. The same **Revise / Drop / Explain** steering
 works on an ask's text. **Dispatch Round** sits beneath the cards. The pull
-request waits as a single muted line at the foot.
+or merge request waits as a single muted line at the foot.
 
 Work orders exist on your own branch only. A teammate PR never offers one.
 
-### Open the pull request
+### Open the pull or merge request
 
 When nothing is left to ask and the description is ready, the page *is* the
-pull request: the title as its heading, the drafted description rendered
-beneath, and one **Open Pull Request** action that pushes the branch and opens
-it. The receipt names the PR number and links to it.
+change request: the title as its heading, the drafted description rendered
+beneath, and one provider-named action that pushes the branch and opens it.
+GitHub shows **Open Pull Request** and a `#` receipt; GitLab.com shows **Open
+Merge Request** and a `!` receipt, using the authenticated `glab` in that
+repository's host or WSL environment.
 
-After the PR exists, rounds continue exactly as before. There is no separate
-lane for reviewing your own pull request.
+After the pull or merge request exists, rounds continue exactly as before.
+There is no separate lane for reviewing your own change request.
 
 ## Rounds
 

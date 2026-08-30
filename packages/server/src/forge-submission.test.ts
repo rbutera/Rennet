@@ -1,11 +1,12 @@
 import type { ForgePrSubmissionPort } from "@rennet/core";
 import { describe, expect, it, vi } from "vitest";
 import {
+  type ForgePrSubmissionResolver,
   type ResolvedForgePullRequestDestination,
   resolveForgePullRequestDestination,
   submitForgePullRequest,
 } from "./forge-submission";
-import { createForgeRegistry, type ForgeProvider } from "./project-forge-registry";
+import { createForgeRegistry } from "./project-forge-registry";
 
 const SUBMISSION = {
   title: "Route the forge",
@@ -25,10 +26,10 @@ const GITLAB_DESTINATION = {
 describe("forge pull-request destination resolution", () => {
   it("returns null for an unsupported effective push URL without mutating the repository", async () => {
     const githubSubmit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>();
-    const registry = createForgeRegistry<Pick<ForgeProvider, "pullRequest">>([
+    const registry = createForgeRegistry<ForgePrSubmissionResolver>([
       {
         forge: "github",
-        implementation: { pullRequest: { submitPullRequest: githubSubmit } },
+        implementation: () => ({ submitPullRequest: githubSubmit }),
       },
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
@@ -50,10 +51,10 @@ describe("forge pull-request destination resolution", () => {
 
   it("returns null for an ambiguous effective push URL without mutating the repository", async () => {
     const githubSubmit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>();
-    const registry = createForgeRegistry<Pick<ForgeProvider, "pullRequest">>([
+    const registry = createForgeRegistry<ForgePrSubmissionResolver>([
       {
         forge: "github",
-        implementation: { pullRequest: { submitPullRequest: githubSubmit } },
+        implementation: () => ({ submitPullRequest: githubSubmit }),
       },
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
@@ -76,10 +77,10 @@ describe("forge pull-request destination resolution", () => {
 
   it("uses a registered GitLab provider for the effective push URL", async () => {
     const gitlabSubmit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>();
-    const registry = createForgeRegistry<Pick<ForgeProvider, "pullRequest">>([
+    const registry = createForgeRegistry<ForgePrSubmissionResolver>([
       {
         forge: "gitlab",
-        implementation: { pullRequest: { submitPullRequest: gitlabSubmit } },
+        implementation: () => ({ submitPullRequest: gitlabSubmit }),
       },
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
@@ -101,6 +102,29 @@ describe("forge pull-request destination resolution", () => {
 });
 
 describe("forge pull-request submission", () => {
+  it("resolves the repository-scoped submitter before pushing", async () => {
+    const resolveGitLab = vi.fn<ForgePrSubmissionResolver>(async () => {
+      throw new Error("GitLab execution locus is unavailable");
+    });
+    const registry = createForgeRegistry<ForgePrSubmissionResolver>([
+      { forge: "gitlab", implementation: resolveGitLab },
+    ]);
+    const git = vi.fn(async () => "");
+
+    await expect(
+      submitForgePullRequest({
+        registry,
+        git,
+        repoRoot: "/workspace/gitlab",
+        headRef: SUBMISSION.head,
+        submission: SUBMISSION,
+        destination: GITLAB_DESTINATION,
+      }),
+    ).rejects.toThrow("GitLab execution locus is unavailable");
+    expect(resolveGitLab).toHaveBeenCalledWith("/workspace/gitlab");
+    expect(git).not.toHaveBeenCalled();
+  });
+
   it("uses one resolved destination for both push and provider submission", async () => {
     const outcome = {
       number: 17,
@@ -108,10 +132,13 @@ describe("forge pull-request submission", () => {
       reused: false,
     };
     const gitlabSubmit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>(async () => outcome);
-    const registry = createForgeRegistry<Pick<ForgeProvider, "pullRequest">>([
+    const resolveGitLab = vi.fn<ForgePrSubmissionResolver>(async () => ({
+      submitPullRequest: gitlabSubmit,
+    }));
+    const registry = createForgeRegistry<ForgePrSubmissionResolver>([
       {
         forge: "gitlab",
-        implementation: { pullRequest: { submitPullRequest: gitlabSubmit } },
+        implementation: resolveGitLab,
       },
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
@@ -153,6 +180,8 @@ describe("forge pull-request submission", () => {
       ],
     ]);
     expect(gitlabSubmit).toHaveBeenCalledTimes(1);
+    expect(resolveGitLab).toHaveBeenCalledOnce();
+    expect(resolveGitLab).toHaveBeenCalledWith("/repo");
     expect(gitlabSubmit.mock.calls[0]?.[0].target).toBe(destination.target);
     expect(gitlabSubmit).toHaveBeenCalledWith({
       target: destination.target,
@@ -162,10 +191,10 @@ describe("forge pull-request submission", () => {
 
   it("refuses an unregistered destination before push", async () => {
     const githubSubmit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>();
-    const registry = createForgeRegistry<Pick<ForgeProvider, "pullRequest">>([
+    const registry = createForgeRegistry<ForgePrSubmissionResolver>([
       {
         forge: "github",
-        implementation: { pullRequest: { submitPullRequest: githubSubmit } },
+        implementation: () => ({ submitPullRequest: githubSubmit }),
       },
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {

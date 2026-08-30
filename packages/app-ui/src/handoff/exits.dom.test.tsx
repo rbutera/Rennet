@@ -645,7 +645,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(useRennetStore.getState().review.stagedAsks.a1?.body).toBe(PROSE_BODY);
   });
 
-  it("Open Pull Request composes(pr) → submits, then receipts the PR number + link", async () => {
+  it("Open Merge Request composes(pr) → submits, then receipts the MR number + link", async () => {
     const submitted: CommandInput<"publish.submitPr">[] = [];
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": (input) => {
@@ -677,7 +677,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
     };
     // Own-branch review (no postTarget), nothing staged → the composed PR IS the page.
     const r = mountHandoff(review(), handlers);
-    const open = await r.findByRole("button", { name: /Open Pull Request/ });
+    const open = await r.findByRole("button", { name: "Open Merge Request" });
     expect(r.getByText("Harden the retry path")).toBeTruthy();
     expect(r.getByText("main ← feat/x · Draft")).toBeTruthy();
     expect(r.getByText("gitlab:acme/widget · feat/x → main")).toBeTruthy();
@@ -687,7 +687,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(submitted).toHaveLength(1);
     expect(submitted[0]?.target).toEqual(GITLAB_PR_TARGET);
     expect(submitted[0]?.payload).toBe(PAYLOAD);
-    expect(await r.findByText(/Pull request opened · #42/)).toBeTruthy();
+    expect(await r.findByText("Merge request opened · !42")).toBeTruthy();
     expect(r.getByText("gitlab.com/acme/widget/-/merge_requests/42")).toBeTruthy();
   });
 });
