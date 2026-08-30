@@ -933,22 +933,46 @@ describe("transactional round source landing", () => {
     const mover = exclusiveRenameMover();
     for (const unit of attempt.units) {
       if (unit.path === "current-link") {
-        const receipts = await Promise.all([
-          landTransactionalRoundSourceUnit({
+        let releaseBlockedMove: () => void = () => undefined;
+        let reportBlockedMove: () => void = () => undefined;
+        const blockedMove = new Promise<void>((resolve) => {
+          reportBlockedMove = resolve;
+        });
+        const releaseMove = new Promise<void>((resolve) => {
+          releaseBlockedMove = resolve;
+        });
+        const sourcePath = join(realpathSync(current.sourceRoot), unit.path);
+        const backupPath = join(realpathSync(current.sourceRoot), unit.backupPath);
+        const delayedMover: ExclusiveNamespaceMover = {
+          async move(paths) {
+            if (paths.sourcePath === sourcePath && paths.destinationPath === backupPath) {
+              reportBlockedMove();
+              await releaseMove;
+            }
+            return mover.move(paths);
+          },
+        };
+        const delayedLanding = landTransactionalRoundSourceUnit({
+          sourceRoot: current.sourceRoot,
+          worktreePath: current.worktreePath,
+          attempt,
+          unit,
+          mover: delayedMover,
+        });
+        await blockedMove;
+        let winningReceipt: RoundSourceLandingUnitReceipt;
+        try {
+          winningReceipt = await landTransactionalRoundSourceUnit({
             sourceRoot: current.sourceRoot,
             worktreePath: current.worktreePath,
             attempt,
             unit,
             mover,
-          }),
-          landTransactionalRoundSourceUnit({
-            sourceRoot: current.sourceRoot,
-            worktreePath: current.worktreePath,
-            attempt,
-            unit,
-            mover,
-          }),
-        ]);
+          });
+        } finally {
+          releaseBlockedMove();
+        }
+        const receipts = [winningReceipt, await delayedLanding];
         expect(receipts.every((receipt) => receipt.unitId === unit.id)).toBe(true);
         expect(readlinkSync(join(current.sourceRoot, unit.path))).toBe("link-target-b");
         return;
