@@ -7,6 +7,7 @@ import {
   openProjectPullRequest,
   type ProjectPullRequestOpener,
   repositoryIdentityAgrees,
+  resolveProjectContextRepository,
   resolveProjectRepositoryRoot,
 } from "./project-forge-registry";
 
@@ -163,6 +164,82 @@ describe("forge registry", () => {
         }),
       }),
     ).resolves.toBe("/workspace/gitlab");
+  });
+
+  it("selects the exact member map in a two-repository workspace", async () => {
+    const identityByRoot = new Map([
+      [
+        "/workspace/github",
+        {
+          repository: "acme/widget",
+          forgeRepository: GITHUB_WIDGET,
+        },
+      ],
+      [
+        "/workspace/gitlab",
+        {
+          repository: "acme/widget",
+          forgeRepository: GITLAB_WIDGET,
+        },
+      ],
+    ]);
+    const identityForRoot = async (root: string) => {
+      const identity = identityByRoot.get(root);
+      if (identity === undefined) throw new Error(`missing identity for ${root}`);
+      return identity;
+    };
+
+    await expect(
+      resolveProjectContextRepository({
+        project: PROJECT,
+        target: { repository: "acme/widget", forgeRepository: GITLAB_WIDGET },
+        identityForRoot,
+      }),
+    ).resolves.toEqual({ kind: "resolved", repositoryRoot: "/workspace/gitlab" });
+
+    // Positive control: changing only the repository address must select the other map.
+    await expect(
+      resolveProjectContextRepository({
+        project: PROJECT,
+        target: { repository: "acme/widget", forgeRepository: GITHUB_WIDGET },
+        identityForRoot,
+      }),
+    ).resolves.toEqual({ kind: "resolved", repositoryRoot: "/workspace/github" });
+  });
+
+  it("returns member identities for an unaddressed multi-repository project", async () => {
+    await expect(
+      resolveProjectContextRepository({
+        project: PROJECT,
+        target: {},
+        identityForRoot: async (root) =>
+          root === "/workspace/github"
+            ? { repository: "acme/widget", forgeRepository: GITHUB_WIDGET }
+            : { repository: "acme/widget", forgeRepository: GITLAB_WIDGET },
+      }),
+    ).resolves.toEqual({
+      kind: "members",
+      members: [
+        { repository: "acme/widget", forgeRepository: GITHUB_WIDGET },
+        { repository: "acme/widget", forgeRepository: GITLAB_WIDGET },
+      ],
+    });
+  });
+
+  it("does not fall back to the primary repository when a named member is absent", async () => {
+    await expect(
+      resolveProjectContextRepository({
+        project: PROJECT,
+        target: {
+          repository: "acme/missing",
+          forgeRepository: { forge: "github", owner: "acme", name: "missing" },
+        },
+        identityForRoot: async (root) =>
+          root === "/workspace/github"
+            ? { repository: "acme/widget", forgeRepository: GITHUB_WIDGET }
+            : { repository: "acme/widget", forgeRepository: GITLAB_WIDGET },
+      }),
+    ).resolves.toEqual({ kind: "missing" });
   });
 
   it("derives owner/name before comparing one-sided structured identities", () => {

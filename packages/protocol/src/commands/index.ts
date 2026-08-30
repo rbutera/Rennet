@@ -715,30 +715,53 @@ const definitions = {
   // Pure read of the persisted Repo Map: no rebuild, no model spend. An absent
   // or gate-failing snapshot is a typed absent, never a fabricated map.
   "project.contextMap": {
-    input: z.object({ projectId: z.string().min(1) }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: projectContextMapResultSchema,
   },
   // Project-scoped orchestrator ask over the persisted snapshot + knowledge set.
   // Model spend through the user's own harness; unanswered and failed are
   // first-class honest results, never a clean answer without evidence.
   "project.contextAsk": {
-    input: z.object({
-      projectId: z.string().min(1),
-      question: z.string().min(1),
-      /** Restrict consulted context to a scope name or repo-relative subtree. */
-      scope: z.string().optional(),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+        question: z.string().min(1),
+        /** Restrict consulted context to a scope name or repo-relative subtree. */
+        scope: z.string().optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: projectContextAskResultSchema,
   },
   // Human disposition of a knowledge statement (the R54 "a human confirms it"
   // surface): flips status by id and persists the set. Disposition never edits
   // the claim, so the content-hash id stays stable.
   "project.knowledgeDisposition": {
-    input: z.object({
-      projectId: z.string().min(1),
-      statementId: z.string().min(1),
-      disposition: z.enum(["confirmed", "rejected"]),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+        statementId: z.string().min(1),
+        disposition: z.enum(["confirmed", "rejected"]),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: knowledgeDispositionResultSchema,
   },
   // ── The Flagged lens (issue #138) ──────────────────────────────────────────

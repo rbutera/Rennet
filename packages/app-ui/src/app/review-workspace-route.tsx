@@ -25,7 +25,7 @@ import {
   useRoundsUnavailable,
 } from "../rounds/rounds-data";
 import { generationLine, RoundsLedger } from "../rounds/rounds-ledger";
-import { useSessionProjectId } from "../routes/slug";
+import { useSessionProjectContextAddress } from "../routes/slug";
 import { ROUTES, readSessionQuery, sessionPath, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
@@ -82,7 +82,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const mode = resolveEntryMode(review);
   // WHICH project this session belongs to — the session ROW's own `projectId`, which is what
   // `?view=map` needs and what `review.repositoryRoot` cannot supply.
-  const projectId = useSessionProjectId(slug);
+  const projectContextAddress = useSessionProjectContextAddress(slug);
 
   // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the
   // reviewer's ephemeral acts (staged asks, retired ledger, inline edits, the verdict override) are
@@ -272,10 +272,14 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         // board so leaving the map does not leave the session. The wrapper supplies the
         // height and scroller the surrounding column expects.
         <div className="min-h-0 flex-1 overflow-auto">
-          {projectId === undefined ? null : projectId === null ? (
+          {projectContextAddress === undefined ? null : projectContextAddress === null ? (
             <MapUnavailable />
           ) : (
-            <ProjectContextMapView projectId={projectId} onBack={toBoard} />
+            <ProjectContextMapView
+              projectId={projectContextAddress.projectId}
+              repositoryAddress={projectContextAddress.repositoryAddress}
+              onBack={toBoard}
+            />
           )}
         </div>
       ) : view === "diff" ? (
