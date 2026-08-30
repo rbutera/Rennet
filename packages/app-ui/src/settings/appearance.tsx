@@ -146,7 +146,8 @@ export function AppearancePage() {
  * existed the wizard was unreachable after setup — `settings.completeWelcome` had no
  * counterpart. One click writes the replay stamp and the `settings.get` refetch reopens
  * the wizard over this page; there is no "are you sure", because nothing is destroyed:
- * finishing the welcome writes the completion stamp straight back.
+ * the replayed wizard's Project step offers to continue with a project this client
+ * already has, and its Ready step writes the completion stamp straight back.
  */
 function FirstRunSection() {
   const { mutate, pending } = useResetWelcome();
@@ -168,7 +169,7 @@ function FirstRunSection() {
         </Button>
       </Row>
       {error ? (
-        <div className="py-1 text-2xs text-accent" role="status">
+        <div className="py-1 text-2xs text-destructive" role="alert">
           The write failed: {error}
         </div>
       ) : null}
