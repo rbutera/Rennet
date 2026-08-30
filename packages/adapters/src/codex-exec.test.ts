@@ -407,6 +407,33 @@ describe("sanitizeSchemaForCodex", () => {
     expect(out.anyOf[1]?.additionalProperties).toBe(false);
   });
 
+  it("rewrites oneOf to the OpenAI-supported anyOf recursively", () => {
+    const input = {
+      type: "array",
+      items: {
+        oneOf: [
+          {
+            type: "object",
+            properties: { kind: { const: "a" }, value: { type: "string" } },
+            required: ["kind", "value"],
+          },
+          {
+            type: "object",
+            properties: { kind: { const: "b" }, count: { type: "number" } },
+            required: ["kind", "count"],
+          },
+        ],
+      },
+    };
+
+    const out = sanitizeSchemaForCodex(input) as {
+      items: { oneOf?: unknown; anyOf?: unknown[] };
+    };
+    expect(out.items.oneOf).toBeUndefined();
+    expect(out.items.anyOf).toHaveLength(2);
+    expect(input.items.oneOf).toHaveLength(2);
+  });
+
   it("adds every property to `required` and makes a previously-optional one nullable", () => {
     const out = JSON.parse(
       JSON.stringify(

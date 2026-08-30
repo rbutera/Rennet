@@ -867,7 +867,7 @@ async function draftOneLens(
     const first = await seatTurn(basePrompt, 0);
     if (first.status !== "emitted") {
       return {
-        failure: `${who}: the initial drafting turn did not emit a board (${first.status}).`,
+        failure: `${who}: the initial drafting turn did not emit a board (${first.status}: ${first.message}).`,
       };
     }
     const absence = initialAbsence?.(first.body);

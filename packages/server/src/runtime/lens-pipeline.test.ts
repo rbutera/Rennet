@@ -3247,4 +3247,33 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     for (const o of result.boards) expect(o.failure).toBeDefined();
     expect(applied).toEqual([]);
   });
+
+  it("preserves the harness failure account when an initial drafter emits no board", async () => {
+    const failingPort = {
+      createSession: async () => ({
+        send: async () => undefined,
+        close: async () => undefined,
+        events: (async function* () {
+          yield {
+            kind: "error",
+            error: { message: "structured output exceeded the seat capability" },
+          };
+        })(),
+      }),
+    } as unknown as HarnessPort;
+    const result = await runLensPipeline({
+      claudePort: failingPort,
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (l) => `board:${l}`,
+    });
+    for (const outcome of result.boards) {
+      expect(outcome.failure).toContain("structured output exceeded the seat capability");
+    }
+  });
 });

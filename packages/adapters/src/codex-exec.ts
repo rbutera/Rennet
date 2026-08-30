@@ -78,6 +78,9 @@ function nullableSubschema(sub: unknown): unknown {
  *      each previously-optional property to `required` but make it NULLABLE (`anyOf`
  *      with `{type:null}`) so the model can still signal absence; `stripNullDeep`
  *      then removes the emitted nulls, restoring the original optional semantics.
+ *   3. OpenAI structured outputs rejects `oneOf`. We weaken it to the supported
+ *      `anyOf` for generation; the original Zod schema still validates the emitted
+ *      body at the core boundary, preserving exclusive-union semantics.
  *
  * Pure, deep, non-mutating.
  */
@@ -86,6 +89,10 @@ export function sanitizeSchemaForCodex(schema: unknown): unknown {
   if (schema === null || typeof schema !== "object") return schema;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (key === "oneOf" && Array.isArray(value)) {
+      out.anyOf = value.map(sanitizeSchemaForCodex);
+      continue;
+    }
     if (
       key === "additionalProperties" &&
       value !== null &&
