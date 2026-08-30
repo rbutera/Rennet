@@ -3,12 +3,14 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, expect, test } from "vitest";
 import { Collapse } from "./collapse";
+import { Command, CommandItem, CommandList } from "./command";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
 } from "./context-menu";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "./input-group";
 import { Kbd } from "./kbd";
 import { Progress } from "./progress";
 import { ResizeHandle } from "./resizable";
@@ -227,6 +229,59 @@ test("toggle-group applies the vertical class against Base UI's data-orientation
   expect(group.getAttribute("data-orientation")).toBe("vertical");
   expect(group.className).toContain("data-[orientation=vertical]:flex-col");
   expect(group.className).not.toContain("data-vertical:flex-col");
+});
+
+// ── Why CommandItem styles on `data-[selected=true]`, not `data-selected` ─────
+// cmdk stamps `data-selected` on EVERY row — "false" on the ones that are not
+// highlighted — so a presence-matching Tailwind variant (`data-selected:bg-muted`,
+// which the upstream template uses) lights the whole list at once. This pins the
+// attribute's real shape, and pins the class to the equality form.
+//
+// What it cannot catch: whether the styles those variants carry are the right ones.
+// It proves the SELECTOR, not the paint.
+test("cmdk marks unselected rows data-selected='false', so only the =true form may be styled", () => {
+  render(
+    <Command>
+      <CommandList>
+        <CommandItem value="alpha">Alpha</CommandItem>
+        <CommandItem value="beta">Beta</CommandItem>
+      </CommandList>
+    </Command>,
+  );
+  const rows = screen.getAllByRole("option");
+  expect(rows).toHaveLength(2);
+  // cmdk highlights the first row on mount; the second is NOT highlighted — and still
+  // carries the attribute. Presence-matching would style both.
+  expect(rows[0]?.getAttribute("data-selected")).toBe("true");
+  expect(rows[1]?.getAttribute("data-selected")).toBe("false");
+  for (const row of rows) {
+    expect(row.className).toContain("data-[selected=true]:bg-muted");
+    // The bare presence form must not appear (it would be a superset of the above).
+    expect(row.className).not.toMatch(/(?:^|\s|:)data-selected:/);
+  }
+});
+
+test("an input-group addon focuses the control, and yields to a button inside it", async () => {
+  let hits = 0;
+  render(
+    <InputGroup>
+      <InputGroupInput aria-label="Address" />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton onClick={() => hits++}>Clear</InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>,
+  );
+  const input = screen.getByLabelText("Address");
+  const addon = document.querySelector('[data-slot="input-group-addon"]') as HTMLElement;
+
+  // Clicking the addon's own padding is a focus shorthand for the control.
+  fireEvent.click(addon, { target: addon });
+  expect(document.activeElement).toBe(input);
+
+  // Clicking the button inside it runs the button — it does not get eaten by the focus hop.
+  input.blur();
+  await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(hits).toBe(1);
 });
 
 test("toggle and toggle-group honor a FUNCTION-form className (cn/clsx would drop it)", () => {

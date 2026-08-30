@@ -386,19 +386,15 @@ function ModelCell({
                 <CommandItem
                   key={model}
                   value={model}
+                  // The tick is the kit's own trailing column now (CommandItem renders it
+                  // off `data-checked`), so the row no longer carries a second one.
+                  data-checked={model === assignment.model}
                   onSelect={() => {
                     onChange(model);
                     setOpen(false);
                   }}
                   className="font-mono text-xs"
                 >
-                  <Icon
-                    icon={Check}
-                    className={cn(
-                      "size-3",
-                      model === assignment.model ? "opacity-100" : "opacity-0",
-                    )}
-                  />
                   {model}
                 </CommandItem>
               ))}

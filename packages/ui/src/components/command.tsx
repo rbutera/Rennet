@@ -1,21 +1,26 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { SearchIcon } from "lucide-react";
+import { CheckIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { cn } from "../lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./dialog";
+import { InputGroup, InputGroupAddon } from "./input-group";
 
 // The standard cmdk-backed shadcn Command, vendored onto the Rennet ramp. cmdk owns
 // fuzzy filtering and ↑/↓/Enter keyboard navigation; the surrounding CommandDialog
 // reuses the kit Dialog (Base UI) for the portal, focus trap, Escape/outside-dismiss.
 // base-nova defaults (raw black scrims, off-ramp radius, palette colors) are mapped to the
 // semantic --rn-* utilities; the kit hex-lint + design-ramp guards keep re-pulls honest.
+//
+// Styling follows `spikes/board-prototype/components/ui/command.tsx`: a padded 12px-corner
+// popover holding an INSET search pill and rounded rows, rather than the upstream
+// edge-to-edge list with a full-bleed input rule.
 
 function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
   return (
     <CommandPrimitive
       data-slot="command"
       className={cn(
-        "flex size-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
+        "flex size-full flex-col overflow-hidden rounded-xl bg-popover p-1 text-popover-foreground",
         className,
       )}
       {...props}
@@ -39,8 +44,11 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
+      {/* Anchored a third of the way down instead of centred: the palette grows
+       *  DOWNWARDS as results arrive, so a centred popup would jump on every
+       *  keystroke. `translate-y-0` cancels the centring transform. */}
       <DialogContent
-        className={cn("overflow-hidden p-0", className)}
+        className={cn("top-1/3 translate-y-0 overflow-hidden p-0", className)}
         showCloseButton={showCloseButton}
       >
         {/* Inside the content so a CLOSED dialog renders no stray sr-only heading
@@ -49,9 +57,10 @@ function CommandDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <Command className="**:[[cmdk-group-heading]]:text-muted-foreground **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium **:[[cmdk-input-wrapper]_svg]:size-5 **:[[cmdk-input]]:h-12 **:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-3 **:[[cmdk-item]_svg]:size-5">
-          {children}
-        </Command>
+        {/* No size overrides here. The palette is the same control ramp as the rest
+         * of the app — the 48px input / 12px rows the upstream template scaled up to
+         * belonged to a different scale entirely. */}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   );
@@ -62,16 +71,25 @@ function CommandInput({
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
-    <div data-slot="command-input-wrapper" className="flex h-9 items-center gap-2 border-b px-3">
-      <SearchIcon className="size-4 shrink-0 opacity-50" strokeWidth={1.6} />
-      <CommandPrimitive.Input
-        data-slot="command-input"
-        className={cn(
-          "flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
-          className,
-        )}
-        {...props}
-      />
+    <div data-slot="command-input-wrapper" className="p-1 pb-0">
+      {/* An inset pill, not a full-bleed rule: the group owns the height so the well
+       *  and the field agree (the previous h-9 wrapper around an h-10 input clipped
+       *  the field by a pixel at every zoom level). */}
+      <InputGroup className="border-input/30 bg-input/30">
+        <CommandPrimitive.Input
+          data-slot="command-input"
+          className={cn(
+            "w-full bg-transparent pr-2.5 text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
+            className,
+          )}
+          {...props}
+        />
+        {/* Declared after the input but rendered before it — the addon's `inline-start`
+         *  alignment is `order-first`, and the group pads the input to clear it. */}
+        <InputGroupAddon>
+          <SearchIcon className="size-4 shrink-0 opacity-50" strokeWidth={1.6} />
+        </InputGroupAddon>
+      </InputGroup>
     </div>
   );
 }
@@ -80,7 +98,13 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Comman
   return (
     <CommandPrimitive.List
       data-slot="command-list"
-      className={cn("max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto", className)}
+      // The bar is hidden via ::-webkit-scrollbar only. Setting `scrollbar-width`
+      // would switch Chromium 121+ off the ::-webkit-* path the app themes its
+      // scrollbars through (index.css) — see that file's note.
+      className={cn(
+        "max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none [&::-webkit-scrollbar]:hidden",
+        className,
+      )}
       {...props}
     />
   );
@@ -128,16 +152,33 @@ function CommandSeparator({
   );
 }
 
-function CommandItem({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Item>) {
+function CommandItem({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof CommandPrimitive.Item>) {
   return (
     <CommandPrimitive.Item
       data-slot="command-item"
+      // `data-[selected=true]`, never the shorthand `data-selected`: cmdk renders the
+      // attribute on EVERY row (`data-selected="false"` on the unselected ones), so a
+      // presence-matching variant would light the whole list. Proven in additions.test.tsx.
       className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "group/command-item relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none in-data-[slot=dialog-content]:rounded-lg! data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-muted data-[selected=true]:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[selected=true]:*:[svg]:text-foreground",
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      {/* The chosen-row tick. cmdk never sets `data-checked` itself — a picker that
+       *  represents a current choice (project picker, model mappings) sets it on the
+       *  row, and a row ending in a shortcut hint uses that column instead. It holds
+       *  its column when unchecked so a list does not reflow as the choice moves. */}
+      <CheckIcon
+        strokeWidth={1.6}
+        className="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100"
+      />
+    </CommandPrimitive.Item>
   );
 }
 
@@ -145,7 +186,10 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<"span">) 
   return (
     <span
       data-slot="command-shortcut"
-      className={cn("ml-auto text-xs tracking-widest text-muted-foreground", className)}
+      className={cn(
+        "ml-auto text-xs tracking-widest text-muted-foreground group-data-[selected=true]/command-item:text-foreground",
+        className,
+      )}
       {...props}
     />
   );

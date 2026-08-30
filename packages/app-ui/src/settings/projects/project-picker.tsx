@@ -5,12 +5,11 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  cn,
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@rennet/ui";
-import { Check, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../../components/icon";
 import type { SidebarHost } from "../../shell/sidebar-data";
@@ -75,6 +74,9 @@ export function ProjectPicker({
                   <CommandItem
                     key={project.id}
                     value={displayName(project.id, project.name)}
+                    // The tick is the kit's own trailing column now (CommandItem renders it
+                    // off `data-checked`), so the row no longer carries a second one.
+                    data-checked={project.id === value}
                     onSelect={() => {
                       onChange(project.id);
                       setOpen(false);
@@ -86,10 +88,6 @@ export function ProjectPicker({
                       className="size-3.5 text-ink-soft"
                     />
                     <span className="flex-1">{displayName(project.id, project.name)}</span>
-                    <Icon
-                      icon={Check}
-                      className={cn("size-3.5", project.id === value ? "opacity-100" : "opacity-0")}
-                    />
                   </CommandItem>
                 ))}
               </CommandGroup>
