@@ -42,6 +42,13 @@ import { Trail, type TrailProps } from "./trail";
 // raised segmented control and these are outlined chrome pills, and the two halves
 // of Map · Diff share one outline that no tray draws.
 //
+// The segmented-control lint (eslint.config.mjs, autopsy S6) is not being dodged
+// here — these are not a segmented control. A segment set always has exactly one
+// member chosen; on the board NONE of these three is pressed, which is why the old
+// `ToggleGroup` had to model that state as an empty array. They are three
+// independent toggles over one query parameter, so each carries its own
+// `aria-pressed` and owes no group semantics.
+//
 // C20: the chat toggle lives on the RIGHTMOST pane, not in the chat header, and it
 // is present in BOTH directions — one control that opens and closes, never a split
 // expand-here / collapse-there pair. A control that only appears when the chat is
