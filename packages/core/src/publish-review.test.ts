@@ -73,6 +73,32 @@ describe("canonicalReviewPayload (issue #21) — the egress round-trip bytes", (
     expect(payload).toContain('"line":null');
   });
 
+  it("binds a multi-line span into the canonical bytes", () => {
+    const payload = canonicalReviewPayload(
+      artifact({
+        comments: [
+          {
+            path: "src/range.ts",
+            startLine: 8,
+            line: 10,
+            side: "RIGHT",
+            type: "request-change",
+            body: "keep this span together",
+          },
+        ],
+      }),
+    );
+
+    expect(JSON.parse(payload).comments[0]).toEqual({
+      path: "src/range.ts",
+      startLine: 8,
+      line: 10,
+      side: "RIGHT",
+      type: "request-change",
+      body: "keep this span together",
+    });
+  });
+
   it("distinguishes a single-byte body change (so a === check is not a prefix check)", () => {
     const base: ReviewCommentInput[] = [
       { path: "a", line: 1, side: "RIGHT", type: "comment", body: "hello" },
@@ -366,7 +392,8 @@ describe("handoffDispositionsFromProjection", () => {
     expect(reviewCommentsFromProjection(projection, activePatchset)).toEqual([
       {
         path: "src/current.ts",
-        line: 8,
+        startLine: 8,
+        line: 10,
         side: "LEFT",
         type: "request-change",
         body: "preserve the base-side contract",
@@ -487,6 +514,68 @@ describe("buildForgeReviewPost (issue #21)", () => {
     // The no-line comment folds into the body as a file-level note.
     expect(post.body).toContain("File-level notes");
     expect(post.body).toContain("README.md");
+  });
+
+  it("keeps the complete multi-line span in the exact thread descriptor", () => {
+    const rangedArtifact = artifact({
+      comments: [
+        {
+          path: "src/range.ts",
+          startLine: 8,
+          line: 10,
+          side: "RIGHT",
+          type: "request-change",
+          body: "change the whole branch",
+        },
+      ],
+    });
+    const ranged = buildForgeReviewPost(rangedArtifact, {
+      reviewId: "rev-range",
+      target: TARGET,
+      payload: canonicalReviewPayload(rangedArtifact),
+      capabilities: CAPS,
+    });
+
+    expect(ranged.threads).toEqual([
+      {
+        path: "src/range.ts",
+        startLine: 8,
+        line: 10,
+        side: "RIGHT",
+        body: "**Requested change** — change the whole branch",
+      },
+    ]);
+  });
+
+  it("folds an unsupported range into the body and durable ledger without narrowing it", () => {
+    const rangedArtifact = artifact({
+      comments: [
+        {
+          path: "src/range.ts",
+          startLine: 8,
+          line: 10,
+          side: "RIGHT",
+          type: "comment",
+          body: "read these lines together",
+        },
+      ],
+    });
+    const ranged = buildForgeReviewPost(rangedArtifact, {
+      reviewId: "rev-range-fold",
+      target: TARGET,
+      payload: canonicalReviewPayload(rangedArtifact),
+      capabilities: { ...CAPS, supportsMultiLineAnchors: false },
+    });
+
+    expect(ranged.threads).toEqual([]);
+    expect(ranged.body).toContain("`src/range.ts:8–10`");
+    expect(ranged.ledger).toEqual([
+      {
+        kind: "thread-fold",
+        path: "src/range.ts",
+        detail: "The forge cannot anchor lines 8–10 — folded into the review body.",
+      },
+    ]);
   });
 
   it("ledgers every fold — a no-line disposition is surfaced, never silently dropped", () => {

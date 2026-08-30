@@ -101,6 +101,30 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
     expect(thread).not.toHaveProperty("startSide");
   });
 
+  it("maps a multi-line thread as startLine through line on the same side", () => {
+    const ranged = post([
+      {
+        path: "src/a.ts",
+        startLine: 8,
+        line: 10,
+        side: "LEFT",
+        type: "request-change",
+        body: "restore this block",
+      },
+    ]);
+    const body = buildGitHubReviewRequest(ranged).requests[0]?.body as {
+      variables: { input: { threads: Record<string, unknown>[] } };
+    };
+
+    expect(body.variables.input.threads[0]).toMatchObject({
+      path: "src/a.ts",
+      startLine: 8,
+      startSide: "LEFT",
+      line: 10,
+      side: "LEFT",
+    });
+  });
+
   it("passes the resolved verdict through to the wire (APPROVE / REQUEST_CHANGES / COMMENT)", () => {
     // The wire posts the post's resolved verdict — a review tool must post the actual
     // verdict. Derived from the dispositions here; an override is exercised in the core
