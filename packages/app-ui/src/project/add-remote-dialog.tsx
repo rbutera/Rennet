@@ -122,14 +122,18 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
           </Field>
           <Field>
             <FieldLabel htmlFor="remote-code">Pairing code</FieldLabel>
+            {/* The kit's Field is presentational — it lays the row out, it does not wire
+             *  ids. So the helper is associated by hand, or a screen reader reads the
+             *  field with no mention of where the pairing code comes from. */}
             <Input
               id="remote-code"
               placeholder="one-time code"
               value={code}
               disabled={connecting}
+              aria-describedby="remote-code-description"
               onChange={(e) => setCode(e.target.value)}
             />
-            <FieldDescription>
+            <FieldDescription id="remote-code-description">
               Run <code className="rounded bg-raised px-1">rennet pair</code> on the machine for a
               one-time code. Open the link it prints to fill both fields.
             </FieldDescription>

@@ -632,7 +632,10 @@ function SidebarTree() {
                             className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none disabled:text-ink-faint"
                           />
                           {projectRenamePending ? (
-                            <Spinner className="size-3 shrink-0 text-ink-faint" />
+                            <Spinner
+                              className="size-3 shrink-0 text-ink-faint"
+                              aria-hidden="true"
+                            />
                           ) : (
                             <span className="text-2xs text-ink-faint">{activeCount}</span>
                           )}
@@ -664,7 +667,7 @@ function SidebarTree() {
                         <span className="flex-1 truncate">{project.name}</span>
                         {project.indexing ? (
                           <span className="flex items-center gap-1 text-2xs text-ink-faint">
-                            <Spinner className="size-3" />
+                            <Spinner className="size-3" aria-hidden="true" />
                             indexing
                           </span>
                         ) : (

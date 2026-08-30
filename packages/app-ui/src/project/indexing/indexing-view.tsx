@@ -161,7 +161,9 @@ function StepLine({ label, detail, status }: TimelineLine) {
   return (
     <div className="flex items-center gap-2 text-sm" data-step-status={status}>
       {running ? (
-        <Spinner className="size-3.5 shrink-0 text-model" />
+        // Decorative: every running step would otherwise announce "Loading" as its own
+        // live region, and the step's own label is what carries the state.
+        <Spinner className="size-3.5 shrink-0 text-model" aria-hidden="true" />
       ) : status === "failed" ? (
         <Icon icon={TriangleAlert} className="size-3.5 shrink-0 text-danger" />
       ) : (

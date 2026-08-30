@@ -63,7 +63,7 @@ export function SourceSwitcher({
             <span className="source-label min-w-0 truncate">{source.label}</span>
             {isConnecting ? (
               <span className="source-connecting ml-auto flex-none inline-flex items-center gap-1.5 text-sm text-ink-soft">
-                <Spinner className="size-3.5" />
+                <Spinner className="size-3.5" aria-hidden="true" />
                 connecting…
               </span>
             ) : null}
