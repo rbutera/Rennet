@@ -22,13 +22,14 @@ import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 
 const PROJECT: Project = {
   id: "p1",
-  name: "atlas",
-  path: "/repos/atlas",
-  kind: "repo",
-  repoCount: 1,
-  branchCount: 1,
+  name: "atlas-workspace",
+  path: "/repos",
+  kind: "workspace",
+  repoCount: 2,
+  branchCount: 2,
   primaryBranch: "main",
-  openPath: "/repos/atlas",
+  openPath: "/repos/atlas-a",
+  includedRepoPaths: ["/repos/atlas-a", "/repos/atlas-b"],
   addedAt: "2026-08-28T00:00:00.000Z",
   source: "local",
 };
@@ -36,7 +37,7 @@ const PROJECT: Project = {
 /** A pinned-snapshot review, so the route's working-tree freshness ask stays off the path. */
 const REVIEW = {
   id: "rv-1",
-  repositoryRoot: "/repos/atlas",
+  repositoryRoot: "/repos/atlas-b",
   status: "current",
   activePatchsetId: "ps-1",
   patchsets: [{ id: "ps-1", source: "local-branch" }],
@@ -44,7 +45,7 @@ const REVIEW = {
 
 /** Mount the real app at `path`, with `s1` owned by project `p1` and holding `rv-1`. */
 function mountApp(path: string, handlers: MemoryBridgeHandlers = {}) {
-  const asked: string[] = [];
+  const asked: unknown[] = [];
   const bridge = new MemoryBridge({
     ...frontDoorHandlers([PROJECT]),
     ...sessionHandlers([{ id: "s1", projectId: "p1", title: "Alpha" }]),
@@ -55,14 +56,17 @@ function mountApp(path: string, handlers: MemoryBridgeHandlers = {}) {
           projectId: "p1",
           title: "Alpha",
           target: "your-branch" as const,
+          claim: { branch: "main" },
+          repository: "acme/atlas-b",
+          forgeRepository: { forge: "github", owner: "acme", name: "atlas-b" },
           reviewId: "rv-1",
           createdAt: 0,
         },
       ],
     }),
     "review.load": () => ({ review: REVIEW, repositoryPresent: true }),
-    "project.contextMap": ({ projectId }) => {
-      asked.push(projectId);
+    "project.contextMap": (input) => {
+      asked.push(input);
       // `absent` is a real, typed answer this surface renders in full — enough to prove
       // WHICH surface mounted and WHICH project it asked for, with no map fixture to keep
       // in sync. The map's own content is `components/context-map-view`'s to test.
@@ -93,7 +97,13 @@ describe("?view=map renders the session project's context map (dead-destination 
     expect(onBoard()).toBe(false);
     // It asked for the project the SESSION ROW names — never one derived from the review's
     // repository root, which a workspace project shares across repositories.
-    expect(asked).toEqual(["p1"]);
+    expect(asked).toEqual([
+      {
+        projectId: "p1",
+        repository: "acme/atlas-b",
+        forgeRepository: { forge: "github", owner: "acme", name: "atlas-b" },
+      },
+    ]);
   });
 
   it("positive control: the same mount WITHOUT ?view=map shows the board and no map", async () => {

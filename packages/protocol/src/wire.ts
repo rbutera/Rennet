@@ -1051,6 +1051,18 @@ export const knowledgeSetSchema = z.object({
 });
 export type KnowledgeSetPayload = z.infer<typeof knowledgeSetSchema>;
 
+/** Wire-safe identity for one repository inside a workspace project. */
+export const projectRepositoryAddressSchema = z
+  .object({
+    repository: z.string().min(1),
+    forgeRepository: forgeRepoIdentitySchema.optional(),
+  })
+  .refine((address) => forgeRepositoryMatchesLegacy(address.repository, address.forgeRepository), {
+    path: ["forgeRepository"],
+    message: "forgeRepository must name the same owner/name as repository",
+  });
+export type ProjectRepositoryAddress = z.infer<typeof projectRepositoryAddressSchema>;
+
 export const projectContextMapResultSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ok"),
@@ -1067,6 +1079,10 @@ export const projectContextMapResultSchema = z.discriminatedUnion("status", [
      * compatibility with older daemons; current servers expose it when a journal exists.
      */
     run: projectProcessRunSchema.optional(),
+  }),
+  z.object({
+    status: z.literal("members"),
+    members: z.array(projectRepositoryAddressSchema).min(2),
   }),
 ]);
 export type ProjectContextMapResult = z.infer<typeof projectContextMapResultSchema>;

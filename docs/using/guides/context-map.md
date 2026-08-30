@@ -14,10 +14,13 @@ project finishes indexing, or from the **Map** control in a project's New Chat
 header. It opens as a full view; leaving it lands on that project's New Chat.
 
 **Map** in a session's top bar opens the same map for that session's project,
-without leaving the session. Leaving it there returns to the board rather than to
-New Chat. A review opened by a direct link rather than through one of its
-sessions has no project to map, and the view says so instead of showing the
-board again.
+without leaving the session. In a workspace with several repositories, the
+session opens the map for the exact repository under review. The standalone
+project map first lists the member repositories so you can choose one; it never
+silently substitutes the workspace's first repository. Leaving a session map
+returns to the board rather than to New Chat. A review opened by a direct link
+rather than through one of its sessions has no project to map, and the view says
+so instead of showing the board again.
 
 The map starts generating in the background as soon as you add a project, even
 if you leave the indexing screen or start a review immediately. Opening **Map**

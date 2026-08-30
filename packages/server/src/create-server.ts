@@ -176,6 +176,7 @@ import {
 } from "@rennet/core";
 import type {
   CodingHarnessSelection,
+  CommandInput,
   ConventionCatalogue,
   CouncilHarnessId,
   DetectedForge,
@@ -258,6 +259,7 @@ import {
   fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
+  resolveProjectContextRepository,
   resolveProjectRepositoryRoot,
 } from "./project-forge-registry";
 import {
@@ -3656,6 +3658,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   };
 
+  type ProjectContextAddressInput = Pick<
+    CommandInput<"project.contextMap">,
+    "projectId" | "repository" | "forgeRepository"
+  >;
+  const resolveProjectContext = async (input: ProjectContextAddressInput) => {
+    const project = projectStore.list().find((entry) => entry.id === input.projectId);
+    const selection = await resolveProjectContextRepository({
+      project,
+      target: {
+        ...(input.repository === undefined ? {} : { repository: input.repository }),
+        ...(input.forgeRepository === undefined ? {} : { forgeRepository: input.forgeRepository }),
+      },
+      identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+    });
+    return { project, selection };
+  };
+
   dispatch = createDispatch({
     service,
     allowedRoots,
@@ -4115,12 +4134,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // Pure read of the persisted Repo Map: resolve the project's repoKey exactly as
     // the store writes it, gate the stored tip fresh, then serve queryProjectMap +
     // the local knowledge set verbatim. No rebuild, no model spend.
-    projectContextMap: async (projectId) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      const projectRoot = project ? project.openPath || project.path : null;
-      if (!projectRoot) return { status: "absent", reason: "unknown project" };
+    projectContextMap: async (input) => {
+      const { project, selection } = await resolveProjectContext(input);
+      if (selection.kind === "members") {
+        return { status: "members", members: [...selection.members] };
+      }
+      if (selection.kind === "missing") {
+        return {
+          status: "absent",
+          reason:
+            project === undefined
+              ? "unknown project"
+              : "the selected repository is not part of this project",
+        };
+      }
+      const projectRoot = selection.repositoryRoot;
       const repoKey = repoKeyForRoot(projectRoot);
-      const processRecord = projectProcessJournal.load(repoKey);
+      const primaryRoot = project ? project.openPath || project.path : projectRoot;
+      const processRecord = projectProcessJournal.load(repoKeyForRoot(primaryRoot));
       const absent = (reason: string): ProjectContextMapResult => ({
         status: "absent",
         reason,
@@ -4159,13 +4190,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // keyed at the persisted tip. The backend owns every honest failure state
     // (absent harness, snapshot refusal) — this wiring only supplies the project's
     // resolve closure and the user's own harness port.
-    projectContextAsk: async ({ projectId, question, scope }) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      const projectRoot = project ? project.openPath || project.path : null;
-      if (!projectRoot) {
+    projectContextAsk: async (input) => {
+      const { project, selection } = await resolveProjectContext(input);
+      if (selection.kind !== "resolved") {
         return {
           status: "failed",
-          failureReason: "unknown project",
+          failureReason:
+            project === undefined
+              ? "unknown project"
+              : selection.kind === "members"
+                ? "select a repository before asking about this workspace"
+                : "the selected repository is not part of this project",
           cost: {
             turns: 0,
             model: null,
@@ -4176,6 +4211,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           },
         };
       }
+      const projectRoot = selection.repositoryRoot;
       const repoKey = repoKeyForRoot(projectRoot);
       const backend = contextAskBackend({
         reader: new ProjectContextReader(liveSnapshotStore),
@@ -4191,26 +4227,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         repoRoot: projectRoot,
       });
       return backend.ask({
-        question,
-        ...(scope === undefined ? {} : { scope }),
+        question: input.question,
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
       }) as Promise<ProjectContextAskResult>;
     },
     // The human-confirm surface (R54): flip one statement's status by id and persist
     // the whole set atomically. Map preserves the deterministic id order; the claim
     // is never edited, so the content-hash id stays stable.
-    knowledgeDisposition: async ({ projectId, statementId, disposition }) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      const projectRoot = project ? project.openPath || project.path : null;
-      if (!projectRoot) return { status: "not-found", statementId };
+    knowledgeDisposition: async (input) => {
+      const { selection } = await resolveProjectContext(input);
+      if (selection.kind !== "resolved") {
+        return { status: "not-found", statementId: input.statementId };
+      }
+      const projectRoot = selection.repositoryRoot;
       const repoKey = repoKeyForRoot(projectRoot);
       const knowledgeStore = new KnowledgeStore(liveSnapshotStore);
       const set = knowledgeStore.loadLocal(repoKey);
-      const statement = set?.statements.find((entry) => entry.id === statementId);
-      if (!set || !statement) return { status: "not-found", statementId };
-      const updated = { ...statement, status: disposition };
+      const statement = set?.statements.find((entry) => entry.id === input.statementId);
+      if (!set || !statement) return { status: "not-found", statementId: input.statementId };
+      const updated = { ...statement, status: input.disposition };
       knowledgeStore.save(repoKey, {
         ...set,
-        statements: set.statements.map((entry) => (entry.id === statementId ? updated : entry)),
+        statements: set.statements.map((entry) =>
+          entry.id === input.statementId ? updated : entry,
+        ),
       });
       return { status: "ok", statement: updated } as KnowledgeDispositionResult;
     },
