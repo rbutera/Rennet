@@ -280,6 +280,29 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
     ]);
     cleanup();
   });
+
+  it("the model picker is a short unsearched list, not a filtered command palette", async () => {
+    const { getByRole, user } = mount(
+      withReview({ agentsByHost: { h1: BOTH_AGENTS }, reviewRoles: REVIEW_ROLE_DEFAULTS }, [
+        "claude",
+      ]),
+    );
+    await user.click(getByRole("button", { name: "Edit Mappings" }));
+    await user.click(body().getByRole("button", { name: "Orchestrator model" }));
+
+    // The models are all on screen, so there is nothing to search: no input, and no
+    // "no match" line for a filter that cannot run.
+    const options = body().getAllByRole("option");
+    expect(options.length).toBeGreaterThan(1);
+    expect(body().queryByPlaceholderText(/search/i)).toBeNull();
+    expect(document.querySelector("[cmdk-input]")).toBeNull();
+    // …and the surface the options sit in is the narrow padded popover, not the wide
+    // flush one a search box needs.
+    const popover = options[0]?.closest('[data-slot="popover-content"]');
+    expect(popover?.className).toContain("w-44");
+    expect(popover?.className).not.toContain("p-0");
+    cleanup();
+  });
 });
 
 describe("MappingsDialog — honest-present + honest-null controls (C16 positive controls)", () => {

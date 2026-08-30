@@ -1,9 +1,7 @@
 import {
   Button,
   Command,
-  CommandEmpty,
   CommandGroup,
-  CommandInput,
   CommandItem,
   CommandList,
   cn,
@@ -43,8 +41,10 @@ import {
 //     unavailable until BOTH agents are enabled (hovering anywhere in it says
 //     which one unlocks it); losing the second agent settles Single whatever was
 //     clicked; Single auto-detects its provider, Claude first, and names it.
-//   • Each role names its model + effort; an editable cell opens a searchable
-//     picker; a role that does not run in a mode renders an em dash (never a fake
+//   • Each role names its model + effort; an editable cell opens a short unsearched
+//     picker (a host offers a handful of models, all visible at once — a filter over a
+//     list you can read is chrome, and it takes the focus the arrow keys want, so the
+//     spike has none); a role that does not run in a mode renders an em dash (never a fake
 //     assignment); a cell whose PROVENANCE says an override won carries a chip, and
 //     a role with any override gains "Reset to default" (C16, #485).
 //
@@ -376,11 +376,12 @@ function ModelCell({
       >
         {display}
       </PopoverTrigger>
-      <PopoverContent className="w-52 p-0" align="start">
+      {/* No search box. A host offers a handful of models, all of them on screen at once,
+          so a filter over a list you can already read is chrome — and it steals the focus
+          the arrow keys want. The popover narrows to the width the model names need. */}
+      <PopoverContent className="w-44 p-1" align="start">
         <Command>
-          <CommandInput placeholder="Search models…" className="text-xs" />
           <CommandList>
-            <CommandEmpty>No model matches.</CommandEmpty>
             <CommandGroup>
               {models.map((model) => (
                 <CommandItem

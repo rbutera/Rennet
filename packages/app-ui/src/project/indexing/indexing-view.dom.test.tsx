@@ -207,6 +207,48 @@ describe("IndexingView — one durable project run", () => {
     await waitFor(() => expect(screen.getByText("indexing")).toBeTruthy());
   });
 
+  it("puts the questionnaire BETWEEN the scout steps and the map steps", async () => {
+    // The scout reads, the questionnaire asks about what it read, and the map is built
+    // with the answers. The view used to render the questions above the whole timeline,
+    // so the answer arrived before the question and the map steps read as if they had
+    // come first. Order is the assertion — DOM position, not membership.
+    const run = renderView("p6");
+    await waitFor(() => expect(run.commandId()).not.toBe(""));
+    run.emit({
+      kind: "step",
+      runId: run.commandId(),
+      repo: "rennet",
+      phase: "scout",
+      step: "returned",
+      status: "done",
+      note: "Scout returned",
+    });
+    run.emit({
+      kind: "scout-ready",
+      runId: run.commandId(),
+      repo: "rennet",
+      questionnaire: QUESTIONNAIRE,
+    });
+    run.emit({
+      kind: "step",
+      runId: run.commandId(),
+      repo: "rennet",
+      phase: "map",
+      step: "tree",
+      status: "running",
+      note: "Scanned the working tree",
+    });
+
+    const scout = await screen.findByText("Scout returned");
+    const questions = screen.getByText(/does this look right/);
+    const map = await screen.findByText(/Scanned the working tree/);
+
+    const precedes = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(precedes(scout, questions)).toBe(true);
+    expect(precedes(questions, map)).toBe(true);
+  });
+
   it("replaces a replayed step in place and renders its explicit running/done state", async () => {
     const run = renderView("p2");
     await waitFor(() => expect(run.commandId()).not.toBe(""));
