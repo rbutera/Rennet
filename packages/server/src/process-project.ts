@@ -269,14 +269,25 @@ export function createProcessProject(deps: ProcessProjectDeps) {
           total: record.repos.length,
         });
         const repoKey = deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path;
-        const questionnaire = await deps.runScout({
-          projectId: project.id,
-          runId,
-          repoKey,
-          repoRoot: checkpoint.path,
-          defaultBranch: project.primaryBranch,
-          narrate,
-        });
+        let questionnaire: ProjectScoutQuestionnaire | null;
+        try {
+          questionnaire = await deps.runScout({
+            projectId: project.id,
+            runId,
+            repoKey,
+            repoRoot: checkpoint.path,
+            defaultBranch: project.primaryBranch,
+            narrate,
+          });
+        } catch (error) {
+          fail({
+            repo: checkpoint.repo,
+            path: checkpoint.path,
+            phase: "scout",
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
         if (!questionnaire) {
           fail({
             repo: checkpoint.repo,
@@ -388,14 +399,25 @@ export function createProcessProject(deps: ProcessProjectDeps) {
         continue;
       }
       const repoKey = deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path;
-      const outcome = await deps.runKnowledge({
-        projectId: project.id,
-        runId,
-        repoKey,
-        repoRoot: checkpoint.path,
-        toOid: current.snapshot.baseOid,
-        narrate,
-      });
+      let outcome: KnowledgeSwarmOutcome;
+      try {
+        outcome = await deps.runKnowledge({
+          projectId: project.id,
+          runId,
+          repoKey,
+          repoRoot: checkpoint.path,
+          toOid: current.snapshot.baseOid,
+          narrate,
+        });
+      } catch (error) {
+        fail({
+          repo: checkpoint.repo,
+          path: checkpoint.path,
+          phase: "knowledge",
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
       let counts: { confirmed: number; rejected: number } | undefined;
       if (outcome.status === "ok") {
         counts = knowledgeCounts(outcome.set);
