@@ -29,6 +29,7 @@ import {
 import { type AnimationSequence, stagger, useAnimate, useReducedMotion } from "motion/react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
+import { Icon } from "../components/icon";
 import { useBridge, useCommand, useMutation, useRefreshCommand } from "../data";
 import { AddProjectFlow } from "../project/add-project-dialog";
 import { newChatPath } from "../routes/url";
@@ -318,7 +319,7 @@ function StepProgress({ step, onStep }: { step: number; onStep(next: number): vo
                 state === "complete" && "border-green text-green",
               )}
             >
-              {state === "complete" ? <Check className="size-3" /> : index + 1}
+              {state === "complete" ? <Icon icon={Check} className="size-3" /> : index + 1}
             </span>
             <em className="text-xs not-italic max-md:hidden">{label}</em>
           </button>
@@ -343,7 +344,7 @@ function WelcomeShell({
         <header className="flex h-[58px] items-center justify-between border-b border-line bg-canvas px-7">
           <RennetLockup size={24} />
           <span className="flex items-center gap-1.5 text-xs text-ink-faint">
-            <ShieldCheck className="size-3.5 text-green" /> Local by default
+            <Icon icon={ShieldCheck} className="size-3.5 text-green" /> Local by default
           </span>
         </header>
       ) : null}
@@ -805,7 +806,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
           aria-label="Continue to Rennet"
           style={{ opacity: 0, transform: "scale(0.86)" }}
         >
-          <ArrowRight />
+          <Icon icon={ArrowRight} />
         </button>
       </div>
 
@@ -869,7 +870,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
               <span className="mt-2.5 block text-xs font-semibold text-ink">{theme.label}</span>
               {themePack === theme.id ? (
                 <i className="absolute top-0.5 right-0.5 grid size-[23px] place-items-center rounded-full bg-accent-fill text-accent-ink [&_svg]:size-[13px]">
-                  <Check />
+                  <Icon icon={Check} />
                 </i>
               ) : null}
             </button>
@@ -882,7 +883,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
         ) : null}
         <div className="flex justify-center border-t border-line pt-[18px]">
           <Button onClick={onContinue}>
-            Continue <ArrowRight />
+            Continue <Icon icon={ArrowRight} />
           </Button>
         </div>
       </div>
@@ -906,13 +907,13 @@ function StepActions({
   return (
     <div className="mt-[30px] flex items-center justify-between border-t border-line pt-[22px]">
       <Button variant="ghost" onClick={onBack}>
-        <ArrowLeft />
+        <Icon icon={ArrowLeft} />
         Back
       </Button>
       {onContinue ? (
         <Button disabled={busy || disabled} onClick={onContinue}>
           {busy ? "Saving…" : continueLabel}
-          <ArrowRight />
+          <Icon icon={ArrowRight} />
         </Button>
       ) : null}
     </div>
@@ -927,7 +928,7 @@ function StatusPill({ good, children }: { good: boolean; children: ReactNode }) 
         good ? "bg-green-soft text-green" : "bg-raised text-ink-faint",
       )}
     >
-      {good ? <CheckCircle2 /> : <TriangleAlert />}
+      {good ? <Icon icon={CheckCircle2} /> : <Icon icon={TriangleAlert} />}
       {children}
     </span>
   );
@@ -1092,7 +1093,7 @@ function ToolsStage({
           : null}
       </div>
       <aside className={PLAIN_NOTE}>
-        <HardDrive />
+        <Icon icon={HardDrive} />
         Detection runs separately for every local, remote, and WSL environment you add.
       </aside>
       <StepActions onBack={onBack} onContinue={onContinue} />
@@ -1181,7 +1182,7 @@ function ReviewSetupStage({
       {ids.length === 0 ? (
         <div className="grid min-h-[370px] place-items-center content-center rounded-window border border-danger bg-surface p-12 text-center">
           <span className="grid size-[70px] place-items-center rounded-window bg-danger-soft text-danger [&_svg]:size-9">
-            <TerminalSquare />
+            <Icon icon={TerminalSquare} />
           </span>
           <h2 className="mx-auto mt-[22px] mb-2 max-w-[550px] font-display text-2xl font-medium">
             Rennet couldn’t detect Claude Code or Codex.
@@ -1198,10 +1199,10 @@ function ReviewSetupStage({
               target="_blank"
               rel="noreferrer"
             >
-              Installation guide <ExternalLink />
+              Installation guide <Icon icon={ExternalLink} />
             </a>
             <Button onClick={onRefresh}>
-              <RefreshCw />
+              <Icon icon={RefreshCw} />
               Check again
             </Button>
           </div>
@@ -1235,14 +1236,14 @@ function ReviewSetupStage({
                 <StatusPill good>Detected</StatusPill>
                 {orchestrator === tool.id ? (
                   <i className="absolute top-2 right-2 grid size-5 place-items-center rounded-full bg-accent-fill text-accent-ink [&_svg]:size-3">
-                    <Check />
+                    <Icon icon={Check} />
                   </i>
                 ) : null}
               </button>
             ))}
           </div>
           <aside className="my-3.5 flex items-center gap-3 border-l-[3px] border-accent-fill bg-surface px-4 py-[13px] [&>svg]:text-accent">
-            <ShieldCheck />
+            <Icon icon={ShieldCheck} />
             <div className="grid gap-0.5">
               <strong className="text-xs">
                 {orchestrator === "claude" ? "Claude Code" : "Codex"} will orchestrate reviews.
@@ -1338,7 +1339,7 @@ function ProjectStage({
       </div>
       {bridge.platform === "darwin" && bridge.openFullDiskAccessSettings ? (
         <aside className="mb-[18px] grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-control bg-raised px-4 py-3.5 max-md:grid-cols-[auto_1fr] [&>svg]:text-green">
-          <ShieldCheck />
+          <Icon icon={ShieldCheck} />
           <div className="grid gap-0.5">
             <strong>Need access outside the folders you choose?</strong>
             <span className="text-xs text-ink-faint">
@@ -1350,7 +1351,7 @@ function ProjectStage({
             variant="outline"
             onClick={() => void openAccess()}
           >
-            Grant Full Disk Access <ExternalLink />
+            Grant Full Disk Access <Icon icon={ExternalLink} />
           </Button>
         </aside>
       ) : null}
@@ -1445,7 +1446,7 @@ function ReadyStage({
       <span className="relative mb-[22px] grid place-items-center" role="img" aria-label="Rennet">
         <RennetLockup size={72} part="mark" />
         <i className="absolute right-0 -bottom-1 grid size-[31px] place-items-center rounded-full border-4 border-canvas bg-green text-surface [&_svg]:size-3.5">
-          <Check />
+          <Icon icon={Check} />
         </i>
       </span>
       <p className={EYEBROW}>Ready</p>
@@ -1481,7 +1482,7 @@ function ReadyStage({
       </div>
       {reviewChoice.orchestrator ? null : (
         <aside className={cn(PLAIN_NOTE, "[&>svg]:text-ink-faint")}>
-          <TerminalSquare />
+          <Icon icon={TerminalSquare} />
           No coding harness is installed here, so Rennet can’t run review turns yet. Install Claude
           Code or Codex, then enable it in Settings → Environments.
         </aside>
@@ -1492,12 +1493,12 @@ function ReadyStage({
         </p>
       ) : null}
       <Button className="mt-4" size="lg" disabled={busy} onClick={() => void start()}>
-        <MessageCircleMore />
+        <Icon icon={MessageCircleMore} />
         {busy ? "Opening…" : "Start a new chat"}
-        <ArrowRight />
+        <Icon icon={ArrowRight} />
       </Button>
       <Button className="mt-2.5" variant="ghost" onClick={onBack}>
-        <ArrowLeft />
+        <Icon icon={ArrowLeft} />
         Back
       </Button>
     </section>

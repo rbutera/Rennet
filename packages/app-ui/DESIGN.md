@@ -89,6 +89,35 @@ welcome's code-rain (`.rn-code-fragment`, 9px) and theme-preview miniature
 The test pins those two selectors to those two exact values; nothing else may
 use them.
 
+## Motion, and the stylesheet's remaining job
+
+Every authored animation is a theme value. A keyframe is declared in
+[`src/index.css`](src/index.css)'s `@theme` block next to an `--animate-*` variable,
+which makes it a real `animate-…` utility — so a call site composes it with variants
+(`motion-reduce:animate-none`) and `twMerge` can override it, neither of which works
+against a bare class the stylesheet defines by hand. Reduced motion is honoured twice:
+by the base rule that collapses every animation's duration, and by the variant where a
+call site can safely drop the animation outright. Those are not interchangeable — an
+animation whose settled state comes from a `forwards` fill (the streaming word reveal)
+breaks under `animate-none` and relies on the base rule instead.
+
+Beyond that the entry stylesheet holds only what utilities cannot express: the base
+document material, browser-owned surfaces (scrollbars, selection, caret, focus), two
+`@utility` definitions for properties Tailwind has none for
+(`app-region-drag` / `app-region-no-drag`, `chrome-scroll-clearance`), the welcome's
+sub-ramp decorative type, the processing orb's masked conic ring, and the `.rtok-*`
+syntax vocabulary the code markup is generated against.
+
+Two rules follow from past drift:
+
+- **A structural contract is never written in utility class names.** The floating-chrome
+  clearance used to hang off `.rennet-floating-chrome-scroll .min-h-0.flex-1.overflow-y-auto`
+  — it matched any branch that happened to type those three, and nothing at all when a
+  pane restyled. Surfaces mark themselves; the stylesheet does not guess.
+- **An opt-out is stated per element, not inferred from a tag list.** The macOS drag
+  region's `button, a, input, code` opt-out silently failed for any other interactive
+  child.
+
 ## Radius scale
 
 Use `4 / 6 / 8 / 12 / 16` px. Pills and circles have separate geometry values: `999px` for chips and counts, and `50%` for circles.

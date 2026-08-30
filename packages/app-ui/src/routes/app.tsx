@@ -10,6 +10,7 @@ import { FolderPlus } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
+import { Icon } from "../components/icon";
 import { BridgeProvider, useCommand, useMutation, useRefreshCommand } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
@@ -123,7 +124,7 @@ function EmptyProjectEntry() {
       className="grid min-h-screen place-content-center justify-items-center gap-4 p-10 text-center"
     >
       <span className="grid size-16 place-items-center rounded-window bg-accent-soft text-accent">
-        <FolderPlus className="size-8" />
+        <Icon icon={FolderPlus} className="size-8" />
       </span>
       <h1 className="font-display text-display font-medium text-ink">Add a project to begin.</h1>
       <p className="max-w-lg text-ink-soft">
@@ -131,7 +132,7 @@ function EmptyProjectEntry() {
         New Chat.
       </p>
       <Button size="lg" onClick={() => openDialog("add-project")}>
-        <FolderPlus />
+        <Icon icon={FolderPlus} />
         Add Project
       </Button>
     </section>

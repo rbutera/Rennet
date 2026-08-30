@@ -203,7 +203,11 @@ All interactive elements use a three-pixel gold focus ring. Only an element that
 
 Board sections, findings, conversations, provider results, and product frames use the 12px surface radius on opaque `surface` or `raised` colors. Use a border or a shadow, not both. Code always sits on an opaque surface.
 
-Post previews use the `sheet` palette. They are cream in light mode, espresso in dark mode, and set review prose in serif.
+The `sheet` palette — cream in light mode, espresso in dark mode — is reserved for a
+full post preview and no surface uses it yet. Today's outbound preview is the handoff
+lane's rendering of the GitHub-facing Markdown, set in the sans reading voice at chrome
+scale on the surrounding surface; the standalone cream sheet went with the canvas
+publish surface (rbutera/Rennet#489) and has not been rebuilt.
 
 ### Provider identity
 
@@ -224,7 +228,10 @@ composes them into Rennet's screens; the hand-rolled component layer they replac
 is retired (2026-08-20 port). Base UI is the one primitive family — Radix is
 allowed only where a shadcn component brings it (`cmdk`). The kit's lucide icons
 render at the same **1.6px identity stroke** as the app-ui `Icon` wrapper, so the
-whole app reads at one line weight.
+whole app reads at one line weight. That is enforced, not merely intended: a lint test
+in `packages/app-ui` fails on any lucide icon rendered as JSX instead of passed to
+`Icon`, because mixed 2px and 1.6px glyphs in one row is exactly the drift no
+screenshot review catches.
 
 The kit is authored in shadcn's semantic Tailwind vocabulary, and
 `packages/theme` aliases that vocabulary onto the `--rn-*` palette above — the alias
