@@ -194,7 +194,6 @@ import type {
   RoundOperation,
   RoundRunReceipt,
   SessionModel,
-  TransactionalRoundSourceLandingAttempt,
 } from "@rennet/protocol";
 import {
   currentGenerationId,
@@ -252,6 +251,12 @@ import {
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createLiveReviewOpenerPort } from "./review-opener-live";
+import {
+  createNativeRoundSourceLandingInjection,
+  type NativeRoundSourceLandingInjection,
+  type RoundSourceLandingInjection,
+  supportsNativeRoundSourceLanding,
+} from "./round-source-landing-native";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard, readRoundReportBoardForRecord } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
@@ -294,6 +299,8 @@ import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
+
+export type { RoundSourceLandingInjection } from "./round-source-landing-native";
 
 /**
  * Ask ONE host's daemon whether it is running and on which version — the read behind the
@@ -444,7 +451,7 @@ export function createRoundWorkspacePlanner(input: {
     const sourceLocus = detectedLocusForRepo(operation.repoRoot);
     let worktreePath: string;
     if (sourceLocus.kind === "host") {
-      worktreePath = join(input.dataDir, "round-worktrees", key);
+      worktreePath = join(realpathSync(input.dataDir), "round-worktrees", key);
     } else {
       const commonDir = toDistroPath(repository.commonDir, sourceLocus.distro);
       if (commonDir === null) {
@@ -496,14 +503,6 @@ export function createRoundWorkerPort(input: {
         }
       : { ...evidence, outcome: "completed" as const };
   };
-}
-
-export interface RoundSourceLandingInjection {
-  readonly plan: (
-    operation: RoundOperation,
-  ) => TransactionalRoundSourceLandingAttempt | Promise<TransactionalRoundSourceLandingAttempt>;
-  readonly landUnit: NonNullable<RoundExecutionPorts["landSourceUnit"]>;
-  readonly cleanup: NonNullable<RoundExecutionPorts["cleanupSourceLanding"]>;
 }
 
 export function createRoundSourceLandingPorts(input: {
@@ -645,7 +644,7 @@ export interface RennetServerOptions {
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
-  /** Transactional landing is injected until its native helper is delivered for every locus. */
+  /** Test override for round landing. Production composes rooted native landing on POSIX daemons. */
   readonly roundSourceLanding?: RoundSourceLandingInjection;
   /** Test observation at the crash commit point, before any PR-draft ripening await. */
   readonly onRoundPlaceholderCommitted?: (input: {
@@ -743,6 +742,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   const gitForRepo = gitForRepoFactory(locusForRepo);
+  const nativeRoundSourceLanding: NativeRoundSourceLandingInjection | undefined =
+    options.roundSourceLanding === undefined && supportsNativeRoundSourceLanding()
+      ? createNativeRoundSourceLandingInjection({ gitForRepo })
+      : undefined;
+  const roundSourceLanding = options.roundSourceLanding ?? nativeRoundSourceLanding;
 
   /** The ProjectSnapshot store key for a repo root: `escapePath(realpath(top-level))` (design §1.1). */
   function repoKeyForRoot(repoRoot: string): string {
@@ -2582,7 +2586,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       return { ...attempt, outcome: result.outcome, landedAt: Date.now() };
     },
-    ...(options.roundSourceLanding === undefined ? {} : { injection: options.roundSourceLanding }),
+    ...(roundSourceLanding === undefined ? {} : { injection: roundSourceLanding }),
   });
 
   const storedRoundReportVerification = {
@@ -3910,6 +3914,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (didShutdown) return;
     didShutdown = true;
     liveTurns.abortAll();
+    void nativeRoundSourceLanding?.close().catch((error) => {
+      console.error("Could not close native round source landing hosts", error);
+    });
     void watcher.close();
     rehydration?.closeAll();
     store?.close();
