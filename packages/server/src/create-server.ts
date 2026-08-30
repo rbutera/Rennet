@@ -140,6 +140,7 @@ import {
   decompose,
   detectLocus,
   escapePath,
+  type ForgePort,
   type ForgePullRequestRef,
   findingDispositionMigrationEvents,
   guardSeatTurn,
@@ -1119,26 +1120,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return createGitHubOctokit({ fetch: publishHttp, token: auth.token });
   }
 
-  // Provider registration is the one composition boundary for forge-specific
-  // status and egress. The registry is daemon-lived, while every credential-bound
-  // operation below resolves its client lazily so a `gh auth` change takes effect
-  // on the next top-level operation.
+  const githubCiStatusSource: Pick<ForgePort, "fetchCiStatus"> = {
+    fetchCiStatus: async (ref, headOid, signal) =>
+      new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }).fetchCiStatus(
+        ref,
+        headOid,
+        signal,
+      ),
+  };
+
+  // Publication and pull-request submission remain GitHub-only. This registry's type
+  // does not carry read capabilities, so it cannot accidentally satisfy the CI path.
   const forgeProviders = createForgeRegistry<ForgeProvider>([
     {
       forge: "github",
       implementation: {
-        fetchCiStatus: async (ref, headOid, signal) =>
-          new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }).fetchCiStatus(
-            ref,
-            headOid,
-            signal,
-          ),
         review: new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit }),
         pullRequest: new GitHubPrSubmissionAdapter({
           resolveOctokit: resolveGitHubOctokit,
         }),
       },
     },
+  ]);
+
+  // CI is independently capability-routed so a read implementation never implies
+  // publish or PR submission. GitLab stays deliberately unregistered here until a
+  // production path can supply both its target identity and repository execution
+  // locus; otherwise a WSL review would silently borrow the Windows host's `glab`.
+  const forgeCiStatusSources = createForgeRegistry<Pick<ForgePort, "fetchCiStatus">>([
+    { forge: "github", implementation: githubCiStatusSource },
   ]);
 
   // Account mutations (device-flow store, paste, disconnect) are SERIALIZED so a
@@ -1655,7 +1665,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       patchset,
       manifest,
       fetchCiStatus: (ref, headOid, signal) =>
-        fetchForgeCiStatus(forgeProviders, ref, headOid, signal),
+        fetchForgeCiStatus(forgeCiStatusSources, ref, headOid, signal),
       ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
       budget: sharedBudget,
     });

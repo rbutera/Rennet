@@ -44,8 +44,11 @@ offering a duplicate target. Two forges can therefore carry the same
 or session. Provider selection is also the server-side boundary for detailed CI
 status, review publication, and pull-request submission: each operation resolves
 the provider from that repository identity, and an unregistered forge never
-falls through to GitHub. The registry contains GitHub today; GitLab and Bitbucket
-adapters remain [planned in #484](https://github.com/rbutera/rennet/issues/484).
+falls through to GitHub. The registered providers contain GitHub today. A GitLab.com
+CI adapter exists behind the narrower status capability, but stays unregistered until
+an intake path supplies both a GitLab target and its repository execution locus;
+GitLab intake and egress and all Bitbucket adapters remain
+[planned in #484](https://github.com/rbutera/rennet/issues/484).
 A round dispatched on a target reads the same forge identity from the repository
 it is about to run in, so it joins the session the click created instead of
 starting a second one beside it. A detached HEAD has no branch to claim, so its
