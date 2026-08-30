@@ -1,6 +1,6 @@
 import { CodeBlock } from "../review";
 import { ActionStep } from "./action-step";
-import type { ActivityStep, TranscriptBlock, TurnRow } from "./chat-data";
+import type { ActivityStep, ContentBlock, TranscriptBlock, TurnRow } from "./chat-data";
 import { StreamingProse } from "./streaming-prose";
 import { ThoughtBlock } from "./thought-block";
 
@@ -31,6 +31,33 @@ function ActivitySequence({ steps }: { readonly steps: readonly ActivityStep[] }
   );
 }
 
+type TranscriptGroup =
+  | { readonly kind: "activity"; readonly steps: ActivityStep[]; readonly index: number }
+  | { readonly kind: "content"; readonly block: ContentBlock; readonly index: number };
+
+/**
+ * Consecutive activity blocks are ONE sequence. The projected transcript is a flat log, and
+ * wrapping each activity block in its own `ActivitySequence` put the transcript's 12px
+ * block gap between steps that belong to one another — a preface reading as three separate
+ * events instead of one train of thought. Grouping restores the sequence's own 6px rhythm
+ * and leaves the 12px gap where it means something: between a preface and the prose.
+ *
+ * The group's key is the index of its FIRST block, so keys stay positional and unique.
+ */
+function groupActivity(blocks: readonly TranscriptBlock[]): readonly TranscriptGroup[] {
+  const out: TranscriptGroup[] = [];
+  for (const [index, block] of blocks.entries()) {
+    if (block.kind !== "thought" && block.kind !== "action") {
+      out.push({ kind: "content", block, index });
+      continue;
+    }
+    const previous = out.at(-1);
+    if (previous?.kind === "activity") previous.steps.push(block);
+    else out.push({ kind: "activity", steps: [block], index });
+  }
+  return out;
+}
+
 function OrderedTranscript({
   blocks,
   animate,
@@ -48,17 +75,17 @@ function OrderedTranscript({
     lastUnresolvedActivity === -1 ? blocks : blocks.slice(0, lastUnresolvedActivity + 1);
   return (
     <div className="flex max-w-[640px] flex-col gap-3">
-      {visibleBlocks.map((block, index) => {
-        if (block.kind === "thought" || block.kind === "action") {
-          return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: projected blocks are a fixed positional log.
-            <ActivitySequence key={index} steps={[block]} />
-          );
+      {/* Keys are the group's position in the projected log, which is a fixed positional
+          record — the same key rule the flat map used, carried onto the groups. */}
+      {groupActivity(visibleBlocks).map((group) => {
+        const index = group.index;
+        if (group.kind === "activity") {
+          return <ActivitySequence key={index} steps={group.steps} />;
         }
+        const block = group.block;
         if (block.kind === "text") {
           return (
             <StreamingProse
-              // biome-ignore lint/suspicious/noArrayIndexKey: projected blocks are a fixed positional log.
               key={index}
               animate={animate}
               paragraphs={[block.text]}
@@ -68,7 +95,6 @@ function OrderedTranscript({
         }
         return (
           <CodeBlock
-            // biome-ignore lint/suspicious/noArrayIndexKey: projected blocks are a fixed positional log.
             key={index}
             path={block.path}
             code={block.code}
