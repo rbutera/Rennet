@@ -242,26 +242,24 @@ describe("ContextMapView — the Context Map surface", () => {
   it("uses a fresh run identity when a completed journal produced no readable map", async () => {
     const commandIds: string[] = [];
     const rebuilding = deferred<{ repos: [] }>();
+    const completedId = commandIdFor("project.process:project-1");
     const bridge = new MemoryBridge({
       "project.contextMap": () => ({
         status: "absent",
         reason: "stored map failed its integrity check",
+        run: {
+          id: completedId,
+          projectId: "project-1",
+          status: "done",
+          phase: "complete",
+          repos: [],
+          scout: null,
+          totals: { repos: 0, files: 0, scopes: 0, confirmed: 0, rejected: 0 },
+        },
       }),
       "project.process": (input) => {
         commandIds.push(input.commandId);
-        if (commandIds.length > 1) return rebuilding.promise;
-        return {
-          repos: [],
-          run: {
-            id: input.commandId,
-            projectId: input.projectId,
-            status: "done",
-            phase: "complete",
-            repos: [],
-            scout: null,
-            totals: { repos: 0, files: 0, scopes: 0, confirmed: 0, rejected: 0 },
-          },
-        };
+        return rebuilding.promise;
       },
     });
     const { container } = mount(
@@ -273,9 +271,116 @@ describe("ContextMapView — the Context Map surface", () => {
       ),
     );
     fireEvent.click(container.querySelector(".context-map-status button") as Element);
+    await waitFor(() => expect(commandIds).toHaveLength(1));
+    expect(commandIds[0]).not.toBe(completedId);
+  });
+
+  it("retries a failed rebuild under its persisted rebuild identity", async () => {
+    const completedId = commandIdFor("project.process:project-1");
+    let persistedRun: Extract<ProjectContextMapResult, { status: "absent" }> = {
+      status: "absent",
+      reason: "stored map failed its integrity check",
+      run: {
+        id: completedId,
+        projectId: "project-1",
+        status: "done",
+        phase: "complete",
+        repos: [],
+        scout: null,
+        totals: { repos: 0, files: 0, scopes: 0, confirmed: 0, rejected: 0 },
+      },
+    };
+    const commandIds: string[] = [];
+    const retrying = deferred<{ repos: [] }>();
+    const bridge = new MemoryBridge({
+      "project.contextMap": () => persistedRun,
+      "project.process": (input) => {
+        commandIds.push(input.commandId);
+        if (commandIds.length > 1) return retrying.promise;
+        persistedRun = {
+          status: "absent",
+          reason: "rebuild worker exited",
+          run: {
+            id: input.commandId,
+            projectId: input.projectId,
+            status: "failed",
+            phase: "map",
+            repos: [],
+            scout: null,
+            reason: "rebuild worker exited",
+          },
+        };
+        return { repos: [], run: persistedRun.run };
+      },
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+
+    fireEvent.click(container.querySelector(".context-map-status button") as Element);
+    await waitFor(() => expect(commandIds).toHaveLength(1));
+    await waitFor(() =>
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "rebuild worker exited",
+      ),
+    );
+    fireEvent.click(container.querySelector(".context-map-status button") as Element);
     await waitFor(() => expect(commandIds).toHaveLength(2));
-    expect(commandIds[0]).toBe(commandIdFor("project.process:project-1"));
-    expect(commandIds[1]).not.toBe(commandIds[0]);
+    expect(commandIds[1]).toBe(commandIds[0]);
+  });
+
+  it("reattaches to a persisted rebuild after the Map remounts", async () => {
+    const completedId = commandIdFor("project.process:project-1");
+    let persistedRun: Extract<ProjectContextMapResult, { status: "absent" }> = {
+      status: "absent",
+      reason: "stored map failed its integrity check",
+      run: {
+        id: completedId,
+        projectId: "project-1",
+        status: "done",
+        phase: "complete",
+        repos: [],
+        scout: null,
+        totals: { repos: 0, files: 0, scopes: 0, confirmed: 0, rejected: 0 },
+      },
+    };
+    const rebuilding = deferred<{ repos: [] }>();
+    const commandIds: string[] = [];
+    const bridge = new MemoryBridge({
+      "project.contextMap": () => persistedRun,
+      "project.process": (input) => {
+        commandIds.push(input.commandId);
+        persistedRun = {
+          status: "absent",
+          reason: "Context Map rebuild is still running",
+          run: {
+            id: input.commandId,
+            projectId: input.projectId,
+            status: "running",
+            phase: "map",
+            repos: [],
+            scout: null,
+          },
+        };
+        return rebuilding.promise;
+      },
+    });
+    const render = (show: boolean) => (
+      <BridgeProvider bridge={bridge}>
+        {show ? <ProductContextMapView projectId="project-1" onBack={vi.fn()} /> : null}
+      </BridgeProvider>
+    );
+    const view = mount(render(true));
+    await waitFor(() => expect(view.container.querySelector('[role="alert"]')).not.toBeNull());
+    fireEvent.click(view.container.querySelector(".context-map-status button") as Element);
+    await waitFor(() => expect(commandIds).toHaveLength(1));
+
+    view.rerender(render(false));
+    view.rerender(render(true));
+
+    await waitFor(() => expect(commandIds).toHaveLength(2));
+    expect(commandIds[1]).toBe(commandIds[0]);
   });
 
   it("does not render a cached map as current when its authoritative refetch fails", async () => {

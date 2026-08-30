@@ -1059,7 +1059,15 @@ export const projectContextMapResultSchema = z.discriminatedUnion("status", [
   }),
   // No persisted snapshot (or it failed the freshness/integrity gate): a typed
   // absent naming why — never a fabricated or partially-served map.
-  z.object({ status: z.literal("absent"), reason: z.string().min(1) }),
+  z.object({
+    status: z.literal("absent"),
+    reason: z.string().min(1),
+    /**
+     * The durable run that currently owns this project's map. Optional only for
+     * compatibility with older daemons; current servers expose it when a journal exists.
+     */
+    run: projectProcessRunSchema.optional(),
+  }),
 ]);
 export type ProjectContextMapResult = z.infer<typeof projectContextMapResultSchema>;
 

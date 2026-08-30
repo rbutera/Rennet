@@ -121,7 +121,9 @@ function totalsOf(record: ProjectProcessJournalRecord) {
   };
 }
 
-function runOf(record: ProjectProcessJournalRecord): ProjectProcessRun {
+export function projectProcessRunFromRecord(
+  record: ProjectProcessJournalRecord,
+): ProjectProcessRun {
   const base = {
     id: record.runId,
     projectId: record.projectId,
@@ -208,7 +210,7 @@ export function createProcessProject(deps: ProcessProjectDeps) {
 
     for (const event of record.events) emit(event);
     if (record.status === "done") {
-      const run = runOf(record);
+      const run = projectProcessRunFromRecord(record);
       return { repos: run.repos, run };
     }
 
@@ -289,7 +291,7 @@ export function createProcessProject(deps: ProcessProjectDeps) {
     }
     if (record.failures.some((failure) => failure.phase === "scout")) {
       setState("failed", "scout");
-      const run = runOf(record);
+      const run = projectProcessRunFromRecord(record);
       return { repos: run.repos, run };
     }
 
@@ -438,7 +440,7 @@ export function createProcessProject(deps: ProcessProjectDeps) {
     } else {
       setState("done", "complete");
     }
-    const run = runOf(record);
+    const run = projectProcessRunFromRecord(record);
     return { repos: run.repos, run };
   }
 

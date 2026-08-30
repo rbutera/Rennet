@@ -122,15 +122,18 @@ export function ContextMapView({
   const started = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (mapQuery.data?.status !== "absent") return;
+    if (mapQuery.data.run?.status === "done" && retryMode !== "rebuild") {
+      setBuild({ kind: "error", message: mapQuery.data.reason, retry: "rebuild" });
+      return;
+    }
     const runKey = `${projectId}:${attempt}`;
     if (started.current === runKey) return;
     started.current = runKey;
     let live = true;
-    const commandId = commandIdFor(
+    const commandId =
       retryMode === "rebuild"
-        ? `project.process:${projectId}:rebuild:${attempt}`
-        : `project.process:${projectId}`,
-    );
+        ? commandIdFor(`project.process:${projectId}:rebuild:${attempt}`)
+        : (mapQuery.data.run?.id ?? commandIdFor(`project.process:${projectId}`));
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
       if (!live) return;
       setBuild({ kind: "processing", ...processEventStatus(event) });
@@ -153,7 +156,7 @@ export function ContextMapView({
       live = false;
       unsubscribe?.();
     };
-  }, [attempt, bridge, mapQuery.data?.status, process, projectId, retryMode]);
+  }, [attempt, bridge, mapQuery.data, process, projectId, retryMode]);
 
   useEffect(() => {
     if (

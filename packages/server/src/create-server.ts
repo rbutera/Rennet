@@ -249,7 +249,7 @@ import {
   type ProactiveRehydration,
   proactiveRehydrationCommandId,
 } from "./proactive-rehydration";
-import { createProcessProject } from "./process-project";
+import { createProcessProject, projectProcessRunFromRecord } from "./process-project";
 import {
   createForgeRegistry,
   fetchForgeCiStatus,
@@ -3820,19 +3820,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const projectRoot = project ? project.openPath || project.path : null;
       if (!projectRoot) return { status: "absent", reason: "unknown project" };
       const repoKey = repoKeyForRoot(projectRoot);
+      const processRecord = projectProcessJournal.load(repoKey);
+      const absent = (reason: string): ProjectContextMapResult => ({
+        status: "absent",
+        reason,
+        ...(processRecord ? { run: projectProcessRunFromRecord(processRecord) } : {}),
+      });
       const manifest = liveSnapshotStore.loadManifest(repoKey);
       if (!manifest) {
-        return {
-          status: "absent",
-          reason:
-            "no repo map is persisted for this project yet — process the project or run `rennet map`",
-        };
+        return absent(
+          "no repo map is persisted for this project yet — process the project or run `rennet map`",
+        );
       }
       const gated = new ProjectContextReader(liveSnapshotStore).loadFresh(
         repoKey,
         manifest.baseOid,
       );
-      if (!gated.ok) return { status: "absent", reason: gated.failure.reason };
+      if (!gated.ok) return absent(gated.failure.reason);
       // Project the stored knowledge through the gated snapshot: a statement whose
       // cited bytes the current map changed is invalidated, and must NOT be served as
       // an active/current claim (that would render stale knowledge as fresh). We serve
