@@ -14,6 +14,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "
 import { Kbd } from "./kbd";
 import { Progress } from "./progress";
 import { ResizeHandle } from "./resizable";
+import { Switch } from "./switch";
 import { Toggle } from "./toggle";
 import { ToggleGroup } from "./toggle-group";
 
@@ -341,4 +342,22 @@ test("toggle and toggle-group honor a FUNCTION-form className (cn/clsx would dro
   );
   const group = container.querySelector('[data-slot="toggle-group"]') as HTMLElement;
   expect(group.classList.contains("fn-sentinel-group")).toBe(true);
+});
+
+test("switch sm is the 28x16 settings proportion, with the thumb size unchanged", () => {
+  // The settings rows' switch. It rendered 24x14 against the design's 28x16, which beside
+  // a 28px-wide row control read as a different component. The THUMB is the invariant:
+  // widening the track must not fatten the knob, so both are asserted together.
+  const { container } = render(<Switch size="sm" aria-label="Include" />);
+  const track = container.querySelector('[data-slot="switch"]') as HTMLElement;
+  const thumb = container.querySelector('[data-slot="switch-thumb"]') as HTMLElement;
+
+  expect(track.className).toContain("data-[size=sm]:w-7");
+  expect(track.className).toContain("data-[size=sm]:h-4");
+  expect(track.className).not.toContain("data-[size=sm]:w-[24px]");
+  expect(thumb.className).toContain("group-data-[size=sm]/switch:size-3");
+
+  // The checked travel has to follow the track, or the knob overruns or stops short: the
+  // 28px track less its 1px transparent border each side, less the 12px thumb, is 14px.
+  expect(thumb.className).toContain("group-data-[size=sm]/switch:data-checked:translate-x-3.5");
 });

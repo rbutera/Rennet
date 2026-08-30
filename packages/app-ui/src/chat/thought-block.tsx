@@ -1,6 +1,7 @@
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { Icon } from "../components/icon";
 import type { ThoughtBlockData } from "./chat-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,7 +27,8 @@ export function ThoughtBlock({ step }: { readonly step: ThoughtBlockData }) {
         className="flex items-center gap-1.5 text-12-5 text-muted-foreground/80 hover:text-muted-foreground"
         aria-expanded={isExpanded}
       >
-        <Loader2
+        <Icon
+          icon={Loader2}
           className={cn(
             "size-3 shrink-0",
             isLive ? "animate-spin text-model" : "text-muted-foreground/70",
@@ -41,7 +43,8 @@ export function ThoughtBlock({ step }: { readonly step: ThoughtBlockData }) {
               : `Thought for ${step.seconds}s`}
         </span>
         {!isLive && (
-          <ChevronRight
+          <Icon
+            icon={ChevronRight}
             className={cn(
               "size-3 shrink-0 text-muted-foreground/50 transition-transform",
               manuallyOpened && "rotate-90",

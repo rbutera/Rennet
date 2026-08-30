@@ -312,33 +312,29 @@ export function ReviewWorkspace({ review }: { review: Review }) {
               <ReportUnavailable status={report.status} />
             )
           ) : (
-            <>
-              <header className="border-border border-b px-6 py-3">
-                <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-                  REVIEW · {review.repositoryRoot.split("/").at(-1)}
-                </p>
-              </header>
-              <LensBoardView
-                reviewId={review.id}
-                generation={boardGeneration}
-                selectedGeneration={query.generation ?? boardGeneration}
-                lens={query.lens}
-                generations={boardGenerations}
-                onGenerationSelect={(generation) =>
-                  navigate(
-                    sessionPath(slug, {
-                      view: "board",
-                      lens: query.lens,
-                      generation: generation === boardGeneration ? undefined : generation,
-                      file: query.file ?? undefined,
-                      round: query.round ?? undefined,
-                      ask: query.ask ?? undefined,
-                    }),
-                    { replace: true },
-                  )
-                }
-              />
-            </>
+            // No eyebrow. The board opens on the board (spike `main-surface.tsx`); a
+            // `REVIEW · <repo>` strip above it was app-only chrome restating the top bar's
+            // own trail, and it pushed the document down a row on every read.
+            <LensBoardView
+              reviewId={review.id}
+              generation={boardGeneration}
+              selectedGeneration={query.generation ?? boardGeneration}
+              lens={query.lens}
+              generations={boardGenerations}
+              onGenerationSelect={(generation) =>
+                navigate(
+                  sessionPath(slug, {
+                    view: "board",
+                    lens: query.lens,
+                    generation: generation === boardGeneration ? undefined : generation,
+                    file: query.file ?? undefined,
+                    round: query.round ?? undefined,
+                    ask: query.ask ?? undefined,
+                  }),
+                  { replace: true },
+                )
+              }
+            />
           )}
         </div>
       )}
@@ -361,27 +357,20 @@ export function ReviewWorkspace({ review }: { review: Review }) {
  */
 function MapUnavailable() {
   return (
-    <>
-      <header className="border-border border-b px-6 py-3">
-        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          CONTEXT MAP
-        </p>
-      </header>
-      <section
-        data-testid="map-unavailable"
-        role="status"
-        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
-      >
-        <h1 className="font-display text-foreground text-xl">
-          Rennet cannot tell which project this review belongs to.
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          A context map is a project&rsquo;s, and the session that owns this review is what names
-          its project. This address reached the review without one — opening it from its session in
-          the sidebar reaches its map.
-        </p>
-      </section>
-    </>
+    <section
+      data-testid="map-unavailable"
+      role="status"
+      className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+    >
+      <h1 className="font-display text-foreground text-xl">
+        Rennet cannot tell which project this review belongs to.
+      </h1>
+      <p className="text-muted-foreground text-sm">
+        A context map is a project&rsquo;s, and the session that owns this review is what names its
+        project. This address reached the review without one — opening it from its session in the
+        sidebar reaches its map.
+      </p>
+    </section>
   );
 }
 
@@ -394,30 +383,23 @@ function MapUnavailable() {
  */
 function RoundsUnavailable({ reason }: { reason: string }) {
   return (
-    <>
-      <header className="border-border border-b px-6 py-3">
-        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          ROUNDS
-        </p>
-      </header>
-      <section
-        data-testid="rounds-unavailable"
-        role="status"
-        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
-      >
-        <h1 className="font-display text-foreground text-xl">
-          Rennet cannot read this session&rsquo;s rounds.
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          The daemon this window is connected to did not answer the rounds read, so whether this
-          session has completed rounds is unknown — not none. It is most likely older than this app;
-          updating the daemon should restore the ledger.
-        </p>
-        <p data-testid="rounds-unavailable-reason" className="text-muted-foreground/80 text-xs">
-          {reason}
-        </p>
-      </section>
-    </>
+    <section
+      data-testid="rounds-unavailable"
+      role="status"
+      className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+    >
+      <h1 className="font-display text-foreground text-xl">
+        Rennet cannot read this session&rsquo;s rounds.
+      </h1>
+      <p className="text-muted-foreground text-sm">
+        The daemon this window is connected to did not answer the rounds read, so whether this
+        session has completed rounds is unknown — not none. It is most likely older than this app;
+        updating the daemon should restore the ledger.
+      </p>
+      <p data-testid="rounds-unavailable-reason" className="text-muted-foreground/80 text-xs">
+        {reason}
+      </p>
+    </section>
   );
 }
 
@@ -430,30 +412,23 @@ function RoundsUnavailable({ reason }: { reason: string }) {
 // the ledger/diff views remain reachable through the top bar (they precede this branch).
 function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
   return (
-    <>
-      <header className="border-border border-b px-6 py-3">
-        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          ROUND REPORT
-        </p>
-      </header>
-      <section
-        data-testid="report-unavailable"
-        data-report-status={status}
-        role="status"
-        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
-      >
-        <h1 className="font-display text-foreground text-xl">
-          {status === "invalid"
-            ? "This round's report could not be read."
-            : "No report for this round."}
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          {status === "invalid"
-            ? "The round completed, but its report came back in a shape Rennet could not render. The new boards stay held back until a readable report arrives."
-            : "The round completed, but no report board resolved for it yet. The new boards stay held back until its report arrives."}
-        </p>
-      </section>
-    </>
+    <section
+      data-testid="report-unavailable"
+      data-report-status={status}
+      role="status"
+      className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+    >
+      <h1 className="font-display text-foreground text-xl">
+        {status === "invalid"
+          ? "This round's report could not be read."
+          : "No report for this round."}
+      </h1>
+      <p className="text-muted-foreground text-sm">
+        {status === "invalid"
+          ? "The round completed, but its report came back in a shape Rennet could not render. The new boards stay held back until a readable report arrives."
+          : "The round completed, but no report board resolved for it yet. The new boards stay held back until its report arrives."}
+      </p>
+    </section>
   );
 }
 

@@ -1,9 +1,7 @@
 import {
   Button,
   Command,
-  CommandEmpty,
   CommandGroup,
-  CommandInput,
   CommandItem,
   CommandList,
   cn,
@@ -17,7 +15,7 @@ import {
   PopoverTrigger,
 } from "@rennet/ui";
 import { Check, RotateCcw } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
 import { CLAUDE_MODELS, CODEX_MODELS } from "../assets/model-council";
 import { Row } from "../atoms";
@@ -43,8 +41,10 @@ import {
 //     unavailable until BOTH agents are enabled (hovering anywhere in it says
 //     which one unlocks it); losing the second agent settles Single whatever was
 //     clicked; Single auto-detects its provider, Claude first, and names it.
-//   • Each role names its model + effort; an editable cell opens a searchable
-//     picker; a role that does not run in a mode renders an em dash (never a fake
+//   • Each role names its model + effort; an editable cell opens a short unsearched
+//     picker (a host offers a handful of models, all visible at once — a filter over a
+//     list you can read is chrome, and it takes the focus the arrow keys want, so the
+//     spike has none); a role that does not run in a mode renders an em dash (never a fake
 //     assignment); a cell whose PROVENANCE says an override won carries a chip, and
 //     a role with any override gains "Reset to default" (C16, #485).
 //
@@ -334,6 +334,11 @@ function ModelCell({
   readonly onChange: (model: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // cmdk listens for ArrowDown/ArrowUp/Enter on its ROOT (it renders one with `tabIndex=-1`),
+  // and keydown does not travel DOWN the tree. With the search box removed there is nothing
+  // focusable inside the popup, so Base UI's default initial focus landed on the popup itself
+  // and every arrow key fired above cmdk — a keyboard-opened picker could not be driven at all.
+  const commandRef = useRef<HTMLDivElement>(null);
 
   // The provenance chip (C16, #485): a cell only carries it when a routing override
   // actually won. An unchipped cell IS the council table — the chip is the whole
@@ -376,11 +381,13 @@ function ModelCell({
       >
         {display}
       </PopoverTrigger>
-      <PopoverContent className="w-52 p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Search models…" className="text-xs" />
+      {/* No search box. A host offers a handful of models, all of them on screen at once,
+          so a filter over a list you can already read is chrome. The popover narrows to the
+          width the model names need — and `initialFocus` hands the keyboard to cmdk's root
+          on open, which is the job the removed input used to be doing by accident. */}
+      <PopoverContent className="w-44 p-1" align="start" initialFocus={commandRef}>
+        <Command ref={commandRef} className="outline-none">
           <CommandList>
-            <CommandEmpty>No model matches.</CommandEmpty>
             <CommandGroup>
               {models.map((model) => (
                 <CommandItem

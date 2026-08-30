@@ -198,14 +198,18 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
       activePatchsetId: "ps-1",
       repositoryRoot: "/home/dev/rennet",
     } as unknown as Review;
-    const { container, findByText } = mount(
+    const { container } = mount(
       <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
         <Router hook={history.hook} searchHook={history.searchHook}>
           <ReviewWorkspace review={review} />
         </Router>
       </BridgeProvider>,
     );
-    await findByText(/REVIEW ·/);
+    // Wait for the board itself — it used to be the `REVIEW ·` eyebrow, which the board
+    // no longer carries.
+    await waitFor(() =>
+      expect(container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull(),
+    );
     // The rule's own selector, run against the live tree: it must match exactly the pane's
     // one primary scroller. Matching NOTHING is the regression.
     const scrollers = container.querySelectorAll(".min-h-0.flex-1.overflow-y-auto");

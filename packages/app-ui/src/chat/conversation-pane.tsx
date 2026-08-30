@@ -1,3 +1,4 @@
+import { cn } from "@rennet/ui";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { AnchoredThread } from "./anchored-thread";
@@ -47,9 +48,22 @@ export function ConversationPane({
     bottomRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
   }, [rows.length]);
 
+  // A just-minted session: the reviewer's own sends and nothing back yet. The spike gives
+  // that shell its own transcript region (`session-view.tsx`) — full height, BOTTOM-anchored,
+  // tighter gaps — so the message you just sent sits above the composer instead of stranded
+  // at the top of an empty pane. It is the same rows through the same renderer; only the
+  // column changes, and it changes back the moment the orchestrator answers.
+  const awaitingFirstReply = rows.every((row) => row.kind === "turn" && row.speaker === "user");
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" data-testid="chat-dock-transcript">
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-5 py-6">
+      <div
+        data-transcript-state={awaitingFirstReply ? "awaiting-first-reply" : "conversation"}
+        className={cn(
+          "mx-auto flex w-full max-w-[720px] flex-col",
+          awaitingFirstReply ? "h-full justify-end gap-3 px-5 py-4" : "gap-6 px-5 py-6",
+        )}
+      >
         {rows.map(renderRow)}
         <div ref={bottomRef} />
       </div>

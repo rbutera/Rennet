@@ -1,5 +1,6 @@
 import { cn } from "@rennet/ui";
 import { Quote } from "lucide-react";
+import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import type { AnchoredThreadRow } from "./chat-data";
 
@@ -34,7 +35,7 @@ export function AnchoredThread({ row }: { readonly row: AnchoredThreadRow }) {
       )}
     >
       <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-        <Quote className="size-3 shrink-0" aria-hidden="true" />
+        <Icon icon={Quote} className="size-3 shrink-0" aria-hidden="true" />
         <span className="truncate italic">“{thread.anchor}”</span>
         {detached && <span className="ml-auto shrink-0 font-medium text-danger">Detached</span>}
       </div>

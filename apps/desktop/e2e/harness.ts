@@ -200,7 +200,9 @@ export async function openWorkingTreeReview(page: Page): Promise<void> {
     .locator('[data-row="target"]', { hasText: /Current Checkout/ })
     .first()
     .click();
-  await expect(page.getByText(/^REVIEW ·/)).toBeVisible({ timeout: 180_000 });
+  // The board itself is the landmark. It was the `REVIEW · <repo>` eyebrow, which the board
+  // no longer carries — the board opens on the board.
+  await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 180_000 });
 }
 
 /** The review workspace's Diff view — the raw patchset, behind the top bar's session-view pill. */

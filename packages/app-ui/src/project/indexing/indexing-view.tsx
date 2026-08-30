@@ -109,6 +109,27 @@ function narrationLine(
   }
 }
 
+/**
+ * Where the scout's narration ends and the map's begins — the seam the questionnaire sits
+ * in. The scout READS the project, the questionnaire asks about what it read, and the map
+ * is built with those answers; rendering the questions above the whole timeline put the
+ * answer before the question and left the map steps looking like they preceded it.
+ *
+ * The boundary is the LAST scout-phase narration: a `scout-ready` event (the one that
+ * carries the questionnaire) or a `step` the host stamped `phase: "scout"`. Both are the
+ * host's own word for it — nothing here infers a phase from a label. Zero means the scout
+ * has said nothing yet, which is also when there is no questionnaire to place.
+ */
+function scoutBoundary(events: readonly ProjectProcessEvent[]): number {
+  let boundary = 0;
+  for (const [index, event] of events.entries()) {
+    if (event.kind === "scout-ready" || (event.kind === "step" && event.phase === "scout")) {
+      boundary = index + 1;
+    }
+  }
+  return boundary;
+}
+
 function currentPhase(events: readonly ProjectProcessEvent[]): ProjectProcessPhase {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
@@ -261,6 +282,31 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
     [events, background],
   );
 
+  const boundary = scoutBoundary(timeline.map(({ event }) => event));
+  const scoutSteps = timeline.slice(0, boundary);
+  const mapSteps = timeline.slice(boundary);
+  const renderStep = ({ event, key }: (typeof timeline)[number]) => {
+    // The "still running" flag is about the whole timeline's tail, not the slice's — a
+    // scout step is never the live one once map steps exist below it.
+    const line = narrationLine(event, event === timeline.at(-1)?.event && !terminal, terminal);
+    return line ? <StepLine key={key} {...line} /> : null;
+  };
+  // Nothing has narrated yet: one honest "what is happening now" line, under the phase the
+  // host last reported. It belongs with the map steps so the questionnaire stays above it.
+  const placeholder =
+    !terminal && timeline.every(({ event }) => narrationLine(event, false, false) === null) ? (
+      <StepLine
+        label={
+          phase === "scout"
+            ? "Reading the project"
+            : phase === "map"
+              ? "Building the structural map"
+              : "Building the knowledge map"
+        }
+        status="running"
+      />
+    ) : null;
+
   return (
     <section
       data-screen="project-indexing"
@@ -290,32 +336,21 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[10vh] pb-16">
+          {/* Scout steps → the questionnaire they produced → the map steps that answer it.
+              One `renderStep` over two slices of ONE timeline, so a step cannot be dropped
+              or doubled by the split: `scoutBoundary` only chooses where the cut falls. */}
+          {scoutSteps.length > 0 ? (
+            <div className="flex flex-col gap-2">{scoutSteps.map(renderStep)}</div>
+          ) : null}
+
           {questionnaire ? <ScoutQuestionnaire questionnaire={questionnaire} /> : null}
 
-          <div className="flex flex-col gap-2">
-            {timeline.map(({ event, key }, index) => {
-              const line = narrationLine(
-                event,
-                index === timeline.length - 1 && !terminal,
-                terminal,
-              );
-              if (!line) return null;
-              return <StepLine key={key} {...line} />;
-            })}
-            {!terminal &&
-            timeline.every(({ event }) => narrationLine(event, false, false) === null) ? (
-              <StepLine
-                label={
-                  phase === "scout"
-                    ? "Reading the project"
-                    : phase === "map"
-                      ? "Building the structural map"
-                      : "Building the knowledge map"
-                }
-                status="running"
-              />
-            ) : null}
-          </div>
+          {mapSteps.length > 0 || placeholder !== null ? (
+            <div className="flex flex-col gap-2">
+              {mapSteps.map(renderStep)}
+              {placeholder}
+            </div>
+          ) : null}
 
           {run && terminal ? <CompletionBlock run={run} ctaRef={ctaRef} /> : null}
         </div>
