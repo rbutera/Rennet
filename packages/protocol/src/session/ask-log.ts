@@ -49,8 +49,8 @@ export const StagedAskSchema = z.object({
    * so it posts on the pre-image line rather than the wrong side. Pre-B11 the disposition
    * compose (`reviewCommentsFromDispositions`) carried `side` (`deletions` → LEFT); the
    * durable staged-ask model must not flatten that away — so it round-trips here. The client
-   * (C9) populates it when staging a deletion-side finding; a multi-line RANGE (`startLine <
-   * line`) is a ledgered follow-up (`ReviewCommentInput` models a single line today).
+   * (C9) populates it when staging a deletion-side finding. The canonical `codeRef` below
+   * carries the complete line range through preview and publication.
    */
   side: z.enum(["LEFT", "RIGHT"]).optional(),
   /** The canonical captured position. `anchor` + `side` remain the legacy fallback. */

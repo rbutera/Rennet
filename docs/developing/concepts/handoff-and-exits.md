@@ -202,15 +202,17 @@ different reviews overlap.
 
 ## The review's two strata
 
-A GitHub review is one **review body** plus **line comments** pinned to diff
+A GitHub review is one **review body** plus **line or range comments** pinned to diff
 positions, and the draft mirrors that shape rather than flattening it. An ask
 whose provenance carries a diff position — a finding's anchor, a code-line
-comment — becomes a line comment, grouped by file with its citation. An ask
+comment — becomes a line or full-range comment, grouped by file with its citation. An ask
 without one (a quote of board prose has no diff line to pin to) travels in
 the review body. A path-only ask has
 no diff position either, so it folds into the body the same way; the conversion
 is recorded in a ledger returned to the client rather than happening silently.
-The preview renders the exact forge body and threads that post. Provenance and
+When a provider cannot anchor a range, the complete `start–end` range folds into
+the review body and the degradation ledger records that conversion; it never
+narrows silently to one endpoint. The preview renders the exact forge body and threads that post. Provenance and
 the degradation ledger remain visible beside that descriptor rather than being
 inserted into it.
 
@@ -288,8 +290,9 @@ reviewer's work because the daemon holds it.
 The exits themselves:
 
 - **The GitHub review** — `publish.compose(mode:"review")` folds the projection
-  into the two strata: staged line asks and bare line comments become line
-  comments in deterministic `(path, line)` order (an ask on a line wins over a
+  into the two strata: staged line or range asks and bare line comments become
+  anchored comments in deterministic `(path, start line, end line)` order (an exact
+  single-line ask wins over a
   bare comment there); pathless asks become body notes and retired asks stay local. The verdict follows
   the outbound set, and a set **verdict override wins** over the derived event.
   The composed artifact and forge descriptor pass unchanged to `publish.review`,

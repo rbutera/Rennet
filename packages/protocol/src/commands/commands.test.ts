@@ -358,6 +358,77 @@ describe("command registry invariants (#465)", () => {
     });
   });
 
+  it("preserves multi-line review spans across compose and publish wires", () => {
+    const artifact = {
+      opener: "I checked the complete affected range.",
+      comments: [
+        {
+          path: "src/range.ts",
+          startLine: 8,
+          line: 10,
+          side: "RIGHT" as const,
+          type: "request-change" as const,
+          body: "change the complete range",
+        },
+      ],
+      bodyNotes: [],
+    };
+    const post = {
+      event: "REQUEST_CHANGES" as const,
+      body: artifact.opener,
+      threads: [
+        {
+          path: "src/range.ts",
+          startLine: 8,
+          line: 10,
+          side: "RIGHT" as const,
+          body: "**Requested change** — change the complete range",
+        },
+      ],
+    };
+    const composed = {
+      status: "review" as const,
+      artifact,
+      post,
+      ledger: [],
+      payload: "canonical-review-range-bytes",
+      destination: "acme/orbital#7",
+      title: "acme/orbital#7",
+      compositionId: "composition-range",
+    };
+
+    expect(parseCommandOutput("publish.compose", composed)).toEqual(composed);
+    expect(
+      parseCommandInput("publish.review", {
+        commandId: "00000000-0000-4000-8000-000000000001",
+        reviewId: "review-range",
+        artifact,
+        post,
+        payload: composed.payload,
+        compositionId: composed.compositionId,
+        dryRun: true,
+      }),
+    ).toMatchObject({ artifact, post });
+    expect(() =>
+      parseCommandOutput("publish.compose", {
+        ...composed,
+        artifact: {
+          ...artifact,
+          comments: [{ ...artifact.comments[0], line: 7 }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseCommandOutput("publish.compose", {
+        ...composed,
+        post: {
+          ...post,
+          threads: [{ ...post.threads[0], line: 7 }],
+        },
+      }),
+    ).toThrow();
+  });
+
   it("round-trips a provider-qualified PR target from compose into submit", () => {
     const target = {
       repo: { forge: "gitlab", owner: "acme", name: "widget" },
