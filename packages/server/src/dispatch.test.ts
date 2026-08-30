@@ -2533,7 +2533,8 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(composed.artifact.comments).toEqual([
       {
         path: "src/current.ts",
-        line: 8,
+        startLine: 8,
+        line: 10,
         side: "LEFT",
         type: "request-change",
         body: "preserve the base-side contract",
@@ -2545,6 +2546,15 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
         anchor: "src/current.ts:999",
         type: "comment",
         body: "revisit the frozen concern",
+      },
+    ]);
+    expect(composed.post.threads).toEqual([
+      {
+        path: "src/current.ts",
+        startLine: 8,
+        line: 10,
+        side: "LEFT",
+        body: "**Requested change** — preserve the base-side contract",
       },
     ]);
     await expect(

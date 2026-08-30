@@ -168,14 +168,15 @@ describe("reviewCommentsFromProjection (B11 cluster 3) — the two-strata compos
 
     const projection = store.readProjection(sid);
     expect(reviewCommentsFromProjection(projection)).toEqual<ReviewCommentInput[]>([
+      { path: "src/a.ts", line: 12, side: "RIGHT", type: "comment", body: "right note" },
       {
         path: "src/a.ts",
-        line: 12,
+        startLine: 12,
+        line: 14,
         side: "LEFT",
         type: "request-change",
         body: "restore the removed branch",
       },
-      { path: "src/a.ts", line: 12, side: "RIGHT", type: "comment", body: "right note" },
     ]);
     expect(reviewBodyNotesFromProjection(projection)).toEqual([]);
   });
