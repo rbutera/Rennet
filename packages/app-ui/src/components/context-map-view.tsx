@@ -118,12 +118,12 @@ function MapHeader({ projectId, onBack }: { projectId: string; onBack(): void })
       >
         <Icon icon={ArrowLeft} className="size-3.5" />
       </button>
-      <span className="flex min-w-0 items-center gap-1.5 text-sm">
+      <span className="flex min-w-0 items-center gap-1.5 text-13">
         <span className="shrink-0 font-medium text-ink">{projectName}</span>
-        <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
+        <Icon icon={ChevronRight} className="size-3 shrink-0 text-muted-foreground/50" />
         <span className="context-map-title text-ink-soft">Context Map</span>
       </span>
-      <kbd className="ml-auto rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-faint">
+      <kbd className="ml-auto rounded-chip border border-line px-1 py-0.5 text-10 text-ink-faint">
         esc
       </kbd>
     </header>
@@ -134,6 +134,7 @@ export function ContextMapView({
   projectId,
   onBack,
   showAskRail = true,
+  takeover = true,
   onDiscuss,
 }: {
   projectId: string;
@@ -141,6 +142,12 @@ export function ContextMapView({
   /** The project-scoped ask rail. The router-side map view (C12) hides it — the
    *  session chat column plays that role there — and leaves it on elsewhere. */
   showAskRail?: boolean;
+  /** Whether this mount OWNS the window: it then carries the 40px takeover header (Back,
+   *  the `project › Context Map` trail, the `esc` keycap) and the window Escape handler
+   *  that keycap advertises. False for the in-session `?view=map` mount, which sits INSIDE
+   *  the session's own chrome — a second Back, a second trail and a stolen Escape there
+   *  are all the session's chrome duplicated or overridden. */
+  takeover?: boolean;
   /** Where a statement's "discuss" goes when there is no ask rail (the router map view hands
    *  it to the project's New Chat, prefilled). Absent AND no ask rail ⇒ no discuss button. */
   onDiscuss?(statement: KnowledgeStatementPayload): void;
@@ -209,15 +216,17 @@ export function ContextMapView({
   }, [build, mapQuery.data, mapQuery.fetching, mapQuery.stale]);
 
   // Escape leaves the map, the way every other takeover surface behaves — which is what
-  // makes the header's `esc` hint true rather than decoration. The ask field's own
-  // Escape clears its text first and stops there (`AskRail`), so a bare Escape leaves.
+  // makes the header's `esc` hint true rather than decoration. Only when this mount IS the
+  // takeover: embedded in a session, a window-wide Escape handler would fire from the chat
+  // composer and navigate the reviewer off the map they were reading.
   useEffect(() => {
+    if (!takeover) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onBack();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onBack]);
+  }, [onBack, takeover]);
 
   if (mapQuery.data?.status === "ok" && !mapQuery.error && !mapQuery.fetching && !mapQuery.stale) {
     return (
@@ -227,13 +236,14 @@ export function ContextMapView({
         knowledge={mapQuery.data.knowledge}
         onBack={onBack}
         showAskRail={showAskRail}
+        takeover={takeover}
         onDiscuss={onDiscuss}
       />
     );
   }
   return (
     <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
-      <MapHeader projectId={projectId} onBack={onBack} />
+      {takeover ? <MapHeader projectId={projectId} onBack={onBack} /> : null}
       <div className="context-map-status flex max-w-xl flex-col gap-3 px-8 py-10 text-ink-soft">
         <div className="flex items-center gap-2 font-serif text-base">
           {mapQuery.pending || build.kind === "processing" || build.kind === "refreshing" ? (
@@ -284,6 +294,7 @@ function ContextMap({
   knowledge,
   onBack,
   showAskRail,
+  takeover,
   onDiscuss,
 }: {
   projectId: string;
@@ -291,6 +302,7 @@ function ContextMap({
   knowledge: KnowledgeSetPayload | null;
   onBack(): void;
   showAskRail: boolean;
+  takeover: boolean;
   onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   const { mutate: persistDisposition } = useMutation("project.knowledgeDisposition");
@@ -357,10 +369,12 @@ function ContextMap({
   const knowledgeBehind = knowledge !== null && knowledge.baseOid !== map.baseOid;
   return (
     <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
-      <MapHeader projectId={projectId} onBack={onBack} />
+      {takeover ? <MapHeader projectId={projectId} onBack={onBack} /> : null}
       {/* The base strip is its OWN row under the 40px header (prototype `MapBaseLine`),
           never folded into it: the header is the takeover tier, and what the map was
-          built from is content about the map. */}
+          built from is content about the map. Embedded in a session there is no header
+          above it and this strip leads the surface, which is the prototype's split
+          between `ContextMapFullView` and the embedded panel. */}
       <div className="context-map-base-strip flex shrink-0 items-center gap-2 border-b border-line px-4 py-2">
         <span className="shrink-0 text-sm font-medium text-ink">Context Map</span>
         <span className="context-map-base truncate font-mono text-sm text-ink-faint">
@@ -377,7 +391,7 @@ function ContextMap({
         )}
       </div>
       <div className="context-map-main flex flex-1 min-h-0">
-        <section className="context-map-col flex flex-col min-w-0 w-64 border-r border-line">
+        <section className="context-map-col flex flex-col min-w-0 w-64 shrink-0 border-r border-line">
           <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
             Structure — {map.scopes.length} scopes · {fileCount.toLocaleString()} files
           </div>
@@ -980,15 +994,6 @@ const AskRail = forwardRef<{ prefill(text: string): void }, { projectId: string 
           ref={inputRef}
           placeholder="Ask about this project…"
           aria-label="Message the orchestrator"
-          onKeyDown={(event) => {
-            // Escape clears a half-typed question BEFORE it can bubble to the view's
-            // window handler and close the map out from under it (archived-view's
-            // two-stage pattern). With the field empty, Escape leaves.
-            if (event.key === "Escape" && event.currentTarget.value) {
-              event.stopPropagation();
-              event.currentTarget.value = "";
-            }
-          }}
           className="context-map-field flex-1 min-w-0 px-3 py-2 rounded-control border border-line bg-surface text-ink text-base"
         />
         <button

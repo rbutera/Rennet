@@ -550,3 +550,47 @@ describe("ContextMapView — the Context Map surface", () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The takeover/embedded split. `/projects/:id/map` OWNS the window: the 40px header
+// (Back, trail, `esc`) and the window Escape that keycap advertises. The session's
+// `?view=map` renders the same surface INSIDE the session's chrome, where that header
+// is a second Back and a second trail and that Escape fires from the chat composer.
+// Nothing exercised Escape at all before this pair, while the keycap claimed it worked.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ContextMapView — takeover chrome vs an in-session mount", () => {
+  it("leaves the map on a window Escape when it is the takeover, making the `esc` keycap true", async () => {
+    const { bridge } = fakeBridge();
+    const onBack = vi.fn();
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={onBack} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-tree")).not.toBeNull());
+    expect(container.querySelector(".context-map-bar")?.textContent).toContain("esc");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders no takeover chrome and installs no window Escape when embedded in a session", async () => {
+    const { bridge } = fakeBridge();
+    const onBack = vi.fn();
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <ProductContextMapView projectId="project-1" onBack={onBack} takeover={false} />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-tree")).not.toBeNull());
+    // No second header: no second Back, no second trail, no keycap promising an Escape.
+    expect(container.querySelector(".context-map-bar")).toBeNull();
+    expect(container.querySelector('[aria-label="Back"]')).toBeNull();
+    // Escape anywhere in the window (the session's chat composer) does NOT navigate the
+    // reviewer off the map. This assertion passes vacuously if the listener is simply
+    // never reached for some other reason — the takeover case above is what proves the
+    // same key press DOES fire the same handler when the listener is installed.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onBack).not.toHaveBeenCalled();
+    // The gate is on the CHROME, not the surface: the map itself still renders.
+    expect(container.querySelector(".context-map-base-strip")).not.toBeNull();
+  });
+});

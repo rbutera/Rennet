@@ -12,12 +12,13 @@ your confirmation.
 Reach the map from **View Context Map** on the ready summary shown when a new
 project finishes indexing, or from the **Map** control in a project's New Chat
 header. It opens as a full view, and the back arrow in its header or Escape leaves
-it for that project's New Chat. When the ask field contains text, the first Escape
-clears it and the next leaves.
+it for that project's New Chat.
 
 **Map** in a session's top bar opens the same map for that session's project,
-without leaving the session. Leaving it there returns to the board rather than to
-New Chat. A review opened by a direct link rather than through one of its
+without leaving the session: it renders inside the session's own chrome, so the
+map's structure and claims appear under the top bar you were already using rather
+than under a second header of their own. Leaving it with the top bar's back arrow
+returns to the board rather than to New Chat. A review opened by a direct link rather than through one of its
 sessions has no project to map, and the view says so instead of showing the
 board again.
 

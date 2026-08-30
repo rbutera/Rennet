@@ -275,7 +275,10 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           {projectId === undefined ? null : projectId === null ? (
             <MapUnavailable />
           ) : (
-            <ProjectContextMapView projectId={projectId} onBack={toBoard} />
+            // `takeover={false}`: the session's top bar already carries Back and the trail,
+            // and Escape here would fire from the chat composer. Only the map's own
+            // content belongs inside the session's chrome.
+            <ProjectContextMapView projectId={projectId} onBack={toBoard} takeover={false} />
           )}
         </div>
       ) : view === "diff" ? (
