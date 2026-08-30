@@ -28,15 +28,15 @@ export function createForgeRegistry<T>(
   };
 }
 
-export interface ForgeProvider extends Pick<ForgePort, "fetchCiStatus"> {
+export interface ForgeProvider {
   readonly review: ForgePublishPort;
   readonly pullRequest: ForgePrSubmissionPort;
 }
 
 export async function fetchForgeCiStatus(
-  registry: ForgeRegistry<Pick<ForgeProvider, "fetchCiStatus">>,
-  ...[ref, headOid, signal]: Parameters<ForgeProvider["fetchCiStatus"]>
-): ReturnType<ForgeProvider["fetchCiStatus"]> {
+  registry: ForgeRegistry<Pick<ForgePort, "fetchCiStatus">>,
+  ...[ref, headOid, signal]: Parameters<ForgePort["fetchCiStatus"]>
+): ReturnType<ForgePort["fetchCiStatus"]> {
   const source = registry.sourceFor(ref.repo);
   if (source === undefined) {
     throw new Error(`No CI status source is registered for forge "${ref.repo.forge}"`);

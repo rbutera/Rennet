@@ -3,7 +3,6 @@ import type { ForgeRepoIdentity, Project } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   createForgeRegistry,
-  type ForgeProvider,
   fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
@@ -81,29 +80,57 @@ describe("forge registry", () => {
   });
 
   it("routes CI by forge and forwards the exact ref, head OID, and signal", async () => {
-    const status = {
+    const githubStatus = {
       checks: [],
       sso: { kind: "none" },
       incomplete: false,
     } satisfies ForgeCiStatus;
-    const githubFetch = vi.fn<ForgePort["fetchCiStatus"]>(async () => status);
-    const registry = createForgeRegistry<Pick<ForgeProvider, "fetchCiStatus">>([
+    const gitlabStatus = {
+      checks: [
+        {
+          id: "gitlab-pipeline",
+          name: "pipeline",
+          outcome: "passing",
+          summary: "passed",
+        },
+      ],
+      sso: { kind: "none" },
+      incomplete: false,
+    } satisfies ForgeCiStatus;
+    const githubFetch = vi.fn<ForgePort["fetchCiStatus"]>(async () => githubStatus);
+    const gitlabFetch = vi.fn<ForgePort["fetchCiStatus"]>(async () => gitlabStatus);
+    const registry = createForgeRegistry<Pick<ForgePort, "fetchCiStatus">>([
       { forge: "github", implementation: { fetchCiStatus: githubFetch } },
+      { forge: "gitlab", implementation: { fetchCiStatus: gitlabFetch } },
     ]);
     const gitlabRef = { repo: GITLAB_WIDGET, number: 7 };
+    const gitlabController = new AbortController();
 
-    await expect(fetchForgeCiStatus(registry, gitlabRef, "gitlab-head")).rejects.toThrow(
-      'No CI status source is registered for forge "gitlab"',
-    );
+    await expect(
+      fetchForgeCiStatus(registry, gitlabRef, "gitlab-head", gitlabController.signal),
+    ).resolves.toBe(gitlabStatus);
+    expect(gitlabFetch).toHaveBeenCalledOnce();
+    expect(gitlabFetch).toHaveBeenCalledWith(gitlabRef, "gitlab-head", gitlabController.signal);
     expect(githubFetch).not.toHaveBeenCalled();
 
     const githubRef = { repo: GITHUB_WIDGET, number: 11 };
-    const controller = new AbortController();
+    const githubController = new AbortController();
     await expect(
-      fetchForgeCiStatus(registry, githubRef, "github-head", controller.signal),
-    ).resolves.toBe(status);
+      fetchForgeCiStatus(registry, githubRef, "github-head", githubController.signal),
+    ).resolves.toBe(githubStatus);
     expect(githubFetch).toHaveBeenCalledOnce();
-    expect(githubFetch).toHaveBeenCalledWith(githubRef, "github-head", controller.signal);
+    expect(githubFetch).toHaveBeenCalledWith(githubRef, "github-head", githubController.signal);
+    expect(gitlabFetch).toHaveBeenCalledOnce();
+
+    const bitbucketRef = {
+      repo: { forge: "bitbucket", owner: "acme", name: "widget" },
+      number: 13,
+    };
+    await expect(fetchForgeCiStatus(registry, bitbucketRef, "bitbucket-head")).rejects.toThrow(
+      'No CI status source is registered for forge "bitbucket"',
+    );
+    expect(githubFetch).toHaveBeenCalledOnce();
+    expect(gitlabFetch).toHaveBeenCalledOnce();
   });
 
   it("resolves the root by forge when two providers share owner/name", async () => {

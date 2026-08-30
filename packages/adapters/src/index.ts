@@ -281,6 +281,13 @@ export {
   type GitHubPublishConfig,
 } from "./github-publish";
 export { parseGitHubSso } from "./github-sso";
+export {
+  createGitLabCiAdapter,
+  type GitLabCiAdapterConfig,
+  type GitLabCiCommand,
+  type GitLabCiCommandResult,
+  type GitLabCiCommandRunner,
+} from "./gitlab-ci";
 export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
