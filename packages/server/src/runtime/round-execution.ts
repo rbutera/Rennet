@@ -54,6 +54,7 @@ export interface RoundSourceLandingCleanupInput {
 
 export type RoundTerminalDrainDecision =
   | { readonly kind: "retain" }
+  | { readonly kind: "return"; readonly returnedAt: number }
   | { readonly kind: "clear" }
   | { readonly kind: "clear-queued" }
   | { readonly kind: "replace"; readonly operation: RoundOperation };
@@ -115,6 +116,8 @@ export interface RoundExecutionCoordinator {
   /** Claim and drive an operation. Same-dispatch calls share the exact promise; a distinct
    * dispatch only sets the durable rerun bit until the current terminal operation drains. */
   submit(operation: RoundOperation): Promise<RoundOperation>;
+  /** Resume one already-claimed durable operation, including a terminal waiting to drain. */
+  resume(sessionId: string): Promise<RoundOperation | undefined>;
   /** Resume every durable operation from its first unsettled phase. */
   recover(): Promise<readonly RoundOperation[]>;
 }
@@ -212,7 +215,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
 
   submit(initial: RoundOperation): Promise<RoundOperation> {
     const validated = RoundOperationSchema.parse(initial);
-    let active = this.options.store.claimIfIdle(validated);
+    let active = this.options.store.claimOrReplaceReturned(validated);
     const running = this.inFlight.get(active.sessionId);
 
     if (isRoundOperationTerminal(active)) {
@@ -235,6 +238,12 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     if (active.revision === 0 && active.state.phase === "claimed") {
       this.options.ports.publish(active);
     }
+    return this.start(active);
+  }
+
+  resume(sessionId: string): Promise<RoundOperation | undefined> {
+    const active = this.options.store.read(sessionId);
+    if (active === undefined) return Promise.resolve(undefined);
     return this.start(active);
   }
 
@@ -449,6 +458,17 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
         );
         this.options.ports.publish(replacement);
         return replacement;
+      }
+      if (decision.kind === "return") {
+        if (latest.state.phase !== "completed") {
+          throw new Error("only a completed round can record its Return handback");
+        }
+        const returned = this.options.store.compareAndSwap(expectation(latest), {
+          state: { ...latest.state, returnedAt: decision.returnedAt },
+          updatedAt: Math.max(latest.updatedAt, decision.returnedAt),
+        });
+        this.options.ports.publish(returned);
+        return undefined;
       }
       if (decision.kind === "retain") return undefined;
       if (decision.kind === "clear-queued") {

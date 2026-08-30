@@ -106,6 +106,44 @@ const changedRoundEvidence = {
   recording: recordingReceipt,
 } as const;
 
+type CompletedRoundOperation = Omit<RoundOperation, "state"> & {
+  state: Extract<RoundOperation["state"], { phase: "completed" }>;
+};
+
+function completedOperation(
+  options: {
+    operationId?: string;
+    sessionId?: string;
+    revision?: number;
+    rerunRequested?: boolean;
+    returnedAt?: number;
+  } = {},
+): CompletedRoundOperation {
+  const completed = operation({
+    operationId: options.operationId,
+    sessionId: options.sessionId,
+    revision: options.revision ?? 10,
+    rerunRequested: options.rerunRequested,
+    state: {
+      phase: "completed",
+      ...changedRoundEvidence,
+      result: {
+        kind: "changed",
+        report: {
+          ...reportDraftReceipt,
+          verificationExecutionId: verificationAttempt.executionId,
+          verificationStartedAt: verificationAttempt.startedAt,
+          verifiedAt: 16,
+        },
+      },
+      completedAt: 16,
+      ...(options.returnedAt === undefined ? {} : { returnedAt: options.returnedAt }),
+    },
+  });
+  if (completed.state.phase !== "completed") throw new Error("completed fixture is invalid");
+  return { ...completed, state: completed.state };
+}
+
 function tempStoreDir(): string {
   return mkdtempSync(join(tmpdir(), "round-operation-store-"));
 }
@@ -374,6 +412,85 @@ if (RACE_ROLE !== undefined) {
       expect(store.claimIfIdle(first)).toEqual(first);
       expect(store.claimIfIdle(second)).toEqual(first);
       expect(store.read(first.sessionId)).toEqual(first);
+    });
+
+    it("atomically claims a successor only after the completed operation returned", () => {
+      const sessionId = "session-returned";
+      const draining = completedOperation({ operationId: "draining", sessionId });
+      const drainingStore = storeWithPersistedOperation(draining);
+      const successor = operation({ operationId: "successor", sessionId });
+
+      expect(drainingStore.claimOrReplaceReturned(successor)).toEqual(draining);
+      expect(drainingStore.read(sessionId)).toEqual(draining);
+
+      const returned = drainingStore.compareAndSwap(expectation(draining), {
+        state: { ...draining.state, returnedAt: 17 },
+        updatedAt: 17,
+      });
+      expect(drainingStore.claimOrReplaceReturned(successor)).toEqual(successor);
+      expect(drainingStore.read(sessionId)).toEqual(successor);
+
+      const queuedReturned = completedOperation({
+        operationId: "queued-returned",
+        sessionId: "session-queued-returned",
+        rerunRequested: true,
+        returnedAt: 17,
+      });
+      const queuedStore = storeWithPersistedOperation(queuedReturned);
+      expect(
+        queuedStore.claimOrReplaceReturned(
+          operation({ operationId: "must-wait", sessionId: queuedReturned.sessionId }),
+        ),
+      ).toEqual(queuedReturned);
+      const sameIdentity = completedOperation({
+        operationId: "same-identity",
+        sessionId: "session-same-identity",
+        returnedAt: 17,
+      });
+      const sameIdentityStore = storeWithPersistedOperation(sameIdentity);
+      expect(() =>
+        sameIdentityStore.claimOrReplaceReturned(
+          operation({ operationId: sameIdentity.operationId, sessionId: sameIdentity.sessionId }),
+        ),
+      ).toThrow(RoundOperationConflictError);
+      expect(returned.state).toMatchObject({ phase: "completed", returnedAt: 17 });
+    });
+
+    it("allows a completed operation to add only its immutable return receipt", () => {
+      const completed = completedOperation({ operationId: "return-receipt" });
+      const store = storeWithPersistedOperation(completed);
+      const returned = store.compareAndSwap(expectation(completed), {
+        state: { ...completed.state, returnedAt: 17 },
+        updatedAt: 17,
+      });
+      if (returned.state.phase !== "completed") throw new Error("return receipt was not persisted");
+      const returnedState = returned.state;
+
+      expect(returnedState).toEqual({ ...completed.state, returnedAt: 17 });
+      expect(returned.revision).toBe(completed.revision + 1);
+      expect(() =>
+        store.compareAndSwap(expectation(returned), {
+          state: { ...returnedState, returnedAt: 18 },
+          updatedAt: 18,
+        }),
+      ).toThrow(RoundOperationConflictError);
+
+      const mutationStore = storeWithPersistedOperation(
+        completedOperation({ operationId: "mutated-return", sessionId: "mutated-return" }),
+      );
+      const current = mutationStore.read("mutated-return");
+      if (current?.state.phase !== "completed") throw new Error("completed fixture is missing");
+      const currentState = current.state;
+      expect(() =>
+        mutationStore.compareAndSwap(expectation(current), {
+          state: {
+            ...currentState,
+            worker: { ...currentState.worker, changedPaths: ["other.ts"] },
+            returnedAt: 17,
+          },
+          updatedAt: 17,
+        }),
+      ).toThrow(RoundOperationConflictError);
     });
 
     it("rejects a stale CAS and advances the revision exactly once", () => {

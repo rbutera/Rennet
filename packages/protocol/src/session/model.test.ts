@@ -679,6 +679,8 @@ describe("session/ durable shapes (#466/#457)", () => {
       snapshot: {
         operationId: "op-1",
         revision: 8,
+        rerunRequested: false,
+        draining: true,
         createdAt: 100,
         roundNumber: 1,
         sourceTarget: { kind: "branch", branch: "feat/round" },
@@ -714,6 +716,65 @@ describe("session/ durable shapes (#466/#457)", () => {
     ]) {
       expect(encoded).not.toContain(privateValue);
     }
+  });
+
+  it("does not expose completed work as returned until its durable return receipt exists", () => {
+    const completed = RoundOperationSchema.parse({
+      ...operationBase,
+      revision: 8,
+      updatedAt: 180,
+      state: {
+        phase: "completed",
+        workspace: operationWorkspace,
+        worker: operationWorker,
+        gate: operationGate,
+        commits: operationCommits,
+        landing: operationLanding,
+        recording: operationRecording,
+        result: {
+          kind: "changed",
+          report: {
+            executionId: "report-draft-1",
+            reportBoardId: "report-1",
+            generation: "gen-2",
+            boardIds: operationBoardIds,
+            startedAt: 165,
+            draftedAt: 170,
+            verificationExecutionId: "report-verify-1",
+            verificationStartedAt: 175,
+            verifiedAt: 180,
+          },
+        },
+        completedAt: 180,
+      },
+    });
+
+    expect(roundOperationProgressSnapshot(completed)).toMatchObject({
+      rerunRequested: false,
+      draining: true,
+    });
+    expect(
+      roundOperationProgressSnapshot(
+        RoundOperationSchema.parse({ ...completed, revision: 9, rerunRequested: true }),
+      ),
+    ).toMatchObject({ rerunRequested: true, draining: true });
+
+    const returned = RoundOperationSchema.parse({
+      ...completed,
+      revision: 9,
+      updatedAt: 190,
+      state: { ...completed.state, returnedAt: 190 },
+    });
+    expect(roundOperationProgressSnapshot(returned)).toMatchObject({
+      rerunRequested: false,
+      draining: false,
+    });
+    expect(
+      RoundOperationSchema.safeParse({
+        ...completed,
+        state: { ...completed.state, returnedAt: 179 },
+      }).success,
+    ).toBe(false);
   });
 
   it("coarsens landing and recording without advancing visible commit progress early", () => {

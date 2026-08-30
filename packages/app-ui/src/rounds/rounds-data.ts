@@ -285,6 +285,7 @@ export function useLiveRoundsSource(): RoundsSource {
         event.type === "operation" &&
         (event.snapshot.state.phase === "failed" ||
           (event.snapshot.state.phase === "completed" &&
+            event.snapshot.draining !== true &&
             event.snapshot.state.result.kind === "changed"));
       if (
         durableTerminal ||
@@ -307,9 +308,7 @@ export function useLiveRoundsSource(): RoundsSource {
     error: recordsError,
     pending: recordsPending,
   } = useCommand("session.rounds", { reviewId: reviewId ?? "" }, { enabled });
-  const { mutate } = useMutation("round.dispatch", {
-    invalidates: ["session.roundEvents"],
-  });
+  const { mutate } = useMutation("round.dispatch");
 
   // The reviewer's dispatch INTENT, held here and never written into the event log (review
   // finding 7). The old code folded a `{type:"dispatched"}` of its own making into the log
@@ -365,9 +364,25 @@ export function useLiveRoundsSource(): RoundsSource {
           { supersedeInFlight: true },
         );
         setIntent({ slug: forSlug, status: "sending" });
-        void mutate({ reviewId }).catch((reason: unknown) => {
-          setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });
-        });
+        void mutate({ reviewId })
+          .then((output) => {
+            if (output.acceptedOperation !== undefined) {
+              const accepted: RoundEvent = {
+                type: "operation",
+                snapshot: output.acceptedOperation,
+              };
+              streamed.current = mergeRoundEvents(streamed.current, [accepted]);
+              cache.setData(
+                commandKey("session.roundEvents", { reviewId }),
+                () => ({ events: [...streamed.current] }),
+                { supersedeInFlight: true },
+              );
+            }
+            cache.invalidate(commandKey("session.roundEvents", { reviewId }));
+          })
+          .catch((reason: unknown) => {
+            setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });
+          });
       },
     };
   }, [

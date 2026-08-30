@@ -39,7 +39,13 @@ const GATE = { status: "passed", durationMs: 1_234, projectCount: 14 } as const;
 function operationEvent(
   revision: number,
   state: RoundOperationProgressSnapshot["state"],
-  options?: { readonly operationId?: string; readonly createdAt?: number; readonly seq?: number },
+  options?: {
+    readonly operationId?: string;
+    readonly createdAt?: number;
+    readonly seq?: number;
+    readonly draining?: boolean;
+    readonly rerunRequested?: boolean;
+  },
 ): Extract<RoundEvent, { type: "operation" }> {
   return {
     type: "operation",
@@ -48,6 +54,8 @@ function operationEvent(
       operationId: options?.operationId ?? OPERATION_BASE.operationId,
       createdAt: options?.createdAt ?? OPERATION_BASE.createdAt,
       revision,
+      ...(options?.draining === undefined ? {} : { draining: options.draining }),
+      ...(options?.rerunRequested === undefined ? {} : { rerunRequested: options.rerunRequested }),
       state,
     },
     ...(options?.seq === undefined ? {} : { seq: options.seq }),
@@ -360,5 +368,62 @@ describe("round-machine — the pure run state machine", () => {
     expect(runNavigation(verifying, SLUG)).toBeNull();
     expect(legacyEarlyTerminal).toBe(verifying);
     expect(runNavigation(completed, SLUG)).toEqual({ path: "/s/s-1", replace: true });
+  });
+
+  it("keeps a completed operation on the run route until its Return handback is durable", () => {
+    const completedState: RoundOperationProgressSnapshot["state"] = {
+      phase: "completed",
+      workspace: WORKSPACE,
+      worker: WORKER,
+      gate: GATE,
+      commits: { status: "done", count: 2 },
+      result: {
+        kind: "changed",
+        report: {
+          status: "verified",
+          reportBoardId: "report-2",
+          generation: "generation-2",
+        },
+      },
+    };
+    const draining = advance(
+      initialRoundState,
+      operationEvent(10, completedState, { draining: true }),
+    );
+
+    expect(draining.phase).toBe("verifying");
+    expect(runNavigation(draining, SLUG)).toBeNull();
+
+    const returned = advance(draining, operationEvent(11, completedState, { draining: false }));
+    expect(returned.phase).toBe("composed");
+    expect(runNavigation(returned, SLUG)).toEqual({ path: "/s/s-1", replace: true });
+  });
+
+  it("treats a queued rerun receipt as the next dispatch instead of round-one completion", () => {
+    const queued = advance(
+      initialRoundState,
+      operationEvent(
+        11,
+        {
+          phase: "completed",
+          workspace: WORKSPACE,
+          worker: WORKER,
+          gate: GATE,
+          commits: { status: "done", count: 2 },
+          result: {
+            kind: "changed",
+            report: {
+              status: "verified",
+              reportBoardId: "report-1",
+              generation: "generation-1",
+            },
+          },
+        },
+        { draining: true, rerunRequested: true },
+      ),
+    );
+
+    expect(queued.phase).toBe("dispatching");
+    expect(runNavigation(queued, SLUG)).toBeNull();
   });
 });

@@ -546,6 +546,69 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.store.read(completed.sessionId)).toBeUndefined();
   });
 
+  it("publishes completion as draining until the durable Return handback is recorded", async () => {
+    const test = scenario();
+    const completed = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async drainTerminal() {
+          return { kind: "return", returnedAt: 2_000_000_000_000 };
+        },
+      },
+    }).submit(operation());
+
+    expect(completed.state.phase).toBe("completed");
+    const retained = test.store.read(completed.sessionId);
+    expect(retained?.state.phase).toBe("completed");
+    if (retained?.state.phase !== "completed") throw new Error("expected retained completion");
+    expect(retained.state.returnedAt).toBe(2_000_000_000_000);
+    const publishedCompletions = test.published.filter(
+      (entry) => entry.state.phase === "completed",
+    );
+    expect(publishedCompletions).toHaveLength(2);
+    expect(publishedCompletions[0]?.state).not.toHaveProperty("returnedAt");
+    expect(publishedCompletions[1]?.state).toHaveProperty("returnedAt", 2_000_000_000_000);
+  });
+
+  it("replaces a queued rerun without publishing round one as handed back", async () => {
+    const test = scenario();
+    const releaseDrain = deferred<void>();
+    const replacement = operation({ operationId: "operation-2", roundNumber: 2 });
+    const ports: RoundExecutionPorts = {
+      ...test.ports,
+      async drainTerminal({ operation: current }) {
+        if (current.operationId === replacement.operationId) {
+          return { kind: "return", returnedAt: 2_000_000_000_001 };
+        }
+        if (current.rerunRequested) return { kind: "replace", operation: replacement };
+        await releaseDrain.promise;
+        return { kind: "return", returnedAt: 2_000_000_000_000 };
+      },
+    };
+    const coordinator = createRoundExecutionCoordinator({ store: test.store, ports });
+    const first = coordinator.submit(operation());
+    await waitUntil(() => test.store.read("session-1")?.state.phase === "completed");
+
+    const second = coordinator.submit(replacement);
+    expect(second).toBe(first);
+    expect(test.store.read("session-1")?.rerunRequested).toBe(true);
+    releaseDrain.resolve(undefined);
+    await first;
+
+    const retained = test.store.read("session-1");
+    expect(retained?.operationId).toBe(replacement.operationId);
+    expect(retained?.state).toHaveProperty("returnedAt", 2_000_000_000_001);
+    expect(
+      test.published.some(
+        (entry) =>
+          entry.operationId === "operation-1" &&
+          entry.state.phase === "completed" &&
+          entry.state.returnedAt !== undefined,
+      ),
+    ).toBe(false);
+  });
+
   it("coalesces a repeated dispatch and only marks a distinct dispatch for rerun", async () => {
     const test = scenario();
     const worker = deferred<RoundWorkerReceipt>();

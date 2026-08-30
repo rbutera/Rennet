@@ -1321,8 +1321,11 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     });
     const dispatched = (await server.dispatch("round.dispatch", { reviewId })) as {
       dispatched: boolean;
+      acceptedOperation?: { operationId: string };
     };
     expect(dispatched.dispatched).toBe(true);
+    expect(dispatched.acceptedOperation?.operationId).toBeTypeOf("string");
+    const acceptedOperationId = dispatched.acceptedOperation?.operationId;
 
     // The kick runs BEHIND the command, so wait on a point that is downstream of the
     // session derivation: `dispatchRound` emits its first progress event only after
@@ -1330,9 +1333,14 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     await vi.waitFor(
       async () => {
         const events = (await server.dispatch("session.roundEvents", { reviewId })) as {
-          events: unknown[];
+          events: { type?: string; snapshot?: { operationId?: string } }[];
         };
-        expect(events.events.length).toBeGreaterThan(0);
+        expect(
+          events.events.some(
+            (event) =>
+              event.type === "operation" && event.snapshot?.operationId === acceptedOperationId,
+          ),
+        ).toBe(true);
       },
       { timeout: 15_000, interval: 50 },
     );
