@@ -346,7 +346,7 @@ describe("NewChatView", () => {
     expect(screen.getByRole("button", { name: /^Needs you/ }).textContent).toContain("1");
     expect(screen.getByRole("button", { name: /^Mine/ }).textContent).toContain("3");
     expect(screen.getByRole("button", { name: /^Local/ }).textContent).toContain("1");
-    expect(screen.getByRole("button", { name: /^PRs/ }).textContent).toContain("3");
+    expect(screen.getByRole("button", { name: /^Requests/ }).textContent).toContain("3");
   });
 
   it("filters by tab", async () => {
@@ -361,7 +361,7 @@ describe("NewChatView", () => {
 
   it("text-filters across the documented fields", async () => {
     renderView("p1", { p1: detailP1() });
-    const filter = await screen.findByLabelText("Filter branches and pull requests");
+    const filter = await screen.findByLabelText("Filter branches and change requests");
 
     // A PR title match.
     fireEvent.change(filter, { target: { value: "span" } });
@@ -388,7 +388,7 @@ describe("NewChatView", () => {
     expect(within(github).getByText("acme/widget")).toBeTruthy();
     expect(within(gitlab).getByText("acme/widget")).toBeTruthy();
 
-    const filter = screen.getByLabelText("Filter branches and pull requests");
+    const filter = screen.getByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "gitlab" } });
     expect(
       screen.getByRole("button", { name: /main.*GitLab.*acme\/widget.*Reviewed/i }),
@@ -405,7 +405,7 @@ describe("NewChatView", () => {
     expect(screen.getByText("acme/gadget")).toBeTruthy();
     expect(screen.queryByText("GitHub")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Filter branches and pull requests"), {
+    fireEvent.change(screen.getByLabelText("Filter branches and change requests"), {
       target: { value: "github" },
     });
     expect(await screen.findByText("Nothing matches.")).toBeTruthy();
@@ -413,20 +413,20 @@ describe("NewChatView", () => {
 
   it("filtered-empty and empty states read honestly", async () => {
     renderView("p1", { p1: detailP1() });
-    const filter = await screen.findByLabelText("Filter branches and pull requests");
+    const filter = await screen.findByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "zzz-nothing" } });
     expect(screen.getByText("Nothing matches.")).toBeTruthy();
 
     cleanup();
     renderView("p2", { p2: EMPTY_DETAIL });
-    await screen.findByText("No open branches or pull requests yet.");
+    await screen.findByText("No open branches or change requests yet.");
   });
 
   it("Escape is two-stage: clear the filter, then return to the prior surface", async () => {
     const { history } = renderView("p1", { p1: detailP1() }, undefined, sessionStore(), {
       current: "/s/session-before-new-chat?view=diff",
     });
-    const filter = await screen.findByLabelText("Filter branches and pull requests");
+    const filter = await screen.findByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "span" } });
 
     // First Escape (filter non-empty): clears it, does NOT navigate.
@@ -614,6 +614,7 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     renderView("p1", { p1: crossForgeDetail() }, undefined, store);
     expect(await screen.findByText("GitLab widget")).toBeTruthy();
     expect(screen.queryByText("GitHub widget")).toBeNull();
+    expect(rowButton(/GitLab widget/).textContent).toContain("!7");
   });
 
   it("the Current Checkout row starts a NO-TARGET session — it claims nothing", async () => {

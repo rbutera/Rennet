@@ -27,19 +27,20 @@ reviewer decides and posts.
 flowchart LR
   source{Change source}
   source -->|Your branch| local[Immutable local patchset]
-  source -->|Team PR| remote[Pinned GitHub patchset]
+  source -->|Team request| remote[Pinned forge patchset]
   local --> boards[Boards, one per lens]
   remote --> boards
   boards --> decide[Read, discuss, decide]
   decide --> asks[Staged asks]
-  asks --> github[GitHub review]
+  asks --> github[Forge review]
   asks --> round[Work-order round]
   round --> delta[Successor patchset]
   delta --> boards
 ```
 
-Both modes use the same review state. A teammate's pull request produces one
-GitHub review. On your own branch the asks become a work order instead: a
+Both modes use the same review state. A teammate's GitHub pull request or
+GitLab.com merge request produces one review on that forge. On your own branch
+the asks become a work order instead: a
 coding agent runs them, and the round comes back with a report and a new
 generation of boards over what it changed. When nothing is left to ask, the
 same surface pushes the branch and opens the GitHub pull request or GitLab.com

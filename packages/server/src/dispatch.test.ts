@@ -1508,8 +1508,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
 
     expect(posted.request.endpoint).toBe("https://gitlab.test/api/v4/merge_requests/reviews");
     expect(publishPortFor.mock.calls).toEqual([
-      [GITLAB_SANDBOX_TARGET.repo],
-      [GITLAB_SANDBOX_TARGET.repo],
+      [GITLAB_SANDBOX_TARGET.repo, "/clone"],
+      [GITLAB_SANDBOX_TARGET.repo, "/clone"],
     ]);
     expect(buildGitHubRequest).not.toHaveBeenCalled();
     expect(githubPort.posts).toHaveLength(0);

@@ -495,6 +495,21 @@ describe("buildForgeReviewPost (issue #21)", () => {
     ]);
   });
 
+  it("folds every line comment into one body note when the forge cannot batch a review", () => {
+    const unbatched = buildForgeReviewPost(reviewArtifact, {
+      reviewId: "rev-unbatched",
+      target: TARGET,
+      payload,
+      capabilities: { ...CAPS, supportsBatchedReview: false },
+    });
+
+    expect(unbatched.threads).toEqual([]);
+    expect(unbatched.body).toContain("## Line comments");
+    expect(unbatched.body).toContain("`src/a.ts:5`");
+    expect(unbatched.body).toContain("`src/b.ts:9`");
+    expect(unbatched.ledger.filter((entry) => entry.kind === "thread-fold")).toHaveLength(2);
+  });
+
   it("renders each disposition TYPE into its body independently of the resolved review event", () => {
     expect(post.threads[0]?.body).toContain("Requested change");
     expect(post.threads[1]?.body).toContain("Question");

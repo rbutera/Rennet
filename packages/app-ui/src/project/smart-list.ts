@@ -56,9 +56,9 @@ export interface SmartRow {
     forgeRepository?: ForgeRepoIdentity;
     ci: SmartListCi;
     reviewRequested: boolean;
-    additions: number;
-    deletions: number;
-    changedFiles: number;
+    additions?: number;
+    deletions?: number;
+    changedFiles?: number;
   };
   /** Present on a local-work row. */
   local?: {

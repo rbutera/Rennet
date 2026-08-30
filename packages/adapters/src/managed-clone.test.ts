@@ -37,6 +37,19 @@ describe("ensureManagedClone", () => {
     expect(runClone).not.toHaveBeenCalled();
   });
 
+  it("keeps GitLab clones provider-qualified and uses the GitLab remote", async () => {
+    const dir = dataDir();
+    const repository = { forge: "gitlab", owner: "acme/platform", name: "widget" };
+    const runClone = vi.fn(async (_url: string, target: string) => {
+      mkdirSync(join(target, ".git"), { recursive: true });
+    });
+
+    const root = await ensureManagedClone(dir, repository, runClone);
+
+    expect(root).toBe(join(dir, "clones", "gitlab", "acme", "platform", "widget"));
+    expect(runClone).toHaveBeenCalledWith("https://gitlab.com/acme/platform/widget.git", root);
+  });
+
   it("wraps a clone failure in an actionable error (pick a clone instead)", async () => {
     const dir = dataDir();
     const runClone = vi.fn(async () => {

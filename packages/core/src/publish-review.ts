@@ -410,7 +410,7 @@ export interface ForgeReviewThread {
 
 /** The class of a flattening the ledger records (never a silent drop, #21). A `body-note`
  *  is a pathless ask woven into the review body (B11 finding 2) — recorded, not dropped. */
-export type PublishDegradationKind = "file-level-fold" | "body-note";
+export type PublishDegradationKind = "file-level-fold" | "thread-fold" | "body-note";
 
 /** One degradation applied while building the outbound post, shown to the reviewer. */
 export interface PublishDegradation {
@@ -538,6 +538,7 @@ export function buildForgeReviewPost(
   assertNonblankReviewOpener(artifact.opener);
   const threads: ForgeReviewThread[] = [];
   const fileLevel: ReviewCommentInput[] = [];
+  const unbatched: ReviewCommentInput[] = [];
   const ledger: PublishDegradation[] = [];
 
   for (const comment of artifact.comments) {
@@ -545,12 +546,16 @@ export function buildForgeReviewPost(
       fileLevel.push(comment);
       continue;
     }
-    threads.push({
-      path: comment.path,
-      line: comment.line,
-      side: comment.side,
-      body: formatCommentBody(comment.type, comment.body),
-    });
+    if (options.capabilities.supportsBatchedReview) {
+      threads.push({
+        path: comment.path,
+        line: comment.line,
+        side: comment.side,
+        body: formatCommentBody(comment.type, comment.body),
+      });
+    } else {
+      unbatched.push(comment);
+    }
   }
 
   // The event is part of the outbound operation but not the canonical artifact payload. Resolve
@@ -592,6 +597,18 @@ export function buildForgeReviewPost(
       return `- \`${comment.path}\` — ${formatCommentBody(comment.type, comment.body)}`;
     });
     sections.push(`## File-level notes\n${notes.join("\n")}`);
+  }
+
+  if (unbatched.length > 0) {
+    const notes = unbatched.map((comment) => {
+      ledger.push({
+        kind: "thread-fold",
+        path: comment.path,
+        detail: "The forge cannot submit one batched review — folded into the review body.",
+      });
+      return `- \`${comment.path}:${comment.line}\` — ${formatCommentBody(comment.type, comment.body)}`;
+    });
+    sections.push(`## Line comments\n${notes.join("\n")}`);
   }
 
   sections.push(markerComment(marker));

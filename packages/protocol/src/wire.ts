@@ -42,7 +42,13 @@ const repositoryProvenanceSchema = z.object({
 // The change's stated intent (#136), captured with the patchset. It reaches the
 // command boundary here so it survives IPC intact rather than being stripped: the
 // type declares it, so the schema must carry it (#242).
-const patchsetIntentSurfaceSchema = z.enum(["github-pr", "github-rest", "working-tree"]);
+const patchsetIntentSurfaceSchema = z.enum([
+  "github-pr",
+  "github-rest",
+  "forge-pr",
+  "forge-rest",
+  "working-tree",
+]);
 const patchsetSpecSnapshotSchema = z.object({
   path: z.string(),
   digest: z.string(),
@@ -71,7 +77,9 @@ export const patchsetSchema = z.object({
   // from `degraded`/`degradationReason`. Absent ⇒ `local` (additive; identity
   // ignores it). Without these here, zod strips them and every PR review looks
   // like a local capture.
-  source: z.enum(["local", "local-branch", "github-local", "github-rest"]).optional(),
+  source: z
+    .enum(["local", "local-branch", "github-local", "github-rest", "forge-local", "forge-rest"])
+    .optional(),
   degraded: z.boolean().optional(),
   degradationReason: z.string().optional(),
   // #144: the ProjectSnapshot the changeset was computed against, and #136: the
@@ -870,9 +878,10 @@ export const pullRequestSchema = z
     /** The viewer has been asked to review this PR — the relevance boost's core signal. */
     reviewRequestedFromViewer: z.boolean(),
     ci: smartListCiSchema,
-    additions: z.number().int().nonnegative(),
-    deletions: z.number().int().nonnegative(),
-    changedFiles: z.number().int().nonnegative(),
+    /** Some forges do not expose aggregate line counts in their list endpoint. */
+    additions: z.number().int().nonnegative().optional(),
+    deletions: z.number().int().nonnegative().optional(),
+    changedFiles: z.number().int().nonnegative().optional(),
     lastActivityAt: z.iso.datetime(),
   })
   .refine(

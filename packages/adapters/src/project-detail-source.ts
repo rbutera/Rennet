@@ -72,7 +72,7 @@ export interface ProjectDetailSourceDeps {
 
 /** The project-detail forges available in this server process. GitHub is the sole entry today. */
 export interface ProjectForgeRegistry {
-  sourceFor(repository: ForgeRepoIdentity): ProjectPrSource | undefined;
+  sourceFor(repository: ForgeRepoIdentity, repositoryRoot: string): ProjectPrSource | undefined;
 }
 
 /** Trim git stdout and read the first non-empty line. */
@@ -369,14 +369,17 @@ export async function loadProjectDetail(
   const identities = await Promise.all(roots.map((root) => repositoryIdentity(deps.git, root)));
   const forgeRepos = [
     ...new Map(
-      identities.flatMap((identity) => {
+      identities.flatMap((identity, index) => {
         const forge = identity.forgeRepository;
-        return forge === undefined ? [] : [[repositoryKey(identity), forge] as const];
+        const root = roots[index];
+        return forge === undefined || root === undefined
+          ? []
+          : [[repositoryKey(identity), { repository: forge, root }] as const];
       }),
     ).values(),
   ];
-  const forgeTargets = forgeRepos.flatMap((repository) => {
-    const source = deps.forgeRegistry?.sourceFor(repository);
+  const forgeTargets = forgeRepos.flatMap(({ repository, root }) => {
+    const source = deps.forgeRegistry?.sourceFor(repository, root);
     return source === undefined ? [] : [{ repository, source }];
   });
 

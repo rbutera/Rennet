@@ -78,6 +78,7 @@ export interface ReviewedHeadPin {
   baseOid: string;
   headOid: string;
   baseRef: string;
+  source?: "github-local" | "forge-local";
 }
 
 export interface GitHubChangesetResult {
@@ -102,14 +103,33 @@ export interface GitHubChangesetSourceDeps {
   pin: GitObjectPinner;
   worktrees: WorktreeProvider;
   visibleByteLimit?: number;
+  remoteHeadRef?: (ref: ForgePullRequestRef) => string | null;
   resolveProjectSnapshotId?: (
     repoRoot: string,
     baseOid: string,
   ) => Promise<string | undefined> | string | undefined;
 }
 
-const DEGRADED_REASON =
-  "This diff came from GitHub's REST API because the repository is not on disk. Whole-repo-context angles (reach, blast-radius) cannot run on the degraded diff.";
+function degradedReason(forge: string): string {
+  const provider = forge === "github" ? "GitHub" : forge === "gitlab" ? "GitLab" : "the forge";
+  return `This diff came from ${provider}'s API because the repository is not on disk. Whole-repo-context angles (reach, blast-radius) cannot run on the degraded diff.`;
+}
+
+function localSource(forge: string): "github-local" | "forge-local" {
+  return forge === "github" ? "github-local" : "forge-local";
+}
+
+function restSource(forge: string): "github-rest" | "forge-rest" {
+  return forge === "github" ? "github-rest" : "forge-rest";
+}
+
+function intentSurface(
+  forge: string,
+  path: "local" | "rest",
+): "github-pr" | "github-rest" | "forge-pr" | "forge-rest" {
+  if (forge === "github") return path === "local" ? "github-pr" : "github-rest";
+  return path === "local" ? "forge-pr" : "forge-rest";
+}
 
 /** The remote the reviewed OIDs are fetched from when they are not yet local. */
 const REVIEW_REMOTE = "origin";
@@ -167,7 +187,7 @@ export class GitHubChangesetSource {
         baseOid: pr.baseOid,
         headOid: pr.headOid,
         baseRef: pr.baseRef,
-        source: "github-local",
+        source: localSource(ref.repo.forge),
         visibleByteLimit: this.deps.visibleByteLimit,
         projectSnapshotId,
       });
@@ -175,11 +195,17 @@ export class GitHubChangesetSource {
       // spec set snapshotted at the reviewed HEAD OID (the clone is on disk, so we
       // read the committed content — what the change shipped against, immutable).
       const specSnapshots = await this.snapshotSpecsAtHead(match.root, pr.headOid, patchset.files);
-      const intent = forgePrIntent("github-pr", pr, specSnapshots);
+      const intent = forgePrIntent(intentSurface(ref.repo.forge, "local"), pr, specSnapshots);
       return {
         patchset: { ...patchset, intent },
         sso: pr.sso,
-        pin: { root: match.root, baseOid: pr.baseOid, headOid: pr.headOid, baseRef: pr.baseRef },
+        pin: {
+          root: match.root,
+          baseOid: pr.baseOid,
+          headOid: pr.headOid,
+          baseRef: pr.baseRef,
+          source: localSource(ref.repo.forge),
+        },
         pullRequest: pr,
       };
     }
@@ -192,7 +218,10 @@ export class GitHubChangesetSource {
     // the forge, not the clone. Spec snapshots need the on-disk committed content,
     // which the REST path does not have, so the spec set is honestly absent.
     return {
-      patchset: { ...restPatchset, intent: forgePrIntent("github-rest", pr, []) },
+      patchset: {
+        ...restPatchset,
+        intent: forgePrIntent(intentSurface(ref.repo.forge, "rest"), pr, []),
+      },
       sso: combinedSso,
       pin: null,
       pullRequest: pr,
@@ -223,8 +252,13 @@ export class GitHubChangesetSource {
     const wanted = [pr.baseOid, pr.headOid];
     if ((await this.missingOids(root, wanted)).length === 0) return;
 
+    const ref =
+      this.deps.remoteHeadRef?.(pr.ref) ??
+      (pr.ref.repo.forge === "github" ? `refs/pull/${prNumber}/head` : null);
     const attempts: string[][] = [
-      ["fetch", "--no-tags", "--no-write-fetch-head", REVIEW_REMOTE, `refs/pull/${prNumber}/head`],
+      ...(ref === null
+        ? []
+        : [["fetch", "--no-tags", "--no-write-fetch-head", REVIEW_REMOTE, ref]]),
       ["fetch", "--no-tags", "--no-write-fetch-head", REVIEW_REMOTE, ...wanted],
     ];
     for (const args of attempts) {
@@ -302,7 +336,7 @@ export class GitHubChangesetSource {
       baseOid: pin.baseOid,
       headOid: pin.headOid,
       baseRef: pin.baseRef,
-      source: "github-local",
+      source: pin.source ?? "github-local",
       visibleByteLimit: this.deps.visibleByteLimit,
       projectSnapshotId,
     });
@@ -342,9 +376,9 @@ export class GitHubChangesetSource {
       rawDiff: visible(diff, visibleByteLimit),
       byteLength: bytes.length,
       truncated: bytes.length > visibleByteLimit,
-      source: "github-rest",
+      source: restSource(ref.repo.forge),
       degraded: true,
-      degradationReason: DEGRADED_REASON,
+      degradationReason: degradedReason(ref.repo.forge),
     };
   }
 }
@@ -356,12 +390,12 @@ export class GitHubChangesetSource {
  * a blank title is simply omitted.
  */
 function forgePrIntent(
-  surface: "github-pr" | "github-rest",
+  surface: "github-pr" | "github-rest" | "forge-pr" | "forge-rest",
   pr: ForgePullRequest,
   specSnapshots: readonly PatchsetSpecSnapshot[],
 ): PatchsetIntent {
   const intent: {
-    surface: "github-pr" | "github-rest";
+    surface: "github-pr" | "github-rest" | "forge-pr" | "forge-rest";
     prTitle?: string;
     prBody?: string;
     prBodyAbsent?: boolean;

@@ -634,7 +634,11 @@ function postTargetSurvivingActivation(
   patchset: Patchset,
 ): ReviewPostTarget | undefined {
   if (!postTarget) return undefined;
-  const isForgePr = patchset.source === "github-local" || patchset.source === "github-rest";
+  const isForgePr =
+    patchset.source === "github-local" ||
+    patchset.source === "github-rest" ||
+    patchset.source === "forge-local" ||
+    patchset.source === "forge-rest";
   if (isForgePr && patchset.repository.headOid === postTarget.headOid) return postTarget;
   return undefined;
 }

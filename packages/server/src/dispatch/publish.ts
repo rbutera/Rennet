@@ -111,7 +111,7 @@ export function publishHandlers(rt: DispatchRuntime) {
           "Publish refused: this is your existing pull request; continue its review rounds instead.",
         );
       }
-      const publishPort = deps.publishPortFor(addressed.postTarget.repo);
+      const publishPort = deps.publishPortFor(addressed.postTarget.repo, addressed.repositoryRoot);
       if (publishPort === undefined) {
         throw new Error(
           `Publish refused: no review publisher is registered for forge "${addressed.postTarget.repo.forge}".`,
@@ -389,7 +389,7 @@ export function publishHandlers(rt: DispatchRuntime) {
             reason: "This is your existing pull request; continue its review rounds instead.",
           });
         }
-        const publishPort = deps.publishPortFor(review.postTarget.repo);
+        const publishPort = deps.publishPortFor(review.postTarget.repo, review.repositoryRoot);
         if (publishPort === undefined) {
           return parseCommandOutput(name, {
             status: "unavailable",

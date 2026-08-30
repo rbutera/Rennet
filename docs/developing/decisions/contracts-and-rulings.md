@@ -79,7 +79,7 @@ Apply the sources by scope:
 | **R30** | Project context is fingerprinted by source, config, generator, schema, toolchain, and shards. Non-current context is rebuilt or omitted with explicit degradation. |
 | **R31** | Harness runs receive assembled context and usable execution authority. The run ledger names provider egress, model source, authority, and non-enumerable ambient inputs. |
 | **R32** | Event history lasts while the review is retained. Delete physically removes Rennet-controlled copies. Unknown events remain byte-identical and mark affected projections incomplete. |
-| **R33** | Another person's pull request receives one idempotent GitHub review. The user's branch path pushes the named branch and opens the composed GitHub pull request or GitLab.com merge request selected by its effective push remote. |
+| **R33** | Another person's GitHub pull request or GitLab.com merge request receives one idempotent forge review, flattened against the provider's capabilities. The user's branch path pushes the named branch and opens the composed GitHub pull request or GitLab.com merge request selected by its effective push remote. |
 | **R35** | Harnesses stream through `AsyncIterable`; the event store owns durable truth; small injected-clock batchers own coalescing. Rennet does not use an RxJS dataflow layer. |
 
 ## Tooling and dependencies
@@ -104,7 +104,8 @@ pins and admission rules.
 | **R52** | Conversation uses verbs and anchors. Threads and symbol inspection occupy the margin or right rail so the reading column does not reflow. |
 | **R53** | Spec requirements, scenarios, tasks, and rationale render as structured review material with coverage and implementation state. |
 
-The same ask model feeds three exits. A teammate PR receives one GitHub review.
+The same ask model feeds three exits. A teammate pull or merge request receives
+one review on its forge.
 Your branch receives a work-order round, then a successor patchset and a new
 generation of boards. When nothing is left to ask, Rennet pushes the named
 branch and opens the composed GitHub pull request or GitLab.com merge request.
@@ -114,7 +115,7 @@ Work orders exist only on your own branch.
 flowchart LR
   read["Read the lens boards"] --> stage["Stage asks"]
   stage --> exit{"Exit"}
-  exit -->|Teammate PR| post["Post the GitHub review"]
+  exit -->|Teammate request| post["Post the forge review"]
   exit -->|Your branch has asks| round["Dispatch a work-order round"]
   round --> successor["Capture a successor patchset"]
   successor --> read

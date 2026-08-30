@@ -106,6 +106,8 @@ describe("projection contract — the app consumes only the projected fixtures (
       "local-branch",
       "github-local",
       "github-rest",
+      "forge-local",
+      "forge-rest",
     ]);
   });
 

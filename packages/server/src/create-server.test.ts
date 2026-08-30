@@ -462,7 +462,7 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     expect(listed.sessions).toHaveLength(1);
   });
 
-  it("refuses a same-coordinate GitLab PR before GitHub network or session persistence", async () => {
+  it("routes a same-coordinate GitLab MR without touching GitHub and reports missing glab", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-forge-dispatch-"));
     const workspace = mkdtempSync(join(tmpdir(), "rennet-forge-workspace-"));
     const githubRepo = mkdtempSync(join(workspace, "github-"));
@@ -506,7 +506,7 @@ describe("session.mint — provider-qualified PR dispatch", () => {
         repository: "acme/widget",
         forgeRepository: { forge: "gitlab", owner: "acme", name: "widget" },
       }),
-    ).rejects.toThrow('No pull-request opener is registered for forge "gitlab"');
+    ).rejects.toThrow("GitLab CLI is unavailable. Install `glab`");
     expect(httpFetch).not.toHaveBeenCalled();
 
     const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };

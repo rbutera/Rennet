@@ -175,6 +175,25 @@ describe("GitHubChangesetSource — the degraded REST fallback (acceptance #4)",
     expect(result.patchset.files.map((file) => file.path)).toContain("x.ts");
     expect(result.pin).toBeNull();
   });
+
+  it("uses provider-neutral patchset and intent labels for a GitLab merge request", async () => {
+    const gitlabRef: ForgePullRequestRef = {
+      repo: { forge: "gitlab", owner: "acme", name: "widget" },
+      number: 9,
+    };
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning({ ...prFrom("bbbb", "aaaa"), ref: gitlabRef }),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: { list: () => Promise.resolve([]) },
+    });
+
+    const result = await source.open(gitlabRef);
+
+    expect(result.patchset.source).toBe("forge-rest");
+    expect(result.patchset.intent?.surface).toBe("forge-rest");
+    expect(result.patchset.degradationReason).toContain("GitLab's API");
+  });
 });
 
 describe("GitHubChangesetSource — force-push resilience (acceptance #5)", () => {
