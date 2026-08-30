@@ -1729,6 +1729,76 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(applied.map(({ boardId }) => boardId)).not.toContain("board:design");
   });
 
+  it("records zero-element optional lanes as typed absences instead of successful arrivals", async () => {
+    const applied: Applied[] = [];
+    const arrivals: BoardArrivalEvent[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "decisions" || lens === "flagged") {
+          return { elements: [], skippedHunks: [] };
+        }
+        if (lens === "post-process" && prompt.includes('"elements":[]')) {
+          return { elements: [], skippedHunks: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => arrivals.push(event),
+    });
+
+    expect(result.boards.find(({ lens }) => lens === "decisions")).toMatchObject({
+      absence: "no-decisions",
+    });
+    expect(result.boards.find(({ lens }) => lens === "flagged")).toMatchObject({
+      absence: "no-findings",
+    });
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:decisions");
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:flagged");
+    expect(arrivals.map(({ lens }) => lens)).not.toContain("decisions");
+    expect(arrivals.map(({ lens }) => lens)).not.toContain("flagged");
+  });
+
+  it("retries a required lane once and records a precise failure when it stays empty", async () => {
+    let sequenceTurns = 0;
+    const arrivals: BoardArrivalEvent[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "sequence") {
+          sequenceTurns += 1;
+          return { elements: [], skippedHunks: [] };
+        }
+        if (lens === "post-process" && prompt.includes('"elements":[]')) {
+          return { elements: [], skippedHunks: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => arrivals.push(event),
+    });
+
+    expect(sequenceTurns).toBe(2);
+    expect(result.boards.find(({ lens }) => lens === "sequence")?.failure).toContain(
+      "produced zero elements after one explicit retry",
+    );
+    expect(arrivals.map(({ lens }) => lens)).not.toContain("sequence");
+  });
+
   it("keeps a valid Design board when the provider envelope also contains grounded absence fields", async () => {
     const applied: Applied[] = [];
     const designBoard = cleanBody("design");
@@ -2906,6 +2976,43 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // Every LENS drafter prompt carried the round report as input.
     const lensPrompts = captures.filter((c) => c.prompt?.includes("design.md"));
     expect(lensPrompts.every((c) => c.prompt?.includes("roundReport"))).toBe(true);
+  });
+
+  it("retries an empty round report once instead of announcing a silent arrival", async () => {
+    let reportTurns = 0;
+    const applied: Applied[] = [];
+    const arrivals: BoardArrivalEvent[] = [];
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "report") {
+          reportTurns += 1;
+          return { elements: [], skippedHunks: [] };
+        }
+        if (lens === "post-process" && prompt.includes('"elements":[]')) {
+          return { elements: [], skippedHunks: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: {
+        ...PACKET,
+        successorAccount: { asks: [], beyondAsks: [] },
+      },
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => arrivals.push(event),
+    });
+
+    expect(reportTurns).toBe(2);
+    expect(result.report?.failure).toContain("produced zero elements after one explicit retry");
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:report");
+    expect(arrivals.map(({ lens }) => lens)).not.toContain("report");
   });
 
   it("composes verified round outcomes into Sequence before the board is persisted", async () => {

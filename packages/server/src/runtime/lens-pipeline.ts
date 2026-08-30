@@ -54,6 +54,7 @@ import {
   type FindingElement,
   generationIdForPatchset,
   LENS_KINDS,
+  type LensAbsenceReason,
   type LensKind,
   parseDraft,
   resolveBoardDocument,
@@ -603,8 +604,8 @@ export interface LensBoardOutcome {
   readonly findingResolutions?: readonly FindingResolution[];
   /** An honest resolution failure — no harness for this seat (never a throw, never a block). */
   readonly failure?: string;
-  /** A successful absence: discovery found no material for this lens. */
-  readonly absence?: "no-material";
+  /** A successful typed absence: the lens ran and honestly found nothing to render. */
+  readonly absence?: LensAbsenceReason;
 }
 
 export interface DesignCoverageRequest {
@@ -685,7 +686,7 @@ export interface LensPipelineDeps {
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
   /** A successful lens absence, emitted as soon as discovery settles it. */
-  readonly onLensAbsence?: (lens: LensKind, reason: "no-material") => void | Promise<void>;
+  readonly onLensAbsence?: (lens: LensKind, reason: LensAbsenceReason) => void | Promise<void>;
   /**
    * The durable home for a board's coverage/validation metadata (finding 3): the
    * `skippedHunks` and validation blemishes the whiteboard event log cannot carry.
@@ -808,6 +809,17 @@ class GroundedDesignAbsenceSignal extends Error {
     super("The Design candidate set was dismissed with grounded no-material evidence.");
     this.name = "GroundedDesignAbsenceSignal";
   }
+}
+
+const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = {
+  decisions: "no-decisions",
+  flagged: "no-findings",
+  noise: "no-noise",
+};
+
+function requiredBoardRetryPrompt(basePrompt: string, lens: LintTarget): string {
+  const name = lens === "report" ? "round report" : `${lens} lens`;
+  return `${basePrompt}\n\nRETRY: The ${name} response validated but contained zero elements. This lane requires a visible reading result. Return a populated board grounded in the supplied change; do not return an empty elements array.`;
 }
 
 /**
@@ -1186,7 +1198,7 @@ async function runRoundReport(
     deps.round,
   );
   const ctx = deps.lintContextFor("report");
-  const validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+  let validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
   if ("failure" in validated) {
     return {
       lens: "report",
@@ -1195,6 +1207,33 @@ async function runRoundReport(
       immutability: [],
       failure: validated.failure,
     };
+  }
+  if (validated.board.elements.length === 0) {
+    validated = await draftOneLens(
+      requiredBoardRetryPrompt(basePrompt, "report"),
+      seat,
+      postProcess,
+      ctx,
+    );
+    if ("failure" in validated) {
+      return {
+        lens: "report",
+        omissions: [],
+        blemishes: [],
+        immutability: [],
+        failure: validated.failure,
+      };
+    }
+    if (validated.board.elements.length === 0) {
+      return {
+        lens: "report",
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        failure:
+          "round-report seat: produced zero elements after one explicit retry; retry the generation to draft this required board.",
+      };
+    }
   }
   const stamped = stampDeltas(deps.previous?.get("report"), validated.board);
 
@@ -2140,7 +2179,7 @@ async function runLensBoard(
     if ("failure" in seat) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
     }
-    const drafted =
+    let drafted =
       semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
         ? await draftOneLens(basePrompt, seat, postProcess, ctx, transformDesignOutput, (output) =>
             groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
@@ -2152,6 +2191,31 @@ async function runLensBoard(
             ctx,
             lens === "design" ? transformDesignOutput : undefined,
           );
+    if (
+      !("failure" in drafted) &&
+      !("absence" in drafted) &&
+      drafted.board.elements.length === 0 &&
+      (lens === "design" || lens === "sequence")
+    ) {
+      const retryPrompt = requiredBoardRetryPrompt(basePrompt, lens);
+      drafted =
+        semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
+          ? await draftOneLens(
+              retryPrompt,
+              seat,
+              postProcess,
+              ctx,
+              transformDesignOutput,
+              (output) => groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
+            )
+          : await draftOneLens(
+              retryPrompt,
+              seat,
+              postProcess,
+              ctx,
+              lens === "design" ? transformDesignOutput : undefined,
+            );
+    }
     if ("failure" in drafted) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: drafted.failure };
     }
@@ -2216,6 +2280,26 @@ async function runLensBoard(
         ...validated.board,
         document: finalizedFlaggedDocument(validated.board.document, visibleElements),
       },
+    };
+  }
+
+  if (validated.board.elements.length === 0) {
+    const absence = EMPTY_LENS_ABSENCE[lens];
+    if (absence !== undefined) {
+      return {
+        lens,
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        absence,
+      };
+    }
+    return {
+      lens,
+      omissions: validated.omissions,
+      blemishes: validated.blemishes,
+      immutability: validated.immutability,
+      failure: `${lens} lens: produced zero elements after one explicit retry; retry the generation to draft this required board.`,
     };
   }
 

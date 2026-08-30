@@ -53,6 +53,7 @@ import {
   generationIdForDispatch,
   generationIdForPatchset,
   LENS_KINDS,
+  type LensAbsenceReason,
   type LensKind,
   type LensLane,
   ROUND_NO_REGEN,
@@ -185,6 +186,19 @@ export function freezeGeneration(gen: Generation): Generation {
   return gen.status === "frozen" ? gen : { ...gen, status: "frozen" };
 }
 
+function lensAbsenceMessage(reason: LensAbsenceReason): string {
+  switch (reason) {
+    case "no-material":
+      return "No Design specification applies to this change.";
+    case "no-decisions":
+      return "No material engineering decisions were found.";
+    case "no-findings":
+      return "No review findings were found.";
+    case "no-noise":
+      return "No safely skippable noise was found.";
+  }
+}
+
 /**
  * Record the lens board ids a drafting run produced onto a generation. The
  * round-report is not a lens (excluded); composition emits no sixth board (C3),
@@ -195,7 +209,7 @@ export function withLensBoards(
   result: Pick<LensPipelineResult, "boards">,
 ): Generation {
   const lensBoards: Partial<Record<LensKind, string>> = {};
-  const absentLenses: Partial<Record<LensKind, "no-material">> = {};
+  const absentLenses: Partial<Record<LensKind, LensAbsenceReason>> = {};
   const failedLenses: Partial<Record<LensKind, string>> = {};
   for (const o of result.boards) {
     if (o.lens === "report") continue;
@@ -730,17 +744,14 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             }
             lanes.arrived(event.lens, event.carried);
           };
-    const earlyAbsentLenses: Partial<Record<LensKind, "no-material">> = {
+    const earlyAbsentLenses: Partial<Record<LensKind, LensAbsenceReason>> = {
       ...attemptGeneration.absentLenses,
     };
     const onLensAbsence =
       lanes === undefined && deps.persistGeneration === undefined
         ? undefined
-        : async (lens: LensKind, reason: "no-material"): Promise<void> => {
-            lanes?.absent(
-              lens,
-              reason === "no-material" ? "No Design specification applies to this change." : reason,
-            );
+        : async (lens: LensKind, reason: LensAbsenceReason): Promise<void> => {
+            lanes?.absent(lens, lensAbsenceMessage(reason));
             earlyAbsentLenses[lens] = reason;
             await deps.persistGeneration?.({
               ...attemptGeneration,
