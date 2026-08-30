@@ -196,6 +196,7 @@ export function withLensBoards(
 ): Generation {
   const lensBoards: Partial<Record<LensKind, string>> = {};
   const absentLenses: Partial<Record<LensKind, "no-material">> = {};
+  const failedLenses: Partial<Record<LensKind, string>> = {};
   for (const o of result.boards) {
     if (o.lens === "report") continue;
     if (o.boardId !== undefined) {
@@ -204,16 +205,20 @@ export function withLensBoards(
     } else if (o.absence !== undefined) {
       absentLenses[o.lens] = o.absence;
       delete lensBoards[o.lens];
+    } else {
+      failedLenses[o.lens] = o.failure ?? "The drafter produced no board.";
     }
   }
   const generationWithoutAttempt = { ...gen };
   delete generationWithoutAttempt.draftingBoardIds;
-  if (Object.keys(absentLenses).length > 0) {
-    return { ...generationWithoutAttempt, lensBoards, absentLenses };
-  }
-  const generationWithoutAbsences = { ...generationWithoutAttempt };
-  delete generationWithoutAbsences.absentLenses;
-  return { ...generationWithoutAbsences, lensBoards };
+  delete generationWithoutAttempt.absentLenses;
+  delete generationWithoutAttempt.failedLenses;
+  return {
+    ...generationWithoutAttempt,
+    lensBoards,
+    ...(Object.keys(absentLenses).length === 0 ? {} : { absentLenses }),
+    ...(Object.keys(failedLenses).length === 0 ? {} : { failedLenses }),
+  };
 }
 
 /**
@@ -567,8 +572,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   }
 
   /** Does the Generation's state have enough exact durable evidence to reconstruct?
-   * An active attempt must settle all five slots. A settled Generation has no attempt map;
-   * its named boards plus absences are the honest partial-success result. */
+   * An active attempt must settle all five slots. A settled partial success has no attempt
+   * map; its named boards plus absences/failures are the honest result. An all-failure
+   * generation remains retryable, so it deliberately does not reconstruct as success. */
   function hasCompleteLensEvidence(generation: Generation, records: readonly BoardMeta[]): boolean {
     if (generation.draftingBoardIds === undefined) {
       const namedLenses = LENS_KINDS.filter((lens) => generation.lensBoards[lens] !== undefined);
@@ -610,6 +616,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       const absence = generation.absentLenses?.[lens];
       if (absence !== undefined) {
         outcomes.push({ lens, omissions: [], blemishes: [], immutability: [], absence });
+        continue;
+      }
+      const failure = generation.failedLenses?.[lens];
+      if (failure !== undefined) {
+        outcomes.push({ lens, omissions: [], blemishes: [], immutability: [], failure });
         continue;
       }
       const boardId = generation.lensBoards[lens] ?? generation.draftingBoardIds?.[lens];
@@ -670,6 +681,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     ) as Partial<Record<LensKind, string>>;
     const generationWithoutAbsences = { ...boardGeneration };
     delete generationWithoutAbsences.absentLenses;
+    delete generationWithoutAbsences.failedLenses;
     const attemptGeneration: Generation = {
       ...generationWithoutAbsences,
       lensBoards: {},
@@ -882,7 +894,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       durableEvidence.length > 0 ||
       Object.keys(boardGeneration.lensBoards).length > 0 ||
       Object.keys(boardGeneration.draftingBoardIds ?? {}).length > 0 ||
-      Object.keys(boardGeneration.absentLenses ?? {}).length > 0;
+      Object.keys(boardGeneration.absentLenses ?? {}).length > 0 ||
+      Object.keys(boardGeneration.failedLenses ?? {}).length > 0;
     const restoredOrDrafted = completeEvidence
       ? {
           generation: boardGeneration,
@@ -912,6 +925,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // board exists; the next dispatch resumes regeneration without rerunning the worker.
     const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
     if (draftedLensBoards.length === 0) {
+      await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
       throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
     }
     if (input.verifyDraftedReport !== undefined) {

@@ -138,6 +138,33 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(tabs?.querySelector("[data-lens=noise]")).toBeNull();
   });
 
+  it("keeps a failed lens selectable so its exact generation failure is reachable", async () => {
+    const reason = "Sequence output failed schema validation.";
+    const { container, user } = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": (input) =>
+              input.lens === "sequence"
+                ? { board: null, failure: reason }
+                : fixtureBoardRead(input),
+          })
+        }
+      >
+        <BoardHarness generation="gen1" generations={["gen1"]} initialLens="design" />
+      </BridgeProvider>,
+    );
+    await settled(container);
+
+    const failedTab = container.querySelector<HTMLButtonElement>("[data-lens=sequence]");
+    expect(failedTab?.getAttribute("data-failed")).toBe("true");
+    expect(failedTab?.getAttribute("aria-label")).toBe("Sequence, failed to generate");
+    if (!failedTab) throw new Error("failed Sequence lens is not selectable");
+    await user.click(failedTab);
+
+    expect(container.querySelector("[data-kind=board-failed]")?.textContent).toContain(reason);
+  });
+
   it("opens Flagged expanded when selected (R44) and folds every section on another lens", async () => {
     const { container, user } = await renderView("gen1");
     // R44: Flagged sections arrive expanded when that URL-owned lens is selected.

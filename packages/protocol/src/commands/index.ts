@@ -599,6 +599,8 @@ const definitions = {
       board: LensBoardSchema.nullable(),
       /** Present only when the generation durably settled this lens without a board. */
       absence: LensAbsenceReasonSchema.optional(),
+      /** Present only when the latest drafting attempt terminally failed this lens. */
+      failure: z.string().min(1).optional(),
     }),
   },
   "projects.add": {

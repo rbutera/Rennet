@@ -60,7 +60,7 @@ export function LensBoardView({
 
   const resolutions = useLensBoardResolutions(reviewId, selectedGeneration);
   const lenses = lensBoardsFromResolutions(resolutions);
-  const present = lenses.map((l) => l.lens);
+  const available = lenses.map((l) => l.lens);
 
   // Drafting takes minutes and the daemon has no board-arrival push, so without this the
   // boards a capture just kicked would land on disk and the surface would keep saying "no
@@ -81,10 +81,10 @@ export function LensBoardView({
   }, [awaitingLenses, refreshBoards]);
 
   // A generation may not carry every lens. A genuinely missing selected lens falls back
-  // to the first present lens in canonical order. Invalid and pending selected boards stay
-  // selected so their honest state is surfaced rather than hidden behind another board.
+  // to the first generated or failed lens in canonical order. Invalid and pending selected
+  // boards stay selected so their honest state is surfaced rather than hidden behind another.
   const selected = resolutions[lens];
-  const fallbackLens = present[0] ?? lens;
+  const fallbackLens = available[0] ?? lens;
   const fallback = resolutions[fallbackLens];
   const effectiveLens: LensKind = selected.status === "missing" ? fallbackLens : lens;
 
@@ -180,6 +180,11 @@ export function LensBoardView({
               ? "There is no applicable specification to project into a Design board for this generation."
               : "This generation has no material to project into the selected board."}
           </p>
+        </div>
+      ) : shown.status === "failed" ? (
+        <div data-kind="board-failed" role="alert" className="text-danger text-sm">
+          <p className="font-medium">This lens failed to generate.</p>
+          <p className="text-muted-foreground">{shown.reason}</p>
         </div>
       ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">

@@ -981,7 +981,10 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           report === undefined
             ? undefined
             : new GenerationStore(join(dataDir, "generations")).load(report.generation);
-        expect(Object.keys(successor?.draftingBoardIds ?? {}).length).toBeGreaterThan(0);
+        expect(
+          Object.keys(successor?.draftingBoardIds ?? {}).length +
+            Object.keys(successor?.failedLenses ?? {}).length,
+        ).toBeGreaterThan(0);
       },
       { timeout: 15_000, interval: 50 },
     );

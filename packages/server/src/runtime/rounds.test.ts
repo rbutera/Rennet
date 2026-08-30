@@ -286,6 +286,14 @@ describe("createRoundsRuntime", () => {
     const persisted: Generation[] = [];
     const runtime = createRoundsRuntime(
       baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) =>
+            lensFromPrompt(prompt) === "flagged"
+              ? ({
+                  elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+                } as unknown as DraftBoard)
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
         persistGeneration: (generation) => {
           order.push(`generation:${generation.id}`);
           persisted.push(generation);

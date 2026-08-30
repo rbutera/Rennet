@@ -193,6 +193,7 @@ describe("session/ durable shapes (#466/#457)", () => {
       draftingBoardIds: { sequence: "board-next-sequence" },
       draftingReportBoardId: "board-next-report",
       absentLenses: { flagged: "no-material" },
+      failedLenses: { decisions: "The drafter response did not validate." },
       compositionBoardId: "board-c",
       status: "frozen",
     };
@@ -202,11 +203,17 @@ describe("session/ durable shapes (#466/#457)", () => {
     );
     expect(GenerationSchema.parse(generation).draftingReportBoardId).toBe("board-next-report");
     expect(GenerationSchema.parse(generation).absentLenses?.flagged).toBe("no-material");
+    expect(GenerationSchema.parse(generation).failedLenses?.decisions).toContain(
+      "did not validate",
+    );
     expect(
       GenerationSchema.safeParse({ ...generation, lensBoards: { spec: "board-s" } }).success,
     ).toBe(false);
     expect(
       GenerationSchema.safeParse({ ...generation, absentLenses: { design: "not-yet" } }).success,
+    ).toBe(false);
+    expect(
+      GenerationSchema.safeParse({ ...generation, failedLenses: { design: "" } }).success,
     ).toBe(false);
   });
 

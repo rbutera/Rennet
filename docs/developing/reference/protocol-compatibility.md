@@ -201,6 +201,12 @@ which remains the ordinary missing-board answer rather than being reclassified
 as successful absence. The client polls missing boards but treats the explicit
 absence as settled.
 
+The same rule applies to drafting failures added after the absence field. A
+generation may carry a per-lens reason in `failedLenses`; `board.read` returns it
+as `failure` beside `board: null`, and the client treats it as terminal. Older
+generations omit the field and remain ordinary missing-board answers. The wire
+addition is optional in both persisted and command-output shapes.
+
 A client can also outrun the daemon it is connected to. An older daemon does not
 answer `session.rounds` or `session.roundEvents` at all, and the rounds surfaces
 say so in the daemon's own words rather than rendering the empty ledger that

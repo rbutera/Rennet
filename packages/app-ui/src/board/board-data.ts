@@ -53,6 +53,7 @@ export type BoardInvalidReason = "shape" | "identity" | "excluded-kind" | "unrea
 export type BoardResolution =
   | { readonly status: "valid"; readonly board: LensBoard }
   | { readonly status: "absent"; readonly reason: LensAbsenceReason }
+  | { readonly status: "failed"; readonly reason: string }
   | { readonly status: "missing" }
   | { readonly status: "pending" }
   | { readonly status: "invalid"; readonly reason: BoardInvalidReason; readonly detail: unknown };
@@ -87,7 +88,7 @@ export function resolveBoard(raw: unknown, expected: BoardIdentity): BoardResolu
  *  through {@link resolveBoard} so shape and identity are still proven client-side. */
 function resolveRead(
   result: {
-    data?: { board: LensBoard | null; absence?: LensAbsenceReason };
+    data?: { board: LensBoard | null; absence?: LensAbsenceReason; failure?: string };
     error: unknown;
     pending: boolean;
   },
@@ -99,6 +100,9 @@ function resolveRead(
   if (result.pending) return { status: "pending" };
   if (result.data?.board == null && result.data?.absence !== undefined) {
     return { status: "absent", reason: result.data.absence };
+  }
+  if (result.data?.board == null && result.data?.failure !== undefined) {
+    return { status: "failed", reason: result.data.failure };
   }
   return resolveBoard(result.data?.board, expected);
 }
@@ -124,11 +128,10 @@ export function useBoardData(
   });
 }
 
-/** A present lens paired with its resolved board — what the lens switcher renders. */
-export interface LensBoardEntry {
-  readonly lens: LensKind;
-  readonly board: LensBoard;
-}
+/** A generated or failed lens — every terminal result the lens switcher can open. */
+export type LensBoardEntry =
+  | { readonly lens: LensKind; readonly board: LensBoard; readonly failure?: never }
+  | { readonly lens: LensKind; readonly board?: never; readonly failure: string };
 
 /**
  * The lenses that HAVE a board in `generation`, each with its board — the lens
@@ -157,9 +160,11 @@ export function useLensBoardResolutions(
 }
 
 export function lensBoardsFromResolutions(byLens: LensBoardResolutions): LensBoardEntry[] {
-  return LENS_KINDS.flatMap((lens) => {
+  return LENS_KINDS.flatMap<LensBoardEntry>((lens) => {
     const resolution = byLens[lens];
-    return resolution.status === "valid" ? [{ lens, board: resolution.board }] : [];
+    if (resolution.status === "valid") return [{ lens, board: resolution.board }];
+    if (resolution.status === "failed") return [{ lens, failure: resolution.reason }];
+    return [];
   });
 }
 

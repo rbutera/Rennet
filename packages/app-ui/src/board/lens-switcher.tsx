@@ -16,10 +16,10 @@ import { deltaKey } from "./viewed-delta";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The lens switcher (C05 6.2, Objective clause 7) — a segmented control, one
-// segment per lens THAT HAS A BOARD this generation. `lenses` is already resolved
-// through the board-data seam (the top bar calls `useLensBoards`), so a lens with no
-// board simply is not in the list: absent, NEVER a disabled segment (the packet's
-// absent-not-disabled contract).
+// segment per lens that produced a terminal result this generation. `lenses` is already
+// resolved through the board-data seam (the top bar calls `useLensBoards`): a durable
+// failure remains selectable so its reason is reachable, while a lens with no board or
+// failure simply is not in the list (absent, NEVER a disabled segment).
 //
 // Delta rollup (Objective clause 7 / #486): each segment carries a small gold pip
 // counting the sections in that lens's board that carry a `new`/`reworked` delta and
@@ -76,17 +76,20 @@ export function LensSwitcher({
         className,
       )}
     >
-      {lenses.map(({ lens, board }) => {
-        const unviewedDeltas = board.sections.filter(
-          (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
-        ).length;
+      {lenses.map(({ lens, board, failure }) => {
+        const unviewedDeltas =
+          board?.sections.filter(
+            (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
+          ).length ?? 0;
         const openCount = lens === "flagged" ? flaggedOpenCount : 0;
         const accessibleStatus =
-          lens === "flagged"
-            ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
-            : unviewedDeltas > 0
-              ? ", changed this round"
-              : "";
+          failure !== undefined
+            ? ", failed to generate"
+            : lens === "flagged"
+              ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
+              : unviewedDeltas > 0
+                ? ", changed this round"
+                : "";
         const active = lens === selected;
         return (
           <button
@@ -97,6 +100,7 @@ export function LensSwitcher({
             aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
             title={LENS_LABEL[lens]}
             data-lens={lens}
+            data-failed={failure === undefined ? undefined : "true"}
             onClick={() => onSelect(lens)}
             className={cn(
               "relative flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 font-medium text-sm transition-colors",
