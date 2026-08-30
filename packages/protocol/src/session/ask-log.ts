@@ -11,8 +11,8 @@
 // and the receipt each write returns. The pure fold + `receiptFor` live in
 // `@rennet/core` (`exits/ask-projection`); the file-backed log lives in
 // `@rennet/adapters` (`ask-log-store`); the command handlers (the sole writers)
-// land in `@rennet/server` (B11 cluster 2). `focusedThreadId` and the PR-body
-// `draftEdits` block map stay CLIENT-transient (task 1.1) — they are not here.
+// land in `@rennet/server` (B11 cluster 2). `focusedThreadId` stays client-transient;
+// saved draft bodies are durable `edit` events over staged asks.
 //
 // The projection mirrors the client's authoritative shapes (`StagedAsk`,
 // `RetiredEntry`, `QuoteThread`, `verdictOverride`) so C9 can swap the store

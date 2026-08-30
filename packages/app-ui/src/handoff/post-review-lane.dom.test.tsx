@@ -85,7 +85,7 @@ describe("PostReviewLane", () => {
     expect(r.getByText(/Line Comments · 1/)).toBeTruthy();
   });
 
-  it("Edit writes a draft edit; Delete retires the ask and unstages it (pip drops)", async () => {
+  it("Edit replaces the canonical ask body; Delete retires the ask and unstages it", async () => {
     stage("src/a.ts:5", "request-change", "guard the boundary");
     const r = mount(<PostReviewLane review={review} />);
     expect(pip()).toBe(1);
@@ -94,7 +94,7 @@ describe("PostReviewLane", () => {
     const box = r.container.querySelector("textarea") as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: "guard the boundary tightly" } });
     fireEvent.click(r.getByRole("button", { name: "Save" }));
-    expect(store().review.draftEdits["src/a.ts:5"]).toBe("guard the boundary tightly");
+    expect(store().review.stagedAsks["src/a.ts:5"]?.body).toBe("guard the boundary tightly");
     expect(r.getByText("guard the boundary tightly")).toBeTruthy();
 
     fireEvent.click(r.getByRole("button", { name: /Delete/ }));
@@ -166,14 +166,9 @@ describe("PostReviewLane", () => {
     expect(await r.findByText("It holds on retry.")).toBeTruthy();
   });
 
-  it("a rework over a PENDING INLINE EDIT shows the rework, not the stale shadow", async () => {
-    // This lane renders `draftEdits[id] ?? ask.body`, so a pending inline edit SHADOWS the ask
-    // body. Re-staging the reworked ask alone leaves that shadow on screen while the panel closes
-    // as success — a fabricated success. The rework supersedes the edit it ran against.
+  it("a rework over a saved edit replaces the same canonical ask body", async () => {
     stage("This holds up on the retry path.", "comment");
-    act(() =>
-      store().reviewActions.setDraftEdit("This holds up on the retry path.", "MY PENDING EDIT"),
-    );
+    act(() => store().reviewActions.editAsk("This holds up on the retry path.", "MY SAVED EDIT"));
     const r = mount(
       <PostReviewLane
         review={review}
@@ -184,23 +179,21 @@ describe("PostReviewLane", () => {
           receipt: {
             kind: "edit",
             id: "This holds up on the retry path.",
-            body: "MY PENDING EDIT",
+            body: "MY SAVED EDIT",
           },
         })}
       />,
     );
-    // The shadow is what renders today — steer off it, exactly as the reviewer would.
-    selectAndRelease(r.getByText("MY PENDING EDIT"));
+    selectAndRelease(r.getByText("MY SAVED EDIT"));
     fireEvent.click(r.getByText("Revise"));
     fireEvent.change(r.container.querySelector("textarea") as HTMLTextAreaElement, {
       target: { value: "cover every retry" },
     });
     await r.user.click(r.getByRole("button", { name: "Rework" }));
 
-    // The card shows the rework; the stale shadow is gone from both the screen and the store.
     expect(await r.findByText("guard the boundary on every retry")).toBeTruthy();
-    expect(r.queryByText("MY PENDING EDIT")).toBeNull();
-    expect(store().review.draftEdits["This holds up on the retry path."]).toBe(
+    expect(r.queryByText("MY SAVED EDIT")).toBeNull();
+    expect(store().review.stagedAsks["This holds up on the retry path."]?.body).toBe(
       "guard the boundary on every retry",
     );
   });

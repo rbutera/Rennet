@@ -119,7 +119,8 @@ their credentials.
 Everything staged is private working material. The orchestrator keeps each
 outbound document — the review text, the work order, the pull request
 description — drafted and redrafted as the review progresses, and the reviewer
-steers it by talking or by highlighting a span rather than typing into it.
+can save a direct edit to one drafted block, talk through a revision, or
+highlight a span.
 Retired content is kept and restorable, never silently dropped.
 
 The draft renders exactly as it will send, so the reviewer reads the real
