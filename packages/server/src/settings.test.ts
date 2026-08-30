@@ -501,6 +501,37 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     expect(view.coachmarks).toEqual({ seen: ["new-chat"], skipAll: false });
   });
 
+  it("resetWelcome round-trips: complete, reset, and the view shows the replay request alone", async () => {
+    let stored: ClientSettings = { version: 1 };
+    let clock = "2026-08-28T12:00:00.000Z";
+    const { deps } = makeDeps({
+      now: () => new Date(clock),
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    expect(composition.completeWelcome()).toBe("2026-08-28T12:00:00.000Z");
+    expect((await composition.get()).welcome).toEqual({ completedAt: "2026-08-28T12:00:00.000Z" });
+
+    clock = "2026-08-29T09:30:00.000Z";
+    expect(composition.resetWelcome()).toBe("2026-08-29T09:30:00.000Z");
+    // The completion stamp is GONE, not merely shadowed — the two can never disagree,
+    // and `settings.get` reads back the request the startup gate acts on.
+    expect((await composition.get()).welcome).toEqual({
+      replayRequestedAt: "2026-08-29T09:30:00.000Z",
+    });
+    expect(stored.welcome?.completedAt).toBeUndefined();
+
+    // Finishing the replayed welcome writes the completion back over the request.
+    clock = "2026-08-29T09:31:00.000Z";
+    composition.completeWelcome();
+    expect((await composition.get()).welcome).toEqual({ completedAt: "2026-08-29T09:31:00.000Z" });
+  });
+
   it("refuses every welcome preference write when client settings are malformed", () => {
     const { deps } = makeDeps({
       updateGlobal: () => {
@@ -514,6 +545,7 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
       /malformed/i,
     );
     expect(() => composition.completeWelcome()).toThrow(/malformed/i);
+    expect(() => composition.resetWelcome()).toThrow(/malformed/i);
   });
 });
 

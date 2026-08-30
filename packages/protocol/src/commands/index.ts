@@ -1051,6 +1051,20 @@ const definitions = {
     input: z.object({}),
     output: z.object({ completedAt: z.iso.datetime() }),
   },
+  // ── Settings: replay the first-run welcome ────────────────────────────────
+  // The counterpart `completeWelcome` never had. Without it the welcome is
+  // permanently unreachable after setup — first-run eligibility elects the wizard
+  // only for a client with NO projects, so clearing the completion stamp alone
+  // would be a no-op on every machine that has one. So the write REPLACES the
+  // slice with `{ replayRequestedAt }`: the completion stamp is dropped AND the
+  // startup gate honors the request regardless of project count. Finishing the
+  // wizard writes `{ completedAt }` back over it, which clears the request.
+  // A plain write, one click, no confirmation (Rule Zero) — refused (throws) only
+  // when client settings are malformed, exactly as `completeWelcome`.
+  "settings.resetWelcome": {
+    input: z.object({}),
+    output: z.object({ replayRequestedAt: z.iso.datetime() }),
+  },
   "settings.setLastProject": {
     input: z.object({ source: sourceSchema, projectId: z.string().min(1) }),
     output: z.object({ source: sourceSchema, projectId: z.string().min(1) }),
@@ -1609,7 +1623,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 104 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 105 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *
@@ -1618,7 +1632,7 @@ const AGENT_EXPOSED = new Set<string>([
  * has no result surface. So a row earns `true` only when all four hold:
  *
  * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
- *    (18 of 104 pass; the rest need a review/session/project/span id or a host path).
+ *    (19 of 105 pass; the rest need a review/session/project/span id or a host path).
  * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
  *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
  *    running them from the menu changes nothing a reader would see).

@@ -92,6 +92,16 @@ export function settingsHandlers(rt: DispatchRuntime) {
         completedAt: deps.settings?.completeWelcome() ?? new Date().toISOString(),
       });
     },
+    "settings.resetWelcome": async (rawInput) => {
+      const name = "settings.resetWelcome" as const;
+      // Replays the first-run welcome: drops the completion stamp and records the
+      // request the startup gate honors even when projects exist. Personal, app-side —
+      // client settings only, never a repo. Refused (throws) on a malformed file.
+      parseCommandInput(name, rawInput);
+      return parseCommandOutput(name, {
+        replayRequestedAt: deps.settings?.resetWelcome() ?? new Date().toISOString(),
+      });
+    },
     "settings.setLastProject": async (rawInput) => {
       const name = "settings.setLastProject" as const;
       const input = parseCommandInput(name, rawInput);

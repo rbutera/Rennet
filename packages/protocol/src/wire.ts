@@ -1993,6 +1993,25 @@ export type CouncilScenarioOverrides = z.infer<typeof councilScenarioOverridesSc
  * into a working tree. Every field beyond `version` is optional — an untouched
  * install is a trivially-valid (or absent) `{ version }`.
  */
+/**
+ * The first-run welcome slice. Both stamps are optional and the two writes are
+ * mutually exclusive — each REPLACES the slice, so the last one wins:
+ *
+ * - `completedAt` — `settings.completeWelcome`, written by the wizard's Ready step.
+ * - `replayRequestedAt` — `settings.resetWelcome`, the replay capability. The startup
+ *   gate reopens the welcome on this stamp REGARDLESS of project count, because
+ *   first-run eligibility only ever elects a fresh, zero-project client; without it a
+ *   reset would be a no-op on every machine that already has a project.
+ *
+ * An untouched install carries neither (the slice is absent) and takes the plain
+ * zero-project first-run path.
+ */
+export const welcomeStateSchema = z.object({
+  completedAt: z.iso.datetime().optional(),
+  replayRequestedAt: z.iso.datetime().optional(),
+});
+export type WelcomeState = z.infer<typeof welcomeStateSchema>;
+
 export const clientSettingsSchema = z.object({
   // Supported version literal — a future/below doc reads as malformed, never
   // silently re-stamped (see globalConfigSchema). Must equal CLIENT_SETTINGS_VERSION.
@@ -2018,7 +2037,7 @@ export const clientSettingsSchema = z.object({
   routing: z
     .object({ task: z.record(z.string(), councilScenarioOverridesSchema).optional() })
     .optional(),
-  welcome: z.object({ completedAt: z.iso.datetime() }).optional(),
+  welcome: welcomeStateSchema.optional(),
   navigation: z
     .object({ lastProjectBySource: z.record(z.string(), z.string().min(1)).optional() })
     .optional(),
@@ -2433,7 +2452,7 @@ export const settingsViewSchema = z.object({
    */
   appearanceMalformed: z.boolean(),
   themePack: themePackSchema.optional(),
-  welcome: z.object({ completedAt: z.iso.datetime() }).optional(),
+  welcome: welcomeStateSchema.optional(),
   navigation: z
     .object({ lastProjectBySource: z.record(z.string(), z.string().min(1)).optional() })
     .optional(),

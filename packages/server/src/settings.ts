@@ -315,6 +315,17 @@ export interface SettingsComposition {
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   setThemePack(themePack: ThemePack): ThemePack;
   completeWelcome(): string;
+  /**
+   * Replay the first-run welcome — the counterpart `completeWelcome` never had, which
+   * left the wizard permanently unreachable once setup finished. ONE atomic write
+   * REPLACES the whole `welcome` slice with `{ replayRequestedAt }`: the completion
+   * stamp is dropped, and the stamp left behind is what the startup gate honors
+   * regardless of project count (eligibility alone only ever elects a zero-project
+   * client, so clearing the stamp by itself would be a no-op on a real machine).
+   * Returns the request stamp. A malformed client-settings file refuses it (throws),
+   * as every write here does. No confirmation — a plain write (Rule Zero).
+   */
+  resetWelcome(): string;
   setLastProject(input: { source: ProjectSource; projectId: string }): {
     source: ProjectSource;
     projectId: string;
@@ -1027,6 +1038,18 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         welcome: { completedAt },
       }));
       return written.welcome?.completedAt ?? completedAt;
+    },
+
+    resetWelcome: (): string => {
+      const replayRequestedAt = (deps.now?.() ?? new Date()).toISOString();
+      // ONE `updateGlobal` — the same atomic write + malformed refusal `completeWelcome`
+      // rides. Replacing the slice (rather than merging) is the point: the completion
+      // stamp goes AND the replay request lands together, so the two can never disagree.
+      const written = deps.updateGlobal((current) => ({
+        ...current,
+        welcome: { replayRequestedAt },
+      }));
+      return written.welcome?.replayRequestedAt ?? replayRequestedAt;
     },
 
     setLastProject: (input) => {

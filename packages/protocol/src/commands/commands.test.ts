@@ -132,6 +132,7 @@ const ABSORBED_IDS = [
   "settings.guidance",
   "settings.pinRepoValue",
   "settings.resetRepoValue",
+  "settings.resetWelcome",
   "settings.setAppearance",
   "settings.setCoachmarks",
   "settings.setGuidance",
@@ -167,7 +168,7 @@ const AGENT_INVENTORY = [
 ] as const;
 
 // The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
-// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 104 commands
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 105 commands
 // lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
 // input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
 // an action rather than a UI-driven read, its output is not the point, and it does not
@@ -178,7 +179,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(104);
+    expect(ABSORBED_IDS).toHaveLength(105);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
