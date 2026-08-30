@@ -20,10 +20,12 @@ interface FakeState {
   home: string;
   /** The node binary the interactive probe prints (`""` ⇒ no Node in the distro). */
   node: string;
-  /** Exit code the bundle `test -f` returns (1 = absent ⇒ deliver; 2 = probe failed). */
+  /** Exit code the bundle's first required-file probe returns before delivery. */
   testExit: number;
-  /** Set true once `cp` runs, so the post-copy verify `test -f` reads present. */
+  /** Set true once `cp` runs, so post-copy regular-file probes read present. */
   copied?: boolean;
+  /** Set true once the copied Linux mover receives its required executable mode. */
+  madeExecutable?: boolean;
   /** What `cat daemon.json` + `/healthz` currently reflect (null ⇒ no daemon). */
   daemon: FakeDaemon | null;
   /** Pids `kill` was asked to signal, in order. */
@@ -62,11 +64,28 @@ function makeRun(state: FakeState): WslRunner {
           }
         : { stdout: "", code: 1 };
     }
-    if (program === "test") return { stdout: "", code: state.copied ? 0 : state.testExit };
+    if (program === "test") {
+      const code = state.copied
+        ? progArgs[0] === "-x" && !state.madeExecutable
+          ? 1
+          : 0
+        : state.testExit;
+      return { stdout: "", code };
+    }
     if (program === "mkdir") return { stdout: "", code: 0 };
     if (program === "wslpath") return { stdout: "/mnt/c/rennet/dist/server/index.cjs\n", code: 0 };
     if (program === "cp") {
       state.copied = true;
+      return { stdout: "", code: 0 };
+    }
+    if (program === "chmod") {
+      if (
+        progArgs[0] !== "0755" ||
+        !progArgs[1]?.endsWith("/native/linux-x64/rennet-exclusive-move")
+      ) {
+        throw new Error(`unexpected chmod arguments: ${joined}`);
+      }
+      state.madeExecutable = true;
       return { stdout: "", code: 0 };
     }
     if (program === "kill") {
