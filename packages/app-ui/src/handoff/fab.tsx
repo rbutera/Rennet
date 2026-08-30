@@ -2,6 +2,7 @@ import { Button, cn } from "@rennet/ui";
 import { ArrowRight, PenLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useCoachAnchor, useMergedRefs } from "../coach/registry";
+import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import { type EntryMode, modeHasExits } from "./handoff-data";
 import { selectExitPipCount } from "./selectors";
@@ -159,7 +160,7 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
   // The prototype rests on PenLine for every scenario. Writing the review IS the pen,
   // so teammate-pr takes it. `own-branch` keeps ArrowRight: below the compact width the
   // glyph is the ONLY signal left, and handing the branch onward is not writing.
-  const Icon = mode === "teammate-pr" ? PenLine : ArrowRight;
+  const glyph = mode === "teammate-pr" ? PenLine : ArrowRight;
   // The accessible name carries the count (R50 second amendment — no inline "· n" in the text).
   const accessibleName = count > 0 ? `${label}, ${count} staged` : label;
 
@@ -177,7 +178,7 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
           open && "pointer-events-none scale-75 opacity-0",
         )}
       >
-        <Icon className="size-4.5 shrink-0" aria-hidden="true" />
+        <Icon icon={glyph} className="size-4.5 shrink-0" />
         {compact ? null : <span>{label}</span>}
         {count > 0 && (
           <span

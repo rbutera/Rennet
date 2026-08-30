@@ -14,6 +14,7 @@ import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
+import { gateDuration } from "../rounds/rounds-ledger";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
@@ -294,9 +295,12 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     expect(triggers[1]?.textContent).toContain("ask-never-reported");
   });
 
-  // The run receipt is optional on the record (legacy rows omit it). A round with no
-  // receipt shows the trigger queue and NO run group — absent beats invented.
-  it("shows the run group only when the record carries a receipt", async () => {
+  // The run RECEIPT is the optional half (legacy rows omit it), and the GATE line is the
+  // only thing that depends on it. `workerCommitRange` is record-level and always present,
+  // so the commit range must survive a missing receipt — it used to be nested inside the
+  // gate's guard, which hid a legacy round's real commits because nobody had written down
+  // which gate command ran.
+  it("shows the gate line only with a receipt, and the commit range either way", async () => {
     const withoutReceipt = renderWorkspace(
       "/s/s-1?view=rounds",
       sourceFor(regeneratedRound(["ask-observability"], 1)),
@@ -307,6 +311,11 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     if (!closed) throw new Error("missing retrospective disclosure");
     await withoutReceipt.r.user.click(closed);
     expect(withoutReceipt.r.queryByTestId("round-gate")).toBeNull();
+    // …and the commits the round DID land are still stated. Re-nest the commit line under
+    // `gate !== undefined` and this reddens.
+    expect(withoutReceipt.r.getByTestId("round-commits").textContent).toContain(
+      "Committed commit-…commit-",
+    );
     withoutReceipt.r.unmount();
 
     const withReceipt = renderWorkspace(
@@ -330,6 +339,27 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     );
     // `commit-from` → `commit-to` is a real move, so the commit line states the range.
     expect(withReceipt.r.getByTestId("round-commits").textContent).toContain("Committed commit-");
+  });
+
+  // The gate duration used to round the SECONDS remainder after splitting off the minutes,
+  // so the remainder could round up into a value its own unit cannot hold: 59_999ms read
+  // "60s" (not "1m 0s") and 359_999ms read "5m 60s" (not "6m 0s"). Rounding to total
+  // seconds first removes the carry entirely. The boundaries are the whole claim, so they
+  // are what is asserted — the interior values were already right.
+  it.each([
+    [0, "<1s"],
+    [499, "<1s"],
+    [999, "<1s"],
+    [1000, "1s"],
+    [12_400, "12s"],
+    [59_499, "59s"],
+    [59_500, "1m 0s"],
+    [59_999, "1m 0s"],
+    [359_499, "5m 59s"],
+    [359_500, "6m 0s"],
+    [359_999, "6m 0s"],
+  ])("renders %ims as %s", (ms, expected) => {
+    expect(gateDuration(ms)).toBe(expected);
   });
 
   it("states the board's generation and round in one quiet intro line", () => {

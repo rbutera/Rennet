@@ -54,11 +54,18 @@ export function generationLine(records: readonly RoundRecord[]): readonly string
   return [...new Set(ids.filter((id): id is string => id !== undefined && id !== ROUND_NO_REGEN))];
 }
 
-/** Duration, in the shape the run receipt's millisecond count deserves at a glance. */
-function gateDuration(ms: number): string {
-  return ms < 60_000
-    ? `${Math.round(ms / 1000)}s`
-    : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+/**
+ * Duration, in the shape the run receipt's millisecond count deserves at a glance.
+ *
+ * Rounds to whole seconds FIRST, then splits. Rounding after the split let the remainder
+ * carry into a unit that cannot hold it: 59_999ms printed "60s" and 359_999ms printed
+ * "5m 60s". A gate that finished inside a second reads "<1s" rather than the "0s" a round
+ * gives it — the run happened, and "0s" says it took no time at all.
+ */
+export function gateDuration(ms: number): string {
+  if (ms < 1000) return "<1s";
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 /**
@@ -120,7 +127,9 @@ function ActivityFeed({
         >
           {record.asksDispatched.length > 0 && (
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-10 text-muted-foreground/70 uppercase tracking-wide">
+              {/* 10px at full `text-muted-foreground`: the /70 knocked these group labels
+                  under AA in both schemes, and they are the smallest type on the panel. */}
+              <span className="font-medium text-10 text-muted-foreground uppercase tracking-wide">
                 Trigger Queue
               </span>
               {record.asksDispatched.map((ref) => (
@@ -137,11 +146,15 @@ function ActivityFeed({
               ))}
             </div>
           )}
-          {gate !== undefined && (
-            <div className="flex flex-col gap-1">
-              <span className="font-medium text-10 text-muted-foreground/70 uppercase tracking-wide">
-                Run
-              </span>
+          {/* The GATE is the optional half — it rides the run receipt, which legacy rows
+              omit. The commit range is record-level and always present, so it renders
+              either way: a legacy row that landed commits used to hide them purely
+              because nobody had written down which gate command ran. */}
+          <div className="flex flex-col gap-1">
+            <span className="font-medium text-10 text-muted-foreground uppercase tracking-wide">
+              Run
+            </span>
+            {gate !== undefined && (
               <span
                 data-testid="round-gate"
                 className="flex items-center gap-1.5 text-12-5 text-muted-foreground"
@@ -154,17 +167,17 @@ function ActivityFeed({
                   ? `Gate passed · ${gate.command} · ${gateDuration(gate.durationMs)}`
                   : "No gate configured — the round ran without one"}
               </span>
-              <span
-                data-testid="round-commits"
-                className="flex items-center gap-1.5 text-12-5 text-muted-foreground"
-              >
-                <Icon icon={GitCommitHorizontal} className="size-3 shrink-0" />
-                {commits.from === commits.to
-                  ? "The worker landed no commits"
-                  : `Committed ${commits.from.slice(0, 7)}…${commits.to.slice(0, 7)}`}
-              </span>
-            </div>
-          )}
+            )}
+            <span
+              data-testid="round-commits"
+              className="flex items-center gap-1.5 text-12-5 text-muted-foreground"
+            >
+              <Icon icon={GitCommitHorizontal} className="size-3 shrink-0" />
+              {commits.from === commits.to
+                ? "The worker landed no commits"
+                : `Committed ${commits.from.slice(0, 7)}…${commits.to.slice(0, 7)}`}
+            </span>
+          </div>
         </div>
       )}
     </div>
