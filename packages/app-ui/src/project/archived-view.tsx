@@ -1,4 +1,4 @@
-import { ArchiveRestore, Check, Inbox, MoveLeft, Search } from "lucide-react";
+import { ArchiveRestore, ArrowLeft, Check, Inbox, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
@@ -98,14 +98,14 @@ export function ArchivedView() {
       data-screen="archived"
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas"
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
         <button
           type="button"
           onClick={back}
           aria-label="Back"
-          className="flex size-7 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
+          className="flex size-6 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
         >
-          <Icon icon={MoveLeft} className="size-4" />
+          <Icon icon={ArrowLeft} className="size-3.5" />
         </button>
         <span className="text-sm font-medium text-ink">Archived</span>
         {all.length > 0 ? <span className="text-2xs text-ink-faint">{all.length}</span> : null}

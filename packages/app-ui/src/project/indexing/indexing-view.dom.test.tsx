@@ -156,6 +156,15 @@ function renderView(id: string, withSidebar = false) {
 }
 
 describe("IndexingView — one durable project run", () => {
+  it("labels the Back control with a back arrow, not the Context Map's glyph", async () => {
+    // The bug this exists for: Back rendered lucide's MAP icon, so the one control that
+    // leaves the run announced itself as "open the Context Map" and went to New Chat.
+    const run = renderView("p1");
+    await waitFor(() => expect(run.commandId()).not.toBe(""));
+    const back = screen.getByLabelText("Back");
+    expect(back.querySelector("svg")?.getAttribute("class")).toContain("lucide-arrow-left");
+  });
+
   it("starts in scouting and reveals only the persisted questionnaire returned by the scout", async () => {
     const run = renderView("p1");
     await waitFor(() => expect(run.commandId()).not.toBe(""));

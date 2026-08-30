@@ -824,7 +824,10 @@ export function Sidebar() {
       data-region="sidebar"
       data-open={open}
       className={cn(
-        "rennet-sidebar h-full shrink-0 overflow-hidden bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        // No ground of its own: the sidebar shares the frame's ONE seamless canvas
+        // (board prototype `app/globals.css` — `--color-sidebar: var(--rn-canvas)`),
+        // so the hairline is the only thing separating it from the pane beside it.
+        "rennet-sidebar h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
         open ? "w-64 border-r border-line" : "w-0",
       )}
     >

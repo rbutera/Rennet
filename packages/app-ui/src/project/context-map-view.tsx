@@ -14,18 +14,24 @@ import { newChatPath } from "../routes/url";
 export function ProjectContextMapView({
   projectId,
   onBack,
+  takeover = true,
 }: {
   readonly projectId: string;
   /** Where Back goes. Omitted ⇒ the project's New Chat, this flow's standing exit. The
    *  session top-bar's `?view=map` overrides it to the board, because there Back leaving
    *  for New Chat would drop the reviewer out of the session they were reading. */
   readonly onBack?: () => void;
+  /** False for the in-session `?view=map` mount, which renders INSIDE the session's own
+   *  chrome: the takeover header and its window Escape would be a second Back, a second
+   *  trail, and an Escape that fires from the chat composer. */
+  readonly takeover?: boolean;
 }) {
   const [, navigate] = useLocation();
   return (
     <ContextMapView
       projectId={projectId}
       showAskRail={false}
+      takeover={takeover}
       onBack={onBack ?? (() => navigate(newChatPath(projectId)))}
       // No ask rail here, so "discuss" hands the statement to the project's New Chat,
       // prefilled — a real handoff, not an inert button (finding 9).

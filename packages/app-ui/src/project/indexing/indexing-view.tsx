@@ -9,7 +9,14 @@ import {
   type ProjectScoutQuestionnaire,
 } from "@rennet/protocol";
 import { Spinner, Toggle, ToggleGroup } from "@rennet/ui";
-import { Check, MapIcon, MessageSquarePlus, TriangleAlert } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  MapIcon,
+  MessageSquarePlus,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
@@ -260,18 +267,20 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
       data-status={status}
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
         <button
           type="button"
           onClick={() => navigate(newChatPath())}
           aria-label="Back"
-          className="flex size-7 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
+          className="flex size-6 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
         >
-          <Icon icon={MapIcon} className="size-4" />
+          {/* Back is a back arrow. This control rendered a MAP glyph — a label that told
+              the reviewer it opened the Context Map while it navigated to New Chat. */}
+          <Icon icon={ArrowLeft} className="size-3.5" />
         </button>
         <span className="flex min-w-0 items-center gap-1.5 text-sm">
           <span className="shrink-0 font-medium text-ink">{project?.name ?? projectId}</span>
-          <span className="text-ink-faint">›</span>
+          <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
           <span className="text-ink-soft">{status}</span>
         </span>
         <kbd className="ml-auto rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-faint">

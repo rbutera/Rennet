@@ -321,6 +321,43 @@ describe("session top-bar (C03 §4)", () => {
     expect(text).toContain("Your PR");
     expect(text).toContain("needs you");
   });
+
+  it("drops its own trail once the dock is open (only TopBar is mounted here)", async () => {
+    // The dock's own header renders the same trail; two of them is the same session
+    // named twice. `TopBar` is session-routes-only, so `chatOpen` IS the dock's state.
+    // This half only proves the BAR lets go — the other half of the hand-off needs the
+    // frame, and is asserted in "the trail transfers…" below.
+    const { container, findByText } = mountTopBar("/s/s2");
+    await findByText("Beta");
+    await waitFor(() => expect(container.textContent ?? "").toContain("atlas"));
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    await waitFor(() => expect(container.querySelector('[data-slot="trail"]')).toBeNull());
+    // The title went with it — the whole trail is gone, not just its second line.
+    expect(container.textContent ?? "").not.toContain("Beta");
+    // ...and the controls that share the slot stayed. This is the assertion that would
+    // catch "gated the entire left slot" being mistaken for "gated the trail".
+    expect(container.querySelector('[aria-label="Close chat"]')).not.toBeNull();
+  });
+
+  it("the trail transfers: in the whole frame exactly ONE renders, and it is the dock's", async () => {
+    // Driven through the real frame, because the bar-only test above cannot see the chat
+    // header at all — it asserts a disappearance and reads as a hand-off. The dock is
+    // always MOUNTED (R47), so counting its trail proves nothing on its own; what the
+    // hand-off means is that the open dock leaves exactly one trail in the document, and
+    // ungating `TopBar`'s copy makes this two.
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project("p1", "atlas")]),
+      ...sessionHandlers(SESSIONS),
+    });
+    const { container, getByTestId } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/s2")} />,
+    );
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
+    const trails = [...container.querySelectorAll('[data-slot="trail"]')];
+    expect(trails).toHaveLength(1);
+    expect(getByTestId("chat-dock-slot").contains(trails[0] as Node)).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

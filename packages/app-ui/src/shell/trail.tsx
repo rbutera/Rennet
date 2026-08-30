@@ -1,3 +1,5 @@
+import { ChevronRight } from "lucide-react";
+import { Icon } from "../components/icon";
 import { TargetIcon } from "./sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "./sidebar-data";
 
@@ -21,15 +23,17 @@ export interface TrailProps {
 export function Trail({ title, projectName, target, targetState }: TrailProps) {
   const needsYou = targetState === "needs-you";
   return (
-    <div className="flex min-w-0 flex-col justify-center">
+    <div data-slot="trail" className="flex min-w-0 flex-col justify-center">
       <span className="truncate font-display text-sm font-medium leading-tight text-ink">
         {title}
       </span>
       {projectName && target ? (
-        <span className="flex items-center gap-1.5 text-2xs leading-tight text-ink-faint">
+        <span className="flex min-w-0 items-center gap-1.5 text-2xs leading-tight text-ink-faint">
           <TargetIcon kind={target} state={targetState} className="size-3" />
+          <span className="shrink-0">{projectName}</span>
+          <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
           <span className="truncate">
-            {projectName} › {TARGET_LABEL[target]}
+            {TARGET_LABEL[target]}
             {needsYou ? <span className="text-accent"> · needs you</span> : null}
           </span>
         </span>
