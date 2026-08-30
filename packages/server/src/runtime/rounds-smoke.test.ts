@@ -60,24 +60,12 @@ import { createRoundsRuntime } from "./rounds";
 // model aliases (`opus-4.8`/`sonnet-5`) to the binary's full ids. Before them,
 // every seat failed identically; after, the drafters run.
 //
-// OBSERVED SEAT BEHAVIOR (characterization, task 1.1, two live runs): with both
-// fixes, each run mints the generation and returns FOUR valid boards — report(4),
-// design(1), decisions(1), flagged(1-2). Two seats fail the SAME way on BOTH runs,
-// so these are SYSTEMATIC per-lens DRAFTING-QUALITY issues, not transient and not
-// infra (and not caused by the fixes):
-//   • sequence — board write rejected `bad-ref` every run: the sequence drafter
-//     emits a board citing an element id that does not exist in the board (a
-//     dangling reference the sequence prompt/shape tends to produce). The pipeline
-//     correctly REJECTS it (honest, not a swallowed empty). Follow-up: the sequence
-//     lens prompt / board shape, not the collation bridge.
-//   • noise — the noise seat's initial turn does not emit a board every run. The
-//     noise route (`lens-draft-noise`) consistently fails to produce structured
-//     output. Follow-up: the noise seat's model route / prompt.
-// Both are handled HONESTLY (rejected / recorded, never fabricated) — the doctrine
-// working — and are drafting-QUALITY follow-ups tracked OUTSIDE c15 (they do not
-// block the collation bridge: the pipeline executes and regeneration data exists).
-// This is why the assertion below is the HONEST bar (generation + report + ≥1 valid
-// lens board + no swallowed empties), not a brittle all-6-green.
+// OBSERVED SEAT BEHAVIOR (current characterization, 2026-08-30): after schema-ref
+// repair and Codex schema normalization, one live run populated report(2), design(1),
+// sequence(5), and noise(2). Decisions and Flagged each persisted zero elements with
+// no failure, so the no-swallowed-empty assertion correctly kept the smoke red; #689
+// owns that shared empty-success defect. The assertion below is the honest bar:
+// generation + report + at least one valid lens board + no swallowed empties.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SMOKE = process.env.RENNET_SMOKE === "1";
@@ -87,8 +75,8 @@ const SMOKE = process.env.RENNET_SMOKE === "1";
 const PATCH = [
   "@@ -1,3 +1,3 @@",
   " export function greet(name: string): string {",
-  "-  return `Hi ${name}`;",
-  "+  return `Hello, ${name}!`;",
+  `-  return \`Hi \${name}\`;`,
+  `+  return \`Hello, \${name}!\`;`,
   " }",
 ].join("\n");
 

@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DESIGN_ARTIFACT_LIMITS, type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
+import {
+  DESIGN_ARTIFACT_LIMITS,
+  type DesignArtifactSet,
+  sanitizeSchemaForCodex,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import {
   type DeltaPacket,
   type HarnessPort,
@@ -24,6 +29,7 @@ import {
   boardOutputSchema,
   composeReviewDraft,
   type DesignCoverageMapper,
+  designDraftOutputSchema,
   draftToOps,
   projectDesignTaskProgress,
   reconcileFlaggedBoards,
@@ -1211,6 +1217,32 @@ describe("boardOutputSchema", () => {
     expect(encoded).toContain('"structured"');
     // Memoized — the same object every call.
     expect(boardOutputSchema()).toBe(schema);
+  });
+});
+
+describe("Codex board output-schema compatibility", () => {
+  it("projects both real board schemas into the supported provider subset", () => {
+    for (const source of [boardOutputSchema(), designDraftOutputSchema()]) {
+      const schema = sanitizeSchemaForCodex(source) as Record<string, unknown>;
+      expect(schema.type).toBe("object");
+      expect(schema.anyOf).toBeUndefined();
+
+      const unsupported: string[] = [];
+      const walk = (node: unknown, path: string): void => {
+        if (Array.isArray(node)) {
+          node.forEach((value, index) => {
+            walk(value, `${path}[${index}]`);
+          });
+          return;
+        }
+        if (node === null || typeof node !== "object") return;
+        const record = node as Record<string, unknown>;
+        if (record.oneOf !== undefined) unsupported.push(`${path}.oneOf`);
+        for (const [key, value] of Object.entries(record)) walk(value, `${path}.${key}`);
+      };
+      walk(schema, "$");
+      expect(unsupported).toEqual([]);
+    }
   });
 });
 

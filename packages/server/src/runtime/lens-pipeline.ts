@@ -120,7 +120,7 @@ export function boardOutputSchema(): unknown {
   return cachedBoardSchema;
 }
 
-function designDraftOutputSchema(): unknown {
+export function designDraftOutputSchema(): unknown {
   if (cachedDesignDraftSchema !== undefined) return cachedDesignDraftSchema;
   try {
     cachedDesignDraftSchema = z.toJSONSchema(DesignDraftOutputSchema, { io: "output" });
