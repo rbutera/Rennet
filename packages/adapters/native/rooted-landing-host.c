@@ -1460,7 +1460,7 @@ static napi_value ensure_info_exclude_rule(napi_env env, napi_callback_info info
   unsigned char *bytes = NULL;
   size_t length = 0;
   int result = 0;
-  bool found;
+  bool found = false;
   napi_value outcome = NULL;
 
   if (!callback_host(env, info, 1, arguments, &this_value, &host, false)) return NULL;
