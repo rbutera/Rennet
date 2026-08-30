@@ -151,13 +151,13 @@ describe("sidebar structure (C03 §2)", () => {
     }
   });
 
-  it("orders the expanded footer Update → Help → Settings, read left-to-right", () => {
+  it("orders the expanded footer Settings → Help → Update, read left-to-right", () => {
     useUpdateReady.setState({ ready: { version: "1.2.3" } });
     const { getByText, getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
     const order = [
-      getByText("Update").closest("button"),
-      getByLabelText("Help"),
       getByLabelText("Settings"),
+      getByLabelText("Help"),
+      getByText("Update").closest("button"),
     ];
     for (let i = 1; i < order.length; i += 1) {
       const prev = order[i - 1];
@@ -235,7 +235,7 @@ describe("sidebar tree (C03 §3)", () => {
     expect(await findByLabelText("Your PR")).toBeTruthy();
   });
 
-  it("folds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
+  it("unfolds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
     const { getByText, findByText } = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
@@ -243,9 +243,35 @@ describe("sidebar tree (C03 §3)", () => {
     await findByText("atlas");
     const row = getByText("atlas").closest("button");
     if (!row) throw new Error("project row missing");
-    expect(row.getAttribute("aria-expanded")).toBe("true");
+    // No session of this project is open, so it starts folded and untouched — the
+    // slice holds NO entry for it, which is what lets the default answer at all.
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBeUndefined();
     fireEvent.click(row);
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(false);
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(getByText("atlas").closest("button") as Element);
     expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // The default the prototype ships (`app-sidebar.tsx`): a project opens because it
+  // holds the session you are in, and every OTHER project stays shut. The two-project
+  // fixture is what makes this visible — with one project on screen a "collapsed by
+  // default" rule and an "expanded by default" rule are told apart only by the row
+  // you are standing in, and the sibling is the half that regressed before.
+  it("defaults to folded, except the project holding the active session", async () => {
+    const { getByText, findByText } = mountSidebar({
+      projects: [project("p1", "atlas"), project("p2", "beacon")],
+      sessions: [...SESSIONS, { id: "s3", projectId: "p2", title: "Gamma", target: "your-branch" }],
+      path: "/s/s1",
+    });
+    await findByText("atlas");
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("true");
+    expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    // …and the reviewer outranks the default in BOTH directions: shutting the active
+    // project's own list sticks, rather than being reopened by the route.
+    fireEvent.click(getByText("atlas").closest("button") as Element);
     expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
   });
 

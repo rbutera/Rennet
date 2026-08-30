@@ -18,7 +18,11 @@ export type CommandMenuMode = "search" | "command";
 export interface UiState {
   /** The sidebar region is open (the layout renders it; the tree inside is a projection). */
   readonly sidebarOpen: boolean;
-  /** Per-node collapse state, keyed by node id. Absent ⇒ the node's default (expanded). */
+  /** Per-node collapse state, keyed by node id: `true` ⇒ folded. ABSENT means the
+   *  reviewer has not touched this node, so the surface picks its own default —
+   *  the sidebar's projects default to folded unless the node holds the active
+   *  session. That is why the write is `setFolded(id, folded)` and not a bare
+   *  toggle: from an absent entry a flip has no current value to invert. */
   readonly sidebarFolds: Readonly<Record<string, boolean>>;
   /** The chat dock is open (its slot is always mounted; this toggles its visible width). */
   readonly chatOpen: boolean;
@@ -66,7 +70,7 @@ export interface UiSlice {
   readonly uiActions: {
     setSidebarOpen(open: boolean): void;
     toggleSidebar(): void;
-    toggleFold(nodeId: string): void;
+    setFolded(nodeId: string, folded: boolean): void;
     setChatOpen(open: boolean): void;
     /** Open the dock and move keyboard focus to its composer. */
     focusChatComposer(): void;
@@ -107,11 +111,11 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
   uiActions: {
     setSidebarOpen: (open) => set((s) => ({ ui: { ...s.ui, sidebarOpen: open } })),
     toggleSidebar: () => set((s) => ({ ui: { ...s.ui, sidebarOpen: !s.ui.sidebarOpen } })),
-    toggleFold: (nodeId) =>
+    setFolded: (nodeId, folded) =>
       set((s) => ({
         ui: {
           ...s.ui,
-          sidebarFolds: { ...s.ui.sidebarFolds, [nodeId]: !s.ui.sidebarFolds[nodeId] },
+          sidebarFolds: { ...s.ui.sidebarFolds, [nodeId]: folded },
         },
       })),
     setChatOpen: (open) => set((s) => ({ ui: { ...s.ui, chatOpen: open } })),

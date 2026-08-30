@@ -15,9 +15,9 @@
 //      merge would silently drop the coach registration.
 //
 // Marks 1-3 (start-review, new-chat, smart-list) resolve on their REAL surfaces here
-// too: the New Chat view hosts new-chat + smart-list, and the indexing view's completion
-// CTA hosts start-review through a `useMergedRefs` merge (a bad merge would silently drop
-// the registration). anchors.dom.test.tsx separately drives their election/chain behaviour
+// too: the sidebar's New Chat row hosts new-chat, the New Chat view hosts smart-list,
+// and the indexing view's completion CTA hosts start-review through a `useMergedRefs`
+// merge (a bad merge would silently drop the registration). anchors.dom.test.tsx separately drives their election/chain behaviour
 // with synthetic anchors. Surfaces are route-exclusive — start-review (indexing) and
 // dispatch (rounds) never share a screen — so the resolution proof is per-surface by
 // nature, not one impossible all-nine tree.
@@ -37,9 +37,11 @@ import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
 import { memoryHistory } from "../routes/history";
 import { projectIndexingPath } from "../routes/url";
+import { Sidebar } from "../shell/sidebar/sidebar";
 import { useRennetStore } from "../store";
 import { act, cleanup, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
+import { type SessionSeed, sessionHandlers } from "../test/fixtures/sessions";
 import { SettingsStore } from "../test/fixtures/settings";
 import { MemoryBridge } from "../test/memory-bridge";
 import { MARKS, type MarkId } from "./marks";
@@ -209,7 +211,7 @@ describe("every coach anchor resolves (C13 Cluster 5)", () => {
     cleanup();
   });
 
-  it("New Chat view — new-chat and smart-list resolve on the real chrome", async () => {
+  it("New Chat view — smart-list resolves on the real chrome", async () => {
     const history = memoryHistory();
     const bridge = bridgeWith({
       "projects.list": () => ({ projects: [p1] }),
@@ -221,14 +223,49 @@ describe("every coach anchor resolves (C13 Cluster 5)", () => {
         <Router hook={history.hook} searchHook={history.searchHook}>
           <CoachDataProvider>
             <NewChatView projectId="p1" />
-            <AnchorReadout id="new-chat" />
             <AnchorReadout id="smart-list" />
+            <AnchorReadout id="new-chat" />
           </CoachDataProvider>
         </Router>
       </BridgeProvider>,
     );
-    await waitFor(() => expect(getByTestId("el-new-chat").textContent).not.toBe("none"));
-    expect(getByTestId("el-smart-list").textContent).not.toBe("none");
+    await waitFor(() => expect(getByTestId("el-smart-list").textContent).not.toBe("none"));
+    // `new-chat` moved to the sidebar row — this surface must NOT claim it too, or
+    // the registry's duplicate guard throws the moment both are on screen.
+    expect(getByTestId("el-new-chat").textContent).toBe("none");
+    cleanup();
+  });
+
+  it("sidebar — new-chat resolves on the New Chat row, and only while there are no sessions", async () => {
+    function mountSidebarSurface(sessions: readonly SessionSeed[]) {
+      const history = memoryHistory();
+      const bridge = bridgeWith({
+        "projects.list": () => ({ projects: [p1] }),
+        ...sessionHandlers(sessions),
+      });
+      return mount(
+        <BridgeProvider bridge={bridge}>
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <CoachDataProvider>
+              <Sidebar />
+              <AnchorReadout id="new-chat" />
+            </CoachDataProvider>
+          </Router>
+        </BridgeProvider>,
+      );
+    }
+
+    const empty = mountSidebarSurface([]);
+    await waitFor(() => expect(empty.getByTestId("el-new-chat").textContent).not.toBe("none"));
+    cleanup();
+
+    // The gate is the load-bearing half: an install that already HAS a session is not
+    // a first run, and the mark must stay out entirely rather than elect and withdraw.
+    const seeded = mountSidebarSurface([
+      { id: "s1", projectId: "p1", title: "Alpha", target: "your-branch" },
+    ]);
+    await waitFor(() => expect(seeded.getByText("New Chat")).toBeTruthy());
+    expect(seeded.getByTestId("el-new-chat").textContent).toBe("none");
     cleanup();
   });
 
