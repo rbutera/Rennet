@@ -8,6 +8,9 @@ import {
   sortSmartRows,
 } from "./smart-list";
 
+const GITHUB_WIDGET = { forge: "github", owner: "acme", name: "widget" } as const;
+const GITLAB_WIDGET = { forge: "gitlab", owner: "acme", name: "widget" } as const;
+
 // A substrate covering every state: my local unpublished work, my open PR (with a
 // local checkout → dedupe), a teammate PR that requested my review (needs-you), a
 // teammate PR with red CI, my own open PR with red CI (needs-you), and a merged PR
@@ -126,6 +129,83 @@ describe("buildSmartRows — dedupe + ownership + state", () => {
     expect(rows.some((r) => r.kind === "local" && r.id === "local-b")).toBe(true);
     // The repo-a PR carries NO checkout annotation (different repository).
     expect(byId(rows, "pr-300").checkedOutLocally).toBeUndefined();
+  });
+
+  it("does NOT dedupe the same repository, branch, and PR number across forges", () => {
+    const crossForge = buildSmartRows({
+      viewer: { login: "rai" },
+      truncated: false,
+      locals: [
+        local({
+          id: "local-github-widget",
+          branch: "main",
+          repository: "acme/widget",
+          forgeRepository: GITHUB_WIDGET,
+        }),
+      ],
+      prs: [
+        pr({
+          id: "pr-gitlab-widget-7",
+          number: 7,
+          branch: "main",
+          repository: "acme/widget",
+          forgeRepository: GITLAB_WIDGET,
+        }),
+      ],
+    });
+
+    expect(crossForge.map((row) => row.id).sort()).toEqual([
+      "local-github-widget",
+      "pr-gitlab-widget-7",
+    ]);
+    expect(byId(crossForge, "pr-gitlab-widget-7").checkedOutLocally).toBeUndefined();
+
+    const sameForge = buildSmartRows({
+      viewer: { login: "rai" },
+      truncated: false,
+      locals: [
+        local({
+          id: "local-github-widget",
+          branch: "main",
+          repository: "acme/widget",
+          forgeRepository: GITHUB_WIDGET,
+        }),
+      ],
+      prs: [
+        pr({
+          id: "pr-github-widget-7",
+          number: 7,
+          branch: "main",
+          repository: "acme/widget",
+          forgeRepository: GITHUB_WIDGET,
+        }),
+      ],
+    });
+    expect(sameForge.map((row) => row.id)).toEqual(["pr-github-widget-7"]);
+    expect(byId(sameForge, "pr-github-widget-7").checkedOutLocally?.id).toBe("local-github-widget");
+
+    const legacyPr = buildSmartRows({
+      viewer: { login: "rai" },
+      truncated: false,
+      locals: [
+        local({
+          id: "local-github-widget",
+          branch: "main",
+          repository: "acme/widget",
+          forgeRepository: GITHUB_WIDGET,
+        }),
+      ],
+      prs: [
+        pr({
+          id: "legacy-widget-7",
+          number: 7,
+          branch: "main",
+          repository: "acme/widget",
+        }),
+      ],
+    });
+    expect(legacyPr.map((row) => row.id)).toEqual(["legacy-widget-7"]);
+    expect(byId(legacyPr, "legacy-widget-7").checkedOutLocally?.id).toBe("local-github-widget");
   });
 
   it("annotates only the MOST RECENT PR when a branch is reused across historical PRs", () => {

@@ -3,6 +3,7 @@ import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
 import { FindingRefSchema } from "../board/schema";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
 import { MAX_UI_EVIDENCE_DATA_URL_LENGTH } from "../domain";
+import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
 import {
   AskEventBodySchema,
   AskProjectionSchema,
@@ -1464,27 +1465,35 @@ const definitions = {
   // `session: null` is the honest no-store answer — nothing was minted — matching the
   // language the sibling writes already speak.
   "session.mint": {
-    input: z.object({
-      projectId: z.string().min(1),
-      /**
-       * The id for the review this mint CAPTURES (#587). Starting a session is one act —
-       * mint, claim, capture, attach — so the command that starts it carries the capture's
-       * id, exactly as `review.capture` does.
-       */
-      commandId: commandIdSchema,
-      /** The claimed branch. Absent mints a no-target session (claims nothing). */
-      branch: z.string().min(1).optional(),
-      /** The claimed branch's PR number, when the row was a pull request. */
-      prNumber: z.number().int().positive().optional(),
-      /**
-       * The row's `owner/name` repository identity (#580). A workspace project holds several
-       * repos, so a branch NAME is unique only within one of them — without this, two repos
-       * that both have `main` collapse into one session and a row click opens the other repo's
-       * chat. This is an identity, not a host path, so it crosses the wire (R19 untouched).
-       * Absent ⇒ no repository named, and the mint behaves exactly as it did before.
-       */
-      repository: z.string().min(1).optional(),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        /**
+         * The id for the review this mint CAPTURES (#587). Starting a session is one act —
+         * mint, claim, capture, attach — so the command that starts it carries the capture's
+         * id, exactly as `review.capture` does.
+         */
+        commandId: commandIdSchema,
+        /** The claimed branch. Absent mints a no-target session (claims nothing). */
+        branch: z.string().min(1).optional(),
+        /** The claimed branch's PR number, when the row was a pull request. */
+        prNumber: z.number().int().positive().optional(),
+        /**
+         * The row's `owner/name` repository identity (#580). A workspace project holds several
+         * repos, so a branch NAME is unique only within one of them — without this, two repos
+         * that both have `main` collapse into one session and a row click opens the other repo's
+         * chat. This is an identity, not a host path, so it crosses the wire (R19 untouched).
+         * Absent ⇒ no repository named, and the mint behaves exactly as it did before.
+         */
+        repository: z.string().min(1).optional(),
+        /** Provider-qualified repository identity from the selected row. Optional for legacy
+         * clients and rows without a forge remote. */
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: z.object({
       session: sidebarSessionSchema.nullable(),
       /** True when an existing live claim owned the target and this reattached to it. */

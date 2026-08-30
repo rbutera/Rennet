@@ -26,6 +26,11 @@ import { NewChatView } from "./new-chat-view";
 
 afterEach(cleanup);
 
+const GITHUB_RENNET = { forge: "github", owner: "rbutera", name: "rennet" } as const;
+const GITHUB_WIDGET = { forge: "github", owner: "acme", name: "widget" } as const;
+const GITHUB_GADGET = { forge: "github", owner: "acme", name: "gadget" } as const;
+const GITLAB_WIDGET = { forge: "gitlab", owner: "acme", name: "widget" } as const;
+
 function project(id: string, name: string): Project {
   return {
     id,
@@ -50,7 +55,8 @@ function detailP1(): ProjectDetail {
       {
         id: "local-x",
         branch: "feat/local-x",
-        repository: "rennet",
+        repository: "rbutera/rennet",
+        forgeRepository: GITHUB_RENNET,
         author: "rai",
         dirty: true,
         ahead: 2,
@@ -65,7 +71,8 @@ function detailP1(): ProjectDetail {
         number: 201,
         title: "My open change",
         branch: "feat/mine",
-        repository: "rennet",
+        repository: "rbutera/rennet",
+        forgeRepository: GITHUB_RENNET,
         author: "rai",
         state: "open",
         reviewRequestedFromViewer: false,
@@ -80,7 +87,8 @@ function detailP1(): ProjectDetail {
         number: 202,
         title: "Teammate span fix",
         branch: "fix/span",
-        repository: "rennet",
+        repository: "rbutera/rennet",
+        forgeRepository: GITHUB_RENNET,
         author: "emma",
         state: "open",
         reviewRequestedFromViewer: true,
@@ -95,7 +103,8 @@ function detailP1(): ProjectDetail {
         number: 199,
         title: "Old merged work",
         branch: "feat/done",
-        repository: "rennet",
+        repository: "rbutera/rennet",
+        forgeRepository: GITHUB_RENNET,
         author: "rai",
         state: "merged",
         reviewRequestedFromViewer: false,
@@ -106,6 +115,88 @@ function detailP1(): ProjectDetail {
         lastActivityAt: "2026-08-25T08:00:00.000Z",
       },
     ],
+  };
+}
+
+function crossForgeDetail(): ProjectDetail {
+  const base = detailP1().prs[0];
+  if (base === undefined) throw new Error("missing PR fixture");
+  return {
+    viewer: { login: "rai" },
+    truncated: false,
+    locals: [],
+    prs: [
+      {
+        ...base,
+        id: "github-widget-7",
+        number: 7,
+        title: "GitHub widget",
+        branch: "main",
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+      },
+      {
+        ...base,
+        id: "gitlab-widget-7",
+        number: 7,
+        title: "GitLab widget",
+        branch: "main",
+        repository: "acme/widget",
+        forgeRepository: GITLAB_WIDGET,
+      },
+    ],
+  };
+}
+
+function crossForgeLocalDetail(): ProjectDetail {
+  const base = detailP1().locals[0];
+  if (base === undefined) throw new Error("missing local fixture");
+  return {
+    viewer: { login: "rai" },
+    truncated: false,
+    locals: [
+      {
+        ...base,
+        id: "github-widget-main",
+        branch: "main",
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+      },
+      {
+        ...base,
+        id: "gitlab-widget-main",
+        branch: "main",
+        repository: "acme/widget",
+        forgeRepository: GITLAB_WIDGET,
+      },
+    ],
+    prs: [],
+  };
+}
+
+function sameForgeLocalDetail(): ProjectDetail {
+  const base = detailP1().locals[0];
+  if (base === undefined) throw new Error("missing local fixture");
+  return {
+    viewer: { login: "rai" },
+    truncated: false,
+    locals: [
+      {
+        ...base,
+        id: "github-widget-main",
+        branch: "main",
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+      },
+      {
+        ...base,
+        id: "github-gadget-release",
+        branch: "release",
+        repository: "acme/gadget",
+        forgeRepository: GITHUB_GADGET,
+      },
+    ],
+    prs: [],
   };
 }
 
@@ -143,7 +234,16 @@ function sessionStore(seeded: SidebarSession[] = []) {
           input.branch === undefined
             ? undefined
             : sessions.find(
-                (s) => s.projectId === input.projectId && s.claim?.branch === input.branch,
+                (s) =>
+                  s.projectId === input.projectId &&
+                  s.claim?.branch === input.branch &&
+                  (s.forgeRepository !== undefined && input.forgeRepository !== undefined
+                    ? s.forgeRepository.forge === input.forgeRepository.forge &&
+                      s.forgeRepository.owner === input.forgeRepository.owner &&
+                      s.forgeRepository.name === input.forgeRepository.name
+                    : s.repository === undefined ||
+                      input.repository === undefined ||
+                      s.repository === input.repository),
               );
         if (claimed) return { session: claimed, reattached: true };
         const session: SidebarSession = {
@@ -155,6 +255,10 @@ function sessionStore(seeded: SidebarSession[] = []) {
           // The host captures and attaches inside the mint, so the session it answers with
           // ALREADY holds its review. That is what `/s/:slug` resolves the workspace from.
           reviewId: `rev-${reviews}`,
+          ...(input.repository === undefined ? {} : { repository: input.repository }),
+          ...(input.forgeRepository === undefined
+            ? {}
+            : { forgeRepository: input.forgeRepository }),
           ...(input.branch === undefined
             ? {}
             : {
@@ -268,6 +372,43 @@ describe("NewChatView", () => {
     fireEvent.change(filter, { target: { value: "local-x" } });
     expect(screen.getByText("feat/local-x")).toBeTruthy();
     expect(screen.queryByText("Teammate span fix")).toBeNull();
+  });
+
+  it("visibly and accessibly disambiguates identical local targets from different forges", async () => {
+    renderView("p1", { p1: crossForgeLocalDetail() });
+
+    const github = await screen.findByRole("button", {
+      name: /main.*GitHub.*acme\/widget.*Reviewed/i,
+    });
+    const gitlab = screen.getByRole("button", {
+      name: /main.*GitLab.*acme\/widget.*Reviewed/i,
+    });
+    expect(within(github).getByText("GitHub")).toBeTruthy();
+    expect(within(gitlab).getByText("GitLab")).toBeTruthy();
+    expect(within(github).getByText("acme/widget")).toBeTruthy();
+    expect(within(gitlab).getByText("acme/widget")).toBeTruthy();
+
+    const filter = screen.getByLabelText("Filter branches and pull requests");
+    fireEvent.change(filter, { target: { value: "gitlab" } });
+    expect(
+      screen.getByRole("button", { name: /main.*GitLab.*acme\/widget.*Reviewed/i }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /main.*GitHub.*acme\/widget.*Reviewed/i }),
+    ).toBeNull();
+  });
+
+  it("keeps ordinary same-forge repository labels as plain owner/name", async () => {
+    renderView("p1", { p1: sameForgeLocalDetail() });
+
+    expect(await screen.findByText("acme/widget")).toBeTruthy();
+    expect(screen.getByText("acme/gadget")).toBeTruthy();
+    expect(screen.queryByText("GitHub")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Filter branches and pull requests"), {
+      target: { value: "github" },
+    });
+    expect(await screen.findByText("Nothing matches.")).toBeTruthy();
   });
 
   it("filtered-empty and empty states read honestly", async () => {
@@ -440,7 +581,8 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
       command: "session.mint",
       branch: "feat/mine",
       prNumber: 201,
-      repository: "rennet",
+      repository: "rbutera/rennet",
+      forgeRepository: GITHUB_RENNET,
     });
     expect(store.captures[0]?.repoPath).toBeUndefined();
     // The session the host answers with ALREADY holds its review — that is the whole act.
@@ -449,6 +591,29 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await waitFor(() =>
       expect(history.history.at(-1)).toBe("/s/sess-1?ask=Why+is+this+diff+so+large%3F"),
     );
+  });
+
+  it("keeps identical GitHub and GitLab targets separate through mint and session reload", async () => {
+    const store = sessionStore();
+    const first = renderView("p1", { p1: crossForgeDetail() }, undefined, store);
+    await screen.findByText("GitHub widget");
+
+    fireEvent.click(rowButton(/GitHub widget/));
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    expect(store.captures[0]).toMatchObject({
+      command: "session.mint",
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    });
+    expect(store.sessions[0]?.forgeRepository).toEqual(GITHUB_WIDGET);
+    first.unmount();
+    cleanup();
+
+    renderView("p1", { p1: crossForgeDetail() }, undefined, store);
+    expect(await screen.findByText("GitLab widget")).toBeTruthy();
+    expect(screen.queryByText("GitHub widget")).toBeNull();
   });
 
   it("the Current Checkout row starts a NO-TARGET session — it claims nothing", async () => {
@@ -508,7 +673,8 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     expect(store.captures[0]).toMatchObject({
       command: "session.mint",
       branch: "feat/local-x",
-      repository: "rennet",
+      repository: "rbutera/rennet",
+      forgeRepository: GITHUB_RENNET,
     });
     expect(store.captures[0]?.repoPath).toBeUndefined();
     cleanup();

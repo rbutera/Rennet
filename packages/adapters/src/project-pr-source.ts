@@ -1,5 +1,11 @@
 import type { Octokit } from "@octokit/core";
-import type { PullRequest, PullRequestState, SmartListCi } from "@rennet/protocol";
+import {
+  type ForgeRepoIdentity,
+  forgeRepositorySlug,
+  type PullRequest,
+  type PullRequestState,
+  type SmartListCi,
+} from "@rennet/protocol";
 import { headerGet } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
@@ -40,13 +46,11 @@ export interface ProjectPrSource {
   /** The signed-in GitHub login, or `null` when the viewer query returns none. */
   resolveViewer(): Promise<string | null>;
   /**
-   * Pull requests for a forge repo `owner/name` in the given states (recent-first,
-   * bounded pages — history is paged, never fully synced). A non-forge identity
-   * (the common-dir fallback) yields an empty, complete result — it has no PRs to
-   * fetch. Omitted states default to `["open"]`, the original live surface.
+   * Pull requests for one provider-qualified repository in the given states. A source must
+   * reject another provider before making a request; the project registry selects it first.
    */
   listPullRequests(
-    repository: string,
+    repository: ForgeRepoIdentity,
     states?: readonly PullRequestState[],
   ): Promise<{ prs: PullRequest[]; truncated: boolean }>;
 }
@@ -152,7 +156,11 @@ function mapState(state: GraphqlPrNode["state"]): PullRequest["state"] {
   }
 }
 
-function mapNode(node: GraphqlPrNode, repository: string, viewerLogin: string | null): PullRequest {
+function mapNode(
+  node: GraphqlPrNode,
+  forgeRepository: ForgeRepoIdentity,
+  viewerLogin: string | null,
+): PullRequest {
   const reviewRequestedFromViewer =
     viewerLogin !== null &&
     node.reviewRequests.nodes.some((request) => request.requestedReviewer?.login === viewerLogin);
@@ -162,7 +170,8 @@ function mapNode(node: GraphqlPrNode, repository: string, viewerLogin: string | 
     number: node.number,
     // A GitHub PR title is always present, but guard the protocol's min(1) anyway.
     title: node.title.length > 0 ? node.title : `#${node.number}`,
-    repository,
+    repository: forgeRepositorySlug(forgeRepository),
+    forgeRepository,
     branch: node.headRefName,
     // A deleted-account author is GitHub's "ghost"; never an empty string (min(1)).
     author: node.author?.login ?? "ghost",
@@ -254,11 +263,12 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
   }
 
   async function listPullRequests(
-    repository: string,
+    repository: ForgeRepoIdentity,
     states: readonly PullRequestState[] = ["open"],
   ): Promise<{ prs: PullRequest[]; truncated: boolean }> {
-    const identity = parseForgeRepository(repository);
-    if (!identity) return { prs: [], truncated: false };
+    if (repository.forge !== "github") {
+      throw new Error(`GitHub project source cannot list ${repository.forge} repositories`);
+    }
     const viewer = await resolveViewer();
 
     const prs: PullRequest[] = [];
@@ -267,7 +277,12 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     let hasNext = false;
     let sawPartial = false;
     do {
-      const { page, partial } = await fetchPrsPage(identity.owner, identity.name, states, cursor);
+      const { page, partial } = await fetchPrsPage(
+        repository.owner,
+        repository.name,
+        states,
+        cursor,
+      );
       if (partial) sawPartial = true;
       if (!page) break; // repo not found / no access → no rows, and no false completeness claim below
       for (const prNode of page.nodes) prs.push(mapNode(prNode, repository, viewer));

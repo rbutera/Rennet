@@ -105,6 +105,7 @@ export function sidebarSessionOf(
     // this is the `owner/name` identity, and New Chat needs it to keep the row-hide
     // repo-precise across a workspace project's several repositories.
     ...(session.repository === undefined ? {} : { repository: session.repository }),
+    ...(session.forgeRepository === undefined ? {} : { forgeRepository: session.forgeRepository }),
     // The attached review (#587): the front door captures the clicked target's change and
     // binds it here, so `/s/<sessionId>` resolves to the review workspace. Absent means
     // nothing has been captured for this session — honestly, there is no diff.
@@ -206,6 +207,9 @@ export function sessionHandlers(rt: DispatchRuntime) {
                 // The row's `owner/name` (#580): a workspace's two `main` branches are two
                 // targets, not one — and it is what resolves the capture to the right repo.
                 ...(input.repository === undefined ? {} : { repository: input.repository }),
+                ...(input.forgeRepository === undefined
+                  ? {}
+                  : { forgeRepository: input.forgeRepository }),
               },
             }),
       });

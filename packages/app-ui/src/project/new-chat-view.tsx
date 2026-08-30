@@ -68,13 +68,65 @@ function repoOf(row: SmartRow): string {
   return row.kind === "pr" ? (row.pr?.repository ?? "") : (row.local?.repository ?? "");
 }
 
+function forgeOf(row: SmartRow): string | undefined {
+  return row.kind === "pr" ? row.pr?.forgeRepository?.forge : row.local?.forgeRepository?.forge;
+}
+
+function forgeLabel(forge: string): string {
+  switch (forge) {
+    case "github":
+      return "GitHub";
+    case "gitlab":
+      return "GitLab";
+    case "bitbucket":
+      return "Bitbucket";
+    default:
+      return forge;
+  }
+}
+
+/** Bare `owner/name` is normally enough. Qualify only a slug served by multiple forges. */
+function repositoriesNeedingForge(rows: readonly SmartRow[]): ReadonlySet<string> {
+  const forgesByRepository = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const forge = forgeOf(row);
+    if (forge === undefined) continue;
+    const repository = repoOf(row);
+    const forges = forgesByRepository.get(repository);
+    if (forges === undefined) {
+      forgesByRepository.set(repository, new Set([forge]));
+    } else {
+      forges.add(forge);
+    }
+  }
+
+  return new Set(
+    [...forgesByRepository.entries()]
+      .filter(([, forges]) => forges.size > 1)
+      .map(([repository]) => repository),
+  );
+}
+
+function searchableRepository(row: SmartRow, repositoriesWithForge: ReadonlySet<string>): string {
+  const repository = repoOf(row);
+  const forge = forgeOf(row);
+  return forge !== undefined && repositoriesWithForge.has(repository)
+    ? `${forgeLabel(forge)} ${repository}`
+    : repository;
+}
+
 /** The documented text-filter fields: PR number/title/branch/repo/author; local branch+repo. */
-function matchesText(row: SmartRow, needle: string): boolean {
+function matchesText(
+  row: SmartRow,
+  needle: string,
+  repositoriesWithForge: ReadonlySet<string>,
+): boolean {
   if (!needle) return true;
+  const repository = searchableRepository(row, repositoriesWithForge);
   const hay =
     row.kind === "pr"
-      ? `#${row.pr?.number} ${row.title} ${row.branch} ${row.pr?.repository} ${row.author}`
-      : `${row.branch} ${row.local?.repository ?? ""}`;
+      ? `#${row.pr?.number} ${row.title} ${row.branch} ${repository} ${row.author}`
+      : `${row.branch} ${repository}`;
   return hay.toLowerCase().includes(needle);
 }
 
@@ -124,8 +176,12 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const unclaimed = useMemo(() => hideClaimedRows(rows, claimed), [rows, claimed]);
   const counts = useMemo(() => smartListCounts(unclaimed), [unclaimed]);
   const needle = filter.trim().toLowerCase();
-  const visible = filterSmartRows(unclaimed, tab).filter((row) => matchesText(row, needle));
-  const showRepo = new Set(unclaimed.map(repoOf)).size > 1;
+  const repositoriesWithForge = repositoriesNeedingForge(unclaimed);
+  const visible = filterSmartRows(unclaimed, tab).filter((row) =>
+    matchesText(row, needle, repositoriesWithForge),
+  );
+  const showRepo =
+    new Set(unclaimed.map((row) => searchableRepository(row, repositoriesWithForge))).size > 1;
 
   const close = () => navigate(priorSurface());
 
@@ -248,6 +304,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                 key={row.id}
                 row={row}
                 showRepo={showRepo}
+                showForge={repositoriesWithForge.has(repoOf(row))}
                 pending={mint.pending}
                 onStart={() => mint.start(row, message)}
               />
@@ -425,11 +482,13 @@ function CheckoutRow({
 function ItemRow({
   row,
   showRepo,
+  showForge,
   pending,
   onStart,
 }: {
   readonly row: SmartRow;
   readonly showRepo: boolean;
+  readonly showForge: boolean;
   readonly pending: boolean;
   readonly onStart: () => void;
 }) {
@@ -463,9 +522,7 @@ function ItemRow({
           {row.local?.stage ? (
             <span className="min-w-0 truncate text-2xs text-ink-faint">{row.local.stage}</span>
           ) : null}
-          {showRepo ? (
-            <span className="shrink-0 text-2xs text-ink-faint">{repoOf(row)}</span>
-          ) : null}
+          {showRepo ? <RepositoryLabel row={row} showForge={showForge} /> : null}
           <span className="ml-auto flex shrink-0 items-center gap-2">
             <StateChip row={row} />
           </span>
@@ -486,7 +543,7 @@ function ItemRow({
           <span className="flex w-full items-center gap-2.5 pl-[22px] text-2xs text-ink-soft">
             <span className="shrink-0 font-mono text-ink-faint">#{row.pr?.number}</span>
             <span className="min-w-0 truncate font-mono">{row.branch}</span>
-            {showRepo ? <span className="shrink-0">{repoOf(row)}</span> : null}
+            {showRepo ? <RepositoryLabel row={row} showForge={showForge} /> : null}
             <span className="shrink-0">{row.author}</span>
             <span className="shrink-0">
               <span className="text-green">+{row.pr?.additions.toLocaleString()}</span>{" "}
@@ -502,6 +559,28 @@ function ItemRow({
         </>
       )}
     </button>
+  );
+}
+
+/** Keep the legacy `owner/name` readable; add a separate provider label only on collision. */
+function RepositoryLabel({
+  row,
+  showForge,
+}: {
+  readonly row: SmartRow;
+  readonly showForge: boolean;
+}) {
+  const forge = forgeOf(row);
+  return (
+    <span className="flex shrink-0 items-baseline gap-1 text-2xs text-ink-faint">
+      {showForge && forge !== undefined ? (
+        <>
+          <span className="font-medium text-ink-soft">{forgeLabel(forge)}</span>
+          <span aria-hidden="true">·</span>
+        </>
+      ) : null}
+      <span>{repoOf(row)}</span>
+    </span>
   );
 }
 

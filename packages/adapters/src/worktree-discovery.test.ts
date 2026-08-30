@@ -26,6 +26,23 @@ describe("parseRemoteIdentity", () => {
     });
   });
 
+  it("preserves every nested GitLab namespace segment for scp and URL remotes", () => {
+    const first = parseRemoteIdentity("git@gitlab.com:division-a/shared/widget.git");
+    const second = parseRemoteIdentity("https://gitlab.com/division-b/shared/widget.git");
+
+    expect(first).toEqual({
+      host: "gitlab.com",
+      owner: "division-a/shared",
+      name: "widget",
+    });
+    expect(second).toEqual({
+      host: "gitlab.com",
+      owner: "division-b/shared",
+      name: "widget",
+    });
+    expect(first).not.toEqual(second);
+  });
+
   it("returns null for a non-forge remote", () => {
     expect(parseRemoteIdentity("/local/only/path")).toBeNull();
     expect(parseRemoteIdentity("")).toBeNull();
@@ -34,6 +51,11 @@ describe("parseRemoteIdentity", () => {
 
 describe("matchWorktree — by repo identity, never a path guess", () => {
   const worktrees: LocalWorktree[] = [
+    {
+      root: "/src/gitlab-widget",
+      commonDir: "/src/gitlab-widget/.git",
+      identities: [{ host: "gitlab.com", owner: "acme", name: "widget" }],
+    },
     {
       root: "/src/widget",
       commonDir: "/src/widget/.git",
@@ -47,17 +69,24 @@ describe("matchWorktree — by repo identity, never a path guess", () => {
   ];
 
   it("matches the worktree whose remote identity equals the PR's owner/name", () => {
-    const match = matchWorktree({ owner: "acme", name: "widget" }, worktrees);
+    const match = matchWorktree({ forge: "github", owner: "acme", name: "widget" }, worktrees);
     expect(match?.root).toBe("/src/widget");
   });
 
-  it("is case-insensitive on owner/name", () => {
-    const match = matchWorktree({ owner: "ACME", name: "Widget" }, worktrees);
+  it("is case-insensitive on forge and owner/name", () => {
+    const match = matchWorktree({ forge: "GITHUB", owner: "ACME", name: "Widget" }, worktrees);
     expect(match?.root).toBe("/src/widget");
+  });
+
+  it("does not match a same-coordinate repository on another forge", () => {
+    const match = matchWorktree({ forge: "gitlab", owner: "acme", name: "widget" }, worktrees);
+    expect(match?.root).toBe("/src/gitlab-widget");
   });
 
   it("returns null when no worktree shares the identity (never guesses a path)", () => {
-    expect(matchWorktree({ owner: "acme", name: "missing" }, worktrees)).toBeNull();
+    expect(
+      matchWorktree({ forge: "github", owner: "acme", name: "missing" }, worktrees),
+    ).toBeNull();
   });
 });
 

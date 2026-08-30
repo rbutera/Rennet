@@ -427,11 +427,13 @@ export {
 export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";
 export {
   defaultProjectDetailSourceDeps,
+  forgeRepositoryFromRemote,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
-  // The repo's stable `owner/name` (else its durable common-dir alias). Exported because
-  // the host must answer WHICH repo of a workspace a New Chat row named (#587), and this
-  // is the same identity the row itself was built from — a second derivation would drift.
+  type ProjectForgeRegistry,
+  type RepositoryIdentity,
+  // The repo's provider-qualified identity plus its legacy/display spelling. Exported because
+  // the host must resolve the same row identity without inventing a second parser.
   repositoryIdentity,
 } from "./project-detail-source";
 export {
