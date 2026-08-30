@@ -5,7 +5,7 @@
 // entry on select (closing + navigating), and defaults to a different view per mode.
 import type { Project } from "@rennet/protocol";
 import { commands } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
@@ -143,6 +143,34 @@ describe("command menu (§9)", () => {
         expect(screen.queryByText(id), id).toBeNull();
       }
     });
+  });
+
+  it("the Replay row dispatches settings.resetWelcome and closes on success", async () => {
+    const reset = vi.fn(() => ({ replayRequestedAt: "2026-08-29T09:30:00.000Z" }));
+    const history = memoryHistory("/");
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project("p1", "atlas")]),
+      "settings.resetWelcome": reset,
+    });
+    useRennetStore.setState((s) => ({
+      ui: { ...s.ui, commandMenuOpen: true, commandMenuMode: "command" },
+    }));
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <CommandMenu />
+        </Router>
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("Replay the first-run welcome")).toBeTruthy());
+    act(() => {
+      fireEvent.click(screen.getByText("Replay the first-run welcome"));
+    });
+    // The real command runs over the bridge — the row is not a label with no wire behind it.
+    await waitFor(() => expect(reset).toHaveBeenCalledTimes(1));
+    // A registry-command row holds the menu open until the dispatch SETTLES; it closes
+    // only on success (a rejection keeps it open carrying the reason).
+    await waitFor(() => expect(useRennetStore.getState().ui.commandMenuOpen).toBe(false));
   });
 
   it("⌘P (search) and ⌘K (command) default to a different view", async () => {

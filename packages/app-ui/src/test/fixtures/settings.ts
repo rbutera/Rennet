@@ -121,6 +121,13 @@ export class SettingsStore {
         this.#welcome = { completedAt };
         return { completedAt };
       },
+      // Mirrors the real command: the write REPLACES the slice, so the completion
+      // stamp goes and the replay request lands in the same step.
+      "settings.resetWelcome": () => {
+        const replayRequestedAt = "2026-08-28T13:00:00.000Z";
+        this.#welcome = { replayRequestedAt };
+        return { replayRequestedAt };
+      },
       "settings.setLastProject": ({ source, projectId }) => {
         this.#navigation = {
           lastProjectBySource: { ...this.#navigation?.lastProjectBySource, [source]: projectId },

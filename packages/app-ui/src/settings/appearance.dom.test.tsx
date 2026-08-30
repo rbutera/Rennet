@@ -10,11 +10,14 @@
 // rebound under `[data-rn-code-theme]`) with no JS; happy-dom has no style engine, so it is
 // asserted at the DOM seam the recolour rides — the root attribute governing a mounted
 // code surface.
+import type { Project } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { cleanup, mount, waitFor, within } from "../test/dom";
-import { settingsBridge } from "../test/fixtures/settings";
+import { frontDoorHandlers } from "../test/fixtures/front-door";
+import { SettingsStore, settingsBridge } from "../test/fixtures/settings";
+import { MemoryBridge } from "../test/memory-bridge";
 
 function root(): HTMLElement {
   return document.documentElement;
@@ -102,5 +105,46 @@ describe("AppearancePage — Theme Pack + Code Theme (app-global, live)", () => 
     cleanup();
     root().removeAttribute("data-rn-theme");
     root().removeAttribute("data-rn-code-theme");
+  });
+});
+
+// The First Run section (wave 4 task 4.1). `settings.completeWelcome` shipped with no
+// counterpart, so once setup finished the welcome was unreachable on every machine —
+// first-run eligibility elects the wizard only for a client with NO projects. This drives
+// the whole capability end to end through the real app: the Settings row writes the
+// replay stamp, the `settings.get` refetch reopens the wizard OVER a client that has a
+// project, and the wizard's own Ready step is what puts it away again.
+describe("AppearancePage — replay the first-run welcome", () => {
+  const project: Project = {
+    id: "p1",
+    name: "atlas",
+    path: "/repos/p1",
+    kind: "repo",
+    repoCount: 1,
+    branchCount: 1,
+    primaryBranch: "main",
+    openPath: "/repos/p1",
+    addedAt: "2026-08-27T00:00:00.000Z",
+    source: "local",
+  };
+
+  it("one click reopens the welcome on a client that already has a project", async () => {
+    // The stateful settings store starts from a COMPLETED welcome (the state every
+    // returning install is in) and the front door hands the app a real project.
+    const store = new SettingsStore();
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project]),
+      ...store.handlers(),
+      "harness.hosts": () => ({ hosts: [] }),
+      "forge.hosts": () => ({ hosts: [] }),
+    });
+    const { user, findByText } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/settings/appearance")} />,
+    );
+    await user.click(await findByText("Replay the first-run welcome"));
+    expect(
+      await findByText("You stopped writing the code. You still have to answer for it."),
+    ).toBeTruthy();
+    cleanup();
   });
 });
