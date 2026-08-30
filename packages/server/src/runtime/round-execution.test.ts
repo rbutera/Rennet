@@ -9,13 +9,62 @@ import {
   type RoundOperationFailure,
   type RoundOperationState,
   type RoundReportReceipt,
+  type RoundSourceLandingAttempt,
   type RoundSourceLandingReceipt,
+  type RoundSourceLandingUnitReceipt,
   type RoundWorkerReceipt,
   type RoundWorkspaceAttempt,
+  roundSourceLandingArtifactPaths,
   sha256Hex,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createRoundExecutionCoordinator, type RoundExecutionPorts } from "./round-execution";
+
+const TRANSACTIONAL_UNIT_A_ID = "a".repeat(64);
+const TRANSACTIONAL_UNIT_B_ID = "b".repeat(64);
+
+function transactionalLandingAttempt(): RoundSourceLandingAttempt {
+  return {
+    effect: "source-landing",
+    strategy: "exclusive-move-v1",
+    executionId: "landing-transaction-1",
+    baselineCommit: "head-before",
+    workerHead: "head-after-1",
+    startedAt: 20,
+    units: [
+      {
+        id: TRANSACTIONAL_UNIT_A_ID,
+        path: "a.txt",
+        baseline: {
+          kind: "git",
+          mode: "100644",
+          oid: "a".repeat(40),
+          rawSha256: "1".repeat(64),
+        },
+        target: {
+          kind: "git",
+          mode: "100644",
+          oid: "b".repeat(40),
+          rawSha256: "2".repeat(64),
+        },
+        ...roundSourceLandingArtifactPaths("landing-transaction-1", TRANSACTIONAL_UNIT_A_ID),
+      },
+      {
+        id: TRANSACTIONAL_UNIT_B_ID,
+        path: "b.txt",
+        baseline: { kind: "absent" },
+        target: {
+          kind: "git",
+          mode: "100644",
+          oid: "c".repeat(40),
+          rawSha256: "3".repeat(64),
+        },
+        ...roundSourceLandingArtifactPaths("landing-transaction-1", TRANSACTIONAL_UNIT_B_ID),
+      },
+    ],
+    unitReceipts: [],
+  };
+}
 
 function operation(
   options: {
@@ -697,6 +746,148 @@ describe("createRoundExecutionCoordinator", () => {
     expect(settleCommits).not.toHaveBeenCalled();
     expect(landSourceChanges).toHaveBeenCalledTimes(1);
     expect(landSourceChanges.mock.calls[0]?.[0].attempt.executionId).toBe("landing-recovery");
+  });
+
+  it("persists each transactional landing unit as an exact prefix and resumes after a crash", async () => {
+    const test = scenario();
+    const attempt = transactionalLandingAttempt();
+    const firstRunUnits: string[] = [];
+    const firstRunFullPreflights: boolean[] = [];
+    let crashed = false;
+    const firstPorts: RoundExecutionPorts = {
+      ...test.ports,
+      planSourceLanding: () => attempt,
+      landSourceChanges: vi.fn(test.ports.landSourceChanges),
+      async landSourceUnit(input) {
+        const { unit } = input;
+        firstRunUnits.push(unit.id);
+        firstRunFullPreflights.push(input.fullPreflight);
+        return {
+          unitId: unit.id,
+          outcome: "applied",
+          landedAt: 30,
+        } satisfies RoundSourceLandingUnitReceipt;
+      },
+      async cleanupSourceLanding() {
+        throw new Error("cleanup ran before the complete receipt was durable");
+      },
+      publish(current) {
+        if (
+          !crashed &&
+          current.state.phase === "source-landing" &&
+          current.state.landing.strategy === "exclusive-move-v1" &&
+          current.state.landing.unitReceipts.length === 1
+        ) {
+          crashed = true;
+          throw new Error("simulated process death after the first durable unit");
+        }
+      },
+    };
+
+    await expect(
+      createRoundExecutionCoordinator({ store: test.store, ports: firstPorts }).submit(operation()),
+    ).rejects.toThrow("simulated process death");
+    const interrupted = test.store.read("session-1");
+    expect(interrupted?.state.phase).toBe("source-landing");
+    if (
+      interrupted?.state.phase !== "source-landing" ||
+      interrupted.state.landing.strategy !== "exclusive-move-v1"
+    ) {
+      throw new Error("transactional landing prefix was not retained");
+    }
+    expect(interrupted.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual([
+      TRANSACTIONAL_UNIT_A_ID,
+    ]);
+    expect(firstRunUnits).toEqual([TRANSACTIONAL_UNIT_A_ID]);
+    expect(firstRunFullPreflights).toEqual([true]);
+
+    const resumedUnits: string[] = [];
+    const resumedFullPreflights: boolean[] = [];
+    const cleanup = vi.fn(
+      async (input: Parameters<NonNullable<RoundExecutionPorts["cleanupSourceLanding"]>>[0]) => {
+        expect(test.store.read(input.operation.sessionId)?.state.phase).toBe("source-landed");
+      },
+    );
+    const recovered = await createRoundExecutionCoordinator({
+      store: new RoundOperationStore(test.dir),
+      ports: {
+        ...test.ports,
+        planSourceLanding: () => attempt,
+        landSourceChanges: vi.fn(test.ports.landSourceChanges),
+        async landSourceUnit(input) {
+          const { unit } = input;
+          resumedUnits.push(unit.id);
+          resumedFullPreflights.push(input.fullPreflight);
+          return {
+            unitId: unit.id,
+            outcome: "already-applied",
+            landedAt: 31,
+          } satisfies RoundSourceLandingUnitReceipt;
+        },
+        cleanupSourceLanding: cleanup,
+      },
+    }).recover();
+
+    expect(recovered[0]?.state.phase).toBe("completed");
+    expect(resumedUnits).toEqual([TRANSACTIONAL_UNIT_B_ID]);
+    expect(resumedFullPreflights).toEqual([true]);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs one full transactional preflight per coordinator drive", async () => {
+    const test = scenario();
+    const fullPreflights: boolean[] = [];
+    const ports: RoundExecutionPorts = {
+      ...test.ports,
+      planSourceLanding: transactionalLandingAttempt,
+      async landSourceUnit(input) {
+        fullPreflights.push(input.fullPreflight);
+        return {
+          unitId: input.unit.id,
+          outcome: "applied",
+          landedAt: 30,
+        } satisfies RoundSourceLandingUnitReceipt;
+      },
+      cleanupSourceLanding: vi.fn(),
+    };
+
+    const completed = await createRoundExecutionCoordinator({ store: test.store, ports }).submit(
+      operation(),
+    );
+
+    expect(completed.state.phase).toBe("completed");
+    expect(fullPreflights).toEqual([true, false]);
+  });
+
+  it("terminalizes transactional landing planning failures instead of replanning on recovery", async () => {
+    const test = scenario();
+    const planSourceLanding = vi.fn(async (): Promise<RoundSourceLandingAttempt> => {
+      throw new Error("Git returned unsupported mode 160000");
+    });
+    const ports: RoundExecutionPorts = {
+      ...test.ports,
+      planSourceLanding,
+      async drainTerminal() {
+        return { kind: "retain" };
+      },
+    };
+
+    const failed = await createRoundExecutionCoordinator({ store: test.store, ports }).submit(
+      operation(),
+    );
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed") throw new Error("planning failure was not terminal");
+    expect(failed.state.failure).toMatchObject({
+      at: "source-landing-planning",
+      reason: "Git returned unsupported mode 160000",
+    });
+
+    const recovered = await createRoundExecutionCoordinator({
+      store: new RoundOperationStore(test.dir),
+      ports,
+    }).recover();
+    expect(recovered[0]?.state.phase).toBe("failed");
+    expect(planSourceLanding).toHaveBeenCalledTimes(1);
   });
 
   it("cold-recovers the exact round recording attempt without relanding", async () => {

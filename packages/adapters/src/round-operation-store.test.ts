@@ -11,6 +11,7 @@ import {
   type RoundWorkerCompletedReceipt,
   type RoundWorkspaceAttempt,
   type RoundWorkspaceReceipt,
+  roundSourceLandingArtifactPaths,
   sha256Hex,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -761,6 +762,106 @@ if (RACE_ROLE !== undefined) {
           updatedAt: 13,
         }).state.phase,
       ).toBe("completed");
+    });
+
+    it("allows only the next exact transactional landing receipt prefix", () => {
+      const unitAId = "a".repeat(64);
+      const unitBId = "b".repeat(64);
+      const landingAttempt = {
+        effect: "source-landing",
+        strategy: "exclusive-move-v1",
+        executionId: "landing-prefix",
+        baselineCommit: changedCommits.from,
+        workerHead: changedCommits.to,
+        startedAt: 9,
+        units: [
+          {
+            id: unitAId,
+            path: "a.txt",
+            baseline: {
+              kind: "git",
+              mode: "100644",
+              oid: "a".repeat(40),
+              rawSha256: "1".repeat(64),
+            },
+            target: {
+              kind: "git",
+              mode: "100644",
+              oid: "b".repeat(40),
+              rawSha256: "2".repeat(64),
+            },
+            ...roundSourceLandingArtifactPaths("landing-prefix", unitAId),
+          },
+          {
+            id: unitBId,
+            path: "b.txt",
+            baseline: { kind: "absent" },
+            target: {
+              kind: "git",
+              mode: "100644",
+              oid: "c".repeat(40),
+              rawSha256: "3".repeat(64),
+            },
+            ...roundSourceLandingArtifactPaths("landing-prefix", unitBId),
+          },
+        ],
+        unitReceipts: [],
+      } satisfies RoundSourceLandingAttempt;
+      const landingState = {
+        phase: "source-landing",
+        workspace,
+        worker: changedWorker,
+        gate: changedGate,
+        commits: changedCommits,
+        landing: landingAttempt,
+      } satisfies Extract<RoundOperation["state"], { phase: "source-landing" }>;
+      const active = operation({ revision: 10, state: landingState });
+      const store = storeWithPersistedOperation(active);
+      const firstReceipt = { unitId: unitAId, outcome: "applied", landedAt: 11 } as const;
+
+      expect(() =>
+        store.compareAndSwap(expectation(active), {
+          state: {
+            ...landingState,
+            landing: {
+              ...landingAttempt,
+              unitReceipts: [
+                firstReceipt,
+                { unitId: unitBId, outcome: "applied", landedAt: 12 } as const,
+              ],
+            },
+          },
+          updatedAt: 12,
+        }),
+      ).toThrow(RoundOperationConflictError);
+      expect(() =>
+        store.compareAndSwap(expectation(active), {
+          state: {
+            ...landingState,
+            landing: {
+              ...landingAttempt,
+              units: landingAttempt.units.map((unit) =>
+                unit.id === unitBId ? { ...unit, path: "rewritten.txt" } : unit,
+              ),
+              unitReceipts: [firstReceipt],
+            },
+          },
+          updatedAt: 11,
+        }),
+      ).toThrow(RoundOperationConflictError);
+
+      const first = store.compareAndSwap(expectation(active), {
+        state: {
+          ...landingState,
+          landing: { ...landingAttempt, unitReceipts: [firstReceipt] },
+        },
+        updatedAt: 11,
+      });
+      if (first.state.phase !== "source-landing") throw new Error("prefix did not persist");
+      if (first.state.landing.strategy !== "exclusive-move-v1") {
+        throw new Error("transactional landing strategy changed");
+      }
+      expect(first.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual([unitAId]);
     });
 
     it("claims only an initial claimed operation", () => {

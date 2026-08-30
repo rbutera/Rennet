@@ -583,6 +583,16 @@ export {
   type RoundOperationTransition,
 } from "./round-operation-store";
 export {
+  type AnchoredRoundSourceLandingFileSystem,
+  type BoundRoundSourceLandingGit,
+  cleanupTransactionalRoundSourceLanding,
+  landTransactionalRoundSourceUnit,
+  planTransactionalRoundSourceLanding,
+  RoundSourceLandingConflictError,
+  type RoundSourceLandingObservedPathDescriptor,
+  type RoundSourceLandingRelativePath,
+} from "./round-source-landing";
+export {
   defaultGenerationStoreDir,
   defaultRoundRecordStoreDir,
   GenerationStore,

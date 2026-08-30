@@ -15,9 +15,12 @@ import {
   RoundReportDraftReceiptSchema,
   RoundReportReceiptSchema,
   RoundRunReceiptSchema,
+  RoundSourceLandingAttemptSchema,
+  RoundSourceLandingReceiptSchema,
   RoundWorkspaceAttemptSchema,
   RoundWorkspaceReceiptSchema,
   roundOperationProgressSnapshot,
+  roundSourceLandingArtifactPaths,
   SessionModelSchema,
   SessionThreadSchema,
   SessionTranscriptRowSchema,
@@ -256,6 +259,142 @@ describe("session/ durable shapes (#466/#457)", () => {
       RoundRecordSchema.safeParse({ ...round, askOccurrences: [{ id: "th-1", revision: -1 }] })
         .success,
     ).toBe(false);
+  });
+
+  it("accepts only an exact transactional source-landing receipt prefix", () => {
+    const unitAId = "a".repeat(64);
+    const unitBId = "b".repeat(64);
+    const units = [
+      {
+        id: unitAId,
+        path: "a.txt",
+        baseline: {
+          kind: "git",
+          mode: "100644",
+          oid: "a".repeat(40),
+          rawSha256: "1".repeat(64),
+        },
+        target: {
+          kind: "git",
+          mode: "100644",
+          oid: "b".repeat(40),
+          rawSha256: "2".repeat(64),
+        },
+        ...roundSourceLandingArtifactPaths("landing-transaction", unitAId),
+      },
+      {
+        id: unitBId,
+        path: "b.txt",
+        baseline: { kind: "absent" },
+        target: {
+          kind: "git",
+          mode: "100644",
+          oid: "c".repeat(40),
+          rawSha256: "3".repeat(64),
+        },
+        ...roundSourceLandingArtifactPaths("landing-transaction", unitBId),
+      },
+    ] as const;
+    const attempt = {
+      effect: "source-landing",
+      strategy: "exclusive-move-v1",
+      executionId: "landing-transaction",
+      baselineCommit: "baseline",
+      workerHead: "worker",
+      startedAt: 1,
+      units,
+      unitReceipts: [{ unitId: unitAId, outcome: "applied", landedAt: 2 }],
+    } as const;
+
+    expect(RoundSourceLandingAttemptSchema.parse(attempt)).toEqual(attempt);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        unitReceipts: [{ unitId: unitBId, outcome: "applied", landedAt: 2 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [{ ...units[0], stagePath: units[0].backupPath }, units[1]],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        unitReceipts: [{ ...attempt.unitReceipts[0], unitId: "a/backup/x" }],
+        units: [
+          {
+            ...units[0],
+            id: "a/backup/x",
+            ...roundSourceLandingArtifactPaths("landing-transaction", "a/backup/x"),
+          },
+          units[1],
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [{ ...units[0], path: ".rennet/round-landings/live.txt" }, units[1]],
+      }).success,
+    ).toBe(false);
+    for (const path of [".RENNET/round-landings/live.txt", ".ReNnEt/round-landings/live.txt"]) {
+      expect(
+        RoundSourceLandingAttemptSchema.safeParse({
+          ...attempt,
+          units: [{ ...units[0], path }, units[1]],
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [{ ...units[0], path: "nested/.rennet/live.txt" }, units[1]],
+      }).success,
+    ).toBe(true);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [
+          {
+            ...units[0],
+            baseline: { kind: "git", mode: "100644", oid: "a".repeat(40) },
+          },
+          units[1],
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        units: [
+          {
+            ...units[0],
+            baseline: { kind: "git", mode: "160000", oid: "a".repeat(40) },
+          },
+          units[1],
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingReceiptSchema.safeParse({
+        ...attempt,
+        outcome: "applied",
+        landedAt: 3,
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingReceiptSchema.parse({
+        ...attempt,
+        unitReceipts: [
+          ...attempt.unitReceipts,
+          { unitId: unitBId, outcome: "already-applied", landedAt: 3 },
+        ],
+        outcome: "applied",
+        landedAt: 4,
+      }).outcome,
+    ).toBe("applied");
   });
 
   // ── The rework count (review finding 10) ──────────────────────────────────

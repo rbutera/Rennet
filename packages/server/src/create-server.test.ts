@@ -23,10 +23,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
   createRennetServer,
+  createRoundSourceLandingPorts,
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
   type HandoffTurnExecution,
+  type RoundSourceLandingInjection,
 } from "./create-server";
+import type { RoundExecutionPorts } from "./runtime/round-execution";
 
 describe("round worker execution context", () => {
   it("carries a distro-native WSL branch capture through the round planner and worker", async () => {
@@ -116,6 +119,56 @@ describe("round worker execution context", () => {
         cwd: `/home/rai/repo/.git/rennet-round-worktrees/${key}`,
       },
     });
+  });
+});
+
+describe("round source landing composition", () => {
+  it("keeps legacy landing as the default and wires the complete injected unit operation", () => {
+    const legacyPlan: RoundExecutionPorts["planSourceLanding"] = () => ({
+      effect: "source-landing",
+      executionId: "legacy-landing",
+      baselineCommit: "baseline",
+      workerHead: "worker",
+      startedAt: 1,
+    });
+    const legacyLand: RoundExecutionPorts["landSourceChanges"] = async ({ attempt }) => ({
+      ...attempt,
+      outcome: "applied",
+      landedAt: 2,
+    });
+    const injection = {
+      plan: vi.fn(async () => ({
+        effect: "source-landing" as const,
+        strategy: "exclusive-move-v1" as const,
+        executionId: "transactional-landing",
+        baselineCommit: "baseline",
+        workerHead: "worker",
+        startedAt: 3,
+        units: [],
+        unitReceipts: [],
+      })),
+      landUnit: vi.fn<NonNullable<RoundExecutionPorts["landSourceUnit"]>>(),
+      cleanup: vi.fn<NonNullable<RoundExecutionPorts["cleanupSourceLanding"]>>(),
+    } satisfies RoundSourceLandingInjection;
+
+    const defaults = createRoundSourceLandingPorts({
+      planLegacy: legacyPlan,
+      landLegacy: legacyLand,
+    });
+    expect(defaults.planSourceLanding).toBe(legacyPlan);
+    expect(defaults.landSourceChanges).toBe(legacyLand);
+    expect(defaults.landSourceUnit).toBeUndefined();
+    expect(defaults.cleanupSourceLanding).toBeUndefined();
+
+    const injected = createRoundSourceLandingPorts({
+      planLegacy: legacyPlan,
+      landLegacy: legacyLand,
+      injection,
+    });
+    expect(injected.planSourceLanding).toBe(injection.plan);
+    expect(injected.landSourceChanges).toBe(legacyLand);
+    expect(injected.landSourceUnit).toBe(injection.landUnit);
+    expect(injected.cleanupSourceLanding).toBe(injection.cleanup);
   });
 });
 

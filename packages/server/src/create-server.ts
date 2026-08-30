@@ -190,6 +190,7 @@ import type {
   RoundOperation,
   RoundRunReceipt,
   SessionModel,
+  TransactionalRoundSourceLandingAttempt,
 } from "@rennet/protocol";
 import {
   currentGenerationId,
@@ -487,6 +488,35 @@ export function createRoundWorkerPort(input: {
   };
 }
 
+export interface RoundSourceLandingInjection {
+  readonly plan: (
+    operation: RoundOperation,
+  ) => TransactionalRoundSourceLandingAttempt | Promise<TransactionalRoundSourceLandingAttempt>;
+  readonly landUnit: NonNullable<RoundExecutionPorts["landSourceUnit"]>;
+  readonly cleanup: NonNullable<RoundExecutionPorts["cleanupSourceLanding"]>;
+}
+
+export function createRoundSourceLandingPorts(input: {
+  readonly planLegacy: RoundExecutionPorts["planSourceLanding"];
+  readonly landLegacy: RoundExecutionPorts["landSourceChanges"];
+  readonly injection?: RoundSourceLandingInjection;
+}): Pick<
+  RoundExecutionPorts,
+  "planSourceLanding" | "landSourceChanges" | "landSourceUnit" | "cleanupSourceLanding"
+> {
+  const legacyPorts = {
+    planSourceLanding: input.planLegacy,
+    landSourceChanges: input.landLegacy,
+  };
+  if (input.injection === undefined) return legacyPorts;
+  return {
+    ...legacyPorts,
+    planSourceLanding: input.injection.plan,
+    landSourceUnit: input.injection.landUnit,
+    cleanupSourceLanding: input.injection.cleanup,
+  };
+}
+
 export interface RennetServerOptions {
   /**
    * The per-user data directory (Electron passes app.getPath("userData")). The SQLite store,
@@ -524,6 +554,8 @@ export interface RennetServerOptions {
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
+  /** Transactional landing is injected until its native helper is delivered for every locus. */
+  readonly roundSourceLanding?: RoundSourceLandingInjection;
   /** Test observation at the crash commit point, before any PR-draft ripening await. */
   readonly onRoundPlaceholderCommitted?: (input: {
     readonly sessionId: string;
@@ -2336,6 +2368,41 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     sourceRepositoryFor: (operation) => sourcePatchsetFor(operation).repository,
   });
   const runRoundWorker = createRoundWorkerPort({ runHandoffTurn });
+  const roundSourceLandingPorts = createRoundSourceLandingPorts({
+    planLegacy: (operation) => {
+      if (operation.state.phase !== "commits-settled") {
+        throw new Error("Round source landing planned before commits settled.");
+      }
+      return {
+        effect: "source-landing",
+        executionId: randomUUID(),
+        baselineCommit: operation.state.commits.from,
+        workerHead: operation.state.commits.to,
+        startedAt: Date.now(),
+      };
+    },
+    landLegacy: async ({ operation, attempt }) => {
+      if (operation.state.phase !== "source-landing") {
+        throw new Error("Round source landing started outside its durable landing phase.");
+      }
+      const result = await landRoundChanges({
+        git: gitForRepo(operation.repoRoot),
+        locus: locusForRepo(operation.repoRoot),
+        sourceRoot: operation.repoRoot,
+        worktreePath: operation.state.workspace.worktreePath,
+        baselineCommit: attempt.baselineCommit,
+        workerHead: attempt.workerHead,
+      });
+      if (
+        result.baselineCommit !== attempt.baselineCommit ||
+        result.workerHead !== attempt.workerHead
+      ) {
+        throw new Error("Round source landing returned a different commit range.");
+      }
+      return { ...attempt, outcome: result.outcome, landedAt: Date.now() };
+    },
+    ...(options.roundSourceLanding === undefined ? {} : { injection: options.roundSourceLanding }),
+  });
 
   const coordinator = createRoundExecutionCoordinator({
     store: roundOperationStore,
@@ -2395,38 +2462,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           startedAt: attempt.startedAt,
         });
       },
-      planSourceLanding: (operation) => {
-        if (operation.state.phase !== "commits-settled") {
-          throw new Error("Round source landing planned before commits settled.");
-        }
-        return {
-          effect: "source-landing",
-          executionId: randomUUID(),
-          baselineCommit: operation.state.commits.from,
-          workerHead: operation.state.commits.to,
-          startedAt: Date.now(),
-        };
-      },
-      landSourceChanges: async ({ operation, attempt }) => {
-        if (operation.state.phase !== "source-landing") {
-          throw new Error("Round source landing started outside its durable landing phase.");
-        }
-        const result = await landRoundChanges({
-          git: gitForRepo(operation.repoRoot),
-          locus: locusForRepo(operation.repoRoot),
-          sourceRoot: operation.repoRoot,
-          worktreePath: operation.state.workspace.worktreePath,
-          baselineCommit: attempt.baselineCommit,
-          workerHead: attempt.workerHead,
-        });
-        if (
-          result.baselineCommit !== attempt.baselineCommit ||
-          result.workerHead !== attempt.workerHead
-        ) {
-          throw new Error("Round source landing returned a different commit range.");
-        }
-        return { ...attempt, outcome: result.outcome, landedAt: Date.now() };
-      },
+      ...roundSourceLandingPorts,
       planRoundRecording: (operation) => {
         if (operation.state.phase !== "source-landed") {
           throw new Error("Round recording planned before source landing settled.");
