@@ -5,6 +5,7 @@ import type {
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { ArrowRight } from "lucide-react";
+import { Icon } from "../components/icon";
 import {
   canRevealNewBoards,
   type LaneRow,
@@ -260,7 +261,7 @@ export function RoundGreeting({
           className="self-start"
         >
           View the New Boards
-          <ArrowRight className="size-3.5" aria-hidden="true" />
+          <Icon icon={ArrowRight} className="size-3.5" />
         </Button>
       )}
     </section>

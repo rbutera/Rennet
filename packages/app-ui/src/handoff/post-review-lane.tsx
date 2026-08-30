@@ -3,6 +3,7 @@ import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, GitPullRequest, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { Icon } from "../components/icon";
 import {
   AnchorReveal,
   type CodeRef,
@@ -274,7 +275,7 @@ function WorkingReviewDraft({
     return (
       <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
         <span className="flex items-center gap-2 text-15 font-semibold text-foreground">
-          <Check className="size-4 text-green" aria-hidden="true" />
+          <Icon icon={Check} className="size-4 text-green" />
           Review posted to {prRef}
         </span>
         <p className="text-13 text-muted-foreground">
@@ -297,7 +298,7 @@ function WorkingReviewDraft({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-8 py-8">
         <div className="flex items-center gap-2.5">
-          <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             Post Review · {prRef}
           </h1>
@@ -393,7 +394,7 @@ function WorkingReviewDraft({
                   onClick={() => restore(entry.ask)}
                   className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
-                  <RotateCcw className="size-2.5" aria-hidden="true" />
+                  <Icon icon={RotateCcw} className="size-2.5" />
                   Restore
                 </button>
               </span>
@@ -549,7 +550,7 @@ function ComposedReviewPreview({
     return (
       <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
         <span className="flex items-center gap-2 text-15 font-semibold text-foreground">
-          <Check className="size-4 text-green" aria-hidden="true" />
+          <Icon icon={Check} className="size-4 text-green" />
           Review posted to {prRef}
         </span>
         <p className="text-13 text-muted-foreground">
@@ -572,7 +573,7 @@ function ComposedReviewPreview({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-8 py-8">
         <div className="flex items-center gap-2.5">
-          <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             Post Review · {prRef}
           </h1>
@@ -767,7 +768,7 @@ function LineCommentCard({
               onClick={onStartEdit}
               className="flex items-center gap-1 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
-              <Pencil className="size-3" aria-hidden="true" />
+              <Icon icon={Pencil} className="size-3" />
               Edit
             </button>
             <button
@@ -775,7 +776,7 @@ function LineCommentCard({
               onClick={onDelete}
               className="flex items-center gap-1 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
-              <Trash2 className="size-3" aria-hidden="true" />
+              <Icon icon={Trash2} className="size-3" />
               Delete
             </button>
           </span>

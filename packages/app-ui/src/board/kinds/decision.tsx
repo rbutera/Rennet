@@ -25,7 +25,10 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
       className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2.5"
     >
       <div className="flex items-start gap-2">
-        <Icon icon={GitCommitHorizontal} className="mt-0.5 size-3.5 shrink-0 text-ink-soft" />
+        <Icon
+          icon={GitCommitHorizontal}
+          className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+        />
         <h3 className="min-w-0 flex-1 font-medium text-13 text-foreground leading-snug">
           <InlineQuoteHighlight text={statement} elementId={element.id} />
         </h3>
