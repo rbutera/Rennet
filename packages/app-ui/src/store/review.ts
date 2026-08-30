@@ -24,8 +24,8 @@ import type { RennetState } from "./index";
 // This is what makes the three wired exits work at all. `publish.compose`,
 // `round.dispatch` and `review.reviseSpan` each read `askLog.readProjection(reviewId)`
 // and nothing else — a client that staged only into this slice left all three reading an
-// empty log, so a composed review had "no content", a dispatched round carried an empty
-// work order, and every ask was "no longer staged". It is also what makes a reload keep
+// empty log, so a composed review lost the reviewer-authored asks, a dispatched round carried
+// an empty work order, and every ask was "no longer staged". It is also what makes a reload keep
 // the reviewer's work: the projection outlives the renderer.
 //
 // `focusedThreadId` and `draftEdits` stay CLIENT-TRANSIENT by contract (the durable-asks

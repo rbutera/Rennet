@@ -66,6 +66,7 @@ export * from "./refine-comment";
 export * from "./repo-composition";
 export * from "./review-ask";
 export * from "./review-intelligence-budget";
+export * from "./review-opener";
 export * from "./risk-crosscheck";
 export * from "./route-plan";
 export * from "./session";

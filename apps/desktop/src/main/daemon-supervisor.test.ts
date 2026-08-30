@@ -30,7 +30,7 @@ import {
 const claim: DaemonInfo = {
   pid: 4242,
   wsPort: 51000,
-  protocolVersion: 1,
+  protocolVersion: PROTOCOL_VERSION,
   version: "0.2.0",
   startedAt: "2026-08-19T00:00:00.000Z",
 };

@@ -74,3 +74,15 @@ describe("kickoff Open cannot be a silent no-op (absent-not-disabled)", () => {
     expect(kickoff).not.toMatch(/\bmatchProjectRepoKey\b/);
   });
 });
+
+describe("publish preview does not strand a transient board-drafting result", () => {
+  const publish = read(join(reviewDir, "publish.tsx"));
+
+  it("routes retries, projection refresh, and route cancellation through the tested controller", () => {
+    expect(publish).toContain("createComposeRefreshController");
+    expect(publish).toContain("supervisor.onAskProjection(reviewId");
+    expect(publish).toContain("controller.refresh()");
+    expect(publish).toContain("controller.stop()");
+    expect(publish.match(/\.invoke\("publish\.compose"/g)).toHaveLength(1);
+  });
+});

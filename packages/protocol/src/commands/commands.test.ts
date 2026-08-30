@@ -233,6 +233,15 @@ describe("command registry invariants (#465)", () => {
     expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
   });
 
+  it("refuses an empty staged-ask anchor before it can become provenance-free body content", () => {
+    expect(() =>
+      parseCommandInput("ask.stage", {
+        sessionId: "review-1",
+        ask: { id: "ask-1", anchor: "", type: "comment", body: "missing provenance" },
+      }),
+    ).toThrow();
+  });
+
   it("settings.setRoleAssignment validates its input (C16 write, #485)", () => {
     // A real cell edit: role + scenario + a concrete model+effort pick.
     const edit = {
@@ -271,8 +280,8 @@ describe("command registry invariants (#465)", () => {
   });
 
   it("preserves review-body-note identity and provenance across the publish wire", () => {
-    const composed = {
-      status: "review" as const,
+    const artifact = {
+      opener: "I checked the retry policy and the anchored comment below.",
       comments: [],
       bodyNotes: [
         {
@@ -282,14 +291,83 @@ describe("command registry invariants (#465)", () => {
           body: "the policy matches its documented boundary",
         },
       ],
+    };
+    const post = {
+      event: "COMMENT" as const,
+      body: `${artifact.opener}\n\n## Review notes\n- the policy matches its documented boundary`,
+      threads: [],
+    };
+    const composed = {
+      status: "review" as const,
+      artifact,
+      post,
+      ledger: [{ kind: "body-note" as const, path: "", detail: "woven into the body" }],
       payload: "canonical-review-bytes",
-      verdict: "COMMENT" as const,
       destination: "acme/orbital#7",
       title: "acme/orbital#7",
       compositionId: "composition-1",
     };
 
     expect(parseCommandOutput("publish.compose", composed)).toEqual(composed);
+    expect(
+      parseCommandOutput("publish.compose", {
+        status: "unavailable",
+        reason: "The current review boards are still drafting.",
+        retryable: true,
+      }),
+    ).toEqual({
+      status: "unavailable",
+      reason: "The current review boards are still drafting.",
+      retryable: true,
+    });
+  });
+
+  it("requires a byte-preserved opener and exact post with no caller target or verdict", () => {
+    const artifact = {
+      opener: "  I checked this exact review.  ",
+      comments: [],
+      bodyNotes: [],
+    };
+    const post = {
+      event: "APPROVE" as const,
+      body: `${artifact.opener}\n\n<!-- rennet:review:marker -->`,
+      threads: [],
+    };
+    const input = {
+      commandId: "00000000-0000-4000-8000-000000000001",
+      reviewId: "review-1",
+      artifact,
+      post,
+      payload: "canonical-review-bytes",
+      compositionId: "composition-1",
+      dryRun: true,
+    };
+
+    expect(parseCommandInput("publish.review", input)).toEqual(input);
+    expect(
+      parseCommandInput("publish.review", {
+        ...input,
+        verdict: "COMMENT",
+        target: {
+          repo: { forge: "github", owner: "wrong", name: "caller-target" },
+          number: 99,
+          forgeRef: "caller-node",
+          headOid: "caller-head",
+        },
+      }),
+    ).toEqual(input);
+    expect(() =>
+      parseCommandInput("publish.review", {
+        ...input,
+        artifact: { ...artifact, opener: " \n\t " },
+      }),
+    ).toThrow(/opener/i);
+    expect(() =>
+      parseCommandInput("publish.review", {
+        ...input,
+        post: { ...post, marker: "must-not-cross-the-wire" },
+      }),
+    ).toThrow();
   });
 
   it("every row's args/output are the parse seams' schemas", () => {

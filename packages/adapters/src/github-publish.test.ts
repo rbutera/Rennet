@@ -24,11 +24,27 @@ const CAPS = {
 };
 
 function post(comments: ReviewCommentInput[], reviewId = "rev-1"): ForgeReviewPost {
-  return buildForgeReviewPost(comments, {
+  const artifact = { opener: "The change is ready for focused review.", comments, bodyNotes: [] };
+  return buildForgeReviewPost(artifact, {
     reviewId,
     target: TARGET,
-    payload: canonicalReviewPayload(comments),
+    payload: canonicalReviewPayload(artifact),
     capabilities: CAPS,
+  });
+}
+
+function postWithVerdict(verdict: "APPROVE" | "COMMENT"): ForgeReviewPost {
+  const artifact = {
+    opener: "The change is ready for focused review.",
+    comments: [],
+    bodyNotes: [],
+  };
+  return buildForgeReviewPost(artifact, {
+    reviewId: "rev-verdict",
+    target: TARGET,
+    payload: canonicalReviewPayload(artifact),
+    capabilities: CAPS,
+    verdict,
   });
 }
 
@@ -162,6 +178,46 @@ describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () =>
     expect(second.reused).toBe(true);
     expect(second.reviewRef).toBe(first.reviewRef);
     expect(mutationCount()).toBe(1); // NO second post — exactly one review
+  });
+
+  it("posts a changed verdict as a new review when the body content is otherwise identical", async () => {
+    const { adapter, mutationCount } = fakeGitHub();
+    const comment = postWithVerdict("COMMENT");
+    const approve = postWithVerdict("APPROVE");
+
+    expect(comment.body.replace(comment.marker, approve.marker)).toBe(approve.body);
+    expect(comment.marker).not.toBe(approve.marker);
+
+    await adapter.publishReview(comment);
+    const outcome = await adapter.publishReview(approve);
+
+    expect(outcome.reused).toBe(false);
+    expect(mutationCount()).toBe(2);
+  });
+
+  it("reuses one landed review when authored prose contains an earlier marker-shaped comment", async () => {
+    const { adapter, mutationCount } = fakeGitHub();
+    const quoted = "f".repeat(64);
+    const artifact = {
+      opener: `The docs quote <!-- rennet:review:${quoted} --> as an example.`,
+      comments: [],
+      bodyNotes: [],
+    };
+    const p = buildForgeReviewPost(artifact, {
+      reviewId: "rev-quoted-marker",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      capabilities: CAPS,
+      verdict: "COMMENT",
+    });
+
+    const first = await adapter.publishReview(p);
+    const retry = await adapter.publishReview(p);
+
+    expect(first.reused).toBe(false);
+    expect(retry.reused).toBe(true);
+    expect(retry.reviewRef).toBe(first.reviewRef);
+    expect(mutationCount()).toBe(1);
   });
 });
 

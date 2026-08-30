@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { type WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import { WsRennetBridge } from "./ws-bridge";
@@ -74,8 +75,8 @@ function startStub(
             JSON.stringify({
               type: "serverInfo",
               version: "stub",
-              protocolVersion: 1,
-              minCompatibleProtocolVersion: 1,
+              protocolVersion: PROTOCOL_VERSION,
+              minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
               features: {},
             }),
           );
@@ -158,8 +159,8 @@ describe("WsRennetBridge", () => {
         JSON.stringify({
           type: "serverInfo",
           version: "stub",
-          protocolVersion: 3,
-          minCompatibleProtocolVersion: 2,
+          protocolVersion: PROTOCOL_VERSION + 1,
+          minCompatibleProtocolVersion: PROTOCOL_VERSION + 1,
           features: {},
         }),
       );
@@ -168,7 +169,7 @@ describe("WsRennetBridge", () => {
     const bridge = trackBridge(new WsRennetBridge({ url: stub.url, initialBackoffMs: 10 }));
 
     await expect(invoke(bridge, "cmd.incompatible", {})).rejects.toThrow(
-      "local protocol version 1 is below the remote minimum compatible version 2",
+      `local protocol version ${PROTOCOL_VERSION} is below the remote minimum compatible version ${PROTOCOL_VERSION + 1}`,
     );
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(stub.helloCount).toBe(1);
@@ -402,8 +403,8 @@ describe("WsRennetBridge remote surface (#380)", () => {
               JSON.stringify({
                 type: "serverInfo",
                 version: "stub",
-                protocolVersion: 1,
-                minCompatibleProtocolVersion: 1,
+                protocolVersion: PROTOCOL_VERSION,
+                minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
                 features: { serverRequests: true },
               }),
             );

@@ -9,7 +9,13 @@
 // mode:"pr")` → `publish.submitPr` and receipts the PR number + link; and a compose the daemon
 // REFUSED states the daemon's own reason where the exit would have been, rather than leaving a
 // disabled CTA (or an absent one) with no account of itself.
-import type { CommandInput, CommandOutput, PatchFile, Review } from "@rennet/protocol";
+import type {
+  AskProjection,
+  CommandInput,
+  CommandOutput,
+  PatchFile,
+  Review,
+} from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
@@ -49,12 +55,43 @@ function review(over: Partial<Review> = {}): Review {
 }
 
 type ReviewCompose = Extract<CommandOutput<"publish.compose">, { status: "review" }>;
-const COMMENTS: ReviewCompose["comments"] = [
+const COMMENTS: ReviewCompose["artifact"]["comments"] = [
   { path: "src/a.ts", line: 5, side: "RIGHT", type: "request-change", body: "guard the boundary" },
   { path: "src/a.ts", side: "RIGHT", type: "comment", body: "overall this reads clean" },
 ];
+const BODY_NOTES: ReviewCompose["artifact"]["bodyNotes"] = [
+  {
+    id: "ask-overall",
+    anchor: "Design · Retry policy",
+    type: "comment",
+    body: "the policy matches its documented boundary",
+  },
+];
+const ARTIFACT: ReviewCompose["artifact"] = {
+  opener: "Exact daemon opener.",
+  comments: COMMENTS,
+  bodyNotes: BODY_NOTES,
+};
+const POST: ReviewCompose["post"] = {
+  event: "REQUEST_CHANGES",
+  body: "Exact daemon opener.\n\noverall this reads clean\n\nthe policy matches its documented boundary",
+  threads: [
+    { path: "src/a.ts", line: 5, side: "RIGHT", body: "[Request change]\n\nguard the boundary" },
+  ],
+};
+const LEDGER: ReviewCompose["ledger"] = [
+  { kind: "body-note", path: "Design · Retry policy", detail: "Included in the review body." },
+];
 // The daemon's byte-exact payload — `publish.review` must receive THIS exact string back.
 const PAYLOAD = "canonical-review-bytes::v1";
+const EMPTY_PROJECTION: AskProjection = {
+  stagedAsks: {},
+  findingDispositions: {},
+  lineComments: {},
+  quoteThreads: {},
+  retired: {},
+  verdictOverride: null,
+};
 
 function stage(anchor: string, type: "comment" | "request-change" = "request-change") {
   act(() =>
@@ -97,32 +134,22 @@ function mountHandoff(r: Review, handlers: MemoryBridgeHandlers, calls: string[]
       </Router>
     </BridgeProvider>,
   );
-  return { ...view, calls };
+  return { ...view, calls, bridge };
 }
 
 describe("hand-off exits (C08 cluster 6)", () => {
-  it("Post Review composes → posts the byte-exact bytes and the composed verdict, then receipts", async () => {
+  it("Post Review renders and posts the exact aggregate, then receipts", async () => {
     const calls: string[] = [];
-    let postedPayload: string | undefined;
-    let postedDryRun: boolean | undefined;
-    let postedVerdict: string | undefined;
-    let postedBodyNotes: CommandInput<"publish.review">["bodyNotes"];
+    let posted: CommandInput<"publish.review"> | undefined;
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": (input) => {
         calls.push(`compose:${input.mode}`);
         return {
           status: "review",
-          comments: COMMENTS,
-          bodyNotes: [
-            {
-              id: "ask-overall",
-              anchor: "Design · Retry policy",
-              type: "comment",
-              body: "the policy matches its documented boundary",
-            },
-          ],
+          artifact: ARTIFACT,
+          post: POST,
+          ledger: LEDGER,
           payload: PAYLOAD,
-          verdict: "REQUEST_CHANGES",
           destination: "acme/orbital#7",
           title: "acme/orbital#7",
           compositionId: "comp-1",
@@ -130,10 +157,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
       },
       "publish.review": (input: CommandInput<"publish.review">) => {
         calls.push("review");
-        postedPayload = input.payload;
-        postedDryRun = input.dryRun;
-        postedVerdict = input.verdict;
-        postedBodyNotes = input.bodyNotes;
+        posted = input;
         return {
           dryRun: false,
           request: { endpoint: "graphql", method: "POST", body: {} },
@@ -155,8 +179,10 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // ("ask src/a.ts:5") never does — the preview is the outbound review, not the working set.
     expect(await r.findByText("guard the boundary")).toBeTruthy();
     expect(r.getByText("overall this reads clean")).toBeTruthy();
-    expect(r.getByText("the policy matches its documented boundary")).toBeTruthy();
+    expect(r.getAllByText("the policy matches its documented boundary")).toHaveLength(2);
     expect(r.getByText("Design · Retry policy")).toBeTruthy();
+    expect(r.getByText(/body-note · Design · Retry policy/)).toBeTruthy();
+    expect(r.container.textContent).toContain("Included in the review body.");
     expect(r.queryByText("ask src/a.ts:5")).toBeNull();
     // Compose ran (a read); nothing that LEAVES the machine has — no post without the sign-click.
     expect(calls).toEqual(["compose:review"]);
@@ -166,24 +192,73 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // The click ran the egress — and never re-composed (compose stays at one). No consent leg:
     // the click IS the authorization (#435).
     expect(calls).toEqual(["compose:review", "review"]);
-    // The preview equals what posts: publish.review received the exact bytes compose returned,
-    // and the COMPOSED verdict — the daemon binds both, so no other event could post.
-    expect(postedPayload).toBe(PAYLOAD);
-    expect(postedVerdict).toBe("REQUEST_CHANGES");
-    expect(postedBodyNotes).toEqual([
-      {
-        id: "ask-overall",
-        anchor: "Design · Retry policy",
-        type: "comment",
-        body: "the policy matches its documented boundary",
-      },
-    ]);
-    // Real egress is the explicit opt-in.
-    expect(postedDryRun).toBe(false);
-    // The receipt names the verdict + line-comment count (one of two comments carries a line) + link.
+    // The preview equals what posts: the frozen aggregate is round-tripped, and no target or
+    // second verdict can be re-derived by the client.
+    expect(posted).toMatchObject({
+      reviewId: "r1",
+      artifact: ARTIFACT,
+      post: POST,
+      payload: PAYLOAD,
+      compositionId: "comp-1",
+      dryRun: false,
+    });
+    expect(posted).not.toHaveProperty("target");
+    expect(posted).not.toHaveProperty("verdict");
+    // The receipt names the descriptor event + exact thread count + link.
     expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
     expect(r.getByText(/Request Changes · 1 line comment · body/)).toBeTruthy();
     expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
+  });
+
+  it("posts an approval with zero asks using the exact descriptor", async () => {
+    const artifact: ReviewCompose["artifact"] = {
+      opener: "Exact approval body from the daemon.",
+      comments: [],
+      bodyNotes: [],
+    };
+    const post: ReviewCompose["post"] = {
+      event: "APPROVE",
+      body: "Exact approval body from the daemon.",
+      threads: [],
+    };
+    let posted: CommandInput<"publish.review"> | undefined;
+    const r = mountHandoff(review({ postTarget }), {
+      "publish.compose": () => ({
+        status: "review",
+        artifact,
+        post,
+        ledger: [],
+        payload: "canonical-approval-bytes",
+        destination: "acme/orbital#7",
+        title: "acme/orbital#7",
+        compositionId: "comp-approval",
+      }),
+      "publish.review": (input) => {
+        posted = input;
+        return {
+          dryRun: false,
+          request: { endpoint: "graphql", method: "POST", body: {} },
+          marker: "m-approval",
+          ledger: [],
+          outcome: { reviewRef: "R_APPROVE", url: "https://x/approval", reused: false },
+        };
+      },
+    });
+
+    expect(await r.findByText(post.body)).toBeTruthy();
+    expect(r.queryByText(/Review Threads/)).toBeNull();
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+
+    expect(posted).toMatchObject({
+      artifact,
+      post,
+      payload: "canonical-approval-bytes",
+      compositionId: "comp-approval",
+      dryRun: false,
+    });
+    expect(posted).not.toHaveProperty("target");
+    expect(posted).not.toHaveProperty("verdict");
+    expect(await r.findByText(/Approve · 0 line comments · body/)).toBeTruthy();
   });
 
   it("a verdict flip writes the ask log and RECOMPOSES — Post posts the recomposed verdict", async () => {
@@ -198,18 +273,33 @@ describe("hand-off exits (C08 cluster 6)", () => {
     // as "overridden — proposed comment" against its own honest REQUEST_CHANGES.
     const calls: string[] = [];
     let composedVerdict: "REQUEST_CHANGES" | "COMMENT" | "APPROVE" = "REQUEST_CHANGES";
-    let postedVerdict: string | undefined;
+    let postedPost: CommandInput<"publish.review">["post"] | undefined;
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": () => {
         calls.push(`compose:${composedVerdict}`);
         return {
           status: "review",
-          comments: [
-            { path: "src/a.ts", line: 5, side: "RIGHT", type: "comment", body: "a line note" },
-          ],
-          bodyNotes: [{ type: "request-change", body: "guard the boundary" }],
+          artifact: {
+            opener: "Exact daemon opener.",
+            comments: [
+              { path: "src/a.ts", line: 5, side: "RIGHT", type: "comment", body: "a line note" },
+            ],
+            bodyNotes: [
+              {
+                id: "ask-boundary",
+                anchor: "Design · Boundary",
+                type: "request-change",
+                body: "guard the boundary",
+              },
+            ],
+          },
+          post: {
+            event: composedVerdict,
+            body: "Exact daemon opener.\n\nguard the boundary",
+            threads: [{ path: "src/a.ts", line: 5, side: "RIGHT", body: "a line note" }],
+          },
+          ledger: [],
           payload: PAYLOAD,
-          verdict: composedVerdict,
           destination: "acme/orbital#7",
           title: "acme/orbital#7",
           compositionId: `comp-${composedVerdict}`,
@@ -223,7 +313,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
       },
       "publish.review": (input) => {
         calls.push("review");
-        postedVerdict = input.verdict;
+        postedPost = input.post;
         return {
           dryRun: false,
           request: { endpoint: "graphql", method: "POST", body: {} },
@@ -249,30 +339,82 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(calls).toEqual(["compose:REQUEST_CHANGES", "override:APPROVE", "compose:APPROVE"]);
 
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
-    // What posts is the RECOMPOSED verdict — the event on screen, never a stale one.
-    expect(postedVerdict).toBe("APPROVE");
+    // What posts is the RECOMPOSED descriptor — its event is on screen, never a second field.
+    expect(postedPost?.event).toBe("APPROVE");
     expect(await r.findByText(/Approve · 1 line comment · body/)).toBeTruthy();
+  });
+
+  it("recomposes a held-open signing preview when another client pushes a new ask projection", async () => {
+    let remoteRevision = 0;
+    let remoteAttempts = 0;
+    const composedRevisions: number[] = [];
+    const r = mountHandoff(review({ postTarget }), {
+      "ask.read": () => ({ projection: EMPTY_PROJECTION }),
+      "publish.compose": () => {
+        composedRevisions.push(remoteRevision);
+        if (remoteRevision === 1 && remoteAttempts++ === 0) {
+          throw new Error("temporary compose failure");
+        }
+        const opener = remoteRevision === 0 ? "Before the remote edit." : "After the remote edit.";
+        return {
+          status: "review",
+          artifact: { opener, comments: [], bodyNotes: [] },
+          post: { event: "APPROVE", body: opener, threads: [] },
+          ledger: [],
+          payload: `payload-${remoteRevision}`,
+          destination: "acme/orbital#7",
+          title: "acme/orbital#7",
+          compositionId: `composition-${remoteRevision}`,
+        };
+      },
+    });
+
+    expect(await r.findByText("Before the remote edit.")).toBeTruthy();
+    remoteRevision = 1;
+    act(() =>
+      r.bridge.emitAskProjection("r1", {
+        ...EMPTY_PROJECTION,
+        stagedAsks: {
+          remote: {
+            id: "remote",
+            anchor: "Review summary",
+            type: "comment",
+            body: "added from the phone",
+          },
+        },
+      }),
+    );
+
+    // Invalidation hides the signed bytes and disarms Post before the replacement arrives.
+    await r.findByText("temporary compose failure");
+    expect(r.queryByText("Before the remote edit.")).toBeNull();
+    expect(r.getByRole("button", { name: /Post Review/ }).hasAttribute("disabled")).toBe(true);
+
+    // A failed refresh is retryable in place; the older cached aggregate never becomes current
+    // again, and the successful retry replaces it without route navigation.
+    expect(await r.findByText("After the remote edit.", {}, { timeout: 2_000 })).toBeTruthy();
+    expect(r.queryByText("Before the remote edit.")).toBeNull();
+    expect(composedRevisions).toEqual([0, 1, 1]);
   });
 
   it("an inline edit that can't reach the composition is marked pending — never silently divergent", async () => {
     // The reviewer stages an ask AND types an inline edit into the store. `publish.compose` takes
     // no edit input, so that edit cannot reach the outbound bytes. The lane must (a) still post the
     // composed bytes byte-for-byte, and (b) visibly mark the unreachable edit — not drop it silently.
-    let postedPayload: string | undefined;
-    let postedComments: unknown;
+    let posted: CommandInput<"publish.review"> | undefined;
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": () => ({
         status: "review",
-        comments: COMMENTS,
+        artifact: ARTIFACT,
+        post: POST,
+        ledger: LEDGER,
         payload: PAYLOAD,
-        verdict: "REQUEST_CHANGES",
         destination: "acme/orbital#7",
         title: "acme/orbital#7",
         compositionId: "comp-1",
       }),
       "publish.review": (input: CommandInput<"publish.review">) => {
-        postedPayload = input.payload;
-        postedComments = input.comments;
+        posted = input;
         return {
           dryRun: false,
           request: { endpoint: "graphql", method: "POST", body: {} },
@@ -293,8 +435,9 @@ describe("hand-off exits (C08 cluster 6)", () => {
 
     await r.user.click(r.getByRole("button", { name: /Post Review/ }));
     // What posts is the composed bytes, byte-for-byte — the local edit reached neither preview nor post.
-    expect(postedPayload).toBe(PAYLOAD);
-    expect(postedComments).toEqual(COMMENTS);
+    expect(posted?.payload).toBe(PAYLOAD);
+    expect(posted?.artifact).toEqual(ARTIFACT);
+    expect(posted?.post).toEqual(POST);
   });
 
   it("a daemon that lands no outcome fails honest — never a faked post", async () => {
@@ -302,9 +445,10 @@ describe("hand-off exits (C08 cluster 6)", () => {
     const handlers: MemoryBridgeHandlers = {
       "publish.compose": () => ({
         status: "review",
-        comments: COMMENTS,
+        artifact: ARTIFACT,
+        post: POST,
+        ledger: LEDGER,
         payload: PAYLOAD,
-        verdict: "REQUEST_CHANGES",
         destination: "acme/orbital#7",
         title: "acme/orbital#7",
         compositionId: "comp-1",
@@ -357,6 +501,35 @@ describe("hand-off exits (C08 cluster 6)", () => {
       await r.findByText("A review comment has an unsafe path (/etc/passwd); it cannot be posted."),
     ).toBeTruthy();
     expect(r.getByRole("button", { name: /Post Review/ }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("retries a transient board-drafting composition without leaving the signing view", async () => {
+    let attempts = 0;
+    const r = mountHandoff(review({ postTarget }), {
+      "publish.compose": () => {
+        attempts += 1;
+        return attempts === 1
+          ? {
+              status: "unavailable",
+              reason: "The current review boards are still drafting.",
+              retryable: true,
+            }
+          : {
+              status: "review",
+              artifact: ARTIFACT,
+              post: POST,
+              ledger: LEDGER,
+              payload: PAYLOAD,
+              destination: "acme/orbital#7",
+              title: "acme/orbital#7",
+              compositionId: "comp-after-drafting",
+            };
+      },
+    });
+
+    expect(await r.findByText("The current review boards are still drafting.")).toBeTruthy();
+    expect(await r.findByText("Exact daemon opener.", {}, { timeout: 2_000 })).toBeTruthy();
+    expect(attempts).toBe(2);
   });
 
   it("a PR the daemon REFUSED to compose says why, instead of a lane that silently never becomes one", async () => {
@@ -497,6 +670,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
     const r = mountHandoff(review(), handlers);
     const open = await r.findByRole("button", { name: /Open Pull Request/ });
     expect(r.getByText("Harden the retry path")).toBeTruthy();
+    expect(r.getByText("main ← feat/x · Draft")).toBeTruthy();
 
     await r.user.click(open);
     // The submitted payload is the byte-exact one compose returned (what you preview is what opens).

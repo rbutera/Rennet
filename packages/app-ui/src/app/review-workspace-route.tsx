@@ -68,7 +68,7 @@ import { useRennetStore } from "../store";
  * is this issue (#576) all over again. `freshness.dom.test.tsx` mounts through
  * `useSlugResolution` for exactly that reason: change the read, and it goes red.
  */
-const STALED_BY_FRESHNESS = ["review.load", "board.read"] as const;
+const STALED_BY_FRESHNESS = ["review.load", "board.read", "publish.compose"] as const;
 
 /** Fire-and-forget: `useMutation` already holds the fault; this only settles the rejection. */
 const held = () => undefined;

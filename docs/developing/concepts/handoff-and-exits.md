@@ -193,11 +193,12 @@ positions, and the draft mirrors that shape rather than flattening it. An ask
 whose provenance carries a diff position — a finding's anchor, a code-line
 comment — becomes a line comment, grouped by file with its citation. An ask
 without one (a quote of board prose has no diff line to pin to) travels in
-the review body, woven in by the orchestrator — its placement under the body
-header is the whole statement, never an explanatory label. A path-only ask has
+the review body. A path-only ask has
 no diff position either, so it folds into the body the same way; the conversion
 is recorded in a ledger returned to the client rather than happening silently.
-The preview renders exactly this structure, because it is exactly what posts.
+The preview renders the exact forge body and threads that post. Provenance and
+the degradation ledger remain visible beside that descriptor rather than being
+inserted into it.
 
 Captured provenance is resolved against the review's active patchset before it
 becomes a line comment or work-order anchor. A base-side citation through a
@@ -214,24 +215,32 @@ a durable write on the ask log (`ask.setVerdictOverride`) that recomposes the
 preview, so the verdict on screen is the verdict that posts — there is no
 separate verdict argument riding along at post time. An
 approving review is a first-class flow, not an empty state: a drafted Approve
-whose body is grounded in what the reviewer actually walked, raised, and
-cleared. Publication keeps the accepted contract: an exact-payload preview
+whose body is grounded in the active persisted boards, patchset, and durable
+reviewer acts. Publication keeps the accepted contract: an exact-payload preview
 and one direct Post — no holds, no consent ceremony.
 
 The GitHub review event follows the outbound set: any outbound request-change
 ask makes it `REQUEST_CHANGES`; comments and questions alone make it `COMMENT`.
-An empty outbound set posts nothing at all.
+With no asks, the grounded opener proposes `APPROVE`. A durable verdict override
+always wins.
 
 ## One payload, one source
 
-The preview and the post are the same object. Before any egress the server
-reconstructs the canonical payload in `@rennet/core`, so the renderer cannot
-construct a different body after preview. A daemon-composed payload carries a
-`compositionId` bound to the review, the active patchset, the mode, the payload
-itself, and — for a review post — the verdict. A stale preview cannot apply, and
-neither can a verdict other than the one previewed: the event is the one
-outbound field the payload bytes do not capture, so it rides in the binding
-instead of behind a confirmation step.
+The preview and the post are the same object. `publish.compose` returns one
+artifact (`opener`, line comments, body notes) and one exact forge descriptor
+(`event`, `body`, `threads`). Before any egress the server reconstructs both in
+`@rennet/core` and compares the descriptor exactly, so the renderer cannot build
+a different body after preview. The server derives the pull-request target from
+the addressed review; it is not client input. A daemon-composed payload carries
+a `compositionId` bound to the review, active patchset, canonical artifact, and
+event. A stale preview or changed verdict is refused as one stale composition,
+not routed through a confirmation step.
+
+The model-authored opener is content-addressed by the persisted evidence used to
+draft it. Unchanged evidence reuses the exact stored bytes across remounts and
+daemon restarts; changed boards, asks, patchset, or verdict draft a new opener.
+That stability keeps the canonical payload and retry marker stable when a post
+may have landed but its response was lost.
 
 The post carries a deterministic idempotency marker. The GitHub adapter checks
 for that marker before creating anything, so a retry returns the review that
@@ -263,10 +272,10 @@ The exits themselves:
 - **The GitHub review** — `publish.compose(mode:"review")` folds the projection
   into the two strata: staged line asks and bare line comments become line
   comments in deterministic `(path, line)` order (an ask on a line wins over a
-  bare comment there); pathless and retired asks fall out. The verdict follows
+  bare comment there); pathless asks become body notes and retired asks stay local. The verdict follows
   the outbound set, and a set **verdict override wins** over the derived event.
-  The composed bytes re-derive the same `publish.review` exact-preview payload,
-  so preview and post stay the same object.
+  The composed artifact and forge descriptor pass unchanged to `publish.review`,
+  which independently rebuilds them before posting.
 - **The round work-order** — `round.dispatch` folds the addressed asks into
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces

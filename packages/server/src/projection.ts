@@ -8,8 +8,8 @@
 // Outbound (server→remote): structural host-path fields become `repoReference`
 // objects (`{repoKey, displayName, relativePath?}`); then a blanket scrub replaces
 // known-root and home-dir prefixes in every remaining string with a display token.
-// Model-authored prose (ask-stream deltas) is NEVER scrubbed — it is
-// the model's text, and the docs say so (R31/R32 honesty).
+// Model-authored ask-stream prose and successful signed `publish.compose` aggregates are NEVER
+// scrubbed: they are intentional content whose exact bytes the client reads and acts on.
 //
 // Inbound (remote→server): a command's host-path input arrives as a `repoKey` (or a
 // repo reference) and is resolved back to the host path via the connection's root
@@ -345,6 +345,18 @@ export function projectCommandOutput(
   output: unknown,
   ctx: ProjectionContext,
 ): unknown {
+  // A successful publish composition is signed outbound prose, not host metadata. Its artifact,
+  // descriptor, canonical payload, and composition id are one correlated exact-bytes object;
+  // rewriting any string here would make the phone preview different bytes from the operation it
+  // signs. An unavailable result is operational text, however, and can contain a raw spawn/read/
+  // persistence error, so it crosses the same scrubbed error boundary as projected RPC failures.
+  if (command === "publish.compose") {
+    const status =
+      output && typeof output === "object" && !Array.isArray(output)
+        ? (output as Record<string, unknown>).status
+        : undefined;
+    return status === "review" || status === "pr" ? output : redactAbsolutePathsDeep(output, ctx);
+  }
   let projected: unknown = output;
   if (output && typeof output === "object" && !Array.isArray(output)) {
     const o = { ...(output as Record<string, unknown>) };

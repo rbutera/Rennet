@@ -279,16 +279,15 @@ The verdict is a three-way control — Approve, Request Changes, Comment —
 proposed from what you actually did, with the arithmetic stated beside it
 ("proposed from your review · N request changes · M comments"). It is always
 flippable, and an overridden verdict says so and offers "use proposal" to go
-back. An approving review is first class: the draft opener is grounded in what
-you walked and cleared, not an empty shell.
+back. With no asks, Approve is the proposal. Its draft opener is grounded in the
+active review evidence and your durable acts, not an empty shell.
 
 The draft renders exactly as it will post, so there is no separate preview
-stage: an opener, the body asks with their intent and provenance, and the line
-comments as cards grouped by file with their anchors. Highlight any draft prose
-for **Revise**, **Drop**, and **Explain** — revise takes an instruction and
-re-streams that block, drop retires it to the Retired drawer where a click
-restores it, explain names the comment or finding the sentence came from. Your
-edit survives a verdict flip.
+stage: the exact review body and line-comment threads. Ask provenance and any
+flattening ledger remain visible beside that post descriptor. The signing view is
+read-only. Steer the underlying asks with **Revise**, **Drop**, and **Explain** before
+opening it; if the preview is wrong, return to the review, revise the durable ask,
+and reopen the signing view to compose new bytes.
 
 A residue line states the bare count of threads and code comments that stay
 local. One **Post Review** action sends it, under your name, as one review

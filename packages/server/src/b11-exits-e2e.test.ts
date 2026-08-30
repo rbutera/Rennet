@@ -7,10 +7,10 @@ import {
   canonicalReviewPayload,
   type ForgePublishPort,
   type ForgeReviewPost,
+  type ForgeReviewPostDescriptor,
   foldAsks,
   mechanicalComposition,
-  type ReviewBodyNote,
-  type ReviewCommentInput,
+  type ReviewArtifact,
 } from "@rennet/core";
 import type { ComposedHandoffBundle, HandoffBundle, Review } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
@@ -207,10 +207,10 @@ function recordingPublishPort(): ForgePublishPort & { posts: ForgeReviewPost[] }
 
 type ComposeReview = {
   status: "review";
-  comments: ReviewCommentInput[];
-  bodyNotes: ReviewBodyNote[];
+  artifact: ReviewArtifact;
+  post: ForgeReviewPostDescriptor;
+  ledger: { kind: string; path: string; detail: string }[];
   payload: string;
-  verdict: string;
   compositionId: string;
 };
 type DryRun = { dryRun: boolean; outcome: unknown; request: { body: unknown } };
@@ -225,6 +225,12 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
       service: { reviewById: (id: string) => (id === SID ? REVIEW_WITH_PR : undefined) },
       publishPort,
       raiseAttention: () => "att-1",
+      draftReviewOpener: () =>
+        Promise.resolve({
+          status: "drafted",
+          opener: "This review concentrates on the staged changes and their concrete impact.",
+          model: "test-model",
+        }),
     } as unknown as DispatchDeps);
     const askH = askHandlers(rt);
     const publish = publishHandlers(rt);
@@ -249,9 +255,9 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
       mode: "review",
     })) as ComposeReview;
     expect(composed.status).toBe("review");
-    expect(composed.comments.length).toBeGreaterThan(0);
+    expect(composed.artifact.comments.length).toBeGreaterThan(0);
     // The prose ask surfaced as a BODY note (exactly once) — not dropped, not a line comment.
-    expect(composed.bodyNotes).toEqual([
+    expect(composed.artifact.bodyNotes).toEqual([
       {
         id: "p1",
         anchor: "The architecture section.",
@@ -260,17 +266,15 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
       },
     ]);
     // The compose payload IS the canonical bytes of BOTH strata (the single source).
-    expect(canonicalReviewPayload(composed.comments, composed.bodyNotes)).toBe(composed.payload);
+    expect(canonicalReviewPayload(composed.artifact)).toBe(composed.payload);
 
     // Preview (dryRun defaults TRUE): builds the exact request, posts NOTHING.
     const dry = (await publish["publish.review"]({
       commandId: randomUUID(),
       reviewId: SID,
-      target: POST_TARGET,
-      comments: composed.comments,
-      bodyNotes: composed.bodyNotes,
+      artifact: composed.artifact,
+      post: composed.post,
       payload: composed.payload,
-      verdict: composed.verdict,
       compositionId: composed.compositionId,
     })) as DryRun;
     expect(dry.dryRun).toBe(true);
@@ -288,10 +292,10 @@ describe("B11 E2E (c) — compose + preview a GitHub review draft, nothing posts
       publish["publish.review"]({
         commandId: randomUUID(),
         reviewId: SID,
-        target: POST_TARGET,
-        comments: composed.comments,
+        artifact: composed.artifact,
+        post: composed.post,
         payload: `${composed.payload} tampered`,
-        verdict: composed.verdict,
+        compositionId: composed.compositionId,
       }),
     ).rejects.toThrow(/does not match/);
     expect(publishPort.posts).toHaveLength(0);

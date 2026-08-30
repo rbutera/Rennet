@@ -87,6 +87,7 @@ import {
   ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
+  PublishCompositionStore,
   parseGitHubPrRef,
   prepareRoundWorkspace,
   prWorktreePath,
@@ -173,9 +174,11 @@ import type {
   DetectedForge,
   DetectedHarness,
   FlaggedReview,
+  Generation,
   GitHubAuthStatus,
   GitHubConnectPoll,
   KnowledgeDispositionResult,
+  LensBoard,
   LensKind,
   NoiseReview,
   OpenSpecCoverage,
@@ -195,6 +198,7 @@ import type {
 import {
   currentGenerationId,
   isRoundOperationTerminal,
+  LENS_KINDS,
   roundOperationProgressSnapshot,
   sha256Hex,
 } from "@rennet/protocol";
@@ -202,7 +206,7 @@ import { buildAppTools } from "./agent-tools";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
-import { createDispatch, type FlaggedReviewRun } from "./dispatch";
+import { createDispatch, type DispatchDeps, type FlaggedReviewRun } from "./dispatch";
 import {
   activeRoundDraft,
   consumeCurrentAskOccurrences,
@@ -245,6 +249,7 @@ import {
 } from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
+import { createLiveReviewOpenerPort } from "./review-opener-live";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard, readRoundReportBoardForRecord } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
@@ -514,6 +519,87 @@ export function createRoundSourceLandingPorts(input: {
     planSourceLanding: input.injection.plan,
     landSourceUnit: input.injection.landUnit,
     cleanupSourceLanding: input.injection.cleanup,
+  };
+}
+
+/** One drafting attempt per review version. A rejected/false attempt is evicted, so the next
+ * compose can retry; concurrent doors join the same work instead of drafting duplicate boards. */
+export function createBoardDraftCoordinator(
+  draft: (review: Review) => Promise<boolean>,
+): (review: Review) => Promise<void> {
+  const inFlight = new Map<string, Promise<void>>();
+  return (review) => {
+    const key = `${review.id}:${review.activePatchsetId}`;
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const tracked = draft(review)
+      .then((settled) => {
+        if (!settled) throw new Error("Review board drafting did not settle.");
+      })
+      .finally(() => {
+        if (inFlight.get(key) === tracked) inFlight.delete(key);
+      });
+    inFlight.set(key, tracked);
+    return tracked;
+  };
+}
+
+type CompositionBoardsForReview = NonNullable<DispatchDeps["compositionBoardsForReview"]>;
+
+/** Production composition read: join/retry drafting, then return only the exact settled boards
+ * named by the persisted generation. An attempt failure is transient because the coordinator
+ * evicts it; the signing clients retry the returned `drafting` state in place. */
+export function createCompositionBoardsForReview(input: {
+  readonly reviewById: (reviewId: string) => Review | undefined;
+  readonly loadGeneration: (generation: string) => Generation | undefined;
+  readonly ensureBoardDrafting: (review: Review) => Promise<void>;
+  readonly readLensBoard: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => Promise<LensBoard | undefined>;
+}): CompositionBoardsForReview {
+  return async (reviewId, generation) => {
+    const review = input.reviewById(reviewId);
+    if (!review) return { status: "unavailable", reason: "The review no longer exists." };
+    let storedGeneration = input.loadGeneration(generation);
+    if (
+      storedGeneration === undefined ||
+      storedGeneration.patchsetId !== review.activePatchsetId ||
+      storedGeneration.draftingBoardIds !== undefined
+    ) {
+      try {
+        await input.ensureBoardDrafting(review);
+      } catch {
+        return { status: "drafting" };
+      }
+      storedGeneration = input.loadGeneration(generation);
+    }
+    if (
+      storedGeneration === undefined ||
+      storedGeneration.patchsetId !== review.activePatchsetId ||
+      storedGeneration.draftingBoardIds !== undefined
+    ) {
+      // The addressed compose may have captured generation A immediately before another client
+      // advanced the review to B. Drafting B can settle successfully while this invocation still
+      // names A; ask the caller to retry so it recomputes the current generation rather than
+      // terminally stranding the held-open signing view on the version race.
+      return { status: "drafting" };
+    }
+    const boards: LensBoard[] = [];
+    for (const lens of LENS_KINDS) {
+      const boardId = storedGeneration.lensBoards[lens];
+      if (boardId === undefined) continue;
+      const board = await input.readLensBoard(reviewId, generation, lens);
+      if (board?.boardId !== boardId) {
+        return {
+          status: "unavailable",
+          reason: `The persisted ${lens} board cannot be read for this review.`,
+        };
+      }
+      boards.push(board);
+    }
+    return { status: "settled", boards };
   };
 }
 
@@ -1906,9 +1992,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Which reviews have a model turn in flight (#383 batch) — the real source of projected
   // `attention.running`, marked by dispatch and read by the projection context below.
   const inFlightReviews = new InFlightReviews();
-  // The publish egress port + its consent authority (issue #21). The port constructs
-  // requests purely (dry-run) and posts only via the gated `publish.review` command.
+  // The publish egress port (issue #21). It constructs requests purely for dry-run and
+  // posts only when the direct `publish.review` action reaches it.
   const publishPort = new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit });
+  const publishCompositionStore = new PublishCompositionStore(
+    join(dataDir, "publish-compositions"),
+  );
   // The own-branch PR submission (issue #257 / #107): push the review's own branch,
   // then open a real PR. Pushing your own branch is not publishing (AGENTS.md) — the
   // agent loop pushes freely — so this is a plain git push + a REST create, with the
@@ -2125,6 +2214,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return typeof __dirname !== "undefined" ? __dirname : dirname(fileURLToPath(import.meta.url));
     }
   })();
+  const readPrompt = createNodePromptReader(promptsSrcDir);
   const sessionEntry = new SessionEntry(sessionStore);
   // The ONE key both session mints converge on (#580): the `Project.id` the sidebar groups by,
   // resolved from a review's repo root through the stored projects. `projectStore.list()` is read
@@ -2141,7 +2231,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
     boardsRuntimeFor,
-    readPrompt: createNodePromptReader(promptsSrcDir),
+    readPrompt,
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
@@ -2164,9 +2254,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     session: SessionModel,
     recapture: () => Promise<void>,
     emit: (event: RoundEvent) => void,
+    reviewNow: () => Review = () => service.reviewById(review.id) ?? review,
   ): BoardRegenerationDeps => ({
     recapture,
-    reviewNow: () => service.reviewById(review.id) ?? review,
+    reviewNow,
     // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
     // this seam hands over the stored set plus the snapshot gated fresh at the
     // patchset's own base OID, and `assembleRoundCollation` projects (invalidated
@@ -2731,9 +2822,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * Failure-isolated. The review is captured and persisted either way; a drafting failure
    * must never take the capture down with it.
    */
-  async function draftBoardsForReview(review: Review): Promise<void> {
+  async function draftBoardsForReview(review: Review): Promise<boolean> {
     const patchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
-    if (patchset === undefined) return;
+    if (patchset === undefined) return false;
     // The SAME mint the round dispatch takes (#580/#587): it prefers the session already
     // HOLDING this review, so the front door's Current Checkout session is what the boards
     // are filed under — and `sessionIdForReview`, the read side of `board.read`, resolves
@@ -2747,7 +2838,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       )
     ).session;
     const head = patchset.repository.headOid;
-    await runBoardRegeneration(
+    const settled = await runBoardRegeneration(
       boardDraftingDeps(
         review,
         session,
@@ -2760,6 +2851,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // anyway, so it would be a lie that did not even render. The client learns the
         // boards arrived by re-reading `board.read` (`board-view.tsx`).
         () => undefined,
+        // Passive drafting belongs to this exact captured version. A regenerate can advance the
+        // live review while this model work is running; letting `reviewNow` observe that successor
+        // turns the old no-work A→A draft into a phantom A→B round. Pin A here, then report
+        // failure below if B became current so the B coordinator owns the live composition.
+        () => review,
       ),
       {
         session,
@@ -2771,13 +2867,43 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
       },
     );
+    return settled && service.reviewById(review.id)?.activePatchsetId === review.activePatchsetId;
   }
 
-  /** Kick {@link draftBoardsForReview} behind the command that opened the review — the
-   *  swarm/scout post-commit-kick precedent. The capture has already returned; drafting
-   *  runs behind it and its failure never surfaces as a failed capture. */
+  const ensureBoardDrafting = createBoardDraftCoordinator(draftBoardsForReview);
+
+  /** Kick board drafting behind a review version becoming current. The command has already
+   *  persisted the version; drafting is single-flight and never turns capture/regenerate into a
+   *  failed command. A later compose can join or retry the same recovery path. */
   const kickBoardDrafting = (review: Review): void => {
-    void draftBoardsForReview(review).catch(() => undefined);
+    void ensureBoardDrafting(review).catch(() => undefined);
+  };
+
+  const readLensBoardForReview = async (reviewId: string, generation: string, lens: LensKind) => {
+    const review = service.reviewById(reviewId);
+    if (!review) return undefined;
+    const storedGeneration = generationStore.load(generation);
+    if (
+      storedGeneration === undefined ||
+      !review.patchsets.some((patchset) => patchset.id === storedGeneration.patchsetId)
+    ) {
+      return undefined;
+    }
+    const sessionId = sessionIdForReview(review);
+    const meta = generationBoardMeta(
+      storedGeneration,
+      boardMetaStore.listForGeneration(sessionId, generation),
+      lens,
+    );
+    if (!meta) return undefined;
+    const state = await boardsRuntimeFor(review.repositoryRoot).service.getState(meta.boardId);
+    return projectLensBoard([...state.values()], {
+      lens,
+      generation,
+      boardId: meta.boardId,
+      document: meta.document,
+      skippedHunks: meta.skippedHunks,
+    });
   };
 
   dispatch = createDispatch({
@@ -3012,32 +3138,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // Session identity is the SAME read-only target-claim derivation the rounds/transcript
     // reads use. No meta record ⇒ that lens drafted no board that generation ⇒ honest
     // missing, never a fabricated board.
-    lensBoardForReview: async (reviewId: string, generation: string, lens: LensKind) => {
-      const review = service.reviewById(reviewId);
-      if (!review) return undefined;
-      const storedGeneration = generationStore.load(generation);
-      if (
-        storedGeneration === undefined ||
-        !review.patchsets.some((patchset) => patchset.id === storedGeneration.patchsetId)
-      ) {
-        return undefined;
-      }
-      const sessionId = sessionIdForReview(review);
-      const meta = generationBoardMeta(
-        storedGeneration,
-        boardMetaStore.listForGeneration(sessionId, generation),
-        lens,
-      );
-      if (!meta) return undefined;
-      const state = await boardsRuntimeFor(review.repositoryRoot).service.getState(meta.boardId);
-      return projectLensBoard([...state.values()], {
-        lens,
-        generation,
-        boardId: meta.boardId,
-        document: meta.document,
-        skippedHunks: meta.skippedHunks,
-      });
-    },
+    lensBoardForReview: readLensBoardForReview,
+    compositionBoardsForReview: createCompositionBoardsForReview({
+      reviewById: (reviewId) => service.reviewById(reviewId) ?? undefined,
+      loadGeneration: (generation) => generationStore.load(generation),
+      ensureBoardDrafting,
+      readLensBoard: readLensBoardForReview,
+    }),
     lensAbsenceForReview: async (reviewId: string, generation: string, lens: LensKind) => {
       const review = service.reviewById(reviewId);
       if (!review) return undefined;
@@ -3473,6 +3580,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     draftPrBody: createLiveDraftPrBodyPort({
       claudePort: claudeAdapterForRepo,
       codexExecutor: codexExecutorForRepo,
+    }),
+    // publish.compose(mode:"review") (#621): the authored opening paragraph is drafted from
+    // active persisted boards plus the durable ask projection. The content-addressed store keeps
+    // unchanged evidence byte-stable across remounts and restarts, preserving the post marker's
+    // outcome-unknown retry identity. A changed verdict, ask, or board legitimately redrafts.
+    draftReviewOpener: createLiveReviewOpenerPort({
+      claudePort: claudeAdapterForRepo,
+      codexExecutor: codexExecutorForRepo,
+      readPrompt,
+      store: publishCompositionStore,
     }),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
     // Rephrases the successor review's DETERMINISTIC successor account into a one-glance

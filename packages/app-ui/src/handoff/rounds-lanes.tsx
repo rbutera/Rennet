@@ -1,5 +1,5 @@
 import type { Review } from "@rennet/protocol";
-import { Badge, cn } from "@rennet/ui";
+import { Badge } from "@rennet/ui";
 import { Check, GitBranch, GitPullRequest } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -14,6 +14,7 @@ import type { DispositionKind, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import { type ReviseSpan, reviseDraftSpan } from "./handoff-data";
+import { OutboundMarkdown } from "./outbound-markdown";
 import { parseLineAnchor } from "./selectors";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +69,9 @@ export interface PrReceipt {
 export interface DraftedPr {
   readonly title: string;
   readonly body: string;
+  readonly base: string;
+  readonly head: string;
+  readonly draft: boolean;
   /** Whether the PR is ready to open (nothing left to ask, the branch pushed). */
   readonly ready: boolean;
 }
@@ -155,7 +159,10 @@ export function RoundsLanes({
             <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
             <h1 className="text-xl font-semibold tracking-tight text-foreground">{pr.title}</h1>
           </div>
-          <PrBody body={pr.body} patchsetId={patchsetId} />
+          <p className="text-xs text-muted-foreground">
+            {pr.base} ← {pr.head} · {pr.draft ? "Draft" : "Ready for review"}
+          </p>
+          <OutboundMarkdown markdown={pr.body} patchsetId={patchsetId} />
           {receipt ? (
             <div className="flex flex-col gap-1 pt-1">
               <span className="flex items-center gap-2 text-base font-medium text-foreground">
@@ -274,39 +281,6 @@ function AskCard({ ask, patchsetId }: { ask: StagedAsk; patchsetId: string }) {
         paragraphClassName="text-sm leading-relaxed text-foreground/90"
       />
       {codeRef && <AnchorReveal citations={[codeRef]} />}
-    </div>
-  );
-}
-
-/** The PR body's minimal markdown: `## ` headings and `**bold**` spans through `RichText`. */
-function PrBody({ body, patchsetId }: { body: string; patchsetId: string }) {
-  const blocks = body.split(/\n{2,}/).filter((block) => block.trim().length > 0);
-  return (
-    <div className="flex flex-col">
-      {blocks.map((block, index) => {
-        const key = `${index}-${block.slice(0, 16)}`;
-        if (block.startsWith("## ")) {
-          return (
-            <h3
-              key={key}
-              className={cn("text-sm font-semibold text-foreground", index > 0 && "mt-4")}
-            >
-              {block.slice(3)}
-            </h3>
-          );
-        }
-        return (
-          <RichText
-            key={key}
-            text={block}
-            patchsetId={patchsetId}
-            paragraphClassName={cn(
-              "text-sm leading-relaxed text-foreground/85",
-              index > 0 && "mt-2",
-            )}
-          />
-        );
-      })}
     </div>
   );
 }

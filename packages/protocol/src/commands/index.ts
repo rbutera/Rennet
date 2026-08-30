@@ -33,7 +33,7 @@ import {
   flaggedReviewSchema,
   forgeHostDetectionSchema,
   forgeRequestSchema,
-  forgeReviewEventSchema,
+  forgeReviewPostDescriptorSchema,
   fsListDirResultSchema,
   gitHubAuthStatusSchema,
   gitHubConnectPollSchema,
@@ -59,13 +59,11 @@ import {
   prWorktreeSetupSchema,
   publishDegradationSchema,
   publishOutcomeSchema,
-  publishTargetSchema,
   pullRequestStateSchema,
   reattachResultSchema,
   refinementResultSchema,
   resolvedProvenanceSchema,
-  reviewBodyNoteSchema,
-  reviewCommentSchema,
+  reviewArtifactSchema,
   reviewRoleMappingSchema,
   reviewRoleScenarioSchema,
   reviewSchema,
@@ -238,48 +236,33 @@ const definitions = {
     output: z.object({ review: reviewSchema }),
   },
   // ── Publish a review to GitHub (issue #21) — the FIRST real egress ──────────
-  // The pipeline NEVER autonomously posts to a real repo: egress exists ONLY behind
-  // this command, from the trusted renderer origin, and every real send is gated.
-  //   • `dryRun` defaults to TRUE (wrong-side-safe, Rule 75): an omitted flag NEVER
+  // The pipeline never autonomously posts to a real repo: this command is the one
+  // direct egress path, invoked by the reviewer's Post action.
+  //   • `dryRun` defaults to TRUE: an omitted flag never
   //     posts. The renderer's real-post path must EXPLICITLY send `dryRun: false`.
-  //   • MAIN re-derives the canonical payload from `comments` and refuses on any
-  //     disagreement with `payload` (byte-exact), and refuses an ill-formed target —
+  //   • MAIN re-derives the canonical payload from `artifact` and refuses on any
+  //     disagreement with `payload` (byte-exact), and rebuilds the exact `post` —
   //     both on dry-run and real, so the dry-run surfaces integrity faults too.
   //   • The user's click on Post IS the authorization — there is no token and no
   //     confirmation step (Rule Zero, #435). What a real send still must satisfy: the
-  //     review's OWN pull request as the target, and a `compositionId` (when the client
-  //     composed one) that still matches the CURRENT review AND the verdict being
+  //     review's persisted pull request as the target, and a `compositionId` that still
+  //     matches the CURRENT review and the event in the exact post descriptor being
   //     posted — so the review that leaves is byte-for-byte, event-for-event the one
   //     that was previewed.
-  //   • The review event is always a neutral COMMENT — the outbound request has no
-  //     shape for APPROVE (R33/#80).
+  //   • The event exists once, inside `post`; there is no second verdict field that
+  //     can disagree with what the reviewer previewed.
   "publish.review": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
-      target: publishTargetSchema,
-      /** The canonical review content (mirrors the ui `ReviewComment` preview). */
-      comments: z.array(reviewCommentSchema),
-      /**
-       * The review-BODY notes — pathless/prose asks woven into the review body (B11 finding
-       * 2). Optional/additive: absent ⇒ `[]`, so a client that only sends line comments is
-       * unchanged. The canonical payload folds these in, so they round-trip like `comments`.
-       */
-      bodyNotes: z.array(reviewBodyNoteSchema).optional().default([]),
+      /** The complete signed review artifact, including its byte-preserved opener. */
+      artifact: reviewArtifactSchema,
+      /** The exact preview descriptor; the daemon rebuilds and compares it before egress. */
+      post: forgeReviewPostDescriptorSchema,
       /** The canonical payload bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
-      /**
-       * The review verdict. Optional: absent ⇒ derived from the dispositions (any
-       * requested change ⇒ REQUEST_CHANGES; else approvals ⇒ APPROVE; else COMMENT).
-       * When set, this explicit verdict WINS ("derive first, overridable"). A sign-time
-       * verdict picker feeds this; until then it simply stays unset.
-       */
-      verdict: forgeReviewEventSchema.optional(),
-      /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
-       *  Optional/additive; when present the daemon recomputes it — over the current review AND
-       *  the `verdict` above — and refuses a stale/cross-review/verdict-swapped post (dry-run
-       *  included) before building the request. */
-      compositionId: z.string().min(1).optional(),
+      /** The compose integrity binding over current evidence, artifact, post, and target. */
+      compositionId: z.string().min(1),
       /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */
       dryRun: z.boolean().optional().default(true),
     }),
@@ -319,10 +302,10 @@ const definitions = {
       submission: prSubmissionSchema,
       /** The canonical `pr-submission` bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
-      /** The compose integrity binding (#382 M2 finding 2), when daemon-composed (the phone flow).
-       *  Optional/additive; when present the daemon recomputes it and refuses a stale (advanced
-       *  patchset) or cross-review submission before pushing. */
-      compositionId: z.string().min(1).optional(),
+      /** The compose integrity binding (#382 M2 finding 2). Protocol v2 requires every caller to
+       *  return the daemon's composition, so a stale/cross-review submission cannot bypass the
+       *  signed-preview contract. */
+      compositionId: z.string().min(1),
     }),
     output: z.object({
       /** The created (or reused) pull request's web URL. */
@@ -344,9 +327,8 @@ const definitions = {
   // ruling (a): BOTH loops end on the phone).
   //
   // `mode` selects which loop:
-  //  • "review" — a team-PR review to post. Composes the default (unedited) comments
-  //    from the review's dispositions + the derived verdict; the phone previews them and
-  //    posts via `publish.review`, which re-verifies these very bytes.
+  //  • "review" — a team-PR review to post. Composes the complete artifact and exact
+  //    post descriptor; the phone previews them and `publish.review` rebuilds both.
   //  • "pr" — the OWN-BRANCH PR submission (title/body/base/head + canonical payload);
   //    the phone posts via `publish.submitPr`, which round-trips the payload exactly.
   // A mode that does not fit the review (a "pr" compose of a team-PR review, a "review"
@@ -365,26 +347,22 @@ const definitions = {
     output: z.discriminatedUnion("status", [
       z.object({
         status: z.literal("review"),
-        /** The composed team-PR comments the phone previews AND posts verbatim via `publish.review`. */
-        comments: z.array(reviewCommentSchema),
-        /** The composed review-BODY notes (pathless/prose asks) the phone previews AND posts
-         *  verbatim (B11 finding 2). Folded into the canonical `payload`, so nothing vanishes.
-         *  Additive/optional so a pre-finding-2 consumer (or a partial mock) still validates; the
-         *  daemon always sends it (`[]` when there are none). */
-        bodyNotes: z.array(reviewBodyNoteSchema).optional(),
-        /** The canonical bytes, derived from `comments` + `bodyNotes` — `publish.review` verifies. */
+        /** The complete review artifact whose exact bytes the reviewer signs. */
+        artifact: reviewArtifactSchema,
+        /** The exact body, event, and threads that the forge request will carry. */
+        post: forgeReviewPostDescriptorSchema,
+        /** Flattening/accounting stays a provenance sidecar, outside the post descriptor. */
+        ledger: z.array(publishDegradationSchema),
+        /** The canonical bytes derived from `artifact`; `publish.review` verifies them. */
         payload: z.string(),
-        /** The derived review verdict (the GitHub review event the post will carry). */
-        verdict: forgeReviewEventSchema,
         /** A human destination line for the preview (e.g. `owner/name#7`). */
         destination: z.string(),
         /** A short headline for the preview (the repo/PR the review posts to). */
         title: z.string(),
         /**
-         * Integrity binding (#382 M2 finding 2): a deterministic id over (reviewId, active
-         * patchset, mode, target, canonical payload). The phone carries it to `publish.review`,
-         * which recomputes it from the CURRENT review and refuses a cross-review or stale-revision
-         * post — pure integrity, no ceremony. A pre-M2 daemon omits it (the post skips the check).
+         * Integrity binding over the review, active patchset, exact payload, event, and opener
+         * evidence. The phone returns it to `publish.review`, which verifies both the inbound
+         * bytes and the current persisted evidence before posting.
          */
         compositionId: z.string().min(1),
       }),
@@ -401,7 +379,12 @@ const definitions = {
         /** Integrity binding (#382 M2 finding 2), recomputed + validated by `publish.submitPr`. */
         compositionId: z.string().min(1),
       }),
-      z.object({ status: z.literal("unavailable"), reason: z.string() }),
+      z.object({
+        status: z.literal("unavailable"),
+        reason: z.string(),
+        /** True when the same composition should be retried in place as evidence settles. */
+        retryable: z.boolean().optional(),
+      }),
     ]),
   },
   // ── Project setup and discovery (issue #29 / #37) ───────────────────────────

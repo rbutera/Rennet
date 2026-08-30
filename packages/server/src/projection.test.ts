@@ -115,6 +115,95 @@ describe("outbound structural projection", () => {
     expect(quiet.review.attention).toEqual({ needsYou: false, running: false });
   });
 
+  it("keeps a clean publish composition byte-exact across the paired-device projection", () => {
+    const composition = {
+      status: "review",
+      artifact: {
+        opener: "The retry boundary is ready to post.",
+        comments: [],
+        bodyNotes: [],
+      },
+      post: {
+        event: "APPROVE",
+        body: "The retry boundary is ready to post.\n\n<!-- rennet:review:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->",
+        threads: [],
+      },
+      ledger: [],
+      payload:
+        '{"kind":"pr-review","opener":"The retry boundary is ready to post.","comments":[],"bodyNotes":[]}',
+      destination: "rbutera/rennet#621",
+      title: "rbutera/rennet#621",
+      compositionId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    };
+
+    expect(projectCommandOutput("publish.compose", composition, ctx)).toEqual(composition);
+  });
+
+  it("treats host-looking publish prose as opaque signed content instead of mutating it", () => {
+    const composition = {
+      status: "review",
+      artifact: {
+        opener: `The retry is implemented in ${REPO}/packages/server/src/retry.ts.`,
+        comments: [],
+        bodyNotes: [
+          {
+            id: "note-1",
+            type: "comment",
+            body: "Keep the local reproduction attached.",
+            anchor: "Design · Retry reproduction",
+          },
+        ],
+      },
+      post: { event: "COMMENT", body: "body", threads: [] },
+      ledger: [],
+      payload: "canonical bytes bound before projection",
+      destination: "rbutera/rennet#621",
+      title: "rbutera/rennet#621",
+      compositionId: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    };
+
+    expect(projectCommandOutput("publish.compose", composition, ctx)).toEqual(composition);
+  });
+
+  it("redacts local paths from an unavailable publish composition", () => {
+    const unavailable = {
+      status: "unavailable",
+      reason: `Could not persist ${REPO}/draft.json after reading /var/private/model.log`,
+      retryable: true,
+    };
+
+    const projected = projectCommandOutput(
+      "publish.compose",
+      unavailable,
+      ctx,
+    ) as typeof unavailable;
+    expect(projected).toEqual({
+      status: "unavailable",
+      reason: "Could not persist <rennet>/draft.json after reading <path>",
+      retryable: true,
+    });
+    expect(JSON.stringify(projected)).not.toContain(REPO);
+    expect(JSON.stringify(projected)).not.toContain("/var/private/model.log");
+  });
+
+  it("detects a Windows host root even though the canonical payload JSON escapes it", () => {
+    const root = "C:\\Users\\rai\\dev\\rennet";
+    const windows = buildProjectionContext([root], "C:\\Users\\rai");
+    const opener = `The retry is implemented in ${root}\\packages\\server\\src\\retry.ts.`;
+    const composition = {
+      status: "review",
+      artifact: { opener, comments: [], bodyNotes: [] },
+      post: { event: "COMMENT", body: opener, threads: [] },
+      ledger: [],
+      payload: JSON.stringify({ kind: "pr-review", opener, comments: [], bodyNotes: [] }),
+      destination: "rbutera/rennet#621",
+      title: "rbutera/rennet#621",
+      compositionId: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    };
+
+    expect(projectCommandOutput("publish.compose", composition, windows)).toEqual(composition);
+  });
+
   // ── session.transcript: the display transcript is stored RAW, scrubbed HERE ──────
   //
   // The capture sink used to redact before `append`, which destroyed the reviewer's own
@@ -642,9 +731,12 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // within the captured patchset.
     "patchset.readSpan.input.path",
     "review.setDisposition.input.path",
-    "publish.review.input.comments.path",
+    "publish.review.input.artifact.comments.path",
+    "publish.review.input.post.threads.path",
     "publish.review.output.ledger.path",
-    "publish.compose.output.comments.path",
+    "publish.compose.output.artifact.comments.path",
+    "publish.compose.output.post.threads.path",
+    "publish.compose.output.ledger.path",
     "flagged.review.output.uiVerification.screenshots.path",
     "flagged.review.output.blockingStates.path",
     "flagged.adjudication.output.review.uiVerification.screenshots.path",

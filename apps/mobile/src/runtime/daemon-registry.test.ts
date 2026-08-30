@@ -28,6 +28,7 @@ function fakeSupervisor(): FakeSupervisor {
       return () => void attentionListeners.delete(listener);
     },
     onAskStream: () => () => undefined,
+    onAskProjection: () => () => undefined,
     onProgress: () => () => undefined,
     saveReplica() {
       return undefined;

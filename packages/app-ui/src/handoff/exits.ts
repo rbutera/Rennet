@@ -1,6 +1,6 @@
 import type { Review } from "@rennet/protocol";
-import { useCallback, useMemo } from "react";
-import { useCommand, useMutation } from "../data";
+import { useCallback, useEffect, useMemo } from "react";
+import { useCommand, useMutation, useRefreshCommand } from "../data";
 import { useRennetStore } from "../store";
 import {
   composeReviewDraft,
@@ -16,14 +16,14 @@ import type { ProposedVerdict } from "./selectors";
 // The hand-off exits — the wiring that turns C08's lanes LIVE (C08 cluster 6, Objective
 // clauses 6/10, Reconciliation 3). The lanes are fully live over the store WITHOUT this hook
 // (every drop/edit/retire/restore/verdict change is already real); this is the last mile: the
-// registered, bound `publish.*` commands the sign-click reaches. Unlike C5's gated board read,
+// registered, bound `publish.*` commands the sign-click reaches. Unlike C5's board read,
 // `publish.compose`/`publish.review`/`publish.submitPr` ARE registered and bound — the egress
 // wires LIVE now, and so does `review.reviseSpan` (B11 landed; only the durable living-draft
 // SOURCE still composes off the store).
 //
 //   • Post Review (teammate PR) — `publish.compose(mode:"review")` composes the daemon's
 //     byte-exact outbound review; the click posts it via `publish.review(dryRun:false)`, which
-//     re-derives the SAME bytes and re-checks the composition binding (payload AND verdict)
+//     re-derives the SAME artifact/post and re-checks the composition binding
 //     before anything leaves. The preview equals what posts (R33). This mirrors the mobile
 //     publish flow exactly (`apps/mobile/.../publish.tsx`) — the single-source egress the daemon
 //     already answers, not a client-fabricated post.
@@ -32,9 +32,9 @@ import type { ProposedVerdict } from "./selectors";
 //     publishing, AGENTS.md). Composed once, submitted verbatim.
 //
 // Rennet never posts as itself: the review goes out under the user's name, and the click IS the
-// post — there is no token, no consent dialog and no freeze (Rule Zero, #435). The verdict is not
-// a separate post argument either: flipping it writes the durable override and RECOMPOSES, so the
-// event that posts is the event on screen. Absent a resolved egress, a CTA renders disabled
+// post — there is no token, no consent dialog and no freeze (Rule Zero, #435). The event exists
+// only in the daemon's post descriptor: flipping it writes the durable override and RECOMPOSES,
+// so the event that posts is the event on screen. Absent a resolved egress, a CTA renders disabled
 // (honest), never a Post that posts nothing — and when the daemon REFUSED to compose, its reason
 // travels out as `unavailable` and the lane states it. A disabled CTA with the refusal on the
 // floor was the only thing here that read as a gate; it was silence, not ceremony.
@@ -89,6 +89,7 @@ export function useHandoffExits(review: Review): HandoffExits {
   // standing law routes every write through `useMutation` — no surface calls `bridge.invoke`.
   const { mutate: postReview } = useMutation("publish.review");
   const { mutate: submitPr } = useMutation("publish.submitPr");
+  const refreshCompose = useRefreshCommand("publish.compose");
   // The verdict flip (#435): a WRITE against the durable ask log, so it stales the composed
   // preview — invalidate `publish.compose` and the lane recomposes with the flipped verdict.
   // This is the ONLY verdict channel: `onPost` posts the composed verdict, and the daemon's
@@ -113,7 +114,13 @@ export function useHandoffExits(review: Review): HandoffExits {
     { commandId: reviewCommandId, reviewId, mode: "review" },
     { enabled: mode === "teammate-pr" },
   );
-  const reviewComposed = reviewCompose.data?.status === "review" ? reviewCompose.data : undefined;
+  const reviewComposed =
+    !reviewCompose.fetching &&
+    !reviewCompose.stale &&
+    reviewCompose.error === undefined &&
+    reviewCompose.data?.status === "review"
+      ? reviewCompose.data
+      : undefined;
 
   // Own-branch PR preview: `publish.compose(mode:"pr")` composes the daemon's byte-exact submission
   // (live, Reconciliation 3) — BOTH the draft the lane shows and the bytes the sign-click opens
@@ -137,37 +144,56 @@ export function useHandoffExits(review: Review): HandoffExits {
     { commandId: prCommandId, reviewId, mode: "pr" },
     { enabled: mode === "own-branch" && noAsks && target === undefined },
   );
-  const prComposed = prCompose.data?.status === "pr" ? prCompose.data : undefined;
+  const prComposed =
+    !prCompose.fetching &&
+    !prCompose.stale &&
+    prCompose.error === undefined &&
+    prCompose.data?.status === "pr"
+      ? prCompose.data
+      : undefined;
 
   // The refusal for whichever compose this mode actually ran. Only one is ever `enabled`, so
   // there is no ambiguity about whose words these are.
   const compose = mode === "own-branch" ? prCompose : reviewCompose;
-  const unavailable = compose.data?.status === "unavailable" ? compose.data.reason : undefined;
+  const unavailable =
+    compose.error !== undefined
+      ? compose.error instanceof Error
+        ? compose.error.message
+        : "The outbound preview could not be composed."
+      : compose.data?.status === "unavailable"
+        ? compose.data.reason
+        : undefined;
+  const retryable =
+    compose.error !== undefined ||
+    (compose.data?.status === "unavailable" && compose.data.retryable === true);
+
+  useEffect(() => {
+    if (!retryable || compose.fetching) return;
+    const timer = globalThis.setTimeout(refreshCompose, 750);
+    return () => globalThis.clearTimeout(timer);
+  }, [compose.fetching, refreshCompose, retryable]);
 
   const onPost = useCallback(async (): Promise<PostReceipt> => {
     // Post the ALREADY-composed bytes the lane previewed — never a fresh compose (that recompose
     // was the exact-preview break: the reviewer signs a preview, a re-derivation posts). The
-    // previewed `reviewComposed` IS the payload AND the verdict: publish.review round-trips the
-    // bytes and re-checks the compositionId, which binds both, so a stale/cross-review post or a
-    // verdict other than the previewed one is refused. Real egress on the click alone.
+    // previewed `reviewComposed` carries the frozen artifact, exact post descriptor, payload, and
+    // composition binding. Publish round-trips those fields unchanged; the server resolves the
+    // addressed review's persisted target. Real egress happens on this click alone.
     if (!reviewComposed) throw new Error("The review is not composed yet.");
-    if (!target) throw new Error("This review has no pull request to post to.");
-    const verdict = reviewComposed.verdict;
+    const verdict = reviewComposed.post.event;
     const result = await postReview({
       commandId: crypto.randomUUID(),
       reviewId,
-      target,
-      comments: reviewComposed.comments,
-      bodyNotes: reviewComposed.bodyNotes ?? [],
+      artifact: reviewComposed.artifact,
+      post: reviewComposed.post,
       payload: reviewComposed.payload,
-      verdict,
       compositionId: reviewComposed.compositionId,
       dryRun: false,
     });
     if (!result.outcome) throw new Error("The review did not post — nothing left the machine.");
-    const lineCommentCount = reviewComposed.comments.filter((c) => c.line !== undefined).length;
+    const lineCommentCount = reviewComposed.post.threads.length;
     return { verdict, lineCommentCount, url: result.outcome.url ?? reviewComposed.destination };
-  }, [postReview, reviewId, target, reviewComposed]);
+  }, [postReview, reviewId, reviewComposed]);
 
   const onSetVerdict = useCallback(
     (verdict: ProposedVerdict | null) => {
@@ -206,9 +232,7 @@ export function useHandoffExits(review: Review): HandoffExits {
     onSetVerdict,
     reviewDraft: reviewComposed ? composeReviewDraft(reviewComposed) : undefined,
     onOpenPr: prComposed ? onOpenPr : undefined,
-    pr: prComposed
-      ? { title: prComposed.submission.title, body: prComposed.submission.body, ready: true }
-      : undefined,
+    pr: prComposed ? { ...prComposed.submission, ready: true } : undefined,
     onRevise,
     ...(unavailable === undefined ? {} : { unavailable }),
   };

@@ -26,6 +26,9 @@ const review = { activePatchsetId: "ps-1" } as unknown as Review;
 const draftedPr = {
   title: "Harden the retry path",
   body: "## Summary\n\nGuards the boundary.",
+  base: "main",
+  head: "feat/retry",
+  draft: true,
   ready: true,
 };
 
@@ -72,6 +75,7 @@ describe("RoundsLanes", () => {
     act(() => store().reviewActions.unstageAsk("This reads clean."));
     expect(r.getByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
     expect(r.getByText("Guards the boundary.")).toBeTruthy(); // the drafted body renders
+    expect(r.getByText("main ← feat/retry · Draft")).toBeTruthy();
     expect(r.queryByRole("heading", { name: "Changes" })).toBeNull();
   });
 

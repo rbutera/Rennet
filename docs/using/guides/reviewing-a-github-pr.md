@@ -115,26 +115,24 @@ Post Review, headed with the pull request reference.
 
 **The verdict** is a three-way control — Approve, Request Changes, Comment —
 proposed from your own acts, with the arithmetic stated beside it. Any requested
-change proposes Request Changes; other asks propose Comment; nothing proposes
-Approve — approving is always your own act. Flip it whenever you like; an overridden verdict says so and
+change proposes Request Changes; other asks propose Comment; no asks proposes
+Approve. Flip it whenever you like; an overridden verdict says so and
 offers "use proposal" to revert. An approving review is a real review here: its
-opener is grounded in what you walked and cleared.
+opener is grounded in the active review evidence and your durable acts.
 
-**The draft mirrors GitHub's own shape**, because that is what posts. An ask
+**The draft is GitHub's own shape**, because the displayed body and threads are
+the exact descriptor that posts. An ask
 carrying a diff position becomes a line comment, grouped under its file with its
 anchor. An ask without one — a quoted span of board prose has no diff line to
-pin to — travels in the review body. Nothing explains the routing; placement
-states it.
+pin to — travels in the review body. Provenance and any flattening ledger remain
+visible beside the post without changing its bytes.
 
-**Steer by highlighting.** Selecting draft prose offers **Revise**, **Drop**,
-and **Explain**. Revise takes an instruction and re-streams that block. Drop
-retires it to the **Retired** drawer, which keeps every retired block with its
-reason and restores it with a click. Explain names the comment or finding the
-sentence came from. Your revision survives a verdict change — the edit wins.
-
-**Line-comment cards** expose Edit and Delete. Editing is inline;
-`⌘`/`Ctrl` + Enter saves, Escape cancels. Deleting retires the card and unstages
-its ask.
+**Steer before signing.** Use **Revise**, **Drop**, and **Explain** on the underlying
+asks while reviewing. Before composition, line-comment cards expose Edit and Delete;
+`⌘`/`Ctrl` + Enter saves, Escape cancels, and deleting retires the card and unstages
+its ask. The composed signing view is read-only because it is the exact
+forge descriptor. If it is wrong, return to the review, revise the durable ask, and
+reopen **Write Review** to compose new bytes. A verdict change also recomposes.
 
 A residue line states the bare count of threads and code comments that stay
 local. The draft you are reading is exactly what posts, so there is no separate

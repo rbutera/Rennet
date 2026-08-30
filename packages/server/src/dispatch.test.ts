@@ -5,18 +5,23 @@ import { join } from "node:path";
 import { AskLogStore, buildGitHubReviewRequest, FileThreadStore } from "@rennet/adapters";
 import {
   type AskAnswer,
+  buildForgeReviewPost,
   type ComposePort,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
   composeHandoffBundle,
   decompose,
   deriveReviewEvent,
+  type ForgeCapabilities,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
+  type ForgeReviewPostDescriptor,
+  forgeReviewPostDescriptor,
   type HandoffRunPort,
   type HarnessEvent,
   type PatchsetCapturePort,
+  type ReviewArtifact,
   type ReviewBodyNote,
   type ReviewCommentInput,
   type ReviewEvent,
@@ -25,9 +30,11 @@ import {
   reviewRoleMappings,
 } from "@rennet/core";
 import type {
+  CommandOutput,
   ComposedHandoffBundle,
   FindingElement,
   FlaggedReview,
+  LensBoard,
   PatchFile,
   Patchset,
   Review,
@@ -48,6 +55,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
+import { publishCompositionId } from "./dispatch/runtime";
 import { InFlightReviews } from "./in-flight-reviews";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
@@ -107,6 +115,13 @@ const SANDBOX_TARGET = {
   headOid: "deadbeefcafe0001",
 };
 
+const PUBLISH_CAPABILITIES: ForgeCapabilities = {
+  supportsThreadResolution: true,
+  supportsBatchedReview: true,
+  supportsMultiLineAnchors: true,
+  supportsFileLevelThreads: true,
+};
+
 class InMemoryStore implements ReviewStorePort {
   #latest: Review | null = null;
   readonly #byId = new Map<string, Review>();
@@ -145,12 +160,7 @@ function fakePublishPort(
   const posts: ForgeReviewPost[] = [];
   return {
     posts,
-    capabilities: {
-      supportsThreadResolution: true,
-      supportsBatchedReview: true,
-      supportsMultiLineAnchors: true,
-      supportsFileLevelThreads: true,
-    },
+    capabilities: PUBLISH_CAPABILITIES,
     // The REAL pure request builder, so the dry-run shape assertion is meaningful.
     buildReviewRequest: (post) => buildGitHubReviewRequest(post),
     findExistingReview: () => Promise.resolve(null),
@@ -174,7 +184,9 @@ function harness(
     composeBundle?: DispatchDeps["composeBundle"];
     liveTurns?: DispatchDeps["liveTurns"];
     submitPullRequest?: DispatchDeps["submitPullRequest"];
+    draftPrBody?: DispatchDeps["draftPrBody"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
+    draftReviewOpener?: DispatchDeps["draftReviewOpener"];
     flaggedReview?: DispatchDeps["flaggedReview"];
     repositoryExists?: DispatchDeps["repositoryExists"];
     pushTokens?: DispatchDeps["pushTokens"];
@@ -190,6 +202,8 @@ function harness(
     projectContextAsk?: DispatchDeps["projectContextAsk"];
     knowledgeDisposition?: DispatchDeps["knowledgeDisposition"];
     onReviewOpened?: DispatchDeps["onReviewOpened"];
+    lensBoardForReview?: DispatchDeps["lensBoardForReview"];
+    compositionBoardsForReview?: DispatchDeps["compositionBoardsForReview"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -319,6 +333,10 @@ function harness(
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
     ...(extra.onReviewOpened ? { onReviewOpened: extra.onReviewOpened } : {}),
+    ...(extra.lensBoardForReview ? { lensBoardForReview: extra.lensBoardForReview } : {}),
+    ...(extra.compositionBoardsForReview
+      ? { compositionBoardsForReview: extra.compositionBoardsForReview }
+      : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -384,7 +402,15 @@ function harness(
     threadPersistence: extra.threadPersistence ?? threadPersistence,
     ...(extra.reattachThreads ? { reattachThreads: extra.reattachThreads } : {}),
     refineComment: refineCommentSpy,
-    draftPrBody: draftPrBodySpy,
+    draftPrBody: extra.draftPrBody ?? draftPrBodySpy,
+    draftReviewOpener:
+      extra.draftReviewOpener ??
+      (() =>
+        Promise.resolve({
+          status: "drafted" as const,
+          opener: "This review focuses on the concrete changes and the remaining asks.",
+          model: "test-model",
+        })),
     symbolLookup: opts.symbolLookup,
     openInEditor: opts.openInEditor,
     openSpecChange: opts.openSpecChange,
@@ -1122,13 +1148,10 @@ describe("createDispatch — openspec.coverage routing (the Spec view's coverage
 // ─────────────────────────────────────────────────────────────────────────────
 // publish.review — the FIRST real GitHub egress (issue #21).
 //
-// Posting a review to GitHub is an EXTERNAL act, so unlike running a model (which
-// just runs) a real send stays explicitly confirmed. The egress is gated behind:
-// (1) an egress-side "what you see is what leaves" round-trip (payload/target
-// fail-closed), (2) an explicit-target requirement, and (3) a single-use,
-// (review+target+payload)-bound consent token ALWAYS consumed before ANY real post.
-// The dry-run posts nothing and needs no token. Every test names the gate it
-// exercises and is red-provable by neutralising exactly that gate.
+// Posting a review to GitHub is an EXTERNAL act. The user's Post click is the whole
+// authorization; correctness comes from the egress-side exact-payload/composition round-trip,
+// the persisted destination, and marker idempotency. The dry-run posts nothing. Every test
+// names the invariant it exercises and is red-provable by neutralising that invariant.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // SANDBOX_TARGET now lives above the harness (the opened-PR review's postTarget).
@@ -1157,6 +1180,95 @@ function publishComments(): ReviewCommentInput[] {
   ];
 }
 
+const REVIEW_OPENER = "This review focuses on the concrete changes and the remaining asks.";
+
+function publishArtifact(
+  comments: readonly ReviewCommentInput[] = publishComments(),
+  bodyNotes: readonly ReviewBodyNote[] = [],
+): ReviewArtifact {
+  return { opener: REVIEW_OPENER, comments, bodyNotes };
+}
+
+function publishReviewInput(
+  reviewId: string,
+  options: {
+    artifact?: ReviewArtifact;
+    event?: ForgeReviewEvent;
+    payload?: string;
+    post?: ForgeReviewPostDescriptor;
+    compositionId?: string;
+    dryRun?: boolean;
+  } = {},
+) {
+  const artifact = options.artifact ?? publishArtifact();
+  const payload = options.payload ?? canonicalReviewPayload(artifact);
+  const post =
+    options.post ??
+    forgeReviewPostDescriptor(
+      buildForgeReviewPost(artifact, {
+        reviewId,
+        target: {
+          ref: { repo: SANDBOX_TARGET.repo, number: SANDBOX_TARGET.number },
+          forgeRef: SANDBOX_TARGET.forgeRef,
+          headOid: SANDBOX_TARGET.headOid,
+        },
+        payload,
+        capabilities: PUBLISH_CAPABILITIES,
+        ...(options.event === undefined ? {} : { verdict: options.event }),
+      }),
+    );
+  return {
+    commandId: randomUUID(),
+    reviewId,
+    artifact,
+    post,
+    payload,
+    compositionId: options.compositionId ?? "not-reached-by-this-test",
+    ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun }),
+  };
+}
+
+type ComposedReview = Extract<CommandOutput<"publish.compose">, { status: "review" }>;
+
+async function composeReview(
+  dispatch: ReturnType<typeof createDispatch>,
+  reviewId: string,
+): Promise<ComposedReview> {
+  const output = (await dispatch("publish.compose", {
+    commandId: randomUUID(),
+    reviewId,
+    mode: "review",
+  })) as CommandOutput<"publish.compose">;
+  if (output.status !== "review") throw new Error("Expected a review composition.");
+  return output;
+}
+
+function composedPublishInput(reviewId: string, composed: ComposedReview, dryRun: boolean) {
+  return {
+    commandId: randomUUID(),
+    reviewId,
+    artifact: composed.artifact,
+    post: composed.post,
+    payload: composed.payload,
+    compositionId: composed.compositionId,
+    dryRun,
+  };
+}
+
+async function stagePublishAsks(
+  dispatch: ReturnType<typeof createDispatch>,
+  reviewId: string,
+): Promise<void> {
+  await dispatch("ask.stage", {
+    sessionId: reviewId,
+    ask: { id: "line", anchor: "src/a.ts:2", type: "request-change", body: "rename this" },
+  });
+  await dispatch("ask.stage", {
+    sessionId: reviewId,
+    ask: { id: "prose", anchor: "README guidance", type: "comment", body: "a body note" },
+  });
+}
+
 interface PublishResult {
   dryRun: boolean;
   request: { endpoint: string; method: string; body: unknown };
@@ -1169,8 +1281,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
   it("keeps sign/publish dispatch byte-identical across passing, failing, and unavailable CI", async () => {
     const { dispatch, flaggedReviewSpy } = harness();
     const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
     const signals: NonNullable<FlaggedReview["ciSignal"]>[] = [
       {
         status: "checked",
@@ -1205,14 +1317,10 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       });
       await dispatch("flagged.review", { reviewId: review.id });
       requests.push(
-        (await dispatch("publish.review", {
-          commandId: randomUUID(),
-          reviewId: review.id,
-          target: SANDBOX_TARGET,
-          comments,
-          payload,
-          dryRun: true,
-        })) as PublishResult,
+        (await dispatch(
+          "publish.review",
+          composedPublishInput(review.id, composed, true),
+        )) as PublishResult,
       );
     }
     expect(requests[1]).toEqual(requests[0]);
@@ -1222,18 +1330,14 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
   it("(d) dry-run: builds the exact GitHub request, posts NOTHING, leaks no token", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
+    const review = await postableReview(dispatch);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
 
-    // dryRun omitted ⇒ defaults to TRUE (wrong-side-safe): nothing leaves.
-    const out = (await dispatch("publish.review", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments,
-      payload,
-    })) as PublishResult;
+    const out = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, true),
+    )) as PublishResult;
 
     expect(out.dryRun).toBe(true);
     expect(out.outcome).toBeNull();
@@ -1244,36 +1348,28 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     };
     expect(body.query).toContain("addPullRequestReview");
     expect(body.query).not.toContain("comments:"); // never the deprecated field
-    // publishComments carries a request-change ⇒ the derived verdict is REQUEST_CHANGES.
     expect(body.variables.input.event).toBe("REQUEST_CHANGES");
     expect(body.variables.input.commitOID).toBe(SANDBOX_TARGET.headOid); // head pinned
     expect(body.variables.input.pullRequestId).toBe(SANDBOX_TARGET.forgeRef);
     const threads = body.variables.input.threads as { line: number }[];
-    expect(threads).toHaveLength(1); // line-anchored; the no-line note folded into body
+    expect(threads).toHaveLength(1);
     expect(threads[0]?.line).toBe(2);
-    // The no-line disposition is visible on the ledger, never silently dropped.
-    expect(out.ledger).toEqual([
-      expect.objectContaining({ kind: "file-level-fold", path: "README.md" }),
-    ]);
+    expect(out.ledger).toEqual([expect.objectContaining({ kind: "body-note", path: "" })]);
     // The descriptor carries NO secret — the bearer is a send-time header.
     expect(JSON.stringify(out.request)).not.toMatch(/authorization|bearer|token/i);
   });
 
   it("(d2) an explicit verdict override wins over the derived one", async () => {
     const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-    const comments = publishComments(); // a request-change ⇒ derived REQUEST_CHANGES
-    const payload = canonicalReviewPayload(comments);
+    const review = await postableReview(dispatch);
+    await stagePublishAsks(dispatch, review.id);
+    await dispatch("ask.setVerdictOverride", { sessionId: review.id, verdict: "APPROVE" });
+    const composed = await composeReview(dispatch, review.id);
 
-    const out = (await dispatch("publish.review", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments,
-      payload,
-      verdict: "APPROVE", // overrides the derived REQUEST_CHANGES
-      dryRun: true,
-    })) as PublishResult;
+    const out = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, true),
+    )) as PublishResult;
 
     const body = out.request.body as { variables: { input: { event: string } } };
     expect(body.variables.input.event).toBe("APPROVE");
@@ -1281,68 +1377,52 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
 
   it("(b) refuses a payload that disagrees with the content — byte-exact, even near-matches", async () => {
     const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-    const comments = publishComments();
-    const canonical = canonicalReviewPayload(comments);
+    const review = await postableReview(dispatch);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
+    const canonical = composed.payload;
 
-    // A wholly-different payload, a trailing byte, and a truncation each fail CLOSED.
-    for (const payload of [canonicalReviewPayload([]), `${canonical} `, canonical.slice(0, -1)]) {
+    for (const payload of [
+      canonicalReviewPayload({ ...composed.artifact, comments: [] }),
+      `${canonical} `,
+      canonical.slice(0, -1),
+    ]) {
       await expect(
         dispatch("publish.review", {
-          commandId: randomUUID(),
-          reviewId: review.id,
-          target: SANDBOX_TARGET,
-          comments,
+          ...composedPublishInput(review.id, composed, true),
           payload,
-          dryRun: true,
         }),
       ).rejects.toThrow(/does not match/i);
     }
   });
 
-  it("(f) refuses a REAL post whose target is a different PR node id", async () => {
-    // The adapter POSTS by forgeRef (the node id) while findExistingReview READS by
-    // coordinates — independent renderer fields. A post carrying the review's coordinates
-    // but a DIFFERENT forgeRef must NOT land, or it would reach a different PR than the
-    // one on screen. Red-proof: dropping forgeRef from forgeTargetKey makes the two keys
-    // equal and this post would go through.
-    const port = fakePublishPort();
-    const { dispatch } = harness(port);
+  it("derives the forge target from the addressed review, not from client input", async () => {
+    const { dispatch } = harness();
     const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
-    const differentNode = { ...SANDBOX_TARGET, forgeRef: "PR_kwFORGEDNODE" };
+    const composed = await composeReview(dispatch, review.id);
 
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: differentNode,
-        comments,
-        payload,
-        dryRun: false,
-      }),
-      // Refused by the target-binding gate (issue #21): the review's stored postTarget is
-      // the authority, so NOTHING posts to a different PR than the review's own.
-    ).rejects.toThrow(/does not match/i);
-    expect(port.posts).toHaveLength(0);
+    const out = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, true),
+    )) as PublishResult;
+    const body = out.request.body as {
+      variables: { input: { pullRequestId: string; commitOID: string } };
+    };
+    expect(body.variables.input.pullRequestId).toBe(SANDBOX_TARGET.forgeRef);
+    expect(body.variables.input.commitOID).toBe(SANDBOX_TARGET.headOid);
   });
 
   it("(e) happy path: the click posts exactly one review — no token, no confirmation step", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
 
-    const out = (await dispatch("publish.review", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments,
-      payload,
-      dryRun: false,
-    })) as PublishResult;
+    const out = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, false),
+    )) as PublishResult;
 
     expect(out.dryRun).toBe(false);
     expect(out.outcome).not.toBeNull();
@@ -1352,30 +1432,59 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(port.posts[0]?.body).toContain(out.marker); // the idempotency marker is embedded
   });
 
+  it("rechecks durable intent after awaited board evidence and refuses an edit that landed meanwhile", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let evidenceReads = 0;
+    const port = fakePublishPort();
+    const { dispatch } = harness(
+      port,
+      {},
+      {
+        compositionBoardsForReview: async () => {
+          evidenceReads += 1;
+          if (evidenceReads === 2) await held;
+          return { status: "settled", boards: [] };
+        },
+      },
+    );
+    const review = await postableReview(dispatch);
+    const composed = await composeReview(dispatch, review.id);
+    const posting = dispatch("publish.review", composedPublishInput(review.id, composed, false));
+    await vi.waitFor(() => expect(evidenceReads).toBe(2));
+
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "arrived-while-checking",
+        anchor: "src/a.ts:2",
+        type: "request-change",
+        body: "this newer intent must win",
+      },
+    });
+    release();
+
+    await expect(posting).rejects.toThrow(/stale|another review/i);
+    expect(port.posts).toHaveLength(0);
+  });
+
   it("(e2) the real post's request is byte-identical to the dry-run's", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
+    const dry = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, true),
+    )) as PublishResult;
 
-    const dry = (await dispatch("publish.review", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments,
-      payload,
-      dryRun: true,
-    })) as PublishResult;
-
-    const real = (await dispatch("publish.review", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments,
-      payload,
-      dryRun: false,
-    })) as PublishResult;
+    const real = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, false),
+    )) as PublishResult;
 
     expect(real.outcome).not.toBeNull();
     expect(port.posts).toHaveLength(1);
@@ -1384,23 +1493,23 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(buildGitHubReviewRequest(port.posts[0] as ForgeReviewPost)).toEqual(real.request);
   });
 
-  it("refuses an empty review (nothing to post is not a valid egress)", async () => {
+  it("posts a grounded approval with zero asks", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
-    const empty: ReviewCommentInput[] = [];
+    const review = await postableReview(dispatch);
+    const composed = await composeReview(dispatch, review.id);
+    expect(composed.artifact.comments).toEqual([]);
+    expect(composed.artifact.bodyNotes).toEqual([]);
+    expect(composed.post.event).toBe("APPROVE");
 
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments: empty,
-        payload: canonicalReviewPayload(empty),
-        dryRun: false,
-      }),
-    ).rejects.toThrow(/no content/i);
-    expect(port.posts).toHaveLength(0);
+    const out = (await dispatch(
+      "publish.review",
+      composedPublishInput(review.id, composed, false),
+    )) as PublishResult;
+    expect(out.outcome).not.toBeNull();
+    expect(port.posts).toHaveLength(1);
+    expect(port.posts[0]).toMatchObject({ event: "APPROVE", threads: [] });
+    expect(port.posts[0]?.body.startsWith(composed.artifact.opener)).toBe(true);
   });
 
   it("(g) a LOCAL capture (no postTarget) cannot post — there is no PR to post to", async () => {
@@ -1409,49 +1518,9 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
     const local = await capturedReview(dispatch); // a working-tree capture — no postTarget
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
-
-    // A hand-crafted real post is refused structurally, because the review owns no
-    // target. NOTHING leaves.
     await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: local.id,
-        target: SANDBOX_TARGET,
-        comments,
-        payload,
-        dryRun: false,
-      }),
+      dispatch("publish.review", publishReviewInput(local.id, { dryRun: false })),
     ).rejects.toThrow(/no pull request/i);
-    expect(port.posts).toHaveLength(0);
-  });
-
-  it("(h) a real post whose target is not the review's OWN pull request is refused", async () => {
-    const port = fakePublishPort();
-    const { dispatch } = harness(port);
-    const review = await postableReview(dispatch); // postTarget = SANDBOX_TARGET
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
-    const otherPr = {
-      repo: { forge: "github", owner: "rbutera", name: "rennet" },
-      number: 999,
-      forgeRef: "PR_kwOTHERPR",
-      headOid: "beefbeefbeef9999",
-    };
-
-    // A hand-crafted real post to the wrong PR is refused: the review's stored postTarget
-    // is the authority, not the caller's input.
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: otherPr,
-        comments,
-        payload,
-        dryRun: false,
-      }),
-    ).rejects.toThrow(/does not match/i);
     expect(port.posts).toHaveLength(0);
   });
 
@@ -1475,12 +1544,12 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       reviewId: review.id,
       mode: "review",
     })) as {
-      comments: ReviewCommentInput[];
+      artifact: ReviewArtifact;
+      post: ForgeReviewPostDescriptor;
       payload: string;
-      verdict: ForgeReviewEvent;
       compositionId: string;
     };
-    expect(composed.verdict).toBe("COMMENT");
+    expect(composed.post.event).toBe("COMMENT");
 
     // The swap: post an APPROVE against the COMMENT preview, without recomposing. Refused,
     // and NOTHING leaves the machine. (Red-proof: drop `verdict` from `publishCompositionId`
@@ -1489,10 +1558,9 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       dispatch("publish.review", {
         commandId: randomUUID(),
         reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments: composed.comments,
+        artifact: composed.artifact,
+        post: { ...composed.post, event: "APPROVE" },
         payload: composed.payload,
-        verdict: "APPROVE",
         compositionId: composed.compositionId,
         dryRun: false,
       }),
@@ -1503,10 +1571,9 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments: composed.comments,
+      artifact: composed.artifact,
+      post: composed.post,
       payload: composed.payload,
-      verdict: composed.verdict,
       compositionId: composed.compositionId,
       dryRun: false,
     })) as PublishResult;
@@ -1533,31 +1600,18 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     });
     const { dispatch } = harness(port);
     const review = await postableReview(dispatch);
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
+    await stagePublishAsks(dispatch, review.id);
+    const composed = await composeReview(dispatch, review.id);
+    const input = composedPublishInput(review.id, composed, false);
 
     // The first post starts and hangs (its synchronous run adds the marker to the
     // in-flight set before it awaits the gate).
-    const first = dispatch("publish.review", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments,
-      payload,
-      dryRun: false,
-    });
+    const first = dispatch("publish.review", input);
 
     // A second sign tries to post the SAME content concurrently.
-    await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments,
-        payload,
-        dryRun: false,
-      }),
-    ).rejects.toThrow(/already in progress/i);
+    await expect(dispatch("publish.review", { ...input, commandId: randomUUID() })).rejects.toThrow(
+      /already in progress/i,
+    );
 
     // Release the first; it lands exactly once.
     release();
@@ -1569,8 +1623,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
   it("(k) a PR review recaptured LOCALLY loses its post-target — local diffs cannot post to the PR", async () => {
     // The patchset-swap vector: open a postable PR review, then recapture LOCAL
     // working-tree changes under the SAME review id. The activated local patchset must
-    // DROP the PR post-target (it is no longer the PR's own patchset), so both minting
-    // consent and posting are refused — local diffs can never reach the PR under the
+    // DROP the PR post-target (it is no longer the PR's own patchset), so both composing
+    // and posting are refused — local diffs can never reach the PR under the
     // human sign, even though the review id is unchanged.
     const port = fakePublishPort();
     const { dispatch } = harness(port);
@@ -1586,19 +1640,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(recaptured.review.id).toBe(review.id); // same review id...
     expect(recaptured.review.postTarget).toBeUndefined(); // ...but the PR target is gone
 
-    const comments = publishComments();
-    const payload = canonicalReviewPayload(comments);
-
-    // A hand-crafted real post is refused structurally — nothing leaves.
     await expect(
-      dispatch("publish.review", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments,
-        payload,
-        dryRun: false,
-      }),
+      dispatch("publish.review", publishReviewInput(review.id, { dryRun: false })),
     ).rejects.toThrow(/no pull request/i);
     expect(port.posts).toHaveLength(0);
   });
@@ -1624,6 +1667,13 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
     draft: true,
   };
   const PAYLOAD = canonicalPrSubmissionPayload(SUBMISSION);
+  const compositionIdFor = (review: Review, payload: string): string =>
+    publishCompositionId({
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      mode: "pr",
+      payload,
+    });
 
   it("pushes the branch and opens the PR, returning the URL (the sign-click is the whole authorization)", async () => {
     const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
@@ -1646,6 +1696,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       reviewId: review.id,
       submission: SUBMISSION,
       payload: PAYLOAD,
+      compositionId: compositionIdFor(review, PAYLOAD),
     })) as { url: string; number: number; reused: boolean };
 
     expect(out).toEqual({ url: "https://github.com/acme/widget/pull/7", number: 7, reused: false });
@@ -1678,6 +1729,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         reviewId: review.id,
         submission: SUBMISSION,
         payload: PAYLOAD,
+        compositionId: compositionIdFor(review, PAYLOAD),
       }),
     ).rejects.toThrow(/Repository access was not granted/);
     expect(submitPullRequest).not.toHaveBeenCalled();
@@ -1701,6 +1753,10 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         reviewId: review.id,
         submission: SUBMISSION,
         payload: canonicalPrSubmissionPayload({ ...SUBMISSION, title: "A DIFFERENT title" }),
+        compositionId: compositionIdFor(
+          review,
+          canonicalPrSubmissionPayload({ ...SUBMISSION, title: "A DIFFERENT title" }),
+        ),
       }),
     ).rejects.toThrow(/does not match its content/i);
     expect(submitPullRequest).not.toHaveBeenCalled();
@@ -1725,6 +1781,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         reviewId: review.id,
         submission: wrong,
         payload: canonicalPrSubmissionPayload(wrong),
+        compositionId: compositionIdFor(review, canonicalPrSubmissionPayload(wrong)),
       }),
     ).rejects.toThrow(/does not match the review's own branch/i);
     expect(submitPullRequest).not.toHaveBeenCalled();
@@ -1742,6 +1799,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         reviewId: review.id,
         submission: detached,
         payload: canonicalPrSubmissionPayload(detached),
+        compositionId: compositionIdFor(review, canonicalPrSubmissionPayload(detached)),
       }),
     ).rejects.toThrow(/detached/i);
     expect(submitPullRequest).not.toHaveBeenCalled();
@@ -1766,8 +1824,26 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         reviewId: opened.review.id,
         submission: SUBMISSION,
         payload: PAYLOAD,
+        compositionId: compositionIdFor(opened.review, PAYLOAD),
       }),
     ).rejects.toThrow(/retrospective/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("refuses direct PR submission when the review already addresses a pull request", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(fakePublishPort(), {}, { submitPullRequest });
+    const review = await postableReview(dispatch);
+
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: SUBMISSION,
+        payload: PAYLOAD,
+        compositionId: compositionIdFor(review, PAYLOAD),
+      }),
+    ).rejects.toThrow(/already has a pull request/i);
     expect(submitPullRequest).not.toHaveBeenCalled();
   });
 
@@ -1780,6 +1856,7 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
         reviewId: review.id,
         submission: SUBMISSION,
         payload: PAYLOAD,
+        compositionId: compositionIdFor(review, PAYLOAD),
       }),
     ).rejects.toThrow(/no GitHub PR submission is available/i);
   });
@@ -1813,7 +1890,13 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       commandId: randomUUID(),
       reviewId: review.id,
       mode: "pr",
-    })) as { status: string; submission: unknown; payload: string; destination: string };
+    })) as {
+      status: string;
+      submission: unknown;
+      payload: string;
+      destination: string;
+      compositionId: string;
+    };
     expect(composed.status).toBe("pr");
     // The payload is byte-consistent with the composed submission — so posting it round-trips.
     expect(composed.payload).toBe(canonicalPrSubmissionPayload(composed.submission as never));
@@ -1825,9 +1908,106 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       reviewId: review.id,
       submission: composed.submission as never,
       payload: composed.payload,
+      compositionId: composed.compositionId,
     })) as { url: string };
     expect(out.url).toBe("https://github.com/acme/widget/pull/9");
     expect(submitPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("server-owns zero-ask PR readiness and refuses a preview made stale by a remote ask", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/9",
+      number: 9,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      { capturePort: ownBranchCapture(), submitPullRequest },
+    );
+    const review = await capturedReview(dispatch);
+    const ready = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as Extract<CommandOutput<"publish.compose">, { status: "pr" }>;
+
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "remote-ask",
+        anchor: "src/a.ts:1",
+        type: "request-change",
+        body: "finish this round first",
+      },
+    });
+    await expect(
+      dispatch("publish.compose", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "pr",
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: expect.stringMatching(/1 staged ask/),
+    });
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: ready.submission,
+        payload: ready.payload,
+        compositionId: ready.compositionId,
+      }),
+    ).rejects.toThrow(/1 staged ask remains/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("never returns an already-ready PR when an ask lands during body drafting", async () => {
+    let release!: () => void;
+    const draft = new Promise<{
+      status: "drafted";
+      title: string;
+      body: string;
+      model: string;
+    }>((resolve) => {
+      release = () =>
+        resolve({ status: "drafted", title: "Old ready PR", body: "old", model: "test-model" });
+    });
+    let drafts = 0;
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        draftPrBody: () => {
+          drafts += 1;
+          return draft;
+        },
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const composing = dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    });
+    await vi.waitFor(() => expect(drafts).toBe(1));
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "remote-during-pr-draft",
+        anchor: "src/a.ts:1",
+        type: "request-change",
+        body: "not ready yet",
+      },
+    });
+    release();
+
+    await expect(composing).resolves.toMatchObject({
+      status: "unavailable",
+      reason: expect.stringMatching(/1 staged ask remains/),
+    });
   });
 
   it("publish.compose is honestly unavailable when HEAD is detached (no own branch)", async () => {
@@ -1858,41 +2038,101 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       mode: "review",
     })) as {
       status: string;
-      comments: ReviewCommentInput[];
+      artifact: ReviewArtifact;
+      post: ForgeReviewPostDescriptor;
       payload: string;
-      verdict: ForgeReviewEvent;
       destination: string;
+      compositionId: string;
     };
     expect(composed.status).toBe("review");
-    // One-source: the composed comments come from the durable ask projection, the payload is core's
-    // canonical bytes, and the verdict is derived — exactly what publish.review re-verifies.
-    expect(composed.comments.length).toBe(1);
-    expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
+    expect(composed.artifact.comments.length).toBe(1);
+    expect(composed.payload).toBe(canonicalReviewPayload(composed.artifact));
     // The daemon composed the comments straight off the projection (one-source): a `path:line`
     // request-change ask becomes a RIGHT line comment carrying the body.
-    expect(composed.comments[0]).toMatchObject({
+    expect(composed.artifact.comments[0]).toMatchObject({
       path: "src/a.ts",
       line: 2,
       side: "RIGHT",
       type: "request-change",
       body: "rename this",
     });
-    expect(composed.verdict).toBe(deriveReviewEvent(composed.comments));
-    expect(composed.verdict).toBe("REQUEST_CHANGES");
+    expect(composed.post.event).toBe(deriveReviewEvent(composed.artifact.comments));
+    expect(composed.post.event).toBe("REQUEST_CHANGES");
+    expect(composed.post.body.startsWith(REVIEW_OPENER)).toBe(true);
     expect(composed.destination).toContain("rennet-egress-sandbox#1");
 
     // The phone posts EXACTLY what compose returned — a real send lands one review.
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments: composed.comments,
+      artifact: composed.artifact,
+      post: composed.post,
       payload: composed.payload,
-      verdict: composed.verdict,
+      compositionId: composed.compositionId,
       dryRun: false,
     })) as { dryRun: boolean; outcome: { url: string | null } | null };
     expect(out.dryRun).toBe(false);
     expect(out.outcome).not.toBeNull();
+  });
+
+  it("never returns an already-stale review preview when an ask lands during opener drafting", async () => {
+    let release!: () => void;
+    const firstDraft = new Promise<{
+      status: "drafted";
+      opener: string;
+      model: string;
+    }>((resolve) => {
+      release = () =>
+        resolve({ status: "drafted", opener: "Old zero-ask opener.", model: "test-model" });
+    });
+    let drafts = 0;
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        draftReviewOpener: () =>
+          drafts++ === 0
+            ? firstDraft
+            : Promise.resolve({
+                status: "drafted",
+                opener: "Current ask-aware opener.",
+                model: "test-model",
+              }),
+      },
+    );
+    const review = await postableReview(dispatch);
+    const composing = dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    });
+    await vi.waitFor(() => expect(drafts).toBe(1));
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: {
+        id: "remote-during-opener",
+        anchor: "src/a.ts:2",
+        type: "request-change",
+        body: "newer intent",
+      },
+    });
+    release();
+
+    await expect(composing).resolves.toMatchObject({
+      status: "unavailable",
+      retryable: true,
+    });
+    await expect(
+      dispatch("publish.compose", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "review",
+      }),
+    ).resolves.toMatchObject({
+      status: "review",
+      artifact: { opener: "Current ask-aware opener." },
+      post: { event: "REQUEST_CHANGES" },
+    });
   });
 
   it("normalizes matching renamed-base asks and routes frozen asks to the review body", async () => {
@@ -1956,14 +2196,13 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       mode: "review",
     })) as {
       status: string;
-      comments: ReviewCommentInput[];
-      bodyNotes: ReviewBodyNote[];
+      artifact: ReviewArtifact;
+      post: ForgeReviewPostDescriptor;
       payload: string;
-      verdict: ForgeReviewEvent;
       compositionId: string;
     };
 
-    expect(composed.comments).toEqual([
+    expect(composed.artifact.comments).toEqual([
       {
         path: "src/current.ts",
         line: 8,
@@ -1972,7 +2211,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
         body: "preserve the base-side contract",
       },
     ]);
-    expect(composed.bodyNotes).toEqual([
+    expect(composed.artifact.bodyNotes).toEqual([
       {
         id: "frozen",
         anchor: "src/current.ts:999",
@@ -1984,11 +2223,9 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       dispatch("publish.review", {
         commandId: randomUUID(),
         reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments: composed.comments,
-        bodyNotes: composed.bodyNotes,
+        artifact: composed.artifact,
+        post: composed.post,
         payload: composed.payload,
-        verdict: composed.verdict,
         compositionId: composed.compositionId,
         dryRun: true,
       }),
@@ -2018,20 +2255,20 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       mode: "review",
     })) as {
       status: string;
-      comments: ReviewCommentInput[];
+      artifact: ReviewArtifact;
+      post: ForgeReviewPostDescriptor;
       payload: string;
-      verdict: ForgeReviewEvent;
       compositionId: string;
     };
     expect(composed.status).toBe("review");
     // Both strata composed, deterministic (path, line) order — line comments, not file-level.
-    expect(composed.comments).toEqual([
+    expect(composed.artifact.comments).toEqual([
       { path: "src/a.ts", line: 3, side: "RIGHT", type: "request-change", body: "rename" },
       { path: "src/b.ts", line: 8, side: "RIGHT", type: "comment", body: "extract" },
     ]);
     // The explicit override WINS over the derived REQUEST_CHANGES.
-    expect(composed.verdict).toBe("COMMENT");
-    expect(composed.payload).toBe(canonicalReviewPayload(composed.comments));
+    expect(composed.post.event).toBe("COMMENT");
+    expect(composed.payload).toBe(canonicalReviewPayload(composed.artifact));
 
     // The phone posts EXACTLY the composed bytes + binding — the freshness mirror recomputes the
     // expected payload AND verdict from the SAME projection and accepts; a real send lands one
@@ -2040,10 +2277,9 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     const out = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments: composed.comments,
+      artifact: composed.artifact,
+      post: composed.post,
       payload: composed.payload,
-      verdict: composed.verdict,
       compositionId: composed.compositionId,
       dryRun: false,
     })) as { dryRun: boolean; outcome: { url: string | null } | null };
@@ -2065,18 +2301,17 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     })) as {
       compositionId: string;
       payload: string;
-      verdict: ForgeReviewEvent;
-      comments: ReviewCommentInput[];
+      artifact: ReviewArtifact;
+      post: ForgeReviewPostDescriptor;
     };
     expect(composed.compositionId).toBeTruthy();
     // Fresh preview: a post carrying the binding is accepted (dry-run, so nothing leaves).
     const fresh = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
-      target: SANDBOX_TARGET,
-      comments: composed.comments,
+      artifact: composed.artifact,
+      post: composed.post,
       payload: composed.payload,
-      verdict: composed.verdict,
       compositionId: composed.compositionId,
       dryRun: true,
     })) as PublishResult;
@@ -2093,14 +2328,220 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       dispatch("publish.review", {
         commandId: randomUUID(),
         reviewId: review.id,
-        target: SANDBOX_TARGET,
-        comments: publishComments(),
+        artifact: composed.artifact,
+        post: composed.post,
         payload: composed.payload,
-        verdict: composed.verdict,
         compositionId: composed.compositionId,
         dryRun: true,
       }),
     ).rejects.toThrow(/stale|another review/i);
+
+    const beforeBodyNote = await composeReview(dispatch, review.id);
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: { id: "prose", anchor: "Architecture rationale", type: "comment", body: "explain it" },
+    });
+    await expect(
+      dispatch("publish.review", composedPublishInput(review.id, beforeBodyNote, true)),
+    ).rejects.toThrow(/stale|another review/i);
+
+    const beforeVerdict = await composeReview(dispatch, review.id);
+    await dispatch("ask.setVerdictOverride", { sessionId: review.id, verdict: "COMMENT" });
+    await expect(
+      dispatch("publish.review", composedPublishInput(review.id, beforeVerdict, true)),
+    ).rejects.toThrow(/stale|another review/i);
+  });
+
+  it("binds the actual inbound aggregate bytes to the composition id", async () => {
+    const { dispatch } = harness();
+    const review = await postableReview(dispatch);
+    await dispatch("ask.stage", {
+      sessionId: review.id,
+      ask: { id: "a1", anchor: "src/a.ts:2", type: "comment", body: "keep this exact" },
+    });
+    const composed = await composeReview(dispatch, review.id);
+    const artifact = {
+      ...composed.artifact,
+      comments: composed.artifact.comments.map((comment) => ({
+        ...comment,
+        body: "mutated after preview",
+      })),
+    };
+    const payload = canonicalReviewPayload(artifact);
+    const post = forgeReviewPostDescriptor(
+      buildForgeReviewPost(artifact, {
+        reviewId: review.id,
+        target: {
+          ref: { repo: SANDBOX_TARGET.repo, number: SANDBOX_TARGET.number },
+          forgeRef: SANDBOX_TARGET.forgeRef,
+          headOid: SANDBOX_TARGET.headOid,
+        },
+        payload,
+        capabilities: PUBLISH_CAPABILITIES,
+        verdict: composed.post.event,
+      }),
+    );
+
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        artifact,
+        post,
+        payload,
+        compositionId: composed.compositionId,
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/stale|another review/i);
+  });
+
+  it("refuses a composed opener after its persisted board evidence changes", async () => {
+    let gist = "The retry boundary owns ambiguous outcomes.";
+    const board = (): LensBoard => ({
+      lens: "design",
+      generation: "gen:pr-patch-1",
+      boardId: "board-design",
+      document: {
+        title: "Design",
+        introMarkdown: "The changed path has one retry boundary.",
+        measure: "structured",
+      },
+      sections: [
+        {
+          ref: "retry",
+          gist,
+          counts: { decisions: 1 },
+        },
+      ],
+      elements: [
+        {
+          id: "retry",
+          kind: "section",
+          data: {
+            author: { kind: "lens-agent", id: "design" },
+            title: "Retry ownership",
+            children: [],
+          },
+        },
+      ],
+      skippedHunks: [],
+    });
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        lensBoardForReview: async (_reviewId, _generation, lens) =>
+          lens === "design" ? board() : undefined,
+      },
+    );
+    const review = await postableReview(dispatch);
+    const composed = await composeReview(dispatch, review.id);
+
+    gist = "The transport now owns ambiguous outcomes.";
+
+    await expect(
+      dispatch("publish.review", composedPublishInput(review.id, composed, true)),
+    ).rejects.toThrow(/stale|another review/i);
+  });
+
+  it("does not draft a publish opener while the current board generation is active", async () => {
+    const draftReviewOpener = vi.fn<NonNullable<DispatchDeps["draftReviewOpener"]>>(async () => ({
+      status: "drafted",
+      opener: REVIEW_OPENER,
+      model: "test-model",
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        compositionBoardsForReview: async () => ({ status: "drafting" }),
+        draftReviewOpener,
+      },
+    );
+    const review = await postableReview(dispatch);
+
+    const composed = await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    });
+
+    expect(composed).toEqual({
+      status: "unavailable",
+      reason: "The current review boards are still drafting.",
+      retryable: true,
+    });
+    expect(draftReviewOpener).not.toHaveBeenCalled();
+  });
+
+  it("does not silently omit a board the settled generation says should exist", async () => {
+    const draftReviewOpener = vi.fn<NonNullable<DispatchDeps["draftReviewOpener"]>>();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        compositionBoardsForReview: async () => ({
+          status: "unavailable",
+          reason: "The persisted design board cannot be read for this review.",
+        }),
+        draftReviewOpener,
+      },
+    );
+    const review = await postableReview(dispatch);
+
+    const composed = await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    });
+
+    expect(composed).toEqual({
+      status: "unavailable",
+      reason: "The persisted design board cannot be read for this review.",
+    });
+    expect(draftReviewOpener).not.toHaveBeenCalled();
+  });
+
+  it("composes from an honestly partial settled board set", async () => {
+    const board: LensBoard = {
+      lens: "design",
+      generation: "gen:pr-patch-1",
+      boardId: "board-design",
+      document: {
+        title: "Design",
+        introMarkdown: "The review has one settled design board.",
+        measure: "structured",
+      },
+      sections: [],
+      elements: [],
+      skippedHunks: [],
+    };
+    const draftReviewOpener = vi.fn<NonNullable<DispatchDeps["draftReviewOpener"]>>(async () => ({
+      status: "drafted",
+      opener: REVIEW_OPENER,
+      model: "test-model",
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        compositionBoardsForReview: async () => ({ status: "settled", boards: [board] }),
+        draftReviewOpener,
+      },
+    );
+    const review = await postableReview(dispatch);
+
+    const composed = await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "review",
+    });
+
+    expect(composed).toMatchObject({ status: "review" });
+    expect(draftReviewOpener).toHaveBeenCalledWith({
+      review,
+      draft: expect.objectContaining({ boards: [board] }),
+    });
   });
 
   it("refuses a disposition with an unsafe path at ingestion (#382 M2 finding 8)", async () => {
@@ -2142,6 +2583,28 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(composed.reason).toMatch(/pull request|own-branch/i);
   });
 
+  it("keeps an authored existing pull request in the rounds loop on the server", async () => {
+    const { dispatch, service, publishPort } = harness();
+    const authored = await service.createReviewFromPatchset(randomUUID(), prPatchset(), {
+      postTarget: { ...SANDBOX_TARGET, viewerDidAuthor: true },
+    });
+
+    const composed = await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: authored.id,
+      mode: "review",
+    });
+    expect(composed).toEqual({
+      status: "unavailable",
+      reason: "This is your existing pull request; continue its review rounds instead.",
+    });
+
+    await expect(
+      dispatch("publish.review", publishReviewInput(authored.id, { dryRun: false })),
+    ).rejects.toThrow(/existing pull request|rounds/i);
+    expect(publishPort.posts).toHaveLength(0);
+  });
+
   it("publish-ready raises when the own-branch draft is composed, and clears on the post", async () => {
     const raised: { family: string }[] = [];
     const acknowledged: { attentionId?: string }[] = [];
@@ -2168,32 +2631,19 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     );
     const review = await capturedReview(dispatch);
 
-    await dispatch("review.draftPrBody", {
+    const composed = (await dispatch("publish.compose", {
       commandId: randomUUID(),
       reviewId: review.id,
-      base: "main",
-      head: "feat/reviewed",
-      dispositions: [],
-    });
+      mode: "pr",
+    })) as Extract<CommandOutput<"publish.compose">, { status: "pr" }>;
     expect(raised.some((r) => r.family === "publish-ready")).toBe(true);
 
     await dispatch("publish.submitPr", {
       commandId: randomUUID(),
       reviewId: review.id,
-      submission: {
-        title: "Reviewed change",
-        body: "b",
-        base: "main",
-        head: "feat/reviewed",
-        draft: true,
-      },
-      payload: canonicalPrSubmissionPayload({
-        title: "Reviewed change",
-        body: "b",
-        base: "main",
-        head: "feat/reviewed",
-        draft: true,
-      }),
+      submission: composed.submission,
+      payload: composed.payload,
+      compositionId: composed.compositionId,
     });
     expect(acknowledged.some((a) => a.attentionId === `publish-ready:${review.id}`)).toBe(true);
   });
@@ -2266,20 +2716,11 @@ describe("createDispatch — review.openPr (the GitHub PR front door)", () => {
       repoPath: REPO,
       retrospective: true,
     })) as { review: Review };
-    const comments = publishComments();
-
     // The refusal precedes the whole egress machinery: even a well-formed dry-run
     // (which posts nothing anyway) and a real send are both refused, in one message.
     for (const dryRun of [true, false]) {
       await expect(
-        dispatch("publish.review", {
-          commandId: randomUUID(),
-          reviewId: opened.review.id,
-          target: SANDBOX_TARGET,
-          comments,
-          payload: canonicalReviewPayload(comments),
-          dryRun,
-        }),
+        dispatch("publish.review", publishReviewInput(opened.review.id, { dryRun })),
       ).rejects.toThrow(/retrospective review/i);
     }
     expect(port.posts).toHaveLength(0); // nothing ever left the machine
@@ -4893,7 +5334,7 @@ describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposit
 });
 
 describe("createDispatch — onReviewOpened (#461, B7)", () => {
-  it("fires on review.capture and review.openPr with the opened review — the retrieval kick point", async () => {
+  it("fires on capture, open-PR, and regenerate with each current review version", async () => {
     const opened: string[] = [];
     const { dispatch } = harness(
       undefined,
@@ -4906,11 +5347,18 @@ describe("createDispatch — onReviewOpened (#461, B7)", () => {
     const captured = await capturedReview(dispatch);
     expect(opened).toEqual([captured.id]);
 
+    await dispatch("review.regenerate", {
+      commandId: randomUUID(),
+      reviewId: captured.id,
+      repoPath: REPO,
+    });
+    expect(opened).toEqual([captured.id, captured.id]);
+
     const pr = (await dispatch("review.openPr", {
       commandId: randomUUID(),
       ref: "rbutera/orbital#7",
     })) as { review: Review };
-    expect(opened).toEqual([captured.id, pr.review.id]);
+    expect(opened).toEqual([captured.id, captured.id, pr.review.id]);
   });
 
   it("review.load does NOT fire it — a reopen is a pure read, not a review open", async () => {

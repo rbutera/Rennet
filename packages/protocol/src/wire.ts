@@ -121,17 +121,15 @@ export const dispositionSchema = z.object({
   body: z.string(),
 });
 
-// The real forge post-target — the single source of truth reused by BOTH the
-// review snapshot (`Review.postTarget`) and the publish commands
-// (`publishTargetSchema`), so the coordinates the renderer reads off a review are
-// byte-identical to the ones it hands to `publish.review`.
+// The real forge post-target persisted on the review snapshot. `publish.review`
+// deliberately carries no client target; the server derives it from this record.
 const forgeRepoSchema = z.object({
   forge: z.string().min(1),
   owner: z.string().min(1),
   name: z.string().min(1),
 });
 
-/** The pinned publish target: which PR, which node id, which reviewed head. */
+/** The pinned review target: which PR, which node id, which reviewed head. */
 const forgePublishTargetSchema = z.object({
   repo: forgeRepoSchema,
   number: z.number().int().positive(),
@@ -209,12 +207,11 @@ export const reviewSchema = z.object({
 });
 
 // ── Publish egress schemas (issue #21) ───────────────────────────────────────
-// The forge-neutral shapes the renderer sends to MAIN for the outbound GitHub
-// review post. The renderer supplies the pinned target, the canonical review
-// content, and the canonical payload bytes; MAIN independently re-derives the
-// bytes and fails CLOSED on any disagreement (the egress-side "what you see is what
-// leaves", R33), then gates the real egress on the effective mode + a single-use,
-// target-and-payload-bound consent token before anything leaves the machine.
+// The forge-neutral shapes a client returns for an outbound GitHub review post.
+// The daemon supplies the complete artifact, descriptor, and canonical payload;
+// the client returns them unchanged, and MAIN derives the target from the persisted
+// review before independently rebuilding and comparing the exact operation. The
+// Post click is the whole authorization (Rule Zero).
 
 // `forgeRepoSchema` and the publish target now live above `reviewSchema` (the
 // single source of truth `Review.postTarget` also reuses). Alias kept so the
@@ -239,14 +236,44 @@ export const reviewCommentSchema = z.object({
  * review's two strata"). An ask with NO diff position (a prose/quote-of-board ask, or a
  * path-only ask) has no line to pin to, so it travels in the review BODY rather than
  * vanishing. `id` is the stable ask identity and `anchor` is the source provenance shown
- * on the signing surface. Both are optional for compatibility with older projected clients.
+ * on the signing surface. Protocol v2 requires both so a signable note cannot lose its source.
  */
 export const reviewBodyNoteSchema = z.object({
-  id: z.string().min(1).optional(),
-  anchor: z.string().optional(),
+  id: z.string().min(1),
+  anchor: z.string().min(1),
   type: dispositionTypeSchema,
   body: z.string(),
 });
+
+/** The complete signed review artifact. Validation never trims or rewrites opener bytes. */
+export const reviewArtifactSchema = z
+  .object({
+    opener: z.string().refine((opener) => opener.trim().length > 0, {
+      message: "review artifact opener must be nonblank",
+    }),
+    comments: z.array(reviewCommentSchema),
+    bodyNotes: z.array(reviewBodyNoteSchema),
+  })
+  .strict();
+
+export const forgeReviewThreadSchema = z
+  .object({
+    path: z.string(),
+    line: z.number().int().min(1),
+    startLine: z.number().int().min(1).optional(),
+    side: z.enum(["LEFT", "RIGHT"]),
+    body: z.string(),
+  })
+  .strict();
+
+/** The signed preview descriptor. Adapter-only marker, target, and ledger stay outside it. */
+export const forgeReviewPostDescriptorSchema = z
+  .object({
+    event: forgeReviewEventSchema,
+    body: z.string(),
+    threads: z.array(forgeReviewThreadSchema),
+  })
+  .strict();
 
 export const forgeRequestSchema = z.object({
   endpoint: z.string(),
