@@ -67,6 +67,8 @@ describe("ensureWslBundleDelivered", () => {
   };
   const targetDir = "/home/rai/.rennet/server/0.3.12";
   const entry = `${targetDir}/index.cjs`;
+  const rootedAddon = `${targetDir}/native/linux-x64/rennet-rooted-landing.node`;
+  const exclusiveMove = `${targetDir}/native/linux-x64/rennet-exclusive-move`;
 
   /** A fake runner: scripted results by index; THROWS on any unscripted call (mutation-sensitive). */
   function recorder(results: WslRunResult[]) {
@@ -84,22 +86,32 @@ describe("ensureWslBundleDelivered", () => {
     return { calls, run };
   }
 
-  it("is a no-op when the versioned entry already exists", async () => {
-    const { calls, run } = recorder([{ stdout: "", code: 0 }]); // test -f entry → present
+  it("is a no-op when the complete Linux daemon payload already exists", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 0 }, // entry present
+      { stdout: "", code: 0 }, // rooted addon present
+      { stdout: "", code: 0 }, // exclusive move helper present
+    ]);
     const result = await ensureWslBundleDelivered(delivery, run);
 
     expect(result).toBe(entry);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({ file: WSL_EXE, args: ["-d", "Ubuntu", "-e", "test", "-f", entry] });
+    expect(calls.map((call) => call.args)).toEqual([
+      ["-d", "Ubuntu", "-e", "test", "-f", entry],
+      ["-d", "Ubuntu", "-e", "test", "-f", rootedAddon],
+      ["-d", "Ubuntu", "-e", "test", "-x", exclusiveMove],
+    ]);
   });
 
-  it("delivers the whole server DIRECTORY when absent: test → mkdir → wslpath → cp -r → verify", async () => {
+  it("delivers the whole server directory and verifies every required file when absent", async () => {
     const { calls, run } = recorder([
       { stdout: "", code: 1 }, // test -f entry → absent
       { stdout: "", code: 0 }, // mkdir -p targetDir
       { stdout: "/mnt/c/Users/rai/Rennet/dist/server/index.cjs\n", code: 0 }, // wslpath -u
       { stdout: "", code: 0 }, // cp -r <dir>/. targetDir
+      { stdout: "", code: 0 }, // chmod 0755 exclusive move helper
       { stdout: "", code: 0 }, // verify test -f entry
+      { stdout: "", code: 0 }, // verify rooted addon
+      { stdout: "", code: 0 }, // verify executable exclusive move helper
     ]);
     const result = await ensureWslBundleDelivered(delivery, run);
 
@@ -109,9 +121,57 @@ describe("ensureWslBundleDelivered", () => {
       ["-d", "Ubuntu", "-e", "mkdir", "-p", targetDir],
       ["-d", "Ubuntu", "-e", "wslpath", "-u", "C:\\Users\\rai\\Rennet\\dist\\server\\index.cjs"],
       ["-d", "Ubuntu", "-e", "cp", "-r", "/mnt/c/Users/rai/Rennet/dist/server/.", targetDir],
+      ["-d", "Ubuntu", "-e", "chmod", "0755", exclusiveMove],
       ["-d", "Ubuntu", "-e", "test", "-f", entry],
+      ["-d", "Ubuntu", "-e", "test", "-f", rootedAddon],
+      ["-d", "Ubuntu", "-e", "test", "-x", exclusiveMove],
     ]);
     expect(calls.every((c) => c.file === WSL_EXE)).toBe(true);
+  });
+
+  it("recopies when the entry exists but the Linux rooted addon is missing", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 0 }, // entry present
+      { stdout: "", code: 1 }, // rooted addon absent
+      { stdout: "", code: 0 }, // mkdir
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 }, // wslpath
+      { stdout: "", code: 0 }, // cp
+      { stdout: "", code: 0 }, // chmod
+      { stdout: "", code: 0 }, // entry verified
+      { stdout: "", code: 0 }, // rooted addon verified
+      { stdout: "", code: 0 }, // executable exclusive move helper verified
+    ]);
+
+    await expect(ensureWslBundleDelivered(delivery, run)).resolves.toBe(entry);
+    expect(calls.map((call) => call.args.slice(3))).toEqual([
+      ["test", "-f", entry],
+      ["test", "-f", rootedAddon],
+      ["mkdir", "-p", targetDir],
+      ["wslpath", "-u", delivery.hostBundlePath],
+      ["cp", "-r", "/mnt/c/x/server/.", targetDir],
+      ["chmod", "0755", exclusiveMove],
+      ["test", "-f", entry],
+      ["test", "-f", rootedAddon],
+      ["test", "-x", exclusiveMove],
+    ]);
+  });
+
+  it("recopies when the entry and addon exist but the Linux exclusive move helper is missing", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 0 }, // entry present
+      { stdout: "", code: 0 }, // rooted addon present
+      { stdout: "", code: 1 }, // exclusive move helper absent or non-executable
+      { stdout: "", code: 0 }, // mkdir
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 }, // wslpath
+      { stdout: "", code: 0 }, // cp
+      { stdout: "", code: 0 }, // chmod
+      { stdout: "", code: 0 }, // entry verified
+      { stdout: "", code: 0 }, // rooted addon verified
+      { stdout: "", code: 0 }, // executable exclusive move helper verified
+    ]);
+
+    await expect(ensureWslBundleDelivered(delivery, run)).resolves.toBe(entry);
+    expect(calls.some((call) => call.args[3] === "cp")).toBe(true);
   });
 
   it("throws before ANY command when distroHome is not absolute", async () => {
@@ -122,7 +182,7 @@ describe("ensureWslBundleDelivered", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("stops AT the `test` probe when it fails (code neither 0 nor 1)", async () => {
+  it("stops at any required-file probe failure (code neither 0 nor 1)", async () => {
     const { calls, run } = recorder([{ stdout: "", code: 2 }]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
@@ -178,17 +238,62 @@ describe("ensureWslBundleDelivered", () => {
     expect(calls).toHaveLength(4);
   });
 
+  it("throws at chmod when the copied Linux helper cannot be made executable", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 1 },
+      { stdout: "", code: 0 },
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 1 },
+    ]);
+
+    await expect(ensureWslBundleDelivered(delivery, run)).rejects.toThrow(exclusiveMove);
+    expect(calls.at(-1)?.args.slice(3)).toEqual(["chmod", "0755", exclusiveMove]);
+  });
+
   it("throws when the entry is missing after copy (partial delivery is not 'delivered')", async () => {
     const { calls, run } = recorder([
       { stdout: "", code: 1 }, // absent
       { stdout: "", code: 0 }, // mkdir
       { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 }, // wslpath
       { stdout: "", code: 0 }, // cp -r ok
+      { stdout: "", code: 0 }, // chmod helper
       { stdout: "", code: 1 }, // verify test -f entry → MISSING
     ]);
     await expect(ensureWslBundleDelivered(delivery, run)).rejects.toBeInstanceOf(
       WslBundleDeliveryError,
     );
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(6);
+  });
+
+  it("throws when the rooted addon is missing after copy", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 1 },
+      { stdout: "", code: 0 },
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 1 },
+    ]);
+
+    await expect(ensureWslBundleDelivered(delivery, run)).rejects.toThrow(rootedAddon);
+    expect(calls).toHaveLength(7);
+  });
+
+  it("throws when the exclusive move helper is missing after copy", async () => {
+    const { calls, run } = recorder([
+      { stdout: "", code: 1 },
+      { stdout: "", code: 0 },
+      { stdout: "/mnt/c/x/server/index.cjs\n", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 0 },
+      { stdout: "", code: 1 },
+    ]);
+
+    await expect(ensureWslBundleDelivered(delivery, run)).rejects.toThrow(exclusiveMove);
+    expect(calls).toHaveLength(8);
   });
 });
