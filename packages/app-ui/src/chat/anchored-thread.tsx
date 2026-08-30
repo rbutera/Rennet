@@ -44,7 +44,7 @@ export function AnchoredThread({ row }: { readonly row: AnchoredThreadRow }) {
             // biome-ignore lint/suspicious/noArrayIndexKey: thread messages are an append-only positional list.
             key={index}
             className={cn(
-              "font-serif text-sm leading-relaxed",
+              "font-prose text-sm leading-relaxed",
               message.author === "user" ? "text-foreground/95" : "text-foreground/90",
             )}
           >

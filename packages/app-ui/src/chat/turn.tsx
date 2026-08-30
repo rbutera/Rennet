@@ -62,7 +62,7 @@ function OrderedTranscript({
               key={index}
               animate={animate}
               paragraphs={[block.text]}
-              className="font-serif text-sm leading-relaxed text-foreground/90"
+              className="font-prose text-15 leading-relaxed text-foreground/90"
             />
           );
         }
@@ -92,7 +92,7 @@ export function Turn({
   if (turn.speaker === "user") {
     return (
       <div className="flex flex-col items-end gap-1">
-        <div className="max-w-[85%] rounded-lg bg-secondary px-3.5 py-2.5 font-serif text-sm leading-relaxed text-foreground/95">
+        <div className="max-w-[85%] rounded-lg bg-secondary px-3.5 py-2.5 font-prose text-15 leading-relaxed text-foreground/95">
           {turn.paragraphs.map((paragraph, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: paragraphs are a fixed positional list.
             <p key={index} className={index > 0 ? "mt-2" : undefined}>
@@ -111,7 +111,7 @@ export function Turn({
         <StreamingProse
           animate={animate}
           paragraphs={[turn.lead]}
-          className="max-w-[640px] font-serif text-sm leading-relaxed text-foreground/90"
+          className="max-w-[640px] font-prose text-15 leading-relaxed text-foreground/90"
         />
       )}
       {turn.blocks && turn.blocks.length > 0 ? (
@@ -128,7 +128,7 @@ export function Turn({
                     key={index}
                     animate={animate}
                     paragraphs={[block.text]}
-                    className="font-serif text-sm leading-relaxed text-foreground/90"
+                    className="font-prose text-15 leading-relaxed text-foreground/90"
                   />
                 ) : (
                   <CodeBlock
@@ -147,7 +147,7 @@ export function Turn({
               <StreamingProse
                 animate={animate}
                 paragraphs={turn.paragraphs}
-                className="max-w-[640px] font-serif text-sm leading-relaxed text-foreground/90"
+                className="max-w-[640px] font-prose text-15 leading-relaxed text-foreground/90"
               />
             )
           )}

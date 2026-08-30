@@ -23,7 +23,7 @@ export function ThoughtBlock({ step }: { readonly step: ThoughtBlockData }) {
       <button
         type="button"
         onClick={() => !isLive && setManuallyOpened((v) => !v)}
-        className="flex items-center gap-1.5 text-xs text-muted-foreground/80 hover:text-muted-foreground"
+        className="flex items-center gap-1.5 text-12-5 text-muted-foreground/80 hover:text-muted-foreground"
         aria-expanded={isExpanded}
       >
         <Loader2
@@ -51,7 +51,7 @@ export function ThoughtBlock({ step }: { readonly step: ThoughtBlockData }) {
         )}
       </button>
       <Collapse open={isExpanded}>
-        <div className="mt-1 flex flex-col gap-2 border-l border-border pl-3 font-serif text-xs italic leading-relaxed text-muted-foreground">
+        <div className="mt-1 flex flex-col gap-2 border-l border-border pl-3 font-prose text-13 italic leading-relaxed text-muted-foreground">
           {step.text.map((paragraph, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: thought paragraphs are a fixed positional list.
             <p key={i}>{paragraph}</p>

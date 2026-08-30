@@ -91,7 +91,7 @@ function ComposerBadgePill({
             <span className="truncate font-mono">{badge.path}</span>
           </div>
           <div className="mt-1 font-mono text-2xs text-primary">L{badge.line}</div>
-          <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-foreground/90">
+          <p className="mt-1 whitespace-pre-wrap text-12-5 leading-relaxed text-foreground/90">
             {badge.text}
           </p>
         </div>
