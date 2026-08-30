@@ -79,20 +79,50 @@ export const QuoteMessageSchema = z.object({
 });
 export type QuoteMessage = z.infer<typeof QuoteMessageSchema>;
 
-/**
- * A quote-anchored thread on board prose. `anchor` is the highlighted span text;
- * `target` + `generation` are the protocol-shaped anchor identity (the element id
- * and board generation) so a durable highlight lands only on that element in that
- * generation; `kind:"explain"` is a question to the orchestrator (never raises the
- * exit count). Mirrors `app-ui`'s `QuoteThread`.
- */
-export const QuoteThreadSchema = z.object({
+const QuoteThreadBaseSchema = z.object({
   anchor: z.string(),
   kind: z.enum(["comment", "explain"]).optional(),
-  target: id.optional(),
-  generation: id.optional(),
   messages: z.array(QuoteMessageSchema),
 });
+
+/**
+ * A quote thread is either generic chat history or a board-scoped anchor. Scoped
+ * threads carry target and generation together. A generation replacement marks
+ * the thread detached when its quote has no unique successor, retaining the old
+ * identity as provenance while preventing a stale highlight.
+ *
+ * `lifecycle` stays optional on the attached arm so existing logs parse as
+ * attached. New events always write it explicitly.
+ */
+export const QuoteThreadSchema = z.union([
+  QuoteThreadBaseSchema.extend({
+    lifecycle: z.undefined().optional(),
+    target: z.undefined().optional(),
+    generation: z.undefined().optional(),
+  }),
+  // The former schema admitted either scope half independently. Keep those
+  // records readable, but only the complete arm below is considered attached.
+  QuoteThreadBaseSchema.extend({
+    lifecycle: z.undefined().optional(),
+    target: id,
+    generation: z.undefined().optional(),
+  }),
+  QuoteThreadBaseSchema.extend({
+    lifecycle: z.undefined().optional(),
+    target: z.undefined().optional(),
+    generation: id,
+  }),
+  QuoteThreadBaseSchema.extend({
+    lifecycle: z.literal("attached").optional(),
+    target: id,
+    generation: id,
+  }),
+  QuoteThreadBaseSchema.extend({
+    lifecycle: z.literal("detached"),
+    target: id,
+    generation: id,
+  }),
+]);
 export type QuoteThread = z.infer<typeof QuoteThreadSchema>;
 
 /** An explicit verdict override — the real GitHub review event, or null (derive). */

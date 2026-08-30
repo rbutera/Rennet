@@ -437,6 +437,8 @@ export interface BoardRegenerationInput {
     readonly diff: string;
     readonly changedPaths: readonly string[];
   };
+  /** Operation-scoped report verifier, passed through to the runtime's pre-commit seam. */
+  readonly verifyDraftedReport?: RoundInput["verifyDraftedReport"];
 }
 
 type DesignArtifactDiscovery =
@@ -556,6 +558,9 @@ export async function runBoardRegeneration(
         ...(input.askOccurrences === undefined
           ? {}
           : { askOccurrences: [...input.askOccurrences] }),
+        ...(input.verifyDraftedReport === undefined
+          ? {}
+          : { verifyDraftedReport: input.verifyDraftedReport }),
         ...(input.round === undefined
           ? {}
           : {

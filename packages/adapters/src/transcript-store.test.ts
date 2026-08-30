@@ -45,4 +45,25 @@ describe("TranscriptStore", () => {
     expect(() => store.read("s3")).toThrow(TranscriptStoreCorruptError);
     expect(() => store.append("s3", [turn("x")])).toThrow(TranscriptStoreCorruptError);
   });
+
+  it("appends stable lifecycle rows once across replay and restart", () => {
+    const dir = tmp();
+    const store = new TranscriptStore(dir);
+    store.append("s4", [turn("history")]);
+    store.appendUnique("s4", [turn("round:dispatch"), turn("round:return")]);
+
+    new TranscriptStore(dir).appendUnique("s4", [turn("round:dispatch"), turn("round:return")]);
+
+    expect(new TranscriptStore(dir).read("s4").map((row) => row.id)).toEqual([
+      "history",
+      "round:dispatch",
+      "round:return",
+    ]);
+  });
+
+  it("deduplicates repeated ids inside one append batch", () => {
+    const store = new TranscriptStore(tmp());
+    store.appendUnique("s5", [turn("same"), turn("same")]);
+    expect(store.read("s5").map((row) => row.id)).toEqual(["same"]);
+  });
 });

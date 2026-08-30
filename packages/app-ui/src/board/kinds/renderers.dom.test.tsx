@@ -301,6 +301,7 @@ describe("board kind renderers over the fixture set", () => {
     expect(state.review.quoteThreads[threadId]).toEqual({
       anchor: fix,
       kind: "explain",
+      lifecycle: "attached",
       target: "f1",
       generation: flaggedBoard.generation,
       messages: [{ author: "user", text: "Discuss this fix." }],

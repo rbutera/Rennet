@@ -82,7 +82,7 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
         }}
       >
         <ProseSelectionLayer>
-          <article data-generation="gen-1" data-element-id="finding-1">
+          <article data-generation="gen-1" data-quote-target="finding-1">
             <RichText text="Call `decompose()` before dispatch." patchsetId="ps-1" />
           </article>
         </ProseSelectionLayer>
@@ -102,6 +102,37 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
         generation: "gen-1",
       },
     ]);
+  });
+
+  it("scopes only text rendered by a durable quote target", async () => {
+    const view = mount(
+      <ProseSelectionLayer>
+        <article data-generation="gen-1" data-element-id="requirement-1">
+          <p data-quote-target="requirement-1">The host SHALL resume the round.</p>
+          <span>Status in progress</span>
+        </article>
+      </ProseSelectionLayer>,
+    );
+
+    selectAndRelease(view.getByText("The host SHALL resume the round."));
+    await view.user.click(view.getByText("Explain"));
+    selectAndRelease(view.getByText("Status in progress"));
+    await view.user.click(view.getByText("Explain"));
+
+    const threads = Object.values(reviewState().quoteThreads);
+    expect(threads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          anchor: "The host SHALL resume the round.",
+          target: "requirement-1",
+          generation: "gen-1",
+        }),
+        expect.objectContaining({ anchor: "Status in progress" }),
+      ]),
+    );
+    const metadataThread = threads.find((thread) => thread.anchor === "Status in progress");
+    expect(metadataThread?.target).toBeUndefined();
+    expect(metadataThread?.generation).toBeUndefined();
   });
 
   it("Request Changes mints a thread AND stages an ask that claims that thread", async () => {

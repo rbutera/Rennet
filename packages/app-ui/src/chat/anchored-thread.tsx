@@ -15,6 +15,7 @@ export function AnchoredThread({ row }: { readonly row: AnchoredThreadRow }) {
   const thread = useRennetStore((s) => s.review.quoteThreads[row.threadId]);
   const focused = useRennetStore((s) => s.review.focusedThreadId === row.threadId);
   if (!thread) return null;
+  const detached = thread.lifecycle === "detached";
 
   return (
     <div
@@ -22,14 +23,20 @@ export function AnchoredThread({ row }: { readonly row: AnchoredThreadRow }) {
       data-thread-id={row.threadId}
       data-board-ref={row.boardRef}
       data-focused={focused}
+      data-lifecycle={thread.lifecycle ?? "attached"}
       className={cn(
         "flex flex-col gap-2 rounded-lg border bg-card/40 p-3",
-        focused ? "border-accent-line ring-1 ring-accent-line" : "border-border",
+        detached
+          ? "border-dashed border-danger/50"
+          : focused
+            ? "border-accent-line ring-1 ring-accent-line"
+            : "border-border",
       )}
     >
       <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
         <Quote className="size-3 shrink-0" aria-hidden="true" />
         <span className="truncate italic">“{thread.anchor}”</span>
+        {detached && <span className="ml-auto shrink-0 font-medium text-danger">Detached</span>}
       </div>
       <div className="flex flex-col gap-2">
         {thread.messages.map((message, index) => (

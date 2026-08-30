@@ -214,6 +214,20 @@ function readFailure(error: unknown): string | undefined {
   return error === undefined || error === null ? undefined : failureText(error);
 }
 
+/** A round-progress receipt emitted only after a transcript append it makes visible.
+ * Dispatch is appended before `claimed`; a completed or failed worker capture before
+ * `worker-settled`/worker failure; Return before the terminal `composed`/`unchanged` receipt. */
+function transcriptRefreshReceipt(event: RoundEvent): boolean {
+  if (event.type === "composed" || event.type === "unchanged") return true;
+  if (event.type !== "operation") return false;
+  const state = event.snapshot.state;
+  return (
+    state.phase === "claimed" ||
+    state.phase === "worker-settled" ||
+    (state.phase === "failed" && state.failure.at === "worker")
+  );
+}
+
 /** The durable session slug the current route is on, or `undefined` off a session route. */
 function useCurrentSessionSlug(): string | undefined {
   const [onRun, runParams] = useRoute(ROUTES.sessionRun);
@@ -279,6 +293,10 @@ export function useLiveRoundsSource(): RoundsSource {
         event.type === "failed"
       ) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
+        cache.invalidate(commandKey("session.list", {}));
+      }
+      if (transcriptRefreshReceipt(event)) {
+        cache.invalidate(commandKey("session.transcript", { reviewId: reviewId ?? "" }));
       }
       return { events: [...mergeRoundEvents(prev?.events ?? NO_EVENTS, [event])] };
     },

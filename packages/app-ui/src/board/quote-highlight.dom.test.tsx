@@ -7,7 +7,7 @@ import { act, mount } from "../test/dom";
 import { designBoard, designGen0Board, prose } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
 import { BoardElement, BoardElementsProvider } from "./kinds";
-import { QuoteHighlightLayer } from "./quote-highlight";
+import { InlineQuoteHighlight, QuoteHighlightLayer } from "./quote-highlight";
 
 // Cluster 5 (durable quote highlights). Threads live on the real `review` slice; the
 // layer reads them and highlights the anchored span over prose — durable because it is
@@ -57,8 +57,35 @@ function render(text = PROSE) {
 describe("QuoteHighlightLayer — durable quote highlights", () => {
   it("no thread anchored here → renders plain prose, no highlight", () => {
     const { container } = render();
+    expect(container.querySelector(`[data-quote-target="${EL}"]`)).toBeTruthy();
     expect(container.querySelector("[data-quote-highlight]")).toBeNull();
     expect(container.textContent).toContain("costs nothing per token");
+  });
+
+  it("renders an inline target and opens its thread without activating its parent control", async () => {
+    const id = seed("durable title", "Keep the title thread reachable.");
+    let activations = 0;
+    const { container, user } = mount(
+      <InlineQuoteHighlight
+        text="A durable title"
+        elementId={EL}
+        onActivate={() => {
+          activations += 1;
+        }}
+        ariaLabel="Toggle section"
+      />,
+    );
+    const target = container.querySelector<HTMLElement>(`[data-quote-target="${EL}"]`);
+    const highlight = target?.querySelector<HTMLElement>("[data-quote-highlight]");
+
+    expect(target?.textContent).toBe("A durable title");
+    expect(highlight?.textContent).toBe("durable title");
+    if (highlight) await user.click(highlight);
+    expect(activations).toBe(0);
+    expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
+
+    if (target) await user.click(target);
+    expect(activations).toBe(1);
   });
 
   it("an anchored quoteThread renders as a durable highlight over the span", () => {
@@ -67,6 +94,24 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     const hl = container.querySelector("[data-quote-highlight]");
     expect(hl).toBeTruthy();
     expect(hl?.textContent).toBe("costs nothing per token");
+  });
+
+  it("does not paint a detached thread on its stale generation", () => {
+    const id = seed("costs nothing per token", "Is this actually free?");
+    const state = useRennetStore.getState();
+    const thread = state.review.quoteThreads[id];
+    expect(thread).toBeTruthy();
+    if (!thread || thread.target === undefined || thread.generation === undefined) return;
+    useRennetStore.setState({
+      review: {
+        ...state.review,
+        quoteThreads: { [id]: { ...thread, lifecycle: "detached" } },
+      },
+    });
+
+    const { container } = render();
+    expect(container.querySelector("[data-quote-highlight]")).toBeNull();
+    expect(container.textContent).toContain("costs nothing per token");
   });
 
   it("maps displayed backtick text to the raw token and keeps the code node", () => {

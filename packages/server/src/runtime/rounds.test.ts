@@ -234,6 +234,89 @@ describe("createRoundsRuntime", () => {
     expect(runtime.ledger("s1")).toEqual([record]);
   });
 
+  it("reconciles quote threads after both generations persist and before recording the round", async () => {
+    const order: string[] = [];
+    const transitions: Array<{
+      readonly repoRoot: string;
+      readonly reviewId: string;
+      readonly sessionId: string;
+      readonly sourceGeneration: string;
+      readonly successorGeneration: string;
+    }> = [];
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        persistGeneration: (generation) => {
+          order.push(`generation:${generation.id}`);
+        },
+        onGenerationTransition: (transition) => {
+          order.push("quote-transition");
+          transitions.push(transition);
+        },
+        recordRound: () => order.push("round-record"),
+      }),
+    );
+
+    await runtime.runRound(
+      roundInput({
+        session: { id: "s1", projectId: "p1", reviewId: "review-1", threads: [], createdAt: 0 },
+        verifyDraftedReport: () => {
+          order.push("report-verified");
+        },
+      }),
+    );
+
+    expect(transitions).toEqual([
+      {
+        repoRoot: "/pr-worktree",
+        reviewId: "review-1",
+        sessionId: "s1",
+        sourceGeneration: "gen:ps-0",
+        successorGeneration: "gen:ps-1",
+      },
+    ]);
+    expect(order.indexOf("quote-transition")).toBeGreaterThan(
+      order.lastIndexOf("generation:gen:ps-0"),
+    );
+    expect(order.indexOf("report-verified")).toBeLessThan(order.lastIndexOf("generation:gen:ps-1"));
+    expect(order.indexOf("quote-transition")).toBeLessThan(order.indexOf("round-record"));
+  });
+
+  it("publishes no successor, quote migration, or real ledger row when report verification fails", async () => {
+    const order: string[] = [];
+    const persisted: Generation[] = [];
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        persistGeneration: (generation) => {
+          order.push(`generation:${generation.id}`);
+          persisted.push(generation);
+        },
+        onGenerationTransition: () => {
+          order.push("quote-transition");
+        },
+        recordRound: () => order.push("round-record"),
+      }),
+    );
+
+    await expect(
+      runtime.runRound(
+        roundInput({
+          session: { id: "s1", projectId: "p1", reviewId: "review-1", threads: [], createdAt: 0 },
+          verifyDraftedReport: () => {
+            order.push("report-rejected");
+            throw new Error("invalid report evidence");
+          },
+        }),
+      ),
+    ).rejects.toThrow("invalid report evidence");
+
+    expect(order).toContain("report-rejected");
+    expect(order).not.toContain("quote-transition");
+    expect(order).not.toContain("round-record");
+    expect(runtime.ledger("s1")).toEqual([]);
+    expect(persisted.at(-1)?.draftingBoardIds).toBeDefined();
+    expect(persisted.some((generation) => generation.status === "frozen")).toBe(false);
+  });
+
   it("exposes both generations by id — the switcher drills back to the frozen predecessor (C15 2.3)", async () => {
     const genDir = mkdtempSync(join(tmpdir(), "gen-store-"));
     const roundDir = mkdtempSync(join(tmpdir(), "round-store-"));

@@ -195,9 +195,14 @@ function unprefix(path: string): string {
  * Parse a unified-diff string (the REST-fallback path) into per-file `PatchFile`s.
  * This is the degraded source, so it derives path/status/counts from the diff text
  * rather than from git's structured `--name-status`/`--numstat` output. The full
- * per-file block is kept as `patch` (truncated to the file visible limit).
+ * per-file block is kept as `patch` (truncated to the file visible limit by default).
+ * Receipt verifiers may pass `Number.POSITIVE_INFINITY` when every input byte must remain
+ * available for exact evidence checks.
  */
-export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
+export function parseUnifiedDiffFiles(
+  diff: string,
+  maximumPatchBytes = FILE_VISIBLE_BYTE_LIMIT,
+): PatchFile[] {
   if (diff.trim().length === 0) return [];
   const blocks = diff.split(/(?=^diff --git )/m).filter((block) => block.startsWith("diff --git"));
   // Accumulate per PATH, coalescing RAW blocks. git splits a TYPE CHANGE
@@ -299,7 +304,7 @@ export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
       additions: acc.binary ? null : acc.additions,
       deletions: acc.binary ? null : acc.deletions,
       binary: acc.binary,
-      patch: visible(acc.rawParts.join("\n"), FILE_VISIBLE_BYTE_LIMIT),
+      patch: visible(acc.rawParts.join("\n"), maximumPatchBytes),
     });
   }
   // Code-unit ordering, not `localeCompare`: this order feeds the REST patchset's

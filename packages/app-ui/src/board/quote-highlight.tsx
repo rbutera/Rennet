@@ -1,5 +1,13 @@
 import { cn } from "@rennet/ui";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useAnchoredAsk } from "../review/anchored-ask";
 import {
   displayToRawRange,
@@ -188,6 +196,20 @@ function anchorRange(rawText: string, anchor: string): RawTextRange | null {
   return displayToRawRange(rawText, anchor) ?? uniqueRawRange(rawText, anchor);
 }
 
+type AnchorLocator = (text: string, anchor: string) => RawTextRange | null;
+
+function useRangedThreads(text: string, elementId: string, locate: AnchorLocator): RangedThread[] {
+  const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
+  const generation = useBoardGeneration();
+  return Object.entries(quoteThreads).flatMap(([id, thread]) => {
+    if (thread.lifecycle === "detached") return [];
+    if (thread.target !== elementId || thread.generation !== generation) return [];
+    const range = locate(text, thread.anchor);
+    if (!range || /\n\n+/.test(text.slice(range.start, range.end))) return [];
+    return [{ id, thread, ...range }];
+  });
+}
+
 /** Convert possibly overlapping thread ranges to disjoint decorated spans. */
 function decorationsFor(ranges: readonly RangedThread[]): RichTextDecoration[] {
   const points = [...new Set(ranges.flatMap((range) => [range.start, range.end]))].sort(
@@ -208,6 +230,79 @@ function decorationsFor(ranges: readonly RangedThread[]): RichTextDecoration[] {
     });
   }
   return decorations;
+}
+
+function decoratedPlainText(text: string, decorations: readonly RichTextDecoration[]): ReactNode {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const decoration of decorations) {
+    if (decoration.start > cursor) {
+      nodes.push(
+        <Fragment key={`plain-${cursor}-${decoration.start}`}>
+          {text.slice(cursor, decoration.start)}
+        </Fragment>,
+      );
+    }
+    nodes.push(
+      <Fragment key={`quote-${decoration.start}-${decoration.end}`}>
+        {decoration.render(text.slice(decoration.start, decoration.end))}
+      </Fragment>,
+    );
+    cursor = decoration.end;
+  }
+  if (cursor < text.length) {
+    nodes.push(<Fragment key={`plain-${cursor}-${text.length}`}>{text.slice(cursor)}</Fragment>);
+  }
+  return nodes;
+}
+
+export interface InlineQuoteHighlightProps {
+  readonly text: string;
+  readonly elementId: string;
+  readonly className?: string;
+  readonly onActivate?: () => void;
+  readonly ariaLabel?: string;
+  readonly ariaExpanded?: boolean;
+}
+
+/** Render a plain-text board field with the same durable scope and thread UI as prose. */
+export function InlineQuoteHighlight({
+  text,
+  elementId,
+  className,
+  onActivate,
+  ariaLabel,
+  ariaExpanded,
+}: InlineQuoteHighlightProps) {
+  const matches = useRangedThreads(text, elementId, uniqueRawRange);
+  const interactive = onActivate !== undefined;
+  return (
+    <span
+      data-quote-target={elementId}
+      className={className}
+      {...(interactive
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": ariaLabel,
+            "aria-expanded": ariaExpanded,
+            onClick: (event: ReactMouseEvent<HTMLSpanElement>) => {
+              if (event.target !== event.currentTarget) return;
+              onActivate?.();
+            },
+            onKeyDown: (event: ReactKeyboardEvent<HTMLSpanElement>) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onActivate?.();
+              }
+            },
+          }
+        : {})}
+    >
+      {matches.length === 0 ? text : decoratedPlainText(text, decorationsFor(matches))}
+    </span>
+  );
 }
 
 export interface QuoteHighlightLayerProps {
@@ -241,35 +336,27 @@ export function QuoteHighlightLayer({
   paragraphClassName,
   keywords,
 }: QuoteHighlightLayerProps) {
-  const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
-  const generation = useBoardGeneration();
-  const matches: RangedThread[] = Object.entries(quoteThreads).flatMap(([id, thread]) => {
-    if (thread.target !== elementId || thread.generation !== generation) return [];
-    const range = anchorRange(text, thread.anchor);
-    if (!range || /\n\n+/.test(text.slice(range.start, range.end))) return [];
-    return [{ id, thread, ...range }];
-  });
-
-  if (matches.length === 0) {
-    return (
-      <RichText
-        text={text}
-        patchsetId={patchsetId}
-        className={className}
-        paragraphClassName={paragraphClassName}
-        keywords={keywords}
-      />
-    );
-  }
-
+  const matches = useRangedThreads(text, elementId, anchorRange);
   return (
-    <RichText
-      text={text}
-      patchsetId={patchsetId}
-      className={className}
-      paragraphClassName={paragraphClassName}
-      keywords={keywords}
-      decorations={decorationsFor(matches)}
-    />
+    <div data-quote-target={elementId} className="contents">
+      {matches.length === 0 ? (
+        <RichText
+          text={text}
+          patchsetId={patchsetId}
+          className={className}
+          paragraphClassName={paragraphClassName}
+          keywords={keywords}
+        />
+      ) : (
+        <RichText
+          text={text}
+          patchsetId={patchsetId}
+          className={className}
+          paragraphClassName={paragraphClassName}
+          keywords={keywords}
+          decorations={decorationsFor(matches)}
+        />
+      )}
+    </div>
   );
 }

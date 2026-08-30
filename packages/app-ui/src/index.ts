@@ -82,6 +82,8 @@ export type {
   ChatTrail,
   CompactBoundaryRow,
   ContextWindow,
+  DetachedThreadRef,
+  DetachedThreadsRow,
   SessionTranscriptProjection,
   TranscriptRow,
   TurnRow,

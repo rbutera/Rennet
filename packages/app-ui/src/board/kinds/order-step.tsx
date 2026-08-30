@@ -1,4 +1,5 @@
 import { AnchorReveal } from "../../review";
+import { InlineQuoteHighlight } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useCodeRefOf } from "./element-context";
 import { BoardChildren } from "./renderers";
@@ -12,7 +13,9 @@ export function OrderStepElement({ element }: { readonly element: ElementOf<"ord
   const spanRef = useCodeRefOf(span);
   return (
     <div data-kind="order_step" className="flex flex-col gap-1.5">
-      <h3 className="font-semibold text-base text-foreground leading-snug">{title}</h3>
+      <h3 className="font-semibold text-base text-foreground leading-snug">
+        <InlineQuoteHighlight text={title} elementId={element.id} />
+      </h3>
       {spanRef && <AnchorReveal citations={[spanRef]} />}
       {children.length > 0 && <BoardChildren ids={children} />}
     </div>

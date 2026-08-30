@@ -328,13 +328,27 @@ something the preview did not describe.
    operation records verified terminal completion (including a verified
    unchanged round). A terminal failure stays on the run with its failure
    receipt. Once a round has returned, the session row carries the durable
-   ledger ordinal as *Round N is back*.
+   ledger ordinal as *Round N is back*. The display transcript keeps every
+   pre-round row and appends two stable lifecycle turns: the reviewer's
+   *Dispatch it.* when the operation is claimed, then a receipt-derived
+   *Round N is back* turn after verified completion. Recovery and repeated
+   terminal drain reuse those row identities rather than duplicating them.
 4. On completion the **round report** drafts first — its own seat on its own
    prompt (`packages/prompts`, `src/prompts/report.md`), through the
    same post-process pass as every draft. It verifies each ask against the
    round's diff rather than taking the worker's word, and classifies the
    outcome: addressed / partial / untouched / beyond the asks, each item
    anchored. Each outcome copies the exact id of the ask this round dispatched.
+   Before completion, the host parses the persisted report as a report board,
+   requires exactly one non-beyond outcome for every dispatched ask, rejects
+   duplicate or invented ask references, and resolves every addressed, partial,
+   or beyond evidence anchor against the expected successor patchset and an
+   exact added or deleted line in the worker's complete measured diff. A report
+   cannot call an ask addressed by citing another file, an unchanged context
+   line, a stale patchset, or a binary or mode-only change that has no
+   line-addressable evidence. This verification runs before the successor
+   generation, quote migrations, or real-generation ledger row are published;
+   rejection leaves the pending placeholder and dispatched asks retryable.
    The report is one artifact with two consumers: the reviewer's greeting, and
    the successor account the lens drafters receive — which is why it must draft
    before they start.
@@ -375,8 +389,12 @@ something the preview did not describe.
    from live to frozen and stays as drill-down while the successor is minted.
    The successor is one board visit, not a patchset bucket: returning to earlier
    content mints a fresh generation and never reopens that content's frozen visit.
-   Asks, threads, and highlights re-anchor by quote match; casualties land in
-   the Detached list.
+   Scoped quote threads re-anchor only inside their corresponding successor
+   lens, and only when their exact quoted text has one match. The durable thread
+   keeps its messages while its target and generation advance. No match or more
+   than one match changes its lifecycle to detached, keeps it visible in the
+   Detached list, and suppresses the stale board highlight. Generic unscoped
+   threads remain unscoped and are not guessed onto board prose.
    The host applies finding lifecycle after drafting and before it persists the
    successor boards. Flagged drops only a finding whose dispatched ask the
    report marks addressed, or one the reviewer dismissed, when that

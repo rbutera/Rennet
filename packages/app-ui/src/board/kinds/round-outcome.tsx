@@ -1,6 +1,7 @@
 import type { HostElement } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { AnchorReveal, RichText } from "../../review";
+import { AnchorReveal } from "../../review";
+import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
 
 // `round_outcome` (C09 2.1) — one item of a round report (#486 R57/R58): how a
@@ -43,12 +44,13 @@ export function RoundOutcomeElement({ element }: { readonly element: RoundOutcom
           {status}
         </span>
         <span className="min-w-0 flex-1 font-medium text-foreground text-sm leading-snug">
-          {ask.text}
+          <InlineQuoteHighlight text={ask.text} elementId={element.id} />
         </span>
         <span className="shrink-0 font-mono text-2xs text-muted-foreground">{ask.ref}</span>
       </div>
-      <RichText
+      <QuoteHighlightLayer
         text={note}
+        elementId={element.id}
         patchsetId={patchsetId}
         paragraphClassName="text-foreground/90 text-sm leading-relaxed"
       />

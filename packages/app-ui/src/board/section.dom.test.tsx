@@ -26,7 +26,10 @@ function renderSection(ref: string) {
   );
 }
 
-beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
+beforeEach(() => {
+  useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } });
+  useRennetStore.getState().reviewActions.resetReview();
+});
 
 describe("Section fold grammar", () => {
   it("a non-delta section starts folded with a full-width gist and unfolds on toggle", async () => {
@@ -65,7 +68,7 @@ describe("Section fold grammar", () => {
     expect(root?.getAttribute("data-delta")).toBe("reworked");
     // The transient gold dot with its screen-reader label.
     expect(queryByTestId("delta-dot")).toBeTruthy();
-    expect(getByText("Still Open").closest("button")?.getAttribute("aria-label")).toBe(
+    expect(getByText("Still Open").closest('[role="button"]')?.getAttribute("aria-label")).toBe(
       "Still Open, reworked this round",
     );
 
@@ -76,5 +79,22 @@ describe("Section fold grammar", () => {
       useRennetStore.getState().viewedDelta.viewedDeltaSections[deltaKey(board.boardId, "g2-open")],
     ).toBe(true);
     expect(queryByTestId("delta-dot")).toBeNull();
+  });
+
+  it("opens a title quote thread without toggling the section", async () => {
+    const id = useRennetStore
+      .getState()
+      .reviewActions.addQuoteComment("Still Open", "Discuss this title.", "comment", {
+        target: "g2-open",
+        generation: "",
+      });
+    const { container, user } = renderSection("g2-open");
+    const root = container.querySelector("[data-kind=board-section]");
+    const highlight = container.querySelector<HTMLElement>("[data-quote-highlight]");
+
+    expect(root?.getAttribute("data-open")).toBe("true");
+    if (highlight) await user.click(highlight);
+    expect(root?.getAttribute("data-open")).toBe("true");
+    expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
   });
 });

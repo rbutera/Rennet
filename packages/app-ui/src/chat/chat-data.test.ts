@@ -2,7 +2,12 @@
 // pure fold's load-bearing branches so a regression reddens HERE, fast, with a clear cause.
 import type { ReattachResult, ReviewAskStreamEvent } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { foldAskStream, mergeTranscriptRows, reattachToRows } from "./chat-data";
+import {
+  detachedThreadRowsOf,
+  foldAskStream,
+  mergeTranscriptRows,
+  reattachToRows,
+} from "./chat-data";
 
 const seen = () => new Map<string, number>();
 
@@ -138,10 +143,47 @@ describe("history and thread chronology", () => {
     };
 
     expect(
-      mergeTranscriptRows([answer, boundary], [question]).map((row) =>
-        row.kind === "anchored-thread" ? row.threadId : row.id,
-      ),
+      mergeTranscriptRows([answer, boundary], [question]).map((row) => {
+        if (row.kind === "anchored-thread") return row.threadId;
+        return row.kind === "detached-threads" ? row.kind : row.id;
+      }),
     ).toEqual(["u1::you", "u1::orchestrator", "boundary-1"]);
+  });
+});
+
+describe("detached quote-thread transcript projection", () => {
+  it("projects only detached durable threads with their retained real target, idempotently", () => {
+    const threads = {
+      generic: { anchor: "generic", messages: [{ author: "user" as const, text: "hello" }] },
+      attached: {
+        anchor: "still present",
+        lifecycle: "attached" as const,
+        target: "current-prose",
+        generation: "gen-2",
+        messages: [{ author: "user" as const, text: "keep me anchored" }],
+      },
+      detached: {
+        anchor: "removed",
+        lifecycle: "detached" as const,
+        target: "old-prose",
+        generation: "gen-1",
+        messages: [
+          { author: "user" as const, text: "where did it go?" },
+          { author: "orchestrator" as const, text: "the round replaced it" },
+        ],
+      },
+    };
+
+    const first = detachedThreadRowsOf(threads);
+    const second = detachedThreadRowsOf(threads);
+
+    expect(first).toEqual([
+      {
+        kind: "detached-threads",
+        threads: [{ threadId: "detached", boardRef: "old-prose" }],
+      },
+    ]);
+    expect(second).toEqual(first);
   });
 });
 

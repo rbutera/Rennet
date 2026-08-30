@@ -135,11 +135,8 @@ export function codePositionKey(position: CodePosition): string {
   return `${position.path}:${position.line}:${position.side}`;
 }
 
-/** One message in a quote thread — the reviewer's, or the orchestrator's reply. */
-export interface QuoteMessage {
-  readonly author: "user" | "orchestrator";
-  readonly text: string;
-}
+/** One message in a quote thread, derived from the durable protocol projection. */
+export type QuoteMessage = AskProjection["quoteThreads"][string]["messages"][number];
 
 /**
  * A quote-anchored thread on board prose (C4, extends C01's placeholder). `anchor`
@@ -153,20 +150,12 @@ export interface QuoteMessage {
  * that repeats it (the fabrication finding 2 kills). A thread carries them when minted
  * from a board selection; a thread that lacks them never renders a durable highlight.
  */
-export interface QuoteThread {
-  readonly anchor: string;
-  readonly kind?: "comment" | "explain";
-  /** The element id this thread anchors to (the `quote_target` identity). */
-  readonly target?: string;
-  /** The board generation this thread was raised against. */
-  readonly generation?: string;
-  readonly messages: readonly QuoteMessage[];
-}
+export type QuoteThread = AskProjection["quoteThreads"][string];
 
 /** The board-anchor identity a thread is scoped to when minted from a selection. */
 export interface QuoteScope {
-  readonly target?: string;
-  readonly generation?: string;
+  readonly target: string;
+  readonly generation: string;
 }
 
 function nextQuoteThreadId(threads: Readonly<Record<string, QuoteThread>>): string {
@@ -354,13 +343,21 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
       },
       addQuoteComment: (anchor, text, kind, scope) => {
         const id = nextQuoteThreadId(get().review.quoteThreads);
-        const thread = {
-          anchor,
-          ...(kind === undefined ? {} : { kind }),
-          ...(scope?.target === undefined ? {} : { target: scope.target }),
-          ...(scope?.generation === undefined ? {} : { generation: scope.generation }),
-          messages: [{ author: "user" as const, text }],
-        };
+        const thread: QuoteThread =
+          scope === undefined
+            ? {
+                anchor,
+                ...(kind === undefined ? {} : { kind }),
+                messages: [{ author: "user", text }],
+              }
+            : {
+                anchor,
+                ...(kind === undefined ? {} : { kind }),
+                lifecycle: "attached",
+                target: scope.target,
+                generation: scope.generation,
+                messages: [{ author: "user", text }],
+              };
         durable("ask.quoteOpen", { threadId: id, thread });
         set((s) => ({
           review: { ...s.review, quoteThreads: { ...s.review.quoteThreads, [id]: thread } },

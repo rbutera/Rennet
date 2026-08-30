@@ -221,15 +221,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
         return running;
       }
       if (!active.rerunRequested) {
-        this.options.store.clear(expectation(active));
-        active = this.options.store.claimIfIdle(validated);
-        if (
-          active.operationId === validated.operationId &&
-          active.revision === 0 &&
-          active.state.phase === "claimed"
-        ) {
-          this.options.ports.publish(active);
-        }
+        return this.drainBeforeFreshSubmit(active, validated);
       }
     }
 
@@ -244,6 +236,26 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
       this.options.ports.publish(active);
     }
     return this.start(active);
+  }
+
+  /** A retained terminal may be waiting only because its last drain failed. Re-run the
+   * idempotent terminal effects before replacing it, so a fresh dispatch cannot erase an
+   * unsettled transcript/cleanup receipt. */
+  private async drainBeforeFreshSubmit(
+    terminal: RoundOperation,
+    validated: RoundOperation,
+  ): Promise<RoundOperation> {
+    await this.start(terminal);
+    const latest = this.options.store.read(terminal.sessionId);
+    if (
+      latest !== undefined &&
+      latest.operationId === terminal.operationId &&
+      isRoundOperationTerminal(latest) &&
+      !latest.rerunRequested
+    ) {
+      this.options.store.clear(expectation(latest));
+    }
+    return this.submit(validated);
   }
 
   async recover(): Promise<readonly RoundOperation[]> {
