@@ -5,13 +5,7 @@
 // interaction. Opened the way the sidebar opens it — `ui.openDialog("add-project")`
 // through the real store — so the mount, the seam reads/writes, and navigation all
 // run against the real router + BridgeProvider.
-import {
-  type CommandInput,
-  commandIdFor,
-  type DiscoveryResult,
-  type FsListDirResult,
-  type Project,
-} from "@rennet/protocol";
+import type { CommandInput, DiscoveryResult, FsListDirResult, Project } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -125,8 +119,6 @@ describe("AddProjectDialog", () => {
   it("Add runs discover + add and navigates straight to the indexing view", async () => {
     open();
     const added: CommandInput<"projects.add">[] = [];
-    const processed: CommandInput<"project.process">[] = [];
-    const processing = deferred<{ repos: [] }>();
     const { history } = renderDialog({
       "fs.listDir": () => ({ result: HOME }),
       "repository.choose": ({ path }) => ({ path: path ?? null }),
@@ -135,10 +127,6 @@ describe("AddProjectDialog", () => {
         added.push(input);
         return { project: project("proj-1"), projects: [project("proj-1")] };
       },
-      "project.process": (input) => {
-        processed.push(input);
-        return processing.promise;
-      },
     });
 
     const add = await screen.findByRole("button", { name: "Add" });
@@ -146,15 +134,9 @@ describe("AddProjectDialog", () => {
     act(() => add.click());
 
     await waitFor(() => expect(history.history.at(-1)).toBe(projectIndexingPath("proj-1")));
-    // No orchestrator turn: adding starts the durable background run and navigation does not
-    // wait for it to finish.
+    // No orchestrator turn: projects.add owns the daemon-side background start, so navigation
+    // does not wait for a second renderer command.
     expect(added).toHaveLength(1);
-    expect(processed).toEqual([
-      {
-        commandId: commandIdFor("project.process:proj-1"),
-        projectId: "proj-1",
-      },
-    ]);
     expect(useRennetStore.getState().ui.openDialogs).not.toContain("add-project");
   });
 

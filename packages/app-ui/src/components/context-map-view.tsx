@@ -36,8 +36,8 @@ type AskTurn =
 type BuildState =
   | { kind: "idle" }
   | { kind: "processing"; message: string; detail?: string }
-  | { kind: "refreshing" }
-  | { kind: "error"; message: string };
+  | { kind: "refreshing"; completedRun: boolean }
+  | { kind: "error"; message: string; retry: "resume" | "rebuild" };
 
 const CONTEXT_MAP_INVALIDATES = ["project.contextMap"] as const;
 
@@ -118,6 +118,7 @@ export function ContextMapView({
   });
   const [build, setBuild] = useState<BuildState>({ kind: "idle" });
   const [attempt, setAttempt] = useState(0);
+  const [retryMode, setRetryMode] = useState<"resume" | "rebuild">("resume");
   const started = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (mapQuery.data?.status !== "absent") return;
@@ -125,7 +126,11 @@ export function ContextMapView({
     if (started.current === runKey) return;
     started.current = runKey;
     let live = true;
-    const commandId = commandIdFor(`project.process:${projectId}`);
+    const commandId = commandIdFor(
+      retryMode === "rebuild"
+        ? `project.process:${projectId}:rebuild:${attempt}`
+        : `project.process:${projectId}`,
+    );
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
       if (!live) return;
       setBuild({ kind: "processing", ...processEventStatus(event) });
@@ -136,19 +141,19 @@ export function ContextMapView({
         if (!live) return;
         setBuild(
           run?.status === "failed"
-            ? { kind: "error", message: run.reason }
-            : { kind: "refreshing" },
+            ? { kind: "error", message: run.reason, retry: "resume" }
+            : { kind: "refreshing", completedRun: run?.status === "done" },
         );
       },
       (reason: unknown) => {
-        if (live) setBuild({ kind: "error", message: messageFrom(reason) });
+        if (live) setBuild({ kind: "error", message: messageFrom(reason), retry: "resume" });
       },
     );
     return () => {
       live = false;
       unsubscribe?.();
     };
-  }, [attempt, bridge, mapQuery.data?.status, process, projectId]);
+  }, [attempt, bridge, mapQuery.data?.status, process, projectId, retryMode]);
 
   useEffect(() => {
     if (
@@ -157,11 +162,15 @@ export function ContextMapView({
       !mapQuery.fetching &&
       !mapQuery.stale
     ) {
-      setBuild({ kind: "error", message: mapQuery.data.reason });
+      setBuild({
+        kind: "error",
+        message: mapQuery.data.reason,
+        retry: build.completedRun ? "rebuild" : "resume",
+      });
     }
-  }, [build.kind, mapQuery.data, mapQuery.fetching, mapQuery.stale]);
+  }, [build, mapQuery.data, mapQuery.fetching, mapQuery.stale]);
 
-  if (mapQuery.data?.status === "ok") {
+  if (mapQuery.data?.status === "ok" && !mapQuery.error && !mapQuery.fetching && !mapQuery.stale) {
     return (
       <ContextMap
         projectId={projectId}
@@ -215,6 +224,7 @@ export function ContextMapView({
             type="button"
             className="inline-flex w-fit items-center gap-1.5 rounded-chip border border-line px-2.5 py-1.5 text-sm text-ink-soft hover:bg-raised hover:text-ink"
             onClick={() => {
+              setRetryMode(build.kind === "error" ? build.retry : "resume");
               setBuild({ kind: "idle" });
               refreshMap();
               setAttempt((current) => current + 1);

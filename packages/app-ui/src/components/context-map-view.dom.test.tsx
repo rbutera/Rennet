@@ -211,13 +211,15 @@ describe("ContextMapView — the Context Map surface", () => {
 
   it("surfaces processing failure and retries the same durable project run", async () => {
     let attempts = 0;
+    const commandIds: string[] = [];
     const bridge = new MemoryBridge({
       "project.contextMap": () => ({
         status: "absent",
         reason: "no repo map is persisted yet",
       }),
-      "project.process": () => {
+      "project.process": (input) => {
         attempts += 1;
+        commandIds.push(input.commandId);
         throw new Error("worker exited during map generation");
       },
     });
@@ -231,6 +233,78 @@ describe("ContextMapView — the Context Map surface", () => {
     );
     fireEvent.click(container.querySelector(".context-map-status button") as Element);
     await waitFor(() => expect(attempts).toBe(2));
+    expect(commandIds).toEqual([
+      commandIdFor("project.process:project-1"),
+      commandIdFor("project.process:project-1"),
+    ]);
+  });
+
+  it("uses a fresh run identity when a completed journal produced no readable map", async () => {
+    const commandIds: string[] = [];
+    const rebuilding = deferred<{ repos: [] }>();
+    const bridge = new MemoryBridge({
+      "project.contextMap": () => ({
+        status: "absent",
+        reason: "stored map failed its integrity check",
+      }),
+      "project.process": (input) => {
+        commandIds.push(input.commandId);
+        if (commandIds.length > 1) return rebuilding.promise;
+        return {
+          repos: [],
+          run: {
+            id: input.commandId,
+            projectId: input.projectId,
+            status: "done",
+            phase: "complete",
+            repos: [],
+            scout: null,
+            totals: { repos: 0, files: 0, scopes: 0, confirmed: 0, rejected: 0 },
+          },
+        };
+      },
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "stored map failed its integrity check",
+      ),
+    );
+    fireEvent.click(container.querySelector(".context-map-status button") as Element);
+    await waitFor(() => expect(commandIds).toHaveLength(2));
+    expect(commandIds[0]).toBe(commandIdFor("project.process:project-1"));
+    expect(commandIds[1]).not.toBe(commandIds[0]);
+  });
+
+  it("does not render a cached map as current when its authoritative refetch fails", async () => {
+    let reads = 0;
+    const bridge = new MemoryBridge({
+      "project.contextMap": () => {
+        reads += 1;
+        if (reads === 1) return { status: "ok", map, knowledge };
+        throw new Error("the saved map can no longer be read");
+      },
+    });
+    const render = (show: boolean) => (
+      <BridgeProvider bridge={bridge}>
+        {show ? <ProductContextMapView projectId="project-1" onBack={vi.fn()} /> : null}
+      </BridgeProvider>
+    );
+    const view = mount(render(true));
+    await waitFor(() => expect(view.container.querySelector(".context-map-tree")).not.toBeNull());
+
+    view.rerender(render(false));
+    view.rerender(render(true));
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[role="alert"]')?.textContent).toContain(
+        "the saved map can no longer be read",
+      ),
+    );
+    expect(view.container.querySelector(".context-map-tree")).toBeNull();
+    expect(reads).toBe(2);
   });
 
   it("filters the knowledge panel to the selected scope", async () => {

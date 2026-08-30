@@ -187,6 +187,29 @@ describe("createProcessProject — the initial context dump wiring", () => {
     });
   });
 
+  it("rebuilds a completed journal when recovery uses a new run identity", async () => {
+    const durable = journal();
+    const gen = fakeGenerator(() => ({ fileCount: 12, symbolCount: 8 }));
+    const processProject = createProcessProject({
+      journal: durable.port,
+      generate: gen.generate,
+      listProjects: () => [project()],
+    });
+    const firstId = "18cc8bc7-e6f6-45a7-87c2-6ec104731c7f";
+    const rebuildId = "98c917b9-610c-47c6-baf0-d22e2bf2224d";
+
+    const first = await processProject({ projectId: "p1", commandId: firstId }, () => undefined);
+    const rebuilt = await processProject(
+      { projectId: "p1", commandId: rebuildId },
+      () => undefined,
+    );
+
+    expect(first.run.id).toBe(firstId);
+    expect(rebuilt.run.id).toBe(rebuildId);
+    expect(gen.calls).toHaveLength(2);
+    expect(durable.records.get("/orbital")?.runId).toBe(rebuildId);
+  });
+
   it("carries a per-repo failure softly and keeps building the rest of the workspace", async () => {
     const gen = fakeGenerator((repoRoot) =>
       repoRoot === "/ws/bad" ? new Error("not a git repository") : { fileCount: 5, symbolCount: 2 },
