@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -41,6 +42,16 @@ interface PackagedAppSmokeModule {
     appPath: string,
     options?: InstalledNativePayloadOptions,
   ): InstalledNativePayloadPaths;
+  verifyPackagedUpdateLifecycleSources(sources: {
+    readonly autoUpdate: string;
+    readonly main: string;
+  }): void;
+  verifyPackagedUpdateLifecycle(
+    appPath: string,
+    options?: {
+      readonly readArchiveFile?: (archivePath: string, entryPath: string) => Uint8Array;
+    },
+  ): { readonly archivePath: string };
 }
 
 const smokeModuleUrl = pathToFileURL(
@@ -287,5 +298,42 @@ describe("packaged native payload smoke", () => {
 
     expect(result).toEqual(paths);
     expect(paths.exclusiveMovePath).toMatch(/rennet-exclusive-move\.exe$/);
+  });
+});
+
+describe("packaged updater lifecycle smoke", () => {
+  const updaterSources = {
+    autoUpdate: readFileSync(resolve(import.meta.dirname, "main/auto-update.ts"), "utf8"),
+    main: readFileSync(resolve(import.meta.dirname, "main/index.ts"), "utf8"),
+  };
+
+  it("requires the packaged main to recover from the close-without-update path", () => {
+    expect(() => smoke.verifyPackagedUpdateLifecycleSources(updaterSources)).not.toThrow();
+
+    expect(() =>
+      smoke.verifyPackagedUpdateLifecycleSources({
+        ...updaterSources,
+        main: updaterSources.main.replace("armRelaunchAfterApply:", "removedRelaunchAfterApply:"),
+      }),
+    ).toThrow("Packaged updater lifecycle is incomplete");
+  });
+
+  it("reads that lifecycle from the app.asar main source map", () => {
+    const sourceMap = Buffer.from(
+      JSON.stringify({
+        sources: ["../../src/main/auto-update.ts", "../../src/main/index.ts"],
+        sourcesContent: [updaterSources.autoUpdate, updaterSources.main],
+      }),
+    );
+    const { appPath } = fixture();
+    const readArchiveFile = (archivePath: string, entryPath: string): Uint8Array => {
+      expect(archivePath).toBe(join(appPath, "Contents", "Resources", "app.asar"));
+      expect(entryPath).toBe("dist/main/index.cjs.map");
+      return sourceMap;
+    };
+
+    expect(smoke.verifyPackagedUpdateLifecycle(appPath, { readArchiveFile }).archivePath).toBe(
+      join(appPath, "Contents", "Resources", "app.asar"),
+    );
   });
 });
