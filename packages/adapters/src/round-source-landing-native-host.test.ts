@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertTestOnlyLandingRelativePath } from "./round-source-landing.test-only-unsafe-host";
@@ -605,9 +606,25 @@ describe("native rooted round source landing host", () => {
       fixture.workerRoot,
       fixture.infoExcludePath,
     ]);
-    expect(defaultRootedLandingAddonPath()).toContain(
-      join("dist", "native", `${process.platform}-${process.arch}`, "rennet-rooted-landing.node"),
+    const layoutRoot = join(realpathSync(tmpdir()), "rennet-addon-layout");
+    expect(
+      defaultRootedLandingAddonPath({
+        moduleUrl: pathToFileURL(
+          join(layoutRoot, "packages/adapters/src/round-source-landing-native-host.ts"),
+        ).href,
+        platform: "darwin",
+        arch: "arm64",
+      }),
+    ).toBe(
+      join(layoutRoot, "packages/adapters/dist/native/darwin-arm64/rennet-rooted-landing.node"),
     );
+    expect(
+      defaultRootedLandingAddonPath({
+        moduleUrl: pathToFileURL(join(layoutRoot, "dist/server/index.cjs")).href,
+        platform: "linux",
+        arch: "x64",
+      }),
+    ).toBe(join(layoutRoot, "dist/server/native/linux-x64/rennet-rooted-landing.node"));
     handle.close();
     handle.close();
     expect(state.closeCount).toBe(1);

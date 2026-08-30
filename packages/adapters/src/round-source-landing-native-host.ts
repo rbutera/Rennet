@@ -135,16 +135,26 @@ function bindNativeHost(
 }
 
 function defaultLoadBinding(addonPath: string): unknown {
-  const require = createRequire(import.meta.url);
+  const require = createRequire(addonPath);
   const loaded: unknown = require(addonPath);
   return loaded;
 }
 
-export function defaultRootedLandingAddonPath(): string {
+export interface RootedLandingAddonPathInput {
+  readonly moduleUrl?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: string;
+}
+
+export function defaultRootedLandingAddonPath(input: RootedLandingAddonPathInput = {}): string {
+  const modulePath = fileURLToPath(input.moduleUrl ?? import.meta.url);
+  const moduleDirectory = dirname(modulePath);
+  const nativeRoot = modulePath.endsWith(".cjs")
+    ? resolve(moduleDirectory, "native")
+    : resolve(moduleDirectory, "../dist/native");
   return resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "../dist/native",
-    `${process.platform}-${process.arch}`,
+    nativeRoot,
+    `${input.platform ?? process.platform}-${input.arch ?? process.arch}`,
     "rennet-rooted-landing.node",
   );
 }
