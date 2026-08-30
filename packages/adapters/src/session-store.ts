@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { addThread, archive, attachReview } from "@rennet/core";
 import {
+  type CodingHarnessSelection,
   type SessionModel,
   SessionModelSchema,
   type SessionPreparation,
@@ -201,6 +202,23 @@ export class SessionStore {
     const next = { ...session };
     if (preparation === undefined) delete next.preparation;
     else next.preparation = preparation;
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Pin the coding harness used by this session's work-order rounds. A legacy session with a
+   * cursor but no selection necessarily came from Claude, the only historical round harness;
+   * selecting Codex clears that provider-specific pointer instead of handing it to Codex.
+   */
+  setCodingHarness(sessionId: string, selection: CodingHarnessSelection): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const currentId =
+      session.codingHarness?.id ??
+      (session.harnessCursor === undefined ? undefined : ("claude-code" as const));
+    const next: SessionModel = { ...session, codingHarness: selection };
+    if (currentId !== undefined && currentId !== selection.id) delete next.harnessCursor;
     this.save(next);
     return next;
   }

@@ -41,6 +41,7 @@ import type {
   RefinementResult,
   Review,
   RoundEvent,
+  RoundOperationProgressSnapshot,
   RoundRecord,
   RoundReportBoard,
   SessionTranscriptRow,
@@ -49,6 +50,8 @@ import type {
   SymbolInspection,
 } from "@rennet/protocol";
 import {
+  type CommandInput,
+  type CommandOutput,
   type ConversationAnchorWire,
   type DetectedForge,
   type DetectedHarness,
@@ -326,26 +329,20 @@ export interface DispatchDeps {
    * Map — deterministic ProjectMap + local knowledge set — from the on-disk project
    * store. Pure read: no rebuild, no model spend; absent/stale gates to typed absent.
    */
-  projectContextMap(projectId: string): Promise<ProjectContextMapResult>;
+  projectContextMap(input: CommandInput<"project.contextMap">): Promise<ProjectContextMapResult>;
   /**
    * Project-scoped context ask (change add-context-map-view): the same engine
    * `context.ask` runs for a review, keyed at the project's persisted tip. Model
    * spend through the user's own harness; unanswered/failed are first-class.
    */
-  projectContextAsk(input: {
-    projectId: string;
-    question: string;
-    scope?: string;
-  }): Promise<ProjectContextAskResult>;
+  projectContextAsk(input: CommandInput<"project.contextAsk">): Promise<ProjectContextAskResult>;
   /**
    * Human disposition of a knowledge statement (the R54 "a human confirms it"
    * surface): flip status by id, persist the set. Never edits the claim.
    */
-  knowledgeDisposition(input: {
-    projectId: string;
-    statementId: string;
-    disposition: "confirmed" | "rejected";
-  }): Promise<KnowledgeDispositionResult>;
+  knowledgeDisposition(
+    input: CommandInput<"project.knowledgeDisposition">,
+  ): Promise<KnowledgeDispositionResult>;
   /**
    * The Flagged lens's input (issue #138): the automated review layer's findings for
    * a review. The LIVE finding-generation runner (#32) is wired behind this — it
@@ -595,12 +592,22 @@ export interface DispatchDeps {
     dispatchId: string;
     sourcePatchsetId: string;
     askOccurrences: readonly AskOccurrence[];
-    // biome-ignore lint/suspicious/noConfusingVoidType: legacy compositions return void
-  }) => Promise<void | { readonly askDrain: "coordinator" }>;
+  }) => Promise<void | {
+    readonly askDrain: "coordinator";
+    readonly acceptedOperation: RoundOperationProgressSnapshot;
+    readonly settled: Promise<void>;
+  }>;
   /** Before the model composer runs, coalesce an exact re-dispatch or mark one queued
-   * behind the session's durable operation. `true` means the active operation owns it,
-   * so this command returns the mechanical preview without composing or starting work. */
-  readonly queueRoundIfActive?: (input: { review: Review; dispatchId: string }) => Promise<boolean>;
+   * behind the session's durable operation. A snapshot means that operation owns it,
+   * so this command returns the mechanical preview and durable acceptance receipt. */
+  readonly queueRoundIfActive?: (input: {
+    review: Review;
+    dispatchId: string;
+  }) => Promise<RoundOperationProgressSnapshot | undefined>;
+  /** Resume the retained failed operation for this review from its durable checkpoint. */
+  readonly retryRound?: (input: {
+    review: Review;
+  }) => Promise<CommandOutput<"round.retry"> | undefined>;
   /**
    * The rounds-ledger read for `session.rounds`: the `RoundRecord[]` the live rounds runtime
    * recorded for this review's session, resolved read-only (the READ side of `dispatchRound`'s

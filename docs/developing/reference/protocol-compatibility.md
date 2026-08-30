@@ -195,11 +195,13 @@ forward` / `reworked` verdict; `absent` and `failed` both require their honest
 reason. Step rows never use `drafted` or `absent`.
 
 The same successful absence is durable. A generation may record a lens in
-`absentLenses` with `no-material`; `board.read` then returns `board: null` plus
-that optional absence code. Older generations and older daemons omit the field,
-which remains the ordinary missing-board answer rather than being reclassified
-as successful absence. The client polls missing boards but treats the explicit
-absence as settled.
+`absentLenses`: Design uses `no-material`, Decisions uses `no-decisions`,
+Flagged uses `no-findings`, and Noise uses `no-noise`. `board.read` then returns
+`board: null` plus that optional absence code. Older generations and older
+daemons omit the field, which remains the ordinary missing-board answer rather
+than being reclassified as successful absence. The client polls missing boards
+but treats the explicit absence as settled and keeps its lens selectable so the
+reviewer can read the result.
 
 The same rule applies to drafting failures added after the absence field. A
 generation may carry a per-lens reason in `failedLenses`; `board.read` returns it

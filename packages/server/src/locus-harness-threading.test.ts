@@ -22,12 +22,10 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getClaudeHarness call (no host-default)", () => {
     const calls = callArgs("getClaudeHarness");
-    // Exactly the read-pipeline + handoff + project-contextAsk sites that survive the
-    // Board rebuild (B2), all `(locus, distroCwd)`. Exact, not `>=`: a new host-default
-    // site added later must fail this, not slip under a floor. (B06 dropped the
-    // knowledge-pass site: the swarm scheduler routes through claudeAdapterForRepo,
-    // which is itself one of the counted locus-threading call sites.)
-    expect(calls).toHaveLength(7);
+    // Exactly the direct read-pipeline + project-contextAsk sites and the shared
+    // claudeAdapterForRepo resolver used by handoff turns. Exact, not `>=`: a new
+    // host-default site added later must fail this, not slip under a floor.
+    expect(calls).toHaveLength(6);
     for (const arg of calls) {
       // Every call threads the repo-resolved `locus` variable — never `HOST_LOCUS`,
       // never a zero-arg host default.
@@ -37,19 +35,19 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getCodexResolution review turn", () => {
     const calls = callArgs("getCodexResolution");
-    // Exactly 2 call sites, ALL of them review-side turns threading the repo-resolved
+    // Exactly 3 call sites, ALL of them review-side turns threading the repo-resolved
     // `locus` — no HOST_LOCUS call survives. The host-global availability probe used to be
     // the one exception; C17's review finding 2 deleted it, because reusing this cache
     // (which holds a live adapter bound to a binary path) for the DISCLOSURE line is what
     // pinned the codex row until the daemon restarted. Detection now probes directly.
-    // W5 took the count from 3 to 2: the review-ask site now resolves through
-    // `codexExecutorForRepo`, which threads the locus itself AND roots the seat at the
+    // The review-ask site resolves through `codexExecutorForRepo`; coding rounds resolve
+    // through `codexAdapterForRepo`. Both thread the locus and root the seat at the
     // checkout. There is NO zero-arg form — the default parameter was removed, so
     // `getCodexResolution()` no longer typechecks. Exact, not `>=`: a new host-default site
     // added later must fail this, not slip under a floor.
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls.filter((arg) => arg === "HOST_LOCUS")).toHaveLength(0);
-    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(2);
+    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(3);
   });
 
   it("threads the locus through the read-pipeline via locusContextForRepo", () => {

@@ -225,14 +225,37 @@ export const publishTargetSchema = forgePublishTargetSchema;
 export const forgeReviewEventSchema = z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
 
 /** One review comment in the canonical `pr-review` shape (mirrors the ui preview). */
-export const reviewCommentSchema = z.object({
-  path: z.string().min(1),
-  /** The file line, when a span anchor is known (#78). Absent ⇒ a file-level note. */
-  line: z.number().int().min(1).optional(),
-  side: z.enum(["LEFT", "RIGHT"]),
-  type: dispositionTypeSchema,
-  body: z.string(),
-});
+export const reviewCommentSchema = z
+  .object({
+    path: z.string().min(1),
+    /** First line of a genuine multi-line span; absent for a single-line comment. */
+    startLine: z.number().int().min(1).optional(),
+    /** The final file line, when a span anchor is known (#78). Absent ⇒ a file-level note. */
+    line: z.number().int().min(1).optional(),
+    side: z.enum(["LEFT", "RIGHT"]),
+    type: dispositionTypeSchema,
+    body: z.string(),
+  })
+  .superRefine((comment, context) => {
+    if (comment.startLine !== undefined && comment.line === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "startLine requires line",
+        path: ["startLine"],
+      });
+    }
+    if (
+      comment.startLine !== undefined &&
+      comment.line !== undefined &&
+      comment.startLine > comment.line
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "startLine must be <= line",
+        path: ["startLine"],
+      });
+    }
+  });
 
 /**
  * One review-BODY note — the body stratum (B11 P0 finding 2, handoff-and-exits.md "The
@@ -262,12 +285,21 @@ export const reviewArtifactSchema = z
 export const forgeReviewThreadSchema = z
   .object({
     path: z.string(),
-    line: z.number().int().min(1),
     startLine: z.number().int().min(1).optional(),
+    line: z.number().int().min(1),
     side: z.enum(["LEFT", "RIGHT"]),
     body: z.string(),
   })
-  .strict();
+  .strict()
+  .superRefine((thread, context) => {
+    if (thread.startLine !== undefined && thread.startLine > thread.line) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "startLine must be <= line",
+        path: ["startLine"],
+      });
+    }
+  });
 
 /** The signed preview descriptor. Adapter-only marker, target, and ledger stay outside it. */
 export const forgeReviewPostDescriptorSchema = z
@@ -1051,6 +1083,18 @@ export const knowledgeSetSchema = z.object({
 });
 export type KnowledgeSetPayload = z.infer<typeof knowledgeSetSchema>;
 
+/** Wire-safe identity for one repository inside a workspace project. */
+export const projectRepositoryAddressSchema = z
+  .object({
+    repository: z.string().min(1),
+    forgeRepository: forgeRepoIdentitySchema.optional(),
+  })
+  .refine((address) => forgeRepositoryMatchesLegacy(address.repository, address.forgeRepository), {
+    path: ["forgeRepository"],
+    message: "forgeRepository must name the same owner/name as repository",
+  });
+export type ProjectRepositoryAddress = z.infer<typeof projectRepositoryAddressSchema>;
+
 export const projectContextMapResultSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ok"),
@@ -1067,6 +1111,10 @@ export const projectContextMapResultSchema = z.discriminatedUnion("status", [
      * compatibility with older daemons; current servers expose it when a journal exists.
      */
     run: projectProcessRunSchema.optional(),
+  }),
+  z.object({
+    status: z.literal("members"),
+    members: z.array(projectRepositoryAddressSchema).min(2),
   }),
 ]);
 export type ProjectContextMapResult = z.infer<typeof projectContextMapResultSchema>;

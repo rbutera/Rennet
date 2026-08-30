@@ -62,11 +62,51 @@ function nullableSubschema(sub: unknown): unknown {
   return { anyOf: [sub, { type: "null" }] };
 }
 
+function lowerRootObjectUnion(schema: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(schema.anyOf)) return schema;
+  const branches = schema.anyOf as unknown[];
+  if (branches.length === 0) return schema;
+  const objectBranches = branches.filter((branch): branch is Record<string, unknown> => {
+    if (branch === null || typeof branch !== "object" || Array.isArray(branch)) return false;
+    const record = branch as Record<string, unknown>;
+    return (
+      record.type === "object" &&
+      record.properties !== null &&
+      typeof record.properties === "object" &&
+      !Array.isArray(record.properties)
+    );
+  });
+  if (objectBranches.length !== branches.length) return schema;
+
+  const rootProperties =
+    schema.properties !== null &&
+    typeof schema.properties === "object" &&
+    !Array.isArray(schema.properties)
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  const properties: Record<string, unknown> = { ...rootProperties };
+  for (const branch of objectBranches) {
+    for (const [key, value] of Object.entries(branch.properties as Record<string, unknown>)) {
+      const existing = properties[key];
+      properties[key] = existing === undefined ? value : { anyOf: [existing, value] };
+    }
+  }
+  const rest = { ...schema };
+  delete rest.anyOf;
+  return {
+    ...rest,
+    type: "object",
+    properties,
+    required: [],
+    additionalProperties: false,
+  };
+}
+
 /**
  * The Codex analogue of `bodyJsonSchema`'s `$schema` strip for the Claude CLI.
  *
  * The `outputSchema` turn parameter feeds the schema to OpenAI structured outputs,
- * which is STRICT in two ways this transform reconciles the Zod projection with:
+ * which is strict in four ways this transform reconciles the Zod projection with:
  *
  *   1. Every object must set `additionalProperties: false`. Zod's `.loose()`
  *      projects `additionalProperties: {}` (a typeless node), which 400s. We flip
@@ -78,14 +118,27 @@ function nullableSubschema(sub: unknown): unknown {
  *      each previously-optional property to `required` but make it NULLABLE (`anyOf`
  *      with `{type:null}`) so the model can still signal absence; `stripNullDeep`
  *      then removes the emitted nulls, restoring the original optional semantics.
+ *   3. OpenAI structured outputs rejects `oneOf`. We weaken it to the supported
+ *      `anyOf` for generation; the original Zod schema still validates the emitted
+ *      body at the core boundary, preserving exclusive-union semantics.
+ *   4. OpenAI also rejects a root `anyOf`. When every branch is an object, we
+ *      merge its fields into one required-nullable generation envelope. Null
+ *      stripping restores the selected branch's original shape before parsing.
  *
  * Pure, deep, non-mutating.
  */
-export function sanitizeSchemaForCodex(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(sanitizeSchemaForCodex);
+function sanitizeSchemaNode(schema: unknown, atRoot: boolean): unknown {
+  if (Array.isArray(schema)) return schema.map((value) => sanitizeSchemaNode(value, false));
   if (schema === null || typeof schema !== "object") return schema;
+  const source = atRoot
+    ? lowerRootObjectUnion(schema as Record<string, unknown>)
+    : (schema as Record<string, unknown>);
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(source)) {
+    if (key === "oneOf" && Array.isArray(value)) {
+      out.anyOf = value.map((branch) => sanitizeSchemaNode(branch, false));
+      continue;
+    }
     if (
       key === "additionalProperties" &&
       value !== null &&
@@ -96,7 +149,7 @@ export function sanitizeSchemaForCodex(schema: unknown): unknown {
       out[key] = false; // OpenAI strict structured outputs demand a boolean here
       continue;
     }
-    out[key] = sanitizeSchemaForCodex(value);
+    out[key] = sanitizeSchemaNode(value, false);
   }
   const props = out.properties;
   if (props !== null && typeof props === "object" && !Array.isArray(props)) {
@@ -110,6 +163,10 @@ export function sanitizeSchemaForCodex(schema: unknown): unknown {
     if (out.additionalProperties === undefined) out.additionalProperties = false;
   }
   return out;
+}
+
+export function sanitizeSchemaForCodex(schema: unknown): unknown {
+  return sanitizeSchemaNode(schema, true);
 }
 
 /**

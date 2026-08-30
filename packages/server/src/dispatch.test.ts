@@ -2533,7 +2533,8 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(composed.artifact.comments).toEqual([
       {
         path: "src/current.ts",
-        line: 8,
+        startLine: 8,
+        line: 10,
         side: "LEFT",
         type: "request-change",
         body: "preserve the base-side contract",
@@ -2545,6 +2546,15 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
         anchor: "src/current.ts:999",
         type: "comment",
         body: "revisit the frozen concern",
+      },
+    ]);
+    expect(composed.post.threads).toEqual([
+      {
+        path: "src/current.ts",
+        startLine: 8,
+        line: 10,
+        side: "LEFT",
+        body: "**Requested change** — preserve the base-side contract",
       },
     ]);
     await expect(
@@ -5581,16 +5591,28 @@ describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposit
   };
 
   it("project.contextMap serves the persisted map + knowledge verbatim", async () => {
+    const projectContextMap = vi.fn<DispatchDeps["projectContextMap"]>(() =>
+      Promise.resolve({ status: "ok", map: sampleMap, knowledge: sampleKnowledge }),
+    );
     const { dispatch } = harness(
       undefined,
       {},
       {
-        projectContextMap: () =>
-          Promise.resolve({ status: "ok", map: sampleMap, knowledge: sampleKnowledge }),
+        projectContextMap,
       },
     );
-    const out = await dispatch("project.contextMap", { projectId: "proj-1" });
+    const forgeRepository = { forge: "gitlab", owner: "acme", name: "repo-b" };
+    const out = await dispatch("project.contextMap", {
+      projectId: "proj-1",
+      repository: "acme/repo-b",
+      forgeRepository,
+    });
     expect(out).toEqual({ status: "ok", map: sampleMap, knowledge: sampleKnowledge });
+    expect(projectContextMap).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      repository: "acme/repo-b",
+      forgeRepository,
+    });
   });
 
   it("project.contextMap returns a typed absent when nothing is persisted", async () => {
@@ -5623,12 +5645,16 @@ describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposit
     const { dispatch } = harness(undefined, {}, { projectContextAsk });
     const out = await dispatch("project.contextAsk", {
       projectId: "proj-1",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
       question: "is a.ts the entrypoint?",
       scope: "src",
     });
     expect(out).toEqual(answered);
     expect(projectContextAsk).toHaveBeenCalledWith({
       projectId: "proj-1",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
       question: "is a.ts the entrypoint?",
       scope: "src",
     });
@@ -5652,12 +5678,16 @@ describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposit
     const { dispatch } = harness(undefined, {}, { knowledgeDisposition });
     const out = await dispatch("project.knowledgeDisposition", {
       projectId: "proj-1",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
       statementId: "stmt-1",
       disposition: "confirmed",
     });
     expect(out).toEqual({ status: "ok", statement: confirmed });
     expect(knowledgeDisposition).toHaveBeenCalledWith({
       projectId: "proj-1",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
       statementId: "stmt-1",
       disposition: "confirmed",
     });

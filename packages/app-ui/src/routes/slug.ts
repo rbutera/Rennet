@@ -1,4 +1,9 @@
-import type { Review, SidebarSession } from "@rennet/protocol";
+import {
+  forgeRepositorySlug,
+  type ProjectRepositoryAddress,
+  type Review,
+  type SidebarSession,
+} from "@rennet/protocol";
 import { readCommandId, useCommand } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,10 +121,41 @@ export function useSlugResolution(slug: string): SlugResolution {
  *
  * Shares the `session.list` read `useSlugResolution` already runs — same cache key, one fetch.
  */
-export function useSessionProjectId(slug: string): string | null | undefined {
+export interface SessionProjectContextAddress {
+  readonly projectId: string;
+  readonly repositoryAddress?: ProjectRepositoryAddress;
+}
+
+export function useSessionProjectContextAddress(
+  slug: string,
+): SessionProjectContextAddress | null | undefined {
   const { data, pending } = useCommand("session.list", {}, { enabled: slug !== "" });
   if (pending) return undefined;
-  return data?.sessions.find((session) => session.id === slug)?.projectId ?? null;
+  const session = data?.sessions.find((candidate) => candidate.id === slug);
+  if (session === undefined) return null;
+  const repository =
+    session.repository ??
+    (session.forgeRepository === undefined
+      ? undefined
+      : forgeRepositorySlug(session.forgeRepository));
+  return {
+    projectId: session.projectId,
+    ...(repository === undefined
+      ? {}
+      : {
+          repositoryAddress: {
+            repository,
+            ...(session.forgeRepository === undefined
+              ? {}
+              : { forgeRepository: session.forgeRepository }),
+          },
+        }),
+  };
+}
+
+export function useSessionProjectId(slug: string): string | null | undefined {
+  const address = useSessionProjectContextAddress(slug);
+  return address === null || address === undefined ? address : address.projectId;
 }
 
 /** The review id `/s/:slug` is looking at, or `undefined` off a review (a chat-only

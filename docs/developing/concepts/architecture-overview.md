@@ -74,7 +74,12 @@ Update application is the other intentional daemon-stop boundary. The packaged
 daemon executes Electron's binary from inside the installed app bundle, so the
 desktop must await its verified graceful stop before Squirrel can replace that
 bundle. Both the renderer update action and the tray action share this one
-ordered handoff; a failed stop leaves the app open and surfaces the failure.
+ordered handoff. A failed stop leaves the app open and surfaces the failure. If
+the native updater rejects after it has closed the windows, the same operation
+restarts the daemon and recreates the window before reporting the error. A
+download failure is also reported rather than discarded as updater noise. On
+macOS, an out-of-bundle helper waits for ShipIt to replace the bundle and opens
+the installed version, covering native installs that exit without relaunching.
 
 ## Clients and reconnection
 

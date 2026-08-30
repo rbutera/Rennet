@@ -12,6 +12,7 @@ import {
   QuoteThreadSchema,
   RoundEventSchema,
   RoundLedgerRecordSchema,
+  RoundOperationProgressSnapshotSchema,
   SessionTranscriptSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
@@ -714,30 +715,53 @@ const definitions = {
   // Pure read of the persisted Repo Map: no rebuild, no model spend. An absent
   // or gate-failing snapshot is a typed absent, never a fabricated map.
   "project.contextMap": {
-    input: z.object({ projectId: z.string().min(1) }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: projectContextMapResultSchema,
   },
   // Project-scoped orchestrator ask over the persisted snapshot + knowledge set.
   // Model spend through the user's own harness; unanswered and failed are
   // first-class honest results, never a clean answer without evidence.
   "project.contextAsk": {
-    input: z.object({
-      projectId: z.string().min(1),
-      question: z.string().min(1),
-      /** Restrict consulted context to a scope name or repo-relative subtree. */
-      scope: z.string().optional(),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+        question: z.string().min(1),
+        /** Restrict consulted context to a scope name or repo-relative subtree. */
+        scope: z.string().optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: projectContextAskResultSchema,
   },
   // Human disposition of a knowledge statement (the R54 "a human confirms it"
   // surface): flips status by id and persists the set. Disposition never edits
   // the claim, so the content-hash id stays stable.
   "project.knowledgeDisposition": {
-    input: z.object({
-      projectId: z.string().min(1),
-      statementId: z.string().min(1),
-      disposition: z.enum(["confirmed", "rejected"]),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+        statementId: z.string().min(1),
+        disposition: z.enum(["confirmed", "rejected"]),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: knowledgeDispositionResultSchema,
   },
   // ── The Flagged lens (issue #138) ──────────────────────────────────────────
@@ -1430,7 +1454,22 @@ const definitions = {
   // no addressed asks — an honest "nothing to dispatch", never a fabricated run.
   "round.dispatch": {
     input: z.object({ reviewId: z.string().min(1) }),
-    output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
+    output: z.object({
+      workOrder: composedHandoffBundleSchema,
+      dispatched: z.boolean(),
+      acceptedOperation: RoundOperationProgressSnapshotSchema.optional(),
+    }),
+  },
+  // Retry a retained failed round from the checkpoint named by its durable failure
+  // receipt. The operation identity and every completed effect receipt stay unchanged;
+  // `retry` tells the client whether the resumed work is still the coding round or only
+  // the post-landing board regeneration tail.
+  "round.retry": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({
+      retry: z.enum(["round", "regeneration"]),
+      acceptedOperation: RoundOperationProgressSnapshotSchema,
+    }),
   },
   // ── Session reads (the client seam B9 and B11 opened) ───────────────────────
   // Both are SERVED. `session.transcript` is the chat dock's read (C07): the header

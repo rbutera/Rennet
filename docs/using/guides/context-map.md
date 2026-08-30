@@ -14,10 +14,13 @@ project finishes indexing, or from the **Map** control in a project's New Chat
 header. It opens as a full view; leaving it lands on that project's New Chat.
 
 **Map** in a session's top bar opens the same map for that session's project,
-without leaving the session. Leaving it there returns to the board rather than to
-New Chat. A review opened by a direct link rather than through one of its
-sessions has no project to map, and the view says so instead of showing the
-board again.
+without leaving the session. In a workspace with several repositories, the
+session opens the map for the exact repository under review. The standalone
+project map first lists the member repositories so you can choose one; it never
+silently substitutes the workspace's first repository. Leaving a session map
+returns to the board rather than to New Chat. A review opened by a direct link
+rather than through one of its sessions has no project to map, and the view says
+so instead of showing the board again.
 
 The map starts generating in the background as soon as you add a project, even
 if you leave the indexing screen or start a review immediately. Opening **Map**
@@ -96,6 +99,13 @@ it completes. Reattaching or restarting resumes the first incomplete checkpoint.
 The stored knowledge layer is only replaced when a run finishes whole, and the
 processing view reports ready only after that verified set is readable. A
 half-finished run never presents itself as a complete map.
+
+Review boards record the exact structural snapshot and knowledge set they consumed.
+If a review starts while project processing is still running, its first draft can
+appear immediately with the context available at that moment. When processing
+finishes, Rennet queues a fresh draft for the same patchset; it never keeps the
+earlier degraded boards as the settled result. Reopening the app resumes the same
+project run and preserves this relationship between the map and its boards.
 
 There is no file cap, but there is a policy exclusion. Lockfiles, vendored trees,
 build output, generated files, and binaries are not sent to a worker: reading them

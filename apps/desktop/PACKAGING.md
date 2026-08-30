@@ -138,6 +138,8 @@ Packaged builds check every five minutes through [`update-electron-app`](https:/
 
 Rennet downloads an available update in the background. When the update is on disk, the logo menu and tray show the update-ready state. **Restart Rennet to update** applies it. `notifyUser: false` disables the library's restart dialog.
 
+The packaged-app smoke reads the main-process source map from the built `app.asar` and requires the complete updater handoff: the renderer IPC and tray converge on one apply operation, bundle preparation precedes the native installer, macOS arms an out-of-bundle relaunch helper before ShipIt replaces the app, and a rejected native handoff restores the daemon and window before reporting the error. Its focused test removes the relaunch wiring and requires the smoke assertion to fail, so the packaged check cannot pass on the close-without-update regression by omission.
+
 Windows reads Squirrel artifacts from the latest GitHub Release. It also checks for a newer staged `app-<version>` directory at startup and every five minutes, so a missed Electron event does not lose the ready state.
 
 macOS uses `update.electronjs.org`, which derives its feed from non-draft, non-prerelease GitHub Releases. The updater starts only in a packaged application with a verified Developer ID signature. Development, tests, and ad hoc packages never contact the feed.

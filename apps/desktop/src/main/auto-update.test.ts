@@ -38,6 +38,8 @@ vi.mock("update-electron-app", () => ({
 }));
 
 import {
+  APPLY_HANDOFF_TIMEOUT_MS,
+  armMacUpdateRelaunch,
   createAutoUpdateStarter,
   createUpdateReadiness,
   isAutoUpdateEligible,
@@ -226,6 +228,77 @@ describe("startAutoUpdate wiring", () => {
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
+  it("restores a usable app and reports a native install handoff failure", async () => {
+    const cancelRelaunchAfterApply = vi.fn();
+    const armRelaunchAfterApply = vi.fn(() => cancelRelaunchAfterApply);
+    const recoverAfterApplyFailure = vi.fn(async () => undefined);
+    const reportApplyFailure = vi.fn();
+    const handle = startAutoUpdate(isTrusted, quietLogger, {
+      prepareToApply: async () => undefined,
+      armRelaunchAfterApply,
+      recoverAfterApplyFailure,
+      reportApplyFailure,
+    });
+
+    await handle.applyUpdate();
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
+    expect(armRelaunchAfterApply.mock.invocationCallOrder[0]).toBeLessThan(
+      autoUpdaterMock.quitAndInstall.mock.invocationCallOrder[0] ?? 0,
+    );
+    autoUpdaterMock.emit("error", new Error("ShipIt could not stage the relaunch"));
+
+    await vi.waitFor(() => expect(recoverAfterApplyFailure).toHaveBeenCalledTimes(1));
+    expect(cancelRelaunchAfterApply).toHaveBeenCalledTimes(1);
+    expect(cancelRelaunchAfterApply.mock.invocationCallOrder[0]).toBeLessThan(
+      recoverAfterApplyFailure.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(reportApplyFailure).toHaveBeenCalledWith("ShipIt could not stage the relaunch");
+    expect(recoverAfterApplyFailure.mock.invocationCallOrder[0]).toBeLessThan(
+      reportApplyFailure.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("recovers when the native handoff silently closes the window without quitting", async () => {
+    vi.useFakeTimers();
+    try {
+      const recoverAfterApplyFailure = vi.fn(async () => undefined);
+      const reportApplyFailure = vi.fn();
+      const handle = startAutoUpdate(isTrusted, quietLogger, {
+        prepareToApply: async () => undefined,
+        recoverAfterApplyFailure,
+        reportApplyFailure,
+      });
+
+      await handle.applyUpdate();
+      await vi.advanceTimersByTimeAsync(APPLY_HANDOFF_TIMEOUT_MS);
+
+      expect(recoverAfterApplyFailure).toHaveBeenCalledTimes(1);
+      expect(reportApplyFailure).toHaveBeenCalledWith(
+        "The native updater closed Rennet without starting the install.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a download failure without running install recovery", async () => {
+    const recoverAfterApplyFailure = vi.fn(async () => undefined);
+    const reportApplyFailure = vi.fn();
+    startAutoUpdate(isTrusted, quietLogger, {
+      recoverAfterApplyFailure,
+      reportApplyFailure,
+    });
+
+    autoUpdaterMock.emit("update-available");
+    autoUpdaterMock.emit("error", new Error("download checksum mismatch"));
+
+    await vi.waitFor(() =>
+      expect(reportApplyFailure).toHaveBeenCalledWith("download checksum mismatch"),
+    );
+    expect(recoverAfterApplyFailure).not.toHaveBeenCalled();
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+  });
+
   it("degrades to a silent no-op when the update client throws (unsigned macOS)", () => {
     updateElectronApp.mockImplementationOnce(() => {
       throw new Error("code signing required");
@@ -234,6 +307,71 @@ describe("startAutoUpdate wiring", () => {
     autoUpdaterMock.emit("error", new Error("still quiet"));
     expect(windowSends).toEqual([]);
   });
+});
+
+describe("armMacUpdateRelaunch", () => {
+  it("spawns an out-of-bundle helper with positional app data and supports cancellation", () => {
+    const child = { unref: vi.fn(), kill: vi.fn() };
+    const spawnProcess = vi.fn(() => child) as unknown as typeof import("node:child_process").spawn;
+
+    const cancel = armMacUpdateRelaunch("/Applications/Rennet Test.app", "0.4.2", {
+      parentPid: 417,
+      openerPath: "/test/open",
+      spawnProcess,
+    });
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "/bin/sh",
+      expect.arrayContaining([
+        "rennet-update-relaunch",
+        "417",
+        "/Applications/Rennet Test.app",
+        "0.4.2",
+        "/test/open",
+      ]),
+      { detached: true, stdio: "ignore" },
+    );
+    expect(child.unref).toHaveBeenCalledTimes(1);
+    cancel();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "opens the installed app after the parent is gone and the bundle version changes",
+    async () => {
+      const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } =
+        require("node:fs") as typeof import("node:fs");
+      const { tmpdir } = require("node:os") as typeof import("node:os");
+      const { join } = require("node:path") as typeof import("node:path");
+      const root = mkdtempSync(join(tmpdir(), "rennet-update-relaunch-"));
+      const appPath = join(root, "Rennet Test.app");
+      const markerPath = join(root, "opened.txt");
+      const openerPath = join(root, "open-test-app");
+      try {
+        mkdirSync(join(appPath, "Contents"), { recursive: true });
+        writeFileSync(
+          join(appPath, "Contents", "Info.plist"),
+          `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>0.4.3</string></dict></plist>`,
+        );
+        writeFileSync(openerPath, `#!/bin/sh\nprintf '%s' "$1" > "${markerPath}"\n`);
+        chmodSync(openerPath, 0o755);
+
+        const cancel = armMacUpdateRelaunch(appPath, "0.4.2", {
+          parentPid: 2_147_483_647,
+          openerPath,
+        });
+        try {
+          await vi.waitFor(() => expect(existsSync(markerPath)).toBe(true), { timeout: 2_000 });
+          expect(readFileSync(markerPath, "utf8")).toBe(appPath);
+        } finally {
+          cancel();
+        }
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
 });
 
 describe("auto-update eligibility", () => {

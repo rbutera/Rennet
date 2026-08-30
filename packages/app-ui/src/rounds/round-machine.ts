@@ -381,12 +381,23 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         ],
       };
     case "completed": {
+      if (snapshot.rerunRequested === true) {
+        return { phase: "dispatching", operation, prep: [], worker: [], tail: [] };
+      }
       const rows = {
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
         tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
       };
+      if (snapshot.draining === true) {
+        if (state.result.kind === "unchanged") return { phase: "committing", ...rows };
+        return {
+          phase: "verifying",
+          ...rows,
+          tail: [...rows.tail, reportRow(state.result.report)],
+        };
+      }
       if (state.result.kind === "unchanged") return { phase: "unchanged", ...rows };
       return {
         phase: "composed",

@@ -546,6 +546,118 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.store.read(completed.sessionId)).toBeUndefined();
   });
 
+  it("publishes completion as draining until the durable Return handback is recorded", async () => {
+    const test = scenario();
+    const completed = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async drainTerminal() {
+          return { kind: "return", returnedAt: 2_000_000_000_000 };
+        },
+      },
+    }).submit(operation());
+
+    expect(completed.state.phase).toBe("completed");
+    const retained = test.store.read(completed.sessionId);
+    expect(retained?.state.phase).toBe("completed");
+    if (retained?.state.phase !== "completed") throw new Error("expected retained completion");
+    expect(retained.state.returnedAt).toBe(2_000_000_000_000);
+    const publishedCompletions = test.published.filter(
+      (entry) => entry.state.phase === "completed",
+    );
+    expect(publishedCompletions).toHaveLength(2);
+    expect(publishedCompletions[0]?.state).not.toHaveProperty("returnedAt");
+    expect(publishedCompletions[1]?.state).toHaveProperty("returnedAt", 2_000_000_000_000);
+  });
+
+  it("replaces a queued rerun without publishing round one as handed back", async () => {
+    const test = scenario();
+    const releaseDrain = deferred<void>();
+    const replacement = operation({ operationId: "operation-2", roundNumber: 2 });
+    const ports: RoundExecutionPorts = {
+      ...test.ports,
+      async drainTerminal({ operation: current }) {
+        if (current.operationId === replacement.operationId) {
+          return { kind: "return", returnedAt: 2_000_000_000_001 };
+        }
+        if (current.rerunRequested) return { kind: "replace", operation: replacement };
+        await releaseDrain.promise;
+        return { kind: "return", returnedAt: 2_000_000_000_000 };
+      },
+    };
+    const coordinator = createRoundExecutionCoordinator({ store: test.store, ports });
+    const first = coordinator.submit(operation());
+    await waitUntil(() => test.store.read("session-1")?.state.phase === "completed");
+
+    const second = coordinator.submit(replacement);
+    expect(second).toBe(first);
+    expect(test.store.read("session-1")?.rerunRequested).toBe(true);
+    releaseDrain.resolve(undefined);
+    await first;
+
+    const retained = test.store.read("session-1");
+    expect(retained?.operationId).toBe(replacement.operationId);
+    expect(retained?.state).toHaveProperty("returnedAt", 2_000_000_000_001);
+    expect(
+      test.published.some(
+        (entry) =>
+          entry.operationId === "operation-1" &&
+          entry.state.phase === "completed" &&
+          entry.state.returnedAt !== undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it("retries the Return receipt when a rerun wins its compare-and-swap", async () => {
+    const test = scenario();
+    const replacement = operation({ operationId: "operation-2", roundNumber: 2 });
+    let workerCalls = 0;
+    let injectedRerun = false;
+    const compareAndSwap = test.store.compareAndSwap.bind(test.store);
+    vi.spyOn(test.store, "compareAndSwap").mockImplementation((expected, next) => {
+      if (
+        !injectedRerun &&
+        next.state.phase === "completed" &&
+        next.state.returnedAt !== undefined
+      ) {
+        injectedRerun = true;
+        test.store.requestRerun(expected);
+      }
+      return compareAndSwap(expected, next);
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async runWorker(input) {
+          workerCalls += 1;
+          return test.ports.runWorker(input);
+        },
+        async drainTerminal({ operation: current }) {
+          if (current.rerunRequested) return { kind: "replace", operation: replacement };
+          return {
+            kind: "return",
+            returnedAt:
+              current.operationId === replacement.operationId
+                ? 2_000_000_000_001
+                : 2_000_000_000_000,
+          };
+        },
+      },
+    });
+
+    await expect(coordinator.submit(operation())).resolves.toMatchObject({
+      operationId: replacement.operationId,
+    });
+
+    expect(injectedRerun).toBe(true);
+    expect(workerCalls).toBe(2);
+    const retained = test.store.read("session-1");
+    expect(retained?.operationId).toBe(replacement.operationId);
+    expect(retained?.state).toHaveProperty("returnedAt", 2_000_000_000_001);
+  });
+
   it("coalesces a repeated dispatch and only marks a distinct dispatch for rerun", async () => {
     const test = scenario();
     const worker = deferred<RoundWorkerReceipt>();
@@ -1024,6 +1136,71 @@ describe("createRoundExecutionCoordinator", () => {
     expect(settleCommits.mock.calls[0]?.[0].attempt.executionId).toBe("commit-recovery");
   });
 
+  it("uses the worker observer on recovery and never dispatches the worker twice", async () => {
+    const test = scenario();
+    seedWorkerRunning(test.store, operation());
+    const runWorker = vi.fn(async () => {
+      throw new Error("duplicate worker execution");
+    });
+    const observeWorker = vi.fn(async ({ attempt }) => ({
+      ...attempt,
+      completedAt: 20,
+      outcome: "failed" as const,
+      termination: { kind: "error" as const, reason: "worker interrupted by daemon restart" },
+      diff: "diff --git a/a.ts b/a.ts\n+partial edit\n",
+      changedPaths: ["a.ts"],
+    }));
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        observeWorker,
+        async drainTerminal() {
+          throw new Error("retain recovered worker evidence");
+        },
+      },
+      now: () => 20,
+    });
+
+    await expect(coordinator.recover()).rejects.toThrow("retain recovered worker evidence");
+    expect(runWorker).not.toHaveBeenCalled();
+    expect(observeWorker).toHaveBeenCalledTimes(1);
+    expect(observeWorker.mock.calls[0]?.[0].attempt.executionId).toBe("worker-recovery");
+    const failed = test.store.read("session-1");
+    expect(failed?.state.phase).toBe("failed");
+    if (failed?.state.phase !== "failed" || failed.state.failure.at !== "worker") {
+      throw new Error("expected recovered worker evidence");
+    }
+    expect(failed.state.failure.worker).toMatchObject({
+      outcome: "failed",
+      diff: "diff --git a/a.ts b/a.ts\n+partial edit\n",
+      changedPaths: ["a.ts"],
+    });
+  });
+
+  it("re-runs an interrupted gate through its observer without re-running the worker", async () => {
+    const test = scenario({ commitCount: 0 });
+    seedGateRunning(test.store, operation({ gatePlan: { kind: "configured", command: "check" } }));
+    const runWorker = vi.fn(async () => {
+      throw new Error("duplicate worker execution");
+    });
+    const runGate = vi.fn(async () => {
+      throw new Error("new gate execution");
+    });
+    const observeGate = vi.fn(test.ports.runGate);
+    const recovered = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: { ...test.ports, runWorker, runGate, observeGate },
+    }).recover();
+
+    expect(recovered[0]?.state.phase).toBe("completed");
+    expect(runWorker).not.toHaveBeenCalled();
+    expect(runGate).not.toHaveBeenCalled();
+    expect(observeGate).toHaveBeenCalledTimes(1);
+    expect(observeGate.mock.calls[0]?.[0].attempt.executionId).toBe("gate-recovery");
+  });
+
   it("marks an unobservable recovered worker as interrupted without dispatching it again", async () => {
     const test = scenario();
     seedWorkerRunning(test.store, operation());
@@ -1298,6 +1475,174 @@ describe("createRoundExecutionCoordinator", () => {
     expect(completed.state.phase).toBe("completed");
     expect(runWorker).toHaveBeenCalledTimes(2);
     expect(test.store.read(initial.sessionId)?.state.phase).toBe("completed");
+  });
+
+  it("retries a failed worker in the same operation and worktree", async () => {
+    const test = scenario();
+    let workerAttempt = 0;
+    const planWorker: RoundExecutionPorts["planWorker"] = () => {
+      test.calls.push("plan-worker");
+      workerAttempt += 1;
+      return { executionId: `worker-${workerAttempt}`, startedAt: 20 + workerAttempt };
+    };
+    const runWorker: RoundExecutionPorts["runWorker"] = vi.fn(async ({ attempt }) => {
+      test.calls.push("worker");
+      return workerAttempt === 1
+        ? {
+            ...attempt,
+            completedAt: 30,
+            outcome: "failed",
+            termination: { kind: "signal", signal: "SIGTERM" },
+            diff: "partial diff",
+            changedPaths: ["partial.ts"],
+          }
+        : {
+            ...attempt,
+            completedAt: 31,
+            outcome: "completed",
+            diff: "diff --git a/file.ts b/file.ts\n",
+            changedPaths: ["file.ts"],
+          };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        planWorker,
+        runWorker,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const failed = await coordinator.submit(operation());
+    expect(failed.state.phase).toBe("failed");
+    const completed = await coordinator.retry("session-1");
+
+    expect(completed?.state.phase).toBe("completed");
+    expect(runWorker).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "prepare-workspace")).toHaveLength(1);
+    expect(completed?.operationId).toBe(failed.operationId);
+    expect(completed?.askOccurrences).toEqual(failed.askOccurrences);
+    if (completed?.state.phase !== "completed") throw new Error("retry did not complete");
+    expect(completed.state.workspace.worktreePath).toBe("/rounds/operation-1");
+  });
+
+  it("retries a failed gate without repeating worker edits", async () => {
+    const test = scenario();
+    let gateAttempt = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const runGate: RoundExecutionPorts["runGate"] = vi.fn(async ({ attempt }) => {
+      test.calls.push("gate");
+      gateAttempt += 1;
+      return gateAttempt === 1
+        ? {
+            ...attempt,
+            completedAt: 30,
+            outcome: "failed",
+            termination: { kind: "exit", exitCode: 1 },
+          }
+        : { ...attempt, completedAt: 31, outcome: "passed", exitCode: 0 };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        runGate,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    expect((await coordinator.submit(operation())).state.phase).toBe("failed");
+    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
+
+    expect(runWorker).toHaveBeenCalledTimes(1);
+    expect(runGate).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "commits")).toHaveLength(1);
+  });
+
+  it("retries source landing from its persisted attempt without duplicating commits", async () => {
+    const test = scenario();
+    let landingAttempt = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const settleCommits = vi.fn(test.ports.settleCommits);
+    const landSourceChanges: RoundExecutionPorts["landSourceChanges"] = vi.fn(async (input) => {
+      test.calls.push("land-source");
+      landingAttempt += 1;
+      if (landingAttempt === 1) throw new Error("source landing failed");
+      return { ...input.attempt, outcome: "already-applied", landedAt: 32 };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        settleCommits,
+        landSourceChanges,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    expect((await coordinator.submit(operation())).state.phase).toBe("failed");
+    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
+
+    expect(runWorker).toHaveBeenCalledTimes(1);
+    expect(settleCommits).toHaveBeenCalledTimes(1);
+    expect(landSourceChanges).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "plan-source-landing")).toHaveLength(1);
+  });
+
+  it("retries board regeneration with the original reserved board identities", async () => {
+    const test = scenario();
+    let draftAttempt = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const settleCommits = vi.fn(test.ports.settleCommits);
+    const recordRound = vi.fn(test.ports.recordRound);
+    const draftReport: RoundExecutionPorts["draftReport"] = vi.fn(async (input) => {
+      test.calls.push("draft-report");
+      draftAttempt += 1;
+      if (draftAttempt === 1) throw new Error("board regeneration failed");
+      return { ...input.attempt, draftedAt: 40 };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        settleCommits,
+        recordRound,
+        draftReport,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const failed = await coordinator.submit(operation());
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed" || failed.state.failure.at !== "report-drafting") {
+      throw new Error("expected a report-drafting failure");
+    }
+    const reserved = failed.state.failure.report;
+    const completed = await coordinator.retry("session-1");
+
+    expect(completed?.state.phase).toBe("completed");
+    expect(runWorker).toHaveBeenCalledTimes(1);
+    expect(settleCommits).toHaveBeenCalledTimes(1);
+    expect(recordRound).toHaveBeenCalledTimes(1);
+    expect(draftReport).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "prepare-report")).toHaveLength(1);
+    if (completed?.state.phase !== "completed" || completed.state.result.kind !== "changed") {
+      throw new Error("retry did not complete regeneration");
+    }
+    expect(completed.state.result.report.reportBoardId).toBe(reserved.reportBoardId);
+    expect(completed.state.result.report.generation).toBe(reserved.generation);
   });
 
   it("retries a failed terminal drain before a fresh dispatch can replace its receipt", async () => {

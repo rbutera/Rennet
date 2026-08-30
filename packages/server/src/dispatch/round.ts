@@ -15,6 +15,7 @@ import {
   parseCommandInput,
   parseCommandOutput,
   ROUND_NO_REGEN,
+  type RoundOperationProgressSnapshot,
   type RoundRecord,
   sha256Hex,
 } from "@rennet/protocol";
@@ -195,12 +196,28 @@ export function roundHandlers(rt: DispatchRuntime) {
   const { deps, requireReviewById, activePatchsetOf } = rt;
   // Same-process coalescing, keyed by the same durable identity written into RoundRecord.
   // Model-authored work-order bytes never enter the key.
-  const inFlight = new Map<string, Promise<ComposedHandoffBundle>>();
+  const inFlight = new Map<
+    string,
+    Promise<{
+      readonly workOrder: ComposedHandoffBundle;
+      readonly acceptedOperation?: RoundOperationProgressSnapshot;
+    }>
+  >();
 
   const consumeCurrent = (reviewId: string, occurrences: readonly AskOccurrence[]): boolean =>
     consumeCurrentAskOccurrences(deps, reviewId, occurrences);
 
   return {
+    "round.retry": async (rawInput) => {
+      const name = "round.retry" as const;
+      const input = parseCommandInput(name, rawInput);
+      const review = requireReviewById(input.reviewId);
+      const retry = await deps.retryRound?.({ review });
+      if (retry === undefined) {
+        throw new Error(`Review ${review.id} has no failed round to retry.`);
+      }
+      return parseCommandOutput(name, retry);
+    },
     "round.dispatch": async (rawInput) => {
       const name = "round.dispatch" as const;
       const input = parseCommandInput(name, rawInput);
@@ -277,10 +294,12 @@ export function roundHandlers(rt: DispatchRuntime) {
       // The durable whole-round owner gets first refusal BEFORE the optional model composer.
       // A second dispatch while A is active records only "run again"; B's ask snapshot and
       // authored work order are rebuilt after A's exact occurrences drain.
-      if (await deps.queueRoundIfActive?.({ review, dispatchId: key })) {
+      const queuedOperation = await deps.queueRoundIfActive?.({ review, dispatchId: key });
+      if (queuedOperation !== undefined) {
         return parseCommandOutput(name, {
           workOrder: mechanicalComposition(bundle),
           dispatched: true,
+          acceptedOperation: queuedOperation,
         });
       }
       let run = inFlight.get(key);
@@ -298,29 +317,30 @@ export function roundHandlers(rt: DispatchRuntime) {
           // completed placeholder/real record is the cross-restart guard. Only after the
           // full dispatch (including regeneration) succeeds are its still-current asks
           // removed in one atomic batch.
-          const kicked = deps.dispatchRound?.({
+          const kicked = await deps.dispatchRound?.({
             review,
             workOrder,
             dispatchId: key,
             sourcePatchsetId,
             askOccurrences,
           });
-          if (kicked !== undefined) {
-            void kicked
-              .then((outcome) => {
-                if (outcome?.askDrain !== "coordinator") {
-                  consumeCurrent(review.id, askOccurrences);
-                }
-              })
-              .catch(() => inFlight.delete(key));
+          if (kicked?.askDrain === "coordinator") {
+            void kicked.settled.catch(() => inFlight.delete(key));
+            return { workOrder, acceptedOperation: kicked.acceptedOperation };
           }
-          return workOrder;
+          consumeCurrent(review.id, askOccurrences);
+          return { workOrder };
         })();
         inFlight.set(key, run);
         // A compose failure is retryable too - evict so a re-dispatch recomposes.
         run.catch(() => inFlight.delete(key));
       }
-      return parseCommandOutput(name, { workOrder: await run, dispatched: true });
+      const { workOrder, acceptedOperation } = await run;
+      return parseCommandOutput(name, {
+        workOrder,
+        dispatched: true,
+        ...(acceptedOperation === undefined ? {} : { acceptedOperation }),
+      });
     },
   } satisfies Record<string, CommandHandler>;
 }

@@ -124,6 +124,8 @@ export function updateSourceFor(platform: NodeJS.Platform, repo: string): IUpdat
 
 /** How often the staged-sibling state is re-checked (matches the update-check cadence). */
 export const STAGED_POLL_INTERVAL_MS = 5 * 60_000;
+/** Native quitAndInstall should terminate this process immediately after its state write. */
+export const APPLY_HANDOFF_TIMEOUT_MS = 3_000;
 
 /** The public repository updates come from. */
 export const UPDATE_REPO = "rbutera/rennet";
@@ -184,9 +186,15 @@ export interface AutoUpdateOptions {
   readonly detectStaged?: () => string | null;
   /** Release processes that execute from the app bundle before the installer replaces it. */
   readonly prepareToApply?: () => Promise<void>;
+  /** Restore the daemon and window after the native installer rejects its handoff. */
+  readonly recoverAfterApplyFailure?: () => Promise<void>;
+  /** Arm an out-of-bundle relaunch before ShipIt replaces the running macOS app. */
+  readonly armRelaunchAfterApply?: () => () => void;
   /** Surface an apply failure while the current app remains open. */
   readonly reportApplyFailure?: (message: string) => void;
 }
+
+type UpdatePhase = "idle" | "downloading" | "ready" | "applying";
 
 export function startAutoUpdate(
   isTrustedUrl: (value: string) => boolean,
@@ -196,7 +204,11 @@ export function startAutoUpdate(
   const detectStaged =
     options.detectStaged ?? (() => stagedNewerVersion(process.execPath, app.getVersion()));
   const prepareToApply = options.prepareToApply ?? (async () => undefined);
+  const recoverAfterApplyFailure = options.recoverAfterApplyFailure ?? (async () => undefined);
+  const armRelaunchAfterApply = options.armRelaunchAfterApply ?? (() => () => undefined);
   const reportApplyFailure = options.reportApplyFailure ?? (() => undefined);
+  let phase: UpdatePhase = "idle";
+  let cancelRelaunchAfterApply: (() => void) | null = null;
   // Whether THIS run saw the live update-downloaded event. When readiness was
   // seeded from a previously staged update instead, electron's quitAndInstall
   // may no-op (its internal downloaded flag is unset), so apply falls back to
@@ -209,6 +221,32 @@ export function startAutoUpdate(
     }
   });
 
+  const handleUpdaterError = async (error: unknown): Promise<void> => {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("[auto-update] updater error:", message);
+    if (phase === "applying") {
+      phase = readiness.ready ? "ready" : "idle";
+      cancelRelaunchAfterApply?.();
+      cancelRelaunchAfterApply = null;
+      try {
+        await recoverAfterApplyFailure();
+      } catch (recoveryError) {
+        const recoveryMessage =
+          recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+        reportApplyFailure(
+          `${message}\n\nRennet also could not restore its local daemon: ${recoveryMessage}`,
+        );
+        return;
+      }
+      reportApplyFailure(message);
+      return;
+    }
+    if (phase === "downloading") {
+      phase = "idle";
+      reportApplyFailure(message);
+    }
+  };
+
   // The one apply path, shared by the renderer badge's confirm AND the tray's
   // "Restart Rennet to update" line. The packaged daemon executes process.execPath from
   // inside Rennet.app; ShipIt cannot replace that bundle while the daemon is alive. Await the
@@ -220,6 +258,8 @@ export function startAutoUpdate(
     const attempt = (async () => {
       try {
         await prepareToApply();
+        phase = "applying";
+        cancelRelaunchAfterApply = armRelaunchAfterApply();
         if (!liveDownloadSeen && process.platform === "win32") {
           const stub = resolve(dirname(process.execPath), "..", basename(process.execPath));
           if (existsSync(stub)) {
@@ -229,10 +269,21 @@ export function startAutoUpdate(
           }
         }
         autoUpdater.quitAndInstall();
+        const handoffWatchdog = setTimeout(() => {
+          if (phase !== "applying") return;
+          void handleUpdaterError(
+            new Error("The native updater closed Rennet without starting the install."),
+          );
+        }, APPLY_HANDOFF_TIMEOUT_MS);
+        handoffWatchdog.unref?.();
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error("[auto-update] failed to apply update:", message);
-        reportApplyFailure(message);
+        if (phase === "applying") {
+          await handleUpdaterError(error);
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error("[auto-update] failed to prepare update:", message);
+          reportApplyFailure(message);
+        }
       }
     })();
     applyInFlight = attempt;
@@ -258,8 +309,12 @@ export function startAutoUpdate(
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
     liveDownloadSeen = true;
+    phase = "ready";
     logger.error("[auto-update] update-downloaded:", releaseName);
     readiness.markDownloaded(releaseName);
+  });
+  autoUpdater.on("update-available", () => {
+    phase = "downloading";
   });
   // The badge is a DISK FACT, not an event hope. Electron's live
   // `update-downloaded` was observed not firing on real Windows installs
@@ -282,9 +337,7 @@ export function startAutoUpdate(
   const stagedPoll = setInterval(seedFromDisk, STAGED_POLL_INTERVAL_MS);
   // Never hold the process open past app quit.
   stagedPoll.unref?.();
-  autoUpdater.on("error", (error) => {
-    logger.error("[auto-update] updater error (ignored):", error?.message ?? error);
-  });
+  autoUpdater.on("error", (error) => void handleUpdaterError(error));
   try {
     updateElectronApp({
       updateSource: updateSourceFor(process.platform, UPDATE_REPO),
@@ -299,6 +352,65 @@ export function startAutoUpdate(
     );
   }
   return { readiness, applyUpdate };
+}
+
+const MAC_UPDATE_RELAUNCH_SCRIPT = `
+parent_pid="$1"
+app_path="$2"
+running_version="$3"
+opener="$4"
+
+while /bin/kill -0 "$parent_pid" 2>/dev/null; do
+  /bin/sleep 0.1
+done
+
+attempt=0
+while [ "$attempt" -lt 600 ]; do
+  installed_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app_path/Contents/Info.plist" 2>/dev/null || true)
+  if [ -n "$installed_version" ] && [ "$installed_version" != "$running_version" ]; then
+    exec "$opener" "$app_path"
+  fi
+  attempt=$((attempt + 1))
+  /bin/sleep 0.1
+done
+
+exec "$opener" "$app_path"
+`;
+
+export interface MacUpdateRelaunchOptions {
+  readonly parentPid?: number;
+  readonly openerPath?: string;
+  readonly spawnProcess?: typeof spawn;
+}
+
+/**
+ * ShipIt runs outside the app bundle while it replaces that bundle. This helper does too: it
+ * waits for this Electron process to exit, then for the installed version to change, and opens
+ * the installed app. The fallback open after 60 seconds also restores the previous version when
+ * ShipIt exits without replacing it. Arguments stay positional so app paths never become shell.
+ */
+export function armMacUpdateRelaunch(
+  appPath: string,
+  runningVersion: string,
+  options: MacUpdateRelaunchOptions = {},
+): () => void {
+  const child = (options.spawnProcess ?? spawn)(
+    "/bin/sh",
+    [
+      "-c",
+      MAC_UPDATE_RELAUNCH_SCRIPT,
+      "rennet-update-relaunch",
+      String(options.parentPid ?? process.pid),
+      appPath,
+      runningVersion,
+      options.openerPath ?? "/usr/bin/open",
+    ],
+    { detached: true, stdio: "ignore" },
+  );
+  child.unref();
+  return () => {
+    child.kill("SIGTERM");
+  };
 }
 
 export function createAutoUpdateStarter(

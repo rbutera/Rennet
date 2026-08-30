@@ -72,6 +72,13 @@ flowchart TD
 Tool results keep both structured output and readable text. Terminal outcomes
 are a discriminated union of `completed`, `cancelled`, and `failed`, so missing
 usage or structured output cannot be mistaken for a successful empty value.
+Codex output schemas are normalized at the transport boundary to its strict
+structured-output subset: object fields become required and nullable, object
+extras are closed, and Zod's unsupported `oneOf` projection becomes `anyOf` for
+generation. A root union of object outcomes becomes one required-nullable object
+envelope, then emitted null fields are removed. Board jobs still parse the result
+through their original schema in core, so this normalization cannot weaken an
+accepted board.
 
 ## Cursor-resume and the turn loop
 
@@ -88,10 +95,14 @@ nothing (model, tools, cwd, system prompt) is sticky across it. After each turn
 the loop persists the updated cursor to the `SessionStore`.
 
 The loop is instantiated in the composition root (`packages/server/src/
-create-server.ts`), one per repository root. Every coding turn a round dispatches
-runs through it, which buys two things: a second round **resumes** the
-conversation the first left off at rather than starting cold, and the turn's
-events are **captured** for the display transcript. It does not add
+create-server.ts`), one per repository root and selected harness. The first coding
+round resolves one enabled installed harness on the repository's execution host,
+preferring Claude when both are enabled, and pins that harness and version to the
+session before the worker starts. Later rounds resolve that exact provider or fail
+plainly; they never switch providers because one disappeared. Claude rounds resume
+the conversation the previous round left off at, while Codex rounds start a fresh
+Codex thread because its resume capability remains unverified. Both paths capture
+normalized events for the display transcript. The loop does not add
 serialization — the rounds runtime already enqueues each dispatch per session,
 including the checkpoint bracket, so the loop's own per-session queue is a
 redundant inner lock on this path. The issue-#18 checkpoint bracket is unchanged
@@ -202,6 +213,12 @@ turn/completed
 policy, approval policy, and optional output schema. Structured output returns
 through the app-server protocol. The adapter does not use an output scratch file
 for this path.
+
+The same agentic port runs write-enabled work-order rounds when Codex is the
+session's selected harness. It receives the full-access sandbox and never-ask
+approval posture used by the acting path, so it can edit, run the configured gate,
+and return checkpoint-measured changes. The durable worker and round receipts record
+the exact Codex version that executed the turn.
 
 The transport maps assistant deltas, completed messages, tool lifecycle events,
 token usage, failures, and interrupts into `HarnessEvent`. It terminates the

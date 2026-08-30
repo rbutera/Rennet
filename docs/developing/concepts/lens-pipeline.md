@@ -108,6 +108,9 @@ and calls board regeneration through this runtime.
      identifiers and patchset ids are exempt);
    - **citation resolves** — every citation is well-formed and resolves against
      the correct side of the patchset;
+   - **element references resolve** — every schema-declared element reference
+     names an element in that exact board, and the reference graph is acyclic so
+     the host can create each target before its citer;
    - **`skippedHunks` present** and its reasons specific;
    - **decision-grounded** — a decision carries non-empty evidence and
      alternatives;
@@ -178,11 +181,15 @@ Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
 files, and comments from each section's direct children. Repeated code refs for
 one path count as one file, and structural prose does not inflate the count. A
-pair with no persisted board answers `null`. When discovery successfully found
-no material, the generation also carries `absence: no-material`; the client
-treats that result as settled, omits its segment, and stops polling. A plain
-`null` remains missing because the board may still be in flight. No board is
-assembled from another generation's elements.
+pair with no persisted board answers `null`. A successful empty result is typed
+instead of persisted as a zero-element board: Design uses `no-material`,
+Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
+`no-noise`. The client treats that result as settled, keeps its segment
+selectable with explicit empty-state copy, and stops polling. Sequence and the
+round report require a reading result; an empty return gets one explicit retry,
+then becomes a retryable lens failure rather than an arrival. A plain `null`
+remains missing because the board may still be in flight. No board is assembled
+from another generation's elements.
 
 The client addresses a frozen board with `?generation=<id>` and treats an
 absent generation parameter as the live generation. Both the generation and

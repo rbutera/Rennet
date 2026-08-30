@@ -235,7 +235,10 @@ raw patchset in the familiar files-changed shape: a filterable file tree on the
 right, per-file cards with unified hunks and dual line-number gutters on the
 left, a summary line reading files changed with total additions and deletions,
 and a per-file **Viewed** checkbox that collapses the card and ticks the tally.
-Diff is not a board — it is the raw source, always one click away.
+Diff is not a board — it is the raw source, always one click away. Large
+patchsets keep the summary and complete file tree responsive while Rennet
+windows the file cards and diff rows; choosing any file still lands on its
+exact virtual position.
 
 ## Raise what you find
 
@@ -389,7 +392,8 @@ absent.
 Once a round has completed, a **History** control joins Map · Diff in the
 header. It lists one row per round with its tally; selecting a round renders its
 full report. Each modern row states when the round ran, its exact branch or
-detached target, and the outcome tally from that round's own report, so nothing
+detached target, the coding harness and version that ran it, and the outcome tally
+from that round's own report, so nothing
 you have already read ever vanishes or gets relabelled by a later round.
 
 ## Move around quickly
@@ -467,8 +471,13 @@ Now**. Rennet never restarts itself without you.
 Choosing **Update Now** or **Restart Rennet to update** first stops the local
 daemon that runs from the installed app bundle, then lets the platform updater
 replace that bundle and relaunch Rennet. The new app starts its matching daemon
-and reconnects to the durable review state. If the owned daemon cannot stop,
+and reconnects to the durable review state. On macOS, Rennet also arms a small
+out-of-bundle relaunch helper before ShipIt replaces the app, so a successful
+install still reopens when the native updater omits its own relaunch. If the owned daemon cannot stop,
 Rennet stays open and reports the failure instead of closing without installing.
+If macOS or Windows rejects the native install handoff after closing the window,
+Rennet restarts its daemon, restores the window, and shows the updater error so
+you can retry from the same review state.
 
 Closing the window leaves Rennet in the macOS menu bar or the Windows system
 tray, with the local daemon and any running review intact. **Open Rennet**

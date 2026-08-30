@@ -71,14 +71,30 @@ describe("codex app-server — real ChatGPT-desktop-bundled binary round-trip (g
       const session = await adapter.createSession({
         cwd: repo,
         outputSchema: {
-          type: "object",
-          properties: { answer: { type: "string" } },
-          required: ["answer"],
-          additionalProperties: false,
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["ok"] },
+                answer: { type: "string" },
+              },
+              required: ["kind", "answer"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["error"] },
+                message: { type: "string" },
+              },
+              required: ["kind", "message"],
+              additionalProperties: false,
+            },
+          ],
         },
       });
       await session.send({
-        prompt: 'Reply with exactly the JSON {"answer":"ok"}. Do not edit any files.',
+        prompt: 'Reply with exactly the JSON {"kind":"ok","answer":"ok"}. Do not edit any files.',
       });
       const events: HarnessEvent[] = [];
       let outcome: SessionOutcome | null = null;
@@ -89,7 +105,7 @@ describe("codex app-server — real ChatGPT-desktop-bundled binary round-trip (g
 
       expect(outcome?.status, `outcome: ${JSON.stringify(outcome)}`).toBe("completed");
       if (outcome?.status !== "completed") return;
-      expect(outcome.structuredOutput).toEqual({ answer: "ok" });
+      expect(outcome.structuredOutput).toEqual({ kind: "ok", answer: "ok" });
       // In-protocol usage (thread/tokenUsage/updated), not a session-log read.
       expect(outcome.usage?.total ?? 0).toBeGreaterThan(0);
     },

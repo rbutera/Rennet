@@ -16,8 +16,68 @@ import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
 const require = createRequire(import.meta.url);
+const asar = require("@electron/asar");
 const rootedProbeBytes = Buffer.from("installed rooted addon probe\n");
 const moveProbeBytes = Buffer.from("installed exclusive move probe\n");
+
+const updateLifecycleFragments = {
+  autoUpdate: [
+    "ipcMain.on(UPDATE_APPLY_CHANNEL",
+    'phase = "applying";',
+    "APPLY_HANDOFF_TIMEOUT_MS",
+    "cancelRelaunchAfterApply = armRelaunchAfterApply();",
+    "await recoverAfterApplyFailure();",
+    "/usr/libexec/PlistBuddy",
+    'exec "$opener" "$app_path"',
+    'autoUpdater.on("update-available"',
+    'autoUpdater.on("error", (error) => void handleUpdaterError(error))',
+  ],
+  main: [
+    "prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir)",
+    "armRelaunchAfterApply:",
+    "armMacUpdateRelaunch(",
+    "recoverAfterApplyFailure: async () => {",
+    "activeWsPort = await ensureDaemon(dataDir);",
+    "await ensureWindowShared();",
+    "applyUpdate: () => void update?.applyUpdate()",
+  ],
+};
+
+export function verifyPackagedUpdateLifecycleSources(sources) {
+  for (const [sourceName, fragments] of Object.entries(updateLifecycleFragments)) {
+    const source = sources[sourceName];
+    if (typeof source !== "string") {
+      throw new Error(`Packaged updater source is missing: ${sourceName}`);
+    }
+    for (const fragment of fragments) {
+      if (!source.includes(fragment)) {
+        throw new Error(`Packaged updater lifecycle is incomplete in ${sourceName}: ${fragment}`);
+      }
+    }
+  }
+}
+
+export function verifyPackagedUpdateLifecycle(
+  appPath,
+  { readArchiveFile = (archivePath, entryPath) => asar.extractFile(archivePath, entryPath) } = {},
+) {
+  const archivePath = join(resolve(appPath), "Contents", "Resources", "app.asar");
+  const mapBytes = readArchiveFile(archivePath, "dist/main/index.cjs.map");
+  const sourceMap = JSON.parse(Buffer.from(mapBytes).toString("utf8"));
+  if (!Array.isArray(sourceMap.sources) || !Array.isArray(sourceMap.sourcesContent)) {
+    throw new Error(`Packaged main source map is invalid: ${archivePath}`);
+  }
+  const sourceEndingWith = (ending) => {
+    const index = sourceMap.sources.findIndex((source) => source.endsWith(ending));
+    return index < 0 ? undefined : sourceMap.sourcesContent[index];
+  };
+  const sources = {
+    autoUpdate: sourceEndingWith("/src/main/auto-update.ts"),
+    main: sourceEndingWith("/src/main/index.ts"),
+  };
+  verifyPackagedUpdateLifecycleSources(sources);
+  return { archivePath, sources };
+}
 
 export function installedNativePayloadPaths(
   appPath,
@@ -219,6 +279,7 @@ export async function smokePackagedApp(appPathInput) {
   }
 
   const nativePayload = verifyInstalledNativePayload(appPath);
+  verifyPackagedUpdateLifecycle(appPath);
   const userData = mkdtempSync(join(tmpdir(), "rennet-package-smoke-"));
 
   // An inherited ELECTRON_RUN_AS_NODE=1 (any shell whose parent is itself an Electron
@@ -275,7 +336,7 @@ export async function smokePackagedApp(appPathInput) {
     }
 
     console.log(
-      `Packaged app signature, fuse policy, installed native payload (${nativePayload.nativeRoot}), launch, bundled-daemon health, and served browser UI smoke passed (daemon pid ${claim.pid}, port ${claim.wsPort}).`,
+      `Packaged app signature, fuse policy, update lifecycle, installed native payload (${nativePayload.nativeRoot}), launch, bundled-daemon health, and served browser UI smoke passed (daemon pid ${claim.pid}, port ${claim.wsPort}).`,
     );
   } finally {
     child.kill("SIGTERM");

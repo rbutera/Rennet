@@ -140,7 +140,7 @@ export function projectHandlers(rt: DispatchRuntime) {
       // absent or gate-failing snapshot returns the typed absent, never a
       // fabricated or partially-served map.
       const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(name, await deps.projectContextMap(input.projectId));
+      return parseCommandOutput(name, await deps.projectContextMap(input));
     },
     "project.contextAsk": async (rawInput) => {
       const name = "project.contextAsk" as const;
@@ -148,28 +148,14 @@ export function projectHandlers(rt: DispatchRuntime) {
       // model turn through the user's own harness; an absent harness or a
       // snapshot refusal is an honest failed result carrying its cost.
       const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(
-        name,
-        await deps.projectContextAsk({
-          projectId: input.projectId,
-          question: input.question,
-          ...(input.scope === undefined ? {} : { scope: input.scope }),
-        }),
-      );
+      return parseCommandOutput(name, await deps.projectContextAsk(input));
     },
     "project.knowledgeDisposition": async (rawInput) => {
       const name = "project.knowledgeDisposition" as const;
       // The human-confirm surface (R54): flip the statement's status by id and
       // persist. Disposition never edits the claim, so the id stays stable.
       const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(
-        name,
-        await deps.knowledgeDisposition({
-          projectId: input.projectId,
-          statementId: input.statementId,
-          disposition: input.disposition,
-        }),
-      );
+      return parseCommandOutput(name, await deps.knowledgeDisposition(input));
     },
   } satisfies Record<string, CommandHandler>;
 }

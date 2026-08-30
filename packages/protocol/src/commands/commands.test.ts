@@ -117,6 +117,7 @@ const ABSORBED_IDS = [
   "review.symbolLookup",
   "review.uiEvidence",
   "round.dispatch",
+  "round.retry",
   "session.archive",
   "session.cancelPreparation",
   "session.list",
@@ -167,7 +168,7 @@ const AGENT_INVENTORY = [
 ] as const;
 
 // The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
-// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 104 commands
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 105 commands
 // lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
 // input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
 // an action rather than a UI-driven read, its output is not the point, and it does not
@@ -178,7 +179,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(104);
+    expect(ABSORBED_IDS).toHaveLength(105);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
@@ -236,6 +237,36 @@ describe("command registry invariants (#465)", () => {
     };
     expect(parseCommandOutput("patchset.readSpan", served)).toEqual(served);
     expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
+  });
+
+  it("keeps Context Map repository addresses provider-qualified and non-contradictory", () => {
+    const address = {
+      projectId: "project-1",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
+    };
+    expect(parseCommandInput("project.contextMap", address)).toEqual(address);
+    expect(
+      parseCommandOutput("project.contextMap", {
+        status: "members",
+        members: [
+          {
+            repository: "acme/repo-a",
+            forgeRepository: { forge: "github", owner: "acme", name: "repo-a" },
+          },
+          {
+            repository: "acme/repo-b",
+            forgeRepository: address.forgeRepository,
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "members" });
+    expect(() =>
+      parseCommandInput("project.contextMap", {
+        ...address,
+        forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-a" },
+      }),
+    ).toThrow();
   });
 
   it("refuses an empty staged-ask anchor before it can become provenance-free body content", () => {
@@ -325,6 +356,77 @@ describe("command registry invariants (#465)", () => {
       reason: "The current review boards are still drafting.",
       retryable: true,
     });
+  });
+
+  it("preserves multi-line review spans across compose and publish wires", () => {
+    const artifact = {
+      opener: "I checked the complete affected range.",
+      comments: [
+        {
+          path: "src/range.ts",
+          startLine: 8,
+          line: 10,
+          side: "RIGHT" as const,
+          type: "request-change" as const,
+          body: "change the complete range",
+        },
+      ],
+      bodyNotes: [],
+    };
+    const post = {
+      event: "REQUEST_CHANGES" as const,
+      body: artifact.opener,
+      threads: [
+        {
+          path: "src/range.ts",
+          startLine: 8,
+          line: 10,
+          side: "RIGHT" as const,
+          body: "**Requested change** — change the complete range",
+        },
+      ],
+    };
+    const composed = {
+      status: "review" as const,
+      artifact,
+      post,
+      ledger: [],
+      payload: "canonical-review-range-bytes",
+      destination: "acme/orbital#7",
+      title: "acme/orbital#7",
+      compositionId: "composition-range",
+    };
+
+    expect(parseCommandOutput("publish.compose", composed)).toEqual(composed);
+    expect(
+      parseCommandInput("publish.review", {
+        commandId: "00000000-0000-4000-8000-000000000001",
+        reviewId: "review-range",
+        artifact,
+        post,
+        payload: composed.payload,
+        compositionId: composed.compositionId,
+        dryRun: true,
+      }),
+    ).toMatchObject({ artifact, post });
+    expect(() =>
+      parseCommandOutput("publish.compose", {
+        ...composed,
+        artifact: {
+          ...artifact,
+          comments: [{ ...artifact.comments[0], line: 7 }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseCommandOutput("publish.compose", {
+        ...composed,
+        post: {
+          ...post,
+          threads: [{ ...post.threads[0], line: 7 }],
+        },
+      }),
+    ).toThrow();
   });
 
   it("round-trips a provider-qualified PR target from compose into submit", () => {
