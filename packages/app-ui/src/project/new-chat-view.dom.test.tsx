@@ -399,10 +399,10 @@ describe("NewChatView", () => {
     renderView("p1", { p1: crossForgeLocalDetail() });
 
     const github = await screen.findByRole("button", {
-      name: /main.*GitHub.*acme\/widget.*Reviewed/i,
+      name: /main.*Reviewed.*GitHub.*acme\/widget/i,
     });
     const gitlab = screen.getByRole("button", {
-      name: /main.*GitLab.*acme\/widget.*Reviewed/i,
+      name: /main.*Reviewed.*GitLab.*acme\/widget/i,
     });
     expect(within(github).getByText("GitHub")).toBeTruthy();
     expect(within(gitlab).getByText("GitLab")).toBeTruthy();
@@ -412,10 +412,10 @@ describe("NewChatView", () => {
     const filter = screen.getByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "gitlab" } });
     expect(
-      screen.getByRole("button", { name: /main.*GitLab.*acme\/widget.*Reviewed/i }),
+      screen.getByRole("button", { name: /main.*Reviewed.*GitLab.*acme\/widget/i }),
     ).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: /main.*GitHub.*acme\/widget.*Reviewed/i }),
+      screen.queryByRole("button", { name: /main.*Reviewed.*GitHub.*acme\/widget/i }),
     ).toBeNull();
   });
 
@@ -429,18 +429,18 @@ describe("NewChatView", () => {
     fireEvent.change(screen.getByLabelText("Filter branches and change requests"), {
       target: { value: "github" },
     });
-    expect(await screen.findByText("Nothing matches.")).toBeTruthy();
+    expect(await screen.findByText("nothing matches")).toBeTruthy();
   });
 
   it("filtered-empty and empty states read honestly", async () => {
     renderView("p1", { p1: detailP1() });
     const filter = await screen.findByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "zzz-nothing" } });
-    expect(screen.getByText("Nothing matches.")).toBeTruthy();
+    expect(screen.getByText("nothing matches")).toBeTruthy();
 
     cleanup();
     renderView("p2", { p2: EMPTY_DETAIL });
-    await screen.findByText("No open branches or change requests yet.");
+    await screen.findByText("no open branches or change requests yet");
   });
 
   it("Escape is two-stage: clear the filter, then return to the prior surface", async () => {

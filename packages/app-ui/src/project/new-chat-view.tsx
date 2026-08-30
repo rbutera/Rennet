@@ -224,7 +224,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
         >
           <Icon icon={ArrowLeft} className="size-3.5" />
         </button>
-        <span className="flex min-w-0 items-center gap-1.5 text-sm">
+        <span className="flex min-w-0 items-center gap-1.5 text-13">
           <span className="shrink-0 text-ink-soft">{project?.name ?? projectId}</span>
           <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
           <span className="font-medium text-ink">New Chat</span>
@@ -233,14 +233,12 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
           <button
             type="button"
             onClick={() => navigate(projectMapPath(projectId))}
-            className="flex items-center gap-1.5 rounded-control border border-line px-2 py-1 text-xs font-medium text-ink-soft hover:bg-raised hover:text-ink"
+            className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs font-medium text-ink-soft transition-colors hover:bg-raised hover:text-ink"
           >
             <Icon icon={MapIcon} className="size-3.5" />
             Map
           </button>
-          <kbd className="rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-faint">
-            esc
-          </kbd>
+          <kbd className="rounded border border-line px-1 py-0.5 text-10 text-ink-faint">esc</kbd>
         </span>
       </header>
 
@@ -248,7 +246,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
         <div className="mx-auto flex w-full max-w-[720px] flex-col px-8 pt-[7vh] pb-6">
           <h1
             ref={newChatRef}
-            className="flex flex-wrap items-baseline justify-center gap-2 text-center font-display text-2xl font-medium tracking-tight text-ink"
+            className="flex flex-wrap items-baseline justify-center gap-2.5 text-center font-display text-2xl font-semibold tracking-tight text-ink"
           >
             What should we review in
             <ProjectPicker
@@ -286,11 +284,20 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
               {TABS.map(({ filter: value, label }) => (
                 <Toggle key={value} value={value} size="sm">
                   {label}
-                  <span className="text-2xs text-ink-faint">{counts[value]}</span>
+                  {/* The count on the ACTIVE tab lifts a notch: at one flat tone it reads
+                      as chrome belonging to the group, not to the tab you selected. */}
+                  <span
+                    className={cn(
+                      "text-10",
+                      value === tab ? "text-ink-soft" : "text-muted-foreground/60",
+                    )}
+                  >
+                    {counts[value]}
+                  </span>
                 </Toggle>
               ))}
             </ToggleGroup>
-            <label className="ml-auto flex h-7 w-52 items-center gap-1.5 rounded-control border border-line bg-surface px-2 focus-within:border-accent-line">
+            <label className="ml-auto flex h-7 w-52 items-center gap-1.5 rounded-control border border-line bg-card/40 px-2 focus-within:border-accent-line">
               <Icon icon={Search} className="size-3.5 shrink-0 text-ink-faint" />
               <input
                 value={filter}
@@ -305,14 +312,14 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                 }}
                 placeholder="Filter"
                 aria-label="Filter branches and change requests"
-                className="w-full bg-transparent text-xs text-ink placeholder:text-ink-faint focus-visible:outline-none"
+                className="w-full bg-transparent text-12-5 text-ink placeholder:text-ink-faint focus-visible:outline-none"
               />
             </label>
           </div>
 
           <div
             ref={smartListRef}
-            className="mt-3 flex flex-col divide-y divide-line overflow-hidden rounded-surface border border-line"
+            className="mt-3 flex flex-col divide-y divide-border/70 overflow-hidden rounded-lg border border-line"
           >
             <CheckoutRow
               branch={branch}
@@ -330,10 +337,10 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
               />
             ))}
             {visible.length === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-ink-faint">
+              <div className="px-3 py-5 text-center text-12-5 text-ink-faint">
                 {unclaimed.length === 0
-                  ? "No open branches or change requests yet."
-                  : "Nothing matches."}
+                  ? "no open branches or change requests yet"
+                  : "nothing matches"}
               </div>
             ) : null}
           </div>
@@ -425,7 +432,7 @@ function Composer({
 }) {
   return (
     <div className="shrink-0 px-8 pt-2 pb-5">
-      <div className="mx-auto flex w-full max-w-[720px] flex-col rounded-surface border border-line bg-surface focus-within:border-accent-line">
+      <div className="mx-auto flex w-full max-w-[720px] flex-col rounded-surface border border-line bg-card/60 shadow-sm focus-within:border-accent-line">
         <textarea
           value={message}
           onChange={(event) => onMessage(event.target.value)}
@@ -526,27 +533,43 @@ function ItemRow({
       )}
     >
       {row.kind === "local" ? (
-        <span className="flex w-full items-center gap-2">
-          <Icon
-            icon={GitBranch}
-            className={cn("size-3.5 shrink-0", row.local?.dirty ? "text-accent" : "text-ink-faint")}
-          />
-          <span className="min-w-0 truncate font-mono text-sm font-medium text-ink">
-            {row.branch}
+        // The repository sits on its own second line, under the branch — the same
+        // anatomy the change-request row already has. Inline it competed with the
+        // branch name for the one truncating slot, so in a multi-repo workspace the
+        // branch (the thing you are picking) was what got cut.
+        <>
+          <span className="flex w-full items-center gap-2">
+            <Icon
+              icon={GitBranch}
+              className={cn(
+                "size-3.5 shrink-0",
+                row.local?.dirty ? "text-accent" : "text-ink-faint",
+              )}
+            />
+            <span className="min-w-0 truncate font-mono text-sm font-medium text-ink">
+              {row.branch}
+            </span>
+            {row.local?.dirty ? (
+              <span
+                className="shrink-0 text-2xs font-medium text-accent"
+                title="uncommitted changes"
+              >
+                ● dirty
+              </span>
+            ) : null}
+            {row.local?.stage ? (
+              <span className="min-w-0 truncate text-2xs text-ink-faint">{row.local.stage}</span>
+            ) : null}
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              <StateChip row={row} />
+            </span>
           </span>
-          {row.local?.dirty ? (
-            <span className="shrink-0 text-2xs font-medium text-accent" title="uncommitted changes">
-              ● dirty
+          {showRepo ? (
+            <span className="flex pl-5.5">
+              <RepositoryLabel row={row} showForge={showForge} />
             </span>
           ) : null}
-          {row.local?.stage ? (
-            <span className="min-w-0 truncate text-2xs text-ink-faint">{row.local.stage}</span>
-          ) : null}
-          {showRepo ? <RepositoryLabel row={row} showForge={showForge} /> : null}
-          <span className="ml-auto flex shrink-0 items-center gap-2">
-            <StateChip row={row} />
-          </span>
-        </span>
+        </>
       ) : (
         <>
           <span className="flex w-full items-center gap-2">
