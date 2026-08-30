@@ -1477,6 +1477,174 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.store.read(initial.sessionId)?.state.phase).toBe("completed");
   });
 
+  it("retries a failed worker in the same operation and worktree", async () => {
+    const test = scenario();
+    let workerAttempt = 0;
+    const planWorker: RoundExecutionPorts["planWorker"] = () => {
+      test.calls.push("plan-worker");
+      workerAttempt += 1;
+      return { executionId: `worker-${workerAttempt}`, startedAt: 20 + workerAttempt };
+    };
+    const runWorker: RoundExecutionPorts["runWorker"] = vi.fn(async ({ attempt }) => {
+      test.calls.push("worker");
+      return workerAttempt === 1
+        ? {
+            ...attempt,
+            completedAt: 30,
+            outcome: "failed",
+            termination: { kind: "signal", signal: "SIGTERM" },
+            diff: "partial diff",
+            changedPaths: ["partial.ts"],
+          }
+        : {
+            ...attempt,
+            completedAt: 31,
+            outcome: "completed",
+            diff: "diff --git a/file.ts b/file.ts\n",
+            changedPaths: ["file.ts"],
+          };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        planWorker,
+        runWorker,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const failed = await coordinator.submit(operation());
+    expect(failed.state.phase).toBe("failed");
+    const completed = await coordinator.retry("session-1");
+
+    expect(completed?.state.phase).toBe("completed");
+    expect(runWorker).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "prepare-workspace")).toHaveLength(1);
+    expect(completed?.operationId).toBe(failed.operationId);
+    expect(completed?.askOccurrences).toEqual(failed.askOccurrences);
+    if (completed?.state.phase !== "completed") throw new Error("retry did not complete");
+    expect(completed.state.workspace.worktreePath).toBe("/rounds/operation-1");
+  });
+
+  it("retries a failed gate without repeating worker edits", async () => {
+    const test = scenario();
+    let gateAttempt = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const runGate: RoundExecutionPorts["runGate"] = vi.fn(async ({ attempt }) => {
+      test.calls.push("gate");
+      gateAttempt += 1;
+      return gateAttempt === 1
+        ? {
+            ...attempt,
+            completedAt: 30,
+            outcome: "failed",
+            termination: { kind: "exit", exitCode: 1 },
+          }
+        : { ...attempt, completedAt: 31, outcome: "passed", exitCode: 0 };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        runGate,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    expect((await coordinator.submit(operation())).state.phase).toBe("failed");
+    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
+
+    expect(runWorker).toHaveBeenCalledTimes(1);
+    expect(runGate).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "commits")).toHaveLength(1);
+  });
+
+  it("retries source landing from its persisted attempt without duplicating commits", async () => {
+    const test = scenario();
+    let landingAttempt = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const settleCommits = vi.fn(test.ports.settleCommits);
+    const landSourceChanges: RoundExecutionPorts["landSourceChanges"] = vi.fn(async (input) => {
+      test.calls.push("land-source");
+      landingAttempt += 1;
+      if (landingAttempt === 1) throw new Error("source landing failed");
+      return { ...input.attempt, outcome: "already-applied", landedAt: 32 };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        settleCommits,
+        landSourceChanges,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    expect((await coordinator.submit(operation())).state.phase).toBe("failed");
+    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
+
+    expect(runWorker).toHaveBeenCalledTimes(1);
+    expect(settleCommits).toHaveBeenCalledTimes(1);
+    expect(landSourceChanges).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "plan-source-landing")).toHaveLength(1);
+  });
+
+  it("retries board regeneration with the original reserved board identities", async () => {
+    const test = scenario();
+    let draftAttempt = 0;
+    const runWorker = vi.fn(test.ports.runWorker);
+    const settleCommits = vi.fn(test.ports.settleCommits);
+    const recordRound = vi.fn(test.ports.recordRound);
+    const draftReport: RoundExecutionPorts["draftReport"] = vi.fn(async (input) => {
+      test.calls.push("draft-report");
+      draftAttempt += 1;
+      if (draftAttempt === 1) throw new Error("board regeneration failed");
+      return { ...input.attempt, draftedAt: 40 };
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        runWorker,
+        settleCommits,
+        recordRound,
+        draftReport,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const failed = await coordinator.submit(operation());
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed" || failed.state.failure.at !== "report-drafting") {
+      throw new Error("expected a report-drafting failure");
+    }
+    const reserved = failed.state.failure.report;
+    const completed = await coordinator.retry("session-1");
+
+    expect(completed?.state.phase).toBe("completed");
+    expect(runWorker).toHaveBeenCalledTimes(1);
+    expect(settleCommits).toHaveBeenCalledTimes(1);
+    expect(recordRound).toHaveBeenCalledTimes(1);
+    expect(draftReport).toHaveBeenCalledTimes(2);
+    expect(test.calls.filter((call) => call === "prepare-report")).toHaveLength(1);
+    if (completed?.state.phase !== "completed" || completed.state.result.kind !== "changed") {
+      throw new Error("retry did not complete regeneration");
+    }
+    expect(completed.state.result.report.reportBoardId).toBe(reserved.reportBoardId);
+    expect(completed.state.result.report.generation).toBe(reserved.generation);
+  });
+
   it("retries a failed terminal drain before a fresh dispatch can replace its receipt", async () => {
     const test = scenario();
     let drainAttempts = 0;
