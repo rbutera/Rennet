@@ -533,8 +533,14 @@ function ComposedReviewPreview({
     [quoteThreads, codeComments],
   );
 
-  const [localReceipt, setLocalReceipt] = useState<PostReceipt | null>(null);
-  const receipt = hydratedReceipt ?? localReceipt;
+  const compositionKey = draft.marker ?? JSON.stringify(draft.post);
+  const [localPublication, setLocalPublication] = useState<{
+    readonly compositionKey: string;
+    readonly receipt: PostReceipt;
+  } | null>(null);
+  const receipt =
+    hydratedReceipt ??
+    (localPublication?.compositionKey === compositionKey ? localPublication.receipt : null);
 
   // The verdict shown is the COMPOSED one — the daemon binds it into the composition, so it is
   // exactly what posts (#435). Flipping it writes the durable override and recomposes; there is
@@ -675,7 +681,7 @@ function ComposedReviewPreview({
             onSubmit={
               onPost
                 ? async () => {
-                    setLocalReceipt(await onPost());
+                    setLocalPublication({ compositionKey, receipt: await onPost() });
                   }
                 : undefined
             }
