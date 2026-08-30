@@ -78,9 +78,11 @@ stack today (`--font-prose: var(--rn-font-sans)` in
 [`packages/theme/src/theme.css`](../theme/src/theme.css)); the alias exists so a
 serif body can be tried by editing one token instead of every surface.
 
-Arbitrary font sizes (`text-[…]`, raw `font-size`) are off-ramp; the package's
-design-ramp test forbids them in `packages/app-ui` sources — including the `font:`
-shorthand, which sizes type just as surely and is checked alongside `font-size:`.
+Arbitrary font sizes (`text-[…]`, inline `fontSize`) are off-ramp; the package's
+design-ramp test forbids them in `packages/app-ui` sources. In the entry
+stylesheet [`src/index.css`](src/index.css) it also reads the raw `font-size:`
+and `font:` declarations, checking the shorthand's size operand — which sizes
+type just as surely — against the ramp alongside `font-size:`.
 Its one exemption is decorative micro-type below the 10px floor: the first-run
 welcome's code-rain (`.rn-code-fragment`, 9px) and theme-preview miniature
 (`.rn-theme-preview code`, 8px), both illegible faux-code rendered as texture.

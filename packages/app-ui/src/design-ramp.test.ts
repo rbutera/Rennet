@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 // The desktop design ramp, utility edition (2026-08-19 overhaul). Components
 // style themselves with Tailwind utilities backed by @rennet/theme; the ramp is
-// the enumerated set of text-* utilities in packages/ui/DESIGN.md. What used to
+// the enumerated set of text-* utilities in packages/app-ui/DESIGN.md. What used to
 // be "no off-ramp font-size px in the CSS" is now "no arbitrary-value escapes
 // in the sources": an arbitrary text size, radius, or color is a
 // split-the-difference nudge or a fourth hue smuggled past the theme.
@@ -63,6 +63,65 @@ function selectorOf(css: string, index: number): string {
   return before.slice(start + 1).trim();
 }
 
+// The ramp, harvested from the one place it is enumerated for humans — the type
+// table in this package's DESIGN.md — so the allowlist cannot drift from the
+// documentation the way a hand-copied list would.
+const RAMP_VARS: ReadonlySet<string> = new Set(
+  [...readFileSync(join(SRC, "..", "DESIGN.md"), "utf8").matchAll(/`text-([a-z0-9-]+)`/g)].map(
+    ([, name]) => `--text-${name}`,
+  ),
+);
+
+function isRampSize(value: string): boolean {
+  const named = /^var\((--text-[a-z0-9-]+)\)$/.exec(value);
+  return named !== null && RAMP_VARS.has(named[1] ?? "");
+}
+
+// Everything the `font:` shorthand may carry BEFORE its size operand.
+const FONT_SHORTHAND_PREFIX =
+  /^(?:normal|italic|oblique|small-caps|bold|bolder|lighter|[1-9]00|(?:ultra-|extra-|semi-)?(?:condensed|expanded))$/;
+
+// The SIZE operand of a `font:` shorthand. Not "a ramp var appears somewhere in
+// the value" — `font: 17px/var(--text-xs) …` puts one in the line-height slot
+// and sizes type at a raw 17px. Split on top-level whitespace and `/` (parens
+// keep `var(…)` whole): with a slash, the size is the token before it;
+// without one, it is the first token that is not a style/weight/stretch keyword.
+function shorthandSize(value: string): string {
+  const tokens: string[] = [];
+  let depth = 0;
+  let token = "";
+  for (const ch of value) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth -= 1;
+    if (depth === 0 && (/\s/.test(ch) || ch === "/")) {
+      if (token) tokens.push(token);
+      if (ch === "/") tokens.push("/");
+      token = "";
+      continue;
+    }
+    token += ch;
+  }
+  if (token) tokens.push(token);
+  const slash = tokens.indexOf("/");
+  if (slash > 0) return tokens[slash - 1] ?? "";
+  return tokens.find((candidate) => !FONT_SHORTHAND_PREFIX.test(candidate)) ?? "";
+}
+
+// Every type-sizing declaration in `css` that is neither on the ramp nor one of
+// the two pinned decorative micro-type exemptions. The trailing `;` is optional:
+// a block's last declaration may omit it, and requiring it hid such a line.
+function offRampFontDeclarations(css: string): string[] {
+  return [...css.matchAll(/\bfont(-size)?:\s*([^;{}]+);?/g)]
+    .filter(([, sizeSuffix, rawValue]) => {
+      const value = (rawValue ?? "").trim();
+      // The shorthand may also be the `inherit` keyword, which sizes nothing new.
+      if (sizeSuffix !== "-size" && value === "inherit") return false;
+      return !isRampSize(sizeSuffix === "-size" ? value : shorthandSize(value));
+    })
+    .filter((match) => DECORATIVE_MICRO_TYPE.get(selectorOf(css, match.index)) !== match[2]?.trim())
+    .map((match) => match[0].trim());
+}
+
 describe("desktop design ramp (utility contracts)", () => {
   it("keeps every source on the enumerated ramp — no arbitrary escapes", () => {
     const files = sources(SRC).filter((f) => !f.endsWith(".test.ts") && !f.endsWith(".test.tsx"));
@@ -82,24 +141,28 @@ describe("desktop design ramp (utility contracts)", () => {
   });
 
   it("the entry stylesheet only sizes type through ramp variables", () => {
-    const entry = readFileSync(join(SRC, "index.css"), "utf8");
-    // `font:` shorthand sizes type as surely as `font-size:` does, and a
-    // font-size-only matcher let three of them through (8/9/12px mono) until
-    // 2026-08-30. Both forms are checked; the shorthand may also be `inherit`.
-    const offRamp = [...entry.matchAll(/\bfont(-size)?:\s*([^;]+);/g)].filter(
-      ([, sizeSuffix, rawValue]) => {
-        const value = (rawValue ?? "").trim();
-        const onRamp =
-          sizeSuffix === "-size"
-            ? /^var\(--text-[\w-]+\)$/.test(value)
-            : value === "inherit" || /\bvar\(--text-[\w-]+\)/.test(value);
-        return !onRamp;
-      },
-    );
-    const exempted = offRamp.filter(
-      (match) => DECORATIVE_MICRO_TYPE.get(selectorOf(entry, match.index)) !== match[2]?.trim(),
-    );
-    expect(exempted.map((m) => m[0]).join("\n")).toBe("");
+    // positive control: the DESIGN.md type table was actually harvested.
+    expect([...RAMP_VARS]).toContain("--text-display");
+    expect(RAMP_VARS.size).toBeGreaterThan(8);
+    const violations = offRampFontDeclarations(readFileSync(join(SRC, "index.css"), "utf8"));
+    expect(violations.join("\n")).toBe("");
+  });
+
+  // Mutation controls for the matcher above: each of these got past the
+  // font-size-only, semicolon-requiring, contains-a-ramp-var check it replaced.
+  it("the type-sizing matcher rejects the shorthands the old check let through", () => {
+    for (const declaration of [
+      ".x { font: 17px/var(--text-xs) var(--font-mono); }", // ramp var in the line-height slot only
+      ".x { font: var(--text-3xl) var(--font-mono); }", // off-ramp name
+      ".x { font-size: var(--text-3xl) }", // off-ramp name, no trailing semicolon
+      ".x { font: italic bold 17px var(--font-mono) }", // keyword prefix, raw px, no semicolon
+    ]) {
+      expect(offRampFontDeclarations(declaration), declaration).not.toEqual([]);
+    }
+    // …and still accepts a well-formed shorthand carrying prefix keywords.
+    expect(
+      offRampFontDeclarations(".x { font: italic bold var(--text-15)/1.4 var(--font-mono) }"),
+    ).toEqual([]);
   });
 
   it("the ramp utilities documented in DESIGN.md exist in the shared theme", () => {

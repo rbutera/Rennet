@@ -85,9 +85,10 @@ Rennet uses four type roles:
 - Geist Mono for source code and exact technical values, over the platform
   monospace stack as fallback.
 
-The desktop component ramp is `11, 12, 14, 16, 18, 20, 24` pixels at a 16-pixel
-root, plus the front-door display size. Components express these through
-Tailwind utilities from `text-2xs` through `text-2xl` and `text-display`. A
+The desktop component ramp is `10, 11, 12, 12.5, 13, 14, 15, 16, 18, 20, 24`
+pixels at a 16-pixel root, plus the front-door display size. Components express
+these through Tailwind utilities from `text-10` through `text-2xl` and
+`text-display`. A
 design-ramp test in each of `packages/ui` and `packages/app-ui` rejects
 arbitrary text sizes, radii, and color escapes in that package's source.
 
