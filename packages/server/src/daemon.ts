@@ -9,6 +9,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { defaultForgeDetectionDeps, resolveGitHubCliToken } from "@rennet/adapters";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, removeDaemonFile, writeDaemonFile } from "./daemon-file";
@@ -87,12 +88,16 @@ export async function runDaemon(
   config: DaemonConfig,
   options: { installSignalHandlers?: boolean } = {},
 ): Promise<RunningDaemon> {
+  const forgeDetectionDeps = defaultForgeDetectionDeps();
   const server = await createRennetServer({
     dataDir: config.dataDir,
     env: config.env,
     serverVersion: config.serverVersion,
     // The GitHub egress transport for a daemon: Node's global `fetch` (no Electron `net`).
     httpFetch: fetch,
+    // Production reads the live `gh` credential on every operation. Direct server
+    // construction has no CLI source unless a test or alternate shell supplies one.
+    githubCliToken: () => resolveGitHubCliToken(forgeDetectionDeps),
     uiDist: config.uiDist,
     hostBundlePath: config.hostBundlePath,
   });

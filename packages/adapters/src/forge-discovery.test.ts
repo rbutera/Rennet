@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  createForgeCommandRunner,
   defaultForgeDetectionDeps,
   detectForge,
   detectForges,
   FORGE_REGISTRY,
+  type ForgeCommandRunner,
   type ForgeDetectionDeps,
   githubForge,
+  resolveGitHubCliToken,
 } from "./forge-discovery";
 
 interface Fixture {
@@ -131,5 +134,110 @@ describe("forge-discovery (gh CLI detection)", () => {
     const deps = defaultForgeDetectionDeps();
     expect(deps.platform).toBe(process.platform);
     expect(githubForge.binary).toBe("gh");
+  });
+});
+
+describe("resolveGitHubCliToken", () => {
+  it("executes the exact proven gh path with the github.com token argv", async () => {
+    const { deps } = recordingDeps({
+      dirContents: { "/opt/homebrew/bin": ["gh"] },
+      executables: new Set(["/opt/homebrew/bin/gh"]),
+      versions: { "/opt/homebrew/bin/gh": "2.62.0" },
+    });
+    const calls: { executable: string; args: readonly string[] }[] = [];
+    const run: ForgeCommandRunner = (executable, args) => {
+      calls.push({ executable, args });
+      return Promise.resolve({ exitCode: 0, stdout: "  gho_from_cli\n" });
+    };
+
+    await expect(resolveGitHubCliToken(deps, run)).resolves.toEqual({
+      kind: "token",
+      token: "gho_from_cli",
+    });
+    expect(calls).toEqual([
+      {
+        executable: "/opt/homebrew/bin/gh",
+        args: ["auth", "token", "--hostname", "github.com"],
+      },
+    ]);
+  });
+
+  it("kills a stalled credential command at its deadline", async () => {
+    const run = createForgeCommandRunner(100);
+
+    await expect(
+      run(process.execPath, ["-e", "setInterval(() => undefined, 1_000)"]),
+    ).resolves.toEqual({ exitCode: 1, stdout: "" });
+  });
+
+  it("does not invoke a command when no gh binary is proven", async () => {
+    const { deps } = recordingDeps({ dirContents: { "/opt/homebrew/bin": ["git"] } });
+    const run: ForgeCommandRunner = () => {
+      throw new Error("must not run");
+    };
+
+    await expect(resolveGitHubCliToken(deps, run)).resolves.toEqual({ kind: "missing" });
+  });
+
+  it("keeps a present executable whose version probe fails gh-owned", async () => {
+    const { deps } = recordingDeps({
+      dirContents: { "/opt/homebrew/bin": ["gh"] },
+      executables: new Set(["/opt/homebrew/bin/gh"]),
+      versions: {},
+    });
+    const run: ForgeCommandRunner = () => {
+      throw new Error("must not ask an unproven binary for a token");
+    };
+
+    await expect(resolveGitHubCliToken(deps, run)).resolves.toEqual({ kind: "failure" });
+  });
+
+  it("uses a later valid candidate after an earlier executable fails its version probe", async () => {
+    const { deps } = recordingDeps({
+      dirContents: {
+        "/opt/homebrew/bin": ["gh"],
+        "/usr/local/bin": ["gh"],
+      },
+      executables: new Set(["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]),
+      versions: { "/usr/local/bin/gh": "2.62.0" },
+    });
+    const calls: string[] = [];
+    const run: ForgeCommandRunner = (executable) => {
+      calls.push(executable);
+      return Promise.resolve({ exitCode: 0, stdout: "gho_from_later_candidate" });
+    };
+
+    await expect(resolveGitHubCliToken(deps, run)).resolves.toEqual({
+      kind: "token",
+      token: "gho_from_later_candidate",
+    });
+    expect(calls).toEqual(["/usr/local/bin/gh"]);
+  });
+
+  it("keeps every present-CLI command failure gh-owned and secret-free", async () => {
+    const { deps } = recordingDeps({
+      dirContents: { "/opt/homebrew/bin": ["gh"] },
+      executables: new Set(["/opt/homebrew/bin/gh"]),
+      versions: { "/opt/homebrew/bin/gh": "2.62.0" },
+    });
+
+    const nonzero = await resolveGitHubCliToken(deps, () =>
+      Promise.resolve({ exitCode: 1, stdout: "gho_stdout_must_not_escape" }),
+    );
+    const empty = await resolveGitHubCliToken(deps, () =>
+      Promise.resolve({ exitCode: 0, stdout: " \n" }),
+    );
+    const thrown = await resolveGitHubCliToken(deps, () =>
+      Promise.reject(new Error("gho_error_must_not_escape")),
+    );
+
+    expect([nonzero, empty, thrown]).toEqual([
+      { kind: "failure" },
+      { kind: "failure" },
+      { kind: "failure" },
+    ]);
+    const serialized = JSON.stringify([nonzero, empty, thrown]);
+    expect(serialized).not.toContain("gho_stdout_must_not_escape");
+    expect(serialized).not.toContain("gho_error_must_not_escape");
   });
 });

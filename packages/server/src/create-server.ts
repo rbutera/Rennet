@@ -19,7 +19,6 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Octokit } from "@octokit/core";
 import {
   AskLogStore,
   applyVisibilitySwitch,
@@ -71,6 +70,7 @@ import {
   GitCheckpointStore,
   type GitExec,
   GitHubChangesetSource,
+  type GitHubCliTokenResult,
   GitHubForgeAdapter,
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
@@ -632,6 +632,8 @@ export interface RennetServerOptions {
   readonly openPath?: (absPath: string) => Promise<boolean>;
   /** The outbound HTTP transport for GitHub egress (the daemon's global fetch). */
   readonly httpFetch?: typeof globalThis.fetch;
+  /** Live `gh auth token` resolver. Absent means this server has no CLI auth source. */
+  readonly githubCliToken?: () => Promise<GitHubCliTokenResult>;
   /** Per-request deadline on GitHub egress (tests shrink it). Default 15s. */
   readonly httpTimeoutMs?: number;
   /** The server application's own version, surfaced in the WS `serverInfo` handshake. Defaults to a dev sentinel. */
@@ -1052,10 +1054,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   // ── The GitHub egress composition (issue #21, v4.2 device flow) ──────────────
   // The outbound HTTP is injected by the shell (the app owns the transport), so no
-  // code here holds a raw socket. The bearer is the STORED token — minted by the
-  // OAuth device flow or pasted as a PAT, kept in the daemon's 0600 token file —
-  // resolved LAZILY on the FIRST real egress, never at launch and never for a
-  // dry-run (which constructs the request without a credential).
+  // code here holds a raw socket. Auth resolves lazily on each top-level egress:
+  // the live `gh` credential first, then the daemon's 0600 token file as fallback.
+  // Construction and dry-runs never ask either source for a credential.
   // Connect-phase resilience: one retry on a momentary network blip, and a
   // plain-language error (never a raw undici internal) when GitHub is unreachable.
   // Every request ALSO carries an abort deadline (the lancelot field bug: a
@@ -1088,6 +1089,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     resolveGitHubAuth({
       octokit: bareOctokit,
       secretStore: gitHubSecretStore,
+      ...(options.githubCliToken === undefined ? {} : { cliToken: options.githubCliToken }),
       refresh: (refreshToken) => refreshGitHubCredential({ fetch: publishHttp, refreshToken }),
       withLock: withAccountLock,
       // One single-line, secret-free `[github-auth]` record per refresh observation
@@ -1109,45 +1111,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return auth;
   }
 
-  /** When an auth-derived memo must die: the credential's own expiry, minus skew. */
-  function memoDeadline(expiresAt: string | null): number | null {
-    if (!expiresAt) return null;
-    const parsed = Date.parse(expiresAt);
-    return Number.isNaN(parsed) ? null : parsed - 60 * 1000;
-  }
-
-  // A token-bound Octokit for a real egress, memoized so a multi-page publish does
-  // not re-validate (`/rate_limit` + `/user`) per request. Invalidated whenever the
-  // account changes AND when the underlying token nears its own expiry — an
-  // expiring-token app rotates every 8 hours, and a memo that outlives the token
-  // would 401 forever without ever consulting the refresh path. A failed
-  // resolution is never cached.
-  interface OctokitMemo {
-    promise: Promise<Octokit>;
-    deadline: number | null;
-  }
-  let octokitMemo: OctokitMemo | null = null;
-  async function resolveGitHubOctokit(): Promise<Octokit> {
-    if (octokitMemo && octokitMemo.deadline !== null && Date.now() > octokitMemo.deadline) {
-      octokitMemo = null;
-    }
-    octokitMemo ??= (() => {
-      const memo: OctokitMemo = {
-        promise: resolveGitHubAuthOk().then((auth) => {
-          if (octokitMemo === memo) memo.deadline = memoDeadline(auth.expiresAt);
-          return createGitHubOctokit({ fetch: publishHttp, token: auth.token });
-        }),
-        deadline: null,
-      };
-      return memo;
-    })();
-    const memo = octokitMemo;
-    try {
-      return await memo.promise;
-    } catch (error) {
-      if (octokitMemo === memo) octokitMemo = null;
-      throw error;
-    }
+  // Resolve a token-bound Octokit for each real adapter call. In particular, a
+  // daemon-lifetime client must not pin the token returned by `gh auth token`:
+  // `gh auth switch`, login, and logout take effect on the next operation.
+  async function resolveGitHubOctokit() {
+    const auth = await resolveGitHubAuthOk();
+    return createGitHubOctokit({ fetch: publishHttp, token: auth.token });
   }
 
   // Account mutations (device-flow store, paste, disconnect) are SERIALIZED so a
@@ -1160,86 +1129,62 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return next;
   }
 
-  // The live project-detail PR source (issue #37, B2). Resolved from the SAME stored
-  // token as egress, memoized so `project.detail` never re-validates per call. When
-  // auth is unavailable it stays `null` and `project.detail` degrades to the local-only
+  // The live project-detail PR source (issue #37, B2). Resolved from the SAME auth
+  // ladder as egress, once per `project.detail`. When auth is unavailable
+  // it stays `null` and `project.detail` degrades to the local-only
   // list (B1) — a missing token is a local-only surface, never a failed fetch rendered
-  // as "zero PRs". Resolution is lazy (first `project.detail`), never at launch —
-  // INVALIDATED on connect/paste/disconnect so the surface follows the account, and
-  // a distinct auth-unavailable REASON rides along so the detail screen can say
-  // WHICH problem stands between the user and the PR half.
+  // as "zero PRs". Resolution is lazy, never at launch, and a distinct
+  // auth-unavailable REASON and credential source ride along so the detail screen
+  // can say which problem stands between the user and the PR half without offering
+  // a fallback action for a `gh` credential the CLI still owns.
   interface ProjectPrResolution {
     source: ProjectPrSource | null;
+    credentialSource?: "gh" | "fallback";
     authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope" | "network";
+    authUnavailableCopy?: string;
   }
-  let projectPrMemo: { promise: Promise<ProjectPrResolution>; deadline: number | null } | null =
-    null;
   async function resolveProjectPrSource(): Promise<ProjectPrResolution> {
-    // Expiry-aware, like octokitMemo: a PR source bound to an 8-hour token must
-    // re-resolve (and thereby refresh) once that token nears its end.
-    if (projectPrMemo && projectPrMemo.deadline !== null && Date.now() > projectPrMemo.deadline) {
-      projectPrMemo = null;
-    }
-    projectPrMemo ??= (() => {
-      const memo: { promise: Promise<ProjectPrResolution>; deadline: number | null } = {
-        promise: Promise.resolve({ source: null }),
-        deadline: null,
-      };
-      memo.promise = (async (): Promise<ProjectPrResolution> => {
-        let auth: Awaited<ReturnType<typeof resolveAuth>>;
-        try {
-          auth = await resolveAuth();
-        } catch {
-          // `resolveGitHubAuth` classifies transport failures as the honest
-          // `network` reason itself, so only a NON-network fault lands here
-          // (store corruption, a broken response). Degrade to the local-only
-          // list rather than failing the whole project.detail RPC; the memo is
-          // cleared so the next call retries.
-          if (projectPrMemo === memo) projectPrMemo = null;
-          return { source: null };
-        }
-        if (!auth.ok) return { source: null, authUnavailable: auth.reason };
-        // Unconditional: this is OUR memo record; if it was already replaced, the
-        // stale record is unreachable and the write is harmless.
-        memo.deadline = memoDeadline(auth.expiresAt);
-        return {
-          source: createGitHubProjectPrSource({
-            octokit: createGitHubOctokit({ fetch: publishHttp, token: auth.token }),
-          }),
-        };
-      })();
-      return memo;
-    })();
-    // A transient validation failure must not poison the memo (mirrors octokitMemo):
-    // the next project.detail retries instead of failing forever.
-    const memo = projectPrMemo;
+    let auth: Awaited<ReturnType<typeof resolveAuth>>;
     try {
-      const resolved = await memo.promise;
-      // An unreachable GitHub is transient: memoizing the verdict would pin the
-      // surface local-only after the network recovers. The next call retries.
-      if (resolved.authUnavailable === "network" && projectPrMemo === memo) {
-        projectPrMemo = null;
-      }
-      return resolved;
-    } catch (error) {
-      if (projectPrMemo === memo) projectPrMemo = null;
-      throw error;
+      auth = await resolveAuth();
+    } catch {
+      // `resolveGitHubAuth` classifies transport failures as the honest `network`
+      // reason itself, so only a non-network fault lands here (store corruption,
+      // a broken response). Degrade to the local-only list rather than failing the
+      // whole project.detail RPC; the next call resolves from scratch and retries.
+      return { source: null };
     }
-  }
-
-  /** Drop every memoized auth-derived surface (the account changed). */
-  function invalidateGitHubMemos(): void {
-    projectPrMemo = null;
-    octokitMemo = null;
+    if (!auth.ok) {
+      return {
+        source: null,
+        authUnavailable: auth.reason,
+        authUnavailableCopy: auth.copy,
+        ...("source" in auth ? { credentialSource: auth.source } : {}),
+      };
+    }
+    return {
+      credentialSource: auth.source,
+      source: createGitHubProjectPrSource({
+        octokit: createGitHubOctokit({ fetch: publishHttp, token: auth.token }),
+      }),
+    };
   }
 
   /** The renderer-safe projection of the host auth state (the token never leaves). */
   function projectAuthStatus(auth: Awaited<ReturnType<typeof resolveAuth>>): GitHubAuthStatus {
-    if (auth.ok) return { state: "connected", login: auth.login, scopes: auth.scopes };
-    if (auth.reason === "insufficient-scope") {
-      return { state: "insufficient-scope", copy: auth.copy, scopes: auth.scopes };
+    if (auth.ok) {
+      return { state: "connected", source: auth.source, login: auth.login, scopes: auth.scopes };
     }
-    return { state: auth.reason, copy: auth.copy };
+    if (auth.reason === "insufficient-scope") {
+      return {
+        state: "insufficient-scope",
+        source: auth.source,
+        copy: auth.copy,
+        scopes: auth.scopes,
+      };
+    }
+    if (auth.reason === "not-connected") return { state: auth.reason, copy: auth.copy };
+    return { state: auth.reason, source: auth.source, copy: auth.copy };
   }
 
   // ── The one-time device-flow connect (v4.2) ──────────────────────────────────
@@ -1277,7 +1222,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             const stored = await withAccountLock(async () => {
               if (deviceFlow !== flow) return false;
               await gitHubSecretStore.setGitHubCredential(minted);
-              invalidateGitHubMemos();
               return true;
             });
             if (!stored) return;
@@ -1318,7 +1262,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (state.ok) {
         await withAccountLock(async () => {
           await gitHubSecretStore.setGitHubCredential({ token });
-          invalidateGitHubMemos();
         });
       }
       return projectAuthStatus(state);
@@ -1328,7 +1271,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       deviceFlow = null;
       await withAccountLock(async () => {
         await gitHubSecretStore.setGitHubCredential(null);
-        invalidateGitHubMemos();
       });
     },
   };
@@ -3464,7 +3406,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           prStates,
         );
       }
-      const { source, authUnavailable } = await resolveProjectPrSource();
+      const { source, credentialSource, authUnavailable, authUnavailableCopy } =
+        await resolveProjectPrSource();
       const forgeRegistry = createProjectForgeRegistry<ProjectPrSource>(
         source === null ? [] : [{ forge: "github", implementation: source }],
       );
@@ -3474,7 +3417,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         prStates,
         emit,
       );
-      return authUnavailable ? { ...detail, authUnavailable } : detail;
+      const finalAuthUnavailable = authUnavailable ?? detail.authUnavailable;
+      if (!finalAuthUnavailable) return detail;
+      return {
+        ...detail,
+        authUnavailable: finalAuthUnavailable,
+        ...(credentialSource === undefined ? {} : { authUnavailableSource: credentialSource }),
+        ...(authUnavailableCopy === undefined ? {} : { authUnavailableCopy }),
+      };
     },
     // The reviewed PR's worktree + setup status (historical-PR review). Honest
     // reads over MAIN's own index and the worktree's status files; a review with

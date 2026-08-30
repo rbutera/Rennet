@@ -1,8 +1,6 @@
 ---
 title: Connect to GitHub
 description: Rennet authenticates as you through the GitHub CLI, with an OAuth device-flow fallback, and everything GitHub-shaped goes straight from your machine to github.com.
-status: planned
-tracking: https://github.com/rbutera/rennet/issues/483
 ---
 
 Rennet talks to GitHub directly from your machine, as you. Its first choice of
@@ -29,14 +27,25 @@ A `gh`-sourced credential has no Rennet-side lifecycle: `gh` owns sign-in,
 refresh, and revocation. If `gh` is signed out, run `gh auth login` in a
 terminal; Rennet picks the credential up on the next GitHub request.
 
+**Settings → Environments → GitHub account** labels this state **GitHub CLI**. It
+shows the connected account but no Rennet **Disconnect** button, because Rennet
+has no credential to delete. Run `gh auth logout` in the project environment when
+you want to sign that CLI out.
+
 ## Device sign-in, the fallback
 
-Without `gh` installed, Rennet offers its own sign-in through GitHub's OAuth
-device flow. It stores one credential in a private file on disk and uses it the
-same way.
+When Rennet cannot resolve a `gh` binary in the environment, it offers its own
+sign-in through GitHub's OAuth device flow. Settings calls this **GitHub fallback**
+so it cannot be mistaken for the primary CLI path. Rennet stores one credential
+in a private file on disk and uses it for GitHub requests.
 
-1. Choose Connect GitHub. Rennet asks GitHub for a device code and shows you a
-   short one-time user code.
+Once Rennet resolves a `gh` binary, that source stays authoritative when its token
+command fails, GitHub rejects its credential, or it lacks a required scope. Rennet
+shows the corresponding `gh auth status`, `gh auth login`, or `gh auth refresh`
+repair instead of silently switching to a different fallback identity.
+
+1. Choose **Use fallback sign-in**. Rennet asks GitHub for a device code and
+   shows you a short one-time user code.
 2. Open `github.com/login/device`, enter the code, and authorize the Rennet
    OAuth app for your account.
 3. Rennet polls GitHub in the background until you authorize, then stores the
@@ -98,25 +107,30 @@ sign in again.
 
 ## Use a personal access token instead
 
-Settings also accepts a personal access token as a side door. Paste one and
-Rennet validates it against GitHub before storing it, so a bad paste saves
-nothing. A personal access token has no refresh half; Rennet uses it as-is until
-you replace or disconnect it. Give it the `repo` and `workflow` scopes.
+**Settings → Environments → GitHub account** also offers **Fallback access token**
+when no GitHub CLI binary is available in that environment. Paste a personal
+access token and Rennet validates it against GitHub before storing it, so a bad
+paste saves nothing. A personal access token has no refresh half; Rennet uses it
+as-is until you replace or disconnect it. Give it the `repo` and `workflow`
+scopes.
 
 ## Disconnect
 
-Disconnecting deletes the fallback token file; Rennet keeps no copy. A `gh`
-credential is disconnected with `gh auth logout`, since it was never Rennet's.
-Reviewing your local working tree keeps working; anything that needs GitHub
-prompts for a credential again.
+For a fallback connection, **Settings → Environments → GitHub account** shows
+**Disconnect**. It deletes the fallback token file; Rennet keeps no copy. A `gh`
+connection has no Rennet **Disconnect** button and is signed out with
+`gh auth logout`, since its credential was never Rennet's. Reviewing your local
+working tree keeps working; anything that needs GitHub prompts for a credential
+again.
 
 ## When something is wrong
 
 Rennet separates the failure states so you know what to fix:
 
-- Not connected: no credential available from `gh` or the fallback store. Sign
-  in with `gh auth login`, or use the device sign-in.
-- Token invalid: the credential was revoked or rejected. Sign in again.
+- Not connected: no `gh` binary was resolved and the fallback store is empty.
+  Make `gh` available in that environment, or use the device sign-in.
+- Token invalid: a CLI credential could not be read or was rejected, or a fallback
+  credential was revoked. Follow the source-specific repair shown in the app.
 - Insufficient scope: the token lacks a permission the request needs. For `gh`,
   `gh auth refresh -s repo,workflow`; for the fallback, reconnect and approve.
 - Network: Rennet could not reach `github.com`. This is never reported as a bad

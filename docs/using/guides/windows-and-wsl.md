@@ -121,11 +121,13 @@ opens inside the distro.
 
 ## Credential and publish boundaries
 
-Rennet does not read Claude Code or Codex credentials on either host. GitHub OAuth
-and paired-device tokens remain separate Rennet credentials.
+Rennet does not read Claude Code or Codex credentials on either host. GitHub
+credentials from `gh` remain owned by the CLI in that environment. OAuth
+fallback and paired-device tokens remain separate Rennet credentials.
 
-A WSL daemon keeps its GitHub credential in its own distro-native data dir, so the
-token and every GitHub connection sit inside the distro.
+A WSL daemon asks the distro's own `gh` for its primary GitHub credential. When
+that is unavailable, the daemon keeps Rennet's fallback credential in its own
+distro-native data directory.
 
 GitHub receives a review or pull request only through the corresponding outbound
 operation. A coding-agent turn can push its working branch because opening a pull

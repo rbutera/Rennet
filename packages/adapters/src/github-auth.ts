@@ -1,12 +1,14 @@
 import type { Octokit } from "@octokit/core";
 import type { SsoState } from "@rennet/core";
+import type { GitHubCliTokenResult } from "./forge-discovery";
 import { type GitHubCredential, GitHubOAuthDeclined } from "./github-device-flow";
 import { isGitHubNetworkError } from "./github-fetch";
 import { headerGet, requestErrorStatus } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
 /**
- * GitHub auth resolution over the STORED credential (v4.3 — expiration-aware).
+ * GitHub auth resolution over the user's `gh` credential, with the stored
+ * device-flow/PAT credential as fallback (v4.3 — expiration-aware).
  *
  * One credential, one store: the daemon's `SecretStore` holds a single GitHub
  * credential — minted by the OAuth device flow or pasted as a personal access
@@ -35,9 +37,12 @@ export interface SecretStore {
  * in-memory use ONLY — it is host-side and never projected to the renderer. The
  * failure variants are renderer-safe and each carry their own copy.
  */
+export type GitHubAuthSource = "gh" | "fallback";
+
 export type GitHubAuthState =
   | {
       ok: true;
+      source: GitHubAuthSource;
       token: string;
       login: string | null;
       scopes: string[];
@@ -46,9 +51,15 @@ export type GitHubAuthState =
       sso: SsoState;
     }
   | { ok: false; reason: "not-connected"; copy: string }
-  | { ok: false; reason: "token-invalid"; copy: string }
-  | { ok: false; reason: "insufficient-scope"; copy: string; scopes: string[] }
-  | { ok: false; reason: "network"; copy: string };
+  | { ok: false; source: GitHubAuthSource; reason: "token-invalid"; copy: string }
+  | {
+      ok: false;
+      source: GitHubAuthSource;
+      reason: "insufficient-scope";
+      copy: string;
+      scopes: string[];
+    }
+  | { ok: false; source: GitHubAuthSource; reason: "network"; copy: string };
 
 /**
  * A single refresh-exchange observation, secret-free BY CONSTRUCTION: there is no
@@ -92,6 +103,8 @@ export interface ResolveAuthDeps {
   /** An UNAUTHENTICATED client; the candidate token rides as an explicit header. */
   octokit: Octokit;
   secretStore: SecretStore;
+  /** The live `gh auth token` read. Only `missing` permits the fallback store to answer. */
+  cliToken?: () => Promise<GitHubCliTokenResult>;
   /** The scope the selected operation needs. Defaults to classic `repo`. */
   requiredScope?: string;
   /**
@@ -123,15 +136,21 @@ const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
 const COPY = {
   notConnected:
-    "GitHub is not connected. Connect with a one-time device sign-in, or paste a personal access token.",
+    "GitHub is not connected. Run `gh auth login`, connect a fallback with one-time device sign-in, or paste a personal access token.",
   tokenInvalid:
     "The stored GitHub token was revoked or has expired. Reconnect, or paste a fresh personal access token.",
+  cliTokenInvalid:
+    "The GitHub CLI credential was rejected. Run `gh auth login` again to repair it.",
+  cliTokenUnavailable:
+    "Rennet could not read the GitHub CLI credential. Run `gh auth status --hostname github.com` in this environment and repair the reported problem.",
   refreshDeclined:
     "The GitHub sign-in expired and could not be renewed. Reconnect with the one-time device sign-in.",
   insufficientScope:
     "This token is missing the `repo` scope needed to read pull requests. Reconnect to re-authorize, or paste a token that has it.",
+  cliInsufficientScope:
+    "The GitHub CLI credential is missing the `repo` scope needed to read pull requests. Run `gh auth refresh -s repo`.",
   network:
-    "GitHub is unreachable right now — showing local work only. Your connection and token are untouched.",
+    "GitHub is unreachable right now — showing local work only. Your GitHub credentials are untouched.",
 } as const;
 
 function parseScopes(header: string | null): string[] {
@@ -149,8 +168,11 @@ function parseScopes(header: string | null): string[] {
  */
 export async function validateGitHubToken(
   token: string,
-  deps: Pick<ResolveAuthDeps, "octokit" | "requiredScope">,
+  deps: Pick<ResolveAuthDeps, "octokit" | "requiredScope"> & {
+    readonly source?: GitHubAuthSource;
+  },
 ): Promise<GitHubAuthState> {
+  const source = deps.source ?? "fallback";
   const requiredScope = deps.requiredScope ?? "repo";
   const authHeader = { authorization: `Bearer ${token}` };
   let res: Awaited<ReturnType<Octokit["request"]>>;
@@ -159,13 +181,18 @@ export async function validateGitHubToken(
   } catch (error) {
     // A revoked or expired token is a 401 — its own problem, never "missing scope".
     if (requestErrorStatus(error) === 401) {
-      return { ok: false, reason: "token-invalid", copy: COPY.tokenInvalid };
+      return {
+        ok: false,
+        source,
+        reason: "token-invalid",
+        copy: source === "gh" ? COPY.cliTokenInvalid : COPY.tokenInvalid,
+      };
     }
     // An unreachable GitHub (timeout, DNS, refused connection) is the NETWORK's
     // failure, never the token's — mislabeling it token-invalid would prompt the
     // user to disconnect a perfectly fine token.
     if (isGitHubNetworkError(error)) {
-      return { ok: false, reason: "network", copy: COPY.network };
+      return { ok: false, source, reason: "network", copy: COPY.network };
     }
     throw error;
   }
@@ -177,7 +204,13 @@ export async function validateGitHubToken(
   // proved itself on /rate_limit, so only a PRESENT header missing the required
   // classic scope is an honest insufficient-scope rejection.
   if (scopesHeader !== null && !scopes.includes(requiredScope)) {
-    return { ok: false, reason: "insufficient-scope", copy: COPY.insufficientScope, scopes };
+    return {
+      ok: false,
+      source,
+      reason: "insufficient-scope",
+      copy: source === "gh" ? COPY.cliInsufficientScope : COPY.insufficientScope,
+      scopes,
+    };
   }
   // The signed-in login, for the settings row ("connected · @user"). Best-effort:
   // a failure here never fails auth — the token already validated.
@@ -192,6 +225,7 @@ export async function validateGitHubToken(
   const rateLimit = rateLimitHeader ? Number(rateLimitHeader) : null;
   return {
     ok: true,
+    source,
     token,
     login,
     scopes,
@@ -213,7 +247,7 @@ function nearExpiry(credential: GitHubCredential, now: number): boolean {
 
 /** The one declined-refresh outcome (proactive and reactive branches share it). */
 function refreshDeclinedState(): GitHubAuthState {
-  return { ok: false, reason: "token-invalid", copy: COPY.refreshDeclined };
+  return { ok: false, source: "fallback", reason: "token-invalid", copy: COPY.refreshDeclined };
 }
 
 /**
@@ -268,12 +302,32 @@ async function refreshAndPersist(
 }
 
 /**
- * Resolve GitHub auth from the stored credential (device-flow-minted or pasted
- * PAT — same store, same treatment). No stored credential is the honest
- * `not-connected` state. An expiring credential refreshes shortly BEFORE expiry
- * (and reactively after an unexpected 401), transparently to every caller.
+ * Resolve GitHub auth from the live CLI credential first. Only a missing CLI falls back
+ * to the device-flow/PAT store. A present CLI whose token cannot be read or whose token
+ * GitHub rejects stays authoritative, so resolution never changes identities silently.
+ * Stored expiring credentials retain their proactive and reactive refresh behavior.
  */
 export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAuthState> {
+  const cli = await deps.cliToken?.();
+  if (cli !== undefined) {
+    switch (cli.kind) {
+      case "token":
+        return validateGitHubToken(cli.token, { ...deps, source: "gh" });
+      case "failure":
+        return {
+          ok: false,
+          source: "gh",
+          reason: "token-invalid",
+          copy: COPY.cliTokenUnavailable,
+        };
+      case "missing":
+        break;
+      default: {
+        const unreachable: never = cli;
+        return unreachable;
+      }
+    }
+  }
   const stored = await deps.secretStore.getGitHubCredential();
   if (!stored || stored.token.length === 0) {
     return { ok: false, reason: "not-connected", copy: COPY.notConnected };
@@ -292,7 +346,7 @@ export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAu
       // stored pair is untouched (GitHub only rotates on success), so degrade
       // honestly instead of throwing raw or reading it as a dead session.
       if (isGitHubNetworkError(error)) {
-        return { ok: false, reason: "network", copy: COPY.network };
+        return { ok: false, source: "fallback", reason: "network", copy: COPY.network };
       }
       throw error;
     }
@@ -318,7 +372,7 @@ export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAu
       // Same honesty as the proactive branch: an unreachable GitHub during the
       // reactive refresh never invalidates the session.
       if (isGitHubNetworkError(error)) {
-        return { ok: false, reason: "network", copy: COPY.network };
+        return { ok: false, source: "fallback", reason: "network", copy: COPY.network };
       }
       throw error;
     }

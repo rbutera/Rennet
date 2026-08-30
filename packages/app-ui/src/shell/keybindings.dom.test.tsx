@@ -2,9 +2,9 @@
 //
 // The keybinding E2E (packet verification): every advertised bind fires through the ONE
 // key owner; ⌘R passes through (R69); a remap persists through `settings.setKeybinding`
-// and fires on the NEW chord after a reload; ⌘K executes a registry command end-to-end
-// against the live registry; Escape priority resolves a dialog + the real menu.
-import { afterEach, describe, expect, it, vi } from "vitest";
+// and fires on the NEW chord after a reload; ⌘K opens command mode without inventing a
+// context-free protocol action; Escape priority resolves a dialog + the real menu.
+import { afterEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { COMMAND_CATALOGUE, matchKeybinding, normalizeChord } from "../command/commands";
 import { KEY_ACTIONS } from "../command/key-actions";
@@ -257,14 +257,11 @@ describe("keybind remapping (R70/#492) — remap persists and fires on the new c
   });
 });
 
-describe("registry-command execution (cluster 6) — ⌘K runs a commandMenu:true row end-to-end", () => {
-  it("opens command mode, surfaces the exposed row, and dispatches it on select", async () => {
-    // The LIVE registry's one menu-exposed row (docs/developing/reference/command-menu-exposure.md).
-    const ran = vi.fn(() => ({}));
+describe("registry-command inventory — no raw protocol command is exposed", () => {
+  it("opens command mode with app actions but no context-free GitHub disconnect", async () => {
     const bridge = new MemoryBridge({
       ...frontDoorHandlers([]),
       "settings.get": () => emptySettings(),
-      "github.disconnect": ran as unknown as MemoryBridgeHandlers["github.disconnect"],
     });
     const history = memoryHistory("/");
     mount(
@@ -277,17 +274,13 @@ describe("registry-command execution (cluster 6) — ⌘K runs a commandMenu:tru
       </BridgeProvider>,
     );
 
-    // ⌘K opens the menu (command mode) — the registry row is now visible.
+    // ⌘K still opens a useful command-first menu. GitHub fallback cleanup stays in
+    // Settings, which can establish the live source before offering Disconnect.
     press("k", { meta: true });
     expect(useRennetStore.getState().ui.commandMenuMode).toBe("command");
-    await waitFor(() => expect(screen.getByText("github.disconnect")).toBeTruthy());
-
-    // Selecting it dispatches the command through the bridge and closes the menu.
-    act(() => {
-      fireEvent.click(screen.getByText("github.disconnect"));
-    });
-    await waitFor(() => expect(ran).toHaveBeenCalledTimes(1));
-    expect(useRennetStore.getState().ui.commandMenuOpen).toBe(false);
+    await waitFor(() => expect(screen.getByText("Add Project")).toBeTruthy());
+    expect(screen.queryByText("github.disconnect")).toBeNull();
+    expect(useRennetStore.getState().ui.commandMenuOpen).toBe(true);
   });
 });
 

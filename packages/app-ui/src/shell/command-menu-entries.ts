@@ -131,7 +131,7 @@ export function actionEntries(): MenuEntry[] {
 /**
  * Registry commands (R4): the ONE `commands` table filtered by `exposure.commandMenu`,
  * each surviving row rendered with a label DERIVED from its id (`label`, which #465
- * initializes to the id). ONE row is exposed today; which rows and why is
+ * initializes to the id). No raw protocol row is exposed today; why is
  * `docs/developing/reference/command-menu-exposure.md`.
  */
 export function registryCommandEntries(

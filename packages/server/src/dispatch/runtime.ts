@@ -280,10 +280,9 @@ export interface DispatchDeps {
    *  Environments surface's `sourceControlByHost` (C17). Singleton registry — `gh` only. */
   detectForges(): Promise<DetectedForge[]>;
   /**
-   * The GitHub account port (v4.2: OAuth device flow, no gh CLI). Status for the
-   * settings rows and the first-run card; the one-time device-flow connect
-   * (start/poll/cancel); the pasted-token side door; disconnect. The token itself
-   * never crosses this boundary outward.
+   * The GitHub account port: live `gh` credential first, with Rennet's device-flow
+   * and pasted-token credential as fallback. Status names the owner; fallback
+   * connect/disconnect remains here. The token itself never crosses outward.
    */
   github: {
     status(): Promise<GitHubAuthStatus>;

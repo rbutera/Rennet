@@ -99,11 +99,20 @@ function resolveBinaryFilename(
   return entries.includes(base) ? base : null;
 }
 
-/** Resolve the first proven (executable + version-answering) binary for `spec`, or null. */
-async function resolveBinary(
+type ForgeBinaryResolution =
+  | { readonly kind: "resolved"; readonly path: string; readonly version: string }
+  | { readonly kind: "missing" }
+  | { readonly kind: "failure" };
+
+/**
+ * Resolve the first proven binary while preserving whether an executable candidate
+ * existed. Detection still projects both negative outcomes as "not installed", but
+ * credential resolution must not mistake a broken present CLI for an absent one.
+ */
+async function resolveForgeBinaryDetailed(
   spec: ForgeSpec,
   deps: ForgeDetectionDeps,
-): Promise<{ readonly path: string; readonly version: string } | null> {
+): Promise<ForgeBinaryResolution> {
   const delimiter = delimiterFor(deps.platform);
   const join = joinFor(deps.platform);
   const known = spec.knownDirectories(deps.home, deps.platform);
@@ -122,6 +131,7 @@ async function resolveBinary(
   }
 
   const resolved = new Set<string>();
+  let foundExecutableCandidate = false;
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
     const filename = resolveBinaryFilename(entries, spec.binary, deps.platform, deps.pathExt);
@@ -130,12 +140,22 @@ async function resolveBinary(
     if (resolved.has(path)) continue;
     resolved.add(path);
     if (!(await deps.isExecutable(path))) continue;
+    foundExecutableCandidate = true;
     const version = await deps.probeVersion(path);
     // A binary that will not answer `--version` is not proven to be the forge CLI; keep
     // looking (a later candidate may be real) rather than reporting a stale/false hit.
-    if (version !== null) return { path, version };
+    if (version !== null) return { kind: "resolved", path, version };
   }
-  return null;
+  return foundExecutableCandidate ? { kind: "failure" } : { kind: "missing" };
+}
+
+/** Resolve the first proven (executable + version-answering) binary for `spec`, or null. */
+export async function resolveForgeBinary(
+  spec: ForgeSpec,
+  deps: ForgeDetectionDeps,
+): Promise<{ readonly path: string; readonly version: string } | null> {
+  const resolved = await resolveForgeBinaryDetailed(spec, deps);
+  return resolved.kind === "resolved" ? { path: resolved.path, version: resolved.version } : null;
 }
 
 /**
@@ -147,7 +167,7 @@ export async function detectForge(
   spec: ForgeSpec,
   deps: ForgeDetectionDeps,
 ): Promise<DetectedForge> {
-  const resolved = await resolveBinary(spec, deps);
+  const resolved = await resolveForgeBinary(spec, deps);
   if (resolved === null) {
     return {
       id: spec.id,
@@ -197,6 +217,57 @@ export const githubForge: ForgeSpec = {
 /** The forge detector registry — EXACTLY ONE entry (#484 boundary: no GitLab/Bitbucket). */
 export const FORGE_REGISTRY: readonly ForgeSpec[] = [githubForge];
 
+export type ForgeCommandRunner = (
+  executable: string,
+  args: readonly string[],
+) => Promise<{ readonly exitCode: number; readonly stdout: string }>;
+
+/** Host-only result of asking the proven GitHub CLI for its active github.com token. */
+export type GitHubCliTokenResult =
+  | { readonly kind: "missing" }
+  | { readonly kind: "token"; readonly token: string }
+  | { readonly kind: "failure" };
+
+const FORGE_COMMAND_TIMEOUT_MS = 10_000;
+
+export function createForgeCommandRunner(timeoutMs = FORGE_COMMAND_TIMEOUT_MS): ForgeCommandRunner {
+  return async (executable, args) => {
+    const result = await execa(executable, [...args], {
+      reject: false,
+      shell: false,
+      stdin: "ignore",
+      stderr: "ignore",
+      timeout: timeoutMs,
+    });
+    return { exitCode: result.exitCode ?? 1, stdout: result.stdout };
+  };
+}
+
+const runForgeCommand = createForgeCommandRunner();
+
+/**
+ * Read the user's GitHub credential from the exact `gh` binary this host proved.
+ * Only a missing CLI permits fallback. Once a binary is proven, an empty, non-zero,
+ * timed-out, or thrown token command remains a `gh`-owned failure so Rennet never
+ * changes identity silently. Neither output nor errors escape this boundary.
+ */
+export async function resolveGitHubCliToken(
+  deps: ForgeDetectionDeps,
+  run: ForgeCommandRunner = runForgeCommand,
+): Promise<GitHubCliTokenResult> {
+  const resolved = await resolveForgeBinaryDetailed(githubForge, deps);
+  if (resolved.kind === "missing") return { kind: "missing" };
+  if (resolved.kind === "failure") return { kind: "failure" };
+  try {
+    const result = await run(resolved.path, ["auth", "token", "--hostname", "github.com"]);
+    if (result.exitCode !== 0) return { kind: "failure" };
+    const token = result.stdout.trim();
+    return token.length > 0 ? { kind: "token", token } : { kind: "failure" };
+  } catch {
+    return { kind: "failure" };
+  }
+}
+
 /** Detect every registered forge on the host these deps run on. */
 export function detectForges(
   deps: ForgeDetectionDeps,
@@ -223,6 +294,7 @@ export async function wslForgeDetectionDeps(distro: string): Promise<ForgeDetect
           reject: false,
           shell: false,
           stdin: "ignore",
+          timeout: FORGE_COMMAND_TIMEOUT_MS,
         });
         return result.exitCode === 0;
       } catch {
@@ -246,6 +318,8 @@ export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
         const result = await execa(shell, ["-ilc", 'printf %s "$PATH"'], {
           reject: false,
           shell: false,
+          stdin: "ignore",
+          timeout: FORGE_COMMAND_TIMEOUT_MS,
         });
         return result.exitCode === 0 ? result.stdout : null;
       } catch {
@@ -271,7 +345,12 @@ export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
     },
     async probeVersion(path: string): Promise<string | null> {
       try {
-        const result = await execa(path, ["--version"], { reject: false, shell: false });
+        const result = await execa(path, ["--version"], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+          timeout: FORGE_COMMAND_TIMEOUT_MS,
+        });
         if (result.exitCode !== 0) return null;
         const match = result.stdout.match(/\d+\.\d+\.\d+/);
         return match ? match[0] : null;
@@ -286,6 +365,7 @@ export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
           reject: false,
           shell: false,
           stdin: "ignore",
+          timeout: FORGE_COMMAND_TIMEOUT_MS,
         });
         return result.exitCode === 0;
       } catch {

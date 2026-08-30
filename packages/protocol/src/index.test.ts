@@ -4,16 +4,110 @@ import {
   daemonHostStatusSchema,
   dispositionSchema,
   forgeHostDetectionSchema,
+  gitHubAuthStatusSchema,
   globalConfigSchema,
   harnessHostDetectionSchema,
   isCommandName,
   parseCommandInput,
   parseCommandOutput,
+  projectDetailSchema,
   projectSchema,
   settingsLayerSchema,
   settingsProjectSchema,
   successorAccountSchema,
 } from "./index";
+
+describe("GitHub auth status", () => {
+  it("carries the connected credential source and defaults a legacy payload to fallback", () => {
+    for (const source of ["gh", "fallback"] as const) {
+      expect(
+        gitHubAuthStatusSchema.safeParse({
+          state: "connected",
+          source,
+          login: "rbutera",
+          scopes: ["repo", "workflow"],
+        }).success,
+      ).toBe(true);
+    }
+
+    expect(
+      gitHubAuthStatusSchema.parse({
+        state: "connected",
+        login: "rbutera",
+        scopes: ["repo", "workflow"],
+      }),
+    ).toEqual({
+      state: "connected",
+      source: "fallback",
+      login: "rbutera",
+      scopes: ["repo", "workflow"],
+    });
+  });
+
+  it("keeps not-connected source-free and carries a known source on failures", () => {
+    expect(
+      gitHubAuthStatusSchema.parse({
+        state: "not-connected",
+        copy: "No GitHub credential is available.",
+        source: "gh",
+      }),
+    ).toEqual({ state: "not-connected", copy: "No GitHub credential is available." });
+
+    expect(
+      gitHubAuthStatusSchema.safeParse({
+        state: "token-invalid",
+        copy: "The GitHub CLI token was rejected.",
+        source: "gh",
+      }).success,
+    ).toBe(true);
+    expect(
+      gitHubAuthStatusSchema.safeParse({
+        state: "insufficient-scope",
+        copy: "The fallback token is missing repo scope.",
+        scopes: [],
+        source: "fallback",
+      }).success,
+    ).toBe(true);
+    expect(
+      gitHubAuthStatusSchema.safeParse({
+        state: "network",
+        copy: "GitHub is unreachable.",
+      }).success,
+    ).toBe(true);
+    expect(
+      gitHubAuthStatusSchema.safeParse({
+        state: "token-invalid",
+        copy: "Unknown credential owner.",
+        source: "other",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("carries a known credential source on a project-detail auth failure", () => {
+    const detail = projectDetailSchema.parse({
+      viewer: { login: "rbutera" },
+      locals: [],
+      prs: [],
+      truncated: false,
+      authUnavailable: "token-invalid",
+      authUnavailableSource: "gh",
+      authUnavailableCopy: "Run `gh auth status --hostname github.com`.",
+    });
+    expect(detail.authUnavailableSource).toBe("gh");
+    expect(detail.authUnavailableCopy).toContain("gh auth status");
+
+    expect(
+      projectDetailSchema.safeParse({
+        viewer: { login: "rbutera" },
+        locals: [],
+        prs: [],
+        truncated: false,
+        authUnavailable: "token-invalid",
+        authUnavailableSource: "other",
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("command protocol", () => {
   it("rejects malformed command payloads", () => {

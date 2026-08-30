@@ -133,12 +133,125 @@ describe("resolveGitHubAuth — the distinct failure states", () => {
 });
 
 describe("resolveGitHubAuth — success", () => {
+  it("uses the live gh token before a distinct stored credential", async () => {
+    const store = storeWith("gho_stored_fallback");
+    const readStored = vi.spyOn(store, "getGitHubCredential");
+    let seenAuth: string | null = null;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      seenAuth = new Headers(init?.headers).get("authorization");
+      return Promise.resolve(
+        new URL(String(input)).pathname === "/rate_limit" ? rateLimitOk() : userOk(),
+      );
+    };
+
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch }),
+      secretStore: store,
+      cliToken: () => Promise.resolve({ kind: "token", token: "gho_from_cli" }),
+    });
+
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.source).toBe("gh");
+    expect(state.token).toBe("gho_from_cli");
+    expect(seenAuth).toBe("Bearer gho_from_cli");
+    expect(readStored).not.toHaveBeenCalled();
+    expect(store.writes).toEqual([]);
+  });
+
+  it("falls back to the stored credential only when gh is missing", async () => {
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk }),
+      secretStore: storeWith("gho_stored_fallback"),
+      cliToken: () => Promise.resolve({ kind: "missing" }),
+    });
+
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.source).toBe("fallback");
+    expect(state.token).toBe("gho_stored_fallback");
+  });
+
+  it("a present gh whose token command failed never falls back to another identity", async () => {
+    const store = storeWith("gho_stored_other_identity");
+    const readStored = vi.spyOn(store, "getGitHubCredential");
+    const fetch = vi.fn();
+    const state = await resolveGitHubAuth({
+      octokit: createGitHubOctokit({ fetch: fetch as unknown as typeof globalThis.fetch }),
+      secretStore: store,
+      cliToken: () => Promise.resolve({ kind: "failure" }),
+    });
+
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state).toMatchObject({ ok: false, source: "gh", reason: "token-invalid" });
+    expect(state.copy).toContain("could not read the GitHub CLI credential");
+    expect(readStored).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a rejected gh credential instead of silently changing identity", async () => {
+    const store = storeWith("gho_stored_fallback");
+    const readStored = vi.spyOn(store, "getGitHubCredential");
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({ "/rate_limit": () => json(401, {}, {}) }),
+      secretStore: store,
+      cliToken: () => Promise.resolve({ kind: "token", token: "gho_rejected_cli" }),
+    });
+
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("token-invalid");
+    if (state.reason !== "token-invalid") throw new Error("unreachable");
+    expect(state.source).toBe("gh");
+    expect(state.copy).toContain("GitHub CLI");
+    expect(readStored).not.toHaveBeenCalled();
+  });
+
+  it("surfaces insufficient gh scope instead of silently changing identity", async () => {
+    const store = storeWith("gho_stored_fallback");
+    const readStored = vi.spyOn(store, "getGitHubCredential");
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({
+        "/rate_limit": () => json(200, { "X-OAuth-Scopes": "gist" }, { resources: {} }),
+      }),
+      secretStore: store,
+      cliToken: () => Promise.resolve({ kind: "token", token: "gho_narrow_cli" }),
+    });
+
+    expect(state.ok).toBe(false);
+    if (state.ok || state.reason !== "insufficient-scope") throw new Error("unreachable");
+    expect(state.source).toBe("gh");
+    expect(state.scopes).toEqual(["gist"]);
+    expect(state.copy).toContain("GitHub CLI");
+    expect(readStored).not.toHaveBeenCalled();
+  });
+
+  it("never refreshes or persists a gh-sourced credential", async () => {
+    const store = memoryStore({ token: "gho_dying", expiresAt: SOON, refreshToken: "ghr_1" });
+    const refresh = vi.fn(() => Promise.reject(new Error("must not refresh")));
+    const state = await resolveGitHubAuth({
+      octokit: octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk }),
+      secretStore: store,
+      cliToken: () => Promise.resolve({ kind: "token", token: "gho_from_cli" }),
+      refresh,
+      now: () => NOW,
+    });
+
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.source).toBe("gh");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(store.writes).toEqual([]);
+  });
+
   it("a stored token with repo scope succeeds: scopes, expiry, rate limit, login", async () => {
     const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
     const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_valid") });
     expect(state.ok).toBe(true);
     if (!state.ok) throw new Error("unreachable");
     expect(state.token).toBe("gho_valid");
+    expect(state.source).toBe("fallback");
     expect(state.login).toBe("rbutera");
     expect(state.scopes).toContain("repo");
     expect(state.scopes).toContain("workflow");

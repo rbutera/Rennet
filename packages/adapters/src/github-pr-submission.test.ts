@@ -32,6 +32,7 @@ interface RecordedCall {
 function adapter(responses: Response[]) {
   const calls: RecordedCall[] = [];
   let index = 0;
+  let resolutions = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     calls.push({
       url: String(input),
@@ -45,14 +46,20 @@ function adapter(responses: Response[]) {
   };
   const octokit = createGitHubOctokit({ fetch, token: "tok" });
   return {
-    port: new GitHubPrSubmissionAdapter({ resolveOctokit: () => Promise.resolve(octokit) }),
+    port: new GitHubPrSubmissionAdapter({
+      resolveOctokit: () => {
+        resolutions += 1;
+        return Promise.resolve(octokit);
+      },
+    }),
     calls,
+    resolutionCount: () => resolutions,
   };
 }
 
 describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
   it("creates the PR when none is open, and carries a BRANCH ref as head (not a SHA)", async () => {
-    const { port, calls } = adapter([
+    const { port, calls, resolutionCount } = adapter([
       json(200, []), // no open PR from this head
       json(201, { html_url: "https://github.com/acme/widget/pull/12", number: 12 }),
     ]);
@@ -76,6 +83,7 @@ describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
       base: "main",
       draft: true,
     });
+    expect(resolutionCount()).toBe(1);
   });
 
   it("reuses an already-open PR from the same head (idempotent — never a second create)", async () => {
@@ -94,7 +102,7 @@ describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
   });
 
   it("resolves a 422 race (a PR appeared between lookup and create) to the existing PR", async () => {
-    const { port } = adapter([
+    const { port, resolutionCount } = adapter([
       json(200, []), // lookup: none yet
       json(422, { message: "A pull request already exists for acme:feat/reviewed." }),
       json(200, [{ html_url: "https://github.com/acme/widget/pull/15", number: 15 }]), // re-lookup
@@ -105,6 +113,7 @@ describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
       number: 15,
       reused: true,
     });
+    expect(resolutionCount()).toBe(1);
   });
 
   it("surfaces a create failure honestly (never a fabricated success)", async () => {

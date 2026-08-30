@@ -27,9 +27,9 @@ import { headerGet, requestErrorHeaders, requestErrorStatus } from "./github-oct
  *     at real send, so a dry-run descriptor carries no secret.
  *   • The review `event` is the resolved verdict from the signed descriptor (derived from
  *     the dispositions, or an explicit override), so the previewed verdict is the posted one.
- *   • The token is resolved LAZILY (`resolveOctokit`), so constructing the adapter and
- *     building a dry-run request need no live credential; only `findExistingReview`
- *     and `publishReview` spend one.
+ *   • The token is resolved LAZILY (`resolveOctokit`) once per top-level operation,
+ *     so constructing the adapter and building a dry-run request need no live
+ *     credential, while one reconcile/publish cannot change identity between pages.
  *   • `publishReview` queries for the idempotency marker BEFORE posting and returns
  *     the existing review if found, so a retry after a dropped outcome yields exactly
  *     one review — and a secondary rate limit throws `ForgeRateLimited`, never a
@@ -187,12 +187,12 @@ export class GitHubPublishAdapter implements ForgePublishPort {
   }
 
   private async graphql<T>(
+    octokit: Octokit,
     query: string,
     variables: Record<string, unknown>,
   ): Promise<{ data: T; errors?: unknown }> {
     let res: Awaited<ReturnType<Octokit["request"]>>;
     try {
-      const octokit = await this.config.resolveOctokit();
       // `octokit.request` (not `octokit.graphql`) so response headers stay visible
       // and the GraphQL error envelope is ours to interpret.
       res = await octokit.request("POST /graphql", { query, variables });
@@ -216,10 +216,11 @@ export class GitHubPublishAdapter implements ForgePublishPort {
   }
 
   private async fetchReviewsPage(
+    octokit: Octokit,
     target: ForgeReviewTarget,
     cursor: string | null,
   ): Promise<ReviewsPage> {
-    const { data } = await this.graphql<ReviewsPage>(REVIEWS_QUERY, {
+    const { data } = await this.graphql<ReviewsPage>(octokit, REVIEWS_QUERY, {
       owner: target.ref.repo.owner,
       name: target.ref.repo.name,
       number: target.ref.number,
@@ -228,7 +229,8 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     return data;
   }
 
-  async findExistingReview(
+  private async findExistingReviewWith(
+    octokit: Octokit,
     target: ForgeReviewTarget,
     marker: string,
   ): Promise<ForgePublishOutcome | null> {
@@ -236,7 +238,7 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     // Bound the reconcile scan so a pathological PR cannot loop forever; the marker
     // is written by the most recent post, so it surfaces on the first pages.
     for (let page = 0; page < 20; page += 1) {
-      const fetched = await this.fetchReviewsPage(target, cursor);
+      const fetched = await this.fetchReviewsPage(octokit, target, cursor);
       const reviews = fetched.repository.pullRequest.reviews;
       for (const node of reviews.nodes) {
         if (extractMarker(node.body) === marker) {
@@ -249,15 +251,25 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     return null;
   }
 
+  async findExistingReview(
+    target: ForgeReviewTarget,
+    marker: string,
+  ): Promise<ForgePublishOutcome | null> {
+    const octokit = await this.config.resolveOctokit();
+    return this.findExistingReviewWith(octokit, target, marker);
+  }
+
   async publishReview(post: ForgeReviewPost): Promise<ForgePublishOutcome> {
+    const octokit = await this.config.resolveOctokit();
     // Query-before-post idempotency (R17 / #21): if a review carrying THIS post's
     // marker already exists, a prior send landed even if its outcome was dropped —
     // reuse it rather than double-post, so a retry yields exactly one review.
-    const existing = await this.findExistingReview(post.target, post.marker);
+    const existing = await this.findExistingReviewWith(octokit, post.target, post.marker);
     if (existing) return existing;
 
     const request = this.buildReviewRequest(post);
     const { data } = await this.graphql<AddReviewResult>(
+      octokit,
       ADD_REVIEW_MUTATION,
       (request.body as { variables: Record<string, unknown> }).variables,
     );

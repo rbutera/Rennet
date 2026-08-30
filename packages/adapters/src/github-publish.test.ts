@@ -125,6 +125,56 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
 });
 
 describe("GitHubPublishAdapter.publishReview (issue #21) — idempotency", () => {
+  it("uses one resolved credential across paginated reconcile and the mutation", async () => {
+    let resolutions = 0;
+    let reviewPages = 0;
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const parsed = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        query: string;
+      };
+      if (parsed.query.includes("addPullRequestReview")) {
+        return json(200, {
+          data: {
+            addPullRequestReview: {
+              pullRequestReview: { id: "PRR_1", url: "https://github.com/o/r/pull/3#r1" },
+            },
+          },
+        });
+      }
+      reviewPages += 1;
+      return json(200, {
+        data: {
+          repository: {
+            pullRequest: {
+              reviews: {
+                pageInfo: {
+                  hasNextPage: reviewPages === 1,
+                  endCursor: reviewPages === 1 ? "next" : null,
+                },
+                nodes: [],
+              },
+            },
+          },
+        },
+      });
+    };
+    const octokit = createGitHubOctokit({ fetch, token: "operation-token" });
+    const adapter = new GitHubPublishAdapter({
+      resolveOctokit: () => {
+        resolutions += 1;
+        return Promise.resolve(octokit);
+      },
+    });
+
+    const outcome = await adapter.publishReview(
+      post([{ path: "a.ts", line: 1, side: "RIGHT", type: "comment", body: "x" }]),
+    );
+
+    expect(outcome.reused).toBe(false);
+    expect(reviewPages).toBe(2);
+    expect(resolutions).toBe(1);
+  });
+
   /**
    * A stateful fake GitHub: the mutation records the created review (its body carries
    * the marker); the reviews query returns whatever has been created so far. So a

@@ -193,10 +193,14 @@ export {
   detectForge,
   detectForges,
   FORGE_REGISTRY,
+  type ForgeCommandRunner,
   type ForgeDetectionDeps,
   type ForgeSpec,
   type ForgeStatus,
+  type GitHubCliTokenResult,
   githubForge,
+  resolveForgeBinary,
+  resolveGitHubCliToken,
   wslForgeDetectionDeps,
 } from "./forge-discovery";
 export {
@@ -221,6 +225,7 @@ export {
   visible,
 } from "./git-range-diff";
 export {
+  type GitHubAuthSource,
   type GitHubAuthState,
   type RefreshLogRecord,
   type ResolveAuthDeps,

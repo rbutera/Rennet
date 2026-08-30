@@ -176,6 +176,58 @@ describe("ProjectDetail — the unified smart list", () => {
     expect(container.querySelectorAll(".smart-row").length).toBeGreaterThan(0);
   });
 
+  it("shows the exact CLI repair for a gh-owned failure without offering fallback reconnect", async () => {
+    const { bridge, calls } = fakeBridge(
+      detail({
+        prs: [],
+        authUnavailable: "token-invalid",
+        authUnavailableSource: "gh",
+        authUnavailableCopy:
+          "Rennet could not read the GitHub CLI credential. Run `gh auth status --hostname github.com` in this environment.",
+      }),
+    );
+    const { container } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector(".project-detail-auth-hint")?.textContent).toContain(
+        "gh auth status --hostname github.com",
+      ),
+    );
+    expect(container.querySelector(".project-detail-reconnect")).toBeNull();
+    expect(calls.some((call) => call.name === "github.connectStart")).toBe(false);
+  });
+
+  it("keeps fallback reconnect available for a Rennet-owned token failure", async () => {
+    const { bridge } = fakeBridge(
+      detail({
+        prs: [],
+        authUnavailable: "token-invalid",
+        authUnavailableSource: "fallback",
+      }),
+    );
+    const { container } = mount(
+      <ProjectDetail
+        bridge={bridge}
+        project={project}
+        onOpenRow={vi.fn()}
+        onOpenContextMap={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector(".project-detail-reconnect")?.textContent).toBe("Reconnect"),
+    );
+  });
+
   it("streams per-repo PR progress into an honest determinate banner", async () => {
     let emit: ((event: ProjectDetailProgressEvent) => void) | undefined;
     const localData = detail({ prs: [] });
