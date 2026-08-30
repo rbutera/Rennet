@@ -4403,6 +4403,77 @@ describe("citation identity (S2 — patchset id + side)", () => {
   });
 });
 
+// ── Schema-declared element references resolve and are orderable ──────────────
+
+describe("schema-declared element references", () => {
+  const referenceViolations = (draft: DraftBoard, lens: LensKind) =>
+    lint(draft, ctx({ lens })).filter(({ ruleId }) => ruleId === "element-reference-resolves");
+
+  it("rejects the dangling span and evidence shapes emitted by Sequence and Decisions", () => {
+    const sequence = board(
+      [
+        el("step", "order_step", {
+          title: "Read the entry point",
+          span: "missing-sequence-code",
+          children: [],
+        }),
+      ],
+      { skippedHunks: [] },
+    );
+    const decisions = board(
+      [
+        el("decision", "decision", {
+          statement: "Keep writes atomic.",
+          evidence: ["missing-decision-code"],
+          alternatives: ["alternative"],
+          why: "Readers never observe a partial batch.",
+        }),
+        el("alternative", "prose", { markdown: "Write each event independently." }),
+      ],
+      { skippedHunks: [] },
+    );
+
+    expect(referenceViolations(sequence, "sequence")).toMatchObject([{ elementRef: "step/span" }]);
+    expect(referenceViolations(decisions, "decisions")).toMatchObject([
+      { elementRef: "decision/evidence" },
+    ]);
+  });
+
+  it("uses the authored schema, so ordinary strings that equal element ids are not references", () => {
+    const draft = board(
+      [
+        el("decision", "decision", {
+          statement: "Keep writes atomic.",
+          evidence: [],
+          alternatives: ["alternative"],
+          why: "alternative",
+        }),
+        el("alternative", "prose", { markdown: "Write each event independently." }),
+      ],
+      { skippedHunks: [] },
+    );
+
+    expect(referenceViolations(draft, "decisions")).toEqual([]);
+  });
+
+  it("rejects a cycle that no create-op ordering can make acceptable", () => {
+    const draft = board(
+      [
+        el("chapter", "section", { title: "Start here", children: ["step"] }),
+        el("step", "order_step", {
+          title: "Read the entry point",
+          span: "code",
+          children: ["chapter"],
+        }),
+        codeRef("code", "src/auth.ts", 11, 12),
+      ],
+      { skippedHunks: [] },
+    );
+
+    expect(referenceViolations(draft, "sequence")).toMatchObject([{ elementRef: "step/children" }]);
+  });
+});
+
 // ── L12 (P2) — noise_verdict.hunk element reference resolves ──────────────────
 
 describe("noise_verdict.hunk resolves (L12 / P2)", () => {

@@ -32,7 +32,14 @@
  *     fields and stay parked (see the ledger for each named field).
  */
 
-import type { DraftBoard, DraftElement, HunkId, LensKind, Violation } from "@rennet/protocol";
+import {
+  AUTHORED_BOARD_SCHEMA,
+  type DraftBoard,
+  type DraftElement,
+  type HunkId,
+  type LensKind,
+  type Violation,
+} from "@rennet/protocol";
 import { parseOpenSpecChange } from "../delta/openspec-change";
 import {
   type DesignSourceFormat,
@@ -437,6 +444,81 @@ const citationWellFormed: Rule = (draft) =>
       checkCitationWellFormed(text, ref(elementId, field)),
     ),
   );
+
+interface ElementReference {
+  readonly sourceId: string;
+  readonly field: string;
+  readonly targetId: string;
+}
+
+/** Read only the fields the authoritative board schema declares as element references. */
+function elementReferences(el: DraftElement): ElementReference[] {
+  const attributes = AUTHORED_BOARD_SCHEMA[el.kind].attributes;
+  const data = el.data as Record<string, unknown>;
+  const references: ElementReference[] = [];
+  for (const [field, attribute] of Object.entries(attributes)) {
+    if (attribute.type !== "element") continue;
+    const value = data[field];
+    const targetIds =
+      "many" in attribute && attribute.many
+        ? Array.isArray(value)
+          ? value.filter((item): item is string => typeof item === "string")
+          : []
+        : typeof value === "string"
+          ? [value]
+          : [];
+    for (const targetId of targetIds) references.push({ sourceId: el.id, field, targetId });
+  }
+  return references;
+}
+
+/**
+ * Every schema-declared element reference must name an element in this exact
+ * draft, and the reference graph must be acyclic so the board service can mint
+ * every target before its citer.
+ */
+const elementReferencesResolve: Rule = (draft) => {
+  const references = draft.elements.flatMap(elementReferences);
+  const liveIds = new Set(draft.elements.map(({ id }) => id));
+  const out: Violation[] = references.flatMap(({ sourceId, field, targetId }) =>
+    liveIds.has(targetId)
+      ? []
+      : [
+          {
+            ruleId: "element-reference-resolves",
+            elementRef: ref(sourceId, field),
+            message: `Element reference \`${targetId}\` is not present in this board. Emit the referenced element or remove the reference.`,
+          },
+        ],
+  );
+
+  const outgoing = new Map<string, ElementReference[]>();
+  for (const reference of references) {
+    if (!liveIds.has(reference.targetId)) continue;
+    const edges = outgoing.get(reference.sourceId) ?? [];
+    edges.push(reference);
+    outgoing.set(reference.sourceId, edges);
+  }
+  const state = new Map<string, "visiting" | "visited">();
+  const visit = (elementId: string): void => {
+    state.set(elementId, "visiting");
+    for (const edge of outgoing.get(elementId) ?? []) {
+      const targetState = state.get(edge.targetId);
+      if (targetState === "visiting") {
+        out.push({
+          ruleId: "element-reference-resolves",
+          elementRef: ref(edge.sourceId, edge.field),
+          message: `Element reference \`${edge.targetId}\` creates a cycle. Board references must be orderable so every target exists before its citer.`,
+        });
+      } else if (targetState === undefined) {
+        visit(edge.targetId);
+      }
+    }
+    state.set(elementId, "visited");
+  };
+  for (const { id } of draft.elements) if (state.get(id) === undefined) visit(id);
+  return out;
+};
 
 /**
  * L4/L12/S2/S8 — every citation resolves against the right side's worktree index.
@@ -2520,6 +2602,7 @@ export const LENS_RULES: readonly Rule[] = [
   noCodeBytes,
   noDialogue,
   citationWellFormed,
+  elementReferencesResolve,
   citationResolves,
   processVocabulary,
   noRemainderNarration,
@@ -2551,6 +2634,7 @@ export const REPORT_RULES: readonly Rule[] = [
   noCodeBytes,
   noDialogue,
   citationWellFormed,
+  elementReferencesResolve,
   citationResolves,
   processVocabulary,
   reportCoherent,
