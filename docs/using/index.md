@@ -1,10 +1,10 @@
 ---
 title: Using Rennet
-description: Guides and concepts for understanding changes and posting code reviews with Rennet.
+description: Guides and concepts for understanding changes and taking review exits with Rennet.
 ---
 
 Rennet drafts a local branch or a GitHub pull request into boards you can read,
-then turns what you raise into a review, a work order, or a pull request. Start
+then turns what you raise into a review, a work order, or a change request. Start
 with the tour, then follow the guide for the change in front of you.
 
 ## Start here
@@ -20,7 +20,7 @@ with the tour, then follow the guide for the change in front of you.
 ## Understand the product
 
 - [Product and vision](./concepts/product-and-vision.md) explains what Rennet is for.
-- [Common questions](./concepts/common-questions.md) covers models, credentials, data, and GitHub.
+- [Common questions](./concepts/common-questions.md) covers models, credentials, data, and forges.
 
 ```mermaid
 flowchart LR
@@ -35,4 +35,5 @@ flowchart LR
 A teammate's pull request becomes one GitHub review, posted under your name. On
 your own branch the same asks become a work order: a coding agent runs the
 round, you read its report and the regenerated boards, and when nothing is left
-to ask, Rennet pushes the branch and opens the pull request.
+to ask, Rennet pushes the branch and opens a GitHub pull request or GitLab.com
+merge request for the repository's effective push remote.

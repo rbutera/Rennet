@@ -42,7 +42,8 @@ Both modes use the same review state. A teammate's pull request produces one
 GitHub review. On your own branch the asks become a work order instead: a
 coding agent runs them, and the round comes back with a report and a new
 generation of boards over what it changed. When nothing is left to ask, the
-same surface pushes the branch and opens the pull request.
+same surface pushes the branch and opens the GitHub pull request or GitLab.com
+merge request named by the repository's effective push remote.
 
 ## Product principles
 

@@ -85,4 +85,10 @@ describe("publish preview does not strand a transient board-drafting result", ()
     expect(publish).toContain("controller.stop()");
     expect(publish.match(/\.invoke\("publish\.compose"/g)).toHaveLength(1);
   });
+
+  it("carries the composed provider and returned number into the change-request receipt", () => {
+    expect(publish).toContain("changeRequestCopy(composed.target?.repo.forge)");
+    expect(publish).toContain("request: { forge: c.target?.repo.forge, number: outcome.number }");
+    expect(publish).toMatch(/`\$\{receipt\.opened\} · \$\{receipt\.sigil\}\$\{receipt\.number\}`/);
+  });
 });

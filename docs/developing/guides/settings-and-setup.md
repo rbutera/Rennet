@@ -37,7 +37,9 @@ unsupported rather than presented as a detected integration. The welcome never
 asks the user to connect a forge account. GitHub operations prefer the
 environment's authenticated `gh` CLI; see
 [GitHub authentication](../../using/guides/github-auth.md). GitLab detection is
-CLI readiness only: merge-request ingestion and publication are still planned.
+the prerequisite for GitLab.com own-branch merge-request submission, which runs
+the repository environment's authenticated `glab`. Merge-request intake, review
+posting, CI target attachment, and self-managed GitLab remain planned.
 
 The review-setup step requires at least one detected Claude Code or Codex
 harness. With both available it asks which harness should own the orchestrator
@@ -187,12 +189,14 @@ runs the probes on each machine the only way it can, so a WSL distribution shows
 its own CLI versions and authentication state, while a host the daemon cannot
 interrogate reads its honest "Connect … to detect its tooling" line rather than
 inheriting this machine's answer. GitHub's enable toggle is stored per host. The
-GitLab health row has no toggle until GitLab operations exist for that decision to
-control. A missing CLI keeps a **Not installed** row with a host-appropriate repair
+GitLab health row has no toggle; it reports the prerequisite used when an
+own-branch GitLab.com merge request opens in that repository environment. A
+missing CLI keeps a **Not installed** row with a host-appropriate repair
 instruction and no invented version. A provider check that fails without explicit
 credential rejection reads **Unreachable**, not **Not Authenticated**. GitLab
-merge-request reads and publication remain planned; this health row does not claim
-those operations are built. Bitbucket remains unsupported.
+merge-request intake, review posting, CI target attachment, and self-managed
+hosting remain planned; this health row does not claim those operations are built.
+Bitbucket remains unsupported.
 When at least one agent is enabled, a Review section exposes Model Mappings — see
 [Model Mappings](#model-mappings) below. The source-control rows report the
 environment's `gh` and `glab` states; the welcome does not contain a separate

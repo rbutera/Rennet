@@ -79,7 +79,7 @@ Apply the sources by scope:
 | **R30** | Project context is fingerprinted by source, config, generator, schema, toolchain, and shards. Non-current context is rebuilt or omitted with explicit degradation. |
 | **R31** | Harness runs receive assembled context and usable execution authority. The run ledger names provider egress, model source, authority, and non-enumerable ambient inputs. |
 | **R32** | Event history lasts while the review is retained. Delete physically removes Rennet-controlled copies. Unknown events remain byte-identical and mark affected projections incomplete. |
-| **R33** | Another person's pull request receives one idempotent GitHub review. The user's branch path pushes the named branch and opens the composed pull request. |
+| **R33** | Another person's pull request receives one idempotent GitHub review. The user's branch path pushes the named branch and opens the composed GitHub pull request or GitLab.com merge request selected by its effective push remote. |
 | **R35** | Harnesses stream through `AsyncIterable`; the event store owns durable truth; small injected-clock batchers own coalescing. Rennet does not use an RxJS dataflow layer. |
 
 ## Tooling and dependencies
@@ -107,8 +107,8 @@ pins and admission rules.
 The same ask model feeds three exits. A teammate PR receives one GitHub review.
 Your branch receives a work-order round, then a successor patchset and a new
 generation of boards. When nothing is left to ask, Rennet pushes the named
-branch and opens the composed pull request. Work orders exist only on your own
-branch.
+branch and opens the composed GitHub pull request or GitLab.com merge request.
+Work orders exist only on your own branch.
 
 ```mermaid
 flowchart LR
@@ -118,7 +118,7 @@ flowchart LR
   exit -->|Your branch has asks| round["Dispatch a work-order round"]
   round --> successor["Capture a successor patchset"]
   successor --> read
-  exit -->|Nothing left to ask| pr["Push the branch and open the pull request"]
+  exit -->|Nothing left to ask| pr["Push the branch and open the change request"]
 ```
 
 Rennet composes the outbound artifact before the forge call. The preview and
