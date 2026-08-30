@@ -19,12 +19,16 @@ New Chat. A review opened by a direct link rather than through one of its
 sessions has no project to map, and the view says so instead of showing the
 board again.
 
-The map generates the first time you add a project. The scout runs first and
-saves its detected and guessed facts; only then does the prefilled questionnaire
-appear while structural and knowledge generation continue. The questionnaire is
-never a gate: the map completes and its exits appear whether or not you answer
-it. Its provenance and evidence come from the saved scout record; changes you
-want to keep as project policy belong in **Settings → Projects**. See
+The map starts generating in the background as soon as you add a project, even
+if you leave the indexing screen or start a review immediately. Opening **Map**
+before the structural snapshot is ready shows the current generation stage and
+rejoins the same durable run; if the run fails there, **Retry** resumes it rather
+than creating a second map. The scout
+runs first and saves its detected and guessed facts; only then does the prefilled
+questionnaire appear while structural and knowledge generation continue. The
+questionnaire is never a gate: the map completes and its exits appear whether or
+not you answer it. Its provenance and evidence come from the saved scout record;
+changes you want to keep as project policy belong in **Settings → Projects**. See
 [Getting started](./getting-started.md#what-happens-after-you-add-it) for that
 flow.
 

@@ -1,13 +1,13 @@
-import type {
-  KnowledgeDispositionResult,
-  KnowledgeSetPayload,
-  KnowledgeStatementPayload,
-  ProjectContextAskResult,
-  ProjectContextMapResult,
-  ProjectMapPayload,
-  RennetBridge,
+import {
+  commandIdFor,
+  type KnowledgeDispositionResult,
+  type KnowledgeSetPayload,
+  type KnowledgeStatementPayload,
+  type ProjectContextAskResult,
+  type ProjectMapPayload,
+  type ProjectProcessEvent,
 } from "@rennet/protocol";
-import { ArrowLeft, Check, X } from "lucide-react";
+import { ArrowLeft, Check, LoaderCircle, RotateCcw, X } from "lucide-react";
 import {
   type FormEvent,
   forwardRef,
@@ -23,6 +23,7 @@ import {
   type ScopeNode,
   type Selection,
 } from "../context-map/model";
+import { useBridge, useCommand, useMutation, useRefreshCommand } from "../data";
 import { messageFrom } from "../lib/message-from";
 import { Icon } from "./icon";
 
@@ -32,11 +33,49 @@ type AskTurn =
   | { id: string; role: "user"; text: string }
   | { id: string; role: "orchestrator"; result: ProjectContextAskResult };
 
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "absent"; reason: string }
-  | { kind: "error"; message: string }
-  | { kind: "ok"; map: ProjectMapPayload; knowledge: KnowledgeSetPayload | null };
+type BuildState =
+  | { kind: "idle" }
+  | { kind: "processing"; message: string; detail?: string }
+  | { kind: "refreshing" }
+  | { kind: "error"; message: string };
+
+const CONTEXT_MAP_INVALIDATES = ["project.contextMap"] as const;
+
+function processEventStatus(event: ProjectProcessEvent): {
+  readonly message: string;
+  readonly detail?: string;
+} {
+  switch (event.kind) {
+    case "run-state":
+      return {
+        message:
+          event.phase === "scout"
+            ? "Learning the project…"
+            : event.phase === "map"
+              ? "Building the Context Map…"
+              : event.phase === "knowledge"
+                ? "Learning what the code does…"
+                : "Opening the Context Map…",
+        detail: event.detail,
+      };
+    case "step":
+    case "stage":
+      return { message: event.note, detail: event.detail };
+    case "scout-ready":
+      return { message: `Learned the project shape for ${event.repo}.` };
+    case "repo-start":
+      return {
+        message: `Building the Context Map for ${event.repo}…`,
+        detail: `Repository ${event.index} of ${event.total}`,
+      };
+    case "repo-done":
+      return { message: `Finished the Context Map for ${event.repo}.` };
+    case "repo-error":
+      return { message: `Could not process ${event.repo}.`, detail: event.message };
+    case "done":
+      return { message: "Opening the Context Map…" };
+  }
+}
 
 /**
  * The Context Map surface (change add-context-map-view).
@@ -57,13 +96,11 @@ export function discussPrompt(statement: KnowledgeStatementPayload): string {
 }
 
 export function ContextMapView({
-  bridge,
   projectId,
   onBack,
   showAskRail = true,
   onDiscuss,
 }: {
-  bridge: RennetBridge;
   projectId: string;
   onBack(): void;
   /** The project-scoped ask rail. The router-side map view (C12) hides it — the
@@ -73,35 +110,63 @@ export function ContextMapView({
    *  it to the project's New Chat, prefilled). Absent AND no ask rail ⇒ no discuss button. */
   onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
-  const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const bridge = useBridge();
+  const mapQuery = useCommand("project.contextMap", { projectId });
+  const refreshMap = useRefreshCommand("project.contextMap");
+  const { mutate: process } = useMutation("project.process", {
+    invalidates: CONTEXT_MAP_INVALIDATES,
+  });
+  const [build, setBuild] = useState<BuildState>({ kind: "idle" });
+  const [attempt, setAttempt] = useState(0);
+  const started = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (mapQuery.data?.status !== "absent") return;
+    const runKey = `${projectId}:${attempt}`;
+    if (started.current === runKey) return;
+    started.current = runKey;
     let live = true;
-    setState({ kind: "loading" });
-    bridge
-      .invoke("project.contextMap", { projectId })
-      .then((result: ProjectContextMapResult) => {
+    const commandId = commandIdFor(`project.process:${projectId}`);
+    const unsubscribe = bridge.onProgress?.(commandId, (event) => {
+      if (!live) return;
+      setBuild({ kind: "processing", ...processEventStatus(event) });
+    });
+    setBuild({ kind: "processing", message: "Starting the Context Map…" });
+    void process({ commandId, projectId }).then(
+      ({ run }) => {
         if (!live) return;
-        if (result.status === "ok") {
-          setState({ kind: "ok", map: result.map, knowledge: result.knowledge });
-        } else {
-          setState({ kind: "absent", reason: result.reason });
-        }
-      })
-      .catch((reason: unknown) => {
-        if (live) setState({ kind: "error", message: messageFrom(reason) });
-      });
+        setBuild(
+          run?.status === "failed"
+            ? { kind: "error", message: run.reason }
+            : { kind: "refreshing" },
+        );
+      },
+      (reason: unknown) => {
+        if (live) setBuild({ kind: "error", message: messageFrom(reason) });
+      },
+    );
     return () => {
       live = false;
+      unsubscribe?.();
     };
-  }, [bridge, projectId]);
+  }, [attempt, bridge, mapQuery.data?.status, process, projectId]);
 
-  if (state.kind === "ok") {
+  useEffect(() => {
+    if (
+      build.kind === "refreshing" &&
+      mapQuery.data?.status === "absent" &&
+      !mapQuery.fetching &&
+      !mapQuery.stale
+    ) {
+      setBuild({ kind: "error", message: mapQuery.data.reason });
+    }
+  }, [build.kind, mapQuery.data, mapQuery.fetching, mapQuery.stale]);
+
+  if (mapQuery.data?.status === "ok") {
     return (
       <ContextMap
-        bridge={bridge}
         projectId={projectId}
-        map={state.map}
-        knowledge={state.knowledge}
+        map={mapQuery.data.map}
+        knowledge={mapQuery.data.knowledge}
         onBack={onBack}
         showAskRail={showAskRail}
         onDiscuss={onDiscuss}
@@ -121,19 +186,50 @@ export function ContextMapView({
         </button>
         <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
       </header>
-      <div className="context-map-status px-8 py-10 font-serif text-base text-ink-soft">
-        {state.kind === "loading"
-          ? "Loading the repo map…"
-          : state.kind === "absent"
-            ? state.reason
-            : state.message}
+      <div className="context-map-status flex max-w-xl flex-col gap-3 px-8 py-10 text-ink-soft">
+        <div className="flex items-center gap-2 font-serif text-base">
+          {mapQuery.pending || build.kind === "processing" || build.kind === "refreshing" ? (
+            <Icon icon={LoaderCircle} className="size-4 animate-spin text-accent" />
+          ) : null}
+          <span role={mapQuery.error || build.kind === "error" ? "alert" : undefined}>
+            {mapQuery.error
+              ? messageFrom(mapQuery.error)
+              : mapQuery.pending
+                ? "Loading the Context Map…"
+                : build.kind === "processing"
+                  ? build.message
+                  : build.kind === "refreshing"
+                    ? "Opening the Context Map…"
+                    : build.kind === "error"
+                      ? build.message
+                      : mapQuery.data?.status === "absent"
+                        ? "Starting the Context Map…"
+                        : "Loading the Context Map…"}
+          </span>
+        </div>
+        {build.kind === "processing" && build.detail ? (
+          <p className="font-mono text-xs text-ink-faint">{build.detail}</p>
+        ) : null}
+        {mapQuery.error || build.kind === "error" ? (
+          <button
+            type="button"
+            className="inline-flex w-fit items-center gap-1.5 rounded-chip border border-line px-2.5 py-1.5 text-sm text-ink-soft hover:bg-raised hover:text-ink"
+            onClick={() => {
+              setBuild({ kind: "idle" });
+              refreshMap();
+              setAttempt((current) => current + 1);
+            }}
+          >
+            <Icon icon={RotateCcw} className="size-3.5" />
+            Retry
+          </button>
+        ) : null}
       </div>
     </div>
   );
 }
 
 function ContextMap({
-  bridge,
   projectId,
   map,
   knowledge,
@@ -141,7 +237,6 @@ function ContextMap({
   showAskRail,
   onDiscuss,
 }: {
-  bridge: RennetBridge;
   projectId: string;
   map: ProjectMapPayload;
   knowledge: KnowledgeSetPayload | null;
@@ -149,6 +244,7 @@ function ContextMap({
   showAskRail: boolean;
   onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
+  const { mutate: persistDisposition } = useMutation("project.knowledgeDisposition");
   const scopes = useMemo(() => buildScopes(map), [map]);
   const [selection, setSelection] = useState<Selection>(
     scopes[0] ? { kind: "scope", scope: scopes[0].name } : { kind: "scope", scope: "" },
@@ -178,7 +274,7 @@ function ContextMap({
         ),
       );
     try {
-      const result = (await bridge.invoke("project.knowledgeDisposition", {
+      const result = (await persistDisposition({
         projectId,
         statementId,
         disposition: next,
@@ -271,7 +367,7 @@ function ContextMap({
             <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
               Orchestrator — project session
             </div>
-            <AskRail ref={askRef} bridge={bridge} projectId={projectId} />
+            <AskRail ref={askRef} projectId={projectId} />
           </section>
         ) : null}
       </div>
@@ -764,10 +860,11 @@ function DetailsPanel({
 }
 
 // ---------------------------------------------------------------- rail ----
-const AskRail = forwardRef<
-  { prefill(text: string): void },
-  { bridge: RennetBridge; projectId: string }
->(function AskRail({ bridge, projectId }, ref) {
+const AskRail = forwardRef<{ prefill(text: string): void }, { projectId: string }>(function AskRail(
+  { projectId },
+  ref,
+) {
+  const { mutate: ask } = useMutation("project.contextAsk");
   const [turns, setTurns] = useState<AskTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -790,7 +887,7 @@ const AskRail = forwardRef<
     setTurns((current) => [...current, question]);
     setBusy(true);
     try {
-      const result = await bridge.invoke("project.contextAsk", { projectId, question: text });
+      const result = await ask({ projectId, question: text });
       setTurns((current) => [
         ...current,
         { id: crypto.randomUUID(), role: "orchestrator", result },

@@ -1,4 +1,4 @@
-import type { Project, ProjectSource } from "@rennet/protocol";
+import { commandIdFor, type Project, type ProjectSource } from "@rennet/protocol";
 import {
   Button,
   Dialog,
@@ -116,6 +116,7 @@ export function AddProjectFlow({
   const addProject = useMutation("projects.add", {
     invalidates: ["projects.list", "settings.get"],
   });
+  const processProject = useMutation("project.process");
 
   // A per-mount guard: this body remounts on each open, so an add() that resolves AFTER the
   // user closed (and maybe reopened) the dialog must NOT run its post-await UI effects —
@@ -186,11 +187,20 @@ export function AddProjectFlow({
         includedRepos: discovery.repos.map((repo) => repo.name),
         primaryBranch: discovery.primaryBranch,
       });
+      // Project processing belongs to the persisted add, not to whichever route happens to
+      // mount next. First-run onboarding does not visit the indexing route, while the normal
+      // flow does; both start or join this same durable command and may navigate immediately.
+      void processProject
+        .mutate({
+          commandId: commandIdFor(`project.process:${project.id}`),
+          projectId: project.id,
+        })
+        .catch(() => undefined);
       // A stale completion (the dialog was closed/reopened while this was in flight) must not
       // close the reopened dialog or hijack the route — bail before any post-await UI effect.
       if (!alive.current) return;
       // Persisted with no orchestrator turn; the sidebar (projects.list, invalidated above)
-      // carries it. Straight to the indexing view — scout + map generation live there.
+      // carries it. The indexing view joins the already-started durable processing run.
       onClose?.();
       if (onAdded) onAdded(project);
       else navigate(projectIndexingPath(project.id));

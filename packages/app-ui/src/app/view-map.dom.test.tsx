@@ -68,6 +68,9 @@ function mountApp(path: string, handlers: MemoryBridgeHandlers = {}) {
       // in sync. The map's own content is `components/context-map-view`'s to test.
       return { status: "absent" as const, reason: "No snapshot for this project yet." };
     },
+    // An absent map starts or rejoins its durable build. Hold that real background state so
+    // this route test can keep proving project identity without fabricating a terminal error.
+    "project.process": () => new Promise<never>(() => undefined),
     ...handlers,
   });
   const history = memoryHistory(path);

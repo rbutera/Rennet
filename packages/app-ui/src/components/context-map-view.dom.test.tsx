@@ -7,15 +7,34 @@
 // subject, confirming a statement invokes `project.knowledgeDisposition`, and asking a
 // question invokes `project.contextAsk` and renders the answer. Assertions are
 // behavioural — rendered nodes and recorded command inputs.
-import type {
-  KnowledgeSetPayload,
-  ProjectContextMapResult,
-  ProjectMapPayload,
-  RennetBridge,
+import {
+  commandIdFor,
+  type KnowledgeSetPayload,
+  type ProjectContextMapResult,
+  type ProjectMapPayload,
+  type RennetBridge,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, mount, waitFor } from "../test/dom";
-import { ContextMapView } from "./context-map-view";
+import { BridgeProvider } from "../data";
+import { act, fireEvent, mount, waitFor } from "../test/dom";
+import { MemoryBridge } from "../test/memory-bridge";
+import { ContextMapView as ProductContextMapView } from "./context-map-view";
+
+function ContextMapView({
+  bridge,
+  projectId,
+  onBack,
+}: {
+  bridge: RennetBridge;
+  projectId: string;
+  onBack(): void;
+}) {
+  return (
+    <BridgeProvider bridge={bridge}>
+      <ProductContextMapView projectId={projectId} onBack={onBack} />
+    </BridgeProvider>
+  );
+}
 
 const map: ProjectMapPayload = {
   baseRef: "main",
@@ -120,6 +139,14 @@ function fakeBridge(
   return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, calls };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 describe("ContextMapView — the Context Map surface", () => {
   it("loads project.contextMap and renders the scope tree with rolled-up counts", async () => {
     const { bridge, calls } = fakeBridge();
@@ -140,17 +167,70 @@ describe("ContextMapView — the Context Map surface", () => {
     expect(tree?.textContent).toContain("2f");
   });
 
-  it("states the absent snapshot plainly instead of a fabricated map", async () => {
-    const { bridge } = fakeBridge({ status: "absent", reason: "no repo map is persisted yet" });
+  it("starts the durable project run, renders its live progress, then opens the generated map", async () => {
+    let reads = 0;
+    const processing = deferred<{ repos: [] }>();
+    const bridge = new MemoryBridge({
+      "project.contextMap": () => {
+        reads += 1;
+        return reads === 1
+          ? { status: "absent" as const, reason: "no repo map is persisted yet" }
+          : { status: "ok" as const, map, knowledge };
+      },
+      "project.process": () => processing.promise,
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    const commandId = commandIdFor("project.process:project-1");
+    await waitFor(() =>
+      expect(container.querySelector(".context-map-status")?.textContent).toContain(
+        "Starting the Context Map",
+      ),
+    );
+    act(() =>
+      bridge.emitProgress(commandId, {
+        kind: "stage",
+        repo: "rennet",
+        stage: "tree",
+        note: "Reading the file tree",
+        detail: "412 files",
+      }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".context-map-status")?.textContent).toContain(
+        "Reading the file tree",
+      ),
+    );
+    expect(container.querySelector(".context-map-status")?.textContent).toContain("412 files");
+
+    act(() => processing.resolve({ repos: [] }));
+    await waitFor(() => expect(container.querySelector(".context-map-tree")).not.toBeNull());
+    expect(reads).toBe(2);
+  });
+
+  it("surfaces processing failure and retries the same durable project run", async () => {
+    let attempts = 0;
+    const bridge = new MemoryBridge({
+      "project.contextMap": () => ({
+        status: "absent",
+        reason: "no repo map is persisted yet",
+      }),
+      "project.process": () => {
+        attempts += 1;
+        throw new Error("worker exited during map generation");
+      },
+    });
     const { container } = mount(
       <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
     );
     await waitFor(() =>
-      expect(container.querySelector(".context-map-status")?.textContent).toContain(
-        "no repo map is persisted yet",
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "worker exited during map generation",
       ),
     );
-    expect(container.querySelector(".context-map-tree")).toBeNull();
+    fireEvent.click(container.querySelector(".context-map-status button") as Element);
+    await waitFor(() => expect(attempts).toBe(2));
   });
 
   it("filters the knowledge panel to the selected scope", async () => {
