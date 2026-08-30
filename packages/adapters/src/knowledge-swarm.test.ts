@@ -250,13 +250,13 @@ async function measureWorkerConcurrency(concurrency?: number): Promise<{
 }
 
 describe("knowledge swarm — council-routed contract (no live model)", () => {
-  it("starts sixteen worker turns by default and never exceeds that bound", async () => {
-    expect(DEFAULT_SWARM_CONCURRENCY).toBe(16);
+  it("starts twelve worker turns by default and never exceeds that bound", async () => {
+    expect(DEFAULT_SWARM_CONCURRENCY).toBe(12);
 
     const measured = await measureWorkerConcurrency();
 
-    expect(measured.startedBeforeRelease).toBe(16);
-    expect(measured.peak).toBe(16);
+    expect(measured.startedBeforeRelease).toBe(12);
+    expect(measured.peak).toBe(12);
     expect(measured.outcome).toMatchObject({
       status: "ok",
       ranPartitions: 17,
