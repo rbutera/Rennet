@@ -357,7 +357,9 @@ that host's repair.
    step coarsens separate detached-commit, source-landing, and round-recording
    receipts; each remains its own restart boundary. The view is
    deep-linkable and cold: opening it mid-round reattaches to the newest durable
-   receipt and never re-dispatches. It stays on the run through report drafting
+   receipt and never re-dispatches. The first round pins one enabled installed
+   Claude Code or Codex harness to the session; later rounds use that exact harness,
+   and the run receipt names its version. It stays on the run through report drafting
    and verification, and hands back to the board surface only after the durable
    operation records verified terminal completion (including a verified
    unchanged round). A terminal failure stays on the run with its failure
@@ -453,7 +455,8 @@ that host's repair.
    rows also pin one immutable run receipt: when the durable operation started,
    its exact branch or detached HEAD target, and the configured gate's command,
    duration, and project count (or the fact that no gate was configured). The
-   first dispatch placeholder owns that receipt; retry and regeneration
+   first dispatch placeholder owns that receipt, including the exact coding harness
+   and version that ran the worker; retry and regeneration
    reconciliation cannot rewrite it. Because
    #457 appends the new generation and freezes the old rather than overwriting, that frozen
    generation stays reachable through the generation switcher, so earlier

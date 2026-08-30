@@ -121,6 +121,7 @@ export const completedRoundRecord: RoundLedgerRecord = {
   run: {
     startedAt: Date.UTC(2026, 7, 29, 9, 30),
     sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    harness: { id: "codex", version: "0.146.0" },
     gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
   },
   report: reportBoardFixture,

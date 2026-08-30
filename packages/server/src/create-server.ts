@@ -35,6 +35,7 @@ import {
   createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
+  createCodexHarness,
   createCoverageTurn,
   createDaemonSettingsStore,
   createGitHubOctokit,
@@ -174,6 +175,7 @@ import {
   verifyFlaggedReview,
 } from "@rennet/core";
 import type {
+  CodingHarnessSelection,
   ConventionCatalogue,
   CouncilHarnessId,
   DetectedForge,
@@ -404,6 +406,153 @@ export interface HandoffTurnInput {
   readonly execution?: HandoffTurnExecution;
 }
 
+export type CodingHarnessResolution =
+  | {
+      readonly status: "ready";
+      readonly selection: CodingHarnessSelection;
+      readonly port: HarnessPort;
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+/**
+ * Resolve the coding harness for an own-branch turn. A session selection is sticky: once a
+ * round records Claude or Codex, later rounds resolve that exact provider and fail plainly if
+ * it was disabled or disappeared. A new session chooses from the enabled live ports in stable
+ * order and records the result before execution, so choosing Codex is never a hidden fallback.
+ */
+export async function resolveCodingHarness(input: {
+  readonly pinned?: CodingHarnessSelection;
+  readonly disabledHarnesses?: readonly string[];
+  readonly resolveClaude: () => Promise<HarnessPort | null>;
+  readonly resolveCodex: () => Promise<HarnessPort | null>;
+}): Promise<CodingHarnessResolution> {
+  const disabled = new Set(input.disabledHarnesses ?? []);
+  const isDisabled = (id: CodingHarnessSelection["id"]): boolean =>
+    disabled.has(id === "claude-code" ? "claude" : "codex") || disabled.has(id);
+  const displayName = (id: CodingHarnessSelection["id"]): string =>
+    id === "claude-code" ? "Claude Code" : "Codex";
+  const tryResolve = async (
+    id: CodingHarnessSelection["id"],
+  ): Promise<{ readonly port: HarnessPort | null; readonly error?: string }> => {
+    try {
+      return {
+        port: await (id === "claude-code" ? input.resolveClaude() : input.resolveCodex()),
+      };
+    } catch (error) {
+      return {
+        port: null,
+        error: `${displayName(id)} discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  };
+  const resolveExact = async (
+    id: CodingHarnessSelection["id"],
+  ): Promise<CodingHarnessResolution> => {
+    if (isDisabled(id)) {
+      return {
+        status: "unavailable",
+        reason: `${displayName(id)} is selected for this session but disabled on its execution host.`,
+      };
+    }
+    const attempt = await tryResolve(id);
+    const port = attempt.port;
+    if (port === null) {
+      return {
+        status: "unavailable",
+        reason:
+          attempt.error ??
+          `${displayName(id)} is selected for this session but is not available on its execution host.`,
+      };
+    }
+    if (port.descriptor.id !== id) {
+      return {
+        status: "unavailable",
+        reason: `The ${id} resolver returned ${port.descriptor.id}; refusing to run a different harness than the selected one.`,
+      };
+    }
+    return {
+      status: "ready",
+      selection: { id, version: port.descriptor.version },
+      port,
+    };
+  };
+
+  if (input.pinned !== undefined) return resolveExact(input.pinned.id);
+
+  const [claudeAttempt, codexAttempt] = await Promise.all([
+    isDisabled("claude-code") ? { port: null } : tryResolve("claude-code"),
+    isDisabled("codex") ? { port: null } : tryResolve("codex"),
+  ]);
+  const claude = claudeAttempt.port;
+  const codex = codexAttempt.port;
+  if (claude !== null && claude.descriptor.id === "claude-code") {
+    return {
+      status: "ready",
+      selection: { id: "claude-code", version: claude.descriptor.version },
+      port: claude,
+    };
+  }
+  if (codex !== null && codex.descriptor.id === "codex") {
+    return {
+      status: "ready",
+      selection: { id: "codex", version: codex.descriptor.version },
+      port: codex,
+    };
+  }
+  return {
+    status: "unavailable",
+    reason:
+      [
+        "error" in claudeAttempt ? claudeAttempt.error : undefined,
+        "error" in codexAttempt ? codexAttempt.error : undefined,
+      ]
+        .filter((reason) => reason !== undefined)
+        .join("; ") ||
+      "No enabled coding harness (Claude Code or Codex) is available on the execution host.",
+  };
+}
+
+/**
+ * Resolve, durably pin, run, and stamp one coding-harness turn. Keeping this bridge together
+ * makes the provider choice part of the session contract rather than an incidental adapter
+ * lookup: the pin lands before any mutation, and the exact live version rides the outcome.
+ */
+export async function runResolvedCodingHarnessTurn(input: {
+  readonly sessionId?: string;
+  readonly sessionStore: Pick<SessionStore, "load" | "setCodingHarness">;
+  readonly disabledHarnesses?: readonly string[];
+  readonly resolveClaude: () => Promise<HarnessPort | null>;
+  readonly resolveCodex: () => Promise<HarnessPort | null>;
+  readonly run: (
+    port: HarnessPort,
+    persistedSessionId: string | undefined,
+  ) => Promise<HandoffTurnOutcome>;
+}): Promise<HandoffTurnOutcome> {
+  const storedSession =
+    input.sessionId === undefined ? undefined : input.sessionStore.load(input.sessionId);
+  const resolution = await resolveCodingHarness({
+    ...(storedSession?.codingHarness === undefined ? {} : { pinned: storedSession.codingHarness }),
+    disabledHarnesses: input.disabledHarnesses ?? [],
+    resolveClaude: input.resolveClaude,
+    resolveCodex: input.resolveCodex,
+  });
+  if (resolution.status === "unavailable") {
+    return {
+      status: "failed",
+      reason: resolution.reason,
+      turnDiff: "",
+      filesTouched: [],
+    };
+  }
+  const persistedSessionId =
+    input.sessionId !== undefined && storedSession !== undefined ? input.sessionId : undefined;
+  if (persistedSessionId !== undefined) {
+    input.sessionStore.setCodingHarness(persistedSessionId, resolution.selection);
+  }
+  const outcome = await input.run(resolution.port, persistedSessionId);
+  return { ...outcome, harness: resolution.selection };
+}
+
 export async function captureBranchPatchset(input: {
   readonly git: GitExec;
   readonly locus: Locus;
@@ -535,6 +684,7 @@ export function createRoundWorkerPort(input: {
       completedAt: (input.now ?? Date.now)(),
       diff: outcome.turnDiff,
       changedPaths: [...outcome.filesTouched],
+      ...(outcome.harness === undefined ? {} : { harness: outcome.harness }),
     };
     return outcome.status === "failed"
       ? {
@@ -895,14 +1045,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readonly binPath: string | null;
     /** The resolved codex version, stamped as harness provenance, or null. */
     readonly version: string | null;
+    /** The full agentic port for write-enabled coding rounds, or null when unavailable. */
+    readonly adapter: HarnessPort | null;
   }
   // Memoized PER LOCUS (add-windows-support / #334), like the Claude harness: the host
   // resolution is shared as before; a WSL-locus project discovers and runs the DISTRO's
   // own `codex` (distro discovery deps, locus-wrapped executor, distro-side scratch).
   // The utility executor carries the locus so every spawn enters the distro through
   // `locusCommand` — a WSL review is dual-harness rather than degrading to
-  // single-Claude. (The agentic transport this once also built went with the dead
-  // `agenticPort`, F1: the orchestrator is Claude.)
+  // single-Claude. The same resolution now owns the agentic adapter used by Codex-backed
+  // coding rounds, so discovery, version provenance, and executable choice cannot drift.
   const codexResolutions = new Map<string, Promise<CodexResolution>>();
   function getCodexResolution(locus: Locus): Promise<CodexResolution> {
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
@@ -916,24 +1068,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             makeExecutor: null,
             binPath: null,
             version: null,
+            adapter: null,
           };
         }
         const explicitBin = env.RENNET_CODEX_BIN;
         const discoveryDeps =
           locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultCodexDiscoveryDeps();
-        const result = await discoverCodex(discoveryDeps, {
+        const result = await createCodexHarness({
+          discoveryDeps,
+          locus,
           // The RENNET_CODEX_BIN override is a host path; it never applies to a distro.
           ...(locus.kind === "host" && explicitBin && explicitBin.length > 0
             ? { explicitBin }
             : {}),
         });
-        const chosen = result.chosen;
+        const chosen = result.discovery.chosen;
         if (!chosen) {
           return {
             availability: { available: false, version: null },
             makeExecutor: null,
             binPath: null,
             version: null,
+            adapter: null,
           };
         }
         const makeExecutor = (repoRoot: string): CodexExecutor =>
@@ -949,6 +1105,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           makeExecutor,
           binPath: chosen.path,
           version: chosen.version,
+          adapter: result.adapter,
         };
       })();
       codexResolutions.set(key, resolution);
@@ -969,6 +1126,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     const { makeExecutor } = await getCodexResolution(locus);
     return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
+  }
+
+  async function codexAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+    const { locus } = locusContextForRepo(repoRoot);
+    return (await getCodexResolution(locus)).adapter;
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -2206,13 +2368,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // since loop-only would leave the brackets unserialized and round 2's `turnDiff` would then
   // include round 1's changes.
   //
-  // ONE loop per repo root, and the repo root is the SINGLE source of the turn's cwd: the loop
-  // key IS what `buildSpec` returns, so there is no second copy of that fact to drift. The port
-  // is that repo's own resolved `claude` adapter (host or distro), so a WSL project's turns run
-  // its claude.
+  // ONE loop per repo root + selected harness, and the repo root is the SINGLE source of the
+  // turn's cwd: the loop key IS what `buildSpec` returns, so there is no second copy of that
+  // fact to drift. The harness is part of the key because two sessions over one repository may
+  // have pinned different providers; returning a cached Claude loop for a Codex session would
+  // silently execute the wrong provider.
   const sessionTurnLoops = new Map<string, SessionTurnLoop>();
   function turnLoopForRepo(repoRoot: string, port: HarnessPort): SessionTurnLoop {
-    const existing = sessionTurnLoops.get(repoRoot);
+    const key = `${repoRoot}\0${port.descriptor.id}`;
+    const existing = sessionTurnLoops.get(key);
     if (existing) return existing;
     const loop = new SessionTurnLoop({
       port,
@@ -2231,10 +2395,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         console.error("Session transcript capture failed", error),
       ),
     });
-    sessionTurnLoops.set(repoRoot, loop);
+    sessionTurnLoops.set(key, loop);
     return loop;
   }
-  // The write-enabled coding-agent turn (issue #18): brackets a live `claude` write turn
+  // The write-enabled coding-agent turn (issue #18): brackets the selected live harness turn
   // with git checkpoints and returns the turn diff. Extracted to a local so BOTH the
   // `review.handoff.run` command and the B11 round dispatch (below) run the same turn.
   const runHandoffTurnDefault = async ({
@@ -2246,8 +2410,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const execution = requestedExecution ?? handoffTurnExecution(locusForRepo(repoRoot), repoRoot);
     const locus: Locus =
       execution.kind === "host" ? HOST_LOCUS : { kind: "wsl", distro: execution.distro };
-    // The SDK prepends this distro cwd to its direct wsl.exe spawn.
-    const distroCwd = execution.kind === "wsl" ? execution.cwd : undefined;
     if (await repoHasSubmodules(repoRoot, locus)) {
       return {
         status: "failed",
@@ -2257,27 +2419,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         filesTouched: [],
       };
     }
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
-    if (!adapter) {
-      return {
-        status: "failed",
-        reason: "no coding harness (claude) is installed to run the handoff",
-        turnDiff: "",
-        filesTouched: [],
-      };
-    }
-    // Only a session that is ACTUALLY persisted rides the loop — the loop resumes from and
-    // writes back a stored record, so an unpersisted id would throw rather than run.
-    const loopSession =
-      sessionId !== undefined && sessionStore.load(sessionId) !== undefined ? sessionId : undefined;
-    return runHandoffTurnCore({
-      repoRoot,
-      prompt,
-      runPort:
-        loopSession === undefined
-          ? claudeHandoffRunPort(adapter)
-          : turnLoopRunPort(turnLoopForRepo(repoRoot, adapter), loopSession),
-      checkpoint: new GitCheckpointStore(repoRoot, locus),
+    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
+    return runResolvedCodingHarnessTurn({
+      ...(sessionId === undefined ? {} : { sessionId }),
+      sessionStore,
+      disabledHarnesses: daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [],
+      resolveClaude: () => claudeAdapterForRepo(repoRoot),
+      resolveCodex: () => codexAdapterForRepo(repoRoot),
+      run: (port, persistedSessionId) =>
+        runHandoffTurnCore({
+          repoRoot,
+          prompt,
+          runPort:
+            persistedSessionId === undefined
+              ? claudeHandoffRunPort(port)
+              : turnLoopRunPort(turnLoopForRepo(repoRoot, port), persistedSessionId),
+          checkpoint: new GitCheckpointStore(repoRoot, locus),
+        }),
     });
   };
   const runHandoffTurn = options.runHandoffTurn ?? runHandoffTurnDefault;
@@ -2785,6 +2943,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           run: {
             startedAt: operation.createdAt,
             sourceTarget: operation.sourceTarget,
+            ...(worker.harness === undefined ? {} : { harness: worker.harness }),
             gate,
           },
           runWorkers: async (): Promise<DispatchRoundResult> => ({
