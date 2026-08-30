@@ -8,8 +8,8 @@ import type { DetectedTool, ToolStatus } from "../data";
 // harnesses read in ONE row shape: the official mark, the tool label, the tool's
 // own version line (shown only when detected — never a guess), a status chip, an
 // honest one-line helper naming the exact fix (backticked commands render as code),
-// and the enable toggle. Built on the kit `Switch` + the shared `Row` atom (autopsy
-// S6 forbids a hand-rolled toggle).
+// and an enable toggle only when the projected behavior has a real consumer. Built on
+// the kit `Switch` + the shared `Row` atom (autopsy S6 forbids a hand-rolled toggle).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATUS: Record<ToolStatus, { readonly label: string; readonly chip: string }> = {
@@ -56,13 +56,14 @@ export function CommandCopy({ text }: { readonly text: string }) {
 export function DetectionRow({
   tool,
   mark,
-  toggleLabel,
-  onToggle,
+  toggle,
 }: {
   readonly tool: DetectedTool;
   readonly mark: ReactNode;
-  readonly toggleLabel: string;
-  readonly onToggle: (enabled: boolean) => void;
+  readonly toggle: {
+    readonly label: string;
+    readonly onChange: (enabled: boolean) => void;
+  } | null;
 }) {
   return (
     <Row
@@ -78,12 +79,14 @@ export function DetectionRow({
       }
       hint={<CommandCopy text={tool.detail} />}
     >
-      <Switch
-        checked={tool.enabled}
-        onCheckedChange={onToggle}
-        aria-label={toggleLabel}
-        size="sm"
-      />
+      {toggle ? (
+        <Switch
+          checked={tool.enabled}
+          onCheckedChange={toggle.onChange}
+          aria-label={toggle.label}
+          size="sm"
+        />
+      ) : null}
     </Row>
   );
 }

@@ -65,7 +65,8 @@ export type ToolStatus = "available" | "not-authenticated" | "not-installed" | "
 
 /** One detected tool (a forge CLI or a coding harness) on one host — the shared row
  *  shape source-control and agents both render (mark, label, version, status, helper,
- *  enable toggle). A row with no detected `version` shows none (never a guess). */
+ *  and, where an acting path consumes it, an enable toggle). A row with no detected
+ *  `version` shows none (never a guess). */
 export interface DetectedTool {
   readonly id: string;
   readonly label: string;

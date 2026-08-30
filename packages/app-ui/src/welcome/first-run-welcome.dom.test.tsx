@@ -10,7 +10,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
-import { cleanup, fireEvent, mount, screen, waitFor } from "../test/dom";
+import { cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 
 const ROLES: readonly ReviewRoleMapping[] = [
@@ -109,6 +109,12 @@ function welcomeBridge(
               status: "available",
               detail: "Authenticated through the gh CLI.",
             },
+            {
+              id: "gitlab",
+              version: "1.80.0",
+              status: "available",
+              detail: "Authenticated with GitLab through the `glab` CLI.",
+            },
           ],
         },
       ],
@@ -142,6 +148,13 @@ async function advanceToReviewSetup(): Promise<void> {
   await screen.findByText("Your tools, already connected.");
   fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
   await screen.findByText("Choose how Rennet reviews.");
+}
+
+async function gitLabToolRow() {
+  const heading = await screen.findByRole("heading", { name: /GitLab CLI/ });
+  const article = heading.closest<HTMLElement>("article");
+  if (!article) throw new Error("GitLab CLI heading is not inside a tool row");
+  return within(article);
 }
 
 afterEach(() => {
@@ -180,6 +193,136 @@ describe("FirstRunWelcome", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dracula" }));
     await waitFor(() => expect(document.documentElement.dataset.rnTheme).toBe("dracula"));
     expect(setTheme).toHaveBeenCalledWith({ themePack: "dracula" });
+  });
+
+  it("shows an authenticated GitLab CLI from live host detection", async () => {
+    mount(<RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+
+    const gitlab = await gitLabToolRow();
+    expect(gitlab.getByText("1.80.0")).toBeTruthy();
+    expect(gitlab.getByText("Available")).toBeTruthy();
+    expect(gitlab.getByText("Authenticated with GitLab through the `glab` CLI.")).toBeTruthy();
+  });
+
+  it("shows the host's detected GitLab CLI and exact auth repair command", async () => {
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "forge.hosts": () => ({
+            hosts: [
+              {
+                source: "local",
+                asked: true,
+                detected: [
+                  {
+                    id: "github",
+                    version: null,
+                    status: "not-installed",
+                    detail: "The `gh` CLI was not found on this host. Run `brew install gh`.",
+                  },
+                  {
+                    id: "gitlab",
+                    version: "1.80.0",
+                    status: "not-authenticated",
+                    detail:
+                      "`glab` is installed but not signed in to gitlab.com. Run `glab auth login --hostname gitlab.com`.",
+                  },
+                ],
+              },
+            ],
+          }),
+        })}
+        history={memoryHistory("/new-chat")}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+
+    const gitlab = await gitLabToolRow();
+    expect(gitlab.getByText("1.80.0")).toBeTruthy();
+    expect(gitlab.getByText("Not authenticated")).toBeTruthy();
+    expect(
+      gitlab.getByText(
+        "`glab` is installed but not signed in to gitlab.com. Run `glab auth login --hostname gitlab.com`.",
+      ),
+    ).toBeTruthy();
+    expect(
+      gitlab.queryByText("GitLab merge-request integration is not part of this launch."),
+    ).toBeNull();
+  });
+
+  it("shows a missing GitLab CLI with its exact install repair and no guessed version", async () => {
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "forge.hosts": () => ({
+            hosts: [
+              {
+                source: "local",
+                asked: true,
+                detected: [
+                  {
+                    id: "gitlab",
+                    version: null,
+                    status: "not-installed",
+                    detail: "The `glab` CLI was not found on this host. Run `brew install glab`.",
+                  },
+                ],
+              },
+            ],
+          }),
+        })}
+        history={memoryHistory("/new-chat")}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+
+    const gitlab = await gitLabToolRow();
+    expect(gitlab.getByText("Not installed")).toBeTruthy();
+    expect(
+      gitlab.getByText("The `glab` CLI was not found on this host. Run `brew install glab`."),
+    ).toBeTruthy();
+    expect(gitlab.queryByText("1.80.0")).toBeNull();
+  });
+
+  it("shows an unreachable GitLab CLI without calling it signed out", async () => {
+    const detail =
+      "`glab` could not reach or verify GitLab.com. Run `glab auth status --hostname gitlab.com`.";
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "forge.hosts": () => ({
+            hosts: [
+              {
+                source: "local",
+                asked: true,
+                detected: [
+                  {
+                    id: "gitlab",
+                    version: "1.80.0",
+                    status: "not-authenticated",
+                    authProbe: "unreachable",
+                    detail,
+                  },
+                ],
+              },
+            ],
+          }),
+        })}
+        history={memoryHistory("/new-chat")}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+
+    const gitlab = await gitLabToolRow();
+    expect(gitlab.getByText("1.80.0")).toBeTruthy();
+    expect(gitlab.getByText("Unreachable")).toBeTruthy();
+    expect(gitlab.getByText(detail)).toBeTruthy();
+    expect(gitlab.queryByText("Not authenticated")).toBeNull();
   });
 
   it("saves the orchestrator and default dual-harness choice before project setup", async () => {

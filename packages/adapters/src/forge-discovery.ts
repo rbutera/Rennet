@@ -7,44 +7,58 @@ import { execa } from "execa";
 import { wslDiscoveryDeps } from "./harness-discovery";
 
 /**
- * Forge (source-control) CLI detection — the `gh` engine, mirroring `harness-discovery.ts`.
+ * Forge (source-control) CLI detection, mirroring `harness-discovery.ts`.
  *
  * Restored in C17 (#483, "gh rides again": enterprise orgs forbid OAuth-app installs, so
  * the `gh auth token` path is wanted again). Reached through a `ForgeDetector` registry
- * shaped for #484's future (a second forge *could* register), but built with EXACTLY ONE
- * entry — GitHub / `gh`. Building GitLab / Bitbucket is out of scope (#484 is planning-only).
+ * shaped for #484: GitHub rides `gh` and GitLab.com rides `glab`. Bitbucket is deliberately
+ * not forced through this CLI-shaped seam because it has no official CLI.
  *
  * Same discipline as harness discovery: never ask a shell to resolve the binary (a launchd
  * GUI PATH finds nothing, and `gh` may be shadowed by a shell function). We harvest PATH,
  * union it with curated install dirs, resolve candidates ourselves, and prove each by
- * EXECUTING `<gh> --version`; a proven binary's auth is then read from `gh auth status`.
+ * EXECUTING `<binary> --version`; a proven binary's auth is then read with that provider's
+ * exact status command.
  * Every effect is injected so a test can prove absence maps to `not-installed`, never a
  * stale hit (the rename-out-of-PATH positive control at unit scale).
  */
 
-/** The honest state of a detected forge CLI. A subset of the client's `ToolStatus`: a
- *  forge CLI probe never yields `unreachable` (that is a host-daemon state, not a CLI one). */
+/** The honest state of a detected forge CLI. */
 export type ForgeStatus = "available" | "not-authenticated" | "not-installed";
+
+/** The auth command's boundary result. Non-zero output stays internal and is used only to
+ * distinguish an explicit credential rejection from a service or local probe failure. */
+export type ForgeAuthProbe =
+  | { readonly kind: "authenticated" }
+  | { readonly kind: "failed"; readonly output: string }
+  | { readonly kind: "unreachable" };
 
 /** One detected forge CLI on the host its daemon runs on. Structurally the wire
  *  `DetectedForge` (protocol) — validated at the dispatch boundary, mapped to a
- *  `DetectedTool` row by the client (which adds the label + enable toggle). */
+ *  `DetectedTool` row by the client (which adds presentation and any operational toggle). */
 export interface DetectedForge {
   readonly id: string;
   readonly version: string | null;
+  /** The v2-compatible base status. Older clients preserve their prior non-zero fallback. */
   readonly status: ForgeStatus;
+  /** Additive truth for clients that can distinguish a failed provider probe. */
+  readonly authProbe?: "unreachable";
   /** One line of honest state and the exact fix; backticked spans render as code. */
   readonly detail: string;
 }
 
-/** A forge the detector knows how to probe. The registry is singleton today (#484). */
+/** A forge the detector knows how to probe. */
 export interface ForgeSpec {
   readonly id: string;
   readonly binary: string;
+  /** Provider-specific argv that proves this CLI's target host is authenticated. */
+  readonly authStatusArgs: readonly string[];
+  /** Interpret a non-zero auth command without mistaking transport failure for signed-out. */
+  classifyAuthFailure(output: string): "not-authenticated" | "unreachable";
   /** Curated install dirs for `binary`, checked even when not on PATH (the launchd case). */
   knownDirectories(home: string, platform: NodeJS.Platform | undefined): readonly string[];
   /** Compose this forge's honest `detail` line from its detection outcome. */
-  detailFor(status: ForgeStatus): string;
+  detailFor(status: ForgeStatus | "unreachable", platform: NodeJS.Platform | undefined): string;
 }
 
 /** Injected effects — mirrors `DiscoveryDeps`, plus the forge auth probe. */
@@ -61,8 +75,8 @@ export interface ForgeDetectionDeps {
   isExecutable(path: string): Promise<boolean>;
   /** Execute `<path> --version` and return the parsed version, or `null`. */
   probeVersion(path: string): Promise<string | null>;
-  /** Probe the forge CLI's auth state (`gh auth status`): true iff authenticated. */
-  probeAuth(path: string): Promise<boolean>;
+  /** Execute the forge CLI's provider-specific auth status command. */
+  probeAuth(path: string, args: readonly string[]): Promise<ForgeAuthProbe>;
   /** The platform the binary lives on. Absent ⇒ POSIX. */
   readonly platform?: NodeJS.Platform;
   /** PATHEXT for the candidate locus, not necessarily the host process. */
@@ -160,7 +174,8 @@ export async function resolveForgeBinary(
 
 /**
  * Detect one forge CLI. Absent binary ⇒ `not-installed`; present-and-proven ⇒
- * `available` when `gh auth status` succeeds, `not-authenticated` when it does not.
+ * `available` when the provider's auth status command succeeds. A known credential rejection
+ * is `not-authenticated`; an unknown non-zero result or failed process is `unreachable`.
  * Never fabricates a version for a binary that is not there.
  */
 export async function detectForge(
@@ -173,18 +188,39 @@ export async function detectForge(
       id: spec.id,
       version: null,
       status: "not-installed",
-      detail: spec.detailFor("not-installed"),
+      detail: spec.detailFor("not-installed", deps.platform),
     };
   }
-  const authed = await deps.probeAuth(resolved.path);
-  const status: ForgeStatus = authed ? "available" : "not-authenticated";
-  return { id: spec.id, version: resolved.version, status, detail: spec.detailFor(status) };
+  const auth = await deps.probeAuth(resolved.path, spec.authStatusArgs);
+  const observedStatus: ForgeStatus | "unreachable" =
+    auth.kind === "authenticated"
+      ? "available"
+      : auth.kind === "failed"
+        ? spec.classifyAuthFailure(auth.output)
+        : "unreachable";
+  return {
+    id: spec.id,
+    version: resolved.version,
+    // `unreachable` is additive on wire v2. Its legacy base stays exactly what v2 daemons
+    // reported for every non-zero auth check, while current clients prefer `authProbe`.
+    status: observedStatus === "unreachable" ? "not-authenticated" : observedStatus,
+    ...(observedStatus === "unreachable" ? { authProbe: "unreachable" as const } : {}),
+    detail: spec.detailFor(observedStatus, deps.platform),
+  };
 }
 
-/** GitHub / `gh` — the sole built forge (#484 seam; #483 gh rides again). */
+/** GitHub / `gh` (#484 seam; #483 gh rides again). */
 export const githubForge: ForgeSpec = {
   id: "github",
   binary: "gh",
+  authStatusArgs: ["auth", "status"],
+  classifyAuthFailure(output) {
+    return /not logged (?:in|into)|token(?:[^\n]*)?(?:invalid|expired)|http (?:401|403)|status(?: code)?:? (?:401|403)/i.test(
+      output,
+    )
+      ? "not-authenticated"
+      : "unreachable";
+  },
   knownDirectories(home, platform) {
     if (platform === "win32") {
       const env = process.env;
@@ -202,20 +238,90 @@ export const githubForge: ForgeSpec = {
       "/home/linuxbrew/.linuxbrew/bin",
     ];
   },
-  detailFor(status) {
+  detailFor(status, platform) {
     switch (status) {
       case "available":
         return "Authenticated with GitHub through the `gh` CLI.";
       case "not-authenticated":
         return "`gh` is installed but not signed in. Run `gh auth login`.";
       case "not-installed":
-        return "The `gh` CLI was not found on this host. Install it from `cli.github.com`.";
+        if (platform === "win32") {
+          return "The `gh` CLI was not found on this host. Run `winget install --id GitHub.cli`.";
+        }
+        if (platform === "darwin") {
+          return "The `gh` CLI was not found on this host. Run `brew install gh`.";
+        }
+        return "The `gh` CLI was not found on this host. On Linux, run `brew install gh` after installing Homebrew from https://brew.sh if needed.";
+      case "unreachable":
+        return "`gh` could not reach or verify GitHub. Run `gh auth status`.";
     }
   },
 };
 
-/** The forge detector registry — EXACTLY ONE entry (#484 boundary: no GitLab/Bitbucket). */
-export const FORGE_REGISTRY: readonly ForgeSpec[] = [githubForge];
+/** GitLab.com / `glab` (#484). Self-managed hosts need host-qualified provider identity first. */
+export const gitlabForge: ForgeSpec = {
+  id: "gitlab",
+  binary: "glab",
+  authStatusArgs: ["auth", "status", "--hostname", "gitlab.com"],
+  classifyAuthFailure(output) {
+    if (
+      /dial tcp|no such host|context deadline exceeded|i\/o timeout|connection (?:refused|reset)|(?:http|status(?: code)?):?\s*5\d\d/i.test(
+        output,
+      )
+    ) {
+      return "unreachable";
+    }
+    return /no gitlab instances have been authenticated|has not been authenticated with glab|oauth2:\s*["']?(?:invalid_grant|invalid_token)\b|(?:access|refresh) token (?:has been |was |is )?(?:expired|revoked)|(?:http|status(?: code)?):?\s*(?:401|403)|\b(?:401|403) (?:unauthorized|forbidden)\b/i.test(
+      output,
+    )
+      ? "not-authenticated"
+      : "unreachable";
+  },
+  knownDirectories(home, platform) {
+    if (platform === "win32") {
+      const join = win32Path.join;
+      const localAppData = process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
+      const programFiles =
+        process.env.ProgramW6432 ?? process.env.ProgramFiles ?? "C:\\Program Files";
+      const programFilesX86 = process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
+      return [
+        join(home, "scoop", "shims"),
+        join(localAppData, "Microsoft", "WinGet", "Links"),
+        join(localAppData, "Programs", "glab"),
+        join(programFiles, "glab"),
+        join(programFilesX86, "glab"),
+      ];
+    }
+    const join = posixPath.join;
+    return [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      join(home, ".local", "bin"),
+      "/home/linuxbrew/.linuxbrew/bin",
+    ];
+  },
+  detailFor(status, platform) {
+    switch (status) {
+      case "available":
+        return "Authenticated with GitLab through the `glab` CLI.";
+      case "not-authenticated":
+        return "`glab` is installed but not signed in to gitlab.com. Run `glab auth login --hostname gitlab.com`.";
+      case "not-installed":
+        if (platform === "win32") {
+          return "The `glab` CLI was not found on this host. Run `winget install glab.glab`.";
+        }
+        if (platform === "darwin") {
+          return "The `glab` CLI was not found on this host. Run `brew install glab`.";
+        }
+        return "The `glab` CLI was not found on this host. On Linux, run `brew install glab` after installing Homebrew from https://brew.sh if needed.";
+      case "unreachable":
+        return "`glab` could not reach or verify GitLab.com. Run `glab auth status --hostname gitlab.com`.";
+    }
+  },
+};
+
+/** CLI-backed forge health this host can actually probe. Bitbucket has no official CLI. */
+export const FORGE_REGISTRY: readonly ForgeSpec[] = [githubForge, gitlabForge];
 
 export type ForgeCommandRunner = (
   executable: string,
@@ -276,19 +382,26 @@ export function detectForges(
   return Promise.all(registry.map((spec) => detectForge(spec, deps)));
 }
 
+/** The exact process plan used to probe a distro-native forge CLI. */
+export function wslForgeAuthCommand(
+  distro: string,
+  path: string,
+  args: readonly string[],
+): ReturnType<typeof locusCommand> {
+  return locusCommand({ kind: "wsl", distro }, path, args);
+}
+
 /**
  * Forge-detection effects for a WSL DISTRO (C17 amendment B) — the distro's own PATH, its own
- * filesystem, its own `gh`. Reuses `wslDiscoveryDeps` verbatim (identical harvest/list/probe
- * contract) and adds the one effect forge detection needs beyond harness discovery: `gh auth
- * status`, run INSIDE the distro. So a WSL host card shows the distro's `gh` and its real auth
- * state, never the Windows host's.
+ * filesystem, its own forge CLIs. Reuses `wslDiscoveryDeps` verbatim and runs each provider's
+ * auth command INSIDE the distro, so a WSL host card never borrows the Windows host's state.
  */
 export async function wslForgeDetectionDeps(distro: string): Promise<ForgeDetectionDeps> {
   const discovery = await wslDiscoveryDeps(distro);
   return {
     ...discovery,
-    async probeAuth(path: string): Promise<boolean> {
-      const command = locusCommand({ kind: "wsl", distro }, path, ["auth", "status"]);
+    async probeAuth(path: string, args: readonly string[]): Promise<ForgeAuthProbe> {
+      const command = wslForgeAuthCommand(distro, path, args);
       try {
         const result = await execa(command.file, [...command.args], {
           reject: false,
@@ -296,16 +409,17 @@ export async function wslForgeDetectionDeps(distro: string): Promise<ForgeDetect
           stdin: "ignore",
           timeout: FORGE_COMMAND_TIMEOUT_MS,
         });
-        return result.exitCode === 0;
+        return result.exitCode === 0
+          ? { kind: "authenticated" }
+          : { kind: "failed", output: `${result.stdout}\n${result.stderr}` };
       } catch {
-        return false;
+        return { kind: "unreachable" };
       }
     },
   };
 }
 
-/** The default effects: real login shell, filesystem, and process execution. Mirrors
- *  `defaultDiscoveryDeps`, adding the `gh auth status` probe. */
+/** The default effects: real login shell, filesystem, and provider-specific auth probes. */
 export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
   const platform = process.platform;
   return {
@@ -358,18 +472,19 @@ export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
         return null;
       }
     },
-    async probeAuth(path: string): Promise<boolean> {
-      // `gh auth status` exits 0 iff signed in to at least one host; non-zero otherwise.
+    async probeAuth(path: string, args: readonly string[]): Promise<ForgeAuthProbe> {
       try {
-        const result = await execa(path, ["auth", "status"], {
+        const result = await execa(path, [...args], {
           reject: false,
           shell: false,
           stdin: "ignore",
           timeout: FORGE_COMMAND_TIMEOUT_MS,
         });
-        return result.exitCode === 0;
+        return result.exitCode === 0
+          ? { kind: "authenticated" }
+          : { kind: "failed", output: `${result.stdout}\n${result.stderr}` };
       } catch {
-        return false;
+        return { kind: "unreachable" };
       }
     },
   };

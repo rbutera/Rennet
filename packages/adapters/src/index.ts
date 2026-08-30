@@ -193,14 +193,17 @@ export {
   detectForge,
   detectForges,
   FORGE_REGISTRY,
+  type ForgeAuthProbe,
   type ForgeCommandRunner,
   type ForgeDetectionDeps,
   type ForgeSpec,
   type ForgeStatus,
   type GitHubCliTokenResult,
   githubForge,
+  gitlabForge,
   resolveForgeBinary,
   resolveGitHubCliToken,
+  wslForgeAuthCommand,
   wslForgeDetectionDeps,
 } from "./forge-discovery";
 export {

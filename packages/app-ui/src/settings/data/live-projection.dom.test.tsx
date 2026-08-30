@@ -416,6 +416,20 @@ const GH_AVAILABLE: DetectedForge = {
   status: "available",
   detail: "Authenticated with GitHub through the `gh` CLI.",
 };
+const GH_NOT_INSTALLED: DetectedForge = {
+  id: "github",
+  version: null,
+  status: "not-installed",
+  detail:
+    "The `gh` CLI was not found on this host. On Linux, run `brew install gh` after installing Homebrew from https://brew.sh if needed.",
+};
+const GLAB_SIGNED_OUT: DetectedForge = {
+  id: "gitlab",
+  version: "1.80.0",
+  status: "not-authenticated",
+  detail:
+    "`glab` is installed but not signed in to gitlab.com. Run `glab auth login --hostname gitlab.com`.",
+};
 
 /** One host, asked, with exactly these forge CLIs — the common `forge.hosts` fixture. */
 function forgeHost(source: string, detected: readonly DetectedForge[]): ForgeHostDetection {
@@ -482,13 +496,13 @@ function card(host: string): HTMLElement {
 }
 
 describe("LiveSettingsProjectionProvider — host cards, source control + agents folded", () => {
-  it("the local card carries the DAEMON's version, its agents and its forge CLI", async () => {
+  it("the local card carries the daemon, agents, and both detected forge CLIs", async () => {
     const { findByText } = mountLive(
       foldBridge({
         sections: [LOCAL_SECTION],
         status: [{ source: "local", reachable: true, version: "4.3.0" }],
         agents: [localHost([{ id: "claude", version: "2.1.0" }])],
-        forges: [forgeHost("local", [GH_AVAILABLE])],
+        forges: [forgeHost("local", [GH_AVAILABLE, GLAB_SIGNED_OUT])],
       }),
     );
     // The daemon line is the PROBED version (4.3.0), not the bridge's app version (1.0.1).
@@ -496,7 +510,13 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
     const local = within(card("local"));
     expect(local.getByText("GitHub")).toBeTruthy();
     expect(local.getByText("2.76.0")).toBeTruthy();
-    // Two rows, both proven present by a real probe: the forge CLI and the harness.
+    expect(local.getByText("GitLab")).toBeTruthy();
+    expect(local.getByText("1.80.0")).toBeTruthy();
+    expect(local.getByText("Not Authenticated")).toBeTruthy();
+    expect(local.getByText("glab auth login --hostname gitlab.com")).toBeTruthy();
+    expect(local.getByRole("switch", { name: "Use GitHub on This Machine" })).toBeTruthy();
+    expect(local.queryByRole("switch", { name: "Use GitLab on This Machine" })).toBeNull();
+    // GitHub and Claude are available; GitLab is honestly signed out.
     expect(local.getAllByText("Available")).toHaveLength(2);
     expect(local.getByText("Claude")).toBeTruthy();
     expect(local.getByText("2.1.0")).toBeTruthy();
@@ -612,9 +632,7 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
     cleanup();
   });
 
-  it("a forge whose binary is gone drops its row rather than reporting a stale hit", async () => {
-    // The rename-out-of-PATH invariant at DOM scale: `gh` absent ⇒ `not-installed` ⇒ the
-    // row is not rendered at all, so nothing on screen claims a CLI that is not there.
+  it("a missing GitLab CLI keeps its row and exact install repair beside healthy GitHub", async () => {
     const { findByText, queryByText } = mountLive(
       foldBridge({
         sections: [LOCAL_SECTION],
@@ -622,29 +640,65 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
         agents: [localHost([{ id: "claude", version: "2.1.0" }])],
         forges: [
           forgeHost("local", [
+            GH_AVAILABLE,
             {
-              id: "github",
+              id: "gitlab",
               version: null,
               status: "not-installed",
-              detail: "The `gh` CLI was not found on this host.",
+              detail: "The `glab` CLI was not found on this host. Run `brew install glab`.",
             },
           ]),
         ],
       }),
     );
-    expect(await findByText("Connect This Machine to detect its tooling.")).toBeTruthy();
-    expect(queryByText("GitHub")).toBeNull();
+    expect(await findByText("GitLab")).toBeTruthy();
+    const local = within(card("local"));
+    expect(local.getByText("GitHub")).toBeTruthy();
+    expect(local.getByText("Not Installed")).toBeTruthy();
+    expect(local.getByText("brew install glab")).toBeTruthy();
+    expect(queryByText("Connect This Machine to detect its tooling.")).toBeNull();
+    expect(local.queryByText("1.80.0")).toBeNull();
+    cleanup();
+  });
+
+  it("an unreachable GitLab auth probe keeps its distinct status and exact repair", async () => {
+    const detail =
+      "`glab` could not reach or verify GitLab.com. Run `glab auth status --hostname gitlab.com`.";
+    const { findByText } = mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION],
+        status: [{ source: "local", reachable: true, version: "4.3.0" }],
+        forges: [
+          forgeHost("local", [
+            GH_AVAILABLE,
+            {
+              id: "gitlab",
+              version: "1.80.0",
+              status: "not-authenticated",
+              authProbe: "unreachable",
+              detail,
+            },
+          ]),
+        ],
+      }),
+    );
+    expect(await findByText("GitLab")).toBeTruthy();
+    const local = within(card("local"));
+    expect(local.getByText("Unreachable")).toBeTruthy();
+    expect(local.queryByText("Not Authenticated")).toBeNull();
+    expect(local.getByText("glab auth status --hostname gitlab.com")).toBeTruthy();
+    expect(local.queryByRole("switch", { name: "Use GitLab on This Machine" })).toBeNull();
     cleanup();
   });
 });
 
 // ── C17 amendment B — every host's Source Control section is fillable ─────────
 // `forge.detect` answers for ONE daemon, so keying its rows to the connected host left every
-// other card structurally unfillable: a distro with its own `gh` could never show it. The
+// other card structurally unfillable: a distro with its own forge CLI could never show it. The
 // per-host `forge.hosts` read fixes that without letting a card borrow another's tooling.
 
 describe("LiveSettingsProjectionProvider — per-host forge detection", () => {
-  it("a WSL card shows ITS OWN gh, with the distro's version — not this machine's", async () => {
+  it("keeps GitLab healthy on a host where GitHub is missing without cross-host borrowing", async () => {
     // POSITIVE CONTROL for amendment B: key the rows to the connected host again and the WSL
     // card falls back to "Connect … to detect its tooling" about a host that HAS the CLI.
     const { findByText } = mountLive(
@@ -655,19 +709,33 @@ describe("LiveSettingsProjectionProvider — per-host forge detection", () => {
           { source: "wsl:Ubuntu", reachable: true, version: "4.3.0" },
         ],
         forges: [
-          forgeHost("local", [GH_AVAILABLE]),
-          forgeHost("wsl:Ubuntu", [{ ...GH_AVAILABLE, version: "2.40.0" }]),
+          forgeHost("local", [GH_AVAILABLE, GLAB_SIGNED_OUT]),
+          forgeHost("wsl:Ubuntu", [
+            GH_NOT_INSTALLED,
+            {
+              id: "gitlab",
+              version: "1.70.0",
+              status: "available",
+              detail: "Authenticated with GitLab through the `glab` CLI.",
+            },
+          ]),
         ],
       }),
     );
-    await findByText("2.40.0");
+    await findByText("1.70.0");
     const wsl = within(card("wsl:Ubuntu"));
     const local = within(card("local"));
-    // Each card carries its own version and neither borrows the other's.
+    // The WSL host has no GitHub CLI, but its independent GitLab result survives.
     expect(wsl.getByText("GitHub")).toBeTruthy();
     expect(wsl.queryByText("2.76.0")).toBeNull();
+    expect(wsl.getByText("Not Installed")).toBeTruthy();
+    expect(wsl.getByText("brew install gh")).toBeTruthy();
     expect(local.getByText("2.76.0")).toBeTruthy();
-    expect(local.queryByText("2.40.0")).toBeNull();
+    expect(local.getByText("1.80.0")).toBeTruthy();
+    expect(local.getByText("Not Authenticated")).toBeTruthy();
+    expect(local.queryByText("1.70.0")).toBeNull();
+    expect(wsl.getByText("1.70.0")).toBeTruthy();
+    expect(wsl.queryByText("1.80.0")).toBeNull();
     cleanup();
   });
 
@@ -949,7 +1017,7 @@ describe("LiveSettingsProjectionProvider — Reconnect performs a real re-handsh
 describe("LiveSettingsProjectionProvider — the forge toggle is served, not inert", () => {
   /** A bridge whose forge ruling lives in the STORE, so the switch can only reflect what
    *  the write persisted and the invalidated re-read returned. */
-  function ruledBridge(initial: readonly string[] = []) {
+  function ruledBridge(initial: readonly string[] = [], detected: DetectedForge = GH_AVAILABLE) {
     let disabledForges = [...initial];
     return new MemoryBridge(
       {
@@ -977,12 +1045,12 @@ describe("LiveSettingsProjectionProvider — the forge toggle is served, not ine
           ],
         }),
         "forge.hosts": () => ({
-          hosts: [{ source: "local" as const, asked: true, detected: [{ ...GH_AVAILABLE }] }],
+          hosts: [{ source: "local" as const, asked: true, detected: [{ ...detected }] }],
         }),
         "forge.setEnabled": (input) => {
           expect(input.source).toBe("local"); // scoped to the row's own host.
           // The WIRE id, not the row's mark id — the same key detection and the store use.
-          expect(input.forgeId).toBe("github");
+          expect(input.forgeId).toBe(detected.id);
           disabledForges = input.enabled
             ? disabledForges.filter((id) => id !== input.forgeId)
             : [...disabledForges, input.forgeId];
@@ -1027,6 +1095,13 @@ describe("LiveSettingsProjectionProvider — the forge toggle is served, not ine
         "aria-checked",
       ),
     ).toBe("true");
+    cleanup();
+  });
+
+  it("the GitLab health row exposes no inert enable switch", async () => {
+    const { findByText, queryByRole } = mountLive(ruledBridge([], GLAB_SIGNED_OUT));
+    expect(await findByText("GitLab")).toBeTruthy();
+    expect(queryByRole("switch", { name: "Use GitLab on This Machine" })).toBeNull();
     cleanup();
   });
 });
