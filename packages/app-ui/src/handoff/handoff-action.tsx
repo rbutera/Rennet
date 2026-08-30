@@ -1,5 +1,5 @@
-import { Button } from "@rennet/ui";
-import { AlertTriangle, Loader2, type LucideIcon } from "lucide-react";
+import { Button, Spinner } from "@rennet/ui";
+import { AlertTriangle, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ export function HandoffAction({ label, pendingLabel, icon: Icon, onSubmit }: Han
         className="h-12 w-fit gap-2.5 px-7 text-base font-semibold disabled:opacity-100"
       >
         {submitting ? (
-          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+          <Spinner className="size-5" aria-hidden="true" />
         ) : (
           <Icon className="size-5" aria-hidden="true" />
         )}

@@ -218,7 +218,8 @@ Use one 44px icon button with a visible focus state and an accessible action lab
 The primitives are a **vendored shadcn/ui kit built on Base UI**, owned in
 `packages/ui` (`@rennet/ui`): Button, Input, Textarea, Label, Dialog, Sheet,
 Popover, DropdownMenu, Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge,
-Skeleton, Separator, Toast, and the `cmdk` Command palette. `@rennet/app-ui`
+Skeleton, Separator, Toast, Field, InputGroup, Spinner, and the `cmdk` Command
+palette. `@rennet/app-ui`
 composes them into Rennet's screens; the hand-rolled component layer they replaced
 is retired (2026-08-20 port). Base UI is the one primitive family — Radix is
 allowed only where a shadcn component brings it (`cmdk`). The kit's lucide icons

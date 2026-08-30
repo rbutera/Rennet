@@ -1,5 +1,5 @@
-import { cn } from "@rennet/ui";
-import { Check, Loader2, Minus } from "lucide-react";
+import { cn, Spinner } from "@rennet/ui";
+import { Check, Minus } from "lucide-react";
 import { useEffect } from "react";
 import { Redirect } from "wouter";
 import { useRennetStore } from "../store";
@@ -37,7 +37,7 @@ const NO_ROWS: readonly LaneRow[] = Object.freeze([]);
  *  the same everywhere, never a false green check. */
 export function StatusIcon({ status }: { readonly status: RowStatus }) {
   if (status === "running")
-    return <Loader2 className="size-3.5 shrink-0 animate-spin text-model" aria-hidden="true" />;
+    return <Spinner className="size-3.5 shrink-0 text-model" aria-hidden="true" />;
   if (status === "queued")
     return (
       <span className="size-3.5 shrink-0 rounded-full border border-border" aria-hidden="true" />

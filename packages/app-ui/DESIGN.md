@@ -108,7 +108,8 @@ Use `4 / 6 / 8 / 12 / 16` px. Pills and circles have separate geometry values: `
 The screens in this package compose the vendored shadcn/Base UI kit
 (`@rennet/ui` — Button, Input, Dialog, Sheet, Popover, DropdownMenu, Select,
 Checkbox, Switch, Tabs, Tooltip, ScrollArea, Badge, Skeleton, Separator, Toast,
-Command, …). The kit is written in shadcn's semantic Tailwind vocabulary, which
+Command, Field, InputGroup, Spinner, …). The kit is written in shadcn's semantic
+Tailwind vocabulary, which
 [`packages/theme/src/theme.css`](../theme/src/theme.css) aliases 1:1 onto the
 `--rn-*` palette — the alias layer renames, it never introduces a new value:
 

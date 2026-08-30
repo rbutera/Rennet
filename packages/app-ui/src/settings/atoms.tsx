@@ -139,9 +139,10 @@ export function Segmented<T extends string>({
  * Appearance page hand-rolled this as a `role="radiogroup"` of `role="radio"` buttons;
  * autopsy S6 forbids that (the same rule that put {@link Segmented} on the kit), so this
  * ports the visual onto the kit's single-select `ToggleGroup` too — the segmented
- * container's joined chrome overridden to a border-less, wrapping pill layout, each pill
+ * container's tray chrome overridden to a border-less, wrapping pill layout, each pill
  * the kit's `outline` toggle restyled onto Rennet tokens (raised fill + accent-line
- * border when lit, never the kit's default gold accent fill).
+ * border when lit — the border is what distinguishes a lit pill here, since the kit's
+ * own lit fill is now that same quiet raised tone).
  */
 export function PillChoice<T extends string>({
   options,
@@ -162,7 +163,7 @@ export function PillChoice<T extends string>({
         const picked = next[0] as T | undefined;
         if (picked && picked !== value) onChange(picked);
       }}
-      className="flex w-auto flex-wrap gap-1.5 bg-transparent p-0"
+      className="flex w-auto flex-wrap gap-1.5 border-transparent bg-transparent p-0"
     >
       {options.map((option) => (
         <Toggle
