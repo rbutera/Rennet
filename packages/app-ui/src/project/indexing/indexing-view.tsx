@@ -8,8 +8,8 @@ import {
   type ProjectScoutAnswer,
   type ProjectScoutQuestionnaire,
 } from "@rennet/protocol";
-import { Toggle, ToggleGroup } from "@rennet/ui";
-import { Check, Loader2, MapIcon, MessageSquarePlus, TriangleAlert } from "lucide-react";
+import { Spinner, Toggle, ToggleGroup } from "@rennet/ui";
+import { Check, MapIcon, MessageSquarePlus, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
@@ -161,7 +161,7 @@ function StepLine({ label, detail, status }: TimelineLine) {
   return (
     <div className="flex items-center gap-2 text-sm" data-step-status={status}>
       {running ? (
-        <Icon icon={Loader2} className="size-3.5 shrink-0 animate-spin text-model" />
+        <Spinner className="size-3.5 shrink-0 text-model" />
       ) : status === "failed" ? (
         <Icon icon={TriangleAlert} className="size-3.5 shrink-0 text-danger" />
       ) : (

@@ -6,10 +6,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
   Input,
-  Label,
+  Spinner,
 } from "@rennet/ui";
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 import { useRef, useState } from "react";
 import { Icon } from "../components/icon";
 import { messageFrom } from "../lib/message-from";
@@ -102,9 +106,12 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
           </span>
         </p>
       ) : (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="remote-address">Address</Label>
+        // The two rows are kit `Field`s, not a local flex stack: the label/control/helper
+        // rhythm and the helper's type belong to the kit, so this dialog and every other
+        // form row in the app agree without each one re-deciding its gaps.
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="remote-address">Address</FieldLabel>
             <Input
               id="remote-address"
               placeholder="build-server.tailnet.ts.net"
@@ -112,9 +119,9 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
               disabled={connecting}
               onChange={(e) => setAddress(e.target.value)}
             />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="remote-code">Pairing code</Label>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="remote-code">Pairing code</FieldLabel>
             <Input
               id="remote-code"
               placeholder="one-time code"
@@ -122,12 +129,12 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
               disabled={connecting}
               onChange={(e) => setCode(e.target.value)}
             />
-            <p className="text-xs text-ink-faint">
+            <FieldDescription>
               Run <code className="rounded bg-raised px-1">rennet pair</code> on the machine for a
               one-time code. Open the link it prints to fill both fields.
-            </p>
-          </div>
-        </div>
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
       )}
 
       {error ? (
@@ -167,7 +174,8 @@ function AddRemoteBody({ onClose }: { onClose(): void }) {
               onClick={() => void connect()}
               disabled={connecting || !address.trim() || !code.trim()}
             >
-              {connecting ? <Icon icon={Loader2} className="mr-2 size-4 animate-spin" /> : null}
+              {/* The button already says "Connecting…" — the glyph is decoration beside it. */}
+              {connecting ? <Spinner className="mr-2 size-4" aria-hidden="true" /> : null}
               {connecting ? "Connecting…" : "Connect"}
             </Button>
           </>

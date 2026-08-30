@@ -28,6 +28,7 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
+  Spinner,
   toast,
 } from "@rennet/ui";
 import {
@@ -36,7 +37,6 @@ import {
   ChevronDown,
   CircleHelp,
   FolderPlus,
-  Loader2,
   Map as MapIcon,
   MessageSquarePlus,
   Monitor,
@@ -632,10 +632,7 @@ function SidebarTree() {
                             className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none disabled:text-ink-faint"
                           />
                           {projectRenamePending ? (
-                            <Icon
-                              icon={Loader2}
-                              className="size-3 shrink-0 animate-spin text-ink-faint"
-                            />
+                            <Spinner className="size-3 shrink-0 text-ink-faint" />
                           ) : (
                             <span className="text-2xs text-ink-faint">{activeCount}</span>
                           )}
@@ -667,7 +664,7 @@ function SidebarTree() {
                         <span className="flex-1 truncate">{project.name}</span>
                         {project.indexing ? (
                           <span className="flex items-center gap-1 text-2xs text-ink-faint">
-                            <Icon icon={Loader2} className="size-3 animate-spin" />
+                            <Spinner className="size-3" />
                             indexing
                           </span>
                         ) : (

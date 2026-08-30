@@ -7,7 +7,8 @@ import {
   type ProjectMapPayload,
   type ProjectProcessEvent,
 } from "@rennet/protocol";
-import { ArrowLeft, Check, LoaderCircle, RotateCcw, X } from "lucide-react";
+import { Spinner } from "@rennet/ui";
+import { ArrowLeft, Check, RotateCcw, X } from "lucide-react";
 import {
   type FormEvent,
   forwardRef,
@@ -201,7 +202,7 @@ export function ContextMapView({
       <div className="context-map-status flex max-w-xl flex-col gap-3 px-8 py-10 text-ink-soft">
         <div className="flex items-center gap-2 font-serif text-base">
           {mapQuery.pending || build.kind === "processing" || build.kind === "refreshing" ? (
-            <Icon icon={LoaderCircle} className="size-4 animate-spin text-accent" />
+            <Spinner className="size-4 text-accent" />
           ) : null}
           <span role={mapQuery.error || build.kind === "error" ? "alert" : undefined}>
             {mapQuery.error
