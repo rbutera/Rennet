@@ -1,5 +1,4 @@
 import type { Review } from "@rennet/protocol";
-import { cn } from "@rennet/ui";
 import { Check, GitBranch, GitPullRequest } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -10,10 +9,11 @@ import {
   ProseSelectionLayer,
   RichText,
 } from "../review";
-import type { DispositionKind, StagedAsk } from "../store";
+import type { StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import { type ReviseSpan, reviseDraftSpan } from "./handoff-data";
+import { IntentPill } from "./intent-pill";
 import { OutboundMarkdown } from "./outbound-markdown";
 import { parseLineAnchor } from "./selectors";
 
@@ -43,30 +43,6 @@ import { parseLineAnchor } from "./selectors";
 // draft): absent them the lane is fully live over the store — every card, Drop, and the Dispatch
 // gating are real — it simply cannot become the pull request until a drafted, ready PR is handed in.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const INTENT_LABEL: Record<DispositionKind, string> = {
-  "request-change": "Request Change",
-  comment: "Comment",
-  question: "Question",
-  approve: "Approve",
-};
-
-/** The intent micro-cap: a soft copper fill for a change request, neutral for the rest.
- *  No danger red — an ask is not an error (prototype `rounds-lanes.tsx:160-168`). */
-function IntentPill({ type }: { type: DispositionKind }) {
-  return (
-    <span
-      data-kind="intent"
-      data-intent={type}
-      className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 font-semibold text-10 uppercase tracking-wide",
-        type === "request-change" ? "bg-warn-soft text-warn" : "bg-secondary text-muted-foreground",
-      )}
-    >
-      {INTENT_LABEL[type]}
-    </span>
-  );
-}
 
 /** The receipt the egress returns once the own-branch change request opens. */
 export interface PrReceipt {

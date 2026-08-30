@@ -10,7 +10,7 @@ import {
   ProseSelectionLayer,
   RichText,
 } from "../review";
-import type { DispositionKind, ReviewState, StagedAsk } from "../store";
+import type { ReviewState, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import {
@@ -21,6 +21,7 @@ import {
   type ReviseSpan,
   reviseDraftSpan,
 } from "./handoff-data";
+import { IntentPill } from "./intent-pill";
 import { OutboundMarkdown } from "./outbound-markdown";
 import {
   type ProposedVerdict,
@@ -65,31 +66,6 @@ const VERDICT_LABEL: Record<ProposedVerdict, string> = {
   REQUEST_CHANGES: "Request Changes",
   COMMENT: "Comment",
 };
-
-const INTENT_LABEL = {
-  approve: "Approve",
-  "request-change": "Request Change",
-  comment: "Comment",
-  question: "Question",
-} satisfies Record<DispositionKind, string>;
-
-/** Same micro-cap register as the rounds lane's `IntentPill`, and for the same reason:
- *  a change request is copper, not danger red. Leaving this one red would have put a red
- *  tag beside the warn verdict dot below, in this same lane. */
-function IntentTag({ type }: { type: DispositionKind }) {
-  return (
-    <span
-      data-kind="intent"
-      data-intent={type}
-      className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 font-semibold text-10 uppercase tracking-wide",
-        type === "request-change" ? "bg-warn-soft text-warn" : "bg-secondary text-muted-foreground",
-      )}
-    >
-      {INTENT_LABEL[type]}
-    </span>
-  );
-}
 
 function localResidueCounts(
   quoteThreads: ReviewState["quoteThreads"],
@@ -351,7 +327,7 @@ function WorkingReviewDraft({
                 draft.body.map((ask) => (
                   <div key={ask.id} className="flex flex-col gap-1">
                     <span className="flex items-center gap-1.5">
-                      <IntentTag type={ask.type} />
+                      <IntentPill type={ask.type} />
                       <span className="truncate text-2xs text-muted-foreground/80 italic">
                         {ask.anchor}
                       </span>
@@ -627,7 +603,7 @@ function ComposedReviewPreview({
                 className="flex flex-col gap-1"
               >
                 <span className="flex items-center gap-1.5">
-                  <IntentTag type={note.type} />
+                  <IntentPill type={note.type} />
                   {note.anchor !== undefined && (
                     <span className="truncate text-2xs text-muted-foreground/80 italic">
                       {note.anchor}
@@ -783,7 +759,7 @@ function LineCommentCard({
     <div className="group rounded-lg border border-border bg-card px-3.5 py-3">
       <div className="flex items-center gap-1.5">
         <AnchorReveal citations={[codeRef]} />
-        <IntentTag type={comment.ask.type} />
+        <IntentPill type={comment.ask.type} />
         {!editing && (
           <span className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <button
