@@ -463,10 +463,20 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
         if (latest.state.phase !== "completed") {
           throw new Error("only a completed round can record its Return handback");
         }
-        const returned = this.options.store.compareAndSwap(expectation(latest), {
-          state: { ...latest.state, returnedAt: decision.returnedAt },
-          updatedAt: Math.max(latest.updatedAt, decision.returnedAt),
-        });
+        let returned: RoundOperation;
+        try {
+          returned = this.options.store.compareAndSwap(expectation(latest), {
+            state: { ...latest.state, returnedAt: decision.returnedAt },
+            updatedAt: Math.max(latest.updatedAt, decision.returnedAt),
+          });
+        } catch (error) {
+          if (!(error instanceof RoundOperationConflictError)) throw error;
+          const conflicted = this.options.store.read(latest.sessionId);
+          if (conflicted === undefined) return undefined;
+          if (conflicted.operationId !== latest.operationId) return conflicted;
+          terminal = conflicted;
+          continue;
+        }
         this.options.ports.publish(returned);
         return undefined;
       }

@@ -1527,7 +1527,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     expect(git("rev-parse", "HEAD")).toBe(head);
   }, 30_000);
 
-  it("restarts a completed no-code dispatch without invoking the coding worker twice", async () => {
+  it("restarts a completed no-code dispatch and runs a distinct queued second ask", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-restart-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-restart-repo-")));
     dirs.push(dataDir, repo);
@@ -1542,11 +1542,21 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
 
     let workerCalls = 0;
     let crashedSessionId: string | undefined;
+    let releaseFirstWorker = (): void => undefined;
+    const firstWorkerGate = new Promise<void>((resolve) => {
+      releaseFirstWorker = resolve;
+    });
+    let markFirstWorkerStarted = (): void => undefined;
+    const firstWorkerStarted = new Promise<void>((resolve) => {
+      markFirstWorkerStarted = resolve;
+    });
     const first = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
       runHandoffTurn: async () => {
         workerCalls += 1;
+        markFirstWorkerStarted();
+        await firstWorkerGate;
         return { status: "completed", finalText: "done", turnDiff: "", filesTouched: [] };
       },
       onRoundPlaceholderCommitted: ({ sessionId }) => {
@@ -1604,6 +1614,21 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
     });
     await first.dispatch("round.dispatch", { reviewId });
+    await firstWorkerStarted;
+    await first.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: "restart-ask-2",
+        anchor: "a.txt:2",
+        type: "request-change",
+        body: "run this after restart",
+      },
+    });
+    const queued = (await first.dispatch("round.dispatch", { reviewId })) as {
+      acceptedOperation?: { rerunRequested?: boolean };
+    };
+    expect(queued.acceptedOperation?.rerunRequested).toBe(true);
+    releaseFirstWorker();
 
     await vi.waitFor(
       async () => {
@@ -1653,7 +1678,6 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
     });
     shutdowns.push(restarted.shutdown);
-    await restarted.dispatch("round.dispatch", { reviewId });
 
     await vi.waitFor(
       async () => {
@@ -1661,16 +1685,20 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           projection: { stagedAsks: Record<string, unknown> };
         };
         expect(asks.projection.stagedAsks["restart-ask"]).toBeUndefined();
+        expect(asks.projection.stagedAsks["restart-ask-2"]).toBeUndefined();
         const records = new RoundRecordStore(join(dataDir, "rounds")).read(crashedSessionId ?? "");
-        expect(records).toHaveLength(1);
-        expect(records[0]?.boardGeneration).toBe(ROUND_NO_REGEN);
-        expect(records[0]?.regeneration).toBe("not-needed");
+        expect(records).toHaveLength(2);
+        expect(records.map((record) => record.boardGeneration)).toEqual([
+          ROUND_NO_REGEN,
+          ROUND_NO_REGEN,
+        ]);
+        expect(records.map((record) => record.regeneration)).toEqual(["not-needed", "not-needed"]);
       },
       { timeout: 15_000, interval: 50 },
     );
-    // Production control: deleting create-server's completed-record lookup calls the
-    // injected coding worker again here, changing this from one to two.
-    expect(workerCalls).toBe(1);
+    // Production controls: deleting completed-record recovery reruns round one (three calls),
+    // while dropping the durable rerun prevents round two (one call).
+    expect(workerCalls).toBe(2);
     const transcript = (await restarted.dispatch("session.transcript", { reviewId })) as {
       rows: { id: string; paragraphs?: string[] }[];
     };
@@ -1678,8 +1706,10 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       "pre-round-history",
       expect.stringMatching(/^round:.+:dispatch$/),
       expect.stringMatching(/^round:.+:return$/),
+      expect.stringMatching(/^round:.+:dispatch$/),
+      expect.stringMatching(/^round:.+:return$/),
     ]);
-    expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain("Round 1 is back");
+    expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain("Round 2 is back");
     expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain(
       "no code changes, so no successor report was drafted",
     );

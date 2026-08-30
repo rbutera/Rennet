@@ -609,6 +609,55 @@ describe("createRoundExecutionCoordinator", () => {
     ).toBe(false);
   });
 
+  it("retries the Return receipt when a rerun wins its compare-and-swap", async () => {
+    const test = scenario();
+    const replacement = operation({ operationId: "operation-2", roundNumber: 2 });
+    let workerCalls = 0;
+    let injectedRerun = false;
+    const compareAndSwap = test.store.compareAndSwap.bind(test.store);
+    vi.spyOn(test.store, "compareAndSwap").mockImplementation((expected, next) => {
+      if (
+        !injectedRerun &&
+        next.state.phase === "completed" &&
+        next.state.returnedAt !== undefined
+      ) {
+        injectedRerun = true;
+        test.store.requestRerun(expected);
+      }
+      return compareAndSwap(expected, next);
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async runWorker(input) {
+          workerCalls += 1;
+          return test.ports.runWorker(input);
+        },
+        async drainTerminal({ operation: current }) {
+          if (current.rerunRequested) return { kind: "replace", operation: replacement };
+          return {
+            kind: "return",
+            returnedAt:
+              current.operationId === replacement.operationId
+                ? 2_000_000_000_001
+                : 2_000_000_000_000,
+          };
+        },
+      },
+    });
+
+    await expect(coordinator.submit(operation())).resolves.toMatchObject({
+      operationId: replacement.operationId,
+    });
+
+    expect(injectedRerun).toBe(true);
+    expect(workerCalls).toBe(2);
+    const retained = test.store.read("session-1");
+    expect(retained?.operationId).toBe(replacement.operationId);
+    expect(retained?.state).toHaveProperty("returnedAt", 2_000_000_000_001);
+  });
+
   it("coalesces a repeated dispatch and only marks a distinct dispatch for rerun", async () => {
     const test = scenario();
     const worker = deferred<RoundWorkerReceipt>();
