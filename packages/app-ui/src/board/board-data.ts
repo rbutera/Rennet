@@ -128,11 +128,10 @@ export function useBoardData(
   });
 }
 
-/** A present lens paired with its resolved board — what the lens switcher renders. */
-export interface LensBoardEntry {
-  readonly lens: LensKind;
-  readonly board: LensBoard;
-}
+/** A generated or failed lens — every terminal result the lens switcher can open. */
+export type LensBoardEntry =
+  | { readonly lens: LensKind; readonly board: LensBoard; readonly failure?: never }
+  | { readonly lens: LensKind; readonly board?: never; readonly failure: string };
 
 /**
  * The lenses that HAVE a board in `generation`, each with its board — the lens
@@ -161,9 +160,11 @@ export function useLensBoardResolutions(
 }
 
 export function lensBoardsFromResolutions(byLens: LensBoardResolutions): LensBoardEntry[] {
-  return LENS_KINDS.flatMap((lens) => {
+  return LENS_KINDS.flatMap<LensBoardEntry>((lens) => {
     const resolution = byLens[lens];
-    return resolution.status === "valid" ? [{ lens, board: resolution.board }] : [];
+    if (resolution.status === "valid") return [{ lens, board: resolution.board }];
+    if (resolution.status === "failed") return [{ lens, failure: resolution.reason }];
+    return [];
   });
 }
 

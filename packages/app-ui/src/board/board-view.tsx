@@ -60,7 +60,7 @@ export function LensBoardView({
 
   const resolutions = useLensBoardResolutions(reviewId, selectedGeneration);
   const lenses = lensBoardsFromResolutions(resolutions);
-  const present = lenses.map((l) => l.lens);
+  const available = lenses.map((l) => l.lens);
 
   // Drafting takes minutes and the daemon has no board-arrival push, so without this the
   // boards a capture just kicked would land on disk and the surface would keep saying "no
@@ -81,10 +81,10 @@ export function LensBoardView({
   }, [awaitingLenses, refreshBoards]);
 
   // A generation may not carry every lens. A genuinely missing selected lens falls back
-  // to the first present lens in canonical order. Invalid and pending selected boards stay
-  // selected so their honest state is surfaced rather than hidden behind another board.
+  // to the first generated or failed lens in canonical order. Invalid and pending selected
+  // boards stay selected so their honest state is surfaced rather than hidden behind another.
   const selected = resolutions[lens];
-  const fallbackLens = present[0] ?? lens;
+  const fallbackLens = available[0] ?? lens;
   const fallback = resolutions[fallbackLens];
   const effectiveLens: LensKind = selected.status === "missing" ? fallbackLens : lens;
 

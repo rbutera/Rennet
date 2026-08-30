@@ -818,16 +818,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (outcome.absence !== undefined) continue;
       lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
     }
-    if (
-      pipeline.boards.some(
-        (outcome) =>
-          outcome.lens !== "report" &&
-          outcome.boardId === undefined &&
-          outcome.absence === undefined,
-      )
-    ) {
-      await deps.persistGeneration?.(withLensBoards(attemptGeneration, pipeline));
-    }
     return { generation: attemptGeneration, pipeline };
   }
 
@@ -935,6 +925,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // board exists; the next dispatch resumes regeneration without rerunning the worker.
     const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
     if (draftedLensBoards.length === 0) {
+      await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
       throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
     }
     if (input.verifyDraftedReport !== undefined) {
