@@ -64,28 +64,69 @@ function selectorOf(css: string, index: number): string {
 }
 
 // The ramp, harvested from the one place it is enumerated for humans — the type
-// table in this package's DESIGN.md — so the allowlist cannot drift from the
-// documentation the way a hand-copied list would.
-const RAMP_VARS: ReadonlySet<string> = new Set(
-  [...readFileSync(join(SRC, "..", "DESIGN.md"), "utf8").matchAll(/`text-([a-z0-9-]+)`/g)].map(
-    ([, name]) => `--text-${name}`,
-  ),
-);
+// TABLE in this package's DESIGN.md — so the allowlist cannot drift from the
+// documentation the way a hand-copied list would. Table rows ONLY (lines opening
+// with `|`): the prose around the table names tokens in order to forbid them
+// ("arbitrary `text-[…]` is off-ramp"), and harvesting the whole document turns
+// every such sentence into a silent sanction for the token it warns about.
+function rampVars(design: string): ReadonlySet<string> {
+  return new Set(
+    design
+      .split("\n")
+      .filter((line) => line.startsWith("|"))
+      .flatMap((row) =>
+        [...row.matchAll(/`text-([a-z0-9-]+)`/g)].map(([, name]) => `--text-${name}`),
+      ),
+  );
+}
+
+const RAMP_VARS = rampVars(readFileSync(join(SRC, "..", "DESIGN.md"), "utf8"));
+
+// The ramp, written out. The literal list IS the point: the harvest keeps the
+// allowlist honest to DESIGN.md, and this keeps DESIGN.md honest to the ramp.
+// Drift in EITHER direction — a step added to the table, a step quietly dropped
+// — reddens here rather than widening or narrowing the test's idea of legal type.
+const SANCTIONED_RAMP = [
+  "--text-10",
+  "--text-12-5",
+  "--text-13",
+  "--text-15",
+  "--text-2xl",
+  "--text-2xs",
+  "--text-base",
+  "--text-display",
+  "--text-lg",
+  "--text-sm",
+  "--text-xl",
+  "--text-xs",
+];
 
 function isRampSize(value: string): boolean {
   const named = /^var\((--text-[a-z0-9-]+)\)$/.exec(value);
   return named !== null && RAMP_VARS.has(named[1] ?? "");
 }
 
-// Everything the `font:` shorthand may carry BEFORE its size operand.
+// Everything the `font:` shorthand may carry BEFORE its size operand: style,
+// variant, weight and stretch keywords, an `oblique <angle>`, and a bare number
+// (a font-weight — CSS Fonts 4 allows any 1–1000, so `625` is legal and is not a
+// size; a size always carries a unit or is an absolute-size keyword).
 const FONT_SHORTHAND_PREFIX =
-  /^(?:normal|italic|oblique|small-caps|bold|bolder|lighter|[1-9]00|(?:ultra-|extra-|semi-)?(?:condensed|expanded))$/;
+  /^(?:normal|italic|oblique|small-caps|bold|bolder|lighter|-?\d+(?:\.\d+)?(?:deg)?|(?:ultra-|extra-|semi-)?(?:condensed|expanded))$/;
 
 // The SIZE operand of a `font:` shorthand. Not "a ramp var appears somewhere in
 // the value" — `font: 17px/var(--text-xs) …` puts one in the line-height slot
 // and sizes type at a raw 17px. Split on top-level whitespace and `/` (parens
 // keep `var(…)` whole): with a slash, the size is the token before it;
 // without one, it is the first token that is not a style/weight/stretch keyword.
+//
+// ponytail: the accepted grammar is deliberately narrow, and this is its ceiling.
+// It understands style/variant/weight/stretch keywords, bare-number weights and
+// `oblique <angle>` as prefixes, and requires the size operand to be a ramp
+// `var(…)`. It is NOT a CSS parser: a quoted family name containing `/` or
+// whitespace (`font: var(--text-15) "Fira/Code"`) will mis-tokenize, and the
+// system-font shorthands (`font: menu`) are out of scope. This guards against an
+// accidental off-ramp size in one hand-written stylesheet, not adversarial CSS.
+// Upgrade path if that stops being true: postcss-value-parser.
 function shorthandSize(value: string): string {
   const tokens: string[] = [];
   let depth = 0;
@@ -110,8 +151,15 @@ function shorthandSize(value: string): string {
 // Every type-sizing declaration in `css` that is neither on the ramp nor one of
 // the two pinned decorative micro-type exemptions. The trailing `;` is optional:
 // a block's last declaration may omit it, and requiring it hid such a line.
-function offRampFontDeclarations(css: string): string[] {
-  return [...css.matchAll(/\bfont(-size)?:\s*([^;{}]+);?/g)]
+function offRampFontDeclarations(source: string): string[] {
+  // Comments come out ONCE, up front, and everything below reads the stripped
+  // text so the match indices still line up for `selectorOf`. A comment can sit
+  // anywhere a space can, so `font/**/: 17px system-ui` is a real declaration
+  // that a raw-text matcher never sees; stripping also retires the mirror-image
+  // false positive, a `/` inside prose being read as a shorthand size/line-height
+  // separator.
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, " ");
+  return [...css.matchAll(/\bfont(-size)?\s*:\s*([^;{}]+);?/g)]
     .filter(([, sizeSuffix, rawValue]) => {
       const value = (rawValue ?? "").trim();
       // The shorthand may also be the `inherit` keyword, which sizes nothing new.
@@ -141,9 +189,9 @@ describe("desktop design ramp (utility contracts)", () => {
   });
 
   it("the entry stylesheet only sizes type through ramp variables", () => {
-    // positive control: the DESIGN.md type table was actually harvested.
-    expect([...RAMP_VARS]).toContain("--text-display");
-    expect(RAMP_VARS.size).toBeGreaterThan(8);
+    // positive control: the DESIGN.md type table was actually harvested, and it
+    // is exactly the sanctioned ramp — no more, no less.
+    expect([...RAMP_VARS].sort()).toEqual(SANCTIONED_RAMP);
     const violations = offRampFontDeclarations(readFileSync(join(SRC, "index.css"), "utf8"));
     expect(violations.join("\n")).toBe("");
   });
@@ -156,13 +204,31 @@ describe("desktop design ramp (utility contracts)", () => {
       ".x { font: var(--text-3xl) var(--font-mono); }", // off-ramp name
       ".x { font-size: var(--text-3xl) }", // off-ramp name, no trailing semicolon
       ".x { font: italic bold 17px var(--font-mono) }", // keyword prefix, raw px, no semicolon
+      ".x { font/**/: 17px system-ui; }", // a comment where a space may sit, hiding `font:`
     ]) {
       expect(offRampFontDeclarations(declaration), declaration).not.toEqual([]);
     }
-    // …and still accepts a well-formed shorthand carrying prefix keywords.
-    expect(
-      offRampFontDeclarations(".x { font: italic bold var(--text-15)/1.4 var(--font-mono) }"),
-    ).toEqual([]);
+    // …and still accepts well-formed shorthands: prefix keywords, an oblique
+    // angle, and a bare-number font-weight all precede the size operand.
+    for (const declaration of [
+      ".x { font: italic bold var(--text-15)/1.4 var(--font-mono) }",
+      ".x { font: oblique 10deg var(--text-15) system-ui }",
+      ".x { font: 625 var(--text-15) system-ui }",
+    ]) {
+      expect(offRampFontDeclarations(declaration), declaration).toEqual([]);
+    }
+  });
+
+  it("harvests the ramp from the type table only, never from the prose around it", () => {
+    const doc = [
+      "Arbitrary sizes are off-ramp: never reach for `text-4xl`.",
+      "",
+      "| px | utility | role |",
+      "|----|---------|------|",
+      "| 16 | `text-base` | reading |",
+    ].join("\n");
+    // The prose mention must NOT sanction --text-4xl; only the table row counts.
+    expect([...rampVars(doc)]).toEqual(["--text-base"]);
   });
 
   it("the ramp utilities documented in DESIGN.md exist in the shared theme", () => {

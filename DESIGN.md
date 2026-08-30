@@ -135,22 +135,6 @@ Display headings can reach `6rem` with a line height near `1`. Keep letter spaci
 
 Desktop components use `10 / 11 / 12 / 12.5 / 13 / 14 / 15 / 16 / 18 / 20 / 24` px, plus `text-display` at `clamp(2.125rem, 5vw, 3.5rem)`. Source code expresses the scale in `rem` through Tailwind utilities.
 
-- `text-10`, 10px: badges inside a dense list row
-- `text-2xs`, 11px: micro labels
-- `text-xs`, 12px: metadata and counts
-- `text-12-5`, 12.5px: diff and code bodies
-- `text-13`, 13px: dense picker and list rows
-- `text-sm`, 14px: controls and chrome
-- `text-15`, 15px: chat turns and review prose
-- `text-base`, 16px: reading text and inputs
-- `text-lg`, 18px: body text and annotations
-- `text-xl`, 20px: section headings
-- `text-2xl`, 24px: screen titles
-
-`10 / 11 / 12 / 12.5 / 13 / 14 / 15 / 16 / 18 / 20 / 24` px (`text-10` through
-`text-2xl`), plus the front-door display expression `text-display` =
-`clamp(2.125rem, 5vw, 3.5rem)`.
-
 - **10px / `text-10`** badge — inline badges inside a dense list row.
 - **11px / `text-2xs`** micro — uppercase micro-caps, the smallest legible chrome.
 - **12px / `text-xs`** meta — secondary metadata, counts, pins.
