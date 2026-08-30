@@ -50,6 +50,7 @@ const inputGroupAddonVariants = cva(
 function InputGroupAddon({
   className,
   align = "inline-start",
+  onClick,
   ...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>) {
   return (
@@ -62,9 +63,14 @@ function InputGroupAddon({
       data-align={align}
       className={cn(inputGroupAddonVariants({ align }), className)}
       onClick={(event) => {
+        onClick?.(event);
         // A button inside the addon is its own target — never steal its click.
         if ((event.target as HTMLElement).closest("button")) return;
-        event.currentTarget.parentElement?.querySelector("input")?.focus();
+        // The CONTROL slot, not `input`: a group wrapping a textarea (or cmdk's own
+        // input) has no element matching `input`, and the focus hop silently did nothing.
+        event.currentTarget.parentElement
+          ?.querySelector<HTMLElement>("[data-slot=input-group-control]")
+          ?.focus();
       }}
       {...props}
     />

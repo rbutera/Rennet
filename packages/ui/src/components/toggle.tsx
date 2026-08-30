@@ -9,8 +9,13 @@ import { mergeClassName } from "../lib/utils";
 // over the content it filters. `spikes/board-prototype` is authoritative here — its
 // toggle and its hand-rolled segmented trays both light with `bg-muted`/`bg-secondary`
 // (both alias to raised) and plain `text-foreground`.
+//
+// Hover is TEXT-ONLY, deliberately. The pressed fill is `bg-muted`, so a hover fill of
+// the same token made a hovered-but-unselected segment pixel-identical to the selected
+// one — the tray would read as two selections under the cursor. The prototype's trays
+// hover inactive members with `text-foreground` and no fill for exactly this reason.
 const toggleVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium whitespace-nowrap text-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring data-disabled:pointer-events-none data-disabled:opacity-50 data-pressed:bg-muted data-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium whitespace-nowrap text-foreground/70 transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring data-disabled:pointer-events-none data-disabled:opacity-50 data-pressed:bg-muted data-pressed:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

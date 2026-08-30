@@ -76,8 +76,12 @@ function CommandInput({
        *  and the field agree (the previous h-9 wrapper around an h-10 input clipped
        *  the field by a pixel at every zoom level). */}
       <InputGroup className="border-input/30 bg-input/30">
+        {/* `input-group-control`, not a bespoke `command-input` slot: the group draws the
+         *  focus ring for THAT slot (`has-[[data-slot=input-group-control]:focus-visible]`),
+         *  and the input's own outline is off. Under any other slot name the group's
+         *  selector misses and keyboard focus lands with no visible indicator at all. */}
         <CommandPrimitive.Input
-          data-slot="command-input"
+          data-slot="input-group-control"
           className={cn(
             "w-full bg-transparent pr-2.5 text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
             className,
