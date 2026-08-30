@@ -57,10 +57,17 @@ test("the board is the review workspace, and is honest when no board is drafted"
     // The board is the DEFAULT view of a session route — no `?view` needed to reach it.
     const board = page.locator('[data-kind="lens-board-view"]');
     await expect(board).toBeVisible({ timeout: 60_000 });
-    // WHICH repository is on screen — the fact the removed `REVIEW · <repo>` eyebrow used
-    // to carry. The session trail carries it now, and the trail is where the app states it.
+    // WHICH repository this session belongs to. The removed `REVIEW · <repo>` eyebrow said
+    // it on the board itself; the sidebar's project row says it now, and that is the only
+    // place the app states it unconditionally (the session trail's second line needs a
+    // resolved target, which a working-tree review may not carry).
+    //
+    // ⚠️ WHAT THIS NO LONGER CATCHES: the board rendering the WRONG review's content while
+    // the right project is named in the sidebar. The eyebrow read off `review.repositoryRoot`
+    // and this does not. Nothing else here covers that, and it is worth a board-side
+    // repository landmark if one is ever added.
     await expect(
-      page.locator('[data-slot="trail"]').getByText(basename(repository)).first(),
+      page.getByRole("button", { name: basename(repository), exact: true }),
     ).toBeVisible();
 
     // The honest-absent state, and the reason this spec drives the model-free floor rather
@@ -92,7 +99,9 @@ test("the board is the review workspace, and is honest when no board is drafted"
     await expect(board).toHaveCount(0);
     await page.getByRole("button", { name: "Back to board" }).click();
     await expect(board).toBeVisible();
-    await expect(page.getByText(`REVIEW · ${basename(repository)}`)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: basename(repository), exact: true }),
+    ).toBeVisible();
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });

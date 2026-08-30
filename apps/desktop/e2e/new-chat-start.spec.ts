@@ -179,7 +179,10 @@ test("#668: a row click opens real generation progress before held drafting comp
     expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
     await expect(progress.getByText("Resolving the repository", { exact: true })).toBeVisible();
     await expect(progress.locator("[data-row]")).toHaveCount(0);
-    await expect(page.getByText(/^REVIEW ·/)).toHaveCount(0);
+    // ⚠️ ABSENCE ASSERTION: the board has NOT taken over while capture is held. Its selector
+    // is the board element (it was the removed `REVIEW ·` eyebrow); if that selector ever
+    // drifts from `board/board-view.tsx` this passes vacuously.
+    await expect(page.locator('[data-kind="lens-board-view"]')).toHaveCount(0);
 
     // Cancellation is a live command, not a disabled navigation state. The review remains on
     // the same route with an explicit terminal account and can be retried in place.
