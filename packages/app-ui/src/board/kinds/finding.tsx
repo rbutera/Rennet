@@ -29,19 +29,45 @@ function splitFix(concern: string): { body: string; fix: string | null } {
   return { body: body.trim(), fix: rest.join("**Fix:**").trim() };
 }
 
+/**
+ * The cross-model concurrence tally, as ONE bordered tinted pill (prototype
+ * `lens-board.tsx:503-516`) rather than a row of plain per-model counts.
+ *
+ * The prototype had a two-model boolean (`{claude, codex}`); the wire carries
+ * per-model `{model, agree, total}` tallies folded by the pipeline
+ * (`server/runtime/lens-pipeline.ts:226-241` — a concurring pair stamps
+ * `agree === total` for both seats, a disagreement stamps `agree: 0` for the
+ * seat that answered "no concern", and a single-harness run degrades to one
+ * tally at `:398-404`). So "every seat agreed" is `sum(agree) === sum(total)`
+ * across MORE THAN ONE seat — green. Anything else names the seats that did
+ * raise it, in the verdigris model register.
+ */
 function Concurrence({
   tallies,
 }: {
   readonly tallies: readonly { model: string; agree: number; total: number }[];
 }) {
   if (tallies.length === 0) return null;
+  const agree = tallies.reduce((sum, t) => sum + t.agree, 0);
+  const total = tallies.reduce((sum, t) => sum + t.total, 0);
+  const concur = tallies.length > 1 && agree === total;
+  const raisers = tallies.filter((t) => t.agree > 0).map((t) => t.model);
+  const detail = tallies.map((t) => `${t.model}: ${t.agree} of ${t.total} agree`).join(", ");
   return (
-    <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
-      {tallies.map((t) => (
-        <span key={t.model} title={`${t.model}: ${t.agree} of ${t.total} agree`}>
-          {t.model} {t.agree}/{t.total}
-        </span>
-      ))}
+    <span
+      data-kind="finding-concurrence"
+      data-concur={concur}
+      className={cn(
+        "shrink-0 rounded border px-1.5 py-0.5 text-10",
+        concur ? "border-green-line text-green" : "border-model-line text-model",
+      )}
+      title={detail}
+    >
+      {concur
+        ? `concur ${agree}/${total}`
+        : raisers.length > 0
+          ? `${raisers.join(" · ")} only`
+          : `${agree}/${total}`}
     </span>
   );
 }

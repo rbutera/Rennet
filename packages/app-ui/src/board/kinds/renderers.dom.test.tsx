@@ -359,4 +359,131 @@ describe("board kind renderers over the fixture set", () => {
     const asks = Object.values(useRennetStore.getState().review.stagedAsks);
     expect(asks.some((a) => a.type === "comment")).toBe(true);
   });
+
+  // ── W3 structural restorations (prototype `lens-board.tsx`) ────────────────────
+
+  it("stamps the inferred badge ONLY on a decision the wire marks reconstructed", () => {
+    const firstDecision = decisionsBoard.elements.find((el) => el.kind === "decision");
+    if (!firstDecision) throw new Error("the decisions fixture carries no decision");
+    const inferred: LensBoard = {
+      ...decisionsBoard,
+      elements: decisionsBoard.elements.map((element) =>
+        element.id === firstDecision.id && element.kind === "decision"
+          ? { ...element, data: { ...element.data, inferred: true } }
+          : element,
+      ),
+    };
+    const marked = renderBoard(inferred);
+    // A section renders its children too, so an element appears once loose and once nested.
+    // The claim is about WHICH decision wears the badge, so compare element ids, not counts.
+    const badged = new Set(
+      [...marked.container.querySelectorAll('[data-kind="decision-inferred"]')].map((badge) =>
+        badge.closest('[data-kind="decision"]')?.getAttribute("data-element-id"),
+      ),
+    );
+    expect([...badged]).toEqual([firstDecision.id]);
+    const badge = marked.container.querySelector('[data-kind="decision-inferred"]');
+    expect(badge?.textContent).toBe("inferred");
+    // …and its card is the bordered decision, not loose prose.
+    expect(badge?.closest('[data-kind="decision"]')?.className).toContain("border");
+    marked.unmount();
+
+    // The fixture set carries NO `inferred` stamp, and absence is not a mark: a decision
+    // read straight off an artifact must never wear the reconstruction warning. Flip the
+    // renderer's `inferred === true` to a truthiness check and this stays green — flip it
+    // to `inferred !== true` and it reddens, which is the direction that would lie.
+    const plain = renderBoard(decisionsBoard);
+    expect(plain.container.querySelectorAll('[data-kind="decision-inferred"]')).toHaveLength(0);
+    expect(plain.container.querySelector('[data-kind="decision"]')?.className).toContain("border");
+  });
+
+  it("reads concurrence as ONE pill: green when every seat agreed, verdigris when they split", () => {
+    // The fixture's findings carry both seats agreeing (`flagged.ts:4-7`).
+    const both = renderBoard(flaggedBoard);
+    const pill = both.container.querySelector<HTMLElement>('[data-kind="finding-concurrence"]');
+    expect(pill?.textContent).toBe("concur 2/2");
+    expect(pill?.getAttribute("data-concur")).toBe("true");
+    expect(pill?.className).toContain("border-green-line");
+    expect(pill?.className).toContain("text-green");
+    both.unmount();
+
+    // A split: the pipeline stamps `agree: 0` for the seat that answered "no concern"
+    // (`server/runtime/lens-pipeline.ts:236-240`), so the pill names who DID raise it and
+    // drops out of the evidence register. Same tally shape, different verdict.
+    const split: LensBoard = {
+      ...flaggedBoard,
+      elements: flaggedBoard.elements.map((element) =>
+        element.kind === "finding" && element.id === "f1"
+          ? {
+              ...element,
+              data: {
+                ...element.data,
+                concurrence: [
+                  { model: "claude", agree: 1, total: 1 },
+                  { model: "codex", agree: 0, total: 1 },
+                ],
+              },
+            }
+          : element,
+      ),
+    };
+    const disagree = renderBoard(split);
+    const f1 = disagree.container.querySelector<HTMLElement>(
+      '[data-element-id="f1"] [data-kind="finding-concurrence"]',
+    );
+    expect(f1?.textContent).toBe("claude only");
+    expect(f1?.getAttribute("data-concur")).toBe("false");
+    expect(f1?.className).toContain("border-model-line");
+    expect(f1?.className).not.toContain("border-green-line");
+  });
+
+  it("renders a noise verdict as a bordered card whose header names the hunk and its judge", () => {
+    const { container } = renderBoard(noiseBoard);
+    const card = container.querySelector<HTMLElement>(
+      '[data-kind="noise_verdict"][data-element-id="nv-barrel"]',
+    );
+    if (!card) throw new Error("missing nv-barrel verdict");
+    expect(card.className).toContain("border-border");
+    // The header row is separated from the reason by the card's own rule.
+    const header = card.querySelector<HTMLElement>(".border-b");
+    expect(header).not.toBeNull();
+    // The hunk's own path is the label — the wire carries no group label to use instead.
+    expect(header?.textContent).toContain("packages/adapters/src/index.ts");
+    // A `deterministic` judge reads "rule" and carries NO Sparkles; only `llm` earns it.
+    const judge = card.querySelector<HTMLElement>('[data-kind="noise-judge"]');
+    expect(judge?.textContent).toBe("rule");
+    expect(judge?.querySelector("svg")).toBeNull();
+
+    const llm: LensBoard = {
+      ...noiseBoard,
+      elements: noiseBoard.elements.map((element) =>
+        element.kind === "noise_verdict" && element.id === "nv-barrel"
+          ? { ...element, data: { ...element.data, judge: "llm" as const } }
+          : element,
+      ),
+    };
+    const judged = renderBoard(llm);
+    const chip = judged.container.querySelector<HTMLElement>(
+      '[data-element-id="nv-barrel"] [data-kind="noise-judge"]',
+    );
+    expect(chip?.textContent).toBe("model judged");
+    expect(chip?.querySelector("svg")?.getAttribute("class")).toContain("lucide-sparkles");
+  });
+
+  it("renders a message as a railed exchange, the human's quote in a bubble", () => {
+    const { container } = renderBoard(flaggedBoard);
+    const message = container.querySelector<HTMLElement>('[data-kind="message"]');
+    if (!message) throw new Error("missing message element");
+    // The rail replaced the bordered ROLE-pill card.
+    expect(message.className).toContain("border-l-2");
+    expect(message.className).toContain("pl-3");
+    // The fixture's message is human-authored (`boards/helpers.ts:188`), so its quote
+    // reads as the reviewer's side of the exchange, not as a plain paragraph.
+    const bubble = message.querySelector<HTMLElement>('[data-kind="message-bubble"]');
+    expect(bubble?.textContent).toContain("connection and token are untouched");
+    expect(bubble?.className).toContain("bg-secondary");
+    expect(bubble?.className).toContain("rounded-lg");
+    // The role survives the restyle — it is what the exchange was FOR.
+    expect(message.textContent).toContain("Discuss");
+  });
 });
