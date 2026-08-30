@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import type { AskLogStore } from "@rennet/adapters";
+import type { AskLogStore, PublishReceiptStore } from "@rennet/adapters";
 import {
   type AskAnswer,
   canonicalReviewPayload,
@@ -205,6 +205,8 @@ export interface DispatchDeps {
     repository: ForgeRepoIdentity,
     repositoryRoot: string,
   ) => ForgePublishPort | undefined;
+  /** Durable result of a completed review publication, keyed by review and marker. */
+  readonly publishReceipts: PublishReceiptStore;
   /** Resolve the exact provider-qualified push destination without mutating the repository. */
   readonly resolvePullRequestDestination?: (
     repoRoot: string,

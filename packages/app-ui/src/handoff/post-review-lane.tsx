@@ -118,6 +118,8 @@ export interface PostReviewLaneProps {
    * is present but disabled (no egress wired / review not composed yet).
    */
   readonly onPost?: () => Promise<PostReceipt>;
+  /** The daemon-owned receipt for this composition, hydrated after remount or restart. */
+  readonly receipt?: PostReceipt;
   /**
    * The composed outbound review (the daemon's `publish.compose` bytes). When present, the lane
    * PREVIEWS exactly these bytes and posts the same composition (the exact-preview contract,
@@ -142,6 +144,7 @@ export interface PostReviewLaneProps {
 export function PostReviewLane({
   review,
   onPost,
+  receipt,
   draft,
   onSetVerdict,
   onRevise,
@@ -155,6 +158,7 @@ export function PostReviewLane({
         review={review}
         draft={draft}
         onPost={onPost}
+        receipt={receipt}
         onSetVerdict={onSetVerdict}
       />
     );
@@ -507,11 +511,13 @@ function ComposedReviewPreview({
   review,
   draft,
   onPost,
+  receipt: hydratedReceipt,
   onSetVerdict,
 }: {
   review: Review;
   draft: ReviewDraft;
   onPost?: () => Promise<PostReceipt>;
+  receipt?: PostReceipt;
   onSetVerdict?: (verdict: ProposedVerdict | null) => void;
 }) {
   const patchsetId = review.activePatchsetId;
@@ -527,7 +533,8 @@ function ComposedReviewPreview({
     [quoteThreads, codeComments],
   );
 
-  const [receipt, setReceipt] = useState<PostReceipt | null>(null);
+  const [localReceipt, setLocalReceipt] = useState<PostReceipt | null>(null);
+  const receipt = hydratedReceipt ?? localReceipt;
 
   // The verdict shown is the COMPOSED one — the daemon binds it into the composition, so it is
   // exactly what posts (#435). Flipping it writes the durable override and recomposes; there is
@@ -668,7 +675,7 @@ function ComposedReviewPreview({
             onSubmit={
               onPost
                 ? async () => {
-                    setReceipt(await onPost());
+                    setLocalReceipt(await onPost());
                   }
                 : undefined
             }
