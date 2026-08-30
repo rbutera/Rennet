@@ -249,6 +249,36 @@ describe("IndexingView — one durable project run", () => {
     expect(precedes(questions, map)).toBe(true);
   });
 
+  it("puts the questionnaire ABOVE a legacy unstamped timeline — the deliberate degrade", async () => {
+    // DELIBERATE, not a bug to normalize away. `scoutBoundary` reads the host's OWN phase
+    // stamp (`scout-ready`, or a `step` with `phase: "scout"`). The legacy narration events —
+    // `repo-start` / `stage` / `repo-done` — carry no phase at all, so the boundary is 0 and
+    // every line lands in the map slice, under the questionnaire.
+    //
+    // That is exactly the layout Rennet shipped before the seam existed, and it is the only
+    // honest one available: with no stamp, ANY split would be the renderer inventing a phase
+    // the host never claimed, and a guessed cut is worse than a known-old one. So this test
+    // pins the degrade rather than a fix — if the boundary ever starts inferring phases from
+    // labels, this goes red and that is the point.
+    const run = renderView("p-legacy");
+    await waitFor(() => expect(run.commandId()).not.toBe(""));
+    run.emit({ kind: "repo-start", repo: "rennet", index: 1, total: 1 });
+    run.emit({ kind: "stage", repo: "rennet", stage: "tree", note: "Reading the file tree" });
+    run.emit({ kind: "repo-done", repo: "rennet", summary: SUMMARY });
+    // A legacy host answers `done` with repos and no `run`; the questionnaire arrives on the
+    // terminal run instead, which is the case the boundary-0 fallback has to render.
+    await act(async () => {
+      run.process.resolve({ repos: [SUMMARY], run: doneRun("p-legacy", run.commandId()) });
+    });
+
+    const questions = await screen.findByText(/does this look right/);
+    const precedes = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    for (const label of [/Building rennet/, /Reading the file tree/, /Finished rennet/]) {
+      expect(precedes(questions, screen.getByText(label))).toBe(true);
+    }
+  });
+
   it("replaces a replayed step in place and renders its explicit running/done state", async () => {
     const run = renderView("p2");
     await waitFor(() => expect(run.commandId()).not.toBe(""));

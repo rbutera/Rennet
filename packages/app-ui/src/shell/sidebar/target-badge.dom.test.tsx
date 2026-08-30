@@ -75,7 +75,12 @@ describe("TargetBadge", () => {
     cleanup();
     const theirs = mount(<TargetBadge kind="teammate-pr" state="needs-you" />);
     const theirsGlyph = badge(theirs.container).querySelector("svg")?.classList.value ?? "";
+    // `toContain("lucide-git-pull-request")` alone is satisfied BY the arrow class
+    // (`lucide-git-pull-request-arrow` contains it), so the regression this test names —
+    // your-PR falling back to the incoming arrow — would have passed. The absence half is
+    // what makes the assertion load-bearing.
     expect(yoursGlyph).toContain("lucide-git-pull-request");
+    expect(yoursGlyph).not.toContain("lucide-git-pull-request-arrow");
     expect(theirsGlyph).toContain("lucide-git-pull-request-arrow");
   });
 

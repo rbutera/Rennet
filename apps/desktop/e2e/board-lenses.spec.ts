@@ -57,18 +57,37 @@ test("the board is the review workspace, and is honest when no board is drafted"
     // The board is the DEFAULT view of a session route — no `?view` needed to reach it.
     const board = page.locator('[data-kind="lens-board-view"]');
     await expect(board).toBeVisible({ timeout: 60_000 });
-    // WHICH repository this session belongs to. The removed `REVIEW · <repo>` eyebrow said
-    // it on the board itself; the sidebar's project row says it now, and that is the only
-    // place the app states it unconditionally (the session trail's second line needs a
-    // resolved target, which a working-tree review may not carry).
+    // WHICH PROJECT this session belongs to — not which repository. The removed
+    // `REVIEW · <repo>` eyebrow read `review.repositoryRoot`; this reads the sidebar's
+    // project row, whose name is `basename(path)` for a local add (`project-discovery.ts`).
+    // For this single-repo fixture the two strings coincide, and that coincidence is the
+    // only reason this assertion looks like a repository check. It is not one.
     //
-    // ⚠️ WHAT THIS NO LONGER CATCHES: the board rendering the WRONG review's content while
-    // the right project is named in the sidebar. The eyebrow read off `review.repositoryRoot`
-    // and this does not. Nothing else here covers that, and it is worth a board-side
-    // repository landmark if one is ever added.
-    await expect(
-      page.getByRole("button", { name: basename(repository), exact: true }),
-    ).toBeVisible();
+    // ⚠️ WHAT THIS CANNOT CATCH, stated so the next reader does not inherit the wrong
+    // belief: the board rendering the WRONG review's content under the right project name,
+    // and — because a workspace maps many repos to one project — any wrong-repo capture at
+    // all. The proof for THAT is `new-chat-start.spec.ts:309`, whose two-repo fixture
+    // asserts the captured file list belongs to the clicked row's repository.
+    //
+    // The selector is the sidebar row itself, matched by SHAPE (`aria-expanded`, unique to
+    // the project row inside `[data-region="sidebar"]` — `sidebar.tsx:685`) plus its text.
+    // An accessible-name match cannot work here: the row's name always carries a trailing
+    // session count or `indexing` (`sidebar.tsx:699-707`), so `{ name, exact: true }` — the
+    // shape the Add-Project breadcrumb uses in `harness.ts:178` — never matches a project row.
+    // MEASURED, not inferred: a launched run's a11y snapshot renders this row as
+    // `button "rennet-e2e-board-UNIPR1 1" [expanded]` — the count is in the name, and the
+    // `aria-expanded` flag is on the element.
+    //
+    // ⚠️ This line has NOT been reached by a green run. The test above it currently fails at
+    // `openWorkingTreeReview` (`harness.ts:205`): with RENNET_DISABLE_HARNESS=1 the session
+    // lands on a failed preparation surface ("Board generation failed") and no
+    // `lens-board-view` ever mounts, so this spec's whole model-free premise — a board that
+    // renders `board-empty` with no harness — does not hold on the current app. That is a
+    // separate defect from this selector and is not fixed here.
+    const projectRow = page
+      .locator('[data-region="sidebar"] button[aria-expanded]')
+      .filter({ hasText: basename(repository) });
+    await expect(projectRow).toBeVisible();
 
     // The honest-absent state, and the reason this spec drives the model-free floor rather
     // than treating it as a gap: with no harness there is no board, and the surface SAYS SO
@@ -99,9 +118,7 @@ test("the board is the review workspace, and is honest when no board is drafted"
     await expect(board).toHaveCount(0);
     await page.getByRole("button", { name: "Back to board" }).click();
     await expect(board).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: basename(repository), exact: true }),
-    ).toBeVisible();
+    await expect(projectRow).toBeVisible();
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });
