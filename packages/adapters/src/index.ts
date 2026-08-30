@@ -599,6 +599,16 @@ export {
   type RoundSourceLandingRelativePath,
 } from "./round-source-landing";
 export {
+  type BoundRoundSourceLandingGitWithInput,
+  type CreateNativeRoundSourceLandingFileSystemInput,
+  createNativeRoundSourceLandingFileSystem,
+  defaultRootedLandingAddonPath,
+  type LoadRootedLandingNativeBinding,
+  type NativeRoundSourceLandingFileSystemHandle,
+  type RootedLandingNativeBinding,
+  type RootedLandingNativeHost,
+} from "./round-source-landing-native-host";
+export {
   defaultGenerationStoreDir,
   defaultRoundRecordStoreDir,
   GenerationStore,
