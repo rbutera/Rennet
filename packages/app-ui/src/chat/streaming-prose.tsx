@@ -9,7 +9,9 @@ import { useEffect, useRef } from "react";
 // waiting out an absolute-index delay, and the reveal never restarts on each delta.
 // `animate=false` renders instantly: historical turns replay as records, never as
 // arrivals (the record-vs-arrival law). The `.animate-word-in` utility + `word-in`
-// keyframe (fill `both`, landing on opacity 1) live in `../index.css`.
+// keyframe (fill `forwards`, landing on opacity 1) live in `../index.css`. The
+// `opacity-0` class below is load-bearing for that fill: it holds a word invisible
+// until its delay elapses, which `forwards` does not do.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WORD_STEP_MS = 22;

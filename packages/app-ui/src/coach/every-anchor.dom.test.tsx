@@ -261,10 +261,20 @@ describe("every coach anchor resolves (C13 Cluster 5)", () => {
 
     // The gate is the load-bearing half: an install that already HAS a session is not
     // a first run, and the mark must stay out entirely rather than elect and withdraw.
+    //
+    // SEQUENCING: do NOT wait on "New Chat". That row is synchronous chrome — it is on
+    // screen before `session.list` has been asked, so the negative assertion would pass
+    // against a bridge that never answered, and would pass just as well with the gate
+    // deleted. Wait instead on evidence the READ landed: the project row's active-session
+    // count is derived from the same response the gate reads, so a "1" there means the
+    // gate has seen the session it is meant to suppress on.
     const seeded = mountSidebarSurface([
       { id: "s1", projectId: "p1", title: "Alpha", target: "your-branch" },
     ]);
-    await waitFor(() => expect(seeded.getByText("New Chat")).toBeTruthy());
+    await waitFor(() => {
+      const row = seeded.getByText("rennet").closest("button");
+      if (!row?.textContent?.includes("1")) throw new Error("session.list has not landed");
+    });
     expect(seeded.getByTestId("el-new-chat").textContent).toBe("none");
     cleanup();
   });

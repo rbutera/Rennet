@@ -505,6 +505,15 @@ function SidebarTree() {
     projectNameRef.current?.select();
   }, [renamingProjectId]);
 
+  // Navigating into a project OPENS it (prototype `app-sidebar.tsx`). The stored fold
+  // is a reviewer's answer about a project they were looking at; it must not survive
+  // into a session they just opened and hide the row they are standing on. Keyed on
+  // the active project CHANGING, so this fires on arrival and never again — folding
+  // the project you are already in stays folded, because the effect does not re-run.
+  useEffect(() => {
+    if (activeProjectId) setFolded(activeProjectId, false);
+  }, [activeProjectId, setFolded]);
+
   const projects = hosts.flatMap((host) => host.projects);
   const pinned = projects.flatMap((project) =>
     project.sessions

@@ -275,6 +275,50 @@ describe("sidebar tree (C03 §3)", () => {
     expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
   });
 
+  // The half the default alone cannot reach: a project with a STORED fold answers
+  // `false` for expanded no matter which session you are in, so arriving in it left
+  // the row you just opened hidden. `Collapse` keeps content mounted, so presence
+  // proves nothing — the `inert` subtree is what "hidden" means here.
+  it("navigating into a folded project reveals the session you opened", async () => {
+    useRennetStore.setState((s) => ({ ui: { ...s.ui, sidebarFolds: { p2: true } } }));
+    const { getByText, findByText, history } = mountSidebar({
+      projects: [project("p1", "atlas"), project("p2", "beacon")],
+      sessions: [...SESSIONS, { id: "s3", projectId: "p2", title: "Gamma", target: "your-branch" }],
+    });
+    await findByText("Gamma");
+    expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(getByText("Gamma").closest("[inert]")).not.toBeNull();
+
+    history.navigate("/s/s3");
+    await waitFor(() =>
+      expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("true"),
+    );
+    expect(useRennetStore.getState().ui.sidebarFolds.p2).toBe(false);
+    expect(getByText("Gamma").closest("[inert]")).toBeNull();
+    // ...and ONLY that project: the sibling you did not navigate into is untouched,
+    // so this is an arrival opening one list, not a route clearing every fold.
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // The unfold is keyed on the active project CHANGING, so it fires on arrival and
+  // never again. Moving between two sessions of the SAME project must not reopen a
+  // list the reviewer just shut — that would make the fold un-settable while you work.
+  it("folding the project you are standing in stays folded across its own sessions", async () => {
+    const { getByText, findByText, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1",
+    });
+    await findByText("atlas");
+    fireEvent.click(getByText("atlas").closest("button") as Element);
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
+
+    history.navigate("/s/s2");
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/s2"));
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
+  });
+
   it("highlights the active session from the route and follows a navigation", async () => {
     const { getByText, findByText, history } = mountSidebar({
       projects: [project("p1", "atlas")],

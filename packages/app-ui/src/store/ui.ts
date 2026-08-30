@@ -175,9 +175,6 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
 });
 
 // ── Selectors (beside the slice) ─────────────────────────────────────────────
-/** True when node `nodeId` is folded (collapsed). */
-export const selectFolded = (nodeId: string) => (s: RennetState) =>
-  s.ui.sidebarFolds[nodeId] === true;
 /** True when dialog `id` is open. */
 export const selectDialogOpen = (id: string) => (s: RennetState) => s.ui.openDialogs.includes(id);
 /** The frontmost open dialog id, or null. DERIVED — never stored as its own field. */

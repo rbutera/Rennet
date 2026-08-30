@@ -1,5 +1,5 @@
 import { currentGenerationId, type LensKind } from "@rennet/protocol";
-import { cn } from "@rennet/ui";
+import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import {
   ArrowLeft,
   FileDiff,
@@ -36,18 +36,18 @@ import { Trail, type TrailProps } from "./trail";
 // board; then the app's ONE chat open/close toggle; then the two-line trail —
 // only while the chat dock is SHUT, since the open dock's header carries it), a
 // CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Map · Diff
-// pills — hand-rolled round buttons over `?view` (History on its own outline, Map
-// and Diff joined by a hairline), selection DERIVED from the URL and pressing one
-// navigating with `viewToggle` (replace). Not a `ToggleGroup`: the kit tray is a
-// raised segmented control and these are outlined chrome pills, and the two halves
-// of Map · Diff share one outline that no tray draws.
+// pills — a C2 `ToggleGroup` over `?view`, selection DERIVED from the URL, toggling
+// navigating with `viewToggle` (replace).
 //
-// The segmented-control lint (eslint.config.mjs, autopsy S6) is not being dodged
-// here — these are not a segmented control. A segment set always has exactly one
-// member chosen; on the board NONE of these three is pressed, which is why the old
-// `ToggleGroup` had to model that state as an empty array. They are three
-// independent toggles over one query parameter, so each carries its own
-// `aria-pressed` and owes no group semantics.
+// The PILL LOOK is a skin, not a different control. The prototype draws outlined
+// chrome pills (History alone on its own round outline, Map and Diff sharing one
+// outline split by a hairline), so the tray opts out of its own well with
+// `border-transparent bg-transparent p-0` and each member takes the round shape.
+// Everything the kit owns stays owned: one `role="group"` labelled "Session view",
+// arrow-key roving focus across all three members, `aria-pressed` per member, and
+// the empty-selection state Base UI models natively as `value={[]}` — which is what
+// the board is, with none of the three pressed. Hand-rolling the buttons to get the
+// skin also dodged the segmented-control lint; the skin was never the reason to.
 //
 // C20: the chat toggle lives on the RIGHTMOST pane, not in the chat header, and it
 // is present in BOTH directions — one control that opens and closes, never a split
@@ -78,34 +78,29 @@ const PILL: ReadonlyArray<{
   { view: "diff", label: "Diff", icon: FileDiff, foldBelow: "hidden @[54rem]:inline" },
 ];
 
-/** One pill item: icon, folding label, pressed state carried by `aria-pressed`. */
-function PillButton({
+/** One kit `Toggle` wearing the prototype pill skin: round, outlined, 12px label.
+ *  No `aria-label` — the visible label IS the name, and the `title` covers the
+ *  folded width where the label is `display:none` and out of the name computation.
+ *  Repeating it as an `aria-label` only makes the control announce twice. */
+function PillToggle({
   entry,
-  pressed,
-  onPress,
   className,
 }: {
   readonly entry: (typeof PILL)[number];
-  readonly pressed: boolean;
-  readonly onPress: () => void;
   readonly className?: string;
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      aria-label={entry.label}
+    <Toggle
+      value={entry.view}
       title={entry.label}
-      onClick={onPress}
       className={cn(
-        "flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors",
-        pressed ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+        "h-auto min-w-0 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground data-pressed:bg-secondary",
         className,
       )}
     >
       <Icon icon={entry.icon} className="size-3.5 shrink-0" />
       <span className={entry.foldBelow}>{entry.label}</span>
-    </button>
+    </Toggle>
   );
 }
 
@@ -210,6 +205,9 @@ export function TopBar() {
       ? PILL.find((p) => p.view === "rounds")
       : undefined;
   const mapDiff = PILL.filter((p) => p.view !== "rounds");
+  // A pill is selected only for its three explicit views; the board and handoff
+  // select none (value = []), never the "" sentinel (S6).
+  const pillValue = PILL.some((p) => p.view === query.view) ? [query.view] : [];
 
   // Resolve the trail from the active session row; a slug in no row falls back to the
   // slug alone rather than inventing a project or a target.
@@ -318,40 +316,44 @@ export function TopBar() {
         />
       </div>
 
-      {/* RIGHT slot: the History · Map · Diff pills. Two groups, not one tray —
-          History is a ledger and joins only once a round has completed, so it
-          carries its own outline; Map and Diff are one pill split by a hairline. */}
-      <div
-        className={cn("flex items-center justify-end gap-1.5", floating && "pointer-events-auto")}
-      >
-        {historyEntry ? (
-          <PillButton
-            entry={historyEntry}
-            pressed={query.view === "rounds"}
-            onPress={() => onPill(query.view === "rounds" ? [] : ["rounds"])}
-            className={cn("rounded-full border border-border bg-card", floating && chip)}
-          />
-        ) : null}
-        <div
-          className={cn(
-            "flex overflow-hidden rounded-full border border-border bg-card",
-            floating && chip,
-          )}
+      {/* RIGHT slot: the History · Map · Diff pills. ONE group for the semantics
+          (label, roving focus, selection), TWO outlines for the look — History is a
+          ledger and joins only once a round has completed, so it carries its own
+          round outline; Map and Diff share one, split by a hairline. The wrapping
+          div is presentation: `ToggleGroup`'s composite registers its members by
+          context, not by direct-child position, so nesting keeps arrow keys. */}
+      <div className={cn("flex items-center justify-end", floating && "pointer-events-auto")}>
+        <ToggleGroup
+          value={pillValue}
+          onValueChange={onPill}
+          aria-label="Session view"
+          className="gap-1.5 border-transparent bg-transparent p-0"
         >
-          {mapDiff.map((entry, index) => (
-            <Fragment key={entry.view}>
-              {index > 0 ? (
-                <span className="w-px self-stretch bg-border" aria-hidden="true" />
-              ) : null}
-              <PillButton
-                entry={entry}
-                pressed={query.view === entry.view}
-                onPress={() => onPill(query.view === entry.view ? [] : [entry.view])}
-                className={index > 0 ? "pl-2" : "pr-2"}
-              />
-            </Fragment>
-          ))}
-        </div>
+          {historyEntry ? (
+            <PillToggle
+              entry={historyEntry}
+              className={cn("border border-border bg-card", floating && chip)}
+            />
+          ) : null}
+          <div className={cn("flex rounded-full border border-border bg-card", floating && chip)}>
+            {mapDiff.map((entry, index) => (
+              <Fragment key={entry.view}>
+                {index > 0 ? (
+                  <span className="w-px self-stretch bg-border" aria-hidden="true" />
+                ) : null}
+                {/* The joined halves square off their INNER edge with a side radius
+                    rather than being clipped by an `overflow-hidden` parent (which the
+                    prototype uses, having no focus ring to lose): a clipped member
+                    swallows the focus outline, and arrow-key focus is the whole point
+                    of the group. */}
+                <PillToggle
+                  entry={entry}
+                  className={index > 0 ? "rounded-l-none pl-2" : "rounded-r-none pr-2"}
+                />
+              </Fragment>
+            ))}
+          </div>
+        </ToggleGroup>
       </div>
     </header>
   );
