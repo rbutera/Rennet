@@ -18,6 +18,7 @@ import {
   type GitLabPrSubmissionCommand,
   RoundOperationStore,
   RoundRecordStore,
+  SqliteReviewStore,
   TranscriptStore,
 } from "@rennet/adapters";
 import type {
@@ -106,6 +107,34 @@ describe("publish board-drafting coordination", () => {
     await expect(ensure(review)).rejects.toThrow("did not settle");
     await expect(ensure(review)).resolves.toBeUndefined();
     expect(calls).toBe(3);
+  });
+
+  it("waits for an aborted draft to unwind before an immediate retry starts", async () => {
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let releaseFirst!: () => void;
+    let calls = 0;
+    const ensure = createBoardDraftCoordinator(async (_review, _emit, signal) => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        return !signal?.aborted;
+      }
+      return true;
+    });
+
+    const first = ensure(review, undefined, firstController.signal);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    firstController.abort("cancelled");
+    const retry = ensure(review, undefined, secondController.signal);
+    expect(retry).not.toBe(first);
+    expect(calls).toBe(1);
+    releaseFirst();
+    await expect(first).rejects.toThrow("did not settle");
+    await expect(retry).resolves.toBeUndefined();
+    expect(calls).toBe(2);
   });
 
   it("returns retryable drafting after failure, then exposes the exact settled named boards", async () => {
@@ -423,6 +452,73 @@ describe("session.mint — provider-qualified PR dispatch", () => {
       sessionId: minted.session?.id ?? "",
     });
   });
+
+  it("reuses a capture that settles during cancellation before retrying boards", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-cancelled-capture-state-"));
+    const repo = mkdtempSync(join(tmpdir(), "rennet-cancelled-capture-repo-"));
+    dirs.push(dataDir, repo);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    execFileSync("git", ["add", "a.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_TEST_CAPTURE_SETTLEMENT_DELAY_MS: "30000" },
+    });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+
+    let capturedReviewId: string | undefined;
+    await vi.waitFor(
+      () => {
+        const reader = new SqliteReviewStore(join(dataDir, "rennet.sqlite"));
+        try {
+          capturedReviewId = reader.latestReview()?.id;
+        } finally {
+          reader.close();
+        }
+        expect(capturedReviewId).toBeDefined();
+      },
+      { timeout: 15_000, interval: 20 },
+    );
+    await server.dispatch("session.cancelPreparation", {
+      sessionId: minted.session?.id ?? "",
+    });
+    const retried = (await server.dispatch("session.retryPreparation", {
+      sessionId: minted.session?.id ?? "",
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+
+    expect(retried.session?.reviewId).toBe(capturedReviewId);
+    expect(retried.session?.preparation?.status).toBe("drafting");
+    const reader = new SqliteReviewStore(join(dataDir, "rennet.sqlite"));
+    try {
+      expect(reader.latestReview()?.id).toBe(capturedReviewId);
+    } finally {
+      reader.close();
+    }
+    await server.dispatch("session.cancelPreparation", {
+      sessionId: minted.session?.id ?? "",
+    });
+  }, 30_000);
 
   it("turns an interrupted preparation into a retryable failure after restart", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-preparation-restart-state-"));

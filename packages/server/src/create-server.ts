@@ -576,19 +576,27 @@ export function createBoardDraftCoordinator(
     signal?: AbortSignal,
   ) => Promise<boolean>,
 ): (review: Review, emit?: (event: RoundEvent) => void, signal?: AbortSignal) => Promise<void> {
-  const inFlight = new Map<string, Promise<void>>();
+  type DraftAttempt = {
+    readonly promise: Promise<void>;
+    readonly signal?: AbortSignal;
+  };
+  const inFlight = new Map<string, DraftAttempt>();
   return (review, emit, signal) => {
     const key = `${review.id}:${review.activePatchsetId}`;
     const existing = inFlight.get(key);
-    if (existing) return existing;
-    const tracked = draft(review, emit, signal)
+    if (existing && !existing.signal?.aborted) return existing.promise;
+    const attempt =
+      existing === undefined
+        ? draft(review, emit, signal)
+        : existing.promise.catch(() => undefined).then(() => draft(review, emit, signal));
+    const tracked = attempt
       .then((settled) => {
         if (!settled) throw new Error("Review board drafting did not settle.");
       })
       .finally(() => {
-        if (inFlight.get(key) === tracked) inFlight.delete(key);
+        if (inFlight.get(key)?.promise === tracked) inFlight.delete(key);
       });
-    inFlight.set(key, tracked);
+    inFlight.set(key, { promise: tracked, ...(signal === undefined ? {} : { signal }) });
     return tracked;
   };
 }
@@ -2165,6 +2173,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   }
   const sessionPreparations = new Map<string, AbortController>();
+  const sessionPreparationRuns = new Map<string, Promise<void>>();
   // The display-transcript store (issue-set B): the durable read-model behind
   // `session.transcript`. Coding turns and round lifecycle receipts append here.
   const transcriptStore = new TranscriptStore(join(dataDir, "transcripts"));
@@ -3193,7 +3202,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   retrospective: false,
                 });
         }
-        if (!preparationIsCurrent(sessionId, controller)) return;
+        await waitForPreparationDelay(
+          env.RENNET_TEST_CAPTURE_SETTLEMENT_DELAY_MS,
+          controller.signal,
+        );
+        if (sessionPreparations.get(sessionId) !== controller) return;
         allowedRoots.add(review.repositoryRoot);
         if (target === undefined) {
           watcher.start(review.repositoryRoot, locusForRepo(review.repositoryRoot));
@@ -3203,6 +3216,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           sessionStore.save({ ...current, repositoryRoot: review.repositoryRoot });
         }
         sessionStore.attachReview(sessionId, review.id);
+        if (controller.signal.aborted) {
+          sessionStore.setPreparation(sessionId, {
+            status: "cancelled",
+            stage: "boards",
+            reviewId: review.id,
+            lanes,
+          });
+          return;
+        }
       }
 
       if (review === null) throw new Error("The captured review could not be loaded.");
@@ -3268,7 +3290,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         ? { status: "capturing", step: "resolving-repository" }
         : { status: "drafting", reviewId: request.reviewId, lanes: initialPreparationLanes() };
     const prepared = sessionStore.setPreparation(session.id, preparation) ?? session;
-    void runSessionPreparation(session.id, request, controller);
+    const run = runSessionPreparation(session.id, request, controller).finally(() => {
+      if (sessionPreparationRuns.get(session.id) === run) {
+        sessionPreparationRuns.delete(session.id);
+      }
+    });
+    sessionPreparationRuns.set(session.id, run);
+    void run;
     return prepared;
   }
 
@@ -3282,7 +3310,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return session;
     }
     sessionPreparations.get(sessionId)?.abort("Cancelled by reviewer.");
-    sessionPreparations.delete(sessionId);
     return sessionStore.setPreparation(sessionId, {
       status: "cancelled",
       stage: preparation.status === "capturing" ? "capture" : "boards",
@@ -3292,7 +3319,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   }
 
-  function retrySessionPreparation(sessionId: string, commandId: string): SessionModel | undefined {
+  async function retrySessionPreparation(
+    sessionId: string,
+    commandId: string,
+  ): Promise<SessionModel | undefined> {
+    await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
     const session = sessionStore.load(sessionId);
     if (session === undefined) return undefined;
     const preparation = session.preparation;
@@ -3530,7 +3561,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         return session && sidebarSessionFor(session);
       },
       retryPreparation: async (sessionId, commandId) => {
-        const session = retrySessionPreparation(sessionId, commandId);
+        const session = await retrySessionPreparation(sessionId, commandId);
         return session && sidebarSessionFor(session);
       },
       rename: (sessionId, title) => {
@@ -4240,6 +4271,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       controller.abort("Rennet is shutting down.");
     }
     sessionPreparations.clear();
+    sessionPreparationRuns.clear();
     liveTurns.abortAll();
     void nativeRoundSourceLanding?.close().catch((error) => {
       console.error("Could not close native round source landing hosts", error);

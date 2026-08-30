@@ -158,7 +158,7 @@ test("#668: a row click opens real generation progress before held drafting comp
     home,
     env: {
       ...modelFreeEnv(home),
-      RENNET_TEST_BOARD_PREPARATION_DELAY_MS: "30000",
+      RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000",
     },
   });
   try {
@@ -171,15 +171,14 @@ test("#668: a row click opens real generation progress before held drafting comp
       .first()
       .click();
 
-    // The session route paints while the daemon deliberately holds first-generation drafting.
-    // Before #668 the click itself awaited capture, so the New Chat client stayed blocked here.
+    // The session route paints while the daemon deliberately holds capture itself. Before #668
+    // the row click awaited this exact command, so holding only board drafting would miss the
+    // original renderer-blocking seam.
     const progress = page.locator('[data-screen="session-preparation"]');
     await expect(progress).toBeVisible({ timeout: 5_000 });
     expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
-    await expect(progress.getByText("Generating the Boards", { exact: true })).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(progress.locator("[data-row]")).toHaveCount(5);
+    await expect(progress.getByText("Resolving the repository", { exact: true })).toBeVisible();
+    await expect(progress.locator("[data-row]")).toHaveCount(0);
     await expect(page.getByText(/^REVIEW ·/)).toHaveCount(0);
 
     // Cancellation is a live command, not a disabled navigation state. The review remains on
