@@ -128,17 +128,34 @@ export function useBoardData(
   });
 }
 
-/** A generated or failed lens — every terminal result the lens switcher can open. */
+/** Every terminal lens result the switcher can open: populated, empty, or failed. */
 export type LensBoardEntry =
-  | { readonly lens: LensKind; readonly board: LensBoard; readonly failure?: never }
-  | { readonly lens: LensKind; readonly board?: never; readonly failure: string };
+  | {
+      readonly lens: LensKind;
+      readonly board: LensBoard;
+      readonly failure?: never;
+      readonly absence?: never;
+    }
+  | {
+      readonly lens: LensKind;
+      readonly board?: never;
+      readonly failure?: never;
+      readonly absence: LensAbsenceReason;
+    }
+  | {
+      readonly lens: LensKind;
+      readonly board?: never;
+      readonly failure: string;
+      readonly absence?: never;
+    };
 
 /**
- * The lenses that HAVE a board in `generation`, each with its board — the lens
- * switcher's absent-not-disabled set (C05 6.2). Probes every lens through the one
- * seam and keeps only those that resolve, so "which lenses are present" is derived
- * from board-data, never invented: a lens the host has no board for is simply
- * absent. `LENS_KINDS` is fixed-length, so the per-lens reads are hooks-safe.
+ * Every terminal lens result in `generation` — the lens switcher's
+ * absent-not-disabled set (C05 6.2). Probes every lens through the one seam and
+ * keeps populated, typed-empty, and failed results, so "which lenses are settled"
+ * is derived from board-data, never invented. A lens with no terminal result is
+ * simply unavailable. `LENS_KINDS` is fixed-length, so the per-lens reads are
+ * hooks-safe.
  */
 export type LensBoardResolutions = Readonly<Record<LensKind, BoardResolution>>;
 
@@ -163,6 +180,7 @@ export function lensBoardsFromResolutions(byLens: LensBoardResolutions): LensBoa
   return LENS_KINDS.flatMap<LensBoardEntry>((lens) => {
     const resolution = byLens[lens];
     if (resolution.status === "valid") return [{ lens, board: resolution.board }];
+    if (resolution.status === "absent") return [{ lens, absence: resolution.reason }];
     if (resolution.status === "failed") return [{ lens, failure: resolution.reason }];
     return [];
   });

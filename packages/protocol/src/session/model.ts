@@ -114,7 +114,12 @@ export type SessionThread = z.infer<typeof SessionThreadSchema>;
  * content. Live boards are append-only logs; when the code moves, the generation
  * freezes immutable and a successor is minted — the successor account compares N vs N+1.
  */
-export const LensAbsenceReasonSchema = z.enum(["no-material"]);
+export const LensAbsenceReasonSchema = z.enum([
+  "no-material",
+  "no-decisions",
+  "no-findings",
+  "no-noise",
+]);
 export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
 
 export const GenerationSchema = z.object({

@@ -1,4 +1,10 @@
-import type { BoardDocument, LensBoard, LensKind, SourceRef } from "@rennet/protocol";
+import type {
+  BoardDocument,
+  LensAbsenceReason,
+  LensBoard,
+  LensKind,
+  SourceRef,
+} from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { useEffect } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -81,8 +87,8 @@ export function LensBoardView({
   }, [awaitingLenses, refreshBoards]);
 
   // A generation may not carry every lens. A genuinely missing selected lens falls back
-  // to the first generated or failed lens in canonical order. Invalid and pending selected
-  // boards stay selected so their honest state is surfaced rather than hidden behind another.
+  // to the first populated, empty, or failed lens in canonical order. Invalid and pending
+  // selected boards stay selected so their honest state is surfaced rather than hidden.
   const selected = resolutions[lens];
   const fallbackLens = available[0] ?? lens;
   const fallback = resolutions[fallbackLens];
@@ -170,16 +176,8 @@ export function LensBoardView({
         </p>
       ) : shown.status === "absent" ? (
         <div data-kind="board-absent" className="text-muted-foreground text-sm">
-          <p className="font-medium text-foreground">
-            {effectiveLens === "design"
-              ? "No Design specification applies to this change."
-              : "No source material was found."}
-          </p>
-          <p>
-            {effectiveLens === "design"
-              ? "There is no applicable specification to project into a Design board for this generation."
-              : "This generation has no material to project into the selected board."}
-          </p>
+          <p className="font-medium text-foreground">{absenceCopy(shown.reason).title}</p>
+          <p>{absenceCopy(shown.reason).detail}</p>
         </div>
       ) : shown.status === "failed" ? (
         <div data-kind="board-failed" role="alert" className="text-danger text-sm">
@@ -193,6 +191,35 @@ export function LensBoardView({
       )}
     </main>
   );
+}
+
+function absenceCopy(reason: LensAbsenceReason): {
+  readonly title: string;
+  readonly detail: string;
+} {
+  switch (reason) {
+    case "no-material":
+      return {
+        title: "No Design specification applies to this change.",
+        detail:
+          "There is no applicable specification to project into a Design board for this generation.",
+      };
+    case "no-decisions":
+      return {
+        title: "No material engineering decisions were found.",
+        detail: "The change did not contain a judgment call with a viable alternative.",
+      };
+    case "no-findings":
+      return {
+        title: "No review findings were found.",
+        detail: "No concrete review findings remain for this generation.",
+      };
+    case "no-noise":
+      return {
+        title: "No safely skippable noise was found.",
+        detail: "Every changed hunk remains part of the substantive reading path.",
+      };
+  }
 }
 
 function sourceTarget(board: LensBoard, source: SourceRef): string | undefined {

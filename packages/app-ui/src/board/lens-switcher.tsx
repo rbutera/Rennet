@@ -18,8 +18,8 @@ import { deltaKey } from "./viewed-delta";
 // The lens switcher (C05 6.2, Objective clause 7) — a segmented control, one
 // segment per lens that produced a terminal result this generation. `lenses` is already
 // resolved through the board-data seam (the top bar calls `useLensBoards`): a durable
-// failure remains selectable so its reason is reachable, while a lens with no board or
-// failure simply is not in the list (absent, NEVER a disabled segment).
+// failure or typed empty result remains selectable so its reason is reachable, while a
+// lens with no terminal result simply is not in the list (never a disabled segment).
 //
 // Delta rollup (Objective clause 7 / #486): each segment carries a small gold pip
 // counting the sections in that lens's board that carry a `new`/`reworked` delta and
@@ -76,7 +76,7 @@ export function LensSwitcher({
         className,
       )}
     >
-      {lenses.map(({ lens, board, failure }) => {
+      {lenses.map(({ lens, board, failure, absence }) => {
         const unviewedDeltas =
           board?.sections.filter(
             (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
@@ -85,11 +85,13 @@ export function LensSwitcher({
         const accessibleStatus =
           failure !== undefined
             ? ", failed to generate"
-            : lens === "flagged"
-              ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
-              : unviewedDeltas > 0
-                ? ", changed this round"
-                : "";
+            : absence !== undefined
+              ? `, ${absenceAccessibleStatus(absence)}`
+              : lens === "flagged"
+                ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
+                : unviewedDeltas > 0
+                  ? ", changed this round"
+                  : "";
         const active = lens === selected;
         return (
           <button
@@ -101,6 +103,7 @@ export function LensSwitcher({
             title={LENS_LABEL[lens]}
             data-lens={lens}
             data-failed={failure === undefined ? undefined : "true"}
+            data-absent={absence === undefined ? undefined : absence}
             onClick={() => onSelect(lens)}
             className={cn(
               "relative flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 font-medium text-sm transition-colors",
@@ -134,4 +137,17 @@ export function LensSwitcher({
       })}
     </div>
   );
+}
+
+function absenceAccessibleStatus(reason: NonNullable<LensBoardEntry["absence"]>): string {
+  switch (reason) {
+    case "no-material":
+      return "no applicable specification found";
+    case "no-decisions":
+      return "no material decisions found";
+    case "no-findings":
+      return "no review findings found";
+    case "no-noise":
+      return "no safely skippable noise found";
+  }
 }

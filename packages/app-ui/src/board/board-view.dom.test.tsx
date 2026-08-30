@@ -99,6 +99,31 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(container.querySelector("article[data-lens]")).toBeNull();
   });
 
+  it("keeps a typed clean result selectable and renders its honest empty state", async () => {
+    const { container, findByText } = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": (input) =>
+              input.lens === "flagged"
+                ? { board: null, absence: "no-findings" }
+                : fixtureBoardRead(input),
+          })
+        }
+      >
+        <BoardHarness generation="gen1" generations={["gen1"]} initialLens="flagged" />
+      </BridgeProvider>,
+    );
+
+    expect(await findByText("No review findings were found.")).toBeTruthy();
+    expect(
+      await findByText("No concrete review findings remain for this generation."),
+    ).toBeTruthy();
+    expect(container.querySelector("[data-lens=flagged]")?.getAttribute("data-absent")).toBe(
+      "no-findings",
+    );
+  });
+
   it("renders document metadata, structured measure, and a semantic anchored outline", async () => {
     const { container } = await renderView("gen1", GENERATIONS, "design");
     const document = container.querySelector<HTMLElement>("[data-kind=lens-board-view]");

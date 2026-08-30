@@ -185,6 +185,22 @@ describe("generation lifecycle (append-then-freeze)", () => {
     expect(gen.absentLenses).toEqual({ design: "no-material" });
   });
 
+  it("preserves a typed clean result on the generation", () => {
+    const gen = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "flagged",
+          absence: "no-findings",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    expect(gen.lensBoards).toEqual({});
+    expect(gen.absentLenses).toEqual({ flagged: "no-findings" });
+  });
+
   it("clears a durable lens absence when that lens later produces a board", () => {
     const absent = withLensBoards(mintGeneration("g", "ps"), {
       boards: [
@@ -446,7 +462,7 @@ describe("createRoundsRuntime", () => {
     expect(after.pipeline.coverage).toBeUndefined();
   });
 
-  it("preserves an honest lens absence when complete durable evidence reconstructs", async () => {
+  it("preserves typed empty results when complete durable evidence reconstructs", async () => {
     const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-absence-meta-")));
     const generations = new GenerationStore(
       mkdtempSync(join(tmpdir(), "rounds-absence-generation-")),
@@ -454,12 +470,24 @@ describe("createRoundsRuntime", () => {
     const input = roundInput({ designArtifacts: null });
     const first = await createRoundsRuntime(
       baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const lens = lensFromPrompt(prompt);
+            if (
+              lens === "flagged" ||
+              (lens === "post-process" && prompt.includes('"elements":[]'))
+            ) {
+              return { elements: [], skippedHunks: [] } as unknown as DraftBoard;
+            }
+            return cleanBody(lens);
+          }),
         persistBoardMeta: (_repo, record) => meta.save(record),
         persistGeneration: (generation) => generations.save(generation),
         loadGeneration: (id) => generations.load(id),
       }),
     ).runRound(input);
     expect(first.boardGeneration.absentLenses?.design).toBe("no-material");
+    expect(first.boardGeneration.absentLenses?.flagged).toBe("no-findings");
 
     const recovered = await createRoundsRuntime(
       baseDeps({
@@ -476,8 +504,13 @@ describe("createRoundsRuntime", () => {
     expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "design")?.absence).toBe(
       "no-material",
     );
+    expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged")?.absence).toBe(
+      "no-findings",
+    );
     expect(recovered.boardGeneration.absentLenses?.design).toBe("no-material");
+    expect(recovered.boardGeneration.absentLenses?.flagged).toBe("no-findings");
     expect(recovered.boardGeneration.lensBoards.design).toBeUndefined();
+    expect(recovered.boardGeneration.lensBoards.flagged).toBeUndefined();
   });
 
   it("reconstructs a settled four-board Generation without opening a new attempt", async () => {
