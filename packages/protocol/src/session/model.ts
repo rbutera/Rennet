@@ -132,6 +132,9 @@ export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
 export const GenerationSchema = z.object({
   id,
   patchsetId: id,
+  /** Exact structural-map + knowledge revision consumed by this draft. Optional only for
+   * generations written before Context Map completion became a drafting dependency. */
+  projectContextRevision: id.optional(),
   /** Per-lens draft boards (L2), keyed by lens; present once drafted. */
   lensBoards: z.partialRecord(z.enum(LENS_KINDS), id),
   /** Pre-minted ids for the one drafting attempt currently allowed to write BoardMeta. */

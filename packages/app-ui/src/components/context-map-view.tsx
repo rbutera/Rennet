@@ -144,7 +144,11 @@ export function ContextMapView({
         if (!live) return;
         setBuild(
           run?.status === "failed"
-            ? { kind: "error", message: run.reason, retry: "resume" }
+            ? {
+                kind: "error",
+                message: `Context Map ${run.phase} failed: ${run.reason}`,
+                retry: "resume",
+              }
             : { kind: "refreshing", completedRun: run?.status === "done" },
         );
       },

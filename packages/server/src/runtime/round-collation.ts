@@ -314,6 +314,8 @@ export function assembleRoundCollation(input: {
 export interface PacketKnowledgeSource {
   readonly set: KnowledgeSet | null;
   readonly snapshot: LoadedSnapshot | null;
+  /** Content identity of the exact snapshot + knowledge pair above. */
+  readonly revision?: string;
 }
 
 /** A prior generation and the boards it really drafted — the delta stamps' comparison set. */
@@ -563,6 +565,9 @@ export async function runBoardRegeneration(
         ...(input.verifyDraftedReport === undefined
           ? {}
           : { verifyDraftedReport: input.verifyDraftedReport }),
+        ...(knowledgeSource.revision === undefined
+          ? {}
+          : { projectContextRevision: knowledgeSource.revision }),
         ...(input.round === undefined
           ? {}
           : {
