@@ -1,5 +1,6 @@
 import type {
   AppearanceScheme,
+  DetectedForge,
   ForgeHostDetection,
   HarnessHostDetection,
   Project,
@@ -530,6 +531,23 @@ function ToolRow({
   );
 }
 
+function forgeDisplayStatus(forge: DetectedForge) {
+  return forge.authProbe ?? forge.status;
+}
+
+function forgeStatusLabel(status: ReturnType<typeof forgeDisplayStatus>): string {
+  switch (status) {
+    case "available":
+      return "Available";
+    case "not-authenticated":
+      return "Not authenticated";
+    case "unreachable":
+      return "Unreachable";
+    case "not-installed":
+      return "Not installed";
+  }
+}
+
 function ToolsStage({
   harnesses,
   forges,
@@ -542,6 +560,7 @@ function ToolsStage({
   onContinue(): void;
 }) {
   const gh = forges?.asked ? forges.detected.find((tool) => tool.id === "github") : undefined;
+  const glab = forges?.asked ? forges.detected.find((tool) => tool.id === "gitlab") : undefined;
   return (
     <section className="rn-content-stage">
       <div className="rn-stage-copy">
@@ -565,14 +584,8 @@ function ToolsStage({
             id="gh"
             name="GitHub CLI"
             version={gh.version ?? undefined}
-            status={
-              gh.status === "available"
-                ? "Available"
-                : gh.status === "not-authenticated"
-                  ? "Not authenticated"
-                  : "Not installed"
-            }
-            good={gh.status === "available"}
+            status={forgeStatusLabel(forgeDisplayStatus(gh))}
+            good={forgeDisplayStatus(gh) === "available"}
             detail={gh.detail}
           />
         ) : (
@@ -584,13 +597,24 @@ function ToolsStage({
             detail="Rennet could not prove a GitHub CLI installation in this environment."
           />
         )}
-        <ToolRow
-          id="glab"
-          name="GitLab CLI"
-          status="Not supported yet"
-          good={false}
-          detail="GitLab merge-request integration is not part of this launch."
-        />
+        {glab ? (
+          <ToolRow
+            id="glab"
+            name="GitLab CLI"
+            version={glab.version ?? undefined}
+            status={forgeStatusLabel(forgeDisplayStatus(glab))}
+            good={forgeDisplayStatus(glab) === "available"}
+            detail={glab.detail}
+          />
+        ) : (
+          <ToolRow
+            id="glab"
+            name="GitLab CLI"
+            status={forges?.asked ? "Not detected" : "Not checked"}
+            good={false}
+            detail="Rennet could not read GitLab CLI state in this environment."
+          />
+        )}
         <ToolRow
           id="bitbucket"
           name="Bitbucket"

@@ -31,11 +31,13 @@ The Claude adapter starts the user's installed `claude` through
 `codex app-server`. Each harness owns its authentication; Rennet does not ask for
 provider credentials.
 
-The tools step reports `git`, GitHub CLI availability and authentication, and
-Claude Code and Codex detection. GitLab and Bitbucket are named as unsupported,
-not presented as detected integrations. The welcome never asks the user to
-connect GitHub. GitHub operations prefer the environment's authenticated `gh`
-CLI; see [GitHub authentication](../../using/guides/github-auth.md).
+The tools step reports `git`, GitHub CLI and GitLab CLI availability and
+authentication, and Claude Code and Codex detection. Bitbucket is named as
+unsupported rather than presented as a detected integration. The welcome never
+asks the user to connect a forge account. GitHub operations prefer the
+environment's authenticated `gh` CLI; see
+[GitHub authentication](../../using/guides/github-auth.md). GitLab detection is
+CLI readiness only: merge-request ingestion and publication are still planned.
 
 The review-setup step requires at least one detected Claude Code or Codex
 harness. With both available it asks which harness should own the orchestrator
@@ -179,18 +181,22 @@ harnesses, and a host the daemon cannot interrogate reads its honest not-detecte
 line rather than inheriting this machine's answers. The enable decision is stored
 per host, so ruling an agent out survives a reload and leaves it running elsewhere.
 
-Source Control lists the forge CLIs detected on that host — GitHub / `gh` only;
-GitLab and Bitbucket are planned, not built. It is detected per host exactly as
-agents are: the daemon runs the probes on each machine the only way it can, so a
-WSL distribution shows its own `gh` and its own auth state, and a host the daemon
-cannot interrogate reads its honest "Connect … to detect its tooling" line rather
-than inheriting this machine's answer. Its enable toggle is stored per host the
-same way. A forge whose binary is not on the host's `PATH` has no row at all,
-rather than a stale hit.
+Source Control reports GitHub / `gh` and GitLab.com / `glab` CLI readiness on
+each host. Detection runs per host exactly as agent detection does: the daemon
+runs the probes on each machine the only way it can, so a WSL distribution shows
+its own CLI versions and authentication state, while a host the daemon cannot
+interrogate reads its honest "Connect … to detect its tooling" line rather than
+inheriting this machine's answer. GitHub's enable toggle is stored per host. The
+GitLab health row has no toggle until GitLab operations exist for that decision to
+control. A missing CLI keeps a **Not installed** row with a host-appropriate repair
+instruction and no invented version. A provider check that fails without explicit
+credential rejection reads **Unreachable**, not **Not Authenticated**. GitLab
+merge-request reads and publication remain planned; this health row does not claim
+those operations are built. Bitbucket remains unsupported.
 When at least one agent is enabled, a Review section exposes Model Mappings — see
-[Model Mappings](#model-mappings) below. The source-control row reports the
-environment's `gh` state; the welcome does not contain a separate GitHub sign-in
-step.
+[Model Mappings](#model-mappings) below. The source-control rows report the
+environment's `gh` and `glab` states; the welcome does not contain a separate
+forge sign-in step.
 
 ### Model Mappings
 

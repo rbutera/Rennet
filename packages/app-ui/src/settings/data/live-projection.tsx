@@ -42,16 +42,17 @@ import type { Layered } from "./provenance";
 //     invents no version. A remote host's platform is never reported to us, so its
 //     glyph is the neutral `unknown` mark rather than a guessed penguin.
 //
-//   • sourceControlByHost ← `forge.hosts` (C17 amendment B), the forge CLIs present on EACH
-//     host the settings surface enumerates — GitHub / `gh` only, the #484 boundary (GitLab
-//     and Bitbucket are planned, not built). Like `harness.hosts` the fan-out is SERVER-side:
-//     the daemon probes each host through that host's own deps (a WSL distro's `gh` over
-//     `wsl.exe`), so a distro card shows ITS `gh` rather than inheriting this machine's. A host
-//     that could not be asked comes back `asked: false` and is dropped here, so its card reads
-//     the honest "Connect … to detect its tooling" line. A `not-installed` forge is DROPPED
-//     too, so a binary renamed out of PATH makes its row disappear instead of going stale.
-//     The row's enable toggle is served (amendment A): it writes `forge.setEnabled` and
-//     reads the host's ruling back off `harness.hosts`, so ruling `gh` out survives a reload.
+//   • sourceControlByHost ← `forge.hosts` (C17 amendment B), the GitHub / `gh` and GitLab.com /
+//     `glab` CLI state on EACH host the settings surface enumerates. Like `harness.hosts` the
+//     fan-out is SERVER-side: the daemon probes each host through that host's own deps (a WSL
+//     distro over `wsl.exe`), so a distro card shows ITS state rather than inheriting this
+//     machine's. A host that could not be asked comes back `asked: false` and is dropped here,
+//     so its card reads the honest "Connect … to detect its tooling" line. A `not-installed`
+//     forge keeps its registry row so the exact install repair remains visible without a fake
+//     version.
+//     GitHub's enable toggle is served (amendment A): it writes `forge.setEnabled` and reads
+//     the host's ruling back off `harness.hosts`, so ruling `gh` out survives a reload. GitLab
+//     stays status-only until merge-request operations exist for an enable decision to control.
 //
 //   • agentsByHost ← `harness.hosts` (C17 cluster 3). The daemon runs the real discovery
 //     probes for EVERY host the settings surface enumerates — itself directly, a WSL distro
@@ -119,10 +120,10 @@ function agentLabel(id: string): string {
   return AGENT_LABEL[id as AgentToolId] ?? id;
 }
 
-/** The forge wire id → the source-control row's mark id + label. ONE entry: GitHub /
- *  `gh` is the only forge Rennet builds (#484 keeps GitLab/Bitbucket as planning). */
+/** The forge wire id → the source-control row's mark id + label. */
 const FORGE_ROW: Record<string, { readonly markId: string; readonly label: string }> = {
   github: { markId: "gh", label: "GitHub" },
+  gitlab: { markId: "glab", label: "GitLab" },
 };
 
 /** One wire cell → the projection's assignment. `null` value stays null: the role does
@@ -156,7 +157,7 @@ function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): Detected
     label: row?.label ?? forge.id,
     // No detected version means no version line — never a guess (DetectionRow).
     version: forge.version ?? undefined,
-    status: forge.status,
+    status: forge.authProbe ?? forge.status,
     detail: forge.detail,
     // The SERVED per-host ruling (amendment A) — a forge the viewer ruled out on this host
     // reads off across reload, and one with no ruling reads enabled by default.
@@ -338,9 +339,8 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
 
     // Each host's OWN forge CLIs (amendment B). A host that could not be asked claims NOTHING —
     // no key, so the card reads its honest "Connect … to detect its tooling" line rather than
-    // inheriting the machine this client is connected to. A forge whose binary is absent is
-    // DROPPED, not rendered Not Installed: renaming `gh` out of PATH makes the row disappear
-    // rather than report a stale hit.
+    // inheriting the machine this client is connected to. An asked host keeps each registry row,
+    // including a missing CLI, so the exact install repair remains visible.
     const sourceControlByHost: Record<string, readonly DetectedTool[]> = {};
     // The rows carry the viewer's forge ruling, which is served on `harness.hosts`. Until THAT
     // read lands there is no ruling to render, and defaulting to enabled would paint a
@@ -357,9 +357,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         );
         // An asked host keeps its key even with no rows — "asked, nothing installed" is an
         // answer, and the section says so rather than asking to connect a connected host.
-        sourceControlByHost[host.source] = host.detected
-          .filter((forge) => forge.status !== "not-installed")
-          .map((forge) => forgeRow(forge, disabled));
+        sourceControlByHost[host.source] = host.detected.map((forge) => forgeRow(forge, disabled));
       }
     }
 

@@ -438,7 +438,7 @@ const definitions = {
   },
   // Forge (source-control) CLI detection, mirroring harness.detect (C17, #484 seam / #483
   // "gh rides again"). Runs on the daemon it is dispatched to = that host; the client folds
-  // the rows into `sourceControlByHost`. Singleton registry today — GitHub / `gh` only.
+  // the GitHub / `gh` and GitLab.com / `glab` rows into `sourceControlByHost`.
   "forge.detect": {
     input: z.object({}),
     output: z.object({ detected: z.array(detectedForgeSchema) }),
@@ -447,17 +447,16 @@ const definitions = {
   // this is dispatched to walks the SAME host enumeration and runs forge discovery through each
   // host's OWN deps — itself directly, a WSL distro through `wsl.exe`, a paired remote device not
   // at all. Each entry carries `asked`, so a host that cannot be interrogated reads honestly
-  // absent rather than inheriting this machine's `gh`. `forge.detect` stays for the single-host
-  // read; this is what the settings surface's Source Control sections are keyed by.
+  // absent rather than inheriting this machine's forge state. `forge.detect` stays for the
+  // single-host read; this is what the settings surface's Source Control sections are keyed by.
   "forge.hosts": {
     input: z.object({}),
     output: z.object({ hosts: z.array(forgeHostDetectionSchema) }),
   },
-  // Rule a forge CLI in or out ON ONE HOST (amendment A) — the served write behind the Source
-  // Control row's toggle, mirroring harness.setEnabled exactly and persisted on the same
-  // per-host daemon-settings entry, so the decision survives reload. Read back through
-  // `harness.hosts`'s `disabledForges`. It installs nothing and hides nothing: the row stays,
-  // with its toggle off.
+  // Rule a forge CLI in or out ON ONE HOST (amendment A) — the served write behind operational
+  // Source Control toggles, mirroring harness.setEnabled exactly and persisted on the same
+  // per-host daemon-settings entry. The current surface exposes it for GitHub; health-only
+  // GitLab has no toggle until merge-request operations exist for that ruling to control.
   "forge.setEnabled": {
     input: z.object({
       source: sourceSchema,

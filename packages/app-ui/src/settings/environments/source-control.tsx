@@ -12,7 +12,8 @@ import { CardSection, DetectionRow } from "./detection-row";
 // look) shows ONE honest line — "Connect <host> to detect its tooling." — never a
 // row of fake providers. There is NO OAuth-shaped connect ceremony anywhere in the
 // rows (Rule Zero, #483): each row is honest state plus the one command that fixes
-// it. The enable toggle rules a tool out on this host without uninstalling anything.
+// it. A toggle appears only where a current acting path consumes the ruling; GitLab's
+// readiness-only row stays status-only until merge-request operations exist.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SourceControlSection({ host }: { readonly host: SettingsHost }) {
@@ -34,8 +35,14 @@ export function SourceControlSection({ host }: { readonly host: SettingsHost }) 
             key={tool.id}
             tool={tool}
             mark={<ToolMark id={tool.id as SourceControlToolId} />}
-            toggleLabel={`Use ${tool.label} on ${host.name}`}
-            onToggle={(enabled) => projection.setToolEnabled(host.id, tool.id, enabled)}
+            toggle={
+              tool.id === "glab"
+                ? null
+                : {
+                    label: `Use ${tool.label} on ${host.name}`,
+                    onChange: (enabled) => projection.setToolEnabled(host.id, tool.id, enabled),
+                  }
+            }
           />
         ))
       )}

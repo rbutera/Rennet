@@ -1324,15 +1324,45 @@ describe("forgeHosts — per-host forge CLIs (C17 amendment B)", () => {
     detail: "Authenticated with GitHub through the `gh` CLI.",
   });
 
-  it("each host reports ITS OWN gh — the distro's version, never this machine's", async () => {
+  const missingGh: DetectedForge = {
+    id: "github",
+    version: null,
+    status: "not-installed",
+    detail:
+      "The `gh` CLI was not found on this host. On Linux, run `brew install gh` after installing Homebrew from https://brew.sh if needed.",
+  };
+
+  const glab = (version: string, status: DetectedForge["status"] = "available"): DetectedForge => ({
+    id: "gitlab",
+    version,
+    status,
+    detail:
+      status === "available"
+        ? "Authenticated with GitLab through the `glab` CLI."
+        : "`glab` is installed but not signed in to gitlab.com.",
+  });
+
+  it("each host reports its own GitHub and GitLab states without cross-host borrowing", async () => {
     // The gap amendment B closes: keyed to the connected host alone, the distro card could
-    // never show a `gh` it really has. Copy the local answer across and this fails too.
+    // never show CLIs it really has. Copy the local answer across and this fails too.
     const hosts = await createSettingsComposition(
-      hostsDeps(async (source) => [gh(source === "local" ? "2.76.0" : "2.40.0")]),
+      hostsDeps(async (source) =>
+        source === "local"
+          ? [gh("2.76.0"), glab("1.80.0", "not-authenticated")]
+          : [missingGh, glab("1.70.0")],
+      ),
     ).forgeHosts();
     expect(hosts).toEqual([
-      { source: "local", asked: true, detected: [gh("2.76.0")] },
-      { source: "wsl:Ubuntu", asked: true, detected: [gh("2.40.0")] },
+      {
+        source: "local",
+        asked: true,
+        detected: [gh("2.76.0"), glab("1.80.0", "not-authenticated")],
+      },
+      {
+        source: "wsl:Ubuntu",
+        asked: true,
+        detected: [missingGh, glab("1.70.0")],
+      },
     ]);
   });
 
@@ -1356,7 +1386,7 @@ describe("forgeHosts — per-host forge CLIs (C17 amendment B)", () => {
   it("a detection that THROWS is unasked, and a host asked with nothing found says so", async () => {
     const rejected = await createSettingsComposition(
       hostsDeps(async () => {
-        throw new Error("gh probe blew up");
+        throw new Error("forge probe blew up");
       }),
     ).forgeHosts();
     expect(rejected.every((host) => host.asked === false)).toBe(true);

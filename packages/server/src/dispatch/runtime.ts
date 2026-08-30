@@ -286,7 +286,7 @@ export interface DispatchDeps {
   /** The harnesses found on the machine, for the ambient first-run detection line. */
   detectHarnesses(): Promise<DetectedHarness[]>;
   /** The forge (source-control) CLIs found on this host, for `forge.detect` → the
-   *  Environments surface's `sourceControlByHost` (C17). Singleton registry — `gh` only. */
+   *  Environments surface's `sourceControlByHost` (C17): `gh` and GitLab.com's `glab`. */
   detectForges(): Promise<DetectedForge[]>;
   /**
    * The GitHub account port: live `gh` credential first, with Rennet's device-flow

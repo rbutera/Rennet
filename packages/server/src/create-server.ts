@@ -989,8 +989,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   // Forge (source-control) CLI detection (C17, #483 gh rides again). Same disclosure model as
   // detectHarnesses, including its liveness: shared while the probe runs, never cached past
-  // it, so installing `gh` — or signing in with it — shows up on the next read instead of
-  // after a restart. Singleton registry — GitHub / `gh` only. Feeds `sourceControlByHost`.
+  // it, so installing `gh` or `glab` — or signing in with either — shows up on the next read
+  // instead of after a restart. Feeds `sourceControlByHost`.
   function detectForges(): Promise<DetectedForge[]> {
     return shareForgeDetection(() =>
       runForgeDetection(defaultForgeDetectionDeps()).catch(() => []),
@@ -998,10 +998,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   // Per-host forge detection (C17 amendment B) — the exact mirror of `detectHarnessesOn`, so a
-  // WSL card shows the DISTRO's own `gh` (and its own auth state) instead of a Source Control
+  // WSL card shows the DISTRO's own `gh` and `glab` auth states instead of a Source Control
   // section it is structurally incapable of filling. `local` is the memoized ambient answer;
   // `wsl:<distro>` runs the whole probe chain inside the distro (a distro `wsl.exe` cannot
-  // enter reports UNASKED, never "no gh"); a paired `remote:` device dials US, so it cannot be
+  // enter reports UNASKED, never "no CLIs"); a paired `remote:` device dials US, so it cannot be
   // probed at all. Shared per host while in flight, never cached past it — the same liveness
   // as the agent probe, for the same reason.
   function detectForgesOn(source: ProjectSource): Promise<DetectedForge[] | null> {
@@ -3782,7 +3782,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         source.startsWith("wsl:") && options.hostBundlePath ? serverVersion : undefined,
       // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
       detectHarnessesOn,
-      // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own `gh`.
+      // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own state.
       detectForgesOn,
       // The real per-host daemon update behind Update Daemon (C17 cluster 6, #534). A host
       // kind with no mechanism throws its reason, so the card never reads a fake success.

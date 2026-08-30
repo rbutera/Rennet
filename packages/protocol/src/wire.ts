@@ -426,17 +426,19 @@ export const detectedHarnessSchema = z.object({
 export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
 
 /** The honest state of a forge (source-control) CLI detected on a host (#484 seam; #483
- *  "gh rides again"). A subset of the client `ToolStatus` — a forge CLI probe never yields
- *  `unreachable` (that is a host-daemon state, not a CLI state). */
+ *  "gh rides again"). This v2 vocabulary stays closed for older clients. */
 export const forgeStatusSchema = z.enum(["available", "not-authenticated", "not-installed"]);
 export type ForgeStatus = z.infer<typeof forgeStatusSchema>;
 
 /** A forge CLI detected on the host its daemon runs on (the wire shape `forge.detect`
- *  returns). The client maps it to a `DetectedTool` row, adding the label + enable toggle. */
+ *  returns). The client maps it to a `DetectedTool` row and adds its presentation label. */
 export const detectedForgeSchema = z.object({
   id: z.string().min(1),
   version: z.string().nullable(),
   status: forgeStatusSchema,
+  /** Additive v2 compatibility field: current clients prefer this over the legacy base status,
+   *  while older clients ignore it and keep their prior non-zero-auth fallback. */
+  authProbe: z.literal("unreachable").optional(),
   detail: z.string(),
 });
 export type DetectedForge = z.infer<typeof detectedForgeSchema>;
@@ -2359,8 +2361,8 @@ export type HarnessHostDetection = z.infer<typeof harnessHostDetectionSchema>;
  * One host's detected forge (source-control) CLIs (C17 amendment B) — the wire shape
  * `forge.hosts` returns, the exact mirror of `harness.hosts` for the Source Control section.
  * `forge.detect` answers for ONE daemon, so keying its rows anywhere else would copy this
- * machine's `gh` onto a host it was never observed on; this read asks each host the only way
- * it CAN be asked, so a WSL distro with its own `gh` shows its own.
+ * machine's forge state onto a host it was never observed on; this read asks each host the only
+ * way it CAN be asked, so a WSL distro with its own `gh` or `glab` shows its own.
  *
  * `asked` discriminates this union exactly as it does the harness read: a host this daemon
  * cannot interrogate reads `asked: false` and cannot carry rows at all — an honest absence,

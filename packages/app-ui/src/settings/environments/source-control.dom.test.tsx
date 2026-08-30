@@ -2,8 +2,8 @@
 //
 // C10 §4 — Source Control detection on a host card. The four statuses render their
 // chip + honest helper; an undetected version renders nothing; a disconnected host
-// shows ONE honest line, not fake rows; Azure DevOps never appears; the enable toggle
-// persists through the projection seam.
+// shows ONE honest line, not fake rows; Azure DevOps never appears; actionable enable
+// toggles persist through the projection seam while GitLab's health-only row has none.
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { cleanup, mount, within } from "../../test/dom";
@@ -100,6 +100,16 @@ describe("SourceControlSection — detection rows", () => {
     cleanup();
   });
 
+  it("keeps normal source-control toggles but gives the health-only GitLab row none", () => {
+    const { getByRole, queryByRole } = mount(
+      withProjection({ sourceControlByHost: { h1: FOUR_STATUSES } }),
+    );
+    expect(getByRole("switch", { name: "Use Git on This Machine" })).toBeTruthy();
+    expect(getByRole("switch", { name: "Use GitHub on This Machine" })).toBeTruthy();
+    expect(queryByRole("switch", { name: "Use GitLab on This Machine" })).toBeNull();
+    cleanup();
+  });
+
   it("the enable toggle persists through the projection", async () => {
     function Stateful() {
       const [tools, setTools] = useState<readonly DetectedTool[]>(FOUR_STATUSES);
@@ -110,14 +120,14 @@ describe("SourceControlSection — detection rows", () => {
       });
     }
     const { getByRole, user } = mount(<Stateful />);
-    const glabToggle = getByRole("switch", { name: "Use GitLab on This Machine" });
-    expect(glabToggle.getAttribute("aria-checked")).toBe("false");
-    await user.click(glabToggle);
+    const githubToggle = getByRole("switch", { name: "Use GitHub on This Machine" });
+    expect(githubToggle.getAttribute("aria-checked")).toBe("true");
+    await user.click(githubToggle);
     expect(
       within(document.body)
-        .getByRole("switch", { name: "Use GitLab on This Machine" })
+        .getByRole("switch", { name: "Use GitHub on This Machine" })
         .getAttribute("aria-checked"),
-    ).toBe("true");
+    ).toBe("false");
     cleanup();
   });
 });

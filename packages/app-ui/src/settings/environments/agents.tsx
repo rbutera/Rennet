@@ -39,8 +39,10 @@ export function AgentsSection({ host }: { readonly host: SettingsHost }) {
             key={tool.id}
             tool={tool}
             mark={<AgentMark id={tool.id as AgentToolId} />}
-            toggleLabel={`Use ${tool.label} on ${host.name}`}
-            onToggle={(enabled) => projection.setToolEnabled(host.id, tool.id, enabled)}
+            toggle={{
+              label: `Use ${tool.label} on ${host.name}`,
+              onChange: (enabled) => projection.setToolEnabled(host.id, tool.id, enabled),
+            }}
           />
         ))
       )}
