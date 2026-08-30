@@ -19,7 +19,7 @@ import {
   shell,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
-import { isAutoUpdateEligible, startAutoUpdateOnce } from "./auto-update";
+import { armMacUpdateRelaunch, isAutoUpdateEligible, startAutoUpdateOnce } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
 import {
   ensureDaemon,
@@ -377,10 +377,21 @@ app.whenReady().then(async () => {
   const update = isAutoUpdateEligible(app.isPackaged)
     ? startAutoUpdateOnce(isTrustedAppUrl, console, {
         prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
+        armRelaunchAfterApply:
+          process.platform === "darwin"
+            ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
+            : undefined,
+        recoverAfterApplyFailure: async () => {
+          activeWsPort = await ensureDaemon(dataDir);
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.isDestroyed()) window.destroy();
+          }
+          await ensureWindowShared();
+        },
         reportApplyFailure: (message) => {
           dialog.showErrorBox(
             "Rennet couldn't install the update",
-            `The update is downloaded, but Rennet could not complete the install handoff, so the app stayed open.\n\n${message}\n\nUse “Quit Rennet and stop daemon” from the menu bar, reopen Rennet, and try the update again.`,
+            `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
           );
         },
       })

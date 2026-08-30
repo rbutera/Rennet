@@ -471,8 +471,13 @@ Now**. Rennet never restarts itself without you.
 Choosing **Update Now** or **Restart Rennet to update** first stops the local
 daemon that runs from the installed app bundle, then lets the platform updater
 replace that bundle and relaunch Rennet. The new app starts its matching daemon
-and reconnects to the durable review state. If the owned daemon cannot stop,
+and reconnects to the durable review state. On macOS, Rennet also arms a small
+out-of-bundle relaunch helper before ShipIt replaces the app, so a successful
+install still reopens when the native updater omits its own relaunch. If the owned daemon cannot stop,
 Rennet stays open and reports the failure instead of closing without installing.
+If macOS or Windows rejects the native install handoff after closing the window,
+Rennet restarts its daemon, restores the window, and shows the updater error so
+you can retry from the same review state.
 
 Closing the window leaves Rennet in the macOS menu bar or the Windows system
 tray, with the local daemon and any running review intact. **Open Rennet**
