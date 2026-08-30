@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DESIGN_ARTIFACT_LIMITS, type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
+import {
+  DESIGN_ARTIFACT_LIMITS,
+  type DesignArtifactSet,
+  sanitizeSchemaForCodex,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import {
   type DeltaPacket,
   type HarnessPort,
@@ -24,6 +29,7 @@ import {
   boardOutputSchema,
   composeReviewDraft,
   type DesignCoverageMapper,
+  designDraftOutputSchema,
   draftToOps,
   projectDesignTaskProgress,
   reconcileFlaggedBoards,
@@ -1214,6 +1220,32 @@ describe("boardOutputSchema", () => {
   });
 });
 
+describe("Codex board output-schema compatibility", () => {
+  it("projects both real board schemas into the supported provider subset", () => {
+    for (const source of [boardOutputSchema(), designDraftOutputSchema()]) {
+      const schema = sanitizeSchemaForCodex(source) as Record<string, unknown>;
+      expect(schema.type).toBe("object");
+      expect(schema.anyOf).toBeUndefined();
+
+      const unsupported: string[] = [];
+      const walk = (node: unknown, path: string): void => {
+        if (Array.isArray(node)) {
+          node.forEach((value, index) => {
+            walk(value, `${path}[${index}]`);
+          });
+          return;
+        }
+        if (node === null || typeof node !== "object") return;
+        const record = node as Record<string, unknown>;
+        if (record.oneOf !== undefined) unsupported.push(`${path}.oneOf`);
+        for (const [key, value] of Object.entries(record)) walk(value, `${path}.${key}`);
+      };
+      walk(schema, "$");
+      expect(unsupported).toEqual([]);
+    }
+  });
+});
+
 describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () => {
   const labels = { a: "Claude", b: "Codex" };
 
@@ -1695,6 +1727,41 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       absence: "no-material",
     });
     expect(applied.map(({ boardId }) => boardId)).not.toContain("board:design");
+  });
+
+  it("keeps a valid Design board when the provider envelope also contains grounded absence fields", async () => {
+    const applied: Applied[] = [];
+    const designBoard = cleanBody("design");
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "design") return cleanBody(lens);
+        return {
+          ...designBoard,
+          absence: "no-material",
+          candidates: DESIGN_ARTIFACTS.candidates.map((candidate) => ({
+            id: candidate.id,
+            relevance: candidate.relevance.kind,
+            reason: "The candidate is unrelated to the reviewed change.",
+          })),
+        };
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      designArtifacts: DESIGN_ARTIFACTS,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const design = result.boards.find(({ lens }) => lens === "design");
+    expect(design).toMatchObject({ lens: "design" });
+    expect(design?.absence).toBeUndefined();
+    expect(design?.board).toBeDefined();
+    expect(applied.map(({ boardId }) => boardId)).toContain("board:design");
   });
 
   it("refuses durable no-material when Design discovery omitted a candidate", async () => {
@@ -3434,5 +3501,34 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     });
     for (const o of result.boards) expect(o.failure).toBeDefined();
     expect(applied).toEqual([]);
+  });
+
+  it("preserves the harness failure account when an initial drafter emits no board", async () => {
+    const failingPort = {
+      createSession: async () => ({
+        send: async () => undefined,
+        close: async () => undefined,
+        events: (async function* () {
+          yield {
+            kind: "error",
+            error: { message: "structured output exceeded the seat capability" },
+          };
+        })(),
+      }),
+    } as unknown as HarnessPort;
+    const result = await runLensPipeline({
+      claudePort: failingPort,
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (l) => `board:${l}`,
+    });
+    for (const outcome of result.boards) {
+      expect(outcome.failure).toContain("structured output exceeded the seat capability");
+    }
   });
 });

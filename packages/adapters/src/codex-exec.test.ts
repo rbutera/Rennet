@@ -407,6 +407,67 @@ describe("sanitizeSchemaForCodex", () => {
     expect(out.anyOf[1]?.additionalProperties).toBe(false);
   });
 
+  it("rewrites oneOf to the OpenAI-supported anyOf recursively", () => {
+    const input = {
+      type: "array",
+      items: {
+        oneOf: [
+          {
+            type: "object",
+            properties: { kind: { const: "a" }, value: { type: "string" } },
+            required: ["kind", "value"],
+          },
+          {
+            type: "object",
+            properties: { kind: { const: "b" }, count: { type: "number" } },
+            required: ["kind", "count"],
+          },
+        ],
+      },
+    };
+
+    const out = sanitizeSchemaForCodex(input) as {
+      items: { oneOf?: unknown; anyOf?: unknown[] };
+    };
+    expect(out.items.oneOf).toBeUndefined();
+    expect(out.items.anyOf).toHaveLength(2);
+    expect(input.items.oneOf).toHaveLength(2);
+  });
+
+  it("lowers a root object anyOf to one required-nullable generation envelope", () => {
+    const out = sanitizeSchemaForCodex({
+      anyOf: [
+        {
+          type: "object",
+          properties: { elements: { type: "array", items: { type: "string" } } },
+          required: ["elements"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            absence: { type: "string", enum: ["no-material"] },
+            candidates: { type: "array", items: { type: "string" } },
+          },
+          required: ["absence", "candidates"],
+          additionalProperties: false,
+        },
+      ],
+    }) as {
+      type?: unknown;
+      anyOf?: unknown;
+      required?: unknown;
+      properties: Record<string, unknown>;
+    };
+
+    expect(out.type).toBe("object");
+    expect(out.anyOf).toBeUndefined();
+    expect(out.required).toEqual(["elements", "absence", "candidates"]);
+    expect(out.properties.elements).toEqual({
+      anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
+    });
+  });
+
   it("adds every property to `required` and makes a previously-optional one nullable", () => {
     const out = JSON.parse(
       JSON.stringify(

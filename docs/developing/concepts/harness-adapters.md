@@ -72,6 +72,13 @@ flowchart TD
 Tool results keep both structured output and readable text. Terminal outcomes
 are a discriminated union of `completed`, `cancelled`, and `failed`, so missing
 usage or structured output cannot be mistaken for a successful empty value.
+Codex output schemas are normalized at the transport boundary to its strict
+structured-output subset: object fields become required and nullable, object
+extras are closed, and Zod's unsupported `oneOf` projection becomes `anyOf` for
+generation. A root union of object outcomes becomes one required-nullable object
+envelope, then emitted null fields are removed. Board jobs still parse the result
+through their original schema in core, so this normalization cannot weaken an
+accepted board.
 
 ## Cursor-resume and the turn loop
 

@@ -120,7 +120,7 @@ export function boardOutputSchema(): unknown {
   return cachedBoardSchema;
 }
 
-function designDraftOutputSchema(): unknown {
+export function designDraftOutputSchema(): unknown {
   if (cachedDesignDraftSchema !== undefined) return cachedDesignDraftSchema;
   try {
     cachedDesignDraftSchema = z.toJSONSchema(DesignDraftOutputSchema, { io: "output" });
@@ -858,7 +858,7 @@ async function draftOneLens(
     const first = await seatTurn(basePrompt, 0);
     if (first.status !== "emitted") {
       return {
-        failure: `${who}: the initial drafting turn did not emit a board (${first.status}).`,
+        failure: `${who}: the initial drafting turn did not emit a board (${first.status}: ${first.message}).`,
       };
     }
     const absence = initialAbsence?.(first.body);
@@ -1697,6 +1697,7 @@ function groundedDesignAbsence(
   set: DesignArtifactSet,
 ): { readonly absence: "no-material" } | undefined {
   if (designArtifactBundleIncomplete(set)) return undefined;
+  if (DraftBoardSchema.safeParse(output).success) return undefined;
   const parsed = DesignNoMaterialSchema.safeParse(output);
   if (!parsed.success || parsed.data.candidates.length !== set.candidates.length) return undefined;
   const byId = new Map(parsed.data.candidates.map((candidate) => [candidate.id, candidate]));
