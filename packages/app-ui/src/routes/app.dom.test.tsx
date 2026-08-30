@@ -279,6 +279,78 @@ describe("/s/:slug for a review-less session (F1 cluster 4, C21 mint)", () => {
   });
 });
 
+describe("/s/:slug during New Chat preparation (#668)", () => {
+  const lanes = [
+    { id: "design", label: "Design", status: "done", verdict: "reworked" },
+    { id: "sequence", label: "Sequence", status: "running" },
+    { id: "decisions", label: "Decisions", status: "queued" },
+    { id: "flagged", label: "Flagged", status: "queued" },
+    { id: "noise", label: "Noise", status: "queued" },
+  ] as const;
+
+  it("renders the daemon's real lens snapshot and cancels without leaving the session", async () => {
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([
+        {
+          id: "sess-progress",
+          projectId: "proj-1",
+          title: "feat/progress",
+          reviewId: "rev-1",
+          preparation: { status: "drafting", reviewId: "rev-1", lanes: [...lanes] },
+        },
+      ]),
+      "review.load": () => ({ review: REVIEW }),
+    } as never);
+    const history = memoryHistory("/s/sess-progress");
+    const { user, findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    expect(await findByText("Generating the Boards")).toBeTruthy();
+    expect(
+      document.querySelectorAll('[data-screen="session-preparation"] [data-row]'),
+    ).toHaveLength(5);
+    expect(document.querySelector('[data-row="design"]')?.getAttribute("data-status")).toBe("done");
+    expect(document.querySelector('[data-row="sequence"]')?.getAttribute("data-status")).toBe(
+      "running",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-screen="session-preparation"]')?.getAttribute("data-status"),
+      ).toBe("cancelled"),
+    );
+    expect(history.history.at(-1)).toBe("/s/sess-progress");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("names the failed stage and reason while retaining retry", async () => {
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      ...sessionHandlers([
+        {
+          id: "sess-failed",
+          projectId: "proj-1",
+          title: "feat/failed",
+          preparation: {
+            status: "failed",
+            stage: "capture",
+            reason: "Branch feat/failed no longer exists.",
+          },
+        },
+      ]),
+      "review.load": () => {
+        throw new Error("Review not found");
+      },
+    } as never);
+
+    mount(<RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-failed")} />);
+    expect(await screen.findByText("Capture failed")).toBeTruthy();
+    expect(await screen.findByText("Branch feat/failed no longer exists.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+});
+
 /** A review the daemon can serve for `/s/rev-1`, minimal but schema-real. */
 const REVIEW = {
   id: "rev-1",

@@ -8,6 +8,7 @@ import {
   initRepo,
   launchRennet,
   makeTempDir,
+  modelFreeEnv,
   writeRepoFile,
 } from "./harness";
 
@@ -129,15 +130,69 @@ async function backToNewChat(page: Page): Promise<void> {
 
 /**
  * Click a row and hold the app to the whole act: it left New Chat, it landed on a
- * session route, and that route is the REVIEW workspace — not the chat-only session,
- * which is precisely what the bug produced.
+ * session route, and capture reaches a terminal review state — populated boards when a
+ * harness is available, or the explicit Board-generation failure this model-free suite
+ * expects. It must never be the chat-only session the original bug produced.
  */
 async function clickRowAndLand(page: Page, name: RegExp): Promise<void> {
   await page.locator('[data-row="target"]', { hasText: name }).first().click();
-  await expect(page.getByText(/^REVIEW ·/)).toBeVisible({ timeout: 180_000 });
+  await expect(
+    page
+      .locator(
+        '[data-kind="lens-board-view"], [data-screen="session-preparation"][data-status="failed"]',
+      )
+      .first(),
+  ).toBeVisible({ timeout: 180_000 });
   await expect(page.locator('[data-screen="chat-only-session"]')).toHaveCount(0);
   expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
 }
+
+test("#668: a row click opens real generation progress before held drafting completes", async () => {
+  test.setTimeout(300_000);
+  const repository = seedRowRepo();
+  const userData = makeTempDir("rennet-e2e-668-state-");
+  const home = makeTempDir("rennet-e2e-668-home-");
+  const { application } = await launchRennet({
+    repository,
+    userData,
+    home,
+    env: {
+      ...modelFreeEnv(home),
+      RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000",
+    },
+  });
+  try {
+    const page = await application.firstWindow();
+    await completeWelcome(page);
+    await addProjectAndOpenNewChat(page, repository);
+
+    await page
+      .locator('[data-row="target"]', { hasText: /feat\/committed/ })
+      .first()
+      .click();
+
+    // The session route paints while the daemon deliberately holds capture itself. Before #668
+    // the row click awaited this exact command, so holding only board drafting would miss the
+    // original renderer-blocking seam.
+    const progress = page.locator('[data-screen="session-preparation"]');
+    await expect(progress).toBeVisible({ timeout: 5_000 });
+    expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
+    await expect(progress.getByText("Resolving the repository", { exact: true })).toBeVisible();
+    await expect(progress.locator("[data-row]")).toHaveCount(0);
+    await expect(page.getByText(/^REVIEW ·/)).toHaveCount(0);
+
+    // Cancellation is a live command, not a disabled navigation state. The review remains on
+    // the same route with an explicit terminal account and can be retried in place.
+    await progress.getByRole("button", { name: "Cancel" }).click();
+    await expect(progress).toHaveAttribute("data-status", "cancelled");
+    await expect(progress.getByRole("button", { name: "Retry" })).toBeVisible();
+  } finally {
+    await application.close();
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("#587: every New Chat row kind starts a real review of that target", async () => {
   test.setTimeout(600_000);
@@ -240,7 +295,13 @@ test("#587: in a two-repo workspace, the click captures the repo the ROW named",
       .filter({ hasText: "acme/beta" });
     await expect(betaRow).toHaveCount(1);
     await betaRow.click();
-    await expect(page.getByText(/^REVIEW ·/)).toBeVisible({ timeout: 180_000 });
+    await expect(
+      page
+        .locator(
+          '[data-kind="lens-board-view"], [data-screen="session-preparation"][data-status="failed"]',
+        )
+        .first(),
+    ).toBeVisible({ timeout: 180_000 });
 
     const session = (await daemon.sessions()).find((s) => s.claim?.branch === "shared/feature");
     expect(session?.reviewId).toBeTruthy();

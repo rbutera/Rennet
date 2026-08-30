@@ -19,7 +19,7 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
-import { SessionTranscriptRowSchema } from "./session/model";
+import { SessionPreparationSchema, SessionTranscriptRowSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -2289,6 +2289,8 @@ export const sidebarSessionSchema = z
      * Absent for a session nothing has been captured for yet — honestly, there is no diff.
      */
     reviewId: z.string().min(1).optional(),
+    /** Durable New Chat capture/board progress, projected from the session record. */
+    preparation: SessionPreparationSchema.optional(),
     /** When the session was minted (epoch ms) — the client renders the relative line. */
     createdAt: z.number(),
   })

@@ -1488,9 +1488,9 @@ const definitions = {
       .object({
         projectId: z.string().min(1),
         /**
-         * The id for the review this mint CAPTURES (#587). Starting a session is one act —
-         * mint, claim, capture, attach — so the command that starts it carries the capture's
-         * id, exactly as `review.capture` does.
+         * The id for the background capture this mint starts (#587/#668). The session is
+         * returned immediately; capture and first-generation drafting report through its
+         * durable preparation state.
          */
         commandId: commandIdSchema,
         /** The claimed branch. Absent mints a no-target session (claims nothing). */
@@ -1518,6 +1518,14 @@ const definitions = {
       /** True when an existing live claim owned the target and this reattached to it. */
       reattached: z.boolean(),
     }),
+  },
+  "session.cancelPreparation": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  "session.retryPreparation": {
+    input: z.object({ sessionId: z.string().min(1), commandId: commandIdSchema }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
   },
   "session.rename": {
     // An emptied title is not stored empty: it CLEARS the reviewer's title, so the row
@@ -1601,7 +1609,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 102 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 104 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *
@@ -1610,7 +1618,7 @@ const AGENT_EXPOSED = new Set<string>([
  * has no result surface. So a row earns `true` only when all four hold:
  *
  * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
- *    (18 of 102 pass; the rest need a review/session/project/span id or a host path).
+ *    (18 of 104 pass; the rest need a review/session/project/span id or a host path).
  * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
  *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
  *    running them from the menu changes nothing a reader would see).

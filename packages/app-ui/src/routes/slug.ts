@@ -10,13 +10,12 @@ import { readCommandId, useCommand } from "../data";
 // cases are DIFFERENT SURFACES, not a success and a failure:
 //
 //   • a session WITH a review → the review workspace (today's whole product);
-//   • a session WITHOUT one → a real, honest chat-only session. A freshly minted
-//     session has no review — nothing on the server attaches one yet — so this is
-//     what the front door actually opens onto. Rendering it as "not found" would
-//     make a click that genuinely worked look broken.
+//   • a session WITHOUT one and WITHOUT preparation → a real, honest chat-only session.
+//     New Chat sessions carry a durable preparation state until their review is ready;
+//     older or intentionally bare sessions can still have neither.
 //
 // WHICH review a session holds is the session's own fact (#587): New Chat's row click
-// captures the clicked branch/PR and attaches the review to the session it minted, so
+// captures the clicked branch/PR in the background and attaches the review to the minted session, so
 // `session.list` carries `reviewId`. The list is therefore read FIRST and the review
 // read waits for it — guessing that the slug is a review id before the list settles
 // would flash the chat-only surface over a session that does have a review.

@@ -11,7 +11,12 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addThread, archive, attachReview } from "@rennet/core";
-import { type SessionModel, SessionModelSchema, type SessionThread } from "@rennet/protocol";
+import {
+  type SessionModel,
+  SessionModelSchema,
+  type SessionPreparation,
+  type SessionThread,
+} from "@rennet/protocol";
 
 /**
  * The durable-session store (#466 res. 1–2, B09 cluster 1) — durability for the
@@ -182,6 +187,20 @@ export class SessionStore {
     if (!session) return undefined;
     if (session.reviewId !== undefined) return session;
     const next = attachReview(session, reviewId);
+    this.save(next);
+    return next;
+  }
+
+  /** Replace or clear the durable New Chat preparation snapshot. */
+  setPreparation(
+    sessionId: string,
+    preparation: SessionPreparation | undefined,
+  ): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const next = { ...session };
+    if (preparation === undefined) delete next.preparation;
+    else next.preparation = preparation;
     this.save(next);
     return next;
   }

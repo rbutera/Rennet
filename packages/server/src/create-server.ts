@@ -186,6 +186,7 @@ import type {
   KnowledgeDispositionResult,
   LensBoard,
   LensKind,
+  LensLane,
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
@@ -198,6 +199,7 @@ import type {
   RoundOperation,
   RoundRunReceipt,
   SessionModel,
+  SessionPreparation,
 } from "@rennet/protocol";
 import {
   currentGenerationId,
@@ -568,21 +570,33 @@ export function createRoundSourceLandingPorts(input: {
 /** One drafting attempt per review version. A rejected/false attempt is evicted, so the next
  * compose can retry; concurrent doors join the same work instead of drafting duplicate boards. */
 export function createBoardDraftCoordinator(
-  draft: (review: Review) => Promise<boolean>,
-): (review: Review) => Promise<void> {
-  const inFlight = new Map<string, Promise<void>>();
-  return (review) => {
+  draft: (
+    review: Review,
+    emit?: (event: RoundEvent) => void,
+    signal?: AbortSignal,
+  ) => Promise<boolean>,
+): (review: Review, emit?: (event: RoundEvent) => void, signal?: AbortSignal) => Promise<void> {
+  type DraftAttempt = {
+    readonly promise: Promise<void>;
+    readonly signal?: AbortSignal;
+  };
+  const inFlight = new Map<string, DraftAttempt>();
+  return (review, emit, signal) => {
     const key = `${review.id}:${review.activePatchsetId}`;
     const existing = inFlight.get(key);
-    if (existing) return existing;
-    const tracked = draft(review)
+    if (existing && !existing.signal?.aborted) return existing.promise;
+    const attempt =
+      existing === undefined
+        ? draft(review, emit, signal)
+        : existing.promise.catch(() => undefined).then(() => draft(review, emit, signal));
+    const tracked = attempt
       .then((settled) => {
         if (!settled) throw new Error("Review board drafting did not settle.");
       })
       .finally(() => {
-        if (inFlight.get(key) === tracked) inFlight.delete(key);
+        if (inFlight.get(key)?.promise === tracked) inFlight.delete(key);
       });
-    inFlight.set(key, tracked);
+    inFlight.set(key, { promise: tracked, ...(signal === undefined ? {} : { signal }) });
     return tracked;
   };
 }
@@ -2145,6 +2159,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The durable session store (B09) — the cursor the turn loop resumes from and the rows
   // the sidebar lists both live here.
   const sessionStore = new SessionStore(join(dataDir, "sessions"));
+  for (const session of sessionStore.list()) {
+    const preparation = session.preparation;
+    if (preparation?.status !== "capturing" && preparation?.status !== "drafting") continue;
+    const interruptedAfterCapture =
+      preparation.status === "drafting" || session.reviewId !== undefined;
+    sessionStore.setPreparation(session.id, {
+      status: "failed",
+      stage: interruptedAfterCapture ? "boards" : "capture",
+      reason: "Rennet restarted before preparation finished. Retry to continue.",
+      ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
+      ...(preparation.status === "drafting" ? { lanes: preparation.lanes } : {}),
+    });
+  }
+  const sessionPreparations = new Map<string, AbortController>();
+  const sessionPreparationRuns = new Map<string, Promise<void>>();
   // The display-transcript store (issue-set B): the durable read-model behind
   // `session.transcript`. Coding turns and round lifecycle receipts append here.
   const transcriptStore = new TranscriptStore(join(dataDir, "transcripts"));
@@ -3001,7 +3030,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * Failure-isolated. The review is captured and persisted either way; a drafting failure
    * must never take the capture down with it.
    */
-  async function draftBoardsForReview(review: Review): Promise<boolean> {
+  async function draftBoardsForReview(
+    review: Review,
+    emit: (event: RoundEvent) => void = () => undefined,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const patchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
     if (patchset === undefined) return false;
     // The SAME mint the round dispatch takes (#580/#587): it prefers the session already
@@ -3024,12 +3057,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // No coding turn ran, so there is nothing to re-capture. `runBoardRegeneration`
         // only calls this when checkpoint evidence says the tree changed, which it never does here.
         async () => undefined,
-        // No live channel: the round-progress log belongs to ROUNDS. Feeding a capture's
-        // drafting into it would put a round the reviewer never dispatched in front of
-        // them — and the client's round machine ignores every event before a `dispatched`
-        // anyway, so it would be a lie that did not even render. The client learns the
-        // boards arrived by re-reading `board.read` (`board-view.tsx`).
-        () => undefined,
+        // Initial drafting has its own durable session-preparation channel. It still consumes
+        // the exact RoundEvent snapshots emitted by the lens runtime; it never fabricates a
+        // reviewer-dispatched round to make them render.
+        emit,
         // Passive drafting belongs to this exact captured version. A regenerate can advance the
         // live review while this model work is running; letting `reviewNow` observe that successor
         // turns the old no-work A→A draft into a phantom A→B round. Pin A here, then report
@@ -3044,6 +3075,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         priorPatchsetId: review.activePatchsetId,
         asksDispatched: [],
         worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
+        ...(signal === undefined ? {} : { signal }),
       },
     );
     return settled && service.reviewById(review.id)?.activePatchsetId === review.activePatchsetId;
@@ -3057,6 +3089,266 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const kickBoardDrafting = (review: Review): void => {
     void ensureBoardDrafting(review).catch(() => undefined);
   };
+
+  type PreparationTarget = {
+    readonly branch: string;
+    readonly prNumber?: number;
+    readonly repository?: string;
+    readonly forgeRepository?: ForgeRepoIdentity;
+  };
+  type PreparationRequest = {
+    readonly projectId: string;
+    readonly commandId: string;
+    readonly target?: PreparationTarget;
+    readonly reviewId?: string;
+  };
+  const initialPreparationLanes = (): LensLane[] =>
+    LENS_KINDS.map((lens) => ({
+      id: lens,
+      label: `${lens[0]?.toUpperCase() ?? ""}${lens.slice(1)}`,
+      status: "queued",
+    }));
+  const preparationIsCurrent = (sessionId: string, controller: AbortController): boolean =>
+    sessionPreparations.get(sessionId) === controller && !controller.signal.aborted;
+  const waitForPreparationDelay = async (
+    rawDelay: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const delayMs = Number(rawDelay ?? 0);
+    if (!Number.isFinite(delayMs) || delayMs <= 0 || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, delayMs);
+      function done(): void {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        resolve();
+      }
+      signal.addEventListener("abort", done, { once: true });
+    });
+  };
+  const setCurrentPreparation = (
+    sessionId: string,
+    controller: AbortController,
+    preparation: SessionPreparation | undefined,
+  ): SessionModel | undefined =>
+    preparationIsCurrent(sessionId, controller)
+      ? sessionStore.setPreparation(sessionId, preparation)
+      : sessionStore.load(sessionId);
+
+  async function runSessionPreparation(
+    sessionId: string,
+    request: PreparationRequest,
+    controller: AbortController,
+  ): Promise<void> {
+    let stage: "capture" | "boards" = request.reviewId === undefined ? "capture" : "boards";
+    let review: Review | null =
+      request.reviewId === undefined ? null : service.reviewById(request.reviewId);
+    let lanes = initialPreparationLanes();
+    try {
+      if (review === null) {
+        await waitForPreparationDelay(
+          env.RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS,
+          controller.signal,
+        );
+        if (!preparationIsCurrent(sessionId, controller)) return;
+
+        const project = projectStore.list().find((entry) => entry.id === request.projectId);
+        const target = request.target;
+        const rowRepository =
+          target?.repository ??
+          (target?.forgeRepository === undefined
+            ? undefined
+            : forgeRepositorySlug(target.forgeRepository));
+        const resolvedRoot =
+          target === undefined
+            ? undefined
+            : await resolveProjectRepositoryRoot({
+                project,
+                target,
+                identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+              });
+        if (!preparationIsCurrent(sessionId, controller)) return;
+        const rootDecision = resolveCaptureRoot(project, rowRepository, resolvedRoot);
+        if ("error" in rootDecision) throw new Error(rootDecision.error);
+        const root = rootDecision.root;
+        setCurrentPreparation(sessionId, controller, {
+          status: "capturing",
+          step: "capturing-change",
+        });
+        if (target === undefined) watcher.setDirty(false);
+        if (target === undefined) {
+          review = await service.capture(request.commandId, root);
+        } else if (target.prNumber === undefined) {
+          review = await captureBranch(
+            request.commandId,
+            root,
+            target.branch,
+            project?.primaryBranch ?? "HEAD",
+          );
+        } else {
+          review =
+            target.forgeRepository === undefined
+              ? await openPullRequest(
+                  request.commandId,
+                  `${target.repository ?? ""}#${target.prNumber}`,
+                  root,
+                  false,
+                )
+              : await openProjectPullRequest(projectPullRequestOpeners, {
+                  commandId: request.commandId,
+                  repository: target.forgeRepository,
+                  number: target.prNumber,
+                  repoPath: root,
+                  retrospective: false,
+                });
+        }
+        await waitForPreparationDelay(
+          env.RENNET_TEST_CAPTURE_SETTLEMENT_DELAY_MS,
+          controller.signal,
+        );
+        if (sessionPreparations.get(sessionId) !== controller) return;
+        allowedRoots.add(review.repositoryRoot);
+        if (target === undefined) {
+          watcher.start(review.repositoryRoot, locusForRepo(review.repositoryRoot));
+        }
+        const current = sessionStore.load(sessionId);
+        if (current !== undefined && current.repositoryRoot === undefined) {
+          sessionStore.save({ ...current, repositoryRoot: review.repositoryRoot });
+        }
+        sessionStore.attachReview(sessionId, review.id);
+        if (controller.signal.aborted) {
+          sessionStore.setPreparation(sessionId, {
+            status: "cancelled",
+            stage: "boards",
+            reviewId: review.id,
+            lanes,
+          });
+          return;
+        }
+      }
+
+      if (review === null) throw new Error("The captured review could not be loaded.");
+      const draftingReview = review;
+      stage = "boards";
+      setCurrentPreparation(sessionId, controller, {
+        status: "drafting",
+        reviewId: draftingReview.id,
+        lanes,
+      });
+      await waitForPreparationDelay(env.RENNET_TEST_BOARD_PREPARATION_DELAY_MS, controller.signal);
+      if (!preparationIsCurrent(sessionId, controller)) return;
+      let terminalReason: string | undefined;
+      try {
+        await ensureBoardDrafting(
+          draftingReview,
+          (event) => {
+            if (!preparationIsCurrent(sessionId, controller)) return;
+            if (event.type === "lens") lanes = [...event.lanes];
+            if (event.type === "failed") terminalReason = event.reason;
+            if (event.type === "lens") {
+              setCurrentPreparation(sessionId, controller, {
+                status: "drafting",
+                reviewId: draftingReview.id,
+                lanes,
+              });
+            }
+          },
+          controller.signal,
+        );
+      } catch (error) {
+        if (terminalReason !== undefined) throw new Error(terminalReason, { cause: error });
+        throw error;
+      }
+      if (!preparationIsCurrent(sessionId, controller)) return;
+      setCurrentPreparation(sessionId, controller, undefined);
+    } catch (error) {
+      if (!preparationIsCurrent(sessionId, controller)) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      setCurrentPreparation(sessionId, controller, {
+        status: "failed",
+        stage,
+        reason,
+        ...(review === null ? {} : { reviewId: review.id }),
+        ...(stage === "boards" ? { lanes } : {}),
+      });
+    } finally {
+      if (sessionPreparations.get(sessionId) === controller) {
+        sessionPreparations.delete(sessionId);
+      }
+    }
+  }
+
+  function beginSessionPreparation(
+    session: SessionModel,
+    request: PreparationRequest,
+  ): SessionModel {
+    sessionPreparations.get(session.id)?.abort("Preparation restarted.");
+    const controller = new AbortController();
+    sessionPreparations.set(session.id, controller);
+    const preparation: SessionPreparation =
+      request.reviewId === undefined
+        ? { status: "capturing", step: "resolving-repository" }
+        : { status: "drafting", reviewId: request.reviewId, lanes: initialPreparationLanes() };
+    const prepared = sessionStore.setPreparation(session.id, preparation) ?? session;
+    const run = runSessionPreparation(session.id, request, controller).finally(() => {
+      if (sessionPreparationRuns.get(session.id) === run) {
+        sessionPreparationRuns.delete(session.id);
+      }
+    });
+    sessionPreparationRuns.set(session.id, run);
+    void run;
+    return prepared;
+  }
+
+  function cancelSessionPreparation(sessionId: string): SessionModel | undefined {
+    const session = sessionStore.load(sessionId);
+    const preparation = session?.preparation;
+    if (
+      session === undefined ||
+      (preparation?.status !== "capturing" && preparation?.status !== "drafting")
+    ) {
+      return session;
+    }
+    sessionPreparations.get(sessionId)?.abort("Cancelled by reviewer.");
+    return sessionStore.setPreparation(sessionId, {
+      status: "cancelled",
+      stage: preparation.status === "capturing" ? "capture" : "boards",
+      ...(preparation.status === "drafting"
+        ? { reviewId: preparation.reviewId, lanes: preparation.lanes }
+        : {}),
+    });
+  }
+
+  async function retrySessionPreparation(
+    sessionId: string,
+    commandId: string,
+  ): Promise<SessionModel | undefined> {
+    await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+    const session = sessionStore.load(sessionId);
+    if (session === undefined) return undefined;
+    const preparation = session.preparation;
+    if (preparation?.status === "capturing" || preparation?.status === "drafting") return session;
+    const retryReviewId =
+      preparation !== undefined && "reviewId" in preparation
+        ? preparation.reviewId
+        : session.reviewId;
+    return beginSessionPreparation(session, {
+      projectId: session.projectId,
+      commandId,
+      ...(session.claim === undefined
+        ? {}
+        : {
+            target: {
+              ...session.claim,
+              ...(session.repository === undefined ? {} : { repository: session.repository }),
+              ...(session.forgeRepository === undefined
+                ? {}
+                : { forgeRepository: session.forgeRepository }),
+            },
+          }),
+      ...(retryReviewId === undefined ? {} : { reviewId: retryReviewId }),
+    });
+  }
 
   const readLensBoardForReview = async (reviewId: string, generation: string, lens: LensKind) => {
     const review = service.reviewById(reviewId);
@@ -3227,20 +3519,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // pin, and an archive all survive reload; restore is un-archive.
     sessions: {
       list: () => sessionStore.list().map(sidebarSessionFor),
-      // The New Chat front door (C21, #587): starting a session is ONE act — capture what
-      // changed on the clicked target, mint, claim, attach — and the HOST owns all of it.
-      //
-      // Two things the client structurally cannot do, which is why this is not a renderer
-      // sequence. It cannot make the steps atomic: a capture that rejects after the mint
-      // would leave a claim standing over a review-less session, and the claim hides the
-      // very row that would retry it. And it cannot resolve WHICH repo a row belongs to,
-      // because `LocalWork` carries an `owner/name` identity and no path (R19) while
-      // `Project.openPath` is "the repo, or the FIRST included repo".
-      //
-      // So: resolve the repo from the row's identity, capture, and only THEN mint. A
-      // rejected capture has claimed nothing and the row stays clickable.
+      // Mint first and return immediately. The durable preparation snapshot owns the capture
+      // and first-generation work after navigation, including cancellation, retry, restart
+      // recovery, and the exact lens events emitted by the server pipeline.
       start: async ({ projectId, commandId, target }) => {
-        const project = projectStore.list().find((entry) => entry.id === projectId);
         const legacyPrRef =
           target?.prNumber === undefined || target.forgeRepository !== undefined
             ? null
@@ -3253,96 +3535,34 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 repository: forgeRepositorySlug(legacyPrRef.repo),
                 forgeRepository: legacyPrRef.repo,
               };
-        // WHICH repo this row named. Absent target (the Current Checkout row) is the project
-        // as a whole, which is exactly what `openPath` means; a target resolves through its
-        // identity. A miss falls back to the default root ONLY when it is unambiguous (a
-        // single-repo project, or a legacy row) — in a multi-repo workspace `resolveCaptureRoot`
-        // refuses rather than capture the wrong repo under this row's label, and the rejection
-        // (before the mint) leaves the row clickable.
-        const rowRepository =
-          identityTarget?.repository ??
-          (identityTarget?.forgeRepository === undefined
-            ? undefined
-            : forgeRepositorySlug(identityTarget.forgeRepository));
-        const resolvedRoot =
-          identityTarget === undefined
-            ? undefined
-            : await resolveProjectRepositoryRoot({
-                project,
-                target: identityTarget,
-                identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
-              });
-        const rootDecision = resolveCaptureRoot(project, rowRepository, resolvedRoot);
-        if ("error" in rootDecision) throw new Error(rootDecision.error);
-        const root = rootDecision.root;
-        // Cleared before the capture, not after (the `checkFreshness` rule): this front
-        // door is reachable on an ALREADY-OPEN project, whose root is watched and settled,
-        // so an edit made while the capture runs must survive as dirty.
-        if (target === undefined) watcher.setDirty(false);
-        // Capture BEFORE the mint, so a rejection claims nothing.
-        let review: Review;
-        if (target === undefined) {
-          review = await service.capture(commandId, root);
-        } else if (target.prNumber === undefined) {
-          review = await captureBranch(
-            commandId,
-            root,
-            target.branch,
-            project?.primaryBranch ?? "HEAD",
-          );
-        } else {
-          review =
-            target.forgeRepository === undefined
-              ? await openPullRequest(
-                  commandId,
-                  `${target.repository ?? ""}#${target.prNumber}`,
-                  root,
-                  false,
-                )
-              : await openProjectPullRequest(projectPullRequestOpeners, {
-                  commandId,
-                  repository: target.forgeRepository,
-                  number: target.prNumber,
-                  repoPath: root,
-                  retrospective: false,
-                });
-        }
-        allowedRoots.add(review.repositoryRoot);
-        if (target === undefined) {
-          // The working-tree capture is the one that IS watched for freshness — the branch
-          // and PR ranges are pinned snapshots and stay off the watcher deliberately.
-          watcher.start(review.repositoryRoot, locusForRepo(review.repositoryRoot));
-        }
-        // The claim-less checkout session still stamps its repo root, so its rounds stay in
-        // that repo's ledger; `reviewId` (attached below) is what resolves them back to it.
         const entered =
           target === undefined
-            ? {
-                session: {
-                  ...mintSession(projectId),
-                  repositoryRoot: review.repositoryRoot,
-                },
-                reattached: false,
-              }
-            : sessionEntry.enter(
-                projectId,
-                identityTarget ?? target,
-                review.repositoryRoot,
-                review.id,
-              );
+            ? { session: mintSession(projectId), reattached: false }
+            : sessionEntry.enter(projectId, identityTarget ?? target);
         if (!entered.reattached) sessionStore.save(entered.session);
-        // Attach, and REPORT WHAT THE STORE HOLDS. `attachReview` keeps an existing review
-        // (a session attaches at most one), so a session already bound to another review
-        // comes back carrying THAT one and the client lands where the diff actually is —
-        // rather than being told this capture succeeded when nothing points at it.
-        const bound = sessionStore.attachReview(entered.session.id, review.id) ?? entered.session;
-        // Draft this change's boards. The front door captures through `service.capture` /
-        // `captureBranch` / `openPullRequest` DIRECTLY rather than through the `review.*`
-        // dispatch, so `onReviewOpened` never fires for it — and New Chat is the only
-        // front door the shipping app has. Kicked AFTER the attach, so the session the
-        // boards file under is the one the row just bound the review to.
-        kickBoardDrafting(review);
-        return { session: sidebarSessionFor(bound), reattached: entered.reattached };
+        const current = sessionStore.load(entered.session.id) ?? entered.session;
+        const prepared =
+          entered.reattached &&
+          (current.reviewId !== undefined ||
+            current.preparation?.status === "capturing" ||
+            current.preparation?.status === "drafting" ||
+            current.preparation?.status === "failed" ||
+            current.preparation?.status === "cancelled")
+            ? current
+            : beginSessionPreparation(current, {
+                projectId,
+                commandId,
+                ...(identityTarget === undefined ? {} : { target: identityTarget }),
+              });
+        return { session: sidebarSessionFor(prepared), reattached: entered.reattached };
+      },
+      cancelPreparation: (sessionId) => {
+        const session = cancelSessionPreparation(sessionId);
+        return session && sidebarSessionFor(session);
+      },
+      retryPreparation: async (sessionId, commandId) => {
+        const session = await retrySessionPreparation(sessionId, commandId);
+        return session && sidebarSessionFor(session);
       },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
@@ -4047,6 +4267,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The WS listener closes last, dropping every client socket.
     if (didShutdown) return;
     didShutdown = true;
+    for (const controller of sessionPreparations.values()) {
+      controller.abort("Rennet is shutting down.");
+    }
+    sessionPreparations.clear();
+    sessionPreparationRuns.clear();
     liveTurns.abortAll();
     void nativeRoundSourceLanding?.close().catch((error) => {
       console.error("Could not close native round source landing hosts", error);

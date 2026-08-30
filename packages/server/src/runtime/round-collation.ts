@@ -439,6 +439,8 @@ export interface BoardRegenerationInput {
   };
   /** Operation-scoped report verifier, passed through to the runtime's pre-commit seam. */
   readonly verifyDraftedReport?: RoundInput["verifyDraftedReport"];
+  /** Cancels model-backed lens work for an initial preparation or an owning operation. */
+  readonly signal?: AbortSignal;
 }
 
 type DesignArtifactDiscovery =
@@ -587,6 +589,7 @@ export async function runBoardRegeneration(
           ...(landed ? { patchsetId: successor.id } : {}),
         }),
         onProgress: deps.emit,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
         ...designArtifactInput,
         ...collation,
       });

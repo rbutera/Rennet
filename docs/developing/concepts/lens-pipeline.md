@@ -24,6 +24,14 @@ it keeps the requested address so a later Flagged arrival restores that reading.
 A lens durably settled without a board produces no segment rather than a
 disabled one. A board that is merely missing can still be in flight.
 
+New Chat persists a session before it captures the selected target and navigates
+to that session immediately. The session's durable preparation snapshot records
+capture, then folds the pipeline's real per-lens events into five progress lanes.
+It is distinct from round progress: no coding round is fabricated for an initial
+generation. Completion clears the snapshot and reveals the review workspace;
+failure, cancellation, and daemon interruption remain explicit, retryable session
+states.
+
 The prompts live in `packages/prompts` (`@rennet/prompts`),
 one markdown file per lens plus the post-process editor pass, the
 reviewer-voice file, and the round-report prompt. The package exports a
