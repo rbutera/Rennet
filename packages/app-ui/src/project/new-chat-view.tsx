@@ -10,6 +10,7 @@ import {
   Map as MapIcon,
   MoveLeft,
   Search,
+  TriangleAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
@@ -256,6 +257,20 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             />
             ?
           </h1>
+
+          {detail?.forgeUnavailable?.map((unavailable) => (
+            <p
+              key={`${unavailable.repository.forge}:${unavailable.repository.owner}/${unavailable.repository.name}`}
+              className="mt-5 flex items-center gap-2 rounded-chip border border-accent-line bg-accent-surface px-3.5 py-2.5 text-sm text-ink"
+              role="note"
+            >
+              <Icon icon={TriangleAlert} className="size-3.5 shrink-0" />
+              <span>
+                {unavailable.repository.owner}/{unavailable.repository.name} could not load from{" "}
+                {forgeLabel(unavailable.repository.forge)}: {unavailable.repair}
+              </span>
+            </p>
+          ))}
 
           <div className="mt-7 flex items-center gap-2">
             {/* The tabs are a single-select segmented control — ToggleGroup, not a

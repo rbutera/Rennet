@@ -349,6 +349,27 @@ describe("NewChatView", () => {
     expect(screen.getByRole("button", { name: /^Requests/ }).textContent).toContain("3");
   });
 
+  it("names an unavailable forge on the routed surface without hiding healthy rows", async () => {
+    renderView("p1", {
+      p1: {
+        ...detailP1(),
+        forgeUnavailable: [
+          {
+            repository: GITLAB_WIDGET,
+            reason: "tooling",
+            repair: "Install `glab` and run `glab auth login`.",
+          },
+        ],
+      },
+    });
+
+    const warning = await screen.findByRole("note");
+    expect(warning.textContent).toContain("acme/widget could not load from GitLab");
+    expect(warning.textContent).toContain("Install `glab` and run `glab auth login`.");
+    expect(screen.getByText("My open change")).toBeTruthy();
+    expect(screen.getByText("feat/local-x")).toBeTruthy();
+  });
+
   it("filters by tab", async () => {
     renderView("p1", { p1: detailP1() });
     await screen.findByText("Teammate span fix");
