@@ -26,7 +26,8 @@ import { Trail, type TrailProps } from "./trail";
 // The 56px session top-bar (C03 §4, R51). The frame renders it on session routes
 // only (the 40px takeover tier belongs to each takeover surface — reconciliation
 // 6). A three-column grid: LEFT slot (back arrow exactly when `?view` is not the
-// board; then the app's ONE chat open/close toggle; then the two-line trail), a
+// board; then the app's ONE chat open/close toggle; then the two-line trail —
+// only while the chat dock is SHUT, since the open dock's header carries it), a
 // CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Map · Diff
 // pill — a C2 `ToggleGroup` over `?view`, selection DERIVED from the URL, toggling
 // navigating with `viewToggle` (replace).
@@ -242,9 +243,16 @@ export function TopBar() {
         >
           <Icon icon={MessageSquare} className="size-4" />
         </button>
-        <div className={cn("min-w-0", floating && cn("rounded-full py-1 pr-3 pl-2.5", chip))}>
-          <Trail {...trail} />
-        </div>
+        {/* The trail belongs to whichever pane is leftmost. With the dock open the chat
+            header already renders one (`chat/chat-header.tsx`), so showing it here too is
+            the same trail twice; the prototype gates the top-bar copy on the chat being
+            shut (`app/s/[slug]/page.tsx` — `showLocationTrail={!chatOpen}`). `TopBar`
+            renders on session routes only, so `chatOpen` IS the dock's state here. */}
+        {chatOpen ? null : (
+          <div className={cn("min-w-0", floating && cn("rounded-full py-1 pr-3 pl-2.5", chip))}>
+            <Trail {...trail} />
+          </div>
+        )}
       </div>
 
       {/* CENTER slot: the available-lens projection for the selected generation. It remains

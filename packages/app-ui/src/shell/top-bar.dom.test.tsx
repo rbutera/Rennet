@@ -321,6 +321,21 @@ describe("session top-bar (C03 §4)", () => {
     expect(text).toContain("Your PR");
     expect(text).toContain("needs you");
   });
+
+  it("yields the trail to the chat header once the dock is open", async () => {
+    // The dock's own header renders the same trail; two of them is the same session
+    // named twice. `TopBar` is session-routes-only, so `chatOpen` IS the dock's state.
+    const { container, findByText } = mountTopBar("/s/s2");
+    await findByText("Beta");
+    await waitFor(() => expect(container.textContent ?? "").toContain("atlas"));
+    act(() => useRennetStore.getState().uiActions.setChatOpen(true));
+    await waitFor(() => expect(container.querySelector('[data-slot="trail"]')).toBeNull());
+    // The title went with it — the whole trail is gone, not just its second line.
+    expect(container.textContent ?? "").not.toContain("Beta");
+    // ...and the controls that share the slot stayed. This is the assertion that would
+    // catch "gated the entire left slot" being mistaken for "gated the trail".
+    expect(container.querySelector('[aria-label="Close chat"]')).not.toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
