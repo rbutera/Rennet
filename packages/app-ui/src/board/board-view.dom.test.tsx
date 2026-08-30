@@ -117,7 +117,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
 
     expect(await findByText("No review findings were found.")).toBeTruthy();
     expect(
-      await findByText("Both review seats completed without identifying a concrete defect."),
+      await findByText("No concrete review findings remain for this generation."),
     ).toBeTruthy();
     expect(container.querySelector("[data-lens=flagged]")?.getAttribute("data-absent")).toBe(
       "no-findings",

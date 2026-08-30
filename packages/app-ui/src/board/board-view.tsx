@@ -212,7 +212,7 @@ function absenceCopy(reason: LensAbsenceReason): {
     case "no-findings":
       return {
         title: "No review findings were found.",
-        detail: "Both review seats completed without identifying a concrete defect.",
+        detail: "No concrete review findings remain for this generation.",
       };
     case "no-noise":
       return {

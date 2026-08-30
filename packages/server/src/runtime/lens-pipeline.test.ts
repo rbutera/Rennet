@@ -1729,75 +1729,78 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(applied.map(({ boardId }) => boardId)).not.toContain("board:design");
   });
 
-  it("records zero-element optional lanes as typed absences instead of successful arrivals", async () => {
-    const applied: Applied[] = [];
-    const arrivals: BoardArrivalEvent[] = [];
-    const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
-        if (lens === "decisions" || lens === "flagged") {
-          return { elements: [], skippedHunks: [] };
-        }
-        if (lens === "post-process" && prompt.includes('"elements":[]')) {
-          return { elements: [], skippedHunks: [] };
-        }
-        return cleanBody(lens);
-      }),
-      codexExecutor: null,
-      repoRoot: "/pr-worktree",
-      deltaPacket: PACKET,
-      hunks: [],
-      lintContextFor,
-      readPrompt,
-      whiteboard: fakeWhiteboard(applied),
-      boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
-    });
+  it.each([
+    ["decisions", "no-decisions"],
+    ["flagged", "no-findings"],
+    ["noise", "no-noise"],
+  ] as const)(
+    "records a zero-element %s lane as a typed absence instead of a successful arrival",
+    async (emptyLens, absence) => {
+      const applied: Applied[] = [];
+      const arrivals: BoardArrivalEvent[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === emptyLens) {
+            return { elements: [], skippedHunks: [] };
+          }
+          if (lens === "post-process" && prompt.includes('"elements":[]')) {
+            return { elements: [], skippedHunks: [] };
+          }
+          return cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+        onBoardArrival: (event) => arrivals.push(event),
+      });
 
-    expect(result.boards.find(({ lens }) => lens === "decisions")).toMatchObject({
-      absence: "no-decisions",
-    });
-    expect(result.boards.find(({ lens }) => lens === "flagged")).toMatchObject({
-      absence: "no-findings",
-    });
-    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:decisions");
-    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:flagged");
-    expect(arrivals.map(({ lens }) => lens)).not.toContain("decisions");
-    expect(arrivals.map(({ lens }) => lens)).not.toContain("flagged");
-  });
+      expect(result.boards.find(({ lens }) => lens === emptyLens)).toMatchObject({ absence });
+      expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${emptyLens}`);
+      expect(arrivals.map(({ lens }) => lens)).not.toContain(emptyLens);
+    },
+  );
 
-  it("retries a required lane once and records a precise failure when it stays empty", async () => {
-    let sequenceTurns = 0;
-    const arrivals: BoardArrivalEvent[] = [];
-    const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
-        if (lens === "sequence") {
-          sequenceTurns += 1;
-          return { elements: [], skippedHunks: [] };
-        }
-        if (lens === "post-process" && prompt.includes('"elements":[]')) {
-          return { elements: [], skippedHunks: [] };
-        }
-        return cleanBody(lens);
-      }),
-      codexExecutor: null,
-      repoRoot: "/pr-worktree",
-      deltaPacket: PACKET,
-      hunks: [],
-      lintContextFor,
-      readPrompt,
-      whiteboard: fakeWhiteboard([]),
-      boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
-    });
+  it.each(["design", "sequence"] as const)(
+    "retries a required %s lane once and records a precise failure when it stays empty",
+    async (requiredLens) => {
+      let requiredTurns = 0;
+      const arrivals: BoardArrivalEvent[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === requiredLens) {
+            requiredTurns += 1;
+            return { elements: [], skippedHunks: [] };
+          }
+          if (lens === "post-process" && prompt.includes('"elements":[]')) {
+            return { elements: [], skippedHunks: [] };
+          }
+          return cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        onBoardArrival: (event) => arrivals.push(event),
+      });
 
-    expect(sequenceTurns).toBe(2);
-    expect(result.boards.find(({ lens }) => lens === "sequence")?.failure).toContain(
-      "produced zero elements after one explicit retry",
-    );
-    expect(arrivals.map(({ lens }) => lens)).not.toContain("sequence");
-  });
+      expect(requiredTurns).toBe(2);
+      expect(result.boards.find(({ lens }) => lens === requiredLens)?.failure).toContain(
+        "produced zero elements after one explicit retry",
+      );
+      expect(arrivals.map(({ lens }) => lens)).not.toContain(requiredLens);
+    },
+  );
 
   it("keeps a valid Design board when the provider envelope also contains grounded absence fields", async () => {
     const applied: Applied[] = [];
