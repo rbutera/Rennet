@@ -1,14 +1,15 @@
 import type { Project, SmartListCi } from "@rennet/protocol";
 import { cn, Popover, PopoverContent, PopoverTrigger, Toggle, ToggleGroup } from "@rennet/ui";
 import {
+  ArrowLeft,
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronRight,
   GitBranch,
   GitMerge,
   GitPullRequest,
   Map as MapIcon,
-  MoveLeft,
   Search,
   TriangleAlert,
 } from "lucide-react";
@@ -214,18 +215,18 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
       data-screen="new-chat"
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas"
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
         <button
           type="button"
           onClick={close}
           aria-label="Back"
-          className="flex size-7 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
+          className="flex size-6 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
         >
-          <Icon icon={MoveLeft} className="size-4" />
+          <Icon icon={ArrowLeft} className="size-3.5" />
         </button>
         <span className="flex min-w-0 items-center gap-1.5 text-sm">
           <span className="shrink-0 text-ink-soft">{project?.name ?? projectId}</span>
-          <span className="text-ink-faint">›</span>
+          <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
           <span className="font-medium text-ink">New Chat</span>
         </span>
         <span className="ml-auto flex items-center gap-2">
