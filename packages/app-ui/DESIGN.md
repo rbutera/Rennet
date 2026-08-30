@@ -111,12 +111,17 @@ Checkbox, Switch, Tabs, Tooltip, ScrollArea, Badge, Skeleton, Separator, Toast,
 Command, Field, InputGroup, Spinner, …). The kit is written in shadcn's semantic
 Tailwind vocabulary, which
 [`packages/theme/src/theme.css`](../theme/src/theme.css) aliases 1:1 onto the
-`--rn-*` palette — the alias layer renames, it never introduces a new value:
+`--rn-*` palette — the alias layer renames, and introduces a new value only for an
+interaction state the palette does not carry, derived from a palette value:
 
 - **Semantic colour:** `background`→canvas, `foreground`→ink, `card`→surface,
   `popover`→overlay, `primary`→accent-fill, `secondary`/`muted`→raised,
   `destructive`→danger, `border`→line, `input`→line-strong, `ring`→accent-line,
   `accent`→gold (`accent-foreground`→surface), `scrim`→modal backdrop.
+- **Derived interaction state (the one exception):** `secondary-hover` is raised
+  `color-mix`ed with 5% ink. It is not a rename because the palette has no hover
+  step for raised, and a secondary button that hovers to its own rest fill has no
+  hover at all. Derive from a palette value; never invent a colour here.
 - **Radius:** `rounded-sm`→micro (4px), `rounded-md`→chip (6px),
   `rounded-lg`→control (8px), `rounded-xl`→surface (12px),
   `rounded-2xl`→window (16px).

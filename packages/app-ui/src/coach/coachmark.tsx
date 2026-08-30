@@ -140,7 +140,7 @@ function ActiveCoachmark({ id }: { id: MarkId }) {
           className="w-78 gap-2 p-3.5 ring-1 ring-primary/30 motion-reduce:animate-none"
         >
           <div className="flex items-start gap-2">
-            <span className="flex-1 text-sm font-semibold tracking-tight text-foreground">
+            <span className="flex-1 text-12-5 font-semibold tracking-tight text-foreground">
               {mark.title}
             </span>
             <button
@@ -152,11 +152,11 @@ function ActiveCoachmark({ id }: { id: MarkId }) {
               <X className="size-3.5" aria-hidden="true" />
             </button>
           </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">{mark.body}</p>
+          <p className="text-13 leading-[1.55] text-muted-foreground">{mark.body}</p>
           <button
             type="button"
             onClick={skipEverything}
-            className="w-fit text-xs text-muted-foreground/70 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground"
+            className="w-fit text-2xs text-muted-foreground/70 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground"
           >
             Skip all tips
           </button>

@@ -170,7 +170,6 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   // A row click STARTS the session (R26) — mint + claim + land, in one act.
   const mint = useNewChatMint(projectId);
   const claimed = useClaimedTargets(projectId);
-  const { data: sessionsData } = useCommand("session.list", {});
 
   const { data: detail } = useCommand("project.detail", { projectId });
   const rows = useMemo(
@@ -203,11 +202,11 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
 
   const branch = project?.primaryBranch ?? "main";
 
-  // Two coach marks live on this surface and chain in system order: `new-chat` (the
-  // project header — pick what to review, add another repo) then `smart-list` (the
-  // unified branches + pull-requests list).
-  const noSessionsAnywhere = sessionsData !== undefined && sessionsData.sessions.length === 0;
-  const newChatRef = useCoachAnchor("new-chat", noSessionsAnywhere);
+  // One coach mark lives on this surface: `smart-list`, over the unified branches +
+  // pull-requests list. `new-chat` moved to the SIDEBAR's New Chat row (prototype
+  // `app-sidebar.tsx`) — "Start Here" has to point at the way in, and this view is
+  // already the other side of that door. The registry throws on a duplicate id, so
+  // there is exactly one anchor for it and it is not here.
   const smartListRef = useCoachAnchor("smart-list");
 
   return (
@@ -244,10 +243,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[720px] flex-col px-8 pt-[7vh] pb-6">
-          <h1
-            ref={newChatRef}
-            className="flex flex-wrap items-baseline justify-center gap-2.5 text-center font-display text-2xl font-semibold tracking-tight text-ink"
-          >
+          <h1 className="flex flex-wrap items-baseline justify-center gap-2.5 text-center font-display text-2xl font-semibold tracking-tight text-ink">
             What should we review in
             <ProjectPicker
               projects={projects}

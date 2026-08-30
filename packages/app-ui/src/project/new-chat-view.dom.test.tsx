@@ -516,7 +516,12 @@ describe("NewChatView", () => {
     expect(within(rowButton(/My open change/)).queryByText("Your PR")).toBeNull();
   });
 
-  it("offers the first-run New Chat coach only before any session exists anywhere", async () => {
+  // The `new-chat` mark ("Start Here") anchors the SIDEBAR's New Chat row now, not this
+  // view — a mark pointing at a surface you had to already find teaches nothing. So this
+  // view elects `smart-list` whatever the session state is, and never `new-chat`. The
+  // first-run GATE that used to live here is proved on its new anchor, in
+  // `coach/every-anchor.dom.test.tsx` ("only while there are no sessions").
+  it("elects smart-list on this surface, never the sidebar's first-run mark", async () => {
     const coach = () =>
       createCoachStore({ initial: { seen: [], skipAll: false }, persist: () => undefined });
 
@@ -529,7 +534,8 @@ describe("NewChatView", () => {
       undefined,
       emptyCoach,
     );
-    await waitFor(() => expect(empty.getByTestId("active-coach").textContent).toBe("new-chat"));
+    // Zero sessions anywhere — the state that USED to elect `new-chat` here.
+    await waitFor(() => expect(empty.getByTestId("active-coach").textContent).toBe("smart-list"));
     empty.unmount();
     cleanup();
 

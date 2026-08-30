@@ -93,14 +93,12 @@
    * disable the ::-webkit-scrollbar styling wherever they apply, and a
    * universal `*` rule also taxes style recalc across huge diff trees. */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--rn-line-strong);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
+    background: var(--rn-line);
+    border-radius: 4px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -1166,16 +1164,22 @@
  * orchestrator turn fades + un-blurs in, staggered by a per-word animation-delay
  * set inline. Records render with `animate=false` (no `.animate-word-in`), so this
  * plays only on arrival. The base reduced-motion rule snaps it to the settled state
- * (duration → 0.01ms, `both` fill lands on the `to` frame → opacity 1). */
+ * (duration → 0.01ms, the `forwards` fill retains the `to` frame → opacity 1).
+ *
+ * `forwards` (not `both`) is only safe because `streaming-prose.tsx` puts `opacity-0`
+ * on each animating word as a CLASS, so a word is invisible before its delay elapses.
+ * A `forwards` fill covers the tail, never the head. Delete that `opacity-0` and every
+ * delayed word flashes at full opacity, then restarts — at which point this keyframe
+ * needs `both`. */
 @layer components {
   .animate-word-in {
-    animation: word-in 260ms ease-out both;
+    animation: word-in 260ms ease-out forwards;
   }
   @keyframes word-in {
     from {
       opacity: 0;
-      filter: blur(4px);
-      transform: translateY(2px);
+      filter: blur(2px);
+      transform: translateY(0.15em);
     }
     to {
       opacity: 1;

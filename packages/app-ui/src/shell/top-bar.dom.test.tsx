@@ -273,6 +273,43 @@ describe("session top-bar (C03 §4)", () => {
     expect(getByText("Diff").closest("button")?.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("the pills are ONE labelled group, however many outlines they wear", () => {
+    // Two visual outlines (History alone, Map · Diff joined) but one control: the
+    // kit ToggleGroup's role and name, with every member inside it. A hand-rolled
+    // rebuild loses this without any test noticing, which is how it was lost.
+    const { container, getByText } = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
+    const group = container.querySelector<HTMLElement>('[role="group"]');
+    expect(group?.getAttribute("aria-label")).toBe("Session view");
+    for (const label of ["History", "Map", "Diff"]) {
+      const button = getByText(label).closest("button");
+      expect(group?.contains(button as Node)).toBe(true);
+      // The visible label IS the name — no aria-label repeating it on top.
+      expect(button?.hasAttribute("aria-label")).toBe(false);
+      expect(button?.getAttribute("title")).toBe(label);
+    }
+  });
+
+  it("arrow keys walk the pills, across the outline boundary and back to the head", async () => {
+    // The roving-focus half of the group. History and Map sit in DIFFERENT wrapper
+    // divs, so this also proves the composite registers NESTED members — and Home
+    // reaching History from Diff proves the walk is one ring, not two.
+    const { getByText } = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
+    const button = (label: string) => getByText(label).closest("button") as HTMLElement;
+    // The composite focuses in a microtask, so each step settles before the next.
+    async function press(from: string, key: string, to: string) {
+      fireEvent.keyDown(button(from), { key });
+      await waitFor(() => expect(document.activeElement).toBe(button(to)));
+    }
+
+    button("History").focus();
+    expect(document.activeElement).toBe(button("History"));
+    await press("History", "ArrowRight", "Map");
+    await press("Map", "ArrowRight", "Diff");
+    await press("Diff", "ArrowLeft", "Map");
+    await press("Map", "ArrowRight", "Diff");
+    await press("Diff", "Home", "History");
+  });
+
   it("selects no pill on the board view", () => {
     const { getByText, queryByText } = mountTopBar("/s/s2");
     for (const label of ["Map", "Diff"]) {
