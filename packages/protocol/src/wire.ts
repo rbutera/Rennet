@@ -535,6 +535,89 @@ export const processedRepoSummarySchema = z.object({
 });
 export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
 
+/** The three ordered phases of one add-project run, plus its terminal state. */
+export const projectProcessPhaseSchema = z.enum(["scout", "map", "knowledge", "complete"]);
+export type ProjectProcessPhase = z.infer<typeof projectProcessPhaseSchema>;
+
+/** A step's explicit lifecycle. The renderer never infers completion from a later row. */
+export const projectProcessStepStatusSchema = z.enum(["queued", "running", "done", "failed"]);
+export type ProjectProcessStepStatus = z.infer<typeof projectProcessStepStatusSchema>;
+
+/** The five persisted scout answers shown while the structural map is built. */
+export const projectScoutAnswerKeySchema = z.enum([
+  "trackerKind",
+  "defaultBranch",
+  "worktreeBaseDir",
+  "gateCommand",
+  "logoPath",
+]);
+export type ProjectScoutAnswerKey = z.infer<typeof projectScoutAnswerKeySchema>;
+
+export const projectScoutAnswerSchema = z.object({
+  key: projectScoutAnswerKeySchema,
+  value: z.string(),
+  provenance: z.enum(["detected", "guessed"]),
+  /** The repository evidence or model seat that supplied this exact value. */
+  source: z.string().min(1),
+  /** One line saying what the answer controls. */
+  hint: z.string().min(1),
+  /** A closed vocabulary renders as a segmented picker. */
+  options: z.array(z.string().min(1)).optional(),
+});
+export type ProjectScoutAnswer = z.infer<typeof projectScoutAnswerSchema>;
+
+export const projectScoutQuestionnaireSchema = z.object({
+  repo: z.string().min(1),
+  answers: z.array(projectScoutAnswerSchema).length(5),
+  detected: z.number().int().nonnegative(),
+  guessed: z.number().int().nonnegative(),
+});
+export type ProjectScoutQuestionnaire = z.infer<typeof projectScoutQuestionnaireSchema>;
+
+export const projectProcessTotalsSchema = z.object({
+  repos: z.number().int().nonnegative(),
+  files: z.number().int().nonnegative(),
+  scopes: z.number().int().nonnegative(),
+  confirmed: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative(),
+});
+export type ProjectProcessTotals = z.infer<typeof projectProcessTotalsSchema>;
+
+const projectProcessRunBaseSchema = z.object({
+  /** The stable command identity also owns restart and reattachment. */
+  id: z.uuid(),
+  projectId: z.string().min(1),
+  repos: z.array(processedRepoSummarySchema),
+  scout: projectScoutQuestionnaireSchema.nullable(),
+});
+
+/**
+ * The durable truth for one add-project run. `done` is the only ready state and
+ * therefore the only variant carrying complete counts. `failed` names the phase
+ * that stopped, while Start Review remains available under Rule Zero.
+ */
+export const projectProcessRunSchema = z.discriminatedUnion("status", [
+  projectProcessRunBaseSchema.extend({
+    status: z.literal("queued"),
+    phase: z.literal("scout"),
+  }),
+  projectProcessRunBaseSchema.extend({
+    status: z.literal("running"),
+    phase: z.enum(["scout", "map", "knowledge"]),
+  }),
+  projectProcessRunBaseSchema.extend({
+    status: z.literal("done"),
+    phase: z.literal("complete"),
+    totals: projectProcessTotalsSchema,
+  }),
+  projectProcessRunBaseSchema.extend({
+    status: z.literal("failed"),
+    phase: z.enum(["scout", "map", "knowledge"]),
+    reason: z.string().min(1),
+  }),
+]);
+export type ProjectProcessRun = z.infer<typeof projectProcessRunSchema>;
+
 /**
  * A typed reference to the project a landed processing line produced (issue #71
  * anchoring). A landed progress event may carry one so the renderer can navigate
@@ -555,6 +638,31 @@ export type ProgressArtifactRef = z.infer<typeof progressArtifactRefSchema>;
  * still fires.
  */
 export const projectProcessEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("run-state"),
+    runId: z.uuid(),
+    projectId: z.string().min(1),
+    phase: projectProcessPhaseSchema,
+    status: projectProcessStepStatusSchema,
+    detail: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("step"),
+    runId: z.uuid(),
+    repo: z.string().min(1),
+    phase: z.enum(["scout", "map", "knowledge"]),
+    /** Stable within `(runId, repo, phase)` so replay/retry replaces one row. */
+    step: z.string().min(1),
+    status: projectProcessStepStatusSchema,
+    note: z.string().min(1),
+    detail: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("scout-ready"),
+    runId: z.uuid(),
+    repo: z.string().min(1),
+    questionnaire: projectScoutQuestionnaireSchema,
+  }),
   z.object({
     kind: z.literal("repo-start"),
     repo: z.string().min(1),
@@ -586,6 +694,8 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("done"),
     repos: z.array(processedRepoSummarySchema),
+    /** Present for the durable scout → map → knowledge coordinator. */
+    run: projectProcessRunSchema.optional(),
   }),
 ]);
 export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;

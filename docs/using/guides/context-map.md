@@ -19,11 +19,12 @@ New Chat. A review opened by a direct link rather than through one of its
 sessions has no project to map, and the view says so instead of showing the
 board again.
 
-The map generates the first time you add a project. A prefilled questionnaire
-about the project runs alongside that generation and is never a gate: the map
-completes and its exits appear whether or not you answer it. Its answers are
-prefilled defaults for a look, not a saved setting — you set them for real in
-**Settings → Projects**. See
+The map generates the first time you add a project. The scout runs first and
+saves its detected and guessed facts; only then does the prefilled questionnaire
+appear while structural and knowledge generation continue. The questionnaire is
+never a gate: the map completes and its exits appear whether or not you answer
+it. Its provenance and evidence come from the saved scout record; changes you
+want to keep as project policy belong in **Settings → Projects**. See
 [Getting started](./getting-started.md#what-happens-after-you-add-it) for that
 flow.
 
@@ -84,10 +85,12 @@ claims, not worker slices. The Model Council picks the models for both seats. On
 a baseline advance, only workers whose slice contains changed paths re-run;
 untouched claims carry forward.
 
-A run that is interrupted does not start over. Each batch's result is saved as it
-completes, and the next run reuses what is already done — but the stored knowledge
-layer is only replaced when a run finishes whole. A half-finished run never
-presents itself as a complete map.
+A run that is interrupted does not start over. The project-run journal checkpoints
+the scout and structural snapshot, while the knowledge journal saves each batch as
+it completes. Reattaching or restarting resumes the first incomplete checkpoint.
+The stored knowledge layer is only replaced when a run finishes whole, and the
+processing view reports ready only after that verified set is readable. A
+half-finished run never presents itself as a complete map.
 
 There is no file cap, but there is a policy exclusion. Lockfiles, vendored trees,
 build output, generated files, and binaries are not sent to a worker: reading them

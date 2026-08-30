@@ -63,9 +63,12 @@ export function projectHandlers(rt: DispatchRuntime) {
       };
       const result = Promise.resolve().then(async () => {
         try {
-          const { repos } = await deps.processProject({ projectId: input.projectId }, emit);
-          emit({ kind: "done", repos });
-          return { repos };
+          const result = await deps.processProject(
+            { projectId: input.projectId, commandId: input.commandId },
+            emit,
+          );
+          emit({ kind: "done", repos: result.repos, ...(result.run ? { run: result.run } : {}) });
+          return result;
         } finally {
           liveProjectRuns.delete(input.commandId);
         }

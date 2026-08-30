@@ -110,6 +110,41 @@ describe("knowledgeOutcomeLine", () => {
 });
 
 describe("createKnowledgeSwarmRuntime", () => {
+  it("keeps a foreground project run on typed knowledge steps and off the background channel", async () => {
+    const foreground: ProjectProcessEvent[] = [];
+    const background: ProjectProcessEvent[] = [];
+    const runtime = createKnowledgeSwarmRuntime({
+      store: new ProjectSnapshotStore(tempDir()),
+      resolveClaudePort: async () => null,
+      resolveCodexExecutor: async () => null,
+      narrate: (_projectId, event) => background.push(event),
+    });
+
+    const outcome = await runtime.runForRepo({
+      projectId: "project-1",
+      repoKey: "repo",
+      repoRoot: join(tempDir(), "rennet"),
+      toOid: "a".repeat(40),
+      runId: "01f15934-68bf-487b-b03b-71e75a8e93a8",
+      narrate: (event) => foreground.push(event),
+    });
+
+    expect(outcome.status).toBe("failed");
+    expect(foreground).toEqual([
+      {
+        kind: "step",
+        runId: "01f15934-68bf-487b-b03b-71e75a8e93a8",
+        repo: "rennet",
+        phase: "knowledge",
+        step: "connect",
+        status: "failed",
+        note: "Knowledge pass failed",
+        detail: "no harness is available to run the knowledge swarm",
+      },
+    ]);
+    expect(background).toEqual([]);
+  });
+
   it("narrates the reason when no harness is available (never a silent no-op)", async () => {
     const narrated: ProjectProcessEvent[] = [];
     const runtime = createKnowledgeSwarmRuntime({

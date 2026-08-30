@@ -140,6 +140,8 @@ export interface GenerateResult {
   readonly extractedImportShards: number;
   /** Total files in the tree at the base OID (the whole snapshot's breadth). */
   readonly fileCount: number;
+  /** Total structural scopes in the built snapshot. */
+  readonly scopeCount: number;
   /** Total DECLARED SYMBOLS across all shards (not the shard/file count). */
   readonly symbolCount: number;
   /** Total identifier OCCURRENCES across all reference shards (not the shard count). */
@@ -354,6 +356,7 @@ export class ProjectSnapshotGenerator {
       reusedImportShards: importPlan.reuse.length,
       extractedImportShards: importPlan.toExtract.length,
       fileCount: inputs.files.length,
+      scopeCount: inputs.scopes.length,
       symbolCount,
       referenceCount,
     };

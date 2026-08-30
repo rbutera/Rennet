@@ -412,15 +412,17 @@ Worker fan-out runs at a named default concurrency of 8 — a policy, not an
 unrevisited literal, and overridable per run. It is deliberately not adaptive: a
 number that changes with ambient load makes a run's cost unreproducible.
 
-The pass runs in the background and reports its outcome — including the reason
-it skipped or failed — on the project's build timeline, under a progress id
-keyed to that project so one project's background work never appears on
+The first pass is part of the awaited add-project run: readiness, the sidebar
+spinner, and the verified statement counts all wait for its typed outcome. Later
+baseline enrichment runs in the background and reports its outcome — including
+the reason it skipped or failed — on the project's build timeline, under a
+progress id keyed to that project so one project's work never appears on
 another's. A failure that arrives as a thrown error is converted to the same
-typed outcome and narrated on the same line as a reported one. The client
-retains a project's background narration above the screen that shows it, so a
-failure that happened while the reader was elsewhere is still there when they
-open the project — a run is never silently absent, and never visible only to
-whoever was watching.
+typed outcome and narrated on the same line as a reported one. The client retains
+a project's background narration above the screen that shows it, so a failure
+that happened while the reader was elsewhere is still there when they open the
+project — a run is never silently absent, and never visible only to whoever was
+watching.
 
 ### Refresh: what a change costs
 

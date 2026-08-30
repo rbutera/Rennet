@@ -260,9 +260,12 @@ export interface DispatchDeps {
    * repo has built. Pure over git: no gate, no model spend.
    */
   processProject(
-    input: { projectId: string },
+    input: { projectId: string; commandId: string },
     emit: (event: ProjectProcessEvent) => void,
-  ): Promise<{ repos: ProcessedRepoSummary[] }>;
+  ): Promise<{
+    repos: ProcessedRepoSummary[];
+    run?: import("@rennet/protocol").ProjectProcessRun;
+  }>;
   /** Read-only discovery over an already-granted path → editable defaults. */
   discoverProject(input: { path: string; kind: ProjectKind }): Promise<DiscoveryResult>;
   /**
@@ -741,7 +744,10 @@ interface LiveProjectRun {
   projectId: string;
   events: ProjectProcessEvent[];
   recipients: Map<unknown, (event: ProjectProcessEvent) => void>;
-  result: Promise<{ repos: ProcessedRepoSummary[] }>;
+  result: Promise<{
+    repos: ProcessedRepoSummary[];
+    run?: import("@rennet/protocol").ProjectProcessRun;
+  }>;
 }
 
 export interface FlaggedReviewRun {

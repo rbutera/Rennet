@@ -17,7 +17,7 @@ import {
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Octokit } from "@octokit/core";
 import {
@@ -238,6 +238,7 @@ import {
   proactiveRehydrationCommandId,
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
+import { createProjectProcessJournal } from "./project-process-journal";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
@@ -253,7 +254,7 @@ import { createLiveReviewOpenerPort } from "./review-opener-live";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { projectLensBoard, readRoundReportBoardForRecord } from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
-import { createProjectScoutRuntime } from "./runtime/project-scout";
+import { createProjectScoutRuntime, scoutQuestionnaire } from "./runtime/project-scout";
 import {
   type BoardRegenerationDeps,
   generationBoardMeta,
@@ -1942,6 +1943,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     resolveCodexExecutor: codexExecutorForRepo,
     narrate: narrateBackground,
   });
+  const projectProcessJournal = createProjectProcessJournal(snapshotStore);
   rehydration = createProactiveRehydration({
     store: snapshotStore,
     generator: snapshotGenerator,
@@ -1959,13 +1961,46 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) =>
       knowledgeSwarmRuntime.runForRepo({ projectId, repoKey, repoRoot, toOid }),
   });
-  // At launch, resume warming every project whose Repo Map already exists.
-  for (const project of projectStore.list()) void rehydration.ensureForProject(project);
-  // The initial context dump's core, wrapped below so a successful process also starts
-  // keeping that project's freshly-built Repo Map warm.
+  // At launch, resume warming established projects. An interrupted initial run owns
+  // its own first knowledge pass; the stable `project.process` command reattaches and
+  // resumes that journal instead of racing the background rehydrator.
+  for (const project of projectStore.list()) {
+    const primaryPath = project.openPath || project.path;
+    const initialRun = projectProcessJournal.load(repoKeyForRoot(primaryPath));
+    if (!initialRun || initialRun.status === "done") {
+      void rehydration.ensureForProject(project);
+    }
+  }
+  // One durable add-project run owns scout → structural map → knowledge. Its journal
+  // lives beside the map so a daemon restart replays completed steps and resumes the
+  // first incomplete phase under the same stable command identity.
+  const projectProcessKnowledge = new KnowledgeStore(snapshotStore);
   const processProjectCore = createProcessProject({
     generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
     listProjects: () => projectStore.list(),
+    repoKeyForRoot,
+    journal: projectProcessJournal,
+    runScout: async (input) => {
+      const result = await projectScoutRuntime.runForRepo({
+        projectId: input.projectId,
+        repoKey: input.repoKey,
+        repoRoot: input.repoRoot,
+        defaultBranch: input.defaultBranch,
+        runId: input.runId,
+        narrate: input.narrate,
+      });
+      return result ? scoutQuestionnaire(basename(input.repoRoot), result) : null;
+    },
+    runKnowledge: (input) =>
+      knowledgeSwarmRuntime.runForRepo({
+        projectId: input.projectId,
+        repoKey: input.repoKey,
+        repoRoot: input.repoRoot,
+        toOid: input.toOid,
+        runId: input.runId,
+        narrate: input.narrate,
+      }),
+    loadKnowledge: (repoKey) => projectProcessKnowledge.loadLocal(repoKey),
   });
   // The app-side settings stores (B10 #476): viewer preferences (appearance,
   // keybindings) in `client-settings.json`, the host's global ladder rung (the
@@ -3251,28 +3286,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         projects: projectStore.list(),
       }),
     },
-    // The initial context dump (issue #29, wireframe #2): build every included
-    // repo's ProjectSnapshot at the CONFIRMED primary branch, streaming the real
-    // generator stages as live narration. Extracted to `process-project.ts` so the
-    // branch-selection + real-count wiring is unit-tested off-Electron.
+    // The complete add-project run: persisted scout facts first, then structural
+    // map, then knowledge. The command does not resolve until that advertised run
+    // is terminal, so the header, timeline, sidebar, and ready card share one fact.
     processProject: async (input, emit) => {
-      const result = await processProjectCore(input, emit);
-      // The Repo Map now exists for this project — start (idempotently) keeping it
-      // warm as its reference branch advances. Fire-and-forget: never delays the
-      // processing response, and a start failure can only leave the map un-warmed,
-      // never break the process.
+      const result = await processProjectCore(
+        { projectId: input.projectId, commandId: input.commandId },
+        emit,
+      );
+      // Once the initial run is terminal, start the idempotent baseline watcher.
+      // Its first knowledge kick reads the just-written current set and skips.
       const processed = projectStore.list().find((entry) => entry.id === input.projectId);
-      if (processed) {
+      if (processed && result.run?.status === "done") {
         void rehydration?.ensureForProject(processed);
-        // The project scout (#461 §4, B7): runs at project add and on every
-        // re-process (re-runnable — determinism recomputes, the seat never
-        // overwrites detected facts). Fire-and-forget like the rehydration kick.
-        const scoutRoot = processed.openPath || processed.path;
-        void projectScoutRuntime.runForRepo({
-          projectId: processed.id,
-          repoKey: repoKeyForRoot(scoutRoot),
-          repoRoot: scoutRoot,
-        });
       }
       return result;
     },

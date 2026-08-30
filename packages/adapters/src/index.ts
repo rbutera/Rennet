@@ -455,6 +455,7 @@ export {
   loadScoutFacts,
   PROJECT_SCOUT_SCHEMA,
   type ProjectScoutDeps,
+  type ProjectScoutProgress,
   resolveTrackerConfig,
   runProjectScout,
   type ScoutFact,
