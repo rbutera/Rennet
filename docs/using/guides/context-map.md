@@ -96,6 +96,9 @@ untouched claims carry forward.
 A run that is interrupted does not start over. The project-run journal checkpoints
 the scout and structural snapshot, while the knowledge journal saves each batch as
 it completes. Reattaching or restarting resumes the first incomplete checkpoint.
+If a scout, map, or knowledge worker exits with an error, the journal records that
+phase as failed and **Map** offers **Retry** under the same run identity. Completed
+checkpoints remain complete; the retry starts at the failed phase.
 The stored knowledge layer is only replaced when a run finishes whole, and the
 processing view reports ready only after that verified set is readable. A
 half-finished run never presents itself as a complete map.
