@@ -463,29 +463,26 @@ function DiffHunkView({
               data-line={rowLine ?? ""}
               data-side={rowSide}
               data-line-state={state}
+              // ONE diff tint system across the app: the `bg-add`/`bg-del` grounds the
+              // palette defines for changed code (`theme/src/palette.css:74-78`), the same
+              // pair `components/code-view.tsx:141-148` paints. The old `bg-green/10` /
+              // `bg-destructive/10` alphas were a second, near-miss system over the
+              // interface greens — two diff surfaces reading differently for the same fact.
+              // The row carries the fill; the gutters inherit it rather than carrying their
+              // own alpha step, so a changed line is one continuous band.
               className={cn(
                 "group flex min-h-[1.7em]",
-                line.type === "add" && "bg-green/10",
-                line.type === "del" && "bg-destructive/10",
+                line.type === "add" && "bg-add",
+                line.type === "del" && "bg-del",
+                // The review states OVERRIDE the diff ground (twMerge keeps the last
+                // background): a staged ask reads danger, a comment reads evidence green.
                 hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-green/15",
               )}
             >
-              <span
-                className={cn(
-                  "w-[5ch] shrink-0 select-none border-r border-transparent py-0 pr-2 text-right text-muted-foreground/50",
-                  line.type === "add" && "bg-green/10",
-                  line.type === "del" && "bg-destructive/15",
-                )}
-              >
+              <span className="w-[5ch] shrink-0 select-none border-r border-transparent py-0 pr-2 text-right text-muted-foreground/50">
                 {line.oldLine ?? ""}
               </span>
-              <span
-                className={cn(
-                  "relative flex w-[6ch] shrink-0 select-none items-center justify-end gap-1 pr-2 text-right text-muted-foreground/50",
-                  line.type === "add" && "bg-green/15",
-                  line.type === "del" && "bg-destructive/10",
-                )}
-              >
+              <span className="relative flex w-[6ch] shrink-0 select-none items-center justify-end gap-1 pr-2 text-right text-muted-foreground/50">
                 {commentLine !== null && !historical && (
                   <button
                     type="button"
@@ -525,8 +522,8 @@ function DiffHunkView({
               <span
                 className={cn(
                   "w-[2ch] shrink-0 select-none text-center",
-                  line.type === "add" && "text-green",
-                  line.type === "del" && "text-destructive",
+                  line.type === "add" && "text-add-ink",
+                  line.type === "del" && "text-del-ink",
                 )}
               >
                 {line.type === "add" ? "+" : line.type === "del" ? "−" : ""}
