@@ -289,6 +289,13 @@ export {
   type GitLabCiCommandRunner,
 } from "./gitlab-ci";
 export {
+  GitLabForgeAdapter,
+  type GitLabForgeCommand,
+  type GitLabForgeCommandResult,
+  type GitLabForgeCommandRunner,
+  type GitLabForgeConfig,
+} from "./gitlab-forge";
+export {
   createGitLabPrSubmissionAdapter,
   type GitLabPrSubmissionCommand,
   type GitLabPrSubmissionCommandResult,

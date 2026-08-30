@@ -274,7 +274,7 @@ const definitions = {
     output: z.object({
       /** Echoes the resolved dry-run flag (true ⇒ nothing left the machine). */
       dryRun: z.boolean(),
-      /** The exact GitHub request that was (dry-run) or would be constructed + sent. */
+      /** The exact ordered forge mutations that were (dry-run) or would be sent. */
       request: forgeRequestSchema,
       /** The deterministic idempotency marker embedded in the review body. */
       marker: z.string(),

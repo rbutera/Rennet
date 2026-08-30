@@ -3,7 +3,7 @@ title: Using Rennet
 description: Guides and concepts for understanding changes and taking review exits with Rennet.
 ---
 
-Rennet drafts a local branch or a GitHub pull request into boards you can read,
+Rennet drafts a local branch, GitHub pull request, or GitLab.com merge request into boards you can read,
 then turns what you raise into a review, a work order, or a change request. Start
 with the tour, then follow the guide for the change in front of you.
 
@@ -26,13 +26,13 @@ with the tour, then follow the guide for the change in front of you.
 flowchart LR
   yours[Your branch] --> review[Read the boards in Rennet]
   team[Teammate pull request] --> review
-  review --> github[One GitHub review]
+  review --> github[One forge review]
   review --> round[Work-order round]
   round --> delta[Read what the round changed]
   delta --> review
 ```
 
-A teammate's pull request becomes one GitHub review, posted under your name. On
+A teammate's pull or merge request becomes one review on its forge, posted under your name. On
 your own branch the same asks become a work order: a coding agent runs the
 round, you read its report and the regenerated boards, and when nothing is left
 to ask, Rennet pushes the branch and opens a GitHub pull request or GitLab.com

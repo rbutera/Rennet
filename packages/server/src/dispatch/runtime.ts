@@ -198,7 +198,10 @@ export interface DispatchDeps {
    * ports, so only the publish command can egress. An unregistered provider returns
    * `undefined`; it must never fall through to another forge's implementation.
    */
-  readonly publishPortFor: (repository: ForgeRepoIdentity) => ForgePublishPort | undefined;
+  readonly publishPortFor: (
+    repository: ForgeRepoIdentity,
+    repositoryRoot: string,
+  ) => ForgePublishPort | undefined;
   /** Resolve the exact provider-qualified push destination without mutating the repository. */
   readonly resolvePullRequestDestination?: (
     repoRoot: string,

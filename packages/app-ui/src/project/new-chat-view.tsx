@@ -10,6 +10,7 @@ import {
   Map as MapIcon,
   MoveLeft,
   Search,
+  TriangleAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
@@ -60,7 +61,7 @@ const TABS: readonly { readonly filter: SmartFilter; readonly label: string }[] 
   { filter: "needs-you", label: "Needs you" },
   { filter: "mine", label: "Mine" },
   { filter: "local", label: "Local" },
-  { filter: "prs", label: "PRs" },
+  { filter: "prs", label: "Requests" },
 ];
 
 /** The row's `owner/name`, for the repo column (dropped when the workspace is single-repo). */
@@ -83,6 +84,10 @@ function forgeLabel(forge: string): string {
     default:
       return forge;
   }
+}
+
+function requestPrefix(forge: string | undefined): "#" | "!" {
+  return forge === "gitlab" ? "!" : "#";
 }
 
 /** Bare `owner/name` is normally enough. Qualify only a slug served by multiple forges. */
@@ -125,7 +130,7 @@ function matchesText(
   const repository = searchableRepository(row, repositoriesWithForge);
   const hay =
     row.kind === "pr"
-      ? `#${row.pr?.number} ${row.title} ${row.branch} ${repository} ${row.author}`
+      ? `${requestPrefix(row.pr?.forgeRepository?.forge)}${row.pr?.number} ${row.title} ${row.branch} ${repository} ${row.author}`
       : `${row.branch} ${repository}`;
   return hay.toLowerCase().includes(needle);
 }
@@ -253,6 +258,20 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             ?
           </h1>
 
+          {detail?.forgeUnavailable?.map((unavailable) => (
+            <p
+              key={`${unavailable.repository.forge}:${unavailable.repository.owner}/${unavailable.repository.name}`}
+              className="mt-5 flex items-center gap-2 rounded-chip border border-accent-line bg-accent-surface px-3.5 py-2.5 text-sm text-ink"
+              role="note"
+            >
+              <Icon icon={TriangleAlert} className="size-3.5 shrink-0" />
+              <span>
+                {unavailable.repository.owner}/{unavailable.repository.name} could not load from{" "}
+                {forgeLabel(unavailable.repository.forge)}: {unavailable.repair}
+              </span>
+            </p>
+          ))}
+
           <div className="mt-7 flex items-center gap-2">
             {/* The tabs are a single-select segmented control — ToggleGroup, not a
                 hand-rolled aria-pressed group (no-handrolled-toggle, autopsy S6). */}
@@ -284,7 +303,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                   }
                 }}
                 placeholder="Filter"
-                aria-label="Filter branches and pull requests"
+                aria-label="Filter branches and change requests"
                 className="w-full bg-transparent text-xs text-ink placeholder:text-ink-faint focus-visible:outline-none"
               />
             </label>
@@ -312,7 +331,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             {visible.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-ink-faint">
                 {unclaimed.length === 0
-                  ? "No open branches or pull requests yet."
+                  ? "No open branches or change requests yet."
                   : "Nothing matches."}
               </div>
             ) : null}
@@ -541,14 +560,26 @@ function ItemRow({
             </span>
           </span>
           <span className="flex w-full items-center gap-2.5 pl-[22px] text-2xs text-ink-soft">
-            <span className="shrink-0 font-mono text-ink-faint">#{row.pr?.number}</span>
+            <span className="shrink-0 font-mono text-ink-faint">
+              {requestPrefix(row.pr?.forgeRepository?.forge)}
+              {row.pr?.number}
+            </span>
             <span className="min-w-0 truncate font-mono">{row.branch}</span>
             {showRepo ? <RepositoryLabel row={row} showForge={showForge} /> : null}
             <span className="shrink-0">{row.author}</span>
             <span className="shrink-0">
-              <span className="text-green">+{row.pr?.additions.toLocaleString()}</span>{" "}
-              <span className="text-danger">−{row.pr?.deletions.toLocaleString()}</span>
-              <span className="text-ink-faint"> · {row.pr?.changedFiles} files</span>
+              {row.pr?.additions === undefined || row.pr.deletions === undefined ? null : (
+                <>
+                  <span className="text-green">+{row.pr.additions.toLocaleString()}</span>{" "}
+                  <span className="text-danger">−{row.pr.deletions.toLocaleString()}</span>
+                  <span className="text-ink-faint"> · </span>
+                </>
+              )}
+              <span className="text-ink-faint">
+                {row.pr?.changedFiles === undefined
+                  ? "file count unavailable"
+                  : `${row.pr.changedFiles} files`}
+              </span>
             </span>
             {row.checkedOutLocally ? (
               <span className="shrink-0 rounded-chip border border-line px-1.5 py-px text-ink-faint">

@@ -1303,7 +1303,7 @@ async function stagePublishAsks(
 
 interface PublishResult {
   dryRun: boolean;
-  request: { endpoint: string; method: string; body: unknown };
+  request: { requests: { endpoint: string; method: string; body: unknown }[] };
   marker: string;
   ledger: { kind: string; path: string; detail: string }[];
   outcome: { reviewRef: string; url: string | null; reused: boolean } | null;
@@ -1374,7 +1374,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(out.dryRun).toBe(true);
     expect(out.outcome).toBeNull();
     expect(port.posts).toHaveLength(0); // NOTHING posted
-    const body = out.request.body as {
+    const body = out.request.requests[0]?.body as {
       query: string;
       variables: { input: Record<string, unknown> };
     };
@@ -1403,7 +1403,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       composedPublishInput(review.id, composed, true),
     )) as PublishResult;
 
-    const body = out.request.body as { variables: { input: { event: string } } };
+    const body = out.request.requests[0]?.body as { variables: { input: { event: string } } };
     expect(body.variables.input.event).toBe("APPROVE");
   });
 
@@ -1437,7 +1437,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       "publish.review",
       composedPublishInput(review.id, composed, true),
     )) as PublishResult;
-    const body = out.request.body as {
+    const body = out.request.requests[0]?.body as {
       variables: { input: { pullRequestId: string; commitOID: string } };
     };
     expect(body.variables.input.pullRequestId).toBe(SANDBOX_TARGET.forgeRef);
@@ -1485,9 +1485,13 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     );
     const githubPort = fakePublishPort({ buildReviewRequest: buildGitHubRequest });
     const buildGitLabRequest = vi.fn<ForgePublishPort["buildReviewRequest"]>((post) => ({
-      endpoint: "https://gitlab.test/api/v4/merge_requests/reviews",
-      method: "POST",
-      body: { marker: post.marker },
+      requests: [
+        {
+          endpoint: "https://gitlab.test/api/v4/merge_requests/reviews",
+          method: "POST",
+          body: { marker: post.marker },
+        },
+      ],
     }));
     const gitlabPort = fakePublishPort({ buildReviewRequest: buildGitLabRequest });
     const publishPortFor = vi.fn<DispatchDeps["publishPortFor"]>((repository) => {
@@ -1506,10 +1510,12 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       composedPublishInput(review.id, composed, false),
     )) as PublishResult;
 
-    expect(posted.request.endpoint).toBe("https://gitlab.test/api/v4/merge_requests/reviews");
+    expect(posted.request.requests[0]?.endpoint).toBe(
+      "https://gitlab.test/api/v4/merge_requests/reviews",
+    );
     expect(publishPortFor.mock.calls).toEqual([
-      [GITLAB_SANDBOX_TARGET.repo],
-      [GITLAB_SANDBOX_TARGET.repo],
+      [GITLAB_SANDBOX_TARGET.repo, "/clone"],
+      [GITLAB_SANDBOX_TARGET.repo, "/clone"],
     ]);
     expect(buildGitHubRequest).not.toHaveBeenCalled();
     expect(githubPort.posts).toHaveLength(0);

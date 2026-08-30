@@ -182,9 +182,11 @@ only that blanket pass.
 The reviewer sees the exact outbound review or change-request payload before the
 external mutation.
 
-For someone else's pull request, Rennet submits the previewed review. A
-deterministic marker and GitHub read-back make retries idempotent. The renderer
-does not construct a different review body after preview.
+For someone else's pull or merge request, Rennet submits the previewed review.
+A deterministic marker and forge read-back make retries idempotent. GitHub posts
+one batched review. GitLab.com folds anchored comments into one review note and
+uses the native approval endpoint for an approval. The renderer does not
+construct a different review body after preview.
 
 For the user's own branch, posting pushes the named branch to the effective push
 remote and opens a GitHub pull request or GitLab.com merge request from the

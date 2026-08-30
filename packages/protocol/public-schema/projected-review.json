@@ -200,7 +200,9 @@
               "local",
               "local-branch",
               "github-local",
-              "github-rest"
+              "github-rest",
+              "forge-local",
+              "forge-rest"
             ]
           },
           "degraded": {
@@ -220,6 +222,8 @@
                 "enum": [
                   "github-pr",
                   "github-rest",
+                  "forge-pr",
+                  "forge-rest",
                   "working-tree"
                 ]
               },

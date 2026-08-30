@@ -4,8 +4,8 @@ description: How Rennet gathers asks, keeps the outbound documents drafted, and 
 ---
 
 A review ends by leaving through an exit: the posted forge review, a dispatched
-work-order round, or the pull or merge request. GitHub review publication and
-own-branch change-request submission for GitHub and GitLab.com are implemented.
+work-order round, or the pull or merge request. GitHub and GitLab.com support
+intake, CI reads, review publication, and own-branch change-request submission.
 Everything the reviewer concludes along the way gathers as asks, and the
 orchestrator keeps every outbound document drafted as it goes.
 
@@ -45,12 +45,12 @@ offering a duplicate target. Two forges can therefore carry the same
 or session. Provider selection is also the server-side boundary for detailed CI
 status, review publication, and change-request submission: each operation resolves
 the provider from that repository identity, and an unregistered forge never
-falls through to GitHub. GitHub provides review publication, CI status, and
-pull-request submission. GitLab.com provides own-branch merge-request submission
-through the `glab` CLI in the repository's execution environment. Its CI adapter
-exists behind the narrower status capability, but stays unregistered until an
-intake path attaches a GitLab target to that repository environment. GitLab
-intake, review publication, self-managed GitLab, and all Bitbucket adapters remain
+falls through to GitHub. GitHub rides `gh`-owned credentials. GitLab.com rides the
+proven `glab` binary in the repository's execution environment for smart-list
+reads, exact merge-request intake, pinned CI status, review notes or approvals,
+and merge-request submission. A forge without the required installed and
+authenticated tool fails with that repair instead of returning an empty list.
+Self-managed GitLab and Bitbucket remain
 [planned in #484](https://github.com/rbutera/rennet/issues/484).
 A round dispatched on a target reads the same forge identity from the repository
 it is about to run in, so it joins the session the click created instead of

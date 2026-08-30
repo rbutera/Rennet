@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execa } from "execa";
 
 /**
@@ -22,8 +22,18 @@ import { execa } from "execa";
  */
 
 /** Where managed clones live under the app data dir. */
-export function managedCloneRoot(dataDir: string, repo: { owner: string; name: string }): string {
-  return join(dataDir, "clones", repo.owner, repo.name);
+export function managedCloneRoot(
+  dataDir: string,
+  repo: { forge?: string; owner: string; name: string },
+): string {
+  return repo.forge === undefined || repo.forge === "github"
+    ? join(dataDir, "clones", repo.owner, repo.name)
+    : join(dataDir, "clones", repo.forge, repo.owner, repo.name);
+}
+
+function cloneUrl(repo: { forge?: string; owner: string; name: string }): string {
+  const host = repo.forge === "gitlab" ? "gitlab.com" : "github.com";
+  return `https://${host}/${repo.owner}/${repo.name}.git`;
 }
 
 // One clone per target directory at a time: concurrent opens of the same repo await
@@ -37,7 +47,7 @@ const inFlightClones = new Map<string, Promise<string>>();
  */
 export async function ensureManagedClone(
   dataDir: string,
-  repo: { owner: string; name: string },
+  repo: { forge?: string; owner: string; name: string },
   runClone: (url: string, dir: string) => Promise<void> = async (url, dir) => {
     await execa("git", ["clone", "--filter=blob:none", url, dir], { shell: false });
   },
@@ -47,9 +57,9 @@ export async function ensureManagedClone(
   const pending = inFlightClones.get(dir);
   if (pending) return pending;
   const clone = (async () => {
-    await mkdir(join(dataDir, "clones", repo.owner), { recursive: true });
+    await mkdir(dirname(dir), { recursive: true });
     try {
-      await runClone(`https://github.com/${repo.owner}/${repo.name}.git`, dir);
+      await runClone(cloneUrl(repo), dir);
     } catch (error) {
       throw new Error(
         `Could not clone ${repo.owner}/${repo.name} (${error instanceof Error ? error.message : String(error)}). ` +

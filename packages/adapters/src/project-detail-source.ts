@@ -1,5 +1,6 @@
 import type {
   ForgeRepoIdentity,
+  ForgeUnavailable,
   LocalWork,
   Project,
   ProjectDetail,
@@ -11,7 +12,7 @@ import { forgeRepositorySlug } from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
 import { isGitHubNetworkError } from "./github-fetch";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
-import type { ProjectPrSource } from "./project-pr-source";
+import { type ProjectPrSource, ProjectPrSourceUnavailable } from "./project-pr-source";
 import { forgeForRemoteHost, parseRemoteIdentity, type RemoteIdentity } from "./worktree-discovery";
 
 /**
@@ -26,11 +27,10 @@ import { forgeForRemoteHost, parseRemoteIdentity, type RemoteIdentity } from "./
  * `for-each-ref`, `status --porcelain`, `rev-list`, `config`) and never mutates the
  * index or working tree.
  *
- * SCOPE: the local half is always real git. The remote half is live — an injected
- * `prSource` fans out over the project's forge repos and fills `prs` + `truncated`;
- * with no source wired (or GitHub auth unavailable) `prs` stays empty, `truncated`
- * false, and `authUnavailable` names the reason. CI + dedupe fidelity and live
- * clean-up extend this same module behind the unchanged command boundary.
+ * SCOPE: the local half is always real git. The remote half is live — registered
+ * provider sources fan out over the project's forge repos and fill `prs` +
+ * `truncated`. A provider-local outage is named in `forgeUnavailable` while healthy
+ * providers remain visible; GitHub's legacy auth hint remains additive.
  *
  * ── Contract notes the sibling waves depend on ───────────────────────────────
  *  • `repository` identity is `owner/name` (from the origin remote). The PR source emits
@@ -44,9 +44,9 @@ import { forgeForRemoteHost, parseRemoteIdentity, type RemoteIdentity } from "./
  *  • Ownership: local work is the viewer's by definition ("you edit what you own"),
  *    so every LocalWork.author is set to the viewer login — matching the shipped
  *    fixture semantics and `smart-list.ts` (`local.author === viewer` ⇒ mine). The
- *    viewer login is the local git identity when no PR source answers; with one wired
- *    it is the real GitHub login from `prSource.resolveViewer`, and because author is
- *    pinned to the viewer, that resolution keeps local work reading as "mine".
+ *    viewer login is the local git identity when no provider answers; with one wired
+ *    it is a healthy provider login. PR ownership never compares against that shared
+ *    label: each PR carries its own provider-authenticated `viewerDidAuthor` fact.
  *  • `stage` is "captured" for every live local: without rennet's own review/PR
  *    tracking there is no local signal for "reviewed"/"prd" yet. Real stage lands
  *    when the review state is consulted (a follow-up).
@@ -70,9 +70,9 @@ export interface ProjectDetailSourceDeps {
   forgeRegistry?: ProjectForgeRegistry;
 }
 
-/** The project-detail forges available in this server process. GitHub is the sole entry today. */
+/** The project-detail forges available in this server process. */
 export interface ProjectForgeRegistry {
-  sourceFor(repository: ForgeRepoIdentity): ProjectPrSource | undefined;
+  sourceFor(repository: ForgeRepoIdentity, repositoryRoot: string): ProjectPrSource | undefined;
 }
 
 /** Trim git stdout and read the first non-empty line. */
@@ -344,11 +344,9 @@ async function mapLimit<T, R>(
 }
 
 /**
- * Build the live `ProjectDetail` for a project from real git and (B2) live GitHub.
- * The local half is always real; the PR half fills when a `prSource` is wired (GitHub
- * auth resolved). The viewer is pinned to the GitHub login when available so ownership
- * reads correctly against both the PR author and — because local-work author is set to
- * this same viewer — the local rows too.
+ * Build the live `ProjectDetail` for a project from real git and registered forges.
+ * Provider-local availability failures omit only that provider's rows; invalid data
+ * still rejects the read. PR ownership rides each PR's authenticated provider fact.
  */
 export async function loadProjectDetail(
   deps: ProjectDetailSourceDeps,
@@ -369,14 +367,17 @@ export async function loadProjectDetail(
   const identities = await Promise.all(roots.map((root) => repositoryIdentity(deps.git, root)));
   const forgeRepos = [
     ...new Map(
-      identities.flatMap((identity) => {
+      identities.flatMap((identity, index) => {
         const forge = identity.forgeRepository;
-        return forge === undefined ? [] : [[repositoryKey(identity), forge] as const];
+        const root = roots[index];
+        return forge === undefined || root === undefined
+          ? []
+          : [[repositoryKey(identity), { repository: forge, root }] as const];
       }),
     ).values(),
   ];
-  const forgeTargets = forgeRepos.flatMap((repository) => {
-    const source = deps.forgeRegistry?.sourceFor(repository);
+  const forgeTargets = forgeRepos.flatMap(({ repository, root }) => {
+    const source = deps.forgeRegistry?.sourceFor(repository, root);
     return source === undefined ? [] : [{ repository, source }];
   });
 
@@ -384,26 +385,22 @@ export async function loadProjectDetail(
   let prs: PullRequest[] = [];
   let truncated = false;
   let authUnavailable: "network" | undefined;
+  let forgeUnavailable: ForgeUnavailable[] = [];
   if (forgeTargets.length > 0) {
-    try {
-      // GitHub is the only registered source today, so its login pins ownership. Keeping source
-      // selection beside each repository prevents a GitLab identity from reaching this call.
-      const githubViewer = await forgeTargets[0]?.source.resolveViewer();
-      if (githubViewer) viewer = githubViewer;
-      // The determinate total: how many forge repos will be fetched. The renderer
-      // turns this into an honest progress fraction (no fabricated percentage).
-      onProgress?.({ kind: "prs-start", total: forgeTargets.length });
-      // Bounded fan-out: each request already carries a 15s deadline, so an
-      // unbounded Promise.all over a many-repo workspace would stack one worst
-      // case per repo. Four in flight keeps the worst case near one deadline.
-      // A `repo-prs` fires as each repo lands, so the UI names exactly which repo
-      // it is on; `fetched` is the running COMPLETION count (JS is single-threaded,
-      // so the increment across the four workers never races).
-      let fetched = 0;
-      const results = await mapLimit(
-        forgeTargets,
-        MAX_CONCURRENT_PR_FETCHES,
-        async ({ repository, source }) => {
+    // The determinate total: how many forge repos will be fetched. The renderer
+    // turns this into an honest progress fraction (no fabricated percentage).
+    onProgress?.({ kind: "prs-start", total: forgeTargets.length });
+    // Bounded fan-out: each request already carries a 15s deadline, so an
+    // unbounded Promise.all over a many-repo workspace would stack one worst
+    // case per repo. Four in flight keeps the worst case near one deadline.
+    // A `repo-prs` fires as each repo lands, including an honestly unavailable repo.
+    let fetched = 0;
+    const results = await mapLimit(
+      forgeTargets,
+      MAX_CONCURRENT_PR_FETCHES,
+      async ({ repository, source }) => {
+        try {
+          const providerViewer = await source.resolveViewer();
           const result = await source.listPullRequests(repository, prStates);
           fetched += 1;
           onProgress?.({
@@ -413,22 +410,51 @@ export async function loadProjectDetail(
             total: forgeTargets.length,
             count: result.prs.length,
           });
-          return result;
-        },
-      );
-      prs = results.flatMap((result) => result.prs);
-      truncated = results.some((result) => result.truncated);
-    } catch (error) {
-      // A network failure AFTER auth established the source (the post-establishment
-      // outage): the source is fine, the fetch failed. Degrade to the local-only
-      // list with the honest reason — never a hard-failed project.detail, and never
-      // a lying "complete, zero PRs" (the hint names why the PR half is absent).
-      // Non-network failures still throw: a broken response must surface.
-      if (!isGitHubNetworkError(error)) throw error;
-      prs = [];
-      truncated = false;
+          return { kind: "success" as const, viewer: providerViewer, ...result };
+        } catch (error) {
+          let unavailable: ForgeUnavailable;
+          if (error instanceof ProjectPrSourceUnavailable) {
+            if (error.forge !== repository.forge) throw error;
+            unavailable = {
+              repository,
+              reason: error.reason,
+              repair: error.repair,
+            };
+          } else if (repository.forge === "github" && isGitHubNetworkError(error)) {
+            unavailable = {
+              repository,
+              reason: "network",
+              repair: "GitHub is unreachable right now. Check the selected host and try again.",
+            };
+          } else {
+            throw error;
+          }
+          fetched += 1;
+          onProgress?.({
+            kind: "repo-prs",
+            repo: forgeRepositorySlug(repository),
+            index: fetched,
+            total: forgeTargets.length,
+            count: 0,
+          });
+          return { kind: "unavailable" as const, unavailable };
+        }
+      },
+    );
+    const successful = results.filter((result) => result.kind === "success");
+    const providerViewer = successful.find((result) => result.viewer !== null)?.viewer;
+    if (providerViewer) viewer = providerViewer;
+    prs = successful.flatMap((result) => result.prs);
+    truncated = successful.some((result) => result.truncated);
+    const unavailable = results.flatMap((result) =>
+      result.kind === "unavailable" ? [result.unavailable] : [],
+    );
+    if (
+      unavailable.some((entry) => entry.repository.forge === "github" && entry.reason === "network")
+    ) {
       authUnavailable = "network";
     }
+    forgeUnavailable = unavailable.filter((entry) => entry.repository.forge !== "github");
   }
 
   const perRepo = await Promise.all(
@@ -440,6 +466,7 @@ export async function loadProjectDetail(
     prs,
     truncated,
     ...(authUnavailable === undefined ? {} : { authUnavailable }),
+    ...(forgeUnavailable.length === 0 ? {} : { forgeUnavailable }),
   };
 }
 

@@ -76,6 +76,8 @@ import {
   GitHubForgeAdapter,
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
+  GitLabForgeAdapter,
+  type GitLabForgeCommandRunner,
   type GitLabPrSubmissionCommandRunner,
   gitForRepoFactory,
   isGitHubNetworkError,
@@ -144,7 +146,6 @@ import {
   detectLocus,
   escapePath,
   type ForgePort,
-  type ForgePublishPort,
   type ForgePullRequestRef,
   findingDispositionMigrationEvents,
   guardSeatTurn,
@@ -178,6 +179,7 @@ import type {
   DetectedForge,
   DetectedHarness,
   FlaggedReview,
+  ForgeRepoIdentity,
   Generation,
   GitHubAuthStatus,
   GitHubConnectPoll,
@@ -699,6 +701,13 @@ export interface RennetServerOptions {
     ) => ForgeDetectionDeps | Promise<ForgeDetectionDeps>;
     readonly run: GitLabPrSubmissionCommandRunner;
   };
+  /** Hermetic seam for GitLab read, CI, and review-publication commands. */
+  readonly gitLabForgeEffects?: {
+    readonly detectionDepsForLocus: (
+      locus: Locus,
+    ) => ForgeDetectionDeps | Promise<ForgeDetectionDeps>;
+    readonly run: GitLabForgeCommandRunner;
+  };
 }
 
 export interface RennetServer {
@@ -1167,14 +1176,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
   };
 
-  // Review publication is independently capability-routed. GitLab submission below
-  // does not imply that GitLab review posting exists.
-  const forgeReviewPublishers = createForgeRegistry<ForgePublishPort>([
-    {
-      forge: "github",
-      implementation: new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit }),
-    },
-  ]);
+  const githubReviewPublisher = new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit });
+
+  function gitLabForgeAdapterForRoot(repoRoot: string): GitLabForgeAdapter {
+    const locus = locusForRepo(repoRoot);
+    const detectionDeps =
+      options.gitLabForgeEffects?.detectionDepsForLocus(locus) ??
+      (locus.kind === "wsl" ? wslForgeDetectionDeps(locus.distro) : defaultForgeDetectionDeps());
+    return new GitLabForgeAdapter({
+      detectionDeps,
+      locus,
+      repositoryRoot: repoRoot,
+      ...(options.gitLabForgeEffects === undefined ? {} : { run: options.gitLabForgeEffects.run }),
+    });
+  }
 
   const githubPrSubmission = new GitHubPrSubmissionAdapter({
     resolveOctokit: resolveGitHubOctokit,
@@ -1448,9 +1463,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     prRef: ForgePullRequestRef,
     repoPath: string | undefined,
     retrospective: boolean,
+    forge: ForgePort,
   ): Promise<Review> {
     const root = await resolvePrRepoRoot(prRef, repoPath);
-    const forge = new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() });
     const locus = locusForRepo(root);
     const gitInLocus = gitForRepo(root);
     const source = new GitHubChangesetSource({
@@ -1462,6 +1477,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // (owner/name vs the repo's remotes) decides whether it is the right clone;
       // it never falls back to a path-name guess.
       worktrees: { list: async () => [await discoverWorktreeIdentities(gitInLocus, root)] },
+      remoteHeadRef: (ref) =>
+        ref.repo.forge === "gitlab"
+          ? `refs/merge-requests/${ref.number}/head`
+          : `refs/pull/${ref.number}/head`,
       resolveProjectSnapshotId: (repoRoot, baseOid) =>
         ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid, gitInLocus),
     });
@@ -1470,7 +1489,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Defensive: the root was resolved by identity above, so a null pin should be
       // unreachable — but never continue into a lying degraded state silently.
       throw new Error(
-        `Could not open ${prRef.repo.owner}/${prRef.repo.name}#${prRef.number} from a local clone.`,
+        `Could not open ${prRef.repo.owner}/${prRef.repo.name} change request ${prRef.number} from a local clone.`,
       );
     }
     // Stamp the REAL post-target onto the review (issue #21) so the renderer can post
@@ -1523,14 +1542,41 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (!prRef) {
       throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
     }
-    return openPullRequestRef(commandId, prRef, repoPath, retrospective);
+    return openPullRequestRef(
+      commandId,
+      prRef,
+      repoPath,
+      retrospective,
+      new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }),
+    );
   }
 
   const projectPullRequestOpeners = createForgeRegistry<ProjectPullRequestOpener<Review>>([
     {
       forge: "github",
       implementation: ({ commandId, repository, number, repoPath, retrospective }) =>
-        openPullRequestRef(commandId, { repo: repository, number }, repoPath, retrospective),
+        resolveGitHubOctokit().then((octokit) =>
+          openPullRequestRef(
+            commandId,
+            { repo: repository, number },
+            repoPath,
+            retrospective,
+            new GitHubForgeAdapter({ octokit }),
+          ),
+        ),
+    },
+    {
+      forge: "gitlab",
+      implementation: async ({ commandId, repository, number, repoPath, retrospective }) => {
+        const root = await resolvePrRepoRoot({ repo: repository, number }, repoPath);
+        return openPullRequestRef(
+          commandId,
+          { repo: repository, number },
+          root,
+          retrospective,
+          gitLabForgeAdapterForRoot(root),
+        );
+      },
     },
   ]);
 
@@ -1717,7 +1763,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       patchset,
       manifest,
       fetchCiStatus: (ref, headOid, signal) =>
-        fetchForgeCiStatus(forgeCiStatusSources, ref, headOid, signal),
+        ref.repo.forge === "gitlab"
+          ? gitLabForgeAdapterForRoot(review.repositoryRoot).fetchCiStatus(ref, headOid, signal)
+          : fetchForgeCiStatus(forgeCiStatusSources, ref, headOid, signal),
       ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
       budget: sharedBudget,
     });
@@ -3101,7 +3149,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A review-scoped turn marks its review running for the duration (#383 batch) — the real
     // source of the projected `attention.running`, read by the listener's projection context.
     inFlightReviews,
-    publishPortFor: (repository) => forgeReviewPublishers.sourceFor(repository),
+    publishPortFor: (repository, repositoryRoot) =>
+      repository.forge === "gitlab"
+        ? gitLabForgeAdapterForRoot(repositoryRoot)
+        : repository.forge === "github"
+          ? githubReviewPublisher
+          : undefined,
     resolvePullRequestDestination,
     submitPullRequest,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
@@ -3474,9 +3527,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       const { source, credentialSource, authUnavailable, authUnavailableCopy } =
         await resolveProjectPrSource();
-      const forgeRegistry = createForgeRegistry<ProjectPrSource>(
+      const githubProjectRegistry = createForgeRegistry<ProjectPrSource>(
         source === null ? [] : [{ forge: "github", implementation: source }],
       );
+      const forgeRegistry = {
+        sourceFor(repository: ForgeRepoIdentity, repositoryRoot: string) {
+          return repository.forge === "gitlab"
+            ? gitLabForgeAdapterForRoot(repositoryRoot)
+            : githubProjectRegistry.sourceFor(repository);
+        },
+      };
       const detail = await loadProjectDetail(
         defaultProjectDetailSourceDeps(gitForRepo(projectRoot), forgeRegistry),
         project,

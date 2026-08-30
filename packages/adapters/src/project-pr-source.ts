@@ -55,6 +55,23 @@ export interface ProjectPrSource {
   ): Promise<{ prs: PullRequest[]; truncated: boolean }>;
 }
 
+export type ProjectPrSourceUnavailableReason = "tooling" | "authentication" | "network";
+
+/**
+ * A provider-local availability failure that may omit that provider's rows without
+ * hiding healthy local or sibling-forge rows. Invalid provider data still throws.
+ */
+export class ProjectPrSourceUnavailable extends Error {
+  constructor(
+    readonly forge: string,
+    readonly reason: ProjectPrSourceUnavailableReason,
+    readonly repair: string,
+  ) {
+    super(repair);
+    this.name = "ProjectPrSourceUnavailable";
+  }
+}
+
 export interface GitHubProjectPrSourceConfig {
   /** A token-bound client from `createGitHubOctokit`. The token never leaves it. */
   octokit: Octokit;
@@ -175,6 +192,7 @@ function mapNode(
     branch: node.headRefName,
     // A deleted-account author is GitHub's "ghost"; never an empty string (min(1)).
     author: node.author?.login ?? "ghost",
+    viewerDidAuthor: viewerLogin !== null && node.author?.login === viewerLogin,
     state: mapState(node.state),
     reviewRequestedFromViewer,
     ci: mapCi(rollup),

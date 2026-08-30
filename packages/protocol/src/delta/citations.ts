@@ -134,12 +134,17 @@ export const DIFF_TRUNCATION_MARKER = "[diff truncated by Rennet]";
  * (`GitCaptureAdapter`); `local-branch` is a LOCAL BRANCH diffed as a pinned
  * `merge-base...head` range (#587's New Chat row click) — it is a SNAPSHOT, so it
  * shares nothing with the working tree and must stay off the freshness watcher, the
- * same as a PR; `github-local` is a GitHub PR diffed from the on-disk clone (full
- * context, the angles can run); `github-rest` is the degraded REST diff fallback used
- * when the clone is not on disk or its SHAs are unfetchable.
+ * same as a PR; `github-local`/`github-rest` are the persisted GitHub spellings;
+ * `forge-local`/`forge-rest` are the provider-neutral equivalents for newer adapters.
  * Absent means `local` (additive: the existing local-capture identity is unchanged).
  */
-export type PatchsetSource = "local" | "local-branch" | "github-local" | "github-rest";
+export type PatchsetSource =
+  | "local"
+  | "local-branch"
+  | "github-local"
+  | "github-rest"
+  | "forge-local"
+  | "forge-rest";
 
 /**
  * The freshness predicates, declared HERE beside `PatchsetSource` because two clients ask
@@ -187,7 +192,12 @@ export function isReviewStale(
 }
 
 /** Which surface a patchset's captured intent came from. */
-export type PatchsetIntentSurface = "github-pr" | "github-rest" | "working-tree";
+export type PatchsetIntentSurface =
+  | "github-pr"
+  | "github-rest"
+  | "forge-pr"
+  | "forge-rest"
+  | "working-tree";
 
 /** A minimal reference to the immutable patchset a document binds to. */
 export interface PatchsetRef {

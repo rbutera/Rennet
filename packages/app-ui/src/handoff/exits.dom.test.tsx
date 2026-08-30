@@ -164,7 +164,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
         posted = input;
         return {
           dryRun: false,
-          request: { endpoint: "graphql", method: "POST", body: {} },
+          request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
           marker: "m1",
           ledger: [],
           outcome: {
@@ -241,7 +241,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
         posted = input;
         return {
           dryRun: false,
-          request: { endpoint: "graphql", method: "POST", body: {} },
+          request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
           marker: "m-approval",
           ledger: [],
           outcome: { reviewRef: "R_APPROVE", url: "https://x/approval", reused: false },
@@ -320,7 +320,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
         postedPost = input.post;
         return {
           dryRun: false,
-          request: { endpoint: "graphql", method: "POST", body: {} },
+          request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
           marker: "m1",
           ledger: [],
           outcome: { reviewRef: "R_1", url: "https://x/1", reused: false },
@@ -421,7 +421,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
         posted = input;
         return {
           dryRun: false,
-          request: { endpoint: "graphql", method: "POST", body: {} },
+          request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
           marker: "m1",
           ledger: [],
           outcome: { reviewRef: "R_1", url: "https://x/1", reused: false },
@@ -460,7 +460,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
       // A dry-run-shaped response: nothing left the machine (outcome null).
       "publish.review": () => ({
         dryRun: true,
-        request: { endpoint: "graphql", method: "POST", body: {} },
+        request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
         marker: "m1",
         ledger: [],
         outcome: null,

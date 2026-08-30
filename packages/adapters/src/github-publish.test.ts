@@ -71,15 +71,18 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
 
   it("targets the GraphQL endpoint with a POST and the addPullRequestReview mutation", () => {
     const request = buildGitHubReviewRequest(singleLine);
-    expect(request.endpoint).toBe("https://api.github.com/graphql");
-    expect(request.method).toBe("POST");
-    const body = request.body as { query: string; variables: { input: Record<string, unknown> } };
+    expect(request.requests[0]?.endpoint).toBe("https://api.github.com/graphql");
+    expect(request.requests[0]?.method).toBe("POST");
+    const body = request.requests[0]?.body as {
+      query: string;
+      variables: { input: Record<string, unknown> };
+    };
     expect(body.query).toContain("addPullRequestReview");
     expect(body.query).not.toContain("comments:"); // NEVER the deprecated batched field
   });
 
   it("pins the head as commitOID, posts the derived verdict, targets the PR node id", () => {
-    const body = buildGitHubReviewRequest(singleLine).body as {
+    const body = buildGitHubReviewRequest(singleLine).requests[0]?.body as {
       variables: { input: { event: string; commitOID: string; pullRequestId: string } };
     };
     // singleLine carries a request-change ⇒ the derived verdict is REQUEST_CHANGES.
@@ -89,7 +92,7 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
   });
 
   it("maps a single-line thread with no startLine/startSide", () => {
-    const body = buildGitHubReviewRequest(singleLine).body as {
+    const body = buildGitHubReviewRequest(singleLine).requests[0]?.body as {
       variables: { input: { threads: Record<string, unknown>[] } };
     };
     const thread = body.variables.input.threads[0];
@@ -102,9 +105,15 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
     // The wire posts the post's resolved verdict — a review tool must post the actual
     // verdict. Derived from the dispositions here; an override is exercised in the core
     // + dispatch tests.
-    const eventOf = (p: ForgeReviewPost): string =>
-      (buildGitHubReviewRequest(p).body as { variables: { input: { event: string } } }).variables
-        .input.event;
+    const eventOf = (p: ForgeReviewPost): string => {
+      const request = buildGitHubReviewRequest(p).requests[0];
+      if (request === undefined) throw new Error("request missing");
+      return (
+        request.body as {
+          variables: { input: { event: string } };
+        }
+      ).variables.input.event;
+    };
     expect(
       eventOf(post([{ path: "a.ts", line: 1, side: "RIGHT", type: "approve", body: "ok" }])),
     ).toBe("APPROVE");

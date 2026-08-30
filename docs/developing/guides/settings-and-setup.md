@@ -189,14 +189,15 @@ runs the probes on each machine the only way it can, so a WSL distribution shows
 its own CLI versions and authentication state, while a host the daemon cannot
 interrogate reads its honest "Connect … to detect its tooling" line rather than
 inheriting this machine's answer. GitHub's enable toggle is stored per host. The
-GitLab health row has no toggle; it reports the prerequisite used when an
-own-branch GitLab.com merge request opens in that repository environment. A
+GitLab health row has no toggle; it reports the prerequisite used for GitLab.com
+merge-request intake, pinned diff capture, CI status, review posting, and
+own-branch submission in that repository environment. A
 missing CLI keeps a **Not installed** row with a host-appropriate repair
 instruction and no invented version. A provider check that fails without explicit
-credential rejection reads **Unreachable**, not **Not Authenticated**. GitLab
-merge-request intake, review posting, CI target attachment, and self-managed
-hosting remain planned; this health row does not claim those operations are built.
-Bitbucket remains unsupported.
+credential rejection reads **Unreachable**, not **Not Authenticated**. When one
+GitLab repository cannot use `glab`, its rows carry the repair while local and
+healthy-provider rows remain available. Self-managed GitLab hosting remains
+planned. Bitbucket remains unsupported.
 When at least one agent is enabled, a Review section exposes Model Mappings — see
 [Model Mappings](#model-mappings) below. The source-control rows report the
 environment's `gh` and `glab` states; the welcome does not contain a separate
