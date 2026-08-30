@@ -309,7 +309,7 @@ describe("round-machine — the pure run state machine", () => {
       id: "gate",
       label: "Ran the gate",
       status: "failed",
-      reason: "pnpm check · exited 1 · 2.5 s",
+      reason: "pnpm check · 8 projects · exited 1 · 2.5 s",
     });
   });
 

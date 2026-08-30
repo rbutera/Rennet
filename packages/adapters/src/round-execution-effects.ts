@@ -5,6 +5,7 @@ import {
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
   locusCommand,
+  stripShellControl,
   toDistroPath,
 } from "@rennet/core";
 import type {
@@ -25,6 +26,7 @@ export interface RoundProcessResult {
   readonly signal?: string;
   readonly stdout: string;
   readonly stderr: string;
+  readonly combinedOutput: string;
 }
 
 export type RoundProcessExec = (
@@ -38,12 +40,14 @@ export const execaRoundProcess: RoundProcessExec = async (command, input) => {
     ...(input === undefined ? {} : { input }),
     reject: false,
     shell: false,
+    all: true,
   });
   return {
     exitCode: result.exitCode ?? null,
     ...(result.signal === undefined ? {} : { signal: result.signal }),
     stdout: result.stdout,
     stderr: result.stderr,
+    combinedOutput: result.all ?? `${result.stdout}\n${result.stderr}`,
   };
 };
 
@@ -442,14 +446,15 @@ export async function releaseRoundSourceCommit(input: {
 
 function observedNxProjectCount(output: string): number | undefined {
   let observed: number | undefined;
-  for (const match of output.matchAll(
-    /Successfully ran targets?[\s\S]{0,500}? for (\d+) projects?\b/g,
-  )) {
+  for (const line of stripShellControl(output).split(/\r?\n/)) {
+    const match = line.match(
+      /^\s*NX\s+(?:Successfully ran|Running) targets?\b.*?\bfor (?:(\d+) projects?\b|project\b)/,
+    );
+    if (match === null) continue;
     const value = match[1];
-    if (value !== undefined) observed = Number.parseInt(value, 10);
+    observed = value === undefined ? 1 : Number.parseInt(value, 10);
   }
-  if (observed !== undefined) return observed;
-  return /Successfully ran target[\s\S]{0,300}? for project\b/.test(output) ? 1 : undefined;
+  return observed;
 }
 
 interface RoundGateExecutionBase {
@@ -490,8 +495,7 @@ export async function runConfiguredRoundGate(input: {
   try {
     const result = await run(locusCommand(input.locus, "sh", ["-lc", input.command], input.cwd));
     const completedAt = now();
-    const output = `${result.stdout}\n${result.stderr}`;
-    const projectCount = observedNxProjectCount(output);
+    const projectCount = observedNxProjectCount(result.combinedOutput);
     const base = {
       executionId: input.executionId,
       command: input.command,

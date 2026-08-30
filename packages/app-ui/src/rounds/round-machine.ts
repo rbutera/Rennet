@@ -217,7 +217,9 @@ function gateRow(operation: RoundRunIdentity, gate: GateProgress): LaneRow {
         id: "gate",
         label: "Ran the gate",
         status: "failed",
-        reason: `${command} · ${gate.reason} · ${durationLabel(gate.durationMs)}`,
+        reason: `${command}${
+          gate.projectCount === undefined ? "" : ` · ${countLabel(gate.projectCount, "project")}`
+        } · ${gate.reason} · ${durationLabel(gate.durationMs)}`,
       };
   }
 }

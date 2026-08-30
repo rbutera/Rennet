@@ -265,7 +265,7 @@ describe("configured round gate", () => {
     const result = await runConfiguredRoundGate({
       locus: HOST_LOCUS,
       cwd: repo.root,
-      command: "printf 'Successfully ran targets test for 4 projects\\n'",
+      command: "printf '\\033[36m NX \\033[0m Successfully ran targets test for 4 projects\\n'",
       executionId: "gate-1",
       startedAt: 100,
       now: () => ticks.shift() ?? 135,
@@ -298,6 +298,101 @@ describe("configured round gate", () => {
       expect.objectContaining({
         outcome: "failed",
         termination: { kind: "exit", exitCode: 7 },
+      }),
+    );
+  });
+
+  it("keeps the announced Nx project count when the gate fails", async () => {
+    const repo = await createRepo();
+    const result = await runConfiguredRoundGate({
+      locus: HOST_LOCUS,
+      cwd: repo.root,
+      command:
+        "printf '\\033[36m NX \\033[0m Running targets test, build for 8 projects:\\n'; exit 7",
+      executionId: "gate-failed-count",
+      startedAt: 1,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        projectCount: 8,
+        termination: { kind: "exit", exitCode: 7 },
+      }),
+    );
+  });
+
+  it("does not invent an Nx project count from unrelated output", async () => {
+    const repo = await createRepo();
+    const result = await runConfiguredRoundGate({
+      locus: HOST_LOCUS,
+      cwd: repo.root,
+      command: "printf 'Running targets from config\\nreport generated for 99 projects\\n'; exit 7",
+      executionId: "gate-unrelated-count",
+      startedAt: 1,
+    });
+
+    expect(result).toEqual(
+      expect.not.objectContaining({
+        projectCount: expect.any(Number),
+      }),
+    );
+  });
+
+  it("uses the last Nx receipt when a compound gate fails", async () => {
+    const repo = await createRepo();
+    const result = await runConfiguredRoundGate({
+      locus: HOST_LOCUS,
+      cwd: repo.root,
+      command:
+        "printf '\\033[36m NX \\033[0m Successfully ran targets test for 7 projects\\n\\033[36m NX \\033[0m Running targets build for 2 projects:\\n'; exit 7",
+      executionId: "gate-compound-count",
+      startedAt: 1,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        projectCount: 2,
+        termination: { kind: "exit", exitCode: 7 },
+      }),
+    );
+  });
+
+  it("preserves Nx receipt chronology across stderr and stdout", async () => {
+    const repo = await createRepo();
+    const result = await runConfiguredRoundGate({
+      locus: HOST_LOCUS,
+      cwd: repo.root,
+      command:
+        "printf '\\033[36m NX \\033[0m Running targets test for 8 projects failed\\n' >&2; printf '\\033[36m NX \\033[0m Successfully ran targets build for 2 projects\\n'; exit 7",
+      executionId: "gate-cross-stream-count",
+      startedAt: 1,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        projectCount: 2,
+        termination: { kind: "exit", exitCode: 7 },
+      }),
+    );
+  });
+
+  it("records the real signal when the gate process is killed", async () => {
+    const repo = await createRepo();
+    const result = await runConfiguredRoundGate({
+      locus: HOST_LOCUS,
+      cwd: repo.root,
+      command: "kill -TERM $$",
+      executionId: "gate-killed",
+      startedAt: 1,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        termination: { kind: "signal", signal: "SIGTERM" },
       }),
     );
   });
