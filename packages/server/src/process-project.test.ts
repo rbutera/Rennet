@@ -276,6 +276,41 @@ describe("createProcessProject — the initial context dump wiring", () => {
     });
   });
 
+  it("persists an initial scout exception as a failed run that the same identity can retry", async () => {
+    const durable = journal();
+    const commandId = "52a7ad55-7fb2-4f5f-930c-3692405513dc";
+    let scoutCalls = 0;
+    const processProject = createProcessProject({
+      journal: durable.port,
+      generate: fakeGenerator(() => ({ fileCount: 12 })).generate,
+      listProjects: () => [project()],
+      runScout: async () => {
+        scoutCalls += 1;
+        if (scoutCalls === 1) throw new Error("scout harness exited before returning facts");
+        return QUESTIONNAIRE;
+      },
+    });
+
+    const failed = await processProject({ projectId: "p1", commandId }, () => undefined);
+
+    expect(failed.run).toMatchObject({
+      id: commandId,
+      status: "failed",
+      phase: "scout",
+      reason: "orbital: scout harness exited before returning facts",
+    });
+    expect(durable.records.get("/orbital")).toMatchObject({
+      runId: commandId,
+      status: "failed",
+      phase: "scout",
+    });
+
+    const retried = await processProject({ projectId: "p1", commandId }, () => undefined);
+
+    expect(scoutCalls).toBe(2);
+    expect(retried.run).toMatchObject({ id: commandId, status: "done", phase: "complete" });
+  });
+
   it("reattaches after a daemon restart at the first incomplete checkpoint without duplicate steps", async () => {
     const durable = journal();
     const commandId = "260265b1-3e18-4d91-9645-a13a37634f49";
@@ -328,9 +363,14 @@ describe("createProcessProject — the initial context dump wiring", () => {
         throw new Error("daemon stopped");
       },
     });
-    await expect(first({ projectId: "p1", commandId }, () => undefined)).rejects.toThrow(
-      "daemon stopped",
-    );
+    await expect(first({ projectId: "p1", commandId }, () => undefined)).resolves.toMatchObject({
+      run: {
+        id: commandId,
+        status: "failed",
+        phase: "knowledge",
+        reason: "orbital: daemon stopped",
+      },
+    });
 
     const resumedEvents: ProjectProcessEvent[] = [];
     const resumed = createProcessProject({
@@ -372,10 +412,13 @@ describe("createProcessProject — the initial context dump wiring", () => {
       totals: { files: 12, scopes: 4, confirmed: 1, rejected: 1 },
     });
     expect(
-      resumedEvents.filter((event) => event.kind === "run-state" && event.status === "running"),
+      resumedEvents
+        .filter((event) => event.kind === "run-state")
+        .map((event) => [event.status, event.phase]),
     ).toEqual([
-      expect.objectContaining({ kind: "run-state", phase: "knowledge", status: "running" }),
-      expect.objectContaining({ kind: "run-state", phase: "knowledge", status: "running" }),
+      ["failed", "knowledge"],
+      ["running", "knowledge"],
+      ["done", "complete"],
     ]);
     const stored = durable.records.get("/orbital");
     expect(
