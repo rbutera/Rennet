@@ -3959,7 +3959,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Mint first and return immediately. The durable preparation snapshot owns the capture
       // and first-generation work after navigation, including cancellation, retry, restart
       // recovery, and the exact lens events emitted by the server pipeline.
-      start: async ({ projectId, commandId, target }) => {
+      start: async ({ projectId, commandId, replacesSessionId, target }) => {
         const legacyPrRef =
           target?.prNumber === undefined || target.forgeRepository !== undefined
             ? null
@@ -3975,7 +3975,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const entered =
           target === undefined
             ? { session: mintSession(projectId), reattached: false }
-            : sessionEntry.enter(projectId, identityTarget ?? target);
+            : replacesSessionId === undefined
+              ? sessionEntry.enter(projectId, identityTarget ?? target)
+              : sessionEntry.enterSuccessor(replacesSessionId, projectId, identityTarget ?? target);
         if (!entered.reattached) sessionStore.save(entered.session);
         const current = sessionStore.load(entered.session.id) ?? entered.session;
         const prepared =
@@ -3991,6 +3993,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 commandId,
                 ...(identityTarget === undefined ? {} : { target: identityTarget }),
               });
+        if (replacesSessionId !== undefined) sessionStore.archive(replacesSessionId);
         return { session: sidebarSessionFor(prepared), reattached: entered.reattached };
       },
       cancelPreparation: (sessionId) => {

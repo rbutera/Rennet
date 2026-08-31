@@ -625,6 +625,23 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
   });
 
+  it("dispatched:true without an accepted operation closes the intent as failed", async () => {
+    const { bridge, readsStarted } = bridgeWith(async (reviewId) => dispatchAnswer(reviewId));
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
+
+    act(() => getByText("dispatch").click());
+
+    await waitFor(() =>
+      expect(
+        getByText(
+          "phase:failed/Rennet did not receive the accepted operation for this coding round. Try dispatching again.",
+        ),
+      ).toBeTruthy(),
+    );
+  });
+
   it("the daemon's own events take over from the intent once they arrive", async () => {
     const { bridge, readsStarted } = bridgeWith(async (reviewId) => dispatchAnswer(reviewId));
     const { getByText } = mountLive(bridge);

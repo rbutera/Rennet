@@ -332,6 +332,11 @@ local. One **Post Review** action sends it, under your name, as one review
 pinned to the reviewed commit. The posted state names the PR, the verdict, the
 line-comment count, and links to the review on GitHub.
 
+If the pull or merge request advances before posting, Rennet sends nothing from
+the stale preview. **Review latest revision** starts a new review of the same
+provider target and opens its capture progress; the review you already read
+stays pinned to its original head and bytes.
+
 ### Dispatch a work order
 
 On your own branch the hand-off is one goal in two states, and the page's shape

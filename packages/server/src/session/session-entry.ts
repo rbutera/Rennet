@@ -364,6 +364,57 @@ export class SessionEntry {
   }
 
   /**
+   * Replace one live target claim with a fresh session after the forge reports that its immutable
+   * head moved. This persists or adopts the successor while the source is still live. The caller
+   * activates the successor before releasing the source claim, so an interruption can leave two
+   * visible claimants but can never archive the only reachable review.
+   */
+  enterSuccessor(sourceSessionId: string, projectId: string, target: Target): EntryResult {
+    const sessions = this.store.list();
+    const source = sessions.find((session) => session.id === sourceSessionId);
+    if (
+      source === undefined ||
+      source.projectId !== projectId ||
+      source.claim === undefined ||
+      !claimMatchesTarget(source.claim, target) ||
+      !repositoryIdentityAgrees(source, target)
+    ) {
+      throw new Error("The review session no longer owns this target.");
+    }
+
+    const existing = claimingSession(
+      sessions.filter((session) => session.id !== source.id),
+      projectId,
+      source.repositoryRoot,
+      target,
+    );
+    if (existing !== undefined) {
+      return { session: existing, reattached: true };
+    }
+    if (source.archivedAt !== undefined) {
+      throw new Error("The previous review session is archived and has no successor.");
+    }
+
+    const claim: Claim = {
+      branch: target.branch,
+      ...(target.prNumber === undefined ? {} : { prNumber: target.prNumber }),
+    };
+    const repository = target.repository ?? source.repository;
+    const forgeRepository = target.forgeRepository ?? source.forgeRepository;
+    const session = bindTarget(
+      {
+        ...mintSession(projectId, this.mintDeps),
+        ...(source.repositoryRoot === undefined ? {} : { repositoryRoot: source.repositoryRoot }),
+        ...(repository === undefined ? {} : { repository }),
+        ...(forgeRepository === undefined ? {} : { forgeRepository }),
+      },
+      claim,
+    );
+    this.store.save(session);
+    return { session, reattached: false };
+  }
+
+  /**
    * The detached-HEAD round's session (#573). No branch means no claim to dedupe on, so the
    * REVIEW id is the key: stable per review, so a re-dispatch serializes onto the same session
    * and `resolveRoundSessionId`'s no-branch fallback resolves the very same id.

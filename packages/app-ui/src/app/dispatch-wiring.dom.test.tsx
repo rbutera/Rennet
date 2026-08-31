@@ -247,4 +247,28 @@ describe("dispatch wiring (C09 cluster 4)", () => {
     expect(noRound.getAttribute("role")).toBe("status");
     expect(r.container.querySelector('[data-screen="session-run"]')).toBeNull();
   });
+
+  it("keeps the full app tree on Handoff without an accepted operation", async () => {
+    act(() =>
+      store().reviewActions.stageAsk({
+        id: "src/a.ts:5",
+        anchor: "src/a.ts:5",
+        type: "request-change",
+        body: "guard the boundary",
+      }),
+    );
+
+    const history = memoryHistory("/s/rev-1?view=handoff");
+    const bridge = liveBridge(() => roundDispatchOutput("rev-1", true));
+    const r = mount(<RennetRouterApp bridge={bridge} history={history} />);
+
+    await r.user.click(await r.findByRole("button", { name: "Dispatch Round" }));
+
+    expect(history.history.at(-1)).toBe("/s/rev-1?view=handoff");
+    const notAccepted = await r.findByText(
+      "Rennet did not receive the accepted operation for this coding round. Try dispatching again.",
+    );
+    expect(notAccepted.getAttribute("role")).toBe("alert");
+    expect(r.container.querySelector('[data-screen="session-run"]')).toBeNull();
+  });
 });

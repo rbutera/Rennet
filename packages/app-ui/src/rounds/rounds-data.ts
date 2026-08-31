@@ -6,7 +6,7 @@ import {
 } from "@rennet/protocol";
 import { createContext, useContext, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
+import { commandKey, readCommandId, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
@@ -292,10 +292,12 @@ export function useLiveRoundsSource(): RoundsSource {
   // so an event that landed during that flight would otherwise be gone. The two are merged
   // by `seq` at read time — see {@link mergeRoundEvents}.
   const streamed = useRef<readonly RoundEvent[]>(NO_EVENTS);
+  const refreshedReviewGeneration = useRef<string | undefined>(undefined);
   const streamKey = useRef(reviewId);
   if (streamKey.current !== reviewId) {
     streamKey.current = reviewId;
     streamed.current = NO_EVENTS;
+    refreshedReviewGeneration.current = undefined;
   }
   useCommandStream({
     channel: "roundProgress",
@@ -307,12 +309,17 @@ export function useLiveRoundsSource(): RoundsSource {
       // A changed or failed durable terminal snapshot follows every ledger write it can
       // expose. An unchanged snapshot does not: finalizeUnchanged writes afterward and
       // emits the legacy unchanged receipt as its post-write commit point.
+      const changedSuccessorGeneration =
+        event.type === "operation" &&
+        event.snapshot.state.phase === "completed" &&
+        event.snapshot.draining !== true &&
+        event.snapshot.state.result.kind === "changed"
+          ? event.snapshot.state.result.report.generation
+          : undefined;
+      const changedReviewCommitted = changedSuccessorGeneration !== undefined;
       const durableTerminal =
         event.type === "operation" &&
-        (event.snapshot.state.phase === "failed" ||
-          (event.snapshot.state.phase === "completed" &&
-            event.snapshot.draining !== true &&
-            event.snapshot.state.result.kind === "changed"));
+        (event.snapshot.state.phase === "failed" || changedReviewCommitted);
       if (
         durableTerminal ||
         event.type === "composed" ||
@@ -321,6 +328,24 @@ export function useLiveRoundsSource(): RoundsSource {
       ) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
         cache.invalidate(commandKey("session.list", {}));
+      }
+      // Boards carry their successor generation on round progress, but Diff and Handoff read
+      // `Review.activePatchsetId`. Refresh the one mounted review only when the daemon has
+      // committed changed successor state; failed and unchanged rounds keep the predecessor.
+      const committedSuccessorGeneration =
+        changedSuccessorGeneration ?? (event.type === "composed" ? event.generation : undefined);
+      if (
+        committedSuccessorGeneration !== undefined &&
+        committedSuccessorGeneration !== refreshedReviewGeneration.current &&
+        reviewId !== undefined
+      ) {
+        refreshedReviewGeneration.current = committedSuccessorGeneration;
+        cache.invalidate(
+          commandKey("review.load", {
+            commandId: readCommandId(`review.load:${reviewId}`),
+            reviewId,
+          }),
+        );
       }
       if (transcriptRefreshReceipt(event)) {
         cache.invalidate(commandKey("session.transcript", { reviewId: reviewId ?? "" }));
@@ -428,18 +453,27 @@ export function useLiveRoundsSource(): RoundsSource {
             setIntent(undefined);
             return { status: "not-dispatched", reason };
           }
-          if (output.acceptedOperation !== undefined) {
-            const accepted: RoundEvent = {
-              type: "operation",
-              snapshot: output.acceptedOperation,
-            };
-            streamed.current = mergeRoundEvents(streamed.current, [accepted]);
+          if (output.acceptedOperation === undefined) {
+            const reason =
+              "Rennet did not receive the accepted operation for this coding round. Try dispatching again.";
             cache.setData(
               commandKey("session.roundEvents", { reviewId }),
-              () => ({ events: [...streamed.current] }),
+              () => ({ events: [...previousEvents] }),
               { supersedeInFlight: true },
             );
+            setIntent({ slug: forSlug, status: "rejected", reason });
+            return { status: "rejected", reason };
           }
+          const accepted: RoundEvent = {
+            type: "operation",
+            snapshot: output.acceptedOperation,
+          };
+          streamed.current = mergeRoundEvents(streamed.current, [accepted]);
+          cache.setData(
+            commandKey("session.roundEvents", { reviewId }),
+            () => ({ events: [...streamed.current] }),
+            { supersedeInFlight: true },
+          );
           cache.invalidate(commandKey("session.roundEvents", { reviewId }));
           return { status: "accepted" };
         } catch (reason: unknown) {
