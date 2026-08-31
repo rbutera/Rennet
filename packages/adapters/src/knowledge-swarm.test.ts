@@ -30,7 +30,7 @@ import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
-import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import { councilSeatTurn, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +139,7 @@ interface ClaudeCapture {
   readonly model: string | undefined;
   readonly effort: CouncilEffort | undefined;
   readonly outputSchema: unknown;
+  readonly ambientConfig: SessionSpec["ambientConfig"];
 }
 
 /** A fake Claude port capturing createSession options and emitting canned output. */
@@ -152,6 +153,7 @@ function fakeClaudePort(
         model: options.model,
         effort: options.effort,
         outputSchema: options.outputSchema,
+        ambientConfig: options.ambientConfig,
       };
       captures.push(capture);
       const session = {
@@ -372,7 +374,12 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       reusedScopePlan: false,
     });
     expect(claudeCaptures).toEqual([
-      { model: "sonnet-5", effort: "medium", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
+      {
+        model: "sonnet-5",
+        effort: "medium",
+        outputSchema: MAP_SCOPE_OUTPUT_SCHEMA,
+        ambientConfig: "isolated",
+      },
     ]);
     expect(codexCaptures).toHaveLength(64);
     expect(
@@ -471,7 +478,12 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     expect(outcome).toMatchObject({ status: "ok", ranPartitions: 64 });
     expect(scopeAttempts).toEqual([2]);
     expect(claudeCaptures).toEqual([
-      { model: "sonnet-5", effort: "medium", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
+      {
+        model: "sonnet-5",
+        effort: "medium",
+        outputSchema: MAP_SCOPE_OUTPUT_SCHEMA,
+        ambientConfig: "isolated",
+      },
     ]);
     expect(codexCaptures).toHaveLength(64);
   });
@@ -625,6 +637,7 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     expect(claudeCaptures[0]?.model).toBe("sonnet-5");
     expect(claudeCaptures[0]?.effort).toBe("medium");
     expect(claudeCaptures[0]?.outputSchema).toBe(MAP_VERIFY_OUTPUT_SCHEMA);
+    expect(claudeCaptures[0]?.ambientConfig).toBe("isolated");
     // The set persisted, statements minted through the honesty contract, and the
     // worker's hint died at synthesis (never stored). The `b` worker's off-slice
     // citation was dropped at mint — exactly ONE statement survives, worker a's.
@@ -662,6 +675,23 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     const schemas = claudeCaptures.map((capture) => capture.outputSchema);
     expect(schemas.filter((schema) => schema === PARTITION_WORKER_OUTPUT_SCHEMA)).toHaveLength(2);
     expect(schemas.filter((schema) => schema === MAP_VERIFY_OUTPUT_SCHEMA)).toHaveLength(1);
+    expect(claudeCaptures.every((capture) => capture.ambientConfig === "isolated")).toBe(true);
+  });
+
+  it("keeps non-map Claude council seats on inherited ambient config", async () => {
+    const captures: ClaudeCapture[] = [];
+    const turn = councilSeatTurn(
+      "project-scout",
+      { type: "object" },
+      { claudePort: fakeClaudePort(captures, () => ({})), repoRoot: "/repo" },
+      { availability: { installed: ["claude-code"] } },
+    );
+    if ("failure" in turn) throw new Error(turn.failure);
+
+    await turn.runTurn("scout", 1);
+
+    expect(captures).toHaveLength(1);
+    expect(captures[0]?.ambientConfig).toBeUndefined();
   });
 
   it("a partially-failed swarm keeps the prior store (all-or-keep-prior)", async () => {
@@ -1209,8 +1239,18 @@ describe("knowledge swarm — prior-set identity", () => {
       carried: 1,
     });
     expect(scopeCaptures).toEqual([
-      { model: "sonnet-5", effort: "medium", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
-      { model: "sonnet-5", effort: "medium", outputSchema: MAP_VERIFY_OUTPUT_SCHEMA },
+      {
+        model: "sonnet-5",
+        effort: "medium",
+        outputSchema: MAP_SCOPE_OUTPUT_SCHEMA,
+        ambientConfig: "isolated",
+      },
+      {
+        model: "sonnet-5",
+        effort: "medium",
+        outputSchema: MAP_VERIFY_OUTPUT_SCHEMA,
+        ambientConfig: "isolated",
+      },
     ]);
     expect(codexCaptures).toHaveLength(1);
     expect(codexCaptures[0]?.prompt).toContain(newlyIncludedFile.path);

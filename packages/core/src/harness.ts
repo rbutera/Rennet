@@ -324,6 +324,8 @@ export function envelope(context: EnvelopeContext, native: unknown): HarnessEven
   };
 }
 
+export type HarnessAmbientConfig = "inherit" | "isolated";
+
 export interface SessionSpec {
   readonly cwd: string;
   readonly model?: string;
@@ -332,6 +334,14 @@ export interface SessionSpec {
   readonly allowedTools?: readonly string[];
   readonly outputSchema?: unknown;
   readonly signal?: AbortSignal;
+  /**
+   * Whether this turn inherits the harness's user/project/local extensions.
+   * `isolated` keeps the installed harness, authentication, working directory,
+   * native tools, and explicitly mounted app tools while skipping filesystem
+   * settings, settings-backed plugins and hooks, and ambient MCP servers.
+   * Absent behaves as `inherit`, which is the normal user-facing session.
+   */
+  readonly ambientConfig?: HarnessAmbientConfig;
   /**
    * Resume a prior harness conversation (B09 cursor-resume, #466 res. 3). When
    * present, `createSession` continues the harness session named by

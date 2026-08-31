@@ -6,6 +6,7 @@ import {
   dedupById,
   describeSnapshotGateFailure,
   dispositionCarrier,
+  type HarnessAmbientConfig,
   type HarnessPort,
   type HarnessSession,
   type HarnessTurnResult,
@@ -167,6 +168,8 @@ export interface SwarmTurnOptions {
   readonly collector?: MetricsCollector;
   /** The metrics label, e.g. "knowledge.worker". */
   readonly label?: string;
+  /** Internal harness extensions policy. Omitted for ordinary council work. */
+  readonly ambientConfig?: HarnessAmbientConfig;
 }
 
 /**
@@ -211,6 +214,7 @@ export function createClaudeSwarmTurn(
         outputSchema,
         model,
         effort,
+        ...(options.ambientConfig === undefined ? {} : { ambientConfig: options.ambientConfig }),
         // #585: Rennet's internal one-shot turn — never the user's session history.
         ephemeral: true,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -454,6 +458,10 @@ export interface CouncilSeatDeps {
   readonly label?: string;
 }
 
+function isContextMapJob(jobId: CouncilJobId): boolean {
+  return jobId === "partition-worker" || jobId === "map-scope" || jobId === "map-verify";
+}
+
 /**
  * Resolve one council job to a concrete `runTurn` on the resolved harness, or
  * an honest failure reason. Shared by the knowledge swarm and the project
@@ -490,9 +498,7 @@ export function councilSeatTurn(
           // server eagerly, even though these workers read the repository through
           // native tools. Keep the empty table job-scoped: every other Codex council
           // job inherits the executor's table as before.
-          ...(jobId === "partition-worker" || jobId === "map-scope" || jobId === "map-verify"
-            ? { mcpServers: {} }
-            : {}),
+          ...(isContextMapJob(jobId) ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         },
       ),
@@ -507,6 +513,7 @@ export function councilSeatTurn(
     effort: resolution.effort,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
+      ...(isContextMapJob(jobId) ? { ambientConfig: "isolated" } : {}),
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),

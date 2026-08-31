@@ -264,7 +264,10 @@ The launched evidence now says:
   seconds, with 24 workers active, zero ambient MCP or plugin-refresh processes,
   and no completed worker. The guard reaped the process group with zero survivors.
   That rejects 24 as the default. The complete 16-lane run stayed below the RSS
-  ceiling but crossed the independent pageout guard after five minutes.
+  ceiling but crossed the independent pageout guard after five minutes. Claude
+  context-map seats likewise request the SDK's empty filesystem-setting sources
+  and strict MCP mode; normal boards, lenses, scouts, and asks still inherit the
+  user's Claude configuration.
 - **Shorter turns.** The scoped eight-hypothesis worker schema attacks the term
   most correlated with measured duration. Its proof must report worker timing,
   statement yield, merge residue, verify timing, and whole-pass wall clock; a

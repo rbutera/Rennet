@@ -60,12 +60,25 @@ describe("toSdkOptions", () => {
     expect(sdk.mcpServers).toEqual({
       canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
     });
-    // Never strict: the user's own configured servers stay reachable alongside ours.
+    // Ordinary sessions stay non-strict: the user's servers remain alongside ours.
     expect("strictMcpConfig" in sdk).toBe(false);
   });
 
   it("omits mcpServers entirely when Rennet has none", () => {
     expect("mcpServers" in (toSdkOptions(baseOptions()) as Record<string, unknown>)).toBe(false);
+  });
+
+  it("isolates ambient settings and MCP only when the session asks for it", () => {
+    const inherited = toSdkOptions(baseOptions()) as Record<string, unknown>;
+    expect("settingSources" in inherited).toBe(false);
+    expect("strictMcpConfig" in inherited).toBe(false);
+
+    const isolated = toSdkOptions(baseOptions({ ambientConfig: "isolated" })) as Record<
+      string,
+      unknown
+    >;
+    expect(isolated.settingSources).toEqual([]);
+    expect(isolated.strictMcpConfig).toBe(true);
   });
 
   it("translates outputSchema into the SDK json_schema outputFormat", () => {
