@@ -260,46 +260,91 @@ function splitParagraphs(body: string): string[] {
     .filter((p) => p.length > 0);
 }
 
-/** A live in-flight turn → a streaming orchestrator `TurnRow`. */
-function inFlightToRows(turn: ReattachResult["inFlight"][number]): TranscriptRow[] {
-  if (turn.rows && turn.rows.length > 0) return transcriptRowsOf(turn.rows);
-  return [
-    {
-      kind: "turn",
-      id: `${turn.turnId}::${turn.channel}`,
-      speaker: "orchestrator",
-      status: "streaming",
-      paragraphs: splitParagraphs(turn.bodySoFar),
-      ...(turn.time === undefined ? {} : { time: turn.time }),
-    },
-  ];
+type ReattachThread = ReattachResult["threads"][number];
+type InFlightTurn = ReattachResult["inFlight"][number];
+
+// `foldAskStream` returns a FRESH `ReattachResult` per `ask-delta`, but it rebuilds only what
+// the event touched: `{ ...base, inFlight: … }` keeps the `threads` array and every settled
+// thread object by reference, and the `inFlight.map` keeps every turn but the one streaming.
+// Keying the derivation on those object identities is therefore enough to make a delta cost
+// O(the live turn) instead of re-splitting every paragraph in the transcript (perf audit §3
+// H2 — the "long sessions melt" quadratic). WeakMaps, so a superseded snapshot is collectable
+// with its rows and nothing has to be invalidated by hand.
+const threadRows = new WeakMap<ReattachThread, TranscriptRow[]>();
+const inFlightRows = new WeakMap<InFlightTurn, TranscriptRow[]>();
+
+/** A live in-flight turn → a streaming orchestrator `TurnRow`. Memoized on the turn object:
+ *  a delta mints a new one, every other in-flight turn keeps its rows. */
+function inFlightToRows(turn: InFlightTurn): TranscriptRow[] {
+  const cached = inFlightRows.get(turn);
+  if (cached) return cached;
+  const rows: TranscriptRow[] =
+    turn.rows && turn.rows.length > 0
+      ? transcriptRowsOf(turn.rows)
+      : [
+          {
+            kind: "turn",
+            id: `${turn.turnId}::${turn.channel}`,
+            speaker: "orchestrator",
+            status: "streaming",
+            paragraphs: splitParagraphs(turn.bodySoFar),
+            ...(turn.time === undefined ? {} : { time: turn.time }),
+          },
+        ];
+  inFlightRows.set(turn, rows);
+  return rows;
+}
+
+/** One settled thread's messages → turn rows. Memoized on the thread object, which
+ *  `foldAskStream` only replaces for the thread an event actually changed. */
+function threadToRows(thread: ReattachThread): TranscriptRow[] {
+  const cached = threadRows.get(thread);
+  if (cached) return cached;
+  const rows: TranscriptRow[] = [];
+  for (const message of thread.messages) {
+    if (message.rows && message.rows.length > 0) appendAll(rows, transcriptRowsOf(message.rows));
+    else
+      rows.push({
+        kind: "turn",
+        id: message.id,
+        speaker: message.author === "you" ? "user" : "orchestrator",
+        status: message.status ?? "complete",
+        paragraphs: splitParagraphs(message.body),
+        ...(message.time === undefined ? {} : { time: message.time }),
+      });
+  }
+  threadRows.set(thread, rows);
+  return rows;
+}
+
+/** `push(...rows)` spreads a whole transcript through the argument list; a long session is
+ *  exactly where that blows the stack. Copy by loop. */
+function appendAll(into: TranscriptRow[], from: readonly TranscriptRow[]): void {
+  for (const row of from) into.push(row);
 }
 
 /** The persisted ask-thread transcript → turn rows (settled threads, then live turns). */
 export function reattachToRows(result: ReattachResult): TranscriptRow[] {
+  // Index the live turns by thread ONCE: the pair of nested loops this replaces was
+  // O(threads × inFlight) per delta.
+  const inFlightByThread = new Map<string, InFlightTurn[]>();
+  for (const turn of result.inFlight) {
+    const queued = inFlightByThread.get(turn.threadId);
+    if (queued) queued.push(turn);
+    else inFlightByThread.set(turn.threadId, [turn]);
+  }
   const rows: TranscriptRow[] = [];
   const known = new Set<string>();
   for (const thread of result.threads) {
     known.add(thread.threadId);
-    for (const message of thread.messages) {
-      if (message.rows && message.rows.length > 0) rows.push(...transcriptRowsOf(message.rows));
-      else
-        rows.push({
-          kind: "turn",
-          id: message.id,
-          speaker: message.author === "you" ? "user" : "orchestrator",
-          status: message.status ?? "complete",
-          paragraphs: splitParagraphs(message.body),
-          ...(message.time === undefined ? {} : { time: message.time }),
-        });
-    }
-    for (const turn of result.inFlight) {
-      if (turn.threadId === thread.threadId) rows.push(...inFlightToRows(turn));
+    appendAll(rows, threadToRows(thread));
+    for (const turn of inFlightByThread.get(thread.threadId) ?? []) {
+      appendAll(rows, inFlightToRows(turn));
     }
   }
   // A brand-new live ask whose thread was not in the reattach snapshot yet.
   for (const turn of result.inFlight) {
-    if (!known.has(turn.threadId)) rows.push(...inFlightToRows(turn));
+    if (!known.has(turn.threadId)) appendAll(rows, inFlightToRows(turn));
   }
   return rows;
 }
