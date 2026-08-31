@@ -177,7 +177,13 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
   );
 }
 
-function CrossSessionProbe({ onSettled }: { readonly onSettled: () => void }) {
+function CrossSessionProbe({
+  onFirstSettled,
+  onSecondSettled = () => undefined,
+}: {
+  readonly onFirstSettled: () => void;
+  readonly onSecondSettled?: () => void;
+}) {
   const dispatch = useRoundDispatch();
   const first = useRoundState(SESSION);
   const second = useRoundState(OTHER_SESSION);
@@ -192,11 +198,22 @@ function CrossSessionProbe({ onSettled }: { readonly onSettled: () => void }) {
         onClick={() =>
           void dispatch?.(SESSION).then(() => {
             setSettlements((count) => count + 1);
-            onSettled();
+            onFirstSettled();
           })
         }
       >
         dispatch first
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void dispatch?.(OTHER_SESSION).then(() => {
+            setSettlements((count) => count + 1);
+            onSecondSettled();
+          })
+        }
+      >
+        dispatch second
       </button>
     </>
   );
@@ -833,7 +850,7 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
         <Router hook={history.hook} searchHook={history.searchHook}>
           <LiveScope>
             <CrossSessionProbe
-              onSettled={() => {
+              onFirstSettled={() => {
                 settled += 1;
               }}
             />
@@ -859,12 +876,97 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
       await Promise.resolve();
     });
     await waitFor(() => expect(settled).toBe(1));
-    act(() => history.navigate(`/s/${OTHER_SESSION}?view=handoff`));
+    act(() => bridge.emitRoundProgress(OTHER_REVIEW, { type: "failed", reason: "no B round" }));
     expect(r.getByText("second:absent")).toBeTruthy();
 
     act(() => history.navigate(`/s/${SESSION}/run`));
     await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
   });
+
+  it.each(["not-dispatched", "missing-operation", "transport-rejected"] as const)(
+    "keeps B's newer intent when deferred A settles as %s",
+    async (settlement) => {
+      let answerA: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+      let refuseA: ((reason?: unknown) => void) | undefined;
+      let answerB: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+      let firstSettled = 0;
+      let secondSettled = 0;
+      const otherReview: Review = { ...RESOLVED_REVIEW, id: OTHER_REVIEW };
+      const otherSession: SidebarSession = {
+        ...SESSION_ROW,
+        id: OTHER_SESSION,
+        reviewId: OTHER_REVIEW,
+        title: "Other review",
+      };
+      const bridge = new MemoryBridge({
+        "session.list": () => ({ sessions: [SESSION_ROW, otherSession] }),
+        "review.load": ({ reviewId }) => ({
+          review: reviewId === REVIEW ? RESOLVED_REVIEW : otherReview,
+          repositoryPresent: true,
+        }),
+        "session.roundEvents": () => ({ events: [] }),
+        "session.rounds": () => ({ records: [] }),
+        "round.dispatch": ({ reviewId }) =>
+          new Promise<CommandOutput<"round.dispatch">>((resolve, reject) => {
+            if (reviewId === REVIEW) {
+              answerA = resolve;
+              refuseA = reject;
+            } else {
+              answerB = resolve;
+            }
+          }),
+      });
+      const history = memoryHistory(`/s/${SESSION}/run`);
+      const r = mount(
+        <BridgeProvider bridge={bridge}>
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <LiveScope>
+              <CrossSessionProbe
+                onFirstSettled={() => {
+                  firstSettled += 1;
+                }}
+                onSecondSettled={() => {
+                  secondSettled += 1;
+                }}
+              />
+            </LiveScope>
+          </Router>
+        </BridgeProvider>,
+      );
+      await waitFor(() => expect(r.getByText("first:absent")).toBeTruthy());
+
+      act(() => r.getByText("dispatch first").click());
+      await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
+      act(() => history.navigate(`/s/${OTHER_SESSION}/run`));
+      await waitFor(() => expect(r.getByText("second:absent")).toBeTruthy());
+      act(() => r.getByText("dispatch second").click());
+      await waitFor(() => expect(r.getByText("second:dispatching")).toBeTruthy());
+
+      await act(async () => {
+        if (settlement === "not-dispatched") answerA?.(dispatchAnswer(REVIEW, undefined, false));
+        else if (settlement === "missing-operation") answerA?.(dispatchAnswer(REVIEW));
+        else refuseA?.(new Error("A transport closed"));
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(firstSettled).toBe(1));
+      expect(r.getByText("second:dispatching")).toBeTruthy();
+
+      await act(async () => {
+        answerB?.(
+          dispatchAnswer(OTHER_REVIEW, {
+            ...OPERATION_BASE,
+            operationId: "operation-other",
+            createdAt: 2,
+            revision: 0,
+            state: { phase: "claimed" },
+          }),
+        );
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(secondSettled).toBe(1));
+      expect(r.getByText("second:dispatching")).toBeTruthy();
+    },
+  );
 });
 
 // ── The catch-up read must not clobber the live push (review finding 7) ────────

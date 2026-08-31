@@ -224,8 +224,19 @@ export function useRoundRetryError(slug: string): string | undefined {
  * "dispatched" arm: that is the DAEMON's fact, and it arrives as a `RoundEvent`.
  */
 type DispatchIntent =
-  | { readonly slug: string; readonly status: "sending" }
-  | { readonly slug: string; readonly status: "rejected"; readonly reason: string };
+  | {
+      readonly slug: string;
+      readonly reviewId: string;
+      readonly request: number;
+      readonly status: "sending";
+    }
+  | {
+      readonly slug: string;
+      readonly reviewId: string;
+      readonly request: number;
+      readonly status: "rejected";
+      readonly reason: string;
+    };
 
 /** A rejection in readable words — the daemon's message where it gave one. */
 function failureText(reason: unknown): string {
@@ -367,6 +378,7 @@ export function useLiveRoundsSource(): RoundsSource {
   // says only what is true ("we asked, and are waiting"); the daemon's receipt is what
   // promotes it into a real round, and its rejection is what surfaces honestly instead.
   const [intent, setIntent] = useState<DispatchIntent | undefined>(undefined);
+  const dispatchRequest = useRef(0);
 
   const events = eventsData?.events;
   const records = recordsData?.records;
@@ -383,7 +395,9 @@ export function useLiveRoundsSource(): RoundsSource {
       if (forSlug !== slug) return initialRoundState;
       // The daemon's own account always wins: the intent covers exactly the window in
       // which the daemon has said nothing, and stops speaking the moment it does.
-      if (merged.length > 0 || intent?.slug !== forSlug) return folded;
+      if (merged.length > 0 || intent?.slug !== forSlug || intent.reviewId !== reviewId) {
+        return folded;
+      }
       return intent.status === "rejected"
         ? // The receipt refused the round. It never started, and saying so is the honest
           // end of the intent — not a silent bounce back to the board.
@@ -442,6 +456,16 @@ export function useLiveRoundsSource(): RoundsSource {
         if (reviewId === undefined) {
           return { status: "rejected", reason: "Rennet could not resolve this review." };
         }
+        const request = ++dispatchRequest.current;
+        const settleIntent = (next: DispatchIntent | undefined) => {
+          setIntent((current) =>
+            current?.request === request &&
+            current.reviewId === reviewId &&
+            current.slug === forSlug
+              ? next
+              : current,
+          );
+        };
         const previousEvents = merged;
         // A new round starts from nothing: drop the finished round's events rather than
         // fold this one onto its `composed` state. That is DISCARDING stale data, not
@@ -452,21 +476,21 @@ export function useLiveRoundsSource(): RoundsSource {
           () => ({ events: [] satisfies RoundEvent[] }),
           { supersedeInFlight: true },
         );
-        setIntent({ slug: forSlug, status: "sending" });
+        setIntent({ slug: forSlug, reviewId, request, status: "sending" });
         try {
           const output = await mutate({ reviewId });
           if (!output.dispatched) {
             const reason =
               "Rennet did not start a coding round. Questions and approvals remain staged for the review.";
             writeEvents(previousEvents, NO_EVENTS);
-            setIntent(undefined);
+            settleIntent(undefined);
             return { status: "not-dispatched", reason };
           }
           if (output.acceptedOperation === undefined) {
             const reason =
               "Rennet did not receive the accepted operation for this coding round. Try dispatching again.";
             writeEvents(previousEvents, NO_EVENTS);
-            setIntent({ slug: forSlug, status: "rejected", reason });
+            settleIntent({ slug: forSlug, reviewId, request, status: "rejected", reason });
             return { status: "rejected", reason };
           }
           const accepted: RoundEvent = {
@@ -474,12 +498,13 @@ export function useLiveRoundsSource(): RoundsSource {
             snapshot: output.acceptedOperation,
           };
           writeEvents(NO_EVENTS, [accepted]);
+          settleIntent(undefined);
           cache.invalidate(commandKey("session.roundEvents", { reviewId }));
           return { status: "accepted" };
         } catch (reason: unknown) {
           const message = failureText(reason);
           writeEvents(previousEvents, NO_EVENTS);
-          setIntent({ slug: forSlug, status: "rejected", reason: message });
+          settleIntent({ slug: forSlug, reviewId, request, status: "rejected", reason: message });
           return { status: "rejected", reason: message };
         }
       },
