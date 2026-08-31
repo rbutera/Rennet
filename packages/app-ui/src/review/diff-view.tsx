@@ -103,6 +103,8 @@ const DIFF_BODY_TOP = 52;
 const DIFF_OVERSCAN = 240;
 const DIFF_VIEWPORT_FALLBACK = 720;
 
+type FileStats = ReturnType<typeof fileStats>;
+
 type DiffRenderRow =
   | { readonly key: string; readonly kind: "hunk"; readonly header: string }
   | { readonly key: string; readonly kind: "line"; readonly line: NumberedLine };
@@ -112,7 +114,12 @@ interface DiffFileModel {
   readonly rows: readonly DiffRenderRow[];
 }
 
-interface DiffFileLayout extends DiffFileModel {
+// The layout WRAPS the model rather than spreading it, so a card's `model` prop keeps
+// its identity when only geometry moves. Spreading minted a fresh object for every
+// file on every layout pass (a Viewed toggle, a scroll, a resize), which would have
+// made `React.memo` on the card decorative.
+interface DiffFileLayout {
+  readonly model: DiffFileModel;
   readonly top: number;
   readonly height: number;
   readonly open: boolean;
@@ -146,7 +153,7 @@ function layoutFiles(
       : model.rows.length * DIFF_ROW_HEIGHT +
         (open && openLine !== undefined ? DIFF_EDITOR_HEIGHT : 0);
     const height = DIFF_CARD_HEADER_HEIGHT + (open ? bodyHeight : 0);
-    layouts.push({ ...model, top, height, open, openLine });
+    layouts.push({ model, top, height, open, openLine });
     top += height + DIFF_CARD_GAP;
   }
   return { files: layouts, height: Math.max(0, top - DIFF_CARD_GAP) };
@@ -179,12 +186,22 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
     () => layoutFiles(models, viewed, collapsed, openLines),
     [models, viewed, collapsed, openLines],
   );
-  const totals = files.reduce(
-    (acc, f) => {
-      const s = fileStats(f);
-      return { additions: acc.additions + s.additions, deletions: acc.deletions + s.deletions };
-    },
-    { additions: 0, deletions: 0 },
+  // `fileStats` falls back to parsing the whole patch when a file carries no counts,
+  // so this reduce is a full re-parse of the patchset — it belongs on `files`, not on
+  // every scroll frame.
+  const totals = React.useMemo(
+    () =>
+      files.reduce(
+        (acc, f) => {
+          const s = fileStats(f);
+          return {
+            additions: acc.additions + s.additions,
+            deletions: acc.deletions + s.deletions,
+          };
+        },
+        { additions: 0, deletions: 0 },
+      ),
+    [files],
   );
   const viewedCount = files.filter((f) => viewed[f.path]).length;
 
@@ -203,7 +220,7 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
 
   const jumpTo = React.useCallback(
     (path: string) => {
-      const target = layout.files.find((file) => file.file.path === path);
+      const target = layout.files.find((file) => file.model.file.path === path);
       const element = scrollRef.current;
       if (!target || !element) return false;
       const top = DIFF_BODY_TOP + target.top;
@@ -222,18 +239,53 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
   }, [fileParam, jumpTo]);
 
   const bodyScrollTop = Math.max(0, scrollTop - DIFF_BODY_TOP);
-  const visibleLayouts = layout.files.filter((file) => {
-    const pinned = file.openLine !== undefined;
-    return (
-      pinned ||
-      (file.top + file.height >= bodyScrollTop - DIFF_OVERSCAN &&
-        file.top <= bodyScrollTop + viewportHeight + DIFF_OVERSCAN)
-    );
-  });
+  const visibleLayouts = React.useMemo(
+    () =>
+      layout.files.filter((file) => {
+        const pinned = file.openLine !== undefined;
+        return (
+          pinned ||
+          (file.top + file.height >= bodyScrollTop - DIFF_OVERSCAN &&
+            file.top <= bodyScrollTop + viewportHeight + DIFF_OVERSCAN)
+        );
+      }),
+    [layout.files, bodyScrollTop, viewportHeight],
+  );
 
-  function setOpenLine(path: string, line: number | null) {
+  // A flick delivers many scroll events per frame and each one used to re-render the
+  // whole card list. Coalesce to one update per animation frame: the live position
+  // sits in a ref, React sees it at most once per paint. Unlike CodeView there is no
+  // range bail-out to add here — each mounted card windows its own rows against
+  // `viewportTop`, so every pixel of scroll is load-bearing for somebody.
+  const pendingScroll = React.useRef(0);
+  const scrollFrame = React.useRef<number | null>(null);
+  const onScroll = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    pendingScroll.current = event.currentTarget.scrollTop;
+    if (scrollFrame.current !== null) return;
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = null;
+      setScrollTop(pendingScroll.current);
+    });
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+    },
+    [],
+  );
+
+  // Stable per-surface handlers: the card names its own path, so `React.memo` is not
+  // defeated by a fresh closure per file per render.
+  const setOpenLine = React.useCallback((path: string, line: number | null) => {
     setOpenLines((current) => ({ ...current, [path]: line ?? undefined }));
-  }
+  }, []);
+  const setCollapsedFor = React.useCallback((path: string, value: boolean) => {
+    setCollapsed((current) => ({ ...current, [path]: value }));
+  }, []);
+  const setViewedFor = React.useCallback((path: string, value: boolean) => {
+    setViewed((current) => ({ ...current, [path]: value }));
+    setCollapsed((current) => ({ ...current, [path]: value }));
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -243,7 +295,7 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
         ref={scrollRef}
         className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto"
         data-diff-scroll=""
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={onScroll}
       >
         <MaybeSelectionLayer enabled={!historical}>
           <div className="mx-auto w-full max-w-[980px] px-6 py-4">
@@ -270,26 +322,23 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
               >
                 {visibleLayouts.map((entry) => (
                   <div
-                    key={entry.file.path}
+                    key={entry.model.file.path}
                     className="absolute inset-x-0"
                     style={{ top: `${entry.top}px`, height: `${entry.height}px` }}
                   >
                     <DiffFileCard
-                      model={entry}
+                      model={entry.model}
+                      open={entry.open}
+                      openLine={entry.openLine}
                       patchsetId={patchsetId}
                       historical={historical}
-                      viewed={!!viewed[entry.file.path]}
-                      collapsed={!!collapsed[entry.file.path]}
+                      viewed={!!viewed[entry.model.file.path]}
+                      collapsed={!!collapsed[entry.model.file.path]}
                       viewportTop={bodyScrollTop - entry.top}
                       viewportHeight={viewportHeight}
-                      onCollapsedChange={(value) =>
-                        setCollapsed((current) => ({ ...current, [entry.file.path]: value }))
-                      }
-                      onOpenLineChange={(line) => setOpenLine(entry.file.path, line)}
-                      onViewedChange={(value) => {
-                        setViewed((current) => ({ ...current, [entry.file.path]: value }));
-                        setCollapsed((current) => ({ ...current, [entry.file.path]: value }));
-                      }}
+                      onCollapsedChange={setCollapsedFor}
+                      onOpenLineChange={setOpenLine}
+                      onViewedChange={setViewedFor}
                     />
                   </div>
                 ))}
@@ -327,15 +376,32 @@ function FileTree({
   viewed: Record<string, boolean>;
   onJump: (path: string) => void;
 }) {
-  const byDir = new Map<string, PatchFile[]>();
-  for (const file of files) {
-    const dir = file.path.split("/").slice(0, -1).join("/");
-    byDir.set(dir, [...(byDir.get(dir) ?? []), file]);
-  }
+  // One linear pass, memoized on `files`. It used to rebuild the map on every render
+  // — every keystroke in the filter, every scroll frame — and copied each directory's
+  // whole array per file (`[...existing, file]`), which is quadratic in the directory
+  // with the most files. `fileStats` is resolved here too: read per row in the render
+  // body it re-parsed a file's entire patch whenever counts were absent.
+  const dirs = React.useMemo(() => {
+    const byDir = new Map<string, { file: PatchFile; name: string; stats: FileStats }[]>();
+    for (const file of files) {
+      const dir = file.path.split("/").slice(0, -1).join("/");
+      let entries = byDir.get(dir);
+      if (entries === undefined) {
+        entries = [];
+        byDir.set(dir, entries);
+      }
+      entries.push({
+        file,
+        name: file.path.split("/").pop() ?? file.path,
+        stats: fileStats(file),
+      });
+    }
+    return [...byDir.entries()];
+  }, [files]);
 
   return (
     <nav className="flex flex-col gap-0.5" aria-label="Changed files">
-      {[...byDir.entries()].map(([dir, dirFiles]) => (
+      {dirs.map(([dir, dirFiles]) => (
         <div key={dir} className="flex flex-col gap-0.5">
           {/* Root-level files (no directory) list directly — no empty folder header. */}
           {dir !== "" && (
@@ -344,9 +410,7 @@ function FileTree({
               <span className="truncate">{dir}</span>
             </span>
           )}
-          {dirFiles.map((file) => {
-            const name = file.path.split("/").pop();
-            const stats = fileStats(file);
+          {dirFiles.map(({ file, name, stats }) => {
             return (
               <button
                 key={file.path}
@@ -390,8 +454,10 @@ function MaybeSelectionLayer({
   return enabled ? <ProseSelectionLayer>{children}</ProseSelectionLayer> : <div>{children}</div>;
 }
 
-function DiffFileCard({
+const DiffFileCard = React.memo(function DiffFileCard({
   model,
+  open,
+  openLine,
   patchsetId,
   historical,
   viewed,
@@ -402,37 +468,51 @@ function DiffFileCard({
   onOpenLineChange,
   onViewedChange,
 }: {
-  model: DiffFileLayout;
+  model: DiffFileModel;
+  open: boolean;
+  openLine?: number;
   patchsetId?: string;
   historical: boolean;
   viewed: boolean;
   collapsed: boolean;
   viewportTop: number;
   viewportHeight: number;
-  onCollapsedChange: (collapsed: boolean) => void;
-  onOpenLineChange: (line: number | null) => void;
-  onViewedChange: (viewed: boolean) => void;
+  onCollapsedChange: (path: string, collapsed: boolean) => void;
+  onOpenLineChange: (path: string, line: number | null) => void;
+  onViewedChange: (path: string, viewed: boolean) => void;
 }) {
-  const { file, rows, open, openLine } = model;
-  const stats = fileStats(file);
+  const { file, rows } = model;
+  const stats = React.useMemo(() => fileStats(file), [file]);
   const [copied, setCopied] = React.useState(false);
   const comments = useRennetStore(selectCodeComments(file.path));
-  const stagedAsks = useRennetStore((state) => state.review.stagedAsks);
   const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore(
     (state) => state.reviewActions,
   );
   const flight = useFlightBatcher();
   const language = React.useMemo(() => detectLanguage(file.path), [file.path]);
-  const askPositions = React.useMemo(() => {
-    const positions = new Set<string>();
-    for (const ask of Object.values(stagedAsks)) {
+  // Subscribe to THIS file's staged-ask positions, not the whole `stagedAsks` map.
+  // The map's identity changes on every stage/unstage anywhere in the review, so the
+  // old subscription re-rendered (and re-tokenized) every mounted card when the
+  // reviewer requested one change. The selector returns a string, so zustand's
+  // `Object.is` check compares it by value and a card whose own positions did not
+  // move never re-renders. Narrowing to `file.path`/`file.previousPath` is exact,
+  // not approximate: a row only ever looks up a key on one of those two paths.
+  const askPositionKey = useRennetStore((state) => {
+    const keys: string[] = [];
+    for (const ask of Object.values(state.review.stagedAsks)) {
       if (ask.type !== "request-change") continue;
       if (ask.codeRef !== undefined && ask.codeRef.patchsetId !== patchsetId) continue;
       const position = stagedAskCodePosition(ask);
-      if (position !== null) positions.add(codePositionKey(position));
+      if (position === null) continue;
+      if (position.path !== file.path && position.path !== file.previousPath) continue;
+      keys.push(codePositionKey(position));
     }
-    return positions;
-  }, [stagedAsks, patchsetId]);
+    return keys.sort().join("\n");
+  });
+  const askPositions = React.useMemo(
+    () => new Set(askPositionKey === "" ? [] : askPositionKey.split("\n")),
+    [askPositionKey],
+  );
 
   const positionedRows = React.useMemo(() => {
     const positioned: Array<
@@ -488,7 +568,7 @@ function DiffFileCard({
       >
         <button
           type="button"
-          onClick={() => onCollapsedChange(!collapsed)}
+          onClick={() => onCollapsedChange(file.path, !collapsed)}
           aria-expanded={open}
           aria-label={open ? "Collapse file" : "Expand file"}
           className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -548,7 +628,7 @@ function DiffFileCard({
             type="checkbox"
             checked={viewed}
             onChange={(event) => {
-              onViewedChange(event.target.checked);
+              onViewedChange(file.path, event.target.checked);
             }}
             className="size-3 accent-primary"
           />
@@ -582,11 +662,11 @@ function DiffFileCard({
                       lineLabel={`L${commentLine}`}
                       initialText={comments?.[commentLine] ?? ""}
                       hasComment={comments?.[commentLine] != null}
-                      onCancel={() => onOpenLineChange(null)}
+                      onCancel={() => onOpenLineChange(file.path, null)}
                       onSave={(text) => {
                         if (text === null) clearCodeComment(file.path, commentLine);
                         else setCodeComment(file.path, commentLine, text);
-                        onOpenLineChange(null);
+                        onOpenLineChange(file.path, null);
                       }}
                       onRequestChanges={(text) => {
                         setCodeComment(file.path, commentLine, text);
@@ -610,7 +690,7 @@ function DiffFileCard({
                               }),
                         });
                         flight.signal();
-                        onOpenLineChange(null);
+                        onOpenLineChange(file.path, null);
                       }}
                     />
                   </div>
@@ -679,7 +759,7 @@ function DiffFileCard({
                     {commentLine !== null && !historical && (
                       <button
                         type="button"
-                        onClick={() => onOpenLineChange(isOpen ? null : commentLine)}
+                        onClick={() => onOpenLineChange(file.path, isOpen ? null : commentLine)}
                         aria-label={
                           hasComment
                             ? `Edit comment on line ${commentLine}`
@@ -739,4 +819,4 @@ function DiffFileCard({
       )}
     </section>
   );
-}
+});

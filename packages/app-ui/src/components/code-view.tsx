@@ -1,6 +1,15 @@
 import type { RenderedHunkOccurrence } from "@rennet/protocol";
 import { parseAnchor } from "@rennet/protocol";
-import { type ReactNode, type Ref, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  type UIEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   buildRowRegistry,
   indexPlacements,
@@ -235,7 +244,43 @@ export function CodeView({
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
   // own scrolling so the window tracks the viewport instead of freezing at row 0.
+  //
+  // Scrolling decides exactly ONE thing here — which slice of rows is painted — so
+  // the raw pixel position stays OUT of the render path. The live value lives in a
+  // ref, updates coalesce to one animation frame (a flick delivers many scroll
+  // events per frame), and the state only moves when the WINDOW would actually
+  // change: a sub-row scroll returns the current value and React bails out of the
+  // re-render entirely. Windowing is unchanged by construction — the only updates
+  // skipped are the ones that compute an identical range.
   const [scroll, setScroll] = useState(scrollTop);
+  const pendingScroll = useRef(scrollTop);
+  const scrollFrame = useRef<number | null>(null);
+  // The windowing inputs the coalesced update compares against. Refreshed on every
+  // render (below, once `total` is known) and read only inside the frame callback,
+  // never during render — so the comparison can never use a stale row count.
+  const windowInputs = useRef({ total: 0, rowHeight, viewportHeight, overscan, renderAll });
+  const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    pendingScroll.current = event.currentTarget.scrollTop;
+    if (scrollFrame.current !== null) return;
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = null;
+      const next = pendingScroll.current;
+      setScroll((current) => {
+        if (current === next) return current;
+        const inputs = windowInputs.current;
+        if (inputs.renderAll) return current;
+        const before = windowRows({ ...inputs, scrollTop: current });
+        const after = windowRows({ ...inputs, scrollTop: next });
+        return before.start === after.start && before.end === after.end ? current : next;
+      });
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+    },
+    [],
+  );
   // The scroll container, so a focus-driven jump can move the REAL viewport (setting
   // window state alone leaves the DOM at scrollTop 0, painting blank spacer).
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -256,34 +301,53 @@ export function CodeView({
 
   // Language for syntax highlighting, inferred once from the path extension.
   // Unknown/absent extension → null → plain text (fail-closed, no fabricated colour).
-  const language: LanguageId | null = detectLanguage(path);
+  const language: LanguageId | null = useMemo(() => detectLanguage(path), [path]);
 
   // The registry + placement are computed over the FULL diff, never the window —
   // so a mark's home row is a fixed function of (diff, hunkOccurrences, marks) and
   // cannot move when a row recycles. Windowing only chooses which rows to paint.
-  const registry = buildRowRegistry({ diff, hunkOccurrences });
-  const placement = marks && marks.length > 0 ? placeMarks(registry, marks) : null;
-  const { glow, gutter } = placement
-    ? indexPlacements(placement)
-    : { glow: new Map<number, PlacedMark[]>(), gutter: new Map<number, PlacedMark[]>() };
+  //
+  // All four derivations below walk the WHOLE diff, and every one of them used to
+  // run in the render body — so each scroll step re-split the patch and re-walked
+  // every row, which is what defeated the windowing this component exists for. They
+  // are memoized on their real inputs; nothing here reads the scroll position.
+  const registry = useMemo(
+    () => buildRowRegistry({ diff, hunkOccurrences }),
+    [diff, hunkOccurrences],
+  );
+  const placement = useMemo(
+    () => (marks && marks.length > 0 ? placeMarks(registry, marks) : null),
+    [registry, marks],
+  );
+  const { glow, gutter } = useMemo(
+    () =>
+      placement
+        ? indexPlacements(placement)
+        : { glow: new Map<number, PlacedMark[]>(), gutter: new Map<number, PlacedMark[]>() },
+    [placement],
+  );
 
   // Deixis: resolve the focused anchor to its rows so the surface can pulse them.
-  const focusRows = new Set<number>();
-  if (focusAnchor) {
+  const focusRows = useMemo(() => {
+    const rows = new Set<number>();
+    if (!focusAnchor) return rows;
     const parsed = parseAnchor(focusAnchor);
-    if (parsed.ok) {
-      const res = resolveAnchorToRows(registry, parsed.anchor);
-      if (res.outcome === "resolved")
-        for (const rawIndex of res.rawIndices) focusRows.add(rawIndex);
-    }
-  }
+    if (!parsed.ok) return rows;
+    const res = resolveAnchorToRows(registry, parsed.anchor);
+    if (res.outcome === "resolved") for (const rawIndex of res.rawIndices) rows.add(rawIndex);
+    return rows;
+  }, [registry, focusAnchor]);
 
   // Report placement up (orphans → tray, marks → index) exactly when it changes.
-  const placementKey = placement
-    ? placement.placed.map((p) => `${p.mark.markId}@${p.gutterRawIndex}`).join(",") +
-      "|" +
-      placement.orphans.map((o) => `${o.mark.markId}:${o.reason}`).join(",")
-    : "";
+  const placementKey = useMemo(
+    () =>
+      placement
+        ? placement.placed.map((p) => `${p.mark.markId}@${p.gutterRawIndex}`).join(",") +
+          "|" +
+          placement.orphans.map((o) => `${o.mark.markId}:${o.reason}`).join(",")
+        : "",
+    [placement],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: placementKey is the stable digest of `placement`; depending on the object identity would fire every render.
   useEffect(() => {
     if (placement && onPlacement) onPlacement(placement);
@@ -310,6 +374,7 @@ export function CodeView({
   }, [firstFocusRow, focusNonce, renderAll, rowHeight, overscan]);
 
   const total = registry.rows.length;
+  windowInputs.current = { total, rowHeight, viewportHeight, overscan, renderAll };
   const range: WindowRange = renderAll
     ? { start: 0, end: total }
     : windowRows({ total, rowHeight, viewportHeight, scrollTop: scroll, overscan });
@@ -346,7 +411,7 @@ export function CodeView({
         ref={attachScroll}
         className="code-view-scroll overflow-auto bg-code"
         style={{ height: `${viewportHeight}px` }}
-        onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
+        onScroll={onScroll}
         data-total-rows={total}
         data-rendered-rows={visible.length}
         data-window-start={range.start}

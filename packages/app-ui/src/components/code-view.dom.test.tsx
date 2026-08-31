@@ -38,7 +38,7 @@ const OCC_H: RenderedHunkOccurrence[][] = [
 ];
 
 describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", () => {
-  it("re-windows on a real scroll event: new rows are revealed, the top recycles out", () => {
+  it("re-windows on a real scroll event: new rows are revealed, the top recycles out", async () => {
     const { container } = mount(
       <CodeView path="src/big.ts" diff={bigDiff(400)} rowHeight={18} viewportHeight={480} />,
     );
@@ -56,8 +56,12 @@ describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", 
     fireEvent.scroll(scrollEl, { target: { scrollTop: 3600 } });
 
     // The window moved: the deep row is now painted and the top row recycled out.
-    const movedStart = Number(scrollEl.getAttribute("data-window-start"));
-    expect(movedStart).toBeGreaterThan(0);
+    // The update is coalesced to one animation frame (many scroll events per frame
+    // must cost at most one render), so it lands on the next frame rather than
+    // inside the handler — hence the wait. Nothing else about windowing changed.
+    await waitFor(() =>
+      expect(Number(scrollEl.getAttribute("data-window-start"))).toBeGreaterThan(0),
+    );
     expect(container.querySelector('[data-raw-index="200"]')).not.toBeNull();
     expect(container.querySelector('[data-raw-index="0"]')).toBeNull();
   });

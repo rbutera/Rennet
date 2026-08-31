@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, cleanup, fireEvent, mount } from "../test/dom";
+import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { DiffView } from "./diff-view";
 
 // The diff surface reads/writes the singleton review slice directly (like CodeBlock).
@@ -135,14 +135,18 @@ describe("DiffView — the raw-diff surface", () => {
     expect(container.querySelector(`[id="diff-${files[11]?.path}"]`)).toBeTruthy();
   });
 
-  it("recycles a large file onto the exact line identity", () => {
+  it("recycles a large file onto the exact line identity", async () => {
     const { container } = mountDiff([largeFile(0)]);
     const scroll = container.querySelector("[data-diff-scroll]") as HTMLElement;
 
     scroll.scrollTop = 7_200;
     fireEvent.scroll(scroll);
 
-    expect(container.querySelector('[data-line="300"][data-side="RIGHT"]')).toBeTruthy();
+    // Scroll-driven state is coalesced to one animation frame, so the recycled rows
+    // arrive on the next frame instead of synchronously inside the handler.
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="300"][data-side="RIGHT"]')).toBeTruthy(),
+    );
     expect(container.querySelector('[data-line="1"][data-side="RIGHT"]')).toBeNull();
     expect(container.querySelectorAll("[data-line]").length).toBeLessThan(160);
   });

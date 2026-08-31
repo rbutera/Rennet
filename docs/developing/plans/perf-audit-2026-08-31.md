@@ -197,7 +197,7 @@ Ranking rule: measured user-facing cost first, then structural O(n²)s that grow
 
 **Wave 3 — renderer scale (700-claim boards):**
 9. `Collapse` unmounts when closed; `memo()` on Section/FindingElement/Turn/DiffFileCard; `useMemo` RichText/useRangedThreads.
-10. CodeView registry memoization + shiki token cache; scroll state out of React render path.
+10. CodeView registry memoization + shiki token cache; scroll state out of React render path. **LANDED.** `buildRowRegistry`, `placeMarks`, `indexPlacements` and the focus-anchor resolution are memoized on `(diff, hunkOccurrences, marks, focusAnchor)`, so scrolling re-windows without re-parsing the patch. Scroll drives a ref plus a frame-coalesced update, and the update is dropped outright when the computed window is unchanged — a sub-row scroll now re-renders nothing. `syntax/shiki.ts` memoizes tokenized lines on `(language, text)` behind a 2000-entry LRU (~4× the live viewport set across every mounted card), which also serves `diff-view` and `code-block`. On the diff surface `DiffFileCard` is `React.memo`'d against a stable per-file model and stable handlers, and it subscribes to its OWN file's staged-ask positions rather than the whole `stagedAsks` map, so staging one ask re-renders one card; the header totals and the file tree's `byDir` build (quadratic per directory, plus a `fileStats` re-parse per row) are memoized on `files`. Item 9's `memo(DiffFileCard)` is covered here.
 11. Bound `CommandCache`; session-list caching daemon-side (§4 H5).
 
 **Wave 4 — startup + size:**
