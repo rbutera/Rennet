@@ -8,10 +8,13 @@ import { useEffect, useRef } from "react";
 // words fade in, staggered relative to the new batch — so a word never sits invisible
 // waiting out an absolute-index delay, and the reveal never restarts on each delta.
 // `animate=false` renders instantly: historical turns replay as records, never as
-// arrivals (the record-vs-arrival law). The `.animate-word-in` utility + `word-in`
-// keyframe (fill `forwards`, landing on opacity 1) live in `../index.css`. The
-// `opacity-0` class below is load-bearing for that fill: it holds a word invisible
-// until its delay elapses, which `forwards` does not do.
+// arrivals (the record-vs-arrival law). `animate-word-in` is a real utility, generated
+// from `--animate-word-in` in `../index.css`'s `@theme` (fill `forwards`, landing on
+// opacity 1). The `opacity-0` class below is load-bearing for that fill: it holds a word
+// invisible until its delay elapses, which `forwards` does not do — which is also why
+// this call site must NOT carry `motion-reduce:animate-none`. Killing the animation would
+// leave every streamed word at `opacity-0` forever; the base reduced-motion rule collapses
+// the duration instead, so the `forwards` fill lands on the settled frame immediately.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WORD_STEP_MS = 22;

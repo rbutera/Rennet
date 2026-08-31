@@ -271,7 +271,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         // `ProjectContextMapView` that `/projects/:id/map` mounts, with Back routed to the
         // board so leaving the map does not leave the session. The wrapper supplies the
         // height and scroller the surrounding column expects.
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-auto">
           {projectId === undefined ? null : projectId === null ? (
             <MapUnavailable />
           ) : (
@@ -290,7 +290,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           round={query.round ?? undefined}
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
           {view === "rounds" && roundsUnavailable !== undefined ? (
             <RoundsUnavailable reason={roundsUnavailable} />
           ) : view === "rounds" && roundRecords.length > 0 ? (

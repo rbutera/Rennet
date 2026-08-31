@@ -28,25 +28,29 @@ describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
   it("scans the whole app-ui source tree, not a single named file", () => {
     expect(css).toMatch(/@source\s+"\.\/"/);
   });
-});
 
-// The hold-to-sign fill contract pinned the deleted `publish-sheet.tsx` component
-// source (B2, #489 — the canvas publish surface is gone); its invariants left with it.
-
-describe("running-review progress track radius (critique review item 1)", () => {
-  // Re-pinned against the component source after the Tailwind conversion (styles.css is
-  // deleted): the track and its fill carry the 4px micro radius utility, never the pill.
-  const source = readFileSync(
-    fileURLToPath(new URL("./components/running-review.tsx", import.meta.url)),
-    "utf8",
-  );
-
-  it("uses the 4px micro radius, not the 999px pill (DESIGN.md: pill = chips/counts only)", () => {
-    const track = source.match(/className="canvas-primer-track[^-][^"]*"/)?.[0] ?? "";
-    const fill = source.match(/className="canvas-primer-track-fill[^"]*"/)?.[0] ?? "";
-    expect(track).toContain("rounded-micro");
-    expect(fill).toContain("rounded-micro");
-    expect(track).not.toContain("rounded-full");
-    expect(fill).not.toContain("rounded-full");
+  // The reduced-motion base rule must zero the DELAY, not only the duration. Three surfaces
+  // stagger a reveal with an inline `animationDelay` (the streamed word, the welcome tool
+  // row, the skeleton row); collapsing only the duration leaves each element waiting out its
+  // full stagger, and the streamed word waits it out at `opacity-0` because its settled
+  // opacity comes from a `forwards` fill.
+  //
+  // WHAT THIS CANNOT CATCH, stated rather than implied: it reads the source text, so it
+  // proves the declaration is present and inside the `prefers-reduced-motion` block — not
+  // that a browser reduces anything. happy-dom runs no animations and applies no cascade, so
+  // the behaviour itself is unproven by any automated test in this repo. Deleting the
+  // declaration reddens this; weakening it to a selector that never matches would not.
+  it("zeroes animation-delay inside the reduced-motion block, not merely somewhere", () => {
+    const block = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n {2}\}/.exec(css);
+    if (block?.[1] === undefined) throw new Error("no prefers-reduced-motion block in index.css");
+    expect(block[1]).toMatch(/animation-delay:\s*0m?s\s*!important/);
+    // …and the duration collapse it sits beside is still there — the pair is the rule.
+    expect(block[1]).toMatch(/animation-duration:\s*0\.01ms\s*!important/);
   });
 });
+
+// Two component-source contracts used to live here and no longer do, because the
+// components they pinned are gone: the hold-to-sign fill pinned `publish-sheet.tsx`
+// (B2, #489 — the canvas publish surface), and the progress-track radius pinned
+// `running-review.tsx` (the canvas-era indeterminate bar, which had no production
+// consumer left after the board rebuild). Their CSS left with them.

@@ -870,7 +870,7 @@ export function Sidebar() {
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
           {/* Header — state 1's corner slot: lights → wordmark → toggle (C20).
-              The 81px light reserve, the `navigation-titlebar` drag rule and the
+              The 81px light reserve, the `app-region-drag` utility and the
               collapse toggle all live in `CornerSlot` now; the lockup is the real
               scheme-swapped vector artwork (never a font), dropped 16px → 14px on
               darwin so it still clears the toggle inside the 256px panel (#557). */}

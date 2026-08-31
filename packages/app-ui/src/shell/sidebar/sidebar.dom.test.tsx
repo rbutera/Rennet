@@ -531,9 +531,9 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     expect(slot.getAttribute("data-owner")).toBe("sidebar");
     expect(slot.className).toContain("pl-[81px]");
     expect(slot.className).not.toContain("pl-3");
-    // With hiddenInset the strip IS the titlebar; the shared `navigation-titlebar`
-    // rule drags it and opts its buttons back out.
-    expect(slot.className).toContain("navigation-titlebar");
+    // With hiddenInset the strip IS the titlebar; `app-region-drag` drags it and each
+    // control inside marks itself `app-region-no-drag`.
+    expect(slot.className).toContain("app-region-drag");
 
     const svg = slotLockup(slot);
     expect(svg.getAttribute("height")).toBe("14");
@@ -560,7 +560,7 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
       const slot = cornerSlot(container);
       expect(slot.className).toContain("pl-3");
       expect(slot.className).not.toMatch(/pl-\[\d+px\]/);
-      expect(slot.className).not.toContain("navigation-titlebar");
+      expect(slot.className).not.toContain("app-region-drag");
       expect(slotLockup(slot).getAttribute("height")).toBe("16");
       // Non-darwin loses the inset, not the affordance: the same single toggle.
       expect(slot.querySelectorAll('[aria-label="Collapse sidebar"]').length).toBe(1);

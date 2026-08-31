@@ -31,8 +31,9 @@
 //
 // B09 does NOT edit the pipeline's pure logic: the round-report drafts FIRST and
 // gates the regeneration, per-board arrival powers the reveal, and the durable
-// `persistBoardMeta` are all the pipeline's own behavior (`isRound` derived from
-// `deltaPacket.successorAccount`) — this runtime only wires the seams.
+// `persistBoardMeta` are all the pipeline's own behavior (whether a report drafts at
+// all is the pipeline's exported `draftsRoundReport`) — this runtime only wires the
+// seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
@@ -117,10 +118,16 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
     if (lanes.has(lens)) lanes.set(lens, { id: lens, label: LENS_LANE_LABEL[lens], ...next });
   };
   return {
-    /** The first drafter is under way (the report gated the regeneration and landed). */
+    /** The first drafter is under way. Called when the round report lands (it gated the
+     *  regeneration) AND at the pipeline's own lens kickoff, which fires on every run —
+     *  including the one where a report was expected and failed, the case an arrival-only
+     *  trigger left reading `queued` for the whole run. Idempotent by construction: it
+     *  promotes the first lane only while that lane is still `queued`, so the second caller
+     *  is a no-op rather than a lane reset or a duplicate frame. */
     start(): void {
       const first = LENS_KINDS[0];
-      if (first !== undefined) set(first, { status: "running" });
+      if (first === undefined || lanes.get(first)?.status !== "queued") return;
+      set(first, { status: "running" });
       emit(snapshot());
     },
     /** A lens board's draft landed; the next lens in the pipeline's order is now running.
@@ -759,7 +766,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             });
           };
 
-    const pipeline = await runLensPipeline({
+    const pipelineInput = {
       claudePort,
       codexExecutor,
       repoRoot: input.repoRoot,
@@ -797,6 +804,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       boardIdFor,
       ...(onBoardArrival === undefined ? {} : { onBoardArrival }),
       ...(onLensAbsence === undefined ? {} : { onLensAbsence }),
+      ...(lanes === undefined ? {} : { onLensDraftingStart: () => lanes.start() }),
       ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
         : {
@@ -820,7 +828,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       reviewDraftLintCtx: input.reviewDraftLintCtx,
       ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
+    } satisfies Parameters<typeof runLensPipeline>[0];
+
+    // The lanes' first drafter used to be promoted ONLY by the round report's ARRIVAL,
+    // because a report gates the regeneration and lands ahead of the lenses. Two runs had
+    // nothing to promote it and read "queued" while Design was the one lens working: the
+    // initial drafting path, which drafts no report at all, and the run whose report was
+    // expected and then FAILED (no arrival, and the post-pipeline failure sweep below skips
+    // `report`). Both are now covered by `onLensDraftingStart`, which the pipeline fires
+    // once the report has settled either way — the honest kickoff, read off the real run
+    // instead of re-derived here from `draftsRoundReport`.
+
+    const pipeline = await runLensPipeline(pipelineInput);
     // A drafter that produced no board settles its lane as failed. Without this the lane
     // sits at `queued`/`running` after the round is over — the surface reads "still
     // working" forever, which is the same stall a silent crash leaves behind.
