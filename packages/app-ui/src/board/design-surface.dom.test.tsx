@@ -369,7 +369,7 @@ describe("Design board document metadata", () => {
     );
     if (added === undefined || added === null) throw new Error("Added capability did not render");
     expect(added?.getAttribute("href")).toBe("#refresh-observability");
-    expect(added?.className).toContain("border-l-green-line");
+    expect(added?.className).toContain("border-l-green/70");
     expect(added?.textContent).toContain("2 requirements · 3 scenarios");
     expect(capabilityGrid?.querySelector('[data-capability="github-auth"]')?.textContent).toContain(
       "1 requirement · 0 scenarios",
@@ -1193,7 +1193,7 @@ describe("Design section metadata", () => {
     const card = cards.item(0);
     expect(card.getAttribute("data-spec-delta")).toBeNull();
     expect(card.getAttribute("data-spec-deltas")).toBe("modified added");
-    expect(card.className).toContain("border-l-green-line");
+    expect(card.className).toContain("border-l-green/70");
     expect(
       [...card.querySelectorAll('[data-kind="spec-delta"]')].map((badge) =>
         badge.getAttribute("data-spec-delta"),

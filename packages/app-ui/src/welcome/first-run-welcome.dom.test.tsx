@@ -12,6 +12,11 @@ import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
+import {
+  bindWelcomeIdleLoops,
+  welcomeFragmentIdleAnimation,
+  welcomeParticleIdleAnimation,
+} from "./first-run-welcome";
 
 const ROLES: readonly ReviewRoleMapping[] = [
   {
@@ -170,35 +175,13 @@ describe("FirstRunWelcome", () => {
     expect(
       await screen.findByText("You stopped writing the code. You still have to answer for it."),
     ).toBeTruthy();
-    expect(container.querySelector(".rn-welcome-header")).toBeNull();
+    expect(container.querySelector("header")).toBeNull();
     const fragments = [...container.querySelectorAll("[data-fragment]")];
     expect(fragments).toHaveLength(10);
     expect(new Set(fragments.map((fragment) => fragment.textContent?.length)).size).toBeGreaterThan(
       5,
     );
     expect(screen.getByText("Appearance")).toBeTruthy();
-  });
-
-  it("renders every fragment at a distinct fixed opacity inside the old animated range", async () => {
-    // The idle-CPU fix (perf audit 2026-08-31, §1): the drift loop used to keyframe
-    // `opacity: [0.42, 0.82, 0.56, 0.74, 0.42]`, repainting ten fragments every frame
-    // forever. What this can prove from the DOM is that the channel is now a static
-    // per-fragment value covering the same depth range — NOT that the running animation
-    // omits it. Nothing here reads motion's keyframes; see the report.
-    const { container } = mount(
-      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-    );
-    await screen.findByText("You stopped writing the code. You still have to answer for it.");
-    const fragments = [...container.querySelectorAll<HTMLElement>("[data-fragment]")];
-    expect(fragments).toHaveLength(10);
-    const opacities = fragments.map((fragment) => Number(fragment.style.opacity));
-    // Every fragment carries one — a bare `""` parses to 0 and fails this.
-    expect(opacities.filter((value) => value >= 0.42 && value <= 0.82)).toHaveLength(10);
-    // Layered, not flat: ten different depths, and no two neighbours at the same one.
-    expect(new Set(opacities).size).toBe(10);
-    expect(opacities.filter((value, index) => index > 0 && value === opacities[index - 1])).toEqual(
-      [],
-    );
   });
 
   it("removes the exact visibilitychange listeners it added, on unmount", async () => {
@@ -229,6 +212,180 @@ describe("FirstRunWelcome", () => {
       added.mockRestore();
       removed.mockRestore();
     }
+  });
+
+  it("replaces the opening visibility listener with one for the post-click reel", async () => {
+    const added = vi.spyOn(document, "addEventListener");
+    const removed = vi.spyOn(document, "removeEventListener");
+    try {
+      const { unmount } = mount(
+        <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+
+      await waitFor(() => {
+        const addedHandlers = added.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler);
+        const removedHandlers = removed.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler);
+        expect(addedHandlers.length).toBeGreaterThanOrEqual(2);
+        expect(removedHandlers).toContain(addedHandlers[0]);
+      });
+
+      const postClickHandler = added.mock.calls
+        .filter(([type]) => type === "visibilitychange")
+        .map(([, handler]) => handler)
+        .at(-1);
+      unmount();
+      expect(
+        removed.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler),
+      ).toContain(postClickHandler);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
+  it("keeps every repeat-forever welcome animation transform-only", () => {
+    const fragments = Array.from({ length: 10 }, (_, index) =>
+      welcomeFragmentIdleAnimation(index, 1_200, 800),
+    );
+    const particles = Array.from({ length: 38 }, (_, index) => welcomeParticleIdleAnimation(index));
+
+    for (const animation of fragments) {
+      expect(Object.keys(animation.keyframes).sort()).toEqual(["rotate", "x", "y"]);
+      expect(animation.transition.repeat).toBe(Infinity);
+    }
+    for (const animation of particles) {
+      expect(Object.keys(animation.keyframes).sort()).toEqual(["x", "y"]);
+      expect(animation.transition.repeat).toBe(Infinity);
+    }
+  });
+
+  it("pauses, resumes, and stops every bound idle loop", () => {
+    let hidden = true;
+    let listener = (): void => undefined;
+    const added = vi.fn((_type: "visibilitychange", next: () => void) => {
+      listener = next;
+    });
+    const removed = vi.fn();
+    const loops = Array.from({ length: 48 }, () => ({
+      pause: vi.fn(),
+      play: vi.fn(),
+      stop: vi.fn(),
+    }));
+
+    const cleanup = bindWelcomeIdleLoops(loops, {
+      get hidden() {
+        return hidden;
+      },
+      addEventListener: added,
+      removeEventListener: removed,
+    });
+    expect(loops.every((loop) => loop.pause.mock.calls.length === 1)).toBe(true);
+    expect(loops.every((loop) => loop.play.mock.calls.length === 0)).toBe(true);
+
+    hidden = false;
+    listener();
+    expect(loops.every((loop) => loop.play.mock.calls.length === 1)).toBe(true);
+
+    cleanup();
+    expect(removed).toHaveBeenCalledWith("visibilitychange", listener);
+    expect(loops.every((loop) => loop.stop.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("renders each code fragment as toned spans over its full-length source", async () => {
+    // What a DOM test CAN see: the token structure and which tone each token claims.
+    // What it CANNOT see: the colour those tones resolve to (happy-dom has no style
+    // engine, and the tones resolve through `--rn-syn-*` in index.css), nor the drift
+    // and gather that move these nodes. Asserted here: structure only.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const first = container.querySelector("[data-fragment]");
+    if (!first) throw new Error("no code fragment rendered");
+    // Six lines, not the four of the truncated string version — the fragments carry the
+    // prototype's whole function body, so the rain reads as real code.
+    expect(first.querySelectorAll(":scope > span")).toHaveLength(6);
+    expect(first.querySelector('[data-tone="keyword"]')?.textContent).toBe("export async function");
+    expect(first.querySelector('[data-tone="function"]')?.textContent).toBe(" listProjectFiles");
+    const tones = new Set(
+      [...container.querySelectorAll("[data-fragment] [data-tone]")].map(
+        (node) => node.getAttribute("data-tone") ?? "",
+      ),
+    );
+    // Every tone in the catalogue is actually used by some fragment; a palette entry
+    // nothing renders is a colour nobody sees.
+    expect([...tones].sort()).toEqual([
+      "add",
+      "comment",
+      "function",
+      "hunk",
+      "keyword",
+      "literal",
+      "remove",
+      "string",
+      "type",
+    ]);
+  });
+
+  it("carries the whole sentence per reel row, with the first row repeated for the wrap", async () => {
+    // The reel's MOTION (a `y` keyframe track held 1.55s per word) is invisible here —
+    // no layout, no animation frames. What is assertable is the thing the setInterval
+    // word-swap could not do: every row holds the complete sentence, so nothing reflows
+    // mid-swap, and row 0 is repeated last so the loop closes without a jump.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const rows = [...container.querySelectorAll("[data-sentence-reel] > strong")];
+    expect(rows).toHaveLength(21);
+    expect(rows[0]?.textContent).toBe("Rennet makes code review digestible");
+    expect(rows.at(-1)?.textContent).toBe(rows[0]?.textContent);
+    for (const row of rows) expect(row.textContent).toContain("Rennet makes code review ");
+  });
+
+  it("remounts the stage on every step so its entrance animation re-fires", async () => {
+    // `key={step}` is the whole mechanism: a CSS animation on a node that survives the
+    // step change plays once, on first paint, and never again. Node identity is the only
+    // DOM-visible proof that the remount happens.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const first = container.querySelector("main");
+    expect(first?.className).toContain("animate-welcome-step");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    await screen.findByText("Your tools, already connected.");
+    const second = container.querySelector("main");
+    expect(second).not.toBe(first);
+    expect(second?.className).toContain("animate-welcome-step");
+  });
+
+  it("marks a finished step complete, not merely 'not current'", async () => {
+    // Three states, and the third one is the point: after leaving Appearance its pip
+    // reads `complete` with a tick, while Review setup is `active` and the rest are
+    // `upcoming`. Position matters here — asserting the SET of states would pass on a
+    // wizard that marked the wrong steps done.
+    mount(<RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    await screen.findByText("Your tools, already connected.");
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+    await screen.findByText("Choose how Rennet reviews.");
+    const nav = screen.getByRole("navigation", { name: "Welcome progress" });
+    expect(
+      [...nav.querySelectorAll("button")].map((pip) => pip.getAttribute("data-state")),
+    ).toEqual(["complete", "complete", "active", "upcoming", "upcoming"]);
+    // The done pips swap their number for a tick; the active one keeps its number.
+    expect(within(nav).getByText("3")).toBeTruthy();
+    expect(within(nav).queryByText("1")).toBeNull();
   });
 
   it("applies and persists appearance immediately inside the welcome", async () => {

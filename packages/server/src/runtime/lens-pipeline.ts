@@ -49,6 +49,7 @@ import {
   type DraftBoard,
   DraftBoardSchema,
   type DraftElement,
+  type FindingAccord,
   type FindingAgreement,
   type FindingDisposition,
   type FindingElement,
@@ -240,6 +241,21 @@ export function foldConcurrence(
   }));
 }
 
+/**
+ * The agreement KIND, as the wire's `accord` — the fact {@link foldConcurrence}'s
+ * tallies structurally cannot express.
+ *
+ * A concurring pair folds to `[{a,1,1},{b,1,1}]`. So does a CONFLICT: two seats that
+ * both raised the finding at materially different severities, where NEITHER answer is
+ * `NO_CONCERN_ANSWER` (`core/src/finding-reconcile.ts` — the conflict arm of
+ * `reconcileFindings`). The two tally sets are byte-identical, so a client reading the
+ * arithmetic alone renders a disagreement as agreement. This stamp is the difference.
+ */
+function accordOf(agreement: FindingAgreement): FindingAccord {
+  if (agreement.kind === "concur") return "concur";
+  return agreement.answers.some((ans) => ans.answer === NO_CONCERN_ANSWER) ? "split" : "conflict";
+}
+
 /** Merge accumulated skippedHunks from both boards (dedup by hunk id). */
 function mergeSkips(boardA: DraftBoard, boardB: DraftBoard): { hunk: string; reason: string }[] {
   const read = (b: DraftBoard) =>
@@ -367,7 +383,11 @@ export function reconcileFlaggedBoards(
     if (r === undefined) return el;
     return {
       ...el,
-      data: { ...(el.data as object), concurrence: foldConcurrence(r.agreement, labels) },
+      data: {
+        ...(el.data as object),
+        concurrence: foldConcurrence(r.agreement, labels),
+        accord: accordOf(r.agreement),
+      },
     } as DraftElement;
   };
 
@@ -395,7 +415,12 @@ export function reconcileFlaggedBoards(
   } as DraftBoard;
 }
 
-/** Stamp single-seat concurrence on every finding (the honest degrade — one harness only). */
+/**
+ * Stamp single-seat concurrence on every finding (the honest degrade — one harness only).
+ *
+ * No `accord`: one seat has no agreement to report. Stamping `concur` here would claim a
+ * second opinion that never ran, and `split` would name a disagreement with nobody.
+ */
 export function stampSingleSeatConcurrence(board: DraftBoard, label: string): DraftBoard {
   const elements = board.elements.map((el) =>
     el.kind === "finding"
@@ -688,6 +713,16 @@ export interface LensPipelineDeps {
   /** A successful lens absence, emitted as soon as discovery settles it. */
   readonly onLensAbsence?: (lens: LensKind, reason: LensAbsenceReason) => void | Promise<void>;
   /**
+   * The lens drafters are about to start. Fires exactly once per pipeline, immediately
+   * before the first lens drafts — so AFTER the round report has settled, whichever way it
+   * settled. This is the honest kickoff signal: the caller's lane block reads "queued" until
+   * something says otherwise, and the report's ARRIVAL cannot be that something on a run
+   * where the report was expected and then FAILED (no arrival is announced, and the failure
+   * sweep only runs once the whole pipeline is over). The lenses run regardless — the report
+   * gates the reveal, not the drafting — so the lanes must start regardless too.
+   */
+  readonly onLensDraftingStart?: () => void;
+  /**
    * The durable home for a board's coverage/validation metadata (finding 3): the
    * `skippedHunks` and validation blemishes the whiteboard event log cannot carry.
    * Called after the board's ops are accepted and BEFORE its arrival is announced,
@@ -773,6 +808,32 @@ function pipelineGenerationId(
   deps: Pick<LensPipelineDeps, "currentGeneration" | "deltaPacket">,
 ): string {
   return deps.currentGeneration ?? generationIdForPatchset(deps.deltaPacket.patchset.id);
+}
+
+/**
+ * Whether this run drafts a ROUND REPORT ahead of the lens boards — see the R58/D3 note
+ * at the call site for why the two shapes differ.
+ *
+ * Exported because the report is also what promotes the live lens lanes' first drafter:
+ * the arrival of the report calls `lanes.start()`. A run that drafts no report has to
+ * start them at kickoff instead, and the caller can only know which it is by asking the
+ * same question the pipeline asks. Copying the predicate over there would let the two
+ * drift into a run that starts its lanes twice (the first lane reads "running" while the
+ * report is still drafting) or never (the first lens reads "queued" for its whole run,
+ * which is the bug this was extracted for).
+ */
+export function draftsRoundReport(
+  deps: Pick<LensPipelineDeps, "currentGeneration" | "deltaPacket" | "round">,
+): boolean {
+  // R58/D3 — a landed dispatched round is explicit in its generation lineage. The
+  // successor account is useful report material, but it is not the round marker: old
+  // reviews can reconstruct exact durable asks without `review.dispositions`, so their
+  // account may be absent even though the code moved. A same-generation round is the
+  // honest no-code shape and drafts no report. Legacy callers without round context keep
+  // the old successor-account signal.
+  return deps.round === undefined
+    ? deps.deltaPacket.successorAccount !== undefined
+    : deps.round.previousGeneration !== pipelineGenerationId(deps);
 }
 
 // ── Seat resolution (council-routed, the B06 precedent) ──
@@ -1099,19 +1160,20 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const postProcessText = await deps.readPrompt(POST_PROCESS_FILE);
   const postProcess = buildPostProcess(deps, council, postProcessText);
 
-  // R58/D3 — a landed dispatched round is explicit in its generation lineage. The
-  // successor account is useful report material, but it is not the round marker: old
-  // reviews can reconstruct exact durable asks without `review.dispositions`, so their
-  // account may be absent even though the code moved. A same-generation round is the
-  // honest no-code shape and drafts no report. Legacy callers without round context keep
-  // the old successor-account signal.
-  const currentGeneration = pipelineGenerationId(deps);
-  const isRound =
-    deps.round === undefined
-      ? deps.deltaPacket.successorAccount !== undefined
-      : deps.round.previousGeneration !== currentGeneration;
-  const report = isRound ? await runRoundReport(deps, council, postProcess) : undefined;
+  // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
+  // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.
+  const report = draftsRoundReport(deps)
+    ? await runRoundReport(deps, council, postProcess)
+    : undefined;
   const reportBoard = report?.board;
+
+  // The report has settled — arrived, failed, or was never expected — and the lens drafters
+  // start now in all three cases. Saying so here, from the run itself, is what keeps the
+  // caller's lane block honest on the path where the report was expected and FAILED: nothing
+  // announces an arrival, so a caller that starts its lanes off the arrival alone shows
+  // "queued" for the whole run while Design is the one lens working. This fires after the
+  // report's arrival, never before, so the report's announce-first contract still holds.
+  deps.onLensDraftingStart?.();
 
   const outcomes: LensBoardOutcome[] = [];
   for (const lens of LENS_KINDS) {

@@ -123,8 +123,12 @@ describe("kit design ramp (utility contracts)", () => {
 
   it("the ramp utilities and shadcn radius aliases exist in the shared theme", () => {
     const theme = readFileSync(join(SRC, "..", "..", "theme", "src", "theme.css"), "utf8");
-    // 2xs and display are Rennet-defined; the rest are Tailwind defaults.
+    // 10, 2xs, 12-5, 13, 15 and display are Rennet-defined; the rest are
+    // Tailwind defaults. text-15 (chat/review prose) and text-12-5 (dense body)
+    // joined the ramp with the prototype convergence, 2026-08-30.
     expect(theme).toContain("--text-2xs: 0.6875rem");
+    expect(theme).toContain("--text-12-5: 0.78125rem");
+    expect(theme).toContain("--text-15: 0.9375rem");
     expect(theme).toContain("--text-display: clamp(2.125rem, 5vw, 3.5rem)");
     // Wave 1 shadcn radius aliases the kit's rounded-sm…rounded-2xl resolve through.
     expect(theme).toContain("--radius-md: var(--radius-chip)");

@@ -369,7 +369,10 @@ export function CodeView({
             isGlow
               ? "cv-glow shadow-[inset_3px_0_0_0_var(--rn-accent),inset_0_0_18px_var(--rn-accent-soft)]"
               : "",
-            isFocus ? "cv-focus" : "",
+            // Marker + utility, the same shape as `cv-glow` above: `cv-focus` names the
+            // state for anything asking which row is pointed at, `animate-cv-focus-pulse`
+            // is the theme's keyframe reached as a utility (so it composes with variants).
+            isFocus ? "cv-focus animate-cv-focus-pulse motion-reduce:animate-none" : "",
           ]
             .filter(Boolean)
             .join(" ");

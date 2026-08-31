@@ -74,7 +74,6 @@ export {
   createUiSlice,
   selectBackgroundEvents,
   selectDialogOpen,
-  selectFolded,
   selectProcessingProjectIds,
   selectTopDialog,
 } from "./ui";

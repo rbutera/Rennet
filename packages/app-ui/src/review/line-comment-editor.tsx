@@ -90,7 +90,7 @@ export function LineCommentEditor({
               if (trimmed.length > 0) onRequestChanges(trimmed);
             }}
             className={cn(
-              "rounded-md border border-destructive/50 px-2.5 py-1 text-2xs font-medium text-destructive transition-colors hover:bg-destructive/10",
+              "rounded-md border border-warn-line px-2.5 py-1 text-2xs font-medium text-warn transition-colors hover:bg-warn-soft",
             )}
           >
             Request Changes

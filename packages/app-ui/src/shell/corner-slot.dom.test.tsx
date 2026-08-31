@@ -7,7 +7,7 @@
 // nothing on screen tells you it happened.
 //
 // Plus #557's platform pattern: on darwin the OWNING slot reserves the traffic-light
-// zone and carries the `navigation-titlebar` drag rule; on win32 / linux / undefined
+// zone and carries the `app-region-drag` utility; on win32 / linux / undefined
 // it reserves nothing and drags nothing, while the toggle geometry is IDENTICAL —
 // non-darwin loses the inset, not the affordance.
 import { afterEach, describe, expect, it } from "vitest";
@@ -112,7 +112,20 @@ describe("corner slot: darwin reserves, every other host does not (C20 §6.2)", 
       // inset 4px from the corner so it needs 76 − 4), but every owner reserves
       // SOMETHING on darwin.
       expect(slot.className).toMatch(/pl-\[(81|76|72)px\]/);
-      expect(slot.className).toContain("navigation-titlebar");
+      expect(slot.className).toContain("app-region-drag");
+      // Every interactive thing INSIDE the drag strip opts back out by name. This used to
+      // be a `.navigation-titlebar button, a, input, code` list in the stylesheet, which
+      // covered this <button> only because it is a <button>: a `div[role="button"]` or a
+      // span trigger dropped into the strip stayed a drag surface and never received its
+      // own clicks. Asserting the class at each control is what makes that unmissable.
+      //
+      // What this CANNOT prove: `-webkit-app-region` is a Chromium/Electron window
+      // property with no representation in happy-dom — no layout, no computed effect, no
+      // event behaviour. The assertion is that the opt-out is DECLARED on the control;
+      // that it actually restores clicks is only observable in a real Electron window.
+      for (const control of slot.querySelectorAll("button, a, input, [role='button']")) {
+        expect(control.className).toContain("app-region-no-drag");
+      }
       cleanup();
     });
   }
@@ -129,7 +142,7 @@ describe("corner slot: darwin reserves, every other host does not (C20 §6.2)", 
         const slot = slots()[0];
         if (!slot) throw new Error("no corner slot");
         expect(slot.className).not.toMatch(/pl-\[\d+px\]/);
-        expect(slot.className).not.toContain("navigation-titlebar");
+        expect(slot.className).not.toContain("app-region-drag");
         // ...and the affordance is untouched: the SAME single toggle, in the same
         // place, with the same label. Only the inset is gone.
         const toggles = slot.querySelectorAll(

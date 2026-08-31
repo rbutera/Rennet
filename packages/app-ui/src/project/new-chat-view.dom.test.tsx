@@ -11,7 +11,13 @@
 // `/s/<sessionId>` carrying the typed ask, and the claimed row LEAVES the list until its
 // session is archived. Those legs are driven here over a MemoryBridge holding a real
 // session list, with the row-vanish positive control both ways.
-import type { CommandInput, Project, ProjectDetail, SidebarSession } from "@rennet/protocol";
+import type {
+  CommandInput,
+  CommandOutput,
+  Project,
+  ProjectDetail,
+  SidebarSession,
+} from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { Router, useSearch } from "wouter";
 import { CoachProvider, useCoachStore } from "../coach/context";
@@ -20,7 +26,7 @@ import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { newChatPath } from "../routes/url";
 import { PriorSurfaceProvider } from "../settings/prior-surface";
-import { cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
+import { act, cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { NewChatView } from "./new-chat-view";
 
@@ -399,10 +405,10 @@ describe("NewChatView", () => {
     renderView("p1", { p1: crossForgeLocalDetail() });
 
     const github = await screen.findByRole("button", {
-      name: /main.*GitHub.*acme\/widget.*Reviewed/i,
+      name: /main.*Reviewed.*GitHub.*acme\/widget/i,
     });
     const gitlab = screen.getByRole("button", {
-      name: /main.*GitLab.*acme\/widget.*Reviewed/i,
+      name: /main.*Reviewed.*GitLab.*acme\/widget/i,
     });
     expect(within(github).getByText("GitHub")).toBeTruthy();
     expect(within(gitlab).getByText("GitLab")).toBeTruthy();
@@ -412,10 +418,10 @@ describe("NewChatView", () => {
     const filter = screen.getByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "gitlab" } });
     expect(
-      screen.getByRole("button", { name: /main.*GitLab.*acme\/widget.*Reviewed/i }),
+      screen.getByRole("button", { name: /main.*Reviewed.*GitLab.*acme\/widget/i }),
     ).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: /main.*GitHub.*acme\/widget.*Reviewed/i }),
+      screen.queryByRole("button", { name: /main.*Reviewed.*GitHub.*acme\/widget/i }),
     ).toBeNull();
   });
 
@@ -429,18 +435,18 @@ describe("NewChatView", () => {
     fireEvent.change(screen.getByLabelText("Filter branches and change requests"), {
       target: { value: "github" },
     });
-    expect(await screen.findByText("Nothing matches.")).toBeTruthy();
+    expect(await screen.findByText("nothing matches")).toBeTruthy();
   });
 
   it("filtered-empty and empty states read honestly", async () => {
     renderView("p1", { p1: detailP1() });
     const filter = await screen.findByLabelText("Filter branches and change requests");
     fireEvent.change(filter, { target: { value: "zzz-nothing" } });
-    expect(screen.getByText("Nothing matches.")).toBeTruthy();
+    expect(screen.getByText("nothing matches")).toBeTruthy();
 
     cleanup();
     renderView("p2", { p2: EMPTY_DETAIL });
-    await screen.findByText("No open branches or change requests yet.");
+    await screen.findByText("no open branches or change requests yet");
   });
 
   it("Escape is two-stage: clear the filter, then return to the prior surface", async () => {
@@ -466,10 +472,34 @@ describe("NewChatView", () => {
     const { history, user } = renderView("p1", { p1: detailP1(), p2: EMPTY_DETAIL });
     await screen.findByText("My open change");
 
-    await user.click(screen.getByRole("button", { name: /^Project:/ }));
+    await user.click(screen.getByRole("button", { name: "Choose project" }));
     await user.click(await screen.findByText("whiteboard"));
 
     await waitFor(() => expect(history.history.at(-1)).toBe(newChatPath("p2")));
+  });
+
+  it("the headline picker is a bordered pill with a glyph, over a searchable host-grouped list", async () => {
+    // The picker used to be a borderless gold dotted-underline link over a plain button
+    // list: no glyph, no search, no host grouping. It is the Projects page's picker now,
+    // at headline size, so all three arrive with it — and there is ONE picker to drift.
+    const { user } = renderView("p1", { p1: detailP1(), p2: EMPTY_DETAIL });
+    await screen.findByText("My open change");
+
+    const trigger = screen.getByRole("button", { name: "Choose project" });
+    expect(trigger.className).toContain("border-line");
+    expect(trigger.className).not.toContain("decoration-dotted");
+    // The glyph, at the headline's size step rather than the inline one.
+    expect(trigger.querySelector("svg")?.classList.value).toContain("size-5");
+    // No size class of its own: it INHERITS the `<h1>`'s display face and size.
+    expect(trigger.className).not.toMatch(/\btext-(13|sm|base|xs)\b/);
+
+    await user.click(trigger);
+    // A search box, and the host heading the sidebar groups by.
+    expect(await screen.findByPlaceholderText("Search projects")).toBeTruthy();
+    expect(screen.getByText("This machine")).toBeTruthy();
+    // Every row carries its project glyph.
+    const row = screen.getByText("whiteboard").closest("[data-slot='command-item']");
+    expect(row?.querySelector("svg")).not.toBeNull();
   });
 
   it("merged rows dim (read-only lift), single-repo drops the repo column", async () => {
@@ -516,7 +546,12 @@ describe("NewChatView", () => {
     expect(within(rowButton(/My open change/)).queryByText("Your PR")).toBeNull();
   });
 
-  it("offers the first-run New Chat coach only before any session exists anywhere", async () => {
+  // The `new-chat` mark ("Start Here") anchors the SIDEBAR's New Chat row now, not this
+  // view — a mark pointing at a surface you had to already find teaches nothing. So this
+  // view elects `smart-list` whatever the session state is, and never `new-chat`. The
+  // first-run GATE that used to live here is proved on its new anchor, in
+  // `coach/every-anchor.dom.test.tsx` ("only while there are no sessions").
+  it("elects smart-list on this surface, never the sidebar's first-run mark", async () => {
     const coach = () =>
       createCoachStore({ initial: { seen: [], skipAll: false }, persist: () => undefined });
 
@@ -529,7 +564,8 @@ describe("NewChatView", () => {
       undefined,
       emptyCoach,
     );
-    await waitFor(() => expect(empty.getByTestId("active-coach").textContent).toBe("new-chat"));
+    // Zero sessions anywhere — the state that USED to elect `new-chat` here.
+    await waitFor(() => expect(empty.getByTestId("active-coach").textContent).toBe("smart-list"));
     empty.unmount();
     cleanup();
 
@@ -707,6 +743,180 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await screen.findByText("My open change");
     expect(screen.queryByText("feat/local-x")).toBeNull();
     expect(store.sessions).toHaveLength(1);
+  });
+
+  it("marks the row that is STARTING, and only that row, while its mint is in flight", async () => {
+    // The spike marked the row you had SELECTED. This list has no selection — R26 made the
+    // click the start — so the mark says "this row is starting". Held on a mint that never
+    // settles, which is the only state in which the mark is on screen at all.
+    const history = memoryHistory(newChatPath("p1"));
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("p1", "rennet")] }),
+      "project.detail": () => detailP1(),
+      "session.list": () => ({ sessions: [] }),
+      "session.mint": () => new Promise(() => undefined),
+    } satisfies MemoryBridgeHandlers);
+
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <PriorSurfaceProvider value={{ current: newChatPath() }}>
+            <NewChatView projectId="p1" />
+          </PriorSurfaceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    await screen.findByText("My open change");
+
+    // Before any click every row reserves the mark column, and none of them wears it — so
+    // the list cannot shift sideways when one appears.
+    const rows = () => screen.getAllByRole("button").filter((b) => b.dataset.row === "target");
+    expect(rows().length).toBeGreaterThan(1);
+    for (const row of rows()) expect(row.dataset.starting).toBeUndefined();
+
+    fireEvent.click(rowButton(/My open change/));
+
+    await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBe("true"));
+    const started = rowButton(/My open change/);
+    expect(started.className).toContain("bg-secondary/60");
+    // The mark itself is the tick that faded IN on this row…
+    expect(started.querySelector('[data-mark="start"]')?.classList.value).toContain("opacity-100");
+    // …and stayed faded OUT everywhere else. Exactly one row is starting.
+    const others = rows().filter((row) => row !== started);
+    expect(others.length).toBeGreaterThan(0);
+    for (const row of others) {
+      expect(row.dataset.starting).toBeUndefined();
+      expect(row.className).not.toContain("bg-secondary/60");
+      const checks = row.querySelectorAll('[data-mark="start"]');
+      expect(checks).toHaveLength(1);
+      expect(checks[0]?.classList.value).toContain("opacity-0");
+    }
+  });
+
+  // ── The starting mark's IDENTITY, not just its visibility ────────────────────
+  //
+  // `mint.pending` decides whether the mark is drawn; it never decided which row it names.
+  // A mark is only on screen DURING a flight, so a stale id from a settled flight is
+  // invisible until a LATER start puts the mark back — which is why every test below needs
+  // a second start to observe the first one's leftovers.
+
+  /**
+   * A `session.mint` the test settles by hand on its FIRST call; every call after that
+   * hangs, holding the second flight open so the mark it draws can be read.
+   *
+   * `session: null` is the honest resolve to use here: a host with no session store mints
+   * nothing and the client stays on New Chat (`new-chat-mint.ts`), so the surface survives
+   * its own success. A real mint navigates away and takes the mark with it.
+   */
+  function stagedMint() {
+    let settleFirst: ((outcome: "resolve" | "reject") => void) | undefined;
+    let calls = 0;
+    const handler = (): Promise<CommandOutput<"session.mint">> => {
+      calls += 1;
+      if (calls > 1) return new Promise<CommandOutput<"session.mint">>(() => undefined);
+      return new Promise<CommandOutput<"session.mint">>((resolve, reject) => {
+        settleFirst = (outcome) => {
+          if (outcome === "resolve") resolve({ session: null, reattached: false });
+          else reject(new Error("session store unavailable"));
+        };
+      });
+    };
+    return {
+      handler,
+      async settle(outcome: "resolve" | "reject") {
+        await act(async () => {
+          settleFirst?.(outcome);
+        });
+      },
+    };
+  }
+
+  /** `renderView`'s URL-driven harness with the mint handler swapped for a staged one. */
+  function renderStaged(handler: () => Promise<CommandOutput<"session.mint">>) {
+    const history = memoryHistory(newChatPath("p1"));
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("p1", "rennet"), project("p2", "whiteboard")] }),
+      "project.detail": (input) => (input.projectId === "p1" ? detailP1() : EMPTY_DETAIL),
+      "session.list": () => ({ sessions: [] }),
+      "session.mint": handler,
+    } satisfies MemoryBridgeHandlers);
+
+    function Harness() {
+      const id = new URLSearchParams(useSearch()).get("project") ?? "";
+      return id === "" ? null : <NewChatView projectId={id} />;
+    }
+
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <PriorSurfaceProvider value={{ current: newChatPath() }}>
+            <Harness />
+          </PriorSurfaceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    return { ...view, history };
+  }
+
+  /** Type into the composer and press its Send — the OTHER start entry point. */
+  async function composerSend(user: ReturnType<typeof mount>["user"]): Promise<void> {
+    await user.type(screen.getByLabelText("Message the orchestrator"), "what changed?");
+    await user.click(screen.getByLabelText("Send"));
+  }
+
+  it("a RESOLVED mint releases the row it marked — the composer's next send marks the checkout", async () => {
+    const mint = stagedMint();
+    const { user } = renderStaged(mint.handler);
+    await screen.findByText("My open change");
+
+    fireEvent.click(rowButton(/My open change/));
+    await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBe("true"));
+    await mint.settle("resolve");
+    await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBeUndefined());
+
+    // The composer starts the CHECKOUT row. Before the fix the id from the settled flight
+    // was still held, so this second flight re-lit the PR row instead.
+    await composerSend(user);
+    await waitFor(() => expect(rowButton(/Current Checkout/).dataset.starting).toBe("true"));
+    expect(rowButton(/My open change/).dataset.starting).toBeUndefined();
+  });
+
+  it("a REJECTED mint releases it too — a failed row does not resurrect under the composer", async () => {
+    const mint = stagedMint();
+    const { user } = renderStaged(mint.handler);
+    await screen.findByText("My open change");
+
+    fireEvent.click(rowButton(/My open change/));
+    await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBe("true"));
+    await mint.settle("reject");
+    await screen.findByRole("alert");
+
+    await composerSend(user);
+    await waitFor(() => expect(rowButton(/Current Checkout/).dataset.starting).toBe("true"));
+    expect(rowButton(/My open change/).dataset.starting).toBeUndefined();
+  });
+
+  it("switching project mid-flight does not carry the mark onto the new project's row", async () => {
+    // `CHECKOUT_ROW_ID` is a CONSTANT, so it collides across every project by construction:
+    // the old project's in-flight mark landed on the new project's checkout row, naming a
+    // start that had nothing to do with it. This is the many-repos-one-identity shape again.
+    const { user } = renderStaged(
+      () => new Promise<CommandOutput<"session.mint">>(() => undefined),
+    );
+    await screen.findByText("My open change");
+
+    fireEvent.click(rowButton(/Current Checkout/));
+    await waitFor(() => expect(rowButton(/Current Checkout/).dataset.starting).toBe("true"));
+
+    await user.click(screen.getByRole("button", { name: "Choose project" }));
+    await user.click(await screen.findByText("whiteboard"));
+
+    // p2 is empty, so its checkout row is the only row — and the flight it would be
+    // reporting belongs to p1.
+    await waitFor(() =>
+      expect(screen.getByText("no open branches or change requests yet")).toBeTruthy(),
+    );
+    expect(rowButton(/Current Checkout/).dataset.starting).toBeUndefined();
   });
 
   it("a failed mint says so and stays put — nothing is claimed to have started", async () => {

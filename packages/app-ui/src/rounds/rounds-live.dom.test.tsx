@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 import type {
-  ComposedHandoffBundle,
+  CommandOutput,
   Review,
   RoundEvent,
   RoundOperationProgressSnapshot,
   SidebarSession,
 } from "@rennet/protocol";
+import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider, useCommand } from "../data";
@@ -34,6 +35,8 @@ import {
 
 const REVIEW = "rev-live";
 const SESSION = "session-live";
+const OTHER_REVIEW = "rev-other";
+const OTHER_SESSION = "session-other";
 
 const OPERATION_BASE = {
   operationId: "operation-live",
@@ -167,8 +170,50 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
         {state.phase === "failed" ? `/${state.reason}` : ""}
       </span>
       <span>rounds:{unavailable === undefined ? "readable" : `unavailable/${unavailable}`}</span>
-      <button type="button" onClick={() => dispatch?.(slug)}>
+      <button type="button" onClick={() => void dispatch?.(slug)}>
         dispatch
+      </button>
+    </>
+  );
+}
+
+function CrossSessionProbe({
+  onFirstSettled,
+  onSecondSettled = () => undefined,
+}: {
+  readonly onFirstSettled: () => void;
+  readonly onSecondSettled?: () => void;
+}) {
+  const dispatch = useRoundDispatch();
+  const first = useRoundState(SESSION);
+  const second = useRoundState(OTHER_SESSION);
+  const [settlements, setSettlements] = useState(0);
+  return (
+    <>
+      <span>first:{first.phase}</span>
+      <span>second:{second.phase}</span>
+      <span>settlements:{settlements}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void dispatch?.(SESSION).then(() => {
+            setSettlements((count) => count + 1);
+            onFirstSettled();
+          })
+        }
+      >
+        dispatch first
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void dispatch?.(OTHER_SESSION).then(() => {
+            setSettlements((count) => count + 1);
+            onSecondSettled();
+          })
+        }
+      >
+        dispatch second
       </button>
     </>
   );
@@ -184,11 +229,8 @@ function TranscriptProbe() {
 const dispatchAnswer = (
   reviewId: string,
   acceptedOperation?: RoundOperationProgressSnapshot,
-): {
-  workOrder: ComposedHandoffBundle;
-  dispatched: boolean;
-  acceptedOperation?: RoundOperationProgressSnapshot;
-} => ({
+  dispatched = true,
+): CommandOutput<"round.dispatch"> => ({
   workOrder: {
     reviewId,
     patchsetId: "ps-1",
@@ -198,7 +240,7 @@ const dispatchAnswer = (
     composed: true,
     traceMap: {},
   },
-  dispatched: true,
+  dispatched,
   ...(acceptedOperation === undefined ? {} : { acceptedOperation }),
 });
 
@@ -565,26 +607,51 @@ describe("the mounted transcript refresh receipts", () => {
 // round under way. The intent now says only what is true, and the receipt is what
 // settles it — confirmed by the daemon's own events, or refuted out loud.
 describe("dispatch is an intent until the daemon answers (C15 finding 7)", () => {
-  function bridgeWith(dispatchImpl: (reviewId: string) => Promise<unknown>): {
+  function completedRound(): RoundEvent {
+    return operationEvent(
+      {
+        phase: "completed",
+        ...SETTLED_OPERATION,
+        result: {
+          kind: "changed",
+          report: {
+            status: "verified",
+            reportBoardId: "report-round-1",
+            generation: "generation-round-1",
+          },
+        },
+      },
+      10,
+      { draining: false, rerunRequested: false },
+    );
+  }
+
+  function bridgeWith(
+    dispatchImpl: (reviewId: string) => Promise<CommandOutput<"round.dispatch">>,
+    seed: readonly RoundEvent[] = [],
+  ): {
     readonly bridge: MemoryBridge;
     readonly readsStarted: () => boolean;
   } {
     let readsStarted = false;
-    const bridge = new MemoryBridge({
+    const handlers: MemoryBridgeHandlers = {
       ...resolutionHandlers,
       "session.roundEvents": () => {
         readsStarted = true;
-        return { events: [] };
+        return { events: [...seed] };
       },
       "session.rounds": () => ({ records: [] }),
-      "round.dispatch": ((input: { reviewId: string }) => dispatchImpl(input.reviewId)) as never,
-    });
+      "round.dispatch": ({ reviewId }) => dispatchImpl(reviewId),
+    };
+    const bridge = new MemoryBridge(handlers);
     return { bridge, readsStarted: () => readsStarted };
   }
 
   it("shows the reviewer's INTENT while the daemon has said nothing", async () => {
     // The receipt never settles — the window this covers.
-    const { bridge, readsStarted } = bridgeWith(() => new Promise(() => undefined));
+    const { bridge, readsStarted } = bridgeWith(
+      () => new Promise<CommandOutput<"round.dispatch">>(() => undefined),
+    );
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
     await waitFor(() => expect(readsStarted()).toBe(true));
@@ -602,6 +669,100 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
     act(() => getByText("dispatch").click());
     // THE LIE THIS GUARDS: the round never started, so nothing may claim it did.
     await waitFor(() => expect(getByText("phase:failed/no work order to dispatch")).toBeTruthy());
+  });
+
+  it("restores a completed round when the transport rejects before accepting another", async () => {
+    let refuse: ((reason?: unknown) => void) | undefined;
+    const { bridge, readsStarted } = bridgeWith(
+      () =>
+        new Promise<CommandOutput<"round.dispatch">>((_resolve, reject) => {
+          refuse = reject;
+        }),
+      [completedRound()],
+    );
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
+
+    act(() => getByText("dispatch").click());
+    await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+    await act(async () => {
+      refuse?.(new Error("transport closed"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+  });
+
+  it.each(["not-dispatched", "missing-operation", "transport-rejected"] as const)(
+    "keeps a live accepted operation when the later receipt is %s",
+    async (settlement) => {
+      let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+      let refuse: ((reason?: unknown) => void) | undefined;
+      const { bridge } = bridgeWith(
+        () =>
+          new Promise<CommandOutput<"round.dispatch">>((resolve, reject) => {
+            answer = resolve;
+            refuse = reject;
+          }),
+        [completedRound()],
+      );
+      const { getByText } = mountLive(bridge);
+      await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+
+      act(() => getByText("dispatch").click());
+      await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+      act(() =>
+        bridge.emitRoundProgress(
+          REVIEW,
+          operationEvent({ phase: "claimed" }, 11, { draining: false, rerunRequested: false }),
+        ),
+      );
+      await act(async () => {
+        if (settlement === "not-dispatched") answer?.(dispatchAnswer(REVIEW, undefined, false));
+        else if (settlement === "missing-operation") answer?.(dispatchAnswer(REVIEW));
+        else refuse?.(new Error("transport closed"));
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+    },
+  );
+
+  it("an honest dispatched:false receipt clears the pending intent", async () => {
+    let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+    const { bridge, readsStarted } = bridgeWith(
+      () =>
+        new Promise<CommandOutput<"round.dispatch">>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
+
+    act(() => getByText("dispatch").click());
+    await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+    act(() => answer?.(dispatchAnswer(REVIEW, undefined, false)));
+
+    await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+  });
+
+  it("dispatched:true without an accepted operation closes the intent as failed", async () => {
+    const { bridge, readsStarted } = bridgeWith(async (reviewId) => dispatchAnswer(reviewId));
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
+
+    act(() => getByText("dispatch").click());
+
+    await waitFor(() =>
+      expect(
+        getByText(
+          "phase:failed/Rennet did not receive the accepted operation for this coding round. Try dispatching again.",
+        ),
+      ).toBeTruthy(),
+    );
   });
 
   it("the daemon's own events take over from the intent once they arrive", async () => {
@@ -659,6 +820,153 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
     await waitFor(() => expect(eventReads).toBeGreaterThan(1));
     expect(getByText("phase:dispatching")).toBeTruthy();
   });
+
+  it("keeps a late accepted dispatch keyed to its original review after the route changes", async () => {
+    let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+    let settled = 0;
+    const otherReview: Review = { ...RESOLVED_REVIEW, id: OTHER_REVIEW };
+    const otherSession: SidebarSession = {
+      ...SESSION_ROW,
+      id: OTHER_SESSION,
+      reviewId: OTHER_REVIEW,
+      title: "Other review",
+    };
+    const bridge = new MemoryBridge({
+      "session.list": () => ({ sessions: [SESSION_ROW, otherSession] }),
+      "review.load": ({ reviewId }) => ({
+        review: reviewId === REVIEW ? RESOLVED_REVIEW : otherReview,
+        repositoryPresent: true,
+      }),
+      "session.roundEvents": () => ({ events: [] }),
+      "session.rounds": () => ({ records: [] }),
+      "round.dispatch": () =>
+        new Promise<CommandOutput<"round.dispatch">>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    const history = memoryHistory(`/s/${SESSION}/run`);
+    const r = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveScope>
+            <CrossSessionProbe
+              onFirstSettled={() => {
+                settled += 1;
+              }}
+            />
+          </LiveScope>
+        </Router>
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(r.getByText("first:absent")).toBeTruthy());
+
+    act(() => r.getByText("dispatch first").click());
+    await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
+    act(() => history.navigate(`/s/${OTHER_SESSION}/run`));
+    await waitFor(() => expect(r.getByText("second:absent")).toBeTruthy());
+
+    await act(async () => {
+      answer?.(
+        dispatchAnswer(REVIEW, {
+          ...OPERATION_BASE,
+          revision: 0,
+          state: { phase: "claimed" },
+        }),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(settled).toBe(1));
+    act(() => bridge.emitRoundProgress(OTHER_REVIEW, { type: "failed", reason: "no B round" }));
+    expect(r.getByText("second:absent")).toBeTruthy();
+
+    act(() => history.navigate(`/s/${SESSION}/run`));
+    await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
+  });
+
+  it.each(["not-dispatched", "missing-operation", "transport-rejected"] as const)(
+    "keeps B's newer intent when deferred A settles as %s",
+    async (settlement) => {
+      let answerA: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+      let refuseA: ((reason?: unknown) => void) | undefined;
+      let answerB: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+      let firstSettled = 0;
+      let secondSettled = 0;
+      const otherReview: Review = { ...RESOLVED_REVIEW, id: OTHER_REVIEW };
+      const otherSession: SidebarSession = {
+        ...SESSION_ROW,
+        id: OTHER_SESSION,
+        reviewId: OTHER_REVIEW,
+        title: "Other review",
+      };
+      const bridge = new MemoryBridge({
+        "session.list": () => ({ sessions: [SESSION_ROW, otherSession] }),
+        "review.load": ({ reviewId }) => ({
+          review: reviewId === REVIEW ? RESOLVED_REVIEW : otherReview,
+          repositoryPresent: true,
+        }),
+        "session.roundEvents": () => ({ events: [] }),
+        "session.rounds": () => ({ records: [] }),
+        "round.dispatch": ({ reviewId }) =>
+          new Promise<CommandOutput<"round.dispatch">>((resolve, reject) => {
+            if (reviewId === REVIEW) {
+              answerA = resolve;
+              refuseA = reject;
+            } else {
+              answerB = resolve;
+            }
+          }),
+      });
+      const history = memoryHistory(`/s/${SESSION}/run`);
+      const r = mount(
+        <BridgeProvider bridge={bridge}>
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <LiveScope>
+              <CrossSessionProbe
+                onFirstSettled={() => {
+                  firstSettled += 1;
+                }}
+                onSecondSettled={() => {
+                  secondSettled += 1;
+                }}
+              />
+            </LiveScope>
+          </Router>
+        </BridgeProvider>,
+      );
+      await waitFor(() => expect(r.getByText("first:absent")).toBeTruthy());
+
+      act(() => r.getByText("dispatch first").click());
+      await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
+      act(() => history.navigate(`/s/${OTHER_SESSION}/run`));
+      await waitFor(() => expect(r.getByText("second:absent")).toBeTruthy());
+      act(() => r.getByText("dispatch second").click());
+      await waitFor(() => expect(r.getByText("second:dispatching")).toBeTruthy());
+
+      await act(async () => {
+        if (settlement === "not-dispatched") answerA?.(dispatchAnswer(REVIEW, undefined, false));
+        else if (settlement === "missing-operation") answerA?.(dispatchAnswer(REVIEW));
+        else refuseA?.(new Error("A transport closed"));
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(firstSettled).toBe(1));
+      expect(r.getByText("second:dispatching")).toBeTruthy();
+
+      await act(async () => {
+        answerB?.(
+          dispatchAnswer(OTHER_REVIEW, {
+            ...OPERATION_BASE,
+            operationId: "operation-other",
+            createdAt: 2,
+            revision: 0,
+            state: { phase: "claimed" },
+          }),
+        );
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(secondSettled).toBe(1));
+      expect(r.getByText("second:dispatching")).toBeTruthy();
+    },
+  );
 });
 
 // ── The catch-up read must not clobber the live push (review finding 7) ────────

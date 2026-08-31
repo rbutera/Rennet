@@ -16,6 +16,7 @@ export function ProjectContextMapView({
   projectId,
   repositoryAddress,
   onBack,
+  takeover = true,
 }: {
   readonly projectId: string;
   readonly repositoryAddress?: ProjectRepositoryAddress;
@@ -23,6 +24,10 @@ export function ProjectContextMapView({
    *  session top-bar's `?view=map` overrides it to the board, because there Back leaving
    *  for New Chat would drop the reviewer out of the session they were reading. */
   readonly onBack?: () => void;
+  /** False for the in-session `?view=map` mount, which renders INSIDE the session's own
+   *  chrome: the takeover header and its window Escape would be a second Back, a second
+   *  trail, and an Escape that fires from the chat composer. */
+  readonly takeover?: boolean;
 }) {
   const [, navigate] = useLocation();
   return (
@@ -30,6 +35,7 @@ export function ProjectContextMapView({
       projectId={projectId}
       repositoryAddress={repositoryAddress}
       showAskRail={false}
+      takeover={takeover}
       onBack={onBack ?? (() => navigate(newChatPath(projectId)))}
       // No ask rail here, so "discuss" hands the statement to the project's New Chat,
       // prefilled — a real handoff, not an inert button (finding 9).

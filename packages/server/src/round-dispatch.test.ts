@@ -194,8 +194,9 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
   });
 
   it("folds the durable asks into exactly one work-order carrying the staged asks", async () => {
-    const { store, dispatch } = harness();
-    // Two addressed asks (one code-anchored, one prose) + a question (excluded from the handoff).
+    const broadcast = vi.fn<NonNullable<DispatchDeps["broadcastAskProjection"]>>();
+    const { store, dispatch } = harness(undefined, { broadcastAskProjection: broadcast });
+    // Two addressed asks (one code-anchored, one prose) plus publication-only asks.
     store.append(REVIEW_ID, {
       kind: "stage",
       ask: { id: "a1", anchor: "src/x.ts:10", type: "request-change", body: "rename the export" },
@@ -207,6 +208,10 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     store.append(REVIEW_ID, {
       kind: "stage",
       ask: { id: "a3", anchor: "src/x.ts:20", type: "question", body: "why here?" },
+    });
+    store.append(REVIEW_ID, {
+      kind: "stage",
+      ask: { id: "a4", anchor: "src/x.ts:30", type: "approve", body: "leave this alone" },
     });
 
     const { workOrder, dispatched } = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
@@ -220,6 +225,10 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     expect(workOrder.prompt).toContain("rename the export");
     expect(workOrder.prompt).toContain("tighten it");
     expect(workOrder.prompt).not.toContain("why here?");
+    expect(workOrder.prompt).not.toContain("leave this alone");
+    expect(Object.keys(store.readProjection(REVIEW_ID).stagedAsks)).toEqual(["a3", "a4"]);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(Object.keys(broadcast.mock.calls[0]?.[1].stagedAsks ?? {})).toEqual(["a3", "a4"]);
   });
 
   it("a same-process redispatch of the same asks kicks the runtime exactly once", async () => {

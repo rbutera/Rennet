@@ -1,6 +1,6 @@
 import type { ProjectSource } from "@rennet/protocol";
-import { cn } from "@rennet/ui";
-import { Loader2, Monitor, Server } from "lucide-react";
+import { cn, Spinner } from "@rennet/ui";
+import { Monitor, Server } from "lucide-react";
 import { Icon } from "./icon";
 
 /**
@@ -63,7 +63,7 @@ export function SourceSwitcher({
             <span className="source-label min-w-0 truncate">{source.label}</span>
             {isConnecting ? (
               <span className="source-connecting ml-auto flex-none inline-flex items-center gap-1.5 text-sm text-ink-soft">
-                <Icon icon={Loader2} className="size-3.5 animate-spin" />
+                <Spinner className="size-3.5" aria-hidden="true" />
                 connecting…
               </span>
             ) : null}

@@ -25,6 +25,22 @@ The welcome ends by opening the same **Add Project** browser described below.
 After the project is added, **Start a new chat** opens the real New Chat screen
 for it.
 
+### Replaying the welcome
+
+The welcome is not a one-time event you can only see on a clean install. Open
+**Settings → Appearance → First Run** and choose **Replay the first-run welcome**,
+or run the same action from the command menu (`⌘K`). It reopens immediately, over
+whatever you were doing, on a client that already has projects. There is no
+confirmation, because nothing is destroyed: your projects, appearance, and
+sessions are untouched, and finishing the welcome puts it away again.
+
+A replayed welcome does not ask you to add a project again. Its **Project** step
+offers **Continue with _your project_** — the one you used last, or the first in
+your list — so **Ready** and **Start a new chat** are one click away, and the
+picker is still there if you do want to add another. Replaying the welcome does
+not re-arm the [onboarding tour](./onboarding-tour.md), and replaying the tour
+does not reopen the welcome.
+
 ## The review loop
 
 ```mermaid
@@ -220,9 +236,12 @@ citation is a chip: click it and the real lines unfold below the paragraph;
 click again and they fold away.
 
 A finding reads as flowing document text, not a boxed card: a severity chip, the
-claim as its title, a concurrence badge reading "concur 2/2" when both review
-seats raised it or naming the single seat when they disagree, then the body and
-the proposed fix as its own callout. **Request This Change** stages that fix for
+claim as its title, a concurrence badge, then the body and the proposed fix as
+its own callout. The badge reads "concur 2/2" only when both review seats raised
+the finding at comparable severity; "severity split" when both raised it but
+disagreed on how much it matters; the seat's name and "only" when one raised it
+and the other did not; and the seat's name alone, quietly, when a single harness
+ran and there was no second opinion to compare. **Request This Change** stages that fix for
 the hand-off; the same control becomes a **Staged · Request Change** receipt and
 unstages it when clicked again.
 
@@ -313,6 +332,11 @@ local. One **Post Review** action sends it, under your name, as one review
 pinned to the reviewed commit. The posted state names the PR, the verdict, the
 line-comment count, and links to the review on GitHub.
 
+If the pull or merge request advances before posting, Rennet sends nothing from
+the stale preview. **Review latest revision** starts a new review of the same
+provider target and opens its capture progress; the review you already read
+stays pinned to its original head and bytes.
+
 ### Dispatch a work order
 
 On your own branch the hand-off is one goal in two states, and the page's shape
@@ -322,6 +346,12 @@ While asks remain, the page is **Changes**: one card per ask with its intent,
 provenance, text, and anchor. The same **Revise / Drop / Explain** steering
 works on an ask's text. **Dispatch Round** sits beneath the cards. The pull
 or merge request waits as a single muted line at the foot.
+
+Dispatch becomes available when at least one staged comment or request-change
+gives the coding worker something to address. Questions and approvals stay with
+the review; Rennet does not turn them into code work. If the daemon finds no
+coding work when asked to dispatch, the page stays here, says that no round
+started, and keeps the staged notes.
 
 Work orders exist on your own branch only. A teammate PR never offers one.
 
@@ -351,7 +381,7 @@ flowchart LR
   gen --> stage
 ```
 
-Dispatching moves you to the run, live: the detached worktree created, the
+An accepted dispatch moves you to the run, live: the detached worktree created, the
 round's asks applied, the worker's activity as a table of steps, your project's
 gate command running and resolving, the commits, and finally the round report
 being drafted and verified. Closing and reopening the run, or following its

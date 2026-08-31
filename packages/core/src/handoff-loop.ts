@@ -11,7 +11,11 @@ import type {
   Patchset,
   RspTokenUsage,
 } from "@rennet/protocol";
-import { sha256Hex } from "@rennet/protocol";
+import {
+  CODING_ROUND_DISPOSITION_TYPES,
+  isCodingRoundDisposition,
+  sha256Hex,
+} from "@rennet/protocol";
 import type { HarnessEvent, HarnessInProcessTool } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,11 +54,11 @@ import type { HarnessEvent, HarnessInProcessTool } from "./harness";
  * editing files. This is the §2.1 "the agent addresses dispositions and nothing
  * else" filter, made explicit.
  */
-export const HANDOFF_ADDRESSED_TYPES: readonly DispositionType[] = ["request-change", "comment"];
+export const HANDOFF_ADDRESSED_TYPES: readonly DispositionType[] = CODING_ROUND_DISPOSITION_TYPES;
 
 /** Whether a disposition type is one the handoff agent addresses. */
 export function isAddressedByHandoff(type: DispositionType): boolean {
-  return HANDOFF_ADDRESSED_TYPES.includes(type);
+  return isCodingRoundDisposition(type);
 }
 
 /** How much of a task's anchored diff context is inlined (bounds the prompt size). */

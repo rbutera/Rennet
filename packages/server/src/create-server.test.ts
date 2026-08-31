@@ -40,6 +40,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
+  captureLandedBranchPatchset,
   createBoardDraftCoordinator,
   createCompositionBoardsForReview,
   createGitLabPrSubmissionResolver,
@@ -465,6 +466,98 @@ function provenGlab(
     platform,
   };
 }
+
+describe("selected-branch patchset recapture", () => {
+  it("captures the persisted landing range after both branch refs move", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-recapture-")));
+    const runGit = (...args: string[]): string =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    const git: GitExec = async (root, arguments_) =>
+      execFileSync("git", arguments_, { cwd: root, encoding: "utf8" });
+
+    try {
+      runGit("init", "-b", "main");
+      runGit("config", "user.email", "rennet@example.test");
+      runGit("config", "user.name", "Rennet Test");
+      writeFileSync(join(repo, "base.ts"), "export const base = true;\n");
+      runGit("add", "base.ts");
+      runGit("commit", "-m", "base");
+
+      runGit("checkout", "-b", "feature/shared");
+      writeFileSync(join(repo, "source.ts"), "export const source = true;\n");
+      runGit("add", "source.ts");
+      runGit("commit", "-m", "review source");
+      const sourcePatchset = await captureBranchPatchset({
+        git,
+        locus: { kind: "host" },
+        repoPath: repo,
+        head: "feature/shared",
+        base: "main",
+        resolveProjectSnapshotId: async () => "snapshot-source",
+      });
+
+      writeFileSync(join(repo, "worker.ts"), "export const worker = true;\n");
+      runGit("add", "worker.ts");
+      runGit("commit", "-m", "landed worker result");
+      const landedHead = runGit("rev-parse", "HEAD");
+
+      runGit("checkout", "main");
+      writeFileSync(join(repo, "base-after.ts"), "export const movedBase = true;\n");
+      runGit("add", "base-after.ts");
+      runGit("commit", "-m", "move base after landing");
+      const movedBase = runGit("rev-parse", "HEAD");
+      runGit("checkout", "feature/shared");
+      runGit("merge", "--no-edit", "main");
+      writeFileSync(join(repo, "head-after.ts"), "export const movedHead = true;\n");
+      runGit("add", "head-after.ts");
+      runGit("commit", "-m", "move head after landing");
+      const movedHead = runGit("rev-parse", "HEAD");
+
+      const liveRefCapture = await captureBranchPatchset({
+        git,
+        locus: { kind: "host" },
+        repoPath: repo,
+        head: "feature/shared",
+        base: "main",
+        resolveProjectSnapshotId: async () => "snapshot-live",
+      });
+      expect(liveRefCapture.repository.baseOid).toBe(movedBase);
+      expect(liveRefCapture.repository.headOid).toBe(movedHead);
+      expect(liveRefCapture.repository.baseOid).not.toBe(sourcePatchset.repository.baseOid);
+      expect(liveRefCapture.repository.headOid).not.toBe(landedHead);
+
+      const resolveProjectSnapshotId = vi.fn(async () => "snapshot-persisted");
+      const recaptured = await captureLandedBranchPatchset({
+        git,
+        locus: { kind: "host" },
+        repoPath: repo,
+        headRef: "feature/shared",
+        baseRef: "main",
+        headOid: landedHead,
+        baseOid: sourcePatchset.repository.baseOid,
+        resolveProjectSnapshotId,
+      });
+
+      expect(recaptured.repository).toMatchObject({
+        baseRef: "main",
+        baseOid: sourcePatchset.repository.baseOid,
+        headRef: "feature/shared",
+        headOid: landedHead,
+      });
+      expect(recaptured.files.map((file) => file.path)).toEqual(["source.ts", "worker.ts"]);
+      expect(recaptured.rawDiff).toContain("export const source = true;");
+      expect(recaptured.rawDiff).toContain("export const worker = true;");
+      expect(recaptured.rawDiff).not.toContain("movedBase");
+      expect(recaptured.rawDiff).not.toContain("movedHead");
+      expect(resolveProjectSnapshotId).toHaveBeenCalledWith(
+        repo,
+        sourcePatchset.repository.baseOid,
+      );
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("round worker execution context", () => {
   it("carries a distro-native WSL branch capture through the round planner and worker", async () => {

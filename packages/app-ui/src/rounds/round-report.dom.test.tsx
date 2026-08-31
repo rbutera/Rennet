@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
+import type { RoundReportBoard as RoundReportBoardModel } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RENDERERS } from "../board/kinds/renderers";
 import { mount } from "../test/dom";
-import { reportBoardFixture } from "../test/fixtures/rounds/report-board";
+import { prose } from "../test/fixtures/boards/helpers";
+import { reportBoardFixture, roundOutcome } from "../test/fixtures/rounds/report-board";
 import type { ReportRegistry } from "./report-registry";
 import { RoundReportBoard } from "./round-report";
 
@@ -35,6 +37,94 @@ describe("RoundReportBoard — the round report as a board", () => {
     expect(getByTestId("report-tally").textContent).toBe(
       "1 addressed · 1 partial · 1 untouched · 1 beyond",
     );
+  });
+
+  it("holds the outcomes in ONE bordered card, and leaves the greeting section unboxed", () => {
+    const { container } = mount(<RoundReportBoard board={reportBoardFixture} />);
+    const cards = container.querySelectorAll('[data-kind="report-outcome-card"]');
+    // Exactly one card: the Outcomes section. The greeting section is prose, so it stays a
+    // plain stack — box it and this reddens, which is the point (the condition is the
+    // section's real content, not its title).
+    expect(cards).toHaveLength(1);
+    const card = cards[0];
+    if (!card) throw new Error("missing outcome card");
+    expect(card.className).toContain("divide-y");
+    expect(card.className).toContain("border-border");
+    // All four outcomes live inside it, one padded row each.
+    expect(card.querySelectorAll('[data-kind="round_outcome"]')).toHaveLength(4);
+    for (const outcome of card.querySelectorAll('[data-kind="round_outcome"]')) {
+      expect(outcome.parentElement?.className).toContain("px-4");
+      expect(outcome.parentElement?.className).toContain("py-3");
+    }
+    // And the greeting's prose is NOT inside the card.
+    const greeting = container.querySelector('[data-section-id="greeting"]');
+    expect(greeting?.querySelector('[data-kind="report-outcome-card"]')).toBeNull();
+  });
+
+  // THE SHAPES THE SECTION-LOCAL CARD COULD NOT SEE. The card used to be built by
+  // `ReportSection` when EVERY child was a `round_outcome`, so:
+  //   - outcomes spread over two sections produced TWO cards ("one card" was never a claim
+  //     about the round, only about a section that happened to hold all of them);
+  //   - a section mixing a paragraph with outcomes produced NONE, and its outcomes fell out
+  //     as loose rows with no frame at all.
+  // Both are wire-valid `RoundReportBoard`s — nothing in the schema says outcomes live in
+  // exactly one all-outcome section. The card is renderer-owned and board-wide now.
+  it("holds outcomes spread across TWO sections in one card, not one card per section", () => {
+    const extra = roundOutcome("ro-extra", {
+      status: "addressed",
+      ask: { ref: "ask-extra", text: "Close the second-section ask." },
+      note: "Landed in a section of its own.",
+    });
+    const split: RoundReportBoardModel = {
+      ...reportBoardFixture,
+      elements: [
+        ...reportBoardFixture.elements,
+        extra,
+        {
+          id: "more-outcomes",
+          kind: "section",
+          data: {
+            author: { kind: "orchestrator", id: "fixture-orchestrator" },
+            title: "And also",
+            children: ["ro-extra"],
+          },
+        },
+      ],
+      sections: [
+        ...reportBoardFixture.sections,
+        { ref: "more-outcomes", gist: "One more ask.", counts: { round_outcome: 1 } },
+      ],
+    };
+    const { container } = mount(<RoundReportBoard board={split} />);
+    const cards = container.querySelectorAll('[data-kind="report-outcome-card"]');
+    expect(cards).toHaveLength(1);
+    // All FIVE outcomes are inside it — the fifth is not stranded in its own section.
+    expect(cards[0]?.querySelectorAll('[data-kind="round_outcome"]')).toHaveLength(5);
+    expect(container.querySelectorAll('[data-kind="round_outcome"]')).toHaveLength(5);
+  });
+
+  it("cards the outcomes of a MIXED section and keeps its prose rendering in place", () => {
+    const mixed: RoundReportBoardModel = {
+      ...reportBoardFixture,
+      elements: reportBoardFixture.elements.map((el) =>
+        el.id === "outcomes" && el.kind === "section"
+          ? { ...el, data: { ...el.data, children: ["mixed-prose", ...el.data.children] } }
+          : el,
+      ),
+    };
+    mixed.elements = [
+      ...mixed.elements,
+      prose("mixed-prose", "A paragraph that opens the outcomes section."),
+    ];
+    const { container } = mount(<RoundReportBoard board={mixed} />);
+    const cards = container.querySelectorAll('[data-kind="report-outcome-card"]');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.querySelectorAll('[data-kind="round_outcome"]')).toHaveLength(4);
+    // The prose still renders, in its section, OUTSIDE the card — non-outcome content is
+    // left exactly where the producer put it.
+    const outcomesSection = container.querySelector('[data-section-id="outcomes"]');
+    expect(outcomesSection?.textContent).toContain("A paragraph that opens the outcomes section.");
+    expect(cards[0]?.textContent).not.toContain("A paragraph that opens the outcomes section.");
   });
 
   it("reveals a code_ref only for the one outcome that carries one", () => {

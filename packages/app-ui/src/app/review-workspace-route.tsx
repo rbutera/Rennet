@@ -2,16 +2,18 @@ import {
   currentGenerationId,
   isReviewStale,
   isWorkingTreeReview,
+  newCommandId,
   type Review,
 } from "@rennet/protocol";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
-import { useMutation } from "../data";
+import { useCommand, useMutation } from "../data";
 import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
+import type { RoundDispatchViewState } from "../handoff/rounds-lanes";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { DiffViewContainer } from "../review";
 import { useAskLog } from "../review/ask-log";
@@ -261,7 +263,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         </div>
       ) : null}
       {view === "handoff" ? (
-        <HandoffMount review={review} slug={slug} navigate={navigate} />
+        <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "map" ? (
         // `?view=map` shows this session's PROJECT context map — the destination the top
         // bar's Map toggle has advertised since C03 §4.3 and the one the docs describe
@@ -271,14 +273,18 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         // `ProjectContextMapView` that `/projects/:id/map` mounts, with Back routed to the
         // board so leaving the map does not leave the session. The wrapper supplies the
         // height and scroller the surrounding column expects.
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-auto">
           {projectContextAddress === undefined ? null : projectContextAddress === null ? (
             <MapUnavailable />
           ) : (
+            // `takeover={false}`: the session's top bar already carries Back and the trail,
+            // and Escape here would fire from the chat composer. Only the map's own
+            // content belongs inside the session's chrome.
             <ProjectContextMapView
               projectId={projectContextAddress.projectId}
               repositoryAddress={projectContextAddress.repositoryAddress}
               onBack={toBoard}
+              takeover={false}
             />
           )}
         </div>
@@ -291,7 +297,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           round={query.round ?? undefined}
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
           {view === "rounds" && roundsUnavailable !== undefined ? (
             <RoundsUnavailable reason={roundsUnavailable} />
           ) : view === "rounds" && roundRecords.length > 0 ? (
@@ -313,33 +319,29 @@ export function ReviewWorkspace({ review }: { review: Review }) {
               <ReportUnavailable status={report.status} />
             )
           ) : (
-            <>
-              <header className="border-border border-b px-6 py-3">
-                <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-                  REVIEW · {review.repositoryRoot.split("/").at(-1)}
-                </p>
-              </header>
-              <LensBoardView
-                reviewId={review.id}
-                generation={boardGeneration}
-                selectedGeneration={query.generation ?? boardGeneration}
-                lens={query.lens}
-                generations={boardGenerations}
-                onGenerationSelect={(generation) =>
-                  navigate(
-                    sessionPath(slug, {
-                      view: "board",
-                      lens: query.lens,
-                      generation: generation === boardGeneration ? undefined : generation,
-                      file: query.file ?? undefined,
-                      round: query.round ?? undefined,
-                      ask: query.ask ?? undefined,
-                    }),
-                    { replace: true },
-                  )
-                }
-              />
-            </>
+            // No eyebrow. The board opens on the board (spike `main-surface.tsx`); a
+            // `REVIEW · <repo>` strip above it was app-only chrome restating the top bar's
+            // own trail, and it pushed the document down a row on every read.
+            <LensBoardView
+              reviewId={review.id}
+              generation={boardGeneration}
+              selectedGeneration={query.generation ?? boardGeneration}
+              lens={query.lens}
+              generations={boardGenerations}
+              onGenerationSelect={(generation) =>
+                navigate(
+                  sessionPath(slug, {
+                    view: "board",
+                    lens: query.lens,
+                    generation: generation === boardGeneration ? undefined : generation,
+                    file: query.file ?? undefined,
+                    round: query.round ?? undefined,
+                    ask: query.ask ?? undefined,
+                  }),
+                  { replace: true },
+                )
+              }
+            />
           )}
         </div>
       )}
@@ -362,27 +364,20 @@ export function ReviewWorkspace({ review }: { review: Review }) {
  */
 function MapUnavailable() {
   return (
-    <>
-      <header className="border-border border-b px-6 py-3">
-        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          CONTEXT MAP
-        </p>
-      </header>
-      <section
-        data-testid="map-unavailable"
-        role="status"
-        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
-      >
-        <h1 className="font-display text-foreground text-xl">
-          Rennet cannot tell which project this review belongs to.
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          A context map is a project&rsquo;s, and the session that owns this review is what names
-          its project. This address reached the review without one — opening it from its session in
-          the sidebar reaches its map.
-        </p>
-      </section>
-    </>
+    <section
+      data-testid="map-unavailable"
+      role="status"
+      className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+    >
+      <h1 className="font-display text-foreground text-xl">
+        Rennet cannot tell which project this review belongs to.
+      </h1>
+      <p className="text-muted-foreground text-sm">
+        A context map is a project&rsquo;s, and the session that owns this review is what names its
+        project. This address reached the review without one — opening it from its session in the
+        sidebar reaches its map.
+      </p>
+    </section>
   );
 }
 
@@ -395,30 +390,23 @@ function MapUnavailable() {
  */
 function RoundsUnavailable({ reason }: { reason: string }) {
   return (
-    <>
-      <header className="border-border border-b px-6 py-3">
-        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          ROUNDS
-        </p>
-      </header>
-      <section
-        data-testid="rounds-unavailable"
-        role="status"
-        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
-      >
-        <h1 className="font-display text-foreground text-xl">
-          Rennet cannot read this session&rsquo;s rounds.
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          The daemon this window is connected to did not answer the rounds read, so whether this
-          session has completed rounds is unknown — not none. It is most likely older than this app;
-          updating the daemon should restore the ledger.
-        </p>
-        <p data-testid="rounds-unavailable-reason" className="text-muted-foreground/80 text-xs">
-          {reason}
-        </p>
-      </section>
-    </>
+    <section
+      data-testid="rounds-unavailable"
+      role="status"
+      className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+    >
+      <h1 className="font-display text-foreground text-xl">
+        Rennet cannot read this session&rsquo;s rounds.
+      </h1>
+      <p className="text-muted-foreground text-sm">
+        The daemon this window is connected to did not answer the rounds read, so whether this
+        session has completed rounds is unknown — not none. It is most likely older than this app;
+        updating the daemon should restore the ledger.
+      </p>
+      <p data-testid="rounds-unavailable-reason" className="text-muted-foreground/80 text-xs">
+        {reason}
+      </p>
+    </section>
   );
 }
 
@@ -431,30 +419,23 @@ function RoundsUnavailable({ reason }: { reason: string }) {
 // the ledger/diff views remain reachable through the top bar (they precede this branch).
 function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
   return (
-    <>
-      <header className="border-border border-b px-6 py-3">
-        <p className="eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
-          ROUND REPORT
-        </p>
-      </header>
-      <section
-        data-testid="report-unavailable"
-        data-report-status={status}
-        role="status"
-        className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
-      >
-        <h1 className="font-display text-foreground text-xl">
-          {status === "invalid"
-            ? "This round's report could not be read."
-            : "No report for this round."}
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          {status === "invalid"
-            ? "The round completed, but its report came back in a shape Rennet could not render. The new boards stay held back until a readable report arrives."
-            : "The round completed, but no report board resolved for it yet. The new boards stay held back until its report arrives."}
-        </p>
-      </section>
-    </>
+    <section
+      data-testid="report-unavailable"
+      data-report-status={status}
+      role="status"
+      className="mx-auto flex w-full max-w-[820px] flex-col gap-2 p-6"
+    >
+      <h1 className="font-display text-foreground text-xl">
+        {status === "invalid"
+          ? "This round's report could not be read."
+          : "No report for this round."}
+      </h1>
+      <p className="text-muted-foreground text-sm">
+        {status === "invalid"
+          ? "The round completed, but its report came back in a shape Rennet could not render. The new boards stay held back until a readable report arrives."
+          : "The round completed, but no report board resolved for it yet. The new boards stay held back until its report arrives."}
+      </p>
+    </section>
   );
 }
 
@@ -465,8 +446,8 @@ function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
 // PR draft) through the `<HandoffView>` mount cluster 5 left taking no props.
 //
 // Dispatch wiring (C09 cluster 4): `onDispatch` closes C8's seam — reset the run slice at the
-// dispatch act (NOT on the run route's cold reattach), fire the rounds seam's `dispatch(slug)`,
-// then take over the live run route. The app tree supplies the LIVE source (`routes/app.tsx`'s
+// accepted dispatch act (NOT on the run route's cold reattach), then take over the live run route.
+// The app tree supplies the LIVE source (`routes/app.tsx`'s
 // `LiveRoundsScope`, C15 3.2), whose `dispatch` is unconditional — so on the shipping path
 // `onDispatch` IS wired and the button goes live the moment an ask stages. `dispatch` is absent
 // only under the honest-absent default (a tree with no rounds scope, i.e. unit mounts), and there
@@ -480,28 +461,93 @@ function HandoffMount({
   slug: string;
   navigate: (to: string) => void;
 }) {
-  const exits = useHandoffExits(review);
+  const recapture = useLatestReviewRecapture(review, slug, navigate);
+  const exits = useHandoffExits(review, recapture);
   const dispatch = useRoundDispatch();
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
+  const [dispatchState, setDispatchState] = useState<RoundDispatchViewState>({ status: "idle" });
+  const dispatchLifecycle = useRef({ mounted: true, slug, request: 0 });
+  useLayoutEffect(() => {
+    dispatchLifecycle.current.mounted = true;
+    return () => {
+      dispatchLifecycle.current.mounted = false;
+      dispatchLifecycle.current.request += 1;
+    };
+  }, []);
   const onDispatch = dispatch
     ? () => {
-        resetRun();
-        dispatch(slug);
-        navigate(sessionRunPath(slug));
+        const request = ++dispatchLifecycle.current.request;
+        setDispatchState({ status: "sending" });
+        void dispatch(slug).then((outcome) => {
+          const current = dispatchLifecycle.current;
+          if (!current.mounted || current.slug !== slug || current.request !== request) return;
+          switch (outcome.status) {
+            case "accepted":
+              resetRun();
+              navigate(sessionRunPath(slug));
+              return;
+            case "not-dispatched":
+              setDispatchState({ status: "not-dispatched", reason: outcome.reason });
+              return;
+            case "rejected":
+              setDispatchState({ status: "failed", reason: outcome.reason });
+              return;
+            default: {
+              const exhaustive: never = outcome;
+              return exhaustive;
+            }
+          }
+        });
       }
     : undefined;
   return (
     <HandoffView
       review={review}
       onPost={exits.onPost}
+      onRecapture={exits.onRecapture}
       receipt={exits.receipt}
       reviewDraft={exits.reviewDraft}
       onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}
       onDispatch={onDispatch}
+      dispatchState={dispatchState}
       onOpenPr={exits.onOpenPr}
       onRevise={exits.onRevise}
       unavailable={exits.unavailable}
     />
   );
+}
+
+function useLatestReviewRecapture(
+  review: Review,
+  slug: string,
+  navigate: (to: string) => void,
+): (() => Promise<void>) | undefined {
+  const { data } = useCommand("session.list", {});
+  const session = data?.sessions.find(
+    (candidate) => candidate.id === slug || candidate.reviewId === review.id,
+  );
+  const { mutate: mint } = useMutation("session.mint", { invalidates: ["session.list"] });
+  const target = review.postTarget;
+
+  const recapture = useCallback(async () => {
+    if (session?.claim === undefined || target === undefined) {
+      throw new Error("This review has no session target to capture again.");
+    }
+    const started = await mint({
+      projectId: session.projectId,
+      commandId: newCommandId(),
+      branch: session.claim.branch,
+      prNumber: target.number,
+      repository: `${target.repo.owner}/${target.repo.name}`,
+      forgeRepository: target.repo,
+      replacesSessionId: session.id,
+    });
+    if (started.session === null || started.session.id === session.id) {
+      throw new Error("The latest review could not be started.");
+    }
+    navigate(sessionPath(started.session.id));
+  }, [mint, navigate, session, target]);
+
+  return session?.claim !== undefined && target !== undefined ? recapture : undefined;
 }

@@ -1,8 +1,21 @@
 import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+/* twMerge's default config only knows Tailwind's stock text sizes, so it files
+ * Rennet's ramp steps (text-10, text-2xs, text-12-5, text-13, text-15,
+ * text-display) under text-COLOR and drops whichever of `text-13`/`text-primary`
+ * comes first in a merge. Registering them as font sizes keeps size and colour
+ * in separate merge groups. */
+const twMergeRennet = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [{ text: ["10", "2xs", "12-5", "13", "15", "display"] }],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return twMergeRennet(clsx(inputs));
 }
 
 /**

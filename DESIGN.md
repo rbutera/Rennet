@@ -68,7 +68,7 @@ components:
 
 **Creative direction: "The Affineur's Bench"**
 
-Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for review prose.
+Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for annotations and quoted excerpts.
 
 Desktop, browser, mobile, marketing, and documentation use the same palette and type families. Each application can choose its own density and layout.
 
@@ -133,22 +133,15 @@ Display headings can reach `6rem` with a line height near `1`. Keep letter spaci
 
 ### Desktop type scale
 
-Desktop components use `11 / 12 / 14 / 16 / 18 / 20 / 24` px, plus `text-display` at `clamp(2.125rem, 5vw, 3.5rem)`. Source code expresses the scale in `rem` through Tailwind utilities.
+Desktop components use `10 / 11 / 12 / 12.5 / 13 / 14 / 15 / 16 / 18 / 20 / 24` px, plus `text-display` at `clamp(2.125rem, 5vw, 3.5rem)`. Source code expresses the scale in `rem` through Tailwind utilities.
 
-- `text-2xs`, 11px: micro labels
-- `text-xs`, 12px: metadata and counts
-- `text-sm`, 14px: controls and chrome
-- `text-base`, 16px: reading text and inputs
-- `text-lg`, 18px: body text and annotations
-- `text-xl`, 20px: section headings
-- `text-2xl`, 24px: screen titles
-
-`11 / 12 / 14 / 16 / 18 / 20 / 24` px (`text-2xs` through `text-2xl`), plus the
-front-door display expression `text-display` = `clamp(2.125rem, 5vw, 3.5rem)`.
-
+- **10px / `text-10`** badge — inline badges inside a dense list row.
 - **11px / `text-2xs`** micro — uppercase micro-caps, the smallest legible chrome.
 - **12px / `text-xs`** meta — secondary metadata, counts, pins.
+- **12.5px / `text-12-5`** dense body — diff and code bodies, quote popovers, dense captions.
+- **13px / `text-13`** dense — dense picker and list rows.
 - **14px / `text-sm`** chrome — the standard chrome label and control text.
+- **15px / `text-15`** prose — chat turns and review prose.
 - **16px / `text-base`** reading — reading text, emphasised labels, inputs.
 - **18px / `text-lg`** body — comfortable body and the annotation serif.
 - **20px / `text-xl`** section — screen and section headings.
@@ -210,7 +203,11 @@ All interactive elements use a three-pixel gold focus ring. Only an element that
 
 Board sections, findings, conversations, provider results, and product frames use the 12px surface radius on opaque `surface` or `raised` colors. Use a border or a shadow, not both. Code always sits on an opaque surface.
 
-Post previews use the `sheet` palette. They are cream in light mode, espresso in dark mode, and set review prose in serif.
+The `sheet` palette — cream in light mode, espresso in dark mode — is reserved for a
+full post preview and no surface uses it yet. Today's outbound preview is the handoff
+lane's rendering of the GitHub-facing Markdown, set in the sans reading voice at chrome
+scale on the surrounding surface; the standalone cream sheet went with the canvas
+publish surface (rbutera/Rennet#489) and has not been rebuilt.
 
 ### Provider identity
 
@@ -225,16 +222,26 @@ Use one 44px icon button with a visible focus state and an accessible action lab
 The primitives are a **vendored shadcn/ui kit built on Base UI**, owned in
 `packages/ui` (`@rennet/ui`): Button, Input, Textarea, Label, Dialog, Sheet,
 Popover, DropdownMenu, Select, Switch, Checkbox, Tabs, Tooltip, ScrollArea, Badge,
-Skeleton, Separator, Toast, and the `cmdk` Command palette. `@rennet/app-ui`
+Skeleton, Separator, Toast, Field, InputGroup, Spinner, and the `cmdk` Command
+palette. `@rennet/app-ui`
 composes them into Rennet's screens; the hand-rolled component layer they replaced
 is retired (2026-08-20 port). Base UI is the one primitive family — Radix is
 allowed only where a shadcn component brings it (`cmdk`). The kit's lucide icons
 render at the same **1.6px identity stroke** as the app-ui `Icon` wrapper, so the
-whole app reads at one line weight.
+whole app reads at one line weight, because mixed 2px and 1.6px glyphs in one row is
+exactly the drift no screenshot review catches. That is enforced in `packages/app-ui`
+only: a lint test there fails on any lucide icon rendered as JSX instead of passed to
+`Icon`. In `packages/ui` the same 1.6px is convention, not enforcement — twenty-odd
+hand-typed `strokeWidth={1.6}` sites across the vendored components, with no test
+watching them, so a re-vendored component arrives at lucide's 2px until someone looks.
 
 The kit is authored in shadcn's semantic Tailwind vocabulary, and
-`packages/theme` aliases that vocabulary onto the `--rn-*` palette above — no new
-colour or radius exists in the alias layer, it is a rename:
+`packages/theme` aliases that vocabulary onto the `--rn-*` palette above — the alias
+layer is a rename, with one documented exception: an *interaction* state that the
+`--rn-*` palette does not carry may be DERIVED from a palette value with
+`color-mix`, never invented. Today that is `--color-secondary-hover` (raised mixed
+with 5% ink), because a secondary button whose hover is the same fill as its rest
+state has no hover at all. Every base colour and every radius is still a rename:
 
 - **Semantic colour:** `background`→canvas, `foreground`→ink, `card`→surface,
   `popover`→overlay, `primary`→accent-fill (`primary-foreground`→accent-ink),
@@ -251,7 +258,7 @@ The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme
 
 - Keep one ground color from title bar to canvas.
 - Reserve gold for selection, decisions, focus, and primary actions.
-- Use serif for annotations and review prose. Use sans serif for controls and data.
+- Use serif for annotations and quoted prose excerpts. Use sans serif for the review body, conversations, controls, and data (amended 2026-08-26 — see Typography).
 - Test light and dark schemes.
 - Preserve the full review and all important claims at every breakpoint.
 - Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state. Chrome floating over content in the full-bleed state may use a translucent, blurred ground — the one sanctioned exception (see Material, Rai 2026-08-28); opaque grounds remain the rule everywhere else.

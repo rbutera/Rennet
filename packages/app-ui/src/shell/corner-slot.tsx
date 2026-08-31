@@ -18,8 +18,8 @@ import { useRennetStore } from "../store";
 // to draw here — the slot RESERVES their zone (81px in state 1 so the wordmark
 // clears the lights outright; 76px is the bare OS light zone, kept for the chat
 // header's leading element and 72px for the 4px-inset floating pill) and, being
-// the titlebar in that state, carries the shared `navigation-titlebar` drag rule
-// so the corner strip drags the window and its buttons opt back out. Every other
+// the titlebar in that state, carries `app-region-drag` so the corner strip drags
+// the window while each control inside marks itself `app-region-no-drag`. Every other
 // host keeps its native frame and reserves nothing, while keeping the same single
 // toggle in the same place: non-darwin loses the inset, not the affordance.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ export function CornerSlot({
       data-owner={owner}
       className={cn(
         "flex h-10 shrink-0 items-center gap-2",
-        mac && "navigation-titlebar",
+        mac && "app-region-drag",
         // State 1: the sidebar's header row IS this strip.
         owner === "sidebar" && (mac ? "pl-[81px] pr-3" : "pl-3 pr-3"),
         // State 2: inline as the chat header's leading element. `self-start` keeps
@@ -98,7 +98,10 @@ export function CornerSlot({
         onClick={() => setSidebarOpen(!open)}
         aria-label={label}
         title={label}
-        className="flex size-6 shrink-0 items-center justify-center rounded-chip text-ink-soft hover:bg-raised hover:text-ink"
+        // `app-region-no-drag` explicitly: inside a drag region a control that does not
+        // opt out never receives the click at all. The old tag-list opt-out happened to
+        // cover a <button>; it would not have covered a div/span trigger.
+        className="app-region-no-drag flex size-6 shrink-0 items-center justify-center rounded-chip text-ink-soft hover:bg-raised hover:text-ink"
       >
         <Icon icon={PanelLeft} className="size-3.5" />
       </button>

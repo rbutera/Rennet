@@ -406,6 +406,69 @@ describe("session/ durable shapes (#466/#457)", () => {
     ).toBe("applied");
   });
 
+  it("binds branch-ref landing to the selected branch head", () => {
+    const selectedHead = "a".repeat(40);
+    const workerHead = "b".repeat(40);
+    const attempt = {
+      effect: "source-landing",
+      strategy: "branch-ref-v1",
+      executionId: "landing-selected-branch",
+      branch: "feat/round",
+      expectedHead: selectedHead,
+      baselineCommit: selectedHead,
+      workerHead,
+      startedAt: 1,
+    } as const;
+
+    expect(RoundSourceLandingAttemptSchema.parse(attempt)).toEqual(attempt);
+    expect(
+      RoundSourceLandingAttemptSchema.safeParse({
+        ...attempt,
+        baselineCommit: "c".repeat(40),
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundSourceLandingReceiptSchema.parse({
+        ...attempt,
+        outcome: "already-applied",
+        landedAt: 2,
+      }),
+    ).toMatchObject({
+      strategy: "branch-ref-v1",
+      branch: "feat/round",
+      expectedHead: selectedHead,
+      outcome: "already-applied",
+    });
+
+    const operation = {
+      ...operationBase,
+      state: {
+        phase: "source-landing",
+        workspace: {
+          ...operationWorkspace,
+          sourceParentHead: selectedHead,
+          sourceHead: selectedHead,
+        },
+        worker: operationWorker,
+        gate: operationGate,
+        commits: {
+          ...operationCommits,
+          baseHead: selectedHead,
+          from: selectedHead,
+          to: workerHead,
+        },
+        landing: attempt,
+      },
+    } as const;
+    expect(RoundOperationSchema.safeParse(operation).success).toBe(true);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operation,
+        sourceTarget: { kind: "branch", branch: "feat/other" },
+      }).success,
+    ).toBe(false);
+  });
+
   // ── The rework count (review finding 10) ──────────────────────────────────
   it("carries the report-derived rework count, and honestly none when no report drafted", () => {
     const round = {

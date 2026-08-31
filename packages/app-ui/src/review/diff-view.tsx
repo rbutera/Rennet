@@ -47,7 +47,11 @@ const STATUS_LABEL: Record<FileChangeStatus, string> = {
   renamed: "renamed",
 };
 
-/** GitHub's five-square add/delete proportion chip. */
+/** GitHub's five-square add/delete proportion chip. The squares carry the 4px `micro`
+ *  radius, not the prototype's 2px: Rennet's named radius ramp STARTS at micro
+ *  (`DESIGN.md` — micro/chip/control/surface/window). Tailwind's own `rounded-xs` would
+ *  render 2px here only because `theme.css` never resets the `--radius-*` namespace, and
+ *  no test guards it — a 2px step is a ramp decision, not a per-component nudge. */
 function StatSquares({ additions, deletions }: { additions: number; deletions: number }) {
   const total = additions + deletions;
   const greens = total === 0 ? 0 : Math.round((additions / total) * 5);
@@ -237,7 +241,7 @@ export function DiffView({ files, patchsetId, historical = false }: DiffViewProp
           plain container div would otherwise break the flex height chain). */}
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto"
         data-diff-scroll=""
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       >
@@ -360,7 +364,7 @@ function FileTree({
                 >
                   {name}
                 </span>
-                <span className="ml-auto flex shrink-0 items-center gap-1 text-2xs tabular-nums">
+                <span className="ml-auto flex shrink-0 items-center gap-1 text-10 tabular-nums">
                   <span className="text-green">+{stats.additions}</span>
                   <span className="text-destructive">−{stats.deletions}</span>
                 </span>
@@ -514,7 +518,7 @@ function DiffFileCard({
         {STATUS_LABEL[file.status] && (
           <span
             className={cn(
-              "shrink-0 rounded border px-1 py-px text-2xs uppercase tracking-wide",
+              "shrink-0 rounded border px-1 py-px text-10 uppercase tracking-wide",
               file.status === "added"
                 ? "border-green/40 text-green"
                 : file.status === "deleted"
@@ -560,7 +564,7 @@ function DiffFileCard({
       {open && !file.binary && (
         <div className="overflow-x-auto">
           <div
-            className="relative min-w-full font-mono text-xs"
+            className="relative min-w-full font-mono text-12-5"
             style={{
               height: `${rows.length * DIFF_ROW_HEIGHT + (openLine === undefined ? 0 : DIFF_EDITOR_HEIGHT)}px`,
             }}
@@ -650,30 +654,28 @@ function DiffFileCard({
                   data-line={rowLine ?? ""}
                   data-side={rowSide}
                   data-line-state={state}
+                  // ONE diff tint system across the app: the `bg-add`/`bg-del` grounds the
+                  // palette defines for changed code (`theme/src/palette.css:74-78`), the
+                  // same pair `components/code-view.tsx:141-148` paints. The old
+                  // `bg-green/10` / `bg-destructive/10` alphas were a second, near-miss
+                  // system over the interface greens — two diff surfaces reading
+                  // differently for the same fact. The row carries the fill; the gutters
+                  // inherit it rather than carrying their own alpha step, so a changed line
+                  // is one continuous band.
                   className={cn(
                     "group absolute inset-x-0 flex h-6 min-w-max items-center",
-                    line.type === "add" && "bg-green/10",
-                    line.type === "del" && "bg-destructive/10",
+                    line.type === "add" && "bg-add",
+                    line.type === "del" && "bg-del",
+                    // The review states OVERRIDE the diff ground (twMerge keeps the last
+                    // background): a staged ask reads danger, a comment reads evidence green.
                     hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-green/15",
                   )}
                   style={{ top: `${positioned.top}px` }}
                 >
-                  <span
-                    className={cn(
-                      "flex h-full w-[5ch] shrink-0 select-none items-center justify-end border-r border-transparent pr-2 text-muted-foreground/50",
-                      line.type === "add" && "bg-green/10",
-                      line.type === "del" && "bg-destructive/15",
-                    )}
-                  >
+                  <span className="flex h-full w-[5ch] shrink-0 select-none items-center justify-end border-r border-transparent pr-2 text-muted-foreground/50">
                     {line.oldLine ?? ""}
                   </span>
-                  <span
-                    className={cn(
-                      "relative flex h-full w-[6ch] shrink-0 select-none items-center justify-end gap-1 pr-2 text-muted-foreground/50",
-                      line.type === "add" && "bg-green/15",
-                      line.type === "del" && "bg-destructive/10",
-                    )}
-                  >
+                  <span className="relative flex h-full w-[6ch] shrink-0 select-none items-center justify-end gap-1 pr-2 text-muted-foreground/50">
                     {commentLine !== null && !historical && (
                       <button
                         type="button"
@@ -686,7 +688,7 @@ function DiffFileCard({
                         className={cn(
                           "size-4 shrink-0 items-center justify-center rounded transition-colors",
                           hasAsk
-                            ? "bg-destructive text-primary-foreground hover:bg-destructive/90"
+                            ? "bg-destructive text-on-danger hover:bg-destructive/90"
                             : "bg-primary text-primary-foreground hover:bg-primary/90",
                           hasComment || isOpen ? "flex" : "hidden group-hover:flex",
                         )}
@@ -713,8 +715,8 @@ function DiffFileCard({
                   <span
                     className={cn(
                       "w-[2ch] shrink-0 select-none text-center",
-                      line.type === "add" && "text-green",
-                      line.type === "del" && "text-destructive",
+                      line.type === "add" && "text-add-ink",
+                      line.type === "del" && "text-del-ink",
                     )}
                   >
                     {line.type === "add" ? "+" : line.type === "del" ? "−" : ""}

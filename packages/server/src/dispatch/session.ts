@@ -199,6 +199,9 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const started = await rt.deps.sessions?.start({
         projectId: input.projectId,
         commandId: input.commandId,
+        ...(input.replacesSessionId === undefined
+          ? {}
+          : { replacesSessionId: input.replacesSessionId }),
         ...(input.branch === undefined
           ? {}
           : {

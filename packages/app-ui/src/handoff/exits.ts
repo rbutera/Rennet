@@ -1,5 +1,5 @@
 import type { Review } from "@rennet/protocol";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
 import { useRennetStore } from "../store";
 import {
@@ -44,6 +44,8 @@ import type { ProposedVerdict } from "./selectors";
 export interface HandoffExits {
   /** Post Review egress (teammate-PR mode). Absent until the review is composed (or off-mode). */
   readonly onPost?: () => Promise<PostReceipt>;
+  /** Capture the same forge review again after the provider reports a moved immutable head. */
+  readonly onRecapture?: () => Promise<void>;
   /** A daemon-owned completed publication for the current composed marker. */
   readonly receipt?: PostReceipt;
   /**
@@ -82,10 +84,18 @@ export interface HandoffExits {
   readonly unavailable?: string;
 }
 
-export function useHandoffExits(review: Review): HandoffExits {
+export function isMovedHeadRefusal(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /^Publish refused: the (?:pull-request|merge-request) head moved from /.test(error.message)
+  );
+}
+
+export function useHandoffExits(review: Review, recapture?: () => Promise<void>): HandoffExits {
   const mode = resolveEntryMode(review);
   const reviewId = review.id;
   const target = review.postTarget;
+  const [movedReviewId, setMovedReviewId] = useState<string | null>(null);
 
   // The egress writes (C01 §2.5): each a registered, bound publish command over the bridge. The
   // standing law routes every write through `useMutation` — no surface calls `bridge.invoke`.
@@ -201,18 +211,24 @@ export function useHandoffExits(review: Review): HandoffExits {
     // addressed review's persisted target. Real egress happens on this click alone.
     if (!reviewComposed) throw new Error("The review is not composed yet.");
     const verdict = reviewComposed.post.event;
-    const result = await postReview({
-      commandId: crypto.randomUUID(),
-      reviewId,
-      artifact: reviewComposed.artifact,
-      post: reviewComposed.post,
-      payload: reviewComposed.payload,
-      compositionId: reviewComposed.compositionId,
-      dryRun: false,
-    });
-    if (!result.outcome) throw new Error("The review did not post — nothing left the machine.");
-    const lineCommentCount = reviewComposed.post.threads.length;
-    return { verdict, lineCommentCount, url: result.outcome.url };
+    setMovedReviewId(null);
+    try {
+      const result = await postReview({
+        commandId: crypto.randomUUID(),
+        reviewId,
+        artifact: reviewComposed.artifact,
+        post: reviewComposed.post,
+        payload: reviewComposed.payload,
+        compositionId: reviewComposed.compositionId,
+        dryRun: false,
+      });
+      if (!result.outcome) throw new Error("The review did not post — nothing left the machine.");
+      const lineCommentCount = reviewComposed.post.threads.length;
+      return { verdict, lineCommentCount, url: result.outcome.url };
+    } catch (error) {
+      setMovedReviewId(isMovedHeadRefusal(error) ? reviewId : null);
+      throw error;
+    }
   }, [postReview, reviewId, reviewComposed]);
 
   const onSetVerdict = useCallback(
@@ -250,6 +266,7 @@ export function useHandoffExits(review: Review): HandoffExits {
     // Post is armed only once the review is composed — so the previewed bytes and the posted bytes
     // are one composition (the CTA renders disabled until then, honest).
     onPost: mode === "teammate-pr" && reviewComposed ? onPost : undefined,
+    onRecapture: movedReviewId === reviewId ? recapture : undefined,
     receipt,
     onSetVerdict,
     reviewDraft: reviewComposed ? composeReviewDraft(reviewComposed) : undefined,

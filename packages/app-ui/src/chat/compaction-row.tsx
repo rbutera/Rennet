@@ -1,5 +1,6 @@
 import { cn } from "@rennet/ui";
 import { Layers, RefreshCw } from "lucide-react";
+import { Icon } from "../components/icon";
 import type { CompactBoundaryRow, ContextRebuiltRow, ContextWindow } from "./chat-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ export function CompactionRow({
     >
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
       <span className="flex items-center gap-1.5">
-        <Layers className="size-3 shrink-0" aria-hidden="true" />
+        <Icon icon={Layers} className="size-3 shrink-0" aria-hidden="true" />
         <span>Context compacted</span>
         <span aria-hidden="true">·</span>
         <ContextMeter row={row} contextWindow={contextWindow} />
@@ -95,7 +96,7 @@ export function ContextRebuiltMarker({ row }: { readonly row: ContextRebuiltRow 
     >
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
       <span className="flex items-center gap-1.5">
-        <RefreshCw className="size-3 shrink-0" aria-hidden="true" />
+        <Icon icon={RefreshCw} className="size-3 shrink-0" aria-hidden="true" />
         <span>Context rebuilt</span>
         <span aria-hidden="true">·</span>
         <span className="italic">{row.reason}</span>

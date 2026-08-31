@@ -15,7 +15,7 @@ import type { Project, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
-import { mount, waitFor } from "../test/dom";
+import { cleanup, mount, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
@@ -82,8 +82,10 @@ function mountApp(path: string, handlers: MemoryBridgeHandlers = {}) {
   return { ...utils, history, asked };
 }
 
-/** The board branch's own header. Present ⇒ the route fell through to the board. */
-const onBoard = () => document.body.textContent?.includes("REVIEW · atlas") === true;
+/** The board itself. Present ⇒ the route fell through to the board. (It used to be the
+ *  `REVIEW · <repo>` eyebrow, which the board no longer carries — the board opens on the
+ *  board. The board element is the sturdier landmark anyway: it IS the surface.) */
+const onBoard = () => document.querySelector('[data-kind="lens-board-view"]') !== null;
 /** The context-map surface's own title. */
 const onMap = () => document.body.textContent?.includes("Context Map") === true;
 
@@ -111,6 +113,26 @@ describe("?view=map renders the session project's context map (dead-destination 
 
     await waitFor(() => expect(onBoard()).toBe(true));
     expect(onMap()).toBe(false);
+  });
+
+  it("the board opens on the BOARD — no eyebrow strip above it, on any of the four surfaces", async () => {
+    // The route rendered a bordered `REVIEW · <repo>` header above the board, and matching
+    // strips above the three honest-absence surfaces. None is in the design, all four
+    // restated what the session trail already says, and each pushed its document down a row.
+    mountApp("/s/s1");
+    await waitFor(() => expect(onBoard()).toBe(true));
+    expect(document.querySelector(".eyebrow")).toBeNull();
+    expect(document.body.textContent).not.toContain("REVIEW ·");
+    // The board is the FIRST thing in the scroll region — nothing precedes it.
+    const board = document.querySelector('[data-kind="lens-board-view"]');
+    expect(board?.previousElementSibling).toBeNull();
+    cleanup();
+
+    // …and the absence surfaces the same, still stating their own fact in their own <h1>.
+    const { findByTestId } = mountApp("/s/rv-1?view=map");
+    const unavailable = await findByTestId("map-unavailable");
+    expect(document.querySelector(".eyebrow")).toBeNull();
+    expect(unavailable.querySelector("h1")?.textContent).toContain("cannot tell which project");
   });
 
   it("clicking the top bar's Map toggle actually arrives — URL and surface both move", async () => {

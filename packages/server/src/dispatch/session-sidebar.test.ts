@@ -45,9 +45,11 @@ function sessionDispatch(dir: string) {
       start: async ({
         projectId,
         target,
+        replacesSessionId,
       }: {
         projectId: string;
         commandId: string;
+        replacesSessionId?: string;
         target?: { branch: string; prNumber?: number; repository?: string };
       }) => {
         // A DISTINCT review per start, as a real capture produces — a shared id would make
@@ -57,9 +59,12 @@ function sessionDispatch(dir: string) {
         const entered =
           target === undefined
             ? { session: mintSession(projectId), reattached: false }
-            : entry.enter(projectId, target, undefined, reviewId);
+            : replacesSessionId === undefined
+              ? entry.enter(projectId, target, undefined, reviewId)
+              : entry.enterSuccessor(replacesSessionId, projectId, target);
         if (!entered.reattached) store.save(entered.session);
         const bound = store.attachReview(entered.session.id, reviewId) ?? entered.session;
+        if (replacesSessionId !== undefined) store.archive(replacesSessionId);
         return { session: sidebarSessionFor(bound), reattached: entered.reattached };
       },
       rename: (id: string, title: string) => {
@@ -337,5 +342,41 @@ describe("session.mint — the New Chat front door (C21)", () => {
         branch: "feat/seam",
       }),
     ).toEqual({ session: null, reattached: false });
+  });
+});
+
+describe("session.mint — moved-head successor", () => {
+  it("returns a fresh live claimant only after persisting it ahead of the archived source", async () => {
+    const dir = sessionsDir();
+    const firstRuntime = sessionDispatch(dir);
+    const first = (await firstRuntime.handlers["session.mint"]({
+      projectId: "p1",
+      commandId: "0b2c1ea2-10fc-4394-88cc-b906584f9211",
+      branch: "feat/seam",
+      prNumber: 7,
+      repository: "acme/widget",
+    })) as { session: SidebarSession };
+
+    const replacement = (await firstRuntime.handlers["session.mint"]({
+      projectId: "p1",
+      commandId: "7f875da6-fbef-4d57-a59d-c0f39094f11e",
+      branch: "feat/seam",
+      prNumber: 7,
+      repository: "acme/widget",
+      replacesSessionId: first.session.id,
+    })) as { session: SidebarSession; reattached: boolean };
+
+    expect(replacement.reattached).toBe(false);
+    expect(replacement.session.id).not.toBe(first.session.id);
+    const rows = (await sessionDispatch(dir).handlers["session.list"]({})) as {
+      sessions: SidebarSession[];
+    };
+    expect(rows.sessions.find((session) => session.id === first.session.id)?.archived).toBe(true);
+    const fresh = rows.sessions.find((session) => session.id === replacement.session.id);
+    expect(fresh?.archived).toBeUndefined();
+    expect(fresh).toMatchObject({
+      claim: { branch: "feat/seam", prNumber: 7 },
+      repository: "acme/widget",
+    });
   });
 });

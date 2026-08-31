@@ -7,12 +7,18 @@ import { type EntryStore, SessionEntry, type Target } from "./session-entry";
 
 /** An in-memory `EntryStore`. Records saves so a test can prove mint-vs-reattach by
  *  counting how many sessions were persisted. */
-function fakeStore(seed: SessionModel[] = []): EntryStore & { readonly sessions: SessionModel[] } {
+function fakeStore(seed: SessionModel[] = []): EntryStore & {
+  readonly sessions: SessionModel[];
+  readonly saves: SessionModel[];
+} {
   const sessions = [...seed];
+  const saves: SessionModel[] = [];
   return {
     sessions,
+    saves,
     list: () => [...sessions],
     save: (s) => {
+      saves.push(s);
       const at = sessions.findIndex((x) => x.id === s.id);
       if (at >= 0) sessions[at] = s;
       else sessions.push(s);
@@ -36,6 +42,11 @@ const GITLAB_WIDGET = {
   forge: "gitlab",
   owner: "acme",
   name: "widget",
+} satisfies ForgeRepoIdentity;
+const GITHUB_GADGET = {
+  forge: "github",
+  owner: "acme",
+  name: "gadget",
 } satisfies ForgeRepoIdentity;
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -177,6 +188,131 @@ describe("SessionEntry.enter — re-entry reattaches (never a second session)", 
     expect(current.session.id).not.toBe(legacy.session.id);
     expect(current.session.forgeRepository).toEqual(GITHUB_WIDGET);
     expect(store.sessions).toHaveLength(2);
+  });
+});
+
+describe("SessionEntry.enterSuccessor — replacement survives every interruption point", () => {
+  it("replaces only the selected repository when one project has an identical branch and PR", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["widget-old", "gadget-old", "widget-fresh"]));
+    const widgetTarget = {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    } satisfies Target;
+    const gadgetTarget = {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/gadget",
+      forgeRepository: GITHUB_GADGET,
+    } satisfies Target;
+    const widget = entry.enter("proj", widgetTarget);
+    const gadget = entry.enter("proj", gadgetTarget, "/repos/gadget");
+    const gadgetBefore = structuredClone(gadget.session);
+
+    const successor = entry.enterSuccessor(widget.session.id, "proj", widgetTarget);
+
+    expect(successor).toMatchObject({
+      reattached: false,
+      session: {
+        id: "widget-fresh",
+        projectId: "proj",
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+        claim: { branch: "main", prNumber: 7 },
+      },
+    });
+    expect(successor.session).not.toHaveProperty("repositoryRoot");
+    expect(successor.session.id).not.toBe(gadget.session.id);
+    expect(store.sessions.find((session) => session.id === gadget.session.id)).toEqual(
+      gadgetBefore,
+    );
+    expect(
+      store.sessions.find((session) => session.id === widget.session.id)?.archivedAt,
+    ).toBeUndefined();
+  });
+
+  it("persists the fresh claimant while the refused review's session remains live", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["old", "fresh"]));
+    entry.enter("proj", { ...FEAT, repository: "acme/widget", forgeRepository: GITHUB_WIDGET });
+    store.saves.length = 0;
+
+    const successor = entry.enterSuccessor("old", "proj", {
+      ...FEAT,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    });
+
+    expect(successor.reattached).toBe(false);
+    expect(successor.session.id).toBe("fresh");
+    expect(store.saves.map((session) => [session.id, session.archivedAt])).toEqual([
+      ["fresh", undefined],
+    ]);
+    expect(store.sessions.find((session) => session.id === "old")?.archivedAt).toBeUndefined();
+  });
+
+  it("adopts a fresh claimant left by an interruption before releasing the old claim", () => {
+    const target = { ...FEAT, repository: "acme/widget", forgeRepository: GITHUB_WIDGET };
+    const store = fakeStore([
+      {
+        id: "old",
+        projectId: "proj",
+        claim: FEAT,
+        repository: target.repository,
+        forgeRepository: target.forgeRepository,
+        threads: [],
+        createdAt: 1,
+      },
+      {
+        id: "fresh",
+        projectId: "proj",
+        claim: FEAT,
+        repository: target.repository,
+        forgeRepository: target.forgeRepository,
+        threads: [],
+        createdAt: 2,
+      },
+    ]);
+    const entry = new SessionEntry(store, mintDeps(["unused"]));
+
+    const successor = entry.enterSuccessor("old", "proj", target);
+
+    expect(successor).toMatchObject({ reattached: true, session: { id: "fresh" } });
+    expect(store.saves).toEqual([]);
+    expect(store.sessions.find((session) => session.id === "old")?.archivedAt).toBeUndefined();
+  });
+
+  it("adopts the persisted successor when the response is lost after releasing the old claim", () => {
+    const target = { ...FEAT, repository: "acme/widget", forgeRepository: GITHUB_WIDGET };
+    const store = fakeStore([
+      {
+        id: "old",
+        projectId: "proj",
+        claim: FEAT,
+        repository: target.repository,
+        forgeRepository: target.forgeRepository,
+        threads: [],
+        createdAt: 1,
+        archivedAt: 3,
+      },
+      {
+        id: "fresh",
+        projectId: "proj",
+        claim: FEAT,
+        repository: target.repository,
+        forgeRepository: target.forgeRepository,
+        threads: [],
+        createdAt: 2,
+      },
+    ]);
+    const entry = new SessionEntry(store, mintDeps(["unused"]));
+
+    const successor = entry.enterSuccessor("old", "proj", target);
+
+    expect(successor).toMatchObject({ reattached: true, session: { id: "fresh" } });
+    expect(store.saves).toEqual([]);
   });
 });
 

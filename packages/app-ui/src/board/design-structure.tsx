@@ -1,7 +1,6 @@
 import type { HostElement, LensBoard, SpecDelta } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { ArrowDown } from "lucide-react";
-import { Icon } from "../components/icon";
+import type { ReactNode } from "react";
 import {
   DesignSectionMetadata,
   followBoardAnchor,
@@ -159,13 +158,23 @@ function countLabel(count: number, singular: string): string {
   return `${count} ${count === 1 ? singular : `${singular}s`}`;
 }
 
+/** The design surfaces' shared section label: micro-cap, muted, no margin of its own
+ *  (prototype `lens-board.tsx:670-675`). It labels a block; it is not a heading in it. */
+function SmallLabel({ children }: { readonly children: ReactNode }) {
+  return (
+    <p className="font-medium text-muted-foreground text-xs uppercase tracking-wide">{children}</p>
+  );
+}
+
 /** The Design header's capability roll-up, derived from canonical requirement sections. */
 export function DesignCapabilityGrid({ board }: { readonly board: LensBoard }) {
   const capabilities = capabilitySummaries(board);
   if (capabilities.length === 0) return null;
   return (
     <nav data-kind="capability-grid" aria-label="Design capabilities" className="mb-8">
-      <p className="mb-2 font-medium text-xs text-foreground">Capabilities</p>
+      <div className="mb-2">
+        <SmallLabel>Capabilities</SmallLabel>
+      </div>
       <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {capabilities.map((capability) => (
           <a
@@ -179,21 +188,17 @@ export function DesignCapabilityGrid({ board }: { readonly board: LensBoard }) {
             aria-label={`Jump to ${capability.slug}`}
             onClick={(event) => followBoardAnchor(event, capability.section.id)}
             className={cn(
-              "group flex min-w-0 flex-col gap-1 rounded-surface border border-line bg-surface px-3 py-2.5 text-left transition-colors hover:border-line-strong hover:bg-raised focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
-              capability.deltas.includes("added") && "border-l-green-line",
+              "flex min-w-0 flex-col gap-1 rounded-surface border border-line px-3 py-2.5 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
+              capability.deltas.includes("added") && "border-l-2 border-l-green/70",
             )}
           >
             <span className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 flex-1 truncate font-mono font-medium text-sm text-foreground">
+              <span className="min-w-0 flex-1 truncate font-medium text-13 text-foreground">
                 {capability.slug}
               </span>
               {capability.deltas.map((delta) => (
                 <SpecDeltaBadge key={delta} delta={delta} />
               ))}
-              <Icon
-                icon={ArrowDown}
-                className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-y-0.5"
-              />
             </span>
             <span className="text-xs text-muted-foreground">
               {countLabel(capability.requirements, "requirement")} ·{" "}
@@ -240,7 +245,7 @@ function ProposalSpine({
           className="flex min-w-0 flex-col"
         >
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
-            <p className="font-medium text-xs text-foreground">What Changes</p>
+            <SmallLabel>What Changes</SmallLabel>
             <SourceChips sources={whatChangesSource?.data.sources ?? []} />
           </div>
           <div className="flex flex-col divide-y divide-line/60">
@@ -248,9 +253,9 @@ function ProposalSpine({
               <div
                 key={element.id}
                 data-kind="design-change-row"
-                className="flex items-start gap-2.5 py-2"
+                className="flex items-baseline gap-2.5 py-1.5"
               >
-                <span className="mt-0.5 shrink-0 rounded-chip border border-line bg-surface px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
+                <span className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
                   {rowTag(element)}
                 </span>
                 <div className="min-w-0 flex-1">
@@ -268,10 +273,10 @@ function ProposalSpine({
           className="flex min-w-0 flex-col"
         >
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
-            <p className="font-medium text-xs text-foreground">Impact</p>
+            <SmallLabel>Impact</SmallLabel>
             <SourceChips sources={impactSource?.data.sources ?? []} />
           </div>
-          <div className="flex flex-col gap-2 rounded-surface border border-line bg-raised px-3 py-2.5">
+          <div className="flex flex-col gap-2 rounded-surface border border-line px-3 py-2">
             {impact.map((element) => (
               <BoardElement key={element.id} element={element} />
             ))}
@@ -427,9 +432,11 @@ function TaskProgress({ groups }: { readonly groups: readonly TaskGroupProgress[
   const total = groups.reduce((sum, group) => sum + group.total, 0);
   return (
     <div data-kind="task-progress" className="flex flex-col">
-      <p className="mb-2 font-medium text-xs text-foreground">
-        Tasks · {done}/{total}
-      </p>
+      <div className="mb-2">
+        <SmallLabel>
+          Tasks · {done}/{total}
+        </SmallLabel>
+      </div>
       <div className="flex flex-col divide-y divide-line/60 rounded-surface border border-line px-3">
         {groups.map((group) => {
           const complete = group.done === group.total;
@@ -449,12 +456,12 @@ function TaskProgress({ groups }: { readonly groups: readonly TaskGroupProgress[
                 aria-valuemin={0}
                 aria-valuemax={group.total}
                 aria-valuetext={`${group.done} of ${group.total} tasks complete`}
-                className="h-1.5 w-28 shrink-0 overflow-hidden rounded-full bg-raised"
+                className="h-1 w-28 shrink-0 overflow-hidden rounded-full bg-secondary"
               >
                 <span
                   className={cn(
                     "block h-full rounded-full",
-                    complete ? "bg-green" : "bg-foreground/40",
+                    complete ? "bg-green/80" : "bg-foreground/40",
                   )}
                   style={{ width: `${percent}%` }}
                 />

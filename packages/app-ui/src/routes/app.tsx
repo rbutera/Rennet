@@ -10,6 +10,7 @@ import { FolderPlus } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
+import { Icon } from "../components/icon";
 import { BridgeProvider, useCommand, useMutation, useRefreshCommand } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { ProjectContextMapView } from "../project/context-map-view";
@@ -123,7 +124,7 @@ function EmptyProjectEntry() {
       className="grid min-h-screen place-content-center justify-items-center gap-4 p-10 text-center"
     >
       <span className="grid size-16 place-items-center rounded-window bg-accent-soft text-accent">
-        <FolderPlus className="size-8" />
+        <Icon icon={FolderPlus} className="size-8" />
       </span>
       <h1 className="font-display text-display font-medium text-ink">Add a project to begin.</h1>
       <p className="max-w-lg text-ink-soft">
@@ -131,7 +132,7 @@ function EmptyProjectEntry() {
         New Chat.
       </p>
       <Button size="lg" onClick={() => openDialog("add-project")}>
-        <FolderPlus />
+        <Icon icon={FolderPlus} />
         Add Project
       </Button>
     </section>
@@ -308,10 +309,20 @@ function StartupGate({ children }: { readonly children: ReactNode }) {
     pending: settingsPending,
     error: settingsError,
   } = useCommand("settings.get", {});
-  if (settingsError) return <div className="rn-startup-content">{children}</div>;
+  if (settingsError) return <div className="contents">{children}</div>;
   if (settingsPending || !settings)
-    return <div className="rn-startup-content rn-startup-pending">{children}</div>;
-  if (settings.welcome) return <div className="rn-startup-content">{children}</div>;
+    return <div className="contents opacity-0 pointer-events-none">{children}</div>;
+  // A replay request (`settings.resetWelcome`, from Settings or ⌘K) reopens the welcome
+  // even on a machine full of projects. It has to bypass FirstRunEligibility entirely:
+  // that resolver elects the wizard only for a client with NO projects, so a reset that
+  // merely cleared the completion stamp would be a no-op on every real install — which
+  // is exactly the state that made the welcome unreachable before this branch existed.
+  // The ORDER of these two lines is load-bearing: `resetWelcome` PRESERVES an existing
+  // `completedAt` (an older v1 build requires that field), so the two stamps stand
+  // together and the request has to win. Finishing the wizard writes `{ completedAt }`
+  // over the whole slice, which drops the request and lets the second line through.
+  if (settings.welcome?.replayRequestedAt) return <FirstRunWelcome settings={settings} />;
+  if (settings.welcome?.completedAt) return <div className="contents">{children}</div>;
   return <FirstRunEligibility settings={settings}>{children}</FirstRunEligibility>;
 }
 
@@ -334,9 +345,9 @@ function FirstRunEligibility({
     setWelcomeClaimed(listed.projects.length === 0);
   }, [listed, welcomeClaimed]);
 
-  if (projectsError) return <div className="rn-startup-content">{children}</div>;
+  if (projectsError) return <div className="contents">{children}</div>;
   if (projectsPending || welcomeClaimed === undefined) {
-    return <div className="rn-startup-content rn-startup-pending">{children}</div>;
+    return <div className="contents opacity-0 pointer-events-none">{children}</div>;
   }
   // The shell must NOT mount beneath the welcome. A hidden-but-mounted underlay is
   // not inert enough: its coach anchors still register, the coach store still elects
@@ -344,7 +355,7 @@ function FirstRunEligibility({
   // wizard, and a click in the wizard burns an unseen mark. Unmounting is the fix at
   // the root; the shell comes up once, on the other side of the welcome.
   if (welcomeClaimed) return <FirstRunWelcome settings={settings} />;
-  return <div className="rn-startup-content">{children}</div>;
+  return <div className="contents">{children}</div>;
 }
 
 /** A session route (#480 `/s/:slug`). The slug is the durable session id (C21); it

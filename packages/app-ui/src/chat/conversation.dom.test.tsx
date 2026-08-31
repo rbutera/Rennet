@@ -131,6 +131,93 @@ describe("transcript turns (task 2.3)", () => {
     expect(action.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("renders CONSECUTIVE activity blocks as one sequence, not one wrapper each", () => {
+    // Each activity block used to get its own ActivitySequence, which put the transcript's
+    // block gap between steps that belong to one another. Assert the shape, not the pixels:
+    // the two adjacent steps share a parent, and the step across the prose does not.
+    const run: TranscriptRow = {
+      kind: "turn",
+      id: "grouped",
+      speaker: "orchestrator",
+      status: "complete",
+      paragraphs: [],
+      blocks: [
+        {
+          kind: "action",
+          id: "g1",
+          label: "Read",
+          detail: "a.ts",
+          status: "complete",
+          icon: FileText,
+        },
+        {
+          kind: "action",
+          id: "g2",
+          label: "Read",
+          detail: "b.ts",
+          status: "complete",
+          icon: FileText,
+        },
+        { kind: "text", text: "Then some prose." },
+        {
+          kind: "action",
+          id: "g3",
+          label: "Read",
+          detail: "c.ts",
+          status: "complete",
+          icon: FileText,
+        },
+      ],
+    };
+    const { container } = mount(<ConversationPane rows={[run]} liveIds={EMPTY_LIVE} />);
+
+    const stepOf = (detail: string) =>
+      screen.getByText(new RegExp(`Read · ${detail.replace(".", "\\.")}`)).closest("div")
+        ?.parentElement;
+    const a = stepOf("a.ts");
+    const b = stepOf("b.ts");
+    const c = stepOf("c.ts");
+    expect(a).not.toBeNull();
+    // The two adjacent steps live in the SAME sequence…
+    expect(a).toBe(b);
+    // …and the one on the far side of the prose does not.
+    expect(c).not.toBe(a);
+    // Which is three activity blocks in exactly two sequences.
+    const sequences = new Set([a, b, c]);
+    expect(sequences.size).toBe(2);
+    expect(container.textContent).toContain("Then some prose.");
+  });
+
+  it("bottom-anchors a just-minted session and returns to the ordinary column on a reply", () => {
+    const sent: TranscriptRow = {
+      kind: "turn",
+      id: "u-first",
+      speaker: "user",
+      status: "complete",
+      paragraphs: ["Review the span fix."],
+    };
+    const replied: TranscriptRow = {
+      kind: "turn",
+      id: "o-first",
+      speaker: "orchestrator",
+      status: "complete",
+      paragraphs: ["Reading it now."],
+    };
+    const column = (container: HTMLElement) =>
+      container.querySelector("[data-transcript-state]") as HTMLElement;
+
+    const { container, rerender } = mount(<ConversationPane rows={[sent]} liveIds={EMPTY_LIVE} />);
+    expect(column(container).dataset.transcriptState).toBe("awaiting-first-reply");
+    expect(column(container).className).toContain("justify-end");
+    expect(column(container).className).toContain("h-full");
+
+    // The orchestrator answers: the ordinary top-aligned transcript takes over.
+    rerender(<ConversationPane rows={[sent, replied]} liveIds={EMPTY_LIVE} />);
+    expect(column(container).dataset.transcriptState).toBe("conversation");
+    expect(column(container).className).not.toContain("justify-end");
+    expect(column(container).className).toContain("py-6");
+  });
+
   it("does not reveal final prose until the preceding activity settles", () => {
     const streaming: TranscriptRow = {
       kind: "turn",

@@ -107,7 +107,7 @@ export function SettingsScreen({ page }: { readonly page: string }) {
         >
           <Icon icon={ArrowLeft} className="size-3.5" />
         </button>
-        <span className="text-xs font-medium text-ink">Settings</span>
+        <span className="text-13 font-medium text-ink">Settings</span>
         <kbd className="ml-auto rounded border border-line px-1 py-0.5 text-2xs text-ink-soft">
           esc
         </kbd>
@@ -127,7 +127,7 @@ export function SettingsScreen({ page }: { readonly page: string }) {
                 aria-current={active ? "page" : undefined}
                 onClick={() => navigate(settingsPath(p.slug, scopedProject), { replace: true })}
                 className={cn(
-                  "flex h-8 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
+                  "flex h-8 items-center gap-2 rounded-md px-2 text-left text-13 transition-colors",
                   active ? "bg-raised text-ink" : "text-ink-soft hover:bg-raised/60 hover:text-ink",
                 )}
               >

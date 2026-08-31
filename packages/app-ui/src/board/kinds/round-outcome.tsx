@@ -1,5 +1,7 @@
 import type { HostElement } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
+import { Check, CircleDashed, Minus, Sparkles } from "lucide-react";
+import { Icon } from "../../components/icon";
 import { AnchorReveal } from "../../review";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
@@ -14,19 +16,22 @@ import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
 type RoundOutcome = Extract<HostElement, { kind: "round_outcome" }>;
 type OutcomeStatus = "addressed" | "partial" | "untouched" | "beyond";
 
-/** One tint per status — addressed reads resolved (gold), untouched wants attention,
- *  partial and beyond each take a distinct neutral/accent so all four are legible apart. */
-const STATUS_PILL: Record<OutcomeStatus, string> = {
-  addressed: "bg-primary/15 text-primary",
-  partial: "bg-accent-soft text-accent-ink",
-  untouched: "bg-danger-soft text-danger",
-  beyond: "bg-secondary text-secondary-foreground",
+/** One glyph + one tint per status, no fill: the four outcomes read apart by icon and
+ *  colour the way the prototype's report does (`round-report.tsx:10-15`). Gold is the
+ *  reserve accent, so addressed takes evidence green; partial the copper warn; untouched
+ *  stays muted (nothing happened); beyond takes the verdigris model hue. */
+const STATUS_MARK: Record<OutcomeStatus, { readonly icon: typeof Check; readonly tint: string }> = {
+  addressed: { icon: Check, tint: "text-green" },
+  partial: { icon: CircleDashed, tint: "text-warn" },
+  untouched: { icon: Minus, tint: "text-muted-foreground" },
+  beyond: { icon: Sparkles, tint: "text-model" },
 };
 
 export function RoundOutcomeElement({ element }: { readonly element: RoundOutcome }) {
   const { status, ask, note, code_ref } = element.data;
   const patchsetId = useBoardPatchsetId();
   const ref = useCodeRefOf(code_ref);
+  const mark = STATUS_MARK[status as OutcomeStatus];
   return (
     <div
       data-kind="round_outcome"
@@ -35,12 +40,8 @@ export function RoundOutcomeElement({ element }: { readonly element: RoundOutcom
       className="flex flex-col gap-1.5"
     >
       <div className="flex items-baseline gap-2">
-        <span
-          className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wide",
-            STATUS_PILL[status as OutcomeStatus],
-          )}
-        >
+        <Icon icon={mark.icon} className={cn("size-3.5 shrink-0 self-center", mark.tint)} />
+        <span className={cn("shrink-0 font-semibold text-2xs uppercase tracking-wide", mark.tint)}>
           {status}
         </span>
         <span className="min-w-0 flex-1 font-medium text-foreground text-sm leading-snug">

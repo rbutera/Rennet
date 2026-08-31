@@ -1,6 +1,7 @@
 import { cn } from "@rennet/ui";
 import { ArrowUp, FileCode, MessageSquare, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
+import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +59,11 @@ function ComposerBadgePill({
       {badge.kind === "image" ? (
         <img src={badge.thumbnailUrl} alt="" className="size-4 shrink-0 rounded-sm object-cover" />
       ) : (
-        <MessageSquare className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <Icon
+          icon={MessageSquare}
+          className="size-3 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
       )}
       <span className="max-w-[160px] truncate">
         {badge.kind === "image"
@@ -82,16 +87,16 @@ function ComposerBadgePill({
         } reference`}
         className="flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
       >
-        <X className="size-3" aria-hidden="true" />
+        <Icon icon={X} className="size-3" aria-hidden="true" />
       </button>
       {badge.kind === "comment" && (
         <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 hidden w-64 max-w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover p-2.5 text-foreground shadow-lg group-hover:block">
           <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-            <FileCode className="size-3 shrink-0" aria-hidden="true" />
+            <Icon icon={FileCode} className="size-3 shrink-0" aria-hidden="true" />
             <span className="truncate font-mono">{badge.path}</span>
           </div>
           <div className="mt-1 font-mono text-2xs text-primary">L{badge.line}</div>
-          <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-foreground/90">
+          <p className="mt-1 whitespace-pre-wrap text-12-5 leading-relaxed text-foreground/90">
             {badge.text}
           </p>
         </div>
@@ -293,7 +298,7 @@ export function Composer({
                 : "bg-muted text-muted-foreground",
             )}
           >
-            <ArrowUp className="size-4" aria-hidden="true" />
+            <Icon icon={ArrowUp} className="size-4" aria-hidden="true" />
           </button>
         </div>
       </div>

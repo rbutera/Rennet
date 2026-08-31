@@ -121,6 +121,16 @@ export class SettingsStore {
         this.#welcome = { completedAt };
         return { completedAt };
       },
+      // Mirrors the real command: the request is ADDED and an existing completion stamp
+      // is PRESERVED (an older v1 build requires `welcome.completedAt`). The startup
+      // gate elects the replay on the request's presence, so the pair is unambiguous.
+      "settings.resetWelcome": () => {
+        const replayRequestedAt = "2026-08-28T13:00:00.000Z";
+        this.#welcome = this.#welcome?.completedAt
+          ? { completedAt: this.#welcome.completedAt, replayRequestedAt }
+          : { replayRequestedAt };
+        return { replayRequestedAt };
+      },
       "settings.setLastProject": ({ source, projectId }) => {
         this.#navigation = {
           lastProjectBySource: { ...this.#navigation?.lastProjectBySource, [source]: projectId },

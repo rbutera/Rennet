@@ -81,10 +81,23 @@ export function useCommandStream<K extends CommandName, C extends StreamChannelN
   const foldRef = useRef(params.fold);
   foldRef.current = params.fold;
   const { channel, delivery, subscriptionKey } = params;
+  const active = useRef({ bridge, cache, key, channel, delivery, subscriptionKey });
+  active.current = { bridge, cache, key, channel, delivery, subscriptionKey };
 
   useEffect(() => {
     if (subscriptionKey === undefined) return;
     const unsubscribe = subscribeChannel(bridge, channel, subscriptionKey, (event) => {
+      const current = active.current;
+      if (
+        current.bridge !== bridge ||
+        current.cache !== cache ||
+        current.key !== key ||
+        current.channel !== channel ||
+        current.subscriptionKey !== subscriptionKey ||
+        current.delivery !== delivery
+      ) {
+        return;
+      }
       cache.setData(key, (prev) => foldRef.current(prev as CommandOutput<K> | undefined, event), {
         supersedeInFlight: delivery === "snapshot",
       });

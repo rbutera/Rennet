@@ -1,8 +1,8 @@
-import type { Review } from "@rennet/protocol";
-import { Badge } from "@rennet/ui";
+import { isCodingRoundDisposition, type Review } from "@rennet/protocol";
 import { Check, GitBranch, GitPullRequest, Pencil } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { Icon } from "../components/icon";
 import {
   AnchorReveal,
   type CodeRef,
@@ -10,10 +10,11 @@ import {
   ProseSelectionLayer,
   RichText,
 } from "../review";
-import type { DispositionKind, StagedAsk } from "../store";
+import type { StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import { type ReviseSpan, reviseDraftSpan } from "./handoff-data";
+import { IntentPill } from "./intent-pill";
 import { OutboundMarkdown } from "./outbound-markdown";
 import { parseLineAnchor } from "./selectors";
 
@@ -43,21 +44,6 @@ import { parseLineAnchor } from "./selectors";
 // draft): absent them the lane is fully live over the store — every card, Drop, and the Dispatch
 // gating are real — it simply cannot become the pull request until a drafted, ready PR is handed in.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const INTENT_LABEL: Record<DispositionKind, string> = {
-  "request-change": "Request Change",
-  comment: "Comment",
-  question: "Question",
-  approve: "Approve",
-};
-
-function IntentPill({ type }: { type: DispositionKind }) {
-  return (
-    <Badge variant={type === "request-change" ? "destructive" : "secondary"} className="shrink-0">
-      {INTENT_LABEL[type]}
-    </Badge>
-  );
-}
 
 /** The receipt the egress returns once the own-branch change request opens. */
 export interface PrReceipt {
@@ -111,6 +97,8 @@ export interface RoundsLanesProps {
   readonly pr?: DraftedPr;
   /** Dispatch a work-order round (the C9 run it navigates to is out of scope). Absent ⇒ a no-op. */
   readonly onDispatch?: () => void;
+  /** The current dispatch request, kept separate from the daemon-owned round state. */
+  readonly dispatchState?: RoundDispatchViewState;
   /**
    * Open the own-branch PR — resolves `publish.submitPr` on the sign-click (cluster 6). Absent ⇒
    * the Open-PR CTA is present but disabled (honest); nothing another human sees leaves without it.
@@ -125,10 +113,19 @@ export interface RoundsLanesProps {
   readonly onRevise?: ReviseSpan;
 }
 
+export type RoundDispatchViewState =
+  | { readonly status: "idle" }
+  | { readonly status: "sending" }
+  | { readonly status: "not-dispatched"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
+const IDLE_DISPATCH_STATE: RoundDispatchViewState = { status: "idle" };
+
 export function RoundsLanes({
   review,
   pr,
   onDispatch,
+  dispatchState = IDLE_DISPATCH_STATE,
   onOpenPr,
   onRevise,
   unavailable,
@@ -142,6 +139,12 @@ export function RoundsLanes({
   const { retire, unstageAsk, stageAsk, editAsk } = useRennetStore((s) => s.reviewActions);
   const asks = useMemo(() => Object.values(stagedAsks), [stagedAsks]);
   const gathering = asks.length > 0;
+  const codingAskCount = useMemo(
+    () => asks.filter((ask) => isCodingRoundDisposition(ask.type)).length,
+    [asks],
+  );
+  const dispatching = dispatchState.status === "sending";
+  const canDispatch = codingAskCount > 0 && onDispatch !== undefined && !dispatching;
 
   // The `dispatch` coach mark anchors the Dispatch Round button.
   const dispatchRef = useCoachAnchor("dispatch");
@@ -194,10 +197,10 @@ export function RoundsLanes({
   if (!gathering && pr?.ready) {
     const changeRequest = CHANGE_REQUEST_COPY[pr.requestKind];
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-8 py-8">
+      <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
           <div className="flex items-center gap-2.5">
-            <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+            <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
             <h1 className="text-xl font-semibold tracking-tight text-foreground">{pr.title}</h1>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -207,8 +210,8 @@ export function RoundsLanes({
           <p className="text-xs text-muted-foreground">{pr.destination}</p>
           {receipt ? (
             <div className="flex flex-col gap-1 pt-1">
-              <span className="flex items-center gap-2 text-base font-medium text-foreground">
-                <Check className="size-4 text-green" aria-hidden="true" />
+              <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Icon icon={Check} className="size-4 text-green" />
                 {changeRequest.opened} · {changeRequest.numberPrefix}
                 {receipt.number}
               </span>
@@ -216,7 +219,7 @@ export function RoundsLanes({
                 href={receipt.url}
                 target="_blank"
                 rel="noreferrer"
-                className="w-fit text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+                className="w-fit text-12-5 text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
               >
                 {receipt.url.replace(/^https?:\/\//, "")}
               </a>
@@ -242,10 +245,10 @@ export function RoundsLanes({
 
   // ── State: changes remain (or nothing staged yet) ────────────────────────────
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 px-8 py-8">
+    <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
         <div className="flex items-center gap-2.5">
-          <GitBranch className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Icon icon={GitBranch} className="size-4 text-muted-foreground" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">Changes</h1>
           {gathering && <span className="text-xs text-muted-foreground">{asks.length}</span>}
         </div>
@@ -272,19 +275,36 @@ export function RoundsLanes({
           <p className="text-sm text-muted-foreground">Nothing staged yet.</p>
         )}
 
-        {/* Dispatch Round: inert while nothing is staged (R37), and inert when no round run is
-            wired (`onDispatch`) — a live button with no handler would be a dead click that lies.
-            The shipping tree DOES wire it (`routes/app.tsx` → `LiveRoundsScope`), so absent
-            `onDispatch` means a mount with no rounds source, not a permanently dead exit. */}
+        {gathering && codingAskCount === 0 && (
+          <p className="text-xs text-muted-foreground">
+            Questions and approvals stay with the review. Stage a comment or request changes to
+            start a coding round.
+          </p>
+        )}
+
+        {/* Dispatch Round: inert without an addressed coding ask (R37), while a dispatch is in
+            flight, or when no live rounds source is wired. */}
         <button
           ref={dispatchRef}
           type="button"
-          disabled={!gathering || !onDispatch}
+          disabled={!canDispatch}
           onClick={onDispatch}
           className="w-fit rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
         >
-          Dispatch Round
+          {dispatching ? "Dispatching…" : "Dispatch Round"}
         </button>
+
+        {dispatchState.status === "not-dispatched" && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {dispatchState.reason}
+          </p>
+        )}
+
+        {dispatchState.status === "failed" && (
+          <p role="alert" className="text-xs text-destructive">
+            {dispatchState.reason}
+          </p>
+        )}
 
         {/* The daemon refused to compose the pull request (a detached HEAD, a review that should
             post as a review instead). Without this the lane just never became the PR and said
@@ -296,10 +316,7 @@ export function RoundsLanes({
         {/* The destination, held quietly until the changes are gone. */}
         {pr && (
           <div className="mt-2 flex items-center gap-2 border-t border-border/60 pt-4">
-            <GitPullRequest
-              className="size-3.5 shrink-0 text-muted-foreground/50"
-              aria-hidden="true"
-            />
+            <Icon icon={GitPullRequest} className="size-3.5 shrink-0 text-muted-foreground/50" />
             <span className="min-w-0 truncate text-xs text-muted-foreground/60">{pr.title}</span>
           </div>
         )}
@@ -344,14 +361,14 @@ function AskCard({
     <div className="group flex flex-col gap-1.5 rounded-md border border-border px-4 py-3">
       <span className="flex items-center gap-1.5">
         <IntentPill type={ask.type} />
-        <span className="truncate text-2xs text-muted-foreground/80 italic">{ask.anchor}</span>
+        <span className="truncate text-2xs text-muted-foreground/80">{ask.anchor}</span>
         {!editing && (
           <button
             type="button"
             onClick={onStartEdit}
             className="ml-auto flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
           >
-            <Pencil className="size-3" aria-hidden="true" />
+            <Icon icon={Pencil} className="size-3" />
             Edit
           </button>
         )}

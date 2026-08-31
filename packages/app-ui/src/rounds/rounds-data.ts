@@ -6,7 +6,7 @@ import {
 } from "@rennet/protocol";
 import { createContext, useContext, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { commandKey, useCommand, useCommandStream, useMutation } from "../data";
+import { commandKey, readCommandId, useCommand, useCommandStream, useMutation } from "../data";
 import { useBridgeContext } from "../data/bridge";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
@@ -52,7 +52,7 @@ export interface RoundsSource {
   /** Raw report-board data by id, or `undefined` when the id resolves nothing. */
   readonly reportBoard: (reportBoardId: string) => unknown;
   /** Dispatch a work-order round for `slug`; absent ⇒ no live runtime, button disabled. */
-  readonly dispatch?: (slug: string) => void;
+  readonly dispatch?: (slug: string) => Promise<RoundDispatchOutcome>;
   /** Retry this session's retained failed operation from its durable checkpoint. */
   readonly retry?: (slug: string) => void;
   /** True while a retry request for this session is awaiting its durable acceptance. */
@@ -90,6 +90,12 @@ export interface RoundsSource {
    */
   readonly roundsUnavailable?: (slug: string) => string | undefined;
 }
+
+/** The complete answer to one client dispatch request. Only `accepted` owns navigation. */
+export type RoundDispatchOutcome =
+  | { readonly status: "accepted" }
+  | { readonly status: "not-dispatched"; readonly reason: string }
+  | { readonly status: "rejected"; readonly reason: string };
 
 /** The honest-absent default: no live round, an empty ledger, no report, no dispatch. The
  *  CONTEXT default only — the app tree binds {@link useLiveRoundsSource} through
@@ -182,7 +188,7 @@ export function useReportBoard(reportBoardId: string): ReportBoardResolution {
 /** The dispatch capability for the current source — present under the app tree's
  *  `LiveRoundsScope`, `undefined` under the honest-absent default (⇒ the Dispatch button
  *  stays inert). `HandoffMount` reads this and threads it to the handoff lanes. */
-export function useRoundDispatch(): ((slug: string) => void) | undefined {
+export function useRoundDispatch(): ((slug: string) => Promise<RoundDispatchOutcome>) | undefined {
   return useContext(RoundsSourceContext).dispatch;
 }
 
@@ -218,8 +224,19 @@ export function useRoundRetryError(slug: string): string | undefined {
  * "dispatched" arm: that is the DAEMON's fact, and it arrives as a `RoundEvent`.
  */
 type DispatchIntent =
-  | { readonly slug: string; readonly status: "sending" }
-  | { readonly slug: string; readonly status: "rejected"; readonly reason: string };
+  | {
+      readonly slug: string;
+      readonly reviewId: string;
+      readonly request: number;
+      readonly status: "sending";
+    }
+  | {
+      readonly slug: string;
+      readonly reviewId: string;
+      readonly request: number;
+      readonly status: "rejected";
+      readonly reason: string;
+    };
 
 /** A rejection in readable words — the daemon's message where it gave one. */
 function failureText(reason: unknown): string {
@@ -284,10 +301,12 @@ export function useLiveRoundsSource(): RoundsSource {
   // so an event that landed during that flight would otherwise be gone. The two are merged
   // by `seq` at read time — see {@link mergeRoundEvents}.
   const streamed = useRef<readonly RoundEvent[]>(NO_EVENTS);
+  const refreshedReviewGeneration = useRef<string | undefined>(undefined);
   const streamKey = useRef(reviewId);
   if (streamKey.current !== reviewId) {
     streamKey.current = reviewId;
     streamed.current = NO_EVENTS;
+    refreshedReviewGeneration.current = undefined;
   }
   useCommandStream({
     channel: "roundProgress",
@@ -299,12 +318,17 @@ export function useLiveRoundsSource(): RoundsSource {
       // A changed or failed durable terminal snapshot follows every ledger write it can
       // expose. An unchanged snapshot does not: finalizeUnchanged writes afterward and
       // emits the legacy unchanged receipt as its post-write commit point.
+      const changedSuccessorGeneration =
+        event.type === "operation" &&
+        event.snapshot.state.phase === "completed" &&
+        event.snapshot.draining !== true &&
+        event.snapshot.state.result.kind === "changed"
+          ? event.snapshot.state.result.report.generation
+          : undefined;
+      const changedReviewCommitted = changedSuccessorGeneration !== undefined;
       const durableTerminal =
         event.type === "operation" &&
-        (event.snapshot.state.phase === "failed" ||
-          (event.snapshot.state.phase === "completed" &&
-            event.snapshot.draining !== true &&
-            event.snapshot.state.result.kind === "changed"));
+        (event.snapshot.state.phase === "failed" || changedReviewCommitted);
       if (
         durableTerminal ||
         event.type === "composed" ||
@@ -313,6 +337,24 @@ export function useLiveRoundsSource(): RoundsSource {
       ) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
         cache.invalidate(commandKey("session.list", {}));
+      }
+      // Boards carry their successor generation on round progress, but Diff and Handoff read
+      // `Review.activePatchsetId`. Refresh the one mounted review only when the daemon has
+      // committed changed successor state; failed and unchanged rounds keep the predecessor.
+      const committedSuccessorGeneration =
+        changedSuccessorGeneration ?? (event.type === "composed" ? event.generation : undefined);
+      if (
+        committedSuccessorGeneration !== undefined &&
+        committedSuccessorGeneration !== refreshedReviewGeneration.current &&
+        reviewId !== undefined
+      ) {
+        refreshedReviewGeneration.current = committedSuccessorGeneration;
+        cache.invalidate(
+          commandKey("review.load", {
+            commandId: readCommandId(`review.load:${reviewId}`),
+            reviewId,
+          }),
+        );
       }
       if (transcriptRefreshReceipt(event)) {
         cache.invalidate(commandKey("session.transcript", { reviewId: reviewId ?? "" }));
@@ -336,6 +378,7 @@ export function useLiveRoundsSource(): RoundsSource {
   // says only what is true ("we asked, and are waiting"); the daemon's receipt is what
   // promotes it into a real round, and its rejection is what surfaces honestly instead.
   const [intent, setIntent] = useState<DispatchIntent | undefined>(undefined);
+  const dispatchRequest = useRef(0);
 
   const events = eventsData?.events;
   const records = recordsData?.records;
@@ -352,13 +395,35 @@ export function useLiveRoundsSource(): RoundsSource {
       if (forSlug !== slug) return initialRoundState;
       // The daemon's own account always wins: the intent covers exactly the window in
       // which the daemon has said nothing, and stops speaking the moment it does.
-      if (merged.length > 0 || intent?.slug !== forSlug) return folded;
+      if (merged.length > 0 || intent?.slug !== forSlug || intent.reviewId !== reviewId) {
+        return folded;
+      }
       return intent.status === "rejected"
         ? // The receipt refused the round. It never started, and saying so is the honest
           // end of the intent — not a silent bounce back to the board.
           { phase: "failed", reason: intent.reason }
         : // Asked, and nothing back yet. The client's own intent, stated as such.
           { phase: "dispatching" };
+    };
+    const writeEvents = (
+      base: readonly RoundEvent[],
+      appended: readonly RoundEvent[],
+    ): readonly RoundEvent[] => {
+      let written: readonly RoundEvent[] = NO_EVENTS;
+      cache.setData(
+        commandKey("session.roundEvents", { reviewId: reviewId ?? "" }),
+        (cached) => {
+          const cachedEvents =
+            (cached as { readonly events?: readonly RoundEvent[] } | undefined)?.events ??
+            NO_EVENTS;
+          const currentStream = streamKey.current === reviewId ? streamed.current : NO_EVENTS;
+          written = mergeRoundEvents([...base, ...cachedEvents], [...currentStream, ...appended]);
+          if (streamKey.current === reviewId) streamed.current = written;
+          return { events: [...written] };
+        },
+        { supersedeInFlight: true },
+      );
+      return written;
     };
     return {
       roundState: stateFor,
@@ -379,12 +444,7 @@ export function useLiveRoundsSource(): RoundsSource {
               type: "operation",
               snapshot: output.acceptedOperation,
             };
-            streamed.current = mergeRoundEvents(streamed.current, [accepted]);
-            cache.setData(
-              commandKey("session.roundEvents", { reviewId }),
-              () => ({ events: [...streamed.current] }),
-              { supersedeInFlight: true },
-            );
+            writeEvents(NO_EVENTS, [accepted]);
             cache.invalidate(commandKey("session.roundEvents", { reviewId }));
           })
           .catch(() => undefined);
@@ -392,8 +452,21 @@ export function useLiveRoundsSource(): RoundsSource {
       retryPending: (forSlug: string) => forSlug === slug && retryPending,
       retryError: (forSlug: string) =>
         forSlug === slug && retryError !== undefined ? failureText(retryError) : undefined,
-      dispatch: (forSlug: string) => {
-        if (reviewId === undefined) return;
+      dispatch: async (forSlug: string): Promise<RoundDispatchOutcome> => {
+        if (reviewId === undefined) {
+          return { status: "rejected", reason: "Rennet could not resolve this review." };
+        }
+        const request = ++dispatchRequest.current;
+        const settleIntent = (next: DispatchIntent | undefined) => {
+          setIntent((current) =>
+            current?.request === request &&
+            current.reviewId === reviewId &&
+            current.slug === forSlug
+              ? next
+              : current,
+          );
+        };
+        const previousEvents = merged;
         // A new round starts from nothing: drop the finished round's events rather than
         // fold this one onto its `composed` state. That is DISCARDING stale data, not
         // asserting a new fact — the log refills from the daemon's own `dispatched`.
@@ -403,26 +476,37 @@ export function useLiveRoundsSource(): RoundsSource {
           () => ({ events: [] satisfies RoundEvent[] }),
           { supersedeInFlight: true },
         );
-        setIntent({ slug: forSlug, status: "sending" });
-        void mutate({ reviewId })
-          .then((output) => {
-            if (output.acceptedOperation !== undefined) {
-              const accepted: RoundEvent = {
-                type: "operation",
-                snapshot: output.acceptedOperation,
-              };
-              streamed.current = mergeRoundEvents(streamed.current, [accepted]);
-              cache.setData(
-                commandKey("session.roundEvents", { reviewId }),
-                () => ({ events: [...streamed.current] }),
-                { supersedeInFlight: true },
-              );
-            }
-            cache.invalidate(commandKey("session.roundEvents", { reviewId }));
-          })
-          .catch((reason: unknown) => {
-            setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });
-          });
+        setIntent({ slug: forSlug, reviewId, request, status: "sending" });
+        try {
+          const output = await mutate({ reviewId });
+          if (!output.dispatched) {
+            const reason =
+              "Rennet did not start a coding round. Questions and approvals remain staged for the review.";
+            writeEvents(previousEvents, NO_EVENTS);
+            settleIntent(undefined);
+            return { status: "not-dispatched", reason };
+          }
+          if (output.acceptedOperation === undefined) {
+            const reason =
+              "Rennet did not receive the accepted operation for this coding round. Try dispatching again.";
+            writeEvents(previousEvents, NO_EVENTS);
+            settleIntent({ slug: forSlug, reviewId, request, status: "rejected", reason });
+            return { status: "rejected", reason };
+          }
+          const accepted: RoundEvent = {
+            type: "operation",
+            snapshot: output.acceptedOperation,
+          };
+          writeEvents(NO_EVENTS, [accepted]);
+          settleIntent(undefined);
+          cache.invalidate(commandKey("session.roundEvents", { reviewId }));
+          return { status: "accepted" };
+        } catch (reason: unknown) {
+          const message = failureText(reason);
+          writeEvents(previousEvents, NO_EVENTS);
+          settleIntent({ slug: forSlug, reviewId, request, status: "rejected", reason: message });
+          return { status: "rejected", reason: message };
+        }
       },
     };
   }, [

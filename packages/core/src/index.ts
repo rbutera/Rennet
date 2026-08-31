@@ -1049,6 +1049,21 @@ export class ReviewService {
     return this.capture(commandId, repositoryPath, reviewId);
   }
 
+  async activatePatchset(commandId: string, reviewId: string, patchset: Patchset): Promise<Review> {
+    const digest = payloadDigest({ reviewId, patchsetId: patchset.id, mode: "activate-patchset" });
+    const receipt = this.store.receipt(commandId, digest);
+    if (receipt) return receipt;
+    const current = this.requireReview(reviewId);
+    const event: ReviewEvent = {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId,
+      patchset,
+    };
+    const review = foldReview(current, event);
+    return this.store.commit(commandId, digest, [event], review);
+  }
+
   /**
    * Read any persisted review by id (issue #324) — the pure read behind
    * `review.load` and every id-addressed dispatch command. Independent of which

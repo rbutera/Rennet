@@ -1,5 +1,6 @@
 import type {
   DomainCountKind,
+  FindingAccord,
   HostElement,
   LensBoard,
   LensKind,
@@ -92,6 +93,7 @@ export const finding = (
     status?: "open" | "addressed" | "dismissed";
     code?: readonly string[];
     concurrence?: readonly { model: string; agree: number; total: number }[];
+    accord?: FindingAccord;
   },
 ): HostElement => ({
   id,
@@ -102,6 +104,7 @@ export const finding = (
     status: opts.status ?? "open",
     code: [...(opts.code ?? [])],
     concurrence: [...(opts.concurrence ?? [])],
+    ...(opts.accord === undefined ? {} : { accord: opts.accord }),
   }),
 });
 

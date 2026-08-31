@@ -85,9 +85,10 @@ Rennet uses four type roles:
 - Geist Mono for source code and exact technical values, over the platform
   monospace stack as fallback.
 
-The desktop component ramp is `11, 12, 14, 16, 18, 20, 24` pixels at a 16-pixel
-root, plus the front-door display size. Components express these through
-Tailwind utilities from `text-2xs` through `text-2xl` and `text-display`. A
+The desktop component ramp is `10, 11, 12, 12.5, 13, 14, 15, 16, 18, 20, 24`
+pixels at a 16-pixel root, plus the front-door display size. Components express
+these through Tailwind utilities from `text-10` through `text-2xl` and
+`text-display`. A
 design-ramp test in each of `packages/ui` and `packages/app-ui` rejects
 arbitrary text sizes, radii, and color escapes in that package's source.
 
@@ -160,7 +161,7 @@ meaning needs it.
 - Give unfamiliar icons a tooltip and accessible name.
 - Use shared icon components for controls instead of emoji or text glyphs.
 - Use the shared radius and color tokens instead of one-off values.
-- Take segmented controls (pick one of N) from the kit's `ToggleGroup`/`Toggle`; hand-rolling `aria-pressed` or `role="radiogroup"` in a surface is banned by lint, not left to review.
+- Take segmented controls (pick one of N) from the kit's `ToggleGroup`/`Toggle`; hand-rolling `aria-pressed` or `role="radiogroup"` in a surface is banned by lint, not left to review. A skin is not a reason to leave the kit: the top bar's History · Map · Diff pills wear the prototype's outlined-pill look as `className` overrides on `ToggleGroup`/`Toggle`, and keep the group label, roving focus, and empty-selection state the kit already owns.
 
 ## Accessibility is part of the component
 
