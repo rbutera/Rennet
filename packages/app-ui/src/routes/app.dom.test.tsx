@@ -62,7 +62,13 @@ describe("RennetRouterApp", () => {
       <RennetRouterApp bridge={bridge} history={history} />,
     );
     expect(
-      await findByText("You stopped writing the code. You still have to answer for it."),
+      // Lazy welcome: the text arrives only after the dynamic chunk resolves, which under a
+      // saturated parallel gate can exceed findBy*'s default 1s. Timeout, not behaviour.
+      await findByText(
+        "You stopped writing the code. You still have to answer for it.",
+        undefined,
+        { timeout: 15_000 },
+      ),
     ).toBeTruthy();
     // The shell is NOT mounted beneath the welcome (D7). A hidden-but-mounted underlay
     // still registered coach anchors and still let the coachmark — which portals to
@@ -86,7 +92,13 @@ describe("RennetRouterApp", () => {
       <RennetRouterApp bridge={bridge} history={memoryHistory("/")} />,
     );
     expect(
-      await findByText("You stopped writing the code. You still have to answer for it."),
+      // Lazy welcome: the text arrives only after the dynamic chunk resolves, which under a
+      // saturated parallel gate can exceed findBy*'s default 1s. Timeout, not behaviour.
+      await findByText(
+        "You stopped writing the code. You still have to answer for it.",
+        undefined,
+        { timeout: 15_000 },
+      ),
     ).toBeTruthy();
     // Same D7 rule as the fresh path: the shell does not mount beneath the wizard.
     expect(queryByTestId("chat-dock-slot")).toBeNull();
