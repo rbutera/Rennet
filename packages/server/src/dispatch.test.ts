@@ -147,6 +147,7 @@ const PUBLISH_CAPABILITIES: ForgeCapabilities = {
   supportsBatchedReview: true,
   supportsMultiLineAnchors: true,
   supportsFileLevelThreads: true,
+  requiresReviewVerdictInBody: false,
 };
 
 class InMemoryStore implements ReviewStorePort {

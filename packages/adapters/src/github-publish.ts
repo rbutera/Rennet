@@ -184,6 +184,7 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     supportsBatchedReview: true,
     supportsMultiLineAnchors: true,
     supportsFileLevelThreads: true,
+    requiresReviewVerdictInBody: false,
   };
 
   constructor(private readonly config: GitHubPublishConfig) {}
