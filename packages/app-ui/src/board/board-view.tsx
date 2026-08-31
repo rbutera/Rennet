@@ -35,6 +35,11 @@ import { Section } from "./section";
 // to force-open on Flagged and leaving it undefined elsewhere gives both behaviours.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** How often an unsettled board re-reads its lenses, and how many consecutive
+ *  learned-nothing reads it takes before the poll gives up (10 minutes of silence). */
+const POLL_MS = 5_000;
+const POLL_LIMIT = 120;
+
 export interface LensBoardViewProps {
   /** The review whose boards are read — half of the `board.read` identity. */
   readonly reviewId: string;
@@ -73,18 +78,47 @@ export function LensBoardView({
   // board for this generation yet" until the window happened to regain focus (the only other
   // thing that invalidates `board.read`). `useCommand` has no polling, so this is it.
   //
-  // ponytail: a 5s poll while any lens is still missing, which means a review whose Noise
-  // lens legitimately drafted nothing keeps polling for as long as the board is on screen —
-  // five loopback reads every five seconds, no model spend. Upgrade path: a daemon-side
-  // board-arrival channel (the `roundProgress` push already proves the transport), at which
-  // point this whole effect goes.
+  // ponytail: a 5s poll while any lens is still missing, BOUNDED two ways because the
+  // unbounded version polled a never-settling board for as long as it was on screen (perf
+  // audit 2026-08-31, §1 H1) — a review whose Noise lens legitimately drafted nothing never
+  // settles, so "stop when it settles" is not a stop condition. (1) A hidden document polls
+  // not at all, and a paused tick spends no budget, so a window left in the background for an
+  // hour comes back with its full window intact. (2) `POLL_LIMIT` consecutive ticks that
+  // observed NO change in any lens's status end the poll: at 5s that is ten minutes of
+  // complete silence, far longer than the gap between two lenses landing in a slow round
+  // (drafting is per-lens minutes, and any arrival restarts the window through `statusKey`).
+  // Remounting the board restarts it too. Upgrade path: a daemon-side board-arrival channel
+  // (the `roundProgress` push already proves the transport), at which point this whole
+  // effect goes and neither bound is needed.
   const refreshBoards = useRefreshCommand("board.read");
   const awaitingLenses = !lensReadsSettled(resolutions);
+  // The observable "something happened": a lens moving off missing/pending, or a settled
+  // lens changing its answer. A background refetch that returns the same thing keeps the
+  // same statuses, so an unchanged key means the poll genuinely learned nothing.
+  const statusKey = Object.values(resolutions)
+    .map((resolution) => resolution.status)
+    .join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: statusKey is an intentional re-run trigger, not a body reference — a lens changing its answer must restart the poll's budget, and re-running the effect is what resets `spent`.
   useEffect(() => {
     if (!awaitingLenses) return;
-    const timer = setInterval(refreshBoards, 5_000);
-    return () => clearInterval(timer);
-  }, [awaitingLenses, refreshBoards]);
+    let spent = 0;
+    const tick = () => {
+      if (document.hidden) return;
+      if (++spent > POLL_LIMIT) {
+        clearInterval(timer);
+        return;
+      }
+      refreshBoards();
+    };
+    const timer = setInterval(tick, POLL_MS);
+    // Electron throttles a hidden window's timers to about one wake a minute, so coming
+    // back to the window reads immediately instead of waiting out a throttled tick.
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [awaitingLenses, refreshBoards, statusKey]);
 
   // A generation may not carry every lens. A genuinely missing selected lens falls back
   // to the first populated, empty, or failed lens in canonical order. Invalid and pending
