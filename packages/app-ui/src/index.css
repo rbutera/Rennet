@@ -345,7 +345,9 @@
     font: 9px / 1.62 var(--font-mono);
     white-space: pre;
     opacity: 0.52;
-    will-change: transform, opacity;
+    /* Transform only. The drift loop no longer animates opacity (that repainted every
+       frame); promoting an opacity layer here would just cost memory for nothing. */
+    will-change: transform;
   }
   .rn-code-fragment span {
     display: block;

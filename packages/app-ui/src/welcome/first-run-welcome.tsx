@@ -118,6 +118,19 @@ const CODE_FRAGMENTS = [
   ],
 ] as const;
 
+/**
+ * How bright each drifting fragment sits, by index into `CODE_FRAGMENTS`.
+ *
+ * These used to be an `opacity` keyframe channel on the infinite drift loop
+ * (`[0.42, 0.82, 0.56, 0.74, 0.42]`), which forced the compositor to repaint every
+ * fragment every frame — measured 2026-08-31 as 11–19% renderer + 5–6% GPU CPU on an
+ * untouched welcome screen. The loops are transform-only now so frames composite on the
+ * GPU, and the layering the animated channel used to give comes from these fixed values
+ * instead: spread across the same 0.42–0.82 range, alternating near and far so no two
+ * neighbours read at the same depth.
+ */
+const FRAGMENT_OPACITY = [0.44, 0.72, 0.5, 0.8, 0.58, 0.66, 0.46, 0.76, 0.54, 0.62] as const;
+
 const CODE_PARTICLES = Array.from({ length: 34 }, (_, index) => ({
   id: `code-particle-${index}`,
   symbol: index % 4 === 0 ? "+" : index % 4 === 1 ? "-" : index % 4 === 2 ? "{" : "@",
@@ -180,7 +193,12 @@ function CodeField() {
   return (
     <div className="rn-code-field" aria-hidden="true">
       {CODE_FRAGMENTS.map((lines, index) => (
-        <pre className={`rn-code-fragment fragment-${index}`} data-fragment key={lines[0]}>
+        <pre
+          className={`rn-code-fragment fragment-${index}`}
+          data-fragment
+          key={lines[0]}
+          style={{ opacity: FRAGMENT_OPACITY[index] }}
+        >
           {lines.map((line) => (
             <span key={line}>{line || " "}</span>
           ))}
@@ -258,25 +276,44 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
           { delay: reduceMotion ? 0 : 0.45, duration: reduceMotion ? 0.01 : 0.45 },
         ),
       ];
+      // Transform-only, deliberately: x/y/rotate composite on the GPU, while the `opacity`
+      // channel these loops used to carry repainted ten fragments every frame for as long as
+      // the screen stayed open. Depth now comes from `FRAGMENT_OPACITY`, set once.
+      const drifts: typeof controls = [];
       if (!reduceMotion) {
         fragments.forEach((node, index) => {
           const x = root.clientWidth * (0.22 + (index % 4) * 0.05) * (index % 2 ? -1 : 1);
           const y = root.clientHeight * (0.12 + (index % 5) * 0.035) * (index % 3 ? 1 : -1);
-          controls.push(
+          drifts.push(
             animate(
               node,
               {
                 x: [0, x, -x * 0.72, x * 0.38, 0],
                 y: [0, y * 0.55, -y, y * 0.7, 0],
                 rotate: [0, 7, -5, 3, 0],
-                opacity: [0.42, 0.82, 0.56, 0.74, 0.42],
               },
               { duration: 17 + index, repeat: Infinity, ease: "linear" },
             ),
           );
         });
+        controls.push(...drifts);
+      }
+      // `repeat: Infinity` means these never end on their own, and a hidden window still runs
+      // motion's frame loop — a minimised or backgrounded first run burned CPU indefinitely.
+      // Park the drift while the document is hidden; the intro one-shots above are short
+      // enough to leave alone. No listener when there is no loop to park (reduce motion).
+      const syncDrift = () => {
+        for (const drift of drifts) {
+          if (document.hidden) drift.pause();
+          else drift.play();
+        }
+      };
+      if (drifts.length > 0) {
+        syncDrift(); // The window can already be hidden at mount; the event only reports changes.
+        document.addEventListener("visibilitychange", syncDrift);
       }
       return () => {
+        document.removeEventListener("visibilitychange", syncDrift);
         controls.forEach((control) => {
           control.stop();
         });

@@ -179,6 +179,58 @@ describe("FirstRunWelcome", () => {
     expect(screen.getByText("Appearance")).toBeTruthy();
   });
 
+  it("renders every fragment at a distinct fixed opacity inside the old animated range", async () => {
+    // The idle-CPU fix (perf audit 2026-08-31, §1): the drift loop used to keyframe
+    // `opacity: [0.42, 0.82, 0.56, 0.74, 0.42]`, repainting ten fragments every frame
+    // forever. What this can prove from the DOM is that the channel is now a static
+    // per-fragment value covering the same depth range — NOT that the running animation
+    // omits it. Nothing here reads motion's keyframes; see the report.
+    const { container } = mount(
+      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+    );
+    await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    const fragments = [...container.querySelectorAll<HTMLElement>("[data-fragment]")];
+    expect(fragments).toHaveLength(10);
+    const opacities = fragments.map((fragment) => Number(fragment.style.opacity));
+    // Every fragment carries one — a bare `""` parses to 0 and fails this.
+    expect(opacities.filter((value) => value >= 0.42 && value <= 0.82)).toHaveLength(10);
+    // Layered, not flat: ten different depths, and no two neighbours at the same one.
+    expect(new Set(opacities).size).toBe(10);
+    expect(opacities.filter((value, index) => index > 0 && value === opacities[index - 1])).toEqual(
+      [],
+    );
+  });
+
+  it("removes the exact visibilitychange listeners it added, on unmount", async () => {
+    // The drift loops are `repeat: Infinity` and motion keeps its frame loop running in a
+    // hidden window, so the welcome parks them on `document.hidden`. Observable here: the
+    // listener exists while the screen is up, and every handler registered is later removed
+    // BY IDENTITY (a cleanup passing a fresh closure removes nothing and leaks the loop).
+    // Not observable here: that the handler actually pauses motion — see the report.
+    const added = vi.spyOn(document, "addEventListener");
+    const removed = vi.spyOn(document, "removeEventListener");
+    try {
+      const { unmount } = mount(
+        <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+      );
+      await screen.findByText("You stopped writing the code. You still have to answer for it.");
+      const handlers = added.mock.calls
+        .filter(([type]) => type === "visibilitychange")
+        .map(([, handler]) => handler);
+      expect(handlers.length).toBeGreaterThan(0);
+      expect(removed.mock.calls.filter(([type]) => type === "visibilitychange")).toHaveLength(0);
+      unmount();
+      expect(
+        removed.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler),
+      ).toEqual(handlers);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
   it("applies and persists appearance immediately inside the welcome", async () => {
     const setTheme = vi.fn((input: CommandInput<"settings.setThemePack">) => ({
       themePack: input.themePack,
