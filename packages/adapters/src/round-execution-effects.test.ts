@@ -367,6 +367,153 @@ describe("selected branch landing", () => {
     expect(await git(repo.root, "status", "--porcelain")).toBe("");
   });
 
+  it("refuses an unmounted selected branch that moved after landing was planned", async () => {
+    const repo = await createRepo();
+    await git(repo.root, "branch", "feature/shared");
+    const worktreePath = join(repo.tempRoot, "round-worktree");
+    await prepareRoundWorktree({
+      git: execaGit,
+      locus: HOST_LOCUS,
+      repoRoot: repo.root,
+      worktreePath,
+      sourceHead: repo.baseHead,
+    });
+    const workerHead = await commitFile(worktreePath, "worker.txt", "worker output\n");
+    const attempt = await planRoundBranchLanding({
+      git: execaGit,
+      repoRoot: repo.root,
+      executionId: "land-moved-unmounted-branch",
+      branch: "feature/shared",
+      expectedHead: repo.baseHead,
+      baselineCommit: repo.baseHead,
+      workerHead,
+      startedAt: 10,
+    });
+    const movedHead = await git(
+      repo.root,
+      "commit-tree",
+      `${repo.baseHead}^{tree}`,
+      "-p",
+      repo.baseHead,
+      "-m",
+      "concurrent selected-branch move",
+    );
+    await git(repo.root, "update-ref", "refs/heads/feature/shared", movedHead, repo.baseHead);
+
+    await expect(
+      landRoundBranch({ git: execaGit, repoRoot: repo.root, attempt }),
+    ).rejects.toBeInstanceOf(RoundBranchLandingConflictError);
+    expect(await git(repo.root, "rev-parse", "feature/shared")).toBe(movedHead);
+    expect(await git(repo.root, "rev-parse", "main")).toBe(repo.baseHead);
+    expect(await git(repo.root, "rev-parse", "HEAD")).toBe(repo.baseHead);
+    expect(await git(repo.root, "status", "--porcelain")).toBe("");
+  });
+
+  it("repairs a stale selected checkout while preserving an unrelated staged edit", async () => {
+    const repo = await createRepo();
+    const worktreePath = join(repo.tempRoot, "round-worktree");
+    await prepareRoundWorktree({
+      git: execaGit,
+      locus: HOST_LOCUS,
+      repoRoot: repo.root,
+      worktreePath,
+      sourceHead: repo.baseHead,
+    });
+    const workerHead = await commitFile(worktreePath, "worker.txt", "worker output\n");
+    const attempt = await planRoundBranchLanding({
+      git: execaGit,
+      repoRoot: repo.root,
+      executionId: "repair-stale-selected-checkout",
+      branch: "main",
+      expectedHead: repo.baseHead,
+      baselineCommit: repo.baseHead,
+      workerHead,
+      startedAt: 10,
+    });
+    await writeFile(join(repo.root, "base.txt"), "unrelated staged edit\n");
+    await git(repo.root, "add", "base.txt");
+    await git(repo.root, "update-ref", "refs/heads/main", workerHead, repo.baseHead);
+
+    await expect(
+      landRoundBranch({ git: execaGit, repoRoot: repo.root, attempt }),
+    ).resolves.toMatchObject({ outcome: "already-applied" });
+    expect(await readFile(join(repo.root, "worker.txt"), "utf8")).toBe("worker output\n");
+    expect(await readFile(join(repo.root, "base.txt"), "utf8")).toBe("unrelated staged edit\n");
+    expect(await git(repo.root, "diff", "--cached", "--name-only")).toBe("base.txt");
+    expect(await git(repo.root, "diff", "--name-only")).toBe("");
+  });
+
+  it("refuses a stale selected checkout with an overlapping staged edit", async () => {
+    const repo = await createRepo();
+    const worktreePath = join(repo.tempRoot, "round-worktree");
+    await prepareRoundWorktree({
+      git: execaGit,
+      locus: HOST_LOCUS,
+      repoRoot: repo.root,
+      worktreePath,
+      sourceHead: repo.baseHead,
+    });
+    const workerHead = await commitFile(worktreePath, "base.txt", "worker output\n");
+    const attempt = await planRoundBranchLanding({
+      git: execaGit,
+      repoRoot: repo.root,
+      executionId: "refuse-stale-overlapping-checkout",
+      branch: "main",
+      expectedHead: repo.baseHead,
+      baselineCommit: repo.baseHead,
+      workerHead,
+      startedAt: 10,
+    });
+    await writeFile(join(repo.root, "base.txt"), "local staged edit\n");
+    await git(repo.root, "add", "base.txt");
+    await git(repo.root, "update-ref", "refs/heads/main", workerHead, repo.baseHead);
+    const indexBefore = await git(repo.root, "write-tree");
+    const statusBefore = await git(repo.root, "status", "--porcelain");
+
+    await expect(
+      landRoundBranch({ git: execaGit, repoRoot: repo.root, attempt }),
+    ).rejects.toBeInstanceOf(RoundBranchLandingConflictError);
+    expect(await git(repo.root, "rev-parse", "main")).toBe(workerHead);
+    expect(await readFile(join(repo.root, "base.txt"), "utf8")).toBe("local staged edit\n");
+    expect(await git(repo.root, "write-tree")).toBe(indexBefore);
+    expect(await git(repo.root, "status", "--porcelain")).toBe(statusBefore);
+  });
+
+  it("refuses a stale selected checkout with an untracked overwrite", async () => {
+    const repo = await createRepo();
+    const worktreePath = join(repo.tempRoot, "round-worktree");
+    await prepareRoundWorktree({
+      git: execaGit,
+      locus: HOST_LOCUS,
+      repoRoot: repo.root,
+      worktreePath,
+      sourceHead: repo.baseHead,
+    });
+    const workerHead = await commitFile(worktreePath, "collision.txt", "worker output\n");
+    const attempt = await planRoundBranchLanding({
+      git: execaGit,
+      repoRoot: repo.root,
+      executionId: "refuse-stale-untracked-checkout",
+      branch: "main",
+      expectedHead: repo.baseHead,
+      baselineCommit: repo.baseHead,
+      workerHead,
+      startedAt: 10,
+    });
+    await writeFile(join(repo.root, "collision.txt"), "local untracked file\n");
+    await git(repo.root, "update-ref", "refs/heads/main", workerHead, repo.baseHead);
+    const indexBefore = await git(repo.root, "write-tree");
+    const statusBefore = await git(repo.root, "status", "--porcelain");
+
+    await expect(
+      landRoundBranch({ git: execaGit, repoRoot: repo.root, attempt }),
+    ).rejects.toBeInstanceOf(RoundBranchLandingConflictError);
+    expect(await git(repo.root, "rev-parse", "main")).toBe(workerHead);
+    expect(await readFile(join(repo.root, "collision.txt"), "utf8")).toBe("local untracked file\n");
+    expect(await git(repo.root, "write-tree")).toBe(indexBefore);
+    expect(await git(repo.root, "status", "--porcelain")).toBe(statusBefore);
+  });
+
   it("preserves unrelated dirty edits while fast-forwarding the selected checkout", async () => {
     const repo = await createRepo();
     const worktreePath = join(repo.tempRoot, "round-worktree");
@@ -408,6 +555,7 @@ describe("selected branch landing", () => {
       sourceHead: repo.baseHead,
     });
     const workerHead = await commitFile(worktreePath, "base.txt", "worker output\n");
+    await git(repo.root, "config", "merge.autostash", "true");
     await writeFile(join(repo.root, "base.txt"), "local tracked edit\n");
     const attempt = await planRoundBranchLanding({
       git: execaGit,
@@ -496,6 +644,11 @@ describe("selected branch landing", () => {
   it("adopts a no-op branch receipt without fabricating a commit", async () => {
     const repo = await createRepo();
     const before = await git(repo.root, "rev-list", "--count", "main");
+    const landingCommands: string[][] = [];
+    const recordingGit: typeof execaGit = async (cwd, args) => {
+      landingCommands.push(args);
+      return execaGit(cwd, args);
+    };
     const attempt = await planRoundBranchLanding({
       git: execaGit,
       repoRoot: repo.root,
@@ -508,8 +661,9 @@ describe("selected branch landing", () => {
     });
 
     await expect(
-      landRoundBranch({ git: execaGit, repoRoot: repo.root, attempt }),
+      landRoundBranch({ git: recordingGit, repoRoot: repo.root, attempt }),
     ).resolves.toMatchObject({ outcome: "unchanged" });
+    expect(landingCommands.some(([command]) => command === "read-tree")).toBe(false);
     expect(await git(repo.root, "rev-parse", "main")).toBe(repo.baseHead);
     expect(await git(repo.root, "rev-list", "--count", "main")).toBe(before);
     expect(await git(repo.root, "status", "--porcelain")).toBe("");

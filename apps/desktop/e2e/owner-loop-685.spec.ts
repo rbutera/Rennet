@@ -10,7 +10,7 @@ import {
   OWNER_LOOP_SEQUENCE_QUOTE,
   OWNER_LOOP_SOURCE,
   writeOwnerLoopScriptedHarnessPlan,
-} from "../../../packages/server/src/owner-loop-proof-fixture";
+} from "@rennet/server/testing";
 import {
   completeWelcome,
   git,

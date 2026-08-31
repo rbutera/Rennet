@@ -104,6 +104,7 @@ function parsePlan(path: string): ScriptedHarnessPlan {
   } catch (error) {
     throw new Error(
       `Invalid scripted harness plan at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
   const parsed = ScriptedHarnessPlanSchema.safeParse(input);

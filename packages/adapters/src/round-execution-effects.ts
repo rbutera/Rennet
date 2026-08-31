@@ -524,6 +524,23 @@ export async function landRoundBranch(input: {
           `branch ${input.attempt.branch} advanced but its checkout at ${checkedOutAt} stayed on ${checkoutHead}`,
         );
       }
+      if (input.attempt.workerHead !== input.attempt.expectedHead) {
+        try {
+          await input.git(checkedOutAt, [
+            "read-tree",
+            "-m",
+            "-u",
+            input.attempt.expectedHead,
+            input.attempt.workerHead,
+          ]);
+        } catch (error) {
+          throw new RoundBranchLandingConflictError(
+            `branch ${input.attempt.branch} advanced but its checkout at ${checkedOutAt} could not adopt the landed tree: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
     }
     return {
       ...input.attempt,
@@ -545,7 +562,12 @@ export async function landRoundBranch(input: {
       );
     }
     try {
-      await input.git(checkedOutAt, ["merge", "--ff-only", input.attempt.workerHead]);
+      await input.git(checkedOutAt, [
+        "merge",
+        "--ff-only",
+        "--no-autostash",
+        input.attempt.workerHead,
+      ]);
     } catch (error) {
       throw new RoundBranchLandingConflictError(
         `branch ${input.attempt.branch} could not fast-forward its checkout at ${checkedOutAt}: ${

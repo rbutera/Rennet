@@ -1,7 +1,6 @@
 import { PROTOCOL_VERSION } from "@rennet/protocol";
-import { createRennetServer } from "../../../packages/server/src/create-server";
-import { removeDaemonFile, writeDaemonFile } from "../../../packages/server/src/daemon-file";
-import { loadScriptedHarnessPlan } from "../../../packages/server/src/scripted-harness-plan";
+import { createRennetServer, removeDaemonFile, writeDaemonFile } from "@rennet/server";
+import { loadScriptedHarnessPlan } from "@rennet/server/testing";
 
 async function main(): Promise<void> {
   const dataDir = process.env.RENNET_USER_DATA;
