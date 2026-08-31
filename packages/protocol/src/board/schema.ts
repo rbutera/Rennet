@@ -80,6 +80,29 @@ const concurrenceSchema = z.object({
 });
 
 /**
+ * How the seats LANDED on a finding — the one fact the tallies cannot carry.
+ *
+ * `reconcileFindings` (`core/src/finding-reconcile.ts`) distinguishes three
+ * outcomes, and two of them fold to the byte-identical tally pair
+ * `[{a,1,1},{b,1,1}]`: a CONCUR (both seats raised it at comparable severity)
+ * and a CONFLICT (both raised it at materially different severities, so both
+ * verbatim answers ride along). A reader working from the arithmetic alone reads
+ * a conflict as agreement. `accord` is the stamp that tells them apart.
+ *
+ * - `concur`   — every seat raised it, at comparable severity.
+ * - `split`    — one seat raised it and another answered "no concern".
+ * - `conflict` — every seat raised it, at materially different severities.
+ *
+ * Optional, and deliberately so: boards drafted before this field carry no
+ * accord, and a renderer must degrade to a neutral read rather than claim a
+ * concurrence the board never asserted. A single-harness run carries none
+ * either — one seat has no agreement to report.
+ */
+export const FINDING_ACCORDS = ["concur", "split", "conflict"] as const;
+const accordSchema = z.enum(FINDING_ACCORDS);
+export type FindingAccord = (typeof FINDING_ACCORDS)[number];
+
+/**
  * A finding on one immutable board generation. Review identity is deliberately
  * outside this shape: the durable ask log is already scoped to exactly one
  * review, while generation + board id + element id binds an action to one
@@ -152,6 +175,9 @@ const findingData = withAuthor({
   // #462 marks optionals with `?`; code, concurrence carry none — required (may be empty).
   code: z.array(z.string()),
   concurrence: z.array(concurrenceSchema),
+  // …and `accord` DOES carry one: a board drafted before it has none, and the read
+  // degrades to the tallies rather than inventing the verdict they cannot express.
+  accord: accordSchema.optional(),
   status: z.enum(["open", "addressed", "dismissed"]),
 });
 const decisionData = withAuthor({
@@ -407,6 +433,11 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
       concern: a("string", true, "The finding, as markdown."),
       code: a("element", true, "code_ref elements the finding cites.", true),
       concurrence: a("json", true, "Per-model { model, agree, total } tallies.", true),
+      accord: a(
+        "string",
+        false,
+        "concur | split | conflict — how the seats landed. Absent on a single-harness run and on boards drafted before the field.",
+      ),
       status: a("string", true, "open | addressed | dismissed."),
     },
   ),

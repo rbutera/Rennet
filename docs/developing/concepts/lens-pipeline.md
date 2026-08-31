@@ -81,9 +81,14 @@ and calls board regeneration through this runtime.
    location: a matched pair collapses to the clearer finding carrying both
    models' concurrence, a solo finding carries only the raising model's. The
    result is folded into each finding's board-native `concurrence` tally
-   (`{ model, agree, total }` per seat). With only one harness available the
-   lens degrades to a single seat, stamped with honest single-model
-   concurrence.
+   (`{ model, agree, total }` per seat), alongside an `accord` stamp naming how
+   the seats landed: `concur`, `split` (one seat answered "no concern"), or
+   `conflict` (both raised it at materially different severities). The stamp is
+   load-bearing, because a concurrence and a conflict fold to the identical
+   tally pair — without it a reader cannot tell agreement from disagreement.
+   With only one harness available the lens degrades to a single seat, stamped
+   with honest single-model concurrence and no accord: one seat has no
+   agreement to report.
 3. **Validate.** A deterministic loop guarantees every draft before a human
    sees it, through **three gates in order**: **lint** (before post-process),
    then an **immutability check** (typed data is untouched across the editor

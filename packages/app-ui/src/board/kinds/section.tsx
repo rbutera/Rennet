@@ -17,7 +17,7 @@ export function SectionElement({ element }: { readonly element: ElementOf<"secti
       data-kind="section"
       data-element-id={element.id}
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
-      className="flex scroll-mt-16 flex-col gap-2"
+      className="flex scroll-mt-6 flex-col gap-2"
     >
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-semibold text-base text-foreground">

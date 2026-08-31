@@ -21,7 +21,10 @@ import { ConversationPane } from "./conversation-pane";
 export function ChatDock({ corner }: { readonly corner?: ReactNode }) {
   const { rows, liveIds, trail, contextWindow, inFlight, send, draft, unavailable } = useChatDock();
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    // The hairline is the CHAT's right edge, not the slot's: the layout's wrapper runs
+    // `chatWidth + 4` and pads those 4px off as canvas gutter, so the border has to sit on
+    // this element to land at `chatWidth` (prototype `components/chat-column.tsx`).
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-line">
       <ChatHeader trail={trail} corner={corner} />
       <ConversationPane rows={rows} liveIds={liveIds} contextWindow={contextWindow} />
       <Composer

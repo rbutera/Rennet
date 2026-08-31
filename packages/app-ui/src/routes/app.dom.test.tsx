@@ -69,6 +69,28 @@ describe("RennetRouterApp", () => {
     expect(queryByTestId("chat-dock-slot")).toBeNull();
   });
 
+  it("reopens the welcome after a replay request even though the client has projects", async () => {
+    // The load-bearing half of `settings.resetWelcome`. First-run ELIGIBILITY elects the
+    // wizard only for a zero-project client, so on any machine that has a project the
+    // reset is a no-op unless the replay stamp bypasses eligibility outright. This client
+    // has a project AND had completed the welcome, which is every real install.
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers([project("p1", "alpha")]),
+      "settings.get": () =>
+        settings({ welcome: { replayRequestedAt: "2026-08-29T09:30:00.000Z" } }),
+      "harness.hosts": () => ({ hosts: [] }),
+      "forge.hosts": () => ({ hosts: [] }),
+    });
+    const { findByText, queryByTestId } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/")} />,
+    );
+    expect(
+      await findByText("You stopped writing the code. You still have to answer for it."),
+    ).toBeTruthy();
+    // Same D7 rule as the fresh path: the shell does not mount beneath the wizard.
+    expect(queryByTestId("chat-dock-slot")).toBeNull();
+  });
+
   it("shows the focused Add Project entry after a completed welcome has no projects", async () => {
     const { findByText, getByTestId } = mount(
       <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/")} />,
@@ -88,7 +110,7 @@ describe("RennetRouterApp", () => {
     });
     const history = memoryHistory("/new-chat");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
   });
@@ -103,7 +125,7 @@ describe("RennetRouterApp", () => {
     });
     const history = memoryHistory("/new-chat");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p1"));
   });
 
@@ -119,7 +141,7 @@ describe("RennetRouterApp", () => {
     const history = memoryHistory("/new-chat?project=beta");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
   });
@@ -136,7 +158,7 @@ describe("RennetRouterApp", () => {
     const history = memoryHistory("/new-chat?project=p1");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(remember).toHaveBeenCalledOnce());
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p1" });
     expect(history.history.at(-1)).toBe("/new-chat?project=p1");
@@ -154,7 +176,7 @@ describe("RennetRouterApp", () => {
     const history = memoryHistory("/new-chat?project=shared");
     const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("No open branches or change requests yet.")).toBeTruthy();
+    expect(await findByText("no open branches or change requests yet")).toBeTruthy();
     await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=p2"));
     expect(remember).toHaveBeenCalledWith({ source: "local", projectId: "p2" });
   });

@@ -67,11 +67,17 @@ describe("command-menu entries — projections for navigation, the registry for 
     expect(entries.every((e) => e.action.kind === "navigate")).toBe(true);
   });
 
-  it("actions: Add Project / Add Environment open their dialog", () => {
+  it("actions: the two Add rows open their dialog, Replay dispatches the welcome reset", () => {
     const entries = actionEntries();
-    expect(entries.map((e) => e.action)).toEqual([
-      { kind: "open-dialog", dialog: "add-project" },
-      { kind: "open-dialog", dialog: "add-environment" },
+    expect(entries.map((e) => [e.title, e.action])).toEqual([
+      ["Add Project", { kind: "open-dialog", dialog: "add-project" }],
+      ["Add Environment", { kind: "open-dialog", dialog: "add-environment" }],
+      // Authored with a readable title on purpose — a registry row would be labelled
+      // `settings.resetWelcome`, since the registry's label IS the command id (#465).
+      [
+        "Replay the first-run welcome",
+        { kind: "registry-command", command: "settings.resetWelcome" },
+      ],
     ]);
   });
 
@@ -95,9 +101,15 @@ describe("command-menu entries — projections for navigation, the registry for 
     for (const entry of entries) {
       expect(MENU_ACTION_KINDS).toContain(entry.action.kind);
     }
-    // With the real-today registry (all hidden), the only entries are navigation.
+    // With the real-today registry (all hidden), the registry contributes NOTHING —
+    // the Commands group is empty.
     const live = buildMenuEntries({ hosts: HOSTS, registry: ALL_HIDDEN });
-    expect(live.some((e) => e.action.kind === "registry-command")).toBe(false);
+    expect(live.some((e) => e.group === "Commands")).toBe(false);
+    // The one surviving `registry-command` action is the hand-authored Replay row, which
+    // names its command in this file rather than being projected from an exposure flag.
+    expect(live.filter((e) => e.action.kind === "registry-command")).toEqual([
+      expect.objectContaining({ id: "action:replay-welcome", group: "Actions" }),
+    ]);
   });
 
   it("groups entries in the mode's order", () => {

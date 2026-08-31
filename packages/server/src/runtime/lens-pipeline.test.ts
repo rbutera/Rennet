@@ -78,6 +78,9 @@ const concurrenceOf = (board: DraftBoard, id: string): { model: string; agree: n
       concurrence?: { model: string; agree: number }[];
     }
   )?.concurrence ?? [];
+/** The wire's agreement-kind stamp — undefined on a board that carries none. */
+const accordOn = (board: DraftBoard, id: string): string | undefined =>
+  (board.elements.find((e) => e.id === id)?.data as { accord?: string } | undefined)?.accord;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -1314,6 +1317,34 @@ describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () =>
       { model: "Claude", agree: 1, total: 1 },
       { model: "Codex", agree: 1, total: 1 },
     ]);
+    expect(accordOn(merged, findings[0]?.id ?? "")).toBe("concur");
+  });
+
+  // THE AMBIGUITY THE TALLIES CANNOT RESOLVE: two seats that both raised the finding at
+  // materially different severities produce `disagree` with NEITHER answer being
+  // `NO_CONCERN_ANSWER`, so `foldConcurrence` emits `[{a,1,1},{b,1,1}]` — the BYTE-IDENTICAL
+  // tally set a real concurrence produces. A client reading the arithmetic renders a
+  // disagreement as agreement, which is exactly what the board pill used to do. The
+  // `accord` stamp is the only thing that separates the two, so this test asserts both
+  // halves: the tallies really are identical, and the accord really does differ.
+  it("stamps a severity conflict `conflict`, though its tallies match a concurrence exactly", () => {
+    const a = mkBoard([
+      mkFinding("f1", "this drops writes under load", ["c1"], "high"),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const b = mkBoard([
+      mkFinding("f2", "minor: tidy this up sometime", ["c2"], "low"),
+      mkCodeRef("c2", "src/auth.ts", 11, 12),
+    ]);
+    const merged = reconcileFlaggedBoards(a, b, labels);
+    const findings = merged.elements.filter((e) => e.kind === "finding");
+    expect(findings).toHaveLength(1);
+    const id = findings[0]?.id ?? "";
+    expect(concurrenceOf(merged, id)).toEqual([
+      { model: "Claude", agree: 1, total: 1 },
+      { model: "Codex", agree: 1, total: 1 },
+    ]);
+    expect(accordOn(merged, id)).toBe("conflict");
   });
 
   it("keeps two solo findings, each with the raising model agreeing and the other at zero", () => {
@@ -1336,6 +1367,9 @@ describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () =>
       { model: "Claude", agree: 0, total: 1 },
       { model: "Codex", agree: 1, total: 1 },
     ]);
+    // A solo is a SPLIT, not a conflict — one seat answered "no concern".
+    expect(accordOn(merged, "f1")).toBe("split");
+    expect(accordOn(merged, "b:f2")).toBe("split");
   });
 
   it("namespaces seat B so its finding never resolves seat A's colliding id (finding 7)", () => {
@@ -1373,6 +1407,9 @@ describe("stampSingleSeatConcurrence — the honest single-seat degrade", () => 
     ]);
     const stamped = stampSingleSeatConcurrence(board, "Claude");
     expect(concurrenceOf(stamped, "f1")).toEqual([{ model: "Claude", agree: 1, total: 1 }]);
+    // …and NO accord: one seat has no agreement to report, so there is nothing to stamp.
+    // `concur` here would claim a second opinion that never ran.
+    expect(accordOn(stamped, "f1")).toBeUndefined();
     expect(stamped.document).toBeUndefined();
   });
 

@@ -245,7 +245,7 @@ export function ProseSelectionLayer({
                   <button
                     type="button"
                     onClick={() => setMode("revise")}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-2xs text-foreground/90 hover:bg-secondary"
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground/90 hover:bg-secondary"
                   >
                     <Icon icon={Pencil} className="size-3" />
                     Revise
@@ -257,7 +257,7 @@ export function ProseSelectionLayer({
                       window.getSelection()?.removeAllRanges();
                       dismiss();
                     }}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                   >
                     <Icon icon={Trash2} className="size-3" />
                     Drop
@@ -268,7 +268,7 @@ export function ProseSelectionLayer({
                       if (anchor) setExplanation(draftHandlers.explain(anchor.quote));
                       setMode("explain");
                     }}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                   >
                     <Icon icon={Sparkles} className="size-3" />
                     Explain
@@ -279,7 +279,7 @@ export function ProseSelectionLayer({
                   <button
                     type="button"
                     onClick={() => setMode("comment")}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-2xs text-foreground/90 hover:bg-secondary"
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground/90 hover:bg-secondary"
                   >
                     <Icon icon={MessageSquare} className="size-3" />
                     Comment
@@ -287,7 +287,7 @@ export function ProseSelectionLayer({
                   <button
                     type="button"
                     onClick={() => setMode("comment-rc")}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-2xs text-foreground/90 hover:bg-secondary"
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground/90 hover:bg-secondary"
                   >
                     <Icon icon={GitPullRequestArrow} className="size-3" />
                     Request Changes
@@ -298,7 +298,7 @@ export function ProseSelectionLayer({
                       startThread(EXPLAIN_OPENER, "explain");
                       dismiss();
                     }}
-                    className="flex items-center gap-1.5 rounded px-2 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                   >
                     <Icon icon={Sparkles} className="size-3" />
                     Explain
@@ -308,7 +308,7 @@ export function ProseSelectionLayer({
             </div>
           ) : mode === "explain" ? (
             <div className="w-[340px] rounded-md border border-border bg-popover p-2.5 shadow-overlay">
-              <p className="text-sm leading-relaxed text-foreground/85">{explanation}</p>
+              <p className="text-12-5 leading-relaxed text-foreground/85">{explanation}</p>
             </div>
           ) : (
             <div className="w-[340px] rounded-md border border-border bg-popover p-2.5 shadow-overlay">
@@ -334,7 +334,7 @@ export function ProseSelectionLayer({
                       : "Ask a question or leave a comment…"
                 }
                 rows={2}
-                className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+                className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-13 leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
               />
               {/* Revise states the truth rather than faking a run: unwired at this mount, or the
                   reason the last rework did not land. */}
@@ -353,7 +353,7 @@ export function ProseSelectionLayer({
                 <button
                   type="button"
                   onClick={dismiss}
-                  className="rounded-md px-2.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  className="rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
                   Cancel
                 </button>
@@ -366,7 +366,7 @@ export function ProseSelectionLayer({
                       ? "Revise is not available on this view."
                       : undefined
                   }
-                  className="rounded-md bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
+                  className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary"
                 >
                   {mode === "revise"
                     ? reworking

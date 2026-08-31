@@ -135,13 +135,17 @@ function advance(
   return store.compareAndSwap(storeExpectation(current), { state, updatedAt });
 }
 
-function seedWorkerRunning(store: RoundOperationStore, initial: RoundOperation): RoundOperation {
+function seedWorkerRunning(
+  store: RoundOperationStore,
+  initial: RoundOperation,
+  options: { sourceHead?: string; sourceParentHead?: string } = {},
+): RoundOperation {
   const claimed = store.claimIfIdle(initial);
   const workspaceAttempt: RoundWorkspaceAttempt = {
     kind: "detached-worktree",
     worktreePath: "/rounds/operation-1",
     sourceTreeOid: "tree-before",
-    sourceParentHead: "parent-before",
+    sourceParentHead: options.sourceParentHead ?? "parent-before",
     startedAt: 2,
   };
   const preparing = advance(
@@ -150,7 +154,11 @@ function seedWorkerRunning(store: RoundOperationStore, initial: RoundOperation):
     { phase: "workspace-preparing", workspace: workspaceAttempt },
     2,
   );
-  const workspace = { ...workspaceAttempt, sourceHead: "head-before", preparedAt: 3 };
+  const workspace = {
+    ...workspaceAttempt,
+    sourceHead: options.sourceHead ?? "head-before",
+    preparedAt: 3,
+  };
   const prepared = advance(store, preparing, { phase: "prepared", workspace }, 3);
   return advance(
     store,
@@ -193,8 +201,12 @@ function seedGateRunning(store: RoundOperationStore, initial: RoundOperation): R
   );
 }
 
-function seedCommitting(store: RoundOperationStore, initial: RoundOperation): RoundOperation {
-  const running = seedWorkerRunning(store, initial);
+function seedCommitting(
+  store: RoundOperationStore,
+  initial: RoundOperation,
+  options: { sourceHead?: string; sourceParentHead?: string } = {},
+): RoundOperation {
+  const running = seedWorkerRunning(store, initial, options);
   if (running.state.phase !== "worker-running") throw new Error("expected seeded worker attempt");
   const worker = {
     ...running.state.worker,
@@ -228,19 +240,33 @@ function seedCommitting(store: RoundOperationStore, initial: RoundOperation): Ro
       workspace: running.state.workspace,
       worker,
       gate: { outcome: "skipped", reason: "not-configured", settledAt: 6 },
-      commit: { executionId: "commit-recovery", baseHead: "head-before", startedAt: 7 },
+      commit: {
+        executionId: "commit-recovery",
+        baseHead: running.state.workspace.sourceHead,
+        startedAt: 7,
+      },
     },
     7,
   );
 }
 
-function seedSourceLanding(store: RoundOperationStore, initial: RoundOperation): RoundOperation {
-  const committing = seedCommitting(store, initial);
+function seedSourceLanding(
+  store: RoundOperationStore,
+  initial: RoundOperation,
+  options: { branchRef?: boolean } = {},
+): RoundOperation {
+  const selectedHead = options.branchRef ? "a".repeat(40) : "head-before";
+  const workerHead = options.branchRef ? "b".repeat(40) : "head-after";
+  const committing = seedCommitting(
+    store,
+    initial,
+    options.branchRef ? { sourceHead: selectedHead, sourceParentHead: selectedHead } : {},
+  );
   if (committing.state.phase !== "committing") throw new Error("expected seeded commit attempt");
   const commits = {
     ...committing.state.commit,
-    from: "head-before",
-    to: "head-after",
+    from: selectedHead,
+    to: workerHead,
     count: 1,
     committedAt: 8,
   } satisfies RoundCommitReceipt;
@@ -265,13 +291,24 @@ function seedSourceLanding(store: RoundOperationStore, initial: RoundOperation):
       worker: committing.state.worker,
       gate: committing.state.gate,
       commits,
-      landing: {
-        effect: "source-landing",
-        executionId: "landing-recovery",
-        baselineCommit: commits.from,
-        workerHead: commits.to,
-        startedAt: 9,
-      },
+      landing: options.branchRef
+        ? {
+            effect: "source-landing",
+            strategy: "branch-ref-v1",
+            executionId: "landing-recovery",
+            branch: "feat/test",
+            expectedHead: commits.from,
+            baselineCommit: commits.from,
+            workerHead: commits.to,
+            startedAt: 9,
+          }
+        : {
+            effect: "source-landing",
+            executionId: "landing-recovery",
+            baselineCommit: commits.from,
+            workerHead: commits.to,
+            startedAt: 9,
+          },
     },
     9,
   );
@@ -858,6 +895,36 @@ describe("createRoundExecutionCoordinator", () => {
     expect(settleCommits).not.toHaveBeenCalled();
     expect(landSourceChanges).toHaveBeenCalledTimes(1);
     expect(landSourceChanges.mock.calls[0]?.[0].attempt.executionId).toBe("landing-recovery");
+  });
+
+  it("cold-recovers and settles the exact selected-branch landing attempt", async () => {
+    const test = scenario();
+    seedSourceLanding(test.store, operation({ gatePlan: { kind: "absent" } }), {
+      branchRef: true,
+    });
+    const planSourceLanding = vi.fn(test.ports.planSourceLanding);
+    const landSourceChanges = vi.fn<RoundExecutionPorts["landSourceChanges"]>(
+      async ({ attempt }) => ({
+        ...attempt,
+        outcome: "already-applied",
+        landedAt: 10,
+      }),
+    );
+    const recovered = await createRoundExecutionCoordinator({
+      store: new RoundOperationStore(test.dir),
+      ports: { ...test.ports, planSourceLanding, landSourceChanges },
+    }).recover();
+
+    expect(recovered[0]?.state.phase).toBe("completed");
+    expect(planSourceLanding).not.toHaveBeenCalled();
+    expect(landSourceChanges).toHaveBeenCalledTimes(1);
+    expect(landSourceChanges.mock.calls[0]?.[0].attempt).toMatchObject({
+      strategy: "branch-ref-v1",
+      executionId: "landing-recovery",
+      branch: "feat/test",
+      expectedHead: "a".repeat(40),
+      workerHead: "b".repeat(40),
+    });
   });
 
   it("persists each transactional landing unit as an exact prefix and resumes after a crash", async () => {

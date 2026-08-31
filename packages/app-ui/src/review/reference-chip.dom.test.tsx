@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mount } from "../test/dom";
 import { ReferenceChip } from "./reference-chip";
 
-describe("ReferenceChip — the shared citation chip", () => {
+describe("ReferenceChip — the code-ref citation chip", () => {
   it("labels basename:line and titles the full path", () => {
     const { getByRole } = mount(
       <ReferenceChip path="packages/core/src/decompose.ts" startLine={42} />,

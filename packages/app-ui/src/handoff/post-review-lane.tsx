@@ -1,8 +1,9 @@
 import type { Review } from "@rennet/protocol";
-import { Badge, cn, Toggle, ToggleGroup } from "@rennet/ui";
+import { cn, Toggle, ToggleGroup } from "@rennet/ui";
 import { Check, GitPullRequest, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { Icon } from "../components/icon";
 import {
   AnchorReveal,
   type CodeRef,
@@ -10,7 +11,7 @@ import {
   ProseSelectionLayer,
   RichText,
 } from "../review";
-import type { DispositionKind, ReviewState, StagedAsk } from "../store";
+import type { ReviewState, StagedAsk } from "../store";
 import { useRennetStore } from "../store";
 import { HandoffAction } from "./handoff-action";
 import {
@@ -21,6 +22,7 @@ import {
   type ReviseSpan,
   reviseDraftSpan,
 } from "./handoff-data";
+import { IntentPill } from "./intent-pill";
 import { OutboundMarkdown } from "./outbound-markdown";
 import {
   type ProposedVerdict,
@@ -52,10 +54,11 @@ import {
 // disabled (honest), never a Post that posts nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The three real GitHub review events, with their segmented-control presentation. */
+/** The three real GitHub review events, with their segmented-control presentation. Request
+ *  Changes takes the copper warn, not danger red: asking for a change is not an error. */
 const VERDICTS: readonly { value: ProposedVerdict; label: string; dot: string }[] = [
   { value: "APPROVE", label: "Approve", dot: "bg-green" },
-  { value: "REQUEST_CHANGES", label: "Request Changes", dot: "bg-destructive" },
+  { value: "REQUEST_CHANGES", label: "Request Changes", dot: "bg-warn" },
   { value: "COMMENT", label: "Comment", dot: "bg-muted-foreground/50" },
 ];
 
@@ -64,22 +67,6 @@ const VERDICT_LABEL: Record<ProposedVerdict, string> = {
   REQUEST_CHANGES: "Request Changes",
   COMMENT: "Comment",
 };
-
-const INTENT_LABEL = {
-  approve: "Approve",
-  "request-change": "Request Change",
-  comment: "Comment",
-  question: "Question",
-} satisfies Record<DispositionKind, string>;
-
-function IntentTag({ type }: { type: DispositionKind }) {
-  const requestChange = type === "request-change";
-  return (
-    <Badge variant={requestChange ? "destructive" : "secondary"} className="shrink-0">
-      {INTENT_LABEL[type]}
-    </Badge>
-  );
-}
 
 function localResidueCounts(
   quoteThreads: ReviewState["quoteThreads"],
@@ -118,6 +105,8 @@ export interface PostReviewLaneProps {
    * is present but disabled (no egress wired / review not composed yet).
    */
   readonly onPost?: () => Promise<PostReceipt>;
+  /** Capture a fresh immutable review after a moved-head publication refusal. */
+  readonly onRecapture?: () => Promise<void>;
   /** The daemon-owned receipt for this composition, hydrated after remount or restart. */
   readonly receipt?: PostReceipt;
   /**
@@ -144,6 +133,7 @@ export interface PostReviewLaneProps {
 export function PostReviewLane({
   review,
   onPost,
+  onRecapture,
   receipt,
   draft,
   onSetVerdict,
@@ -158,6 +148,7 @@ export function PostReviewLane({
         review={review}
         draft={draft}
         onPost={onPost}
+        onRecapture={onRecapture}
         receipt={receipt}
         onSetVerdict={onSetVerdict}
       />
@@ -283,11 +274,11 @@ function WorkingReviewDraft({
   if (receipt) {
     return (
       <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
-        <span className="flex items-center gap-2 text-base font-semibold text-foreground">
-          <Check className="size-4 text-green" aria-hidden="true" />
+        <span className="flex items-center gap-2 text-15 font-semibold text-foreground">
+          <Icon icon={Check} className="size-4 text-green" />
           Review posted to {prRef}
         </span>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-13 text-muted-foreground">
           {VERDICT_LABEL[receipt.verdict]} · {receipt.lineCommentCount} line comment
           {receipt.lineCommentCount === 1 ? "" : "s"} · body
         </p>
@@ -295,7 +286,7 @@ function WorkingReviewDraft({
           href={receipt.url}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+          className="text-13 text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
         >
           {receipt.url.replace(/^https?:\/\//, "")}
         </a>
@@ -304,10 +295,10 @@ function WorkingReviewDraft({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-8 py-8">
         <div className="flex items-center gap-2.5">
-          <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             Post Review · {prRef}
           </h1>
@@ -337,7 +328,7 @@ function WorkingReviewDraft({
                 draft.body.map((ask) => (
                   <div key={ask.id} className="flex flex-col gap-1">
                     <span className="flex items-center gap-1.5">
-                      <IntentTag type={ask.type} />
+                      <IntentPill type={ask.type} />
                       <span className="truncate text-2xs text-muted-foreground/80 italic">
                         {ask.anchor}
                       </span>
@@ -345,7 +336,7 @@ function WorkingReviewDraft({
                     <RichText
                       text={blockText(ask)}
                       patchsetId={patchsetId}
-                      paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                      paragraphClassName="text-15 leading-[1.7] text-foreground/90"
                     />
                   </div>
                 ))
@@ -394,7 +385,7 @@ function WorkingReviewDraft({
             </span>
             {retired.map((entry) => (
               <span key={entry.ask.id} className="flex items-baseline gap-2">
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground line-through">
+                <span className="min-w-0 flex-1 truncate text-12-5 text-muted-foreground line-through">
                   {entry.ask.body}
                 </span>
                 <span className="shrink-0 text-2xs text-muted-foreground/70">{entry.reason}</span>
@@ -403,7 +394,7 @@ function WorkingReviewDraft({
                   onClick={() => restore(entry.ask)}
                   className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
-                  <RotateCcw className="size-2.5" aria-hidden="true" />
+                  <Icon icon={RotateCcw} className="size-2.5" />
                   Restore
                 </button>
               </span>
@@ -471,7 +462,13 @@ function VerdictControl({
       >
         {VERDICTS.map((option) => (
           <Toggle key={option.value} value={option.value} size="sm">
-            <span className={cn("size-1.5 rounded-full", option.dot)} />
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                option.dot,
+                option.value !== effectiveVerdict && "opacity-40",
+              )}
+            />
             {option.label}
           </Toggle>
         ))}
@@ -511,12 +508,14 @@ function ComposedReviewPreview({
   review,
   draft,
   onPost,
+  onRecapture,
   receipt: hydratedReceipt,
   onSetVerdict,
 }: {
   review: Review;
   draft: ReviewDraft;
   onPost?: () => Promise<PostReceipt>;
+  onRecapture?: () => Promise<void>;
   receipt?: PostReceipt;
   onSetVerdict?: (verdict: ProposedVerdict | null) => void;
 }) {
@@ -556,11 +555,11 @@ function ComposedReviewPreview({
   if (receipt) {
     return (
       <div className="mx-auto flex w-full max-w-[720px] flex-col items-start gap-3 px-8 py-10">
-        <span className="flex items-center gap-2 text-base font-semibold text-foreground">
-          <Check className="size-4 text-green" aria-hidden="true" />
+        <span className="flex items-center gap-2 text-15 font-semibold text-foreground">
+          <Icon icon={Check} className="size-4 text-green" />
           Review posted to {prRef}
         </span>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-13 text-muted-foreground">
           {VERDICT_LABEL[receipt.verdict]} · {receipt.lineCommentCount} line comment
           {receipt.lineCommentCount === 1 ? "" : "s"} · body
         </p>
@@ -568,7 +567,7 @@ function ComposedReviewPreview({
           href={receipt.url}
           target="_blank"
           rel="noreferrer"
-          className="text-sm text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+          className="text-13 text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
         >
           {receipt.url.replace(/^https?:\/\//, "")}
         </a>
@@ -577,10 +576,10 @@ function ComposedReviewPreview({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[720px] flex-col gap-6 px-8 py-8">
         <div className="flex items-center gap-2.5">
-          <GitPullRequest className="size-4 text-muted-foreground" aria-hidden="true" />
+          <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             Post Review · {prRef}
           </h1>
@@ -603,7 +602,7 @@ function ComposedReviewPreview({
                 className="flex flex-col gap-1"
               >
                 <span className="flex items-center gap-1.5">
-                  <IntentTag type={note.type} />
+                  <IntentPill type={note.type} />
                   {note.anchor !== undefined && (
                     <span className="truncate text-2xs text-muted-foreground/80 italic">
                       {note.anchor}
@@ -613,7 +612,7 @@ function ComposedReviewPreview({
                 <RichText
                   text={note.body}
                   patchsetId={patchsetId}
-                  paragraphClassName="text-base leading-[1.7] text-foreground/90"
+                  paragraphClassName="text-15 leading-[1.7] text-foreground/90"
                 />
               </div>
             ))}
@@ -686,6 +685,14 @@ function ComposedReviewPreview({
                 : undefined
             }
           />
+          {onRecapture !== undefined && (
+            <HandoffAction
+              label="Review latest revision"
+              pendingLabel="Capturing latest revision…"
+              icon={RotateCcw}
+              onSubmit={onRecapture}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -759,23 +766,23 @@ function LineCommentCard({
     <div className="group rounded-lg border border-border bg-card px-3.5 py-3">
       <div className="flex items-center gap-1.5">
         <AnchorReveal citations={[codeRef]} />
-        <IntentTag type={comment.ask.type} />
+        <IntentPill type={comment.ask.type} />
         {!editing && (
           <span className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <button
               type="button"
               onClick={onStartEdit}
-              className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
-              <Pencil className="size-3" aria-hidden="true" />
+              <Icon icon={Pencil} className="size-3" />
               Edit
             </button>
             <button
               type="button"
               onClick={onDelete}
-              className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-2xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
-              <Trash2 className="size-3" aria-hidden="true" />
+              <Icon icon={Trash2} className="size-3" />
               Delete
             </button>
           </span>
@@ -797,7 +804,7 @@ function LineCommentCard({
                 if (event.key === "Escape") onCancelEdit();
               }}
               rows={2}
-              className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-sm leading-relaxed text-foreground focus-visible:border-ring focus-visible:outline-none"
+              className="w-full resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-13 leading-relaxed text-foreground focus-visible:border-ring focus-visible:outline-none"
             />
             <div className="mt-1.5 flex items-center justify-end gap-1">
               <button

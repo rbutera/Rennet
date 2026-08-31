@@ -151,13 +151,13 @@ describe("sidebar structure (C03 §2)", () => {
     }
   });
 
-  it("orders the expanded footer Update → Help → Settings, read left-to-right", () => {
+  it("orders the expanded footer Settings → Help → Update, read left-to-right", () => {
     useUpdateReady.setState({ ready: { version: "1.2.3" } });
     const { getByText, getByLabelText } = mountSidebar({ projects: [project("p1", "atlas")] });
     const order = [
-      getByText("Update").closest("button"),
-      getByLabelText("Help"),
       getByLabelText("Settings"),
+      getByLabelText("Help"),
+      getByText("Update").closest("button"),
     ];
     for (let i = 1; i < order.length; i += 1) {
       const prev = order[i - 1];
@@ -235,7 +235,7 @@ describe("sidebar tree (C03 §3)", () => {
     expect(await findByLabelText("Your PR")).toBeTruthy();
   });
 
-  it("folds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
+  it("unfolds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
     const { getByText, findByText } = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
@@ -243,10 +243,80 @@ describe("sidebar tree (C03 §3)", () => {
     await findByText("atlas");
     const row = getByText("atlas").closest("button");
     if (!row) throw new Error("project row missing");
-    expect(row.getAttribute("aria-expanded")).toBe("true");
+    // No session of this project is open, so it starts folded and untouched — the
+    // slice holds NO entry for it, which is what lets the default answer at all.
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBeUndefined();
     fireEvent.click(row);
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(false);
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(getByText("atlas").closest("button") as Element);
     expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
     expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // The default the prototype ships (`app-sidebar.tsx`): a project opens because it
+  // holds the session you are in, and every OTHER project stays shut. The two-project
+  // fixture is what makes this visible — with one project on screen a "collapsed by
+  // default" rule and an "expanded by default" rule are told apart only by the row
+  // you are standing in, and the sibling is the half that regressed before.
+  it("defaults to folded, except the project holding the active session", async () => {
+    const { getByText, findByText } = mountSidebar({
+      projects: [project("p1", "atlas"), project("p2", "beacon")],
+      sessions: [...SESSIONS, { id: "s3", projectId: "p2", title: "Gamma", target: "your-branch" }],
+      path: "/s/s1",
+    });
+    await findByText("atlas");
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("true");
+    expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    // …and the reviewer outranks the default in BOTH directions: shutting the active
+    // project's own list sticks, rather than being reopened by the route.
+    fireEvent.click(getByText("atlas").closest("button") as Element);
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // The half the default alone cannot reach: a project with a STORED fold answers
+  // `false` for expanded no matter which session you are in, so arriving in it left
+  // the row you just opened hidden. `Collapse` keeps content mounted, so presence
+  // proves nothing — the `inert` subtree is what "hidden" means here.
+  it("navigating into a folded project reveals the session you opened", async () => {
+    useRennetStore.setState((s) => ({ ui: { ...s.ui, sidebarFolds: { p2: true } } }));
+    const { getByText, findByText, history } = mountSidebar({
+      projects: [project("p1", "atlas"), project("p2", "beacon")],
+      sessions: [...SESSIONS, { id: "s3", projectId: "p2", title: "Gamma", target: "your-branch" }],
+    });
+    await findByText("Gamma");
+    expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(getByText("Gamma").closest("[inert]")).not.toBeNull();
+
+    history.navigate("/s/s3");
+    await waitFor(() =>
+      expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("true"),
+    );
+    expect(useRennetStore.getState().ui.sidebarFolds.p2).toBe(false);
+    expect(getByText("Gamma").closest("[inert]")).toBeNull();
+    // ...and ONLY that project: the sibling you did not navigate into is untouched,
+    // so this is an arrival opening one list, not a route clearing every fold.
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // The unfold is keyed on the active project CHANGING, so it fires on arrival and
+  // never again. Moving between two sessions of the SAME project must not reopen a
+  // list the reviewer just shut — that would make the fold un-settable while you work.
+  it("folding the project you are standing in stays folded across its own sessions", async () => {
+    const { getByText, findByText, history } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: SESSIONS,
+      path: "/s/s1",
+    });
+    await findByText("atlas");
+    fireEvent.click(getByText("atlas").closest("button") as Element);
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
+
+    history.navigate("/s/s2");
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/s2"));
+    expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(useRennetStore.getState().ui.sidebarFolds.p1).toBe(true);
   });
 
   it("highlights the active session from the route and follows a navigation", async () => {
@@ -461,9 +531,9 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     expect(slot.getAttribute("data-owner")).toBe("sidebar");
     expect(slot.className).toContain("pl-[81px]");
     expect(slot.className).not.toContain("pl-3");
-    // With hiddenInset the strip IS the titlebar; the shared `navigation-titlebar`
-    // rule drags it and opts its buttons back out.
-    expect(slot.className).toContain("navigation-titlebar");
+    // With hiddenInset the strip IS the titlebar; `app-region-drag` drags it and each
+    // control inside marks itself `app-region-no-drag`.
+    expect(slot.className).toContain("app-region-drag");
 
     const svg = slotLockup(slot);
     expect(svg.getAttribute("height")).toBe("14");
@@ -490,7 +560,7 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
       const slot = cornerSlot(container);
       expect(slot.className).toContain("pl-3");
       expect(slot.className).not.toMatch(/pl-\[\d+px\]/);
-      expect(slot.className).not.toContain("navigation-titlebar");
+      expect(slot.className).not.toContain("app-region-drag");
       expect(slotLockup(slot).getAttribute("height")).toBe("16");
       // Non-darwin loses the inset, not the affordance: the same single toggle.
       expect(slot.querySelectorAll('[aria-label="Collapse sidebar"]').length).toBe(1);

@@ -126,12 +126,12 @@ export function CodeBlock({
               type="button"
               title={path}
               onClick={() => resolvedOpenPath(path)}
-              className="truncate font-mono text-2xs text-foreground/80 hover:text-foreground hover:underline"
+              className="truncate font-mono text-foreground/80 text-xs underline-offset-2 transition-colors hover:text-foreground hover:underline hover:decoration-dotted"
             >
               {path}
             </button>
           ) : (
-            <span title={path} className="truncate font-mono text-2xs text-foreground/80">
+            <span title={path} className="truncate font-mono text-foreground/80 text-xs">
               {path}
             </span>
           )}
@@ -162,7 +162,7 @@ export function CodeBlock({
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-max py-1.5 font-mono text-xs leading-[1.7]">
+        <div className="min-w-max py-1.5 font-mono text-12-5 leading-[1.7]">
           {tokenLines.map((lineTokens, i) => {
             const lineNumber = startLine + i;
             const isHighlighted = highlightSet.has(lineNumber);
@@ -216,7 +216,7 @@ export function CodeBlock({
                       className={cn(
                         "size-4 shrink-0 items-center justify-center rounded transition-colors",
                         hasAsk
-                          ? "flex bg-destructive text-primary-foreground hover:bg-destructive/90"
+                          ? "flex bg-destructive text-on-danger hover:bg-destructive/90"
                           : hasComment || isOpen
                             ? "flex bg-primary text-primary-foreground hover:bg-primary/90"
                             : "hidden bg-primary text-primary-foreground hover:bg-primary/90 group-hover:flex",

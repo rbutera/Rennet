@@ -87,7 +87,7 @@ Global settings live in two machine-local files, split by who owns the value:
 | `~/.rennet/client-settings.json` | Viewer preferences, **outside** the config ladder | Appearance | system, dark, light | Applies the selected color scheme to the app. |
 | `~/.rennet/client-settings.json` | | Theme pack | affineur, github, one-dark-pro, dracula, catppuccin-mocha | Applies the selected application color pack and restores it across launches. |
 | `~/.rennet/client-settings.json` | | Keybindings | command ID to chord or explicit unbind | Overrides the command catalogue on this machine. |
-| `~/.rennet/client-settings.json` | | Welcome | `{ completedAt: string }` | Prevents the first-run welcome from replaying after setup. Independent of coach marks and project count. |
+| `~/.rennet/client-settings.json` | | Welcome | `{ completedAt?: string; replayRequestedAt?: string }` | `completedAt` (written by the wizard's Ready step) keeps the first-run welcome from replaying after setup. `replayRequestedAt` (**Settings → Appearance → First Run → Replay the first-run welcome**, or the same `⌘K` action, through `settings.resetWelcome`) reopens it **regardless of project count** — first-run eligibility alone only ever elects a zero-project client, so the stamp is what makes a replay work on a real machine. The reset keeps any existing `completedAt`, because the client-settings version is still 1 and an older build requires that field; the startup gate reads the replay request first, so the pair means "completed, replay asked for". Completing replaces the slice and drops the request. Independent of coach marks. |
 | `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** or a one-shot `?tour=reset` route clears it through `settings.setCoachmarks`. |
 | `~/.rennet/client-settings.json` | | Navigation | `{ lastProjectBySource: Record<string, string> }` | Remembers the last valid project per source so bare New Chat opens the real project picker directly. |
 | `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
@@ -106,8 +106,9 @@ nav lists four pages — **Environments**, **Appearance**, **Keyboard Shortcuts*
 and **Projects** — each its own route (`/settings/:page`); the active page is read
 from the URL, so a page deep-links and reloads directly. **Archived** is a
 sibling main-surface route (`/archived`), not a settings page. Appearance edits
-the color scheme, theme pack, and code theme; Keyboard Shortcuts edits
-keybindings; Environments and Projects are described below.
+the color scheme, theme pack, and code theme, and carries the **First Run** row
+that replays the welcome; Keyboard Shortcuts edits keybindings; Environments and
+Projects are described below.
 
 The Keyboard Shortcuts page lists the app shortcuts that a single global key owner
 fires: Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle

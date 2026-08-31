@@ -315,6 +315,19 @@ export interface SettingsComposition {
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   setThemePack(themePack: ThemePack): ThemePack;
   completeWelcome(): string;
+  /**
+   * Replay the first-run welcome — the counterpart `completeWelcome` never had, which
+   * left the wizard permanently unreachable once setup finished. ONE atomic write ADDS
+   * `replayRequestedAt` to the `welcome` slice, PRESERVING an existing `completedAt`
+   * (an older v1 build requires that field; see the implementation). The request stamp
+   * is what the startup gate honors regardless of project count — eligibility alone only
+   * ever elects a zero-project client, so a reset that wrote nothing new would be a no-op
+   * on a real machine. `completeWelcome` still REPLACES the slice, so finishing the
+   * replayed welcome clears the request.
+   * Returns the request stamp. A malformed client-settings file refuses it (throws),
+   * as every write here does. No confirmation — a plain write (Rule Zero).
+   */
+  resetWelcome(): string;
   setLastProject(input: { source: ProjectSource; projectId: string }): {
     source: ProjectSource;
     projectId: string;
@@ -1027,6 +1040,32 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         welcome: { completedAt },
       }));
       return written.welcome?.completedAt ?? completedAt;
+    },
+
+    resetWelcome: (): string => {
+      const replayRequestedAt = (deps.now?.() ?? new Date()).toISOString();
+      // ONE `updateGlobal` — the same atomic write + malformed refusal `completeWelcome`
+      // rides. The request is ADDED to the slice, and an existing `completedAt` is carried
+      // through untouched: `CLIENT_SETTINGS_VERSION` is still 1, and an older build's v1
+      // schema has `welcome.completedAt` REQUIRED. A replay-only slice would read as
+      // malformed to that build, and a malformed file refuses every subsequent settings
+      // write — so dropping the stamp would brick settings for anyone who downgrades.
+      // Preserving it costs nothing here: the startup gate elects replay on the PRESENCE
+      // of `replayRequestedAt`, before it ever looks at `completedAt`.
+      //
+      // Residual gap, stated rather than papered over: a client that has never completed
+      // the welcome has no `completedAt` to preserve, so the slice this writes is
+      // `{ replayRequestedAt }` alone, which an older build still reads as malformed. That
+      // client is one whose welcome is already showing (no completion stamp ⇒ the
+      // zero-project first-run path), so it has no reason to ask for a replay; closing it
+      // properly needs `welcome.completedAt` to become optional in a version bump.
+      const written = deps.updateGlobal((current) => ({
+        ...current,
+        welcome: current.welcome?.completedAt
+          ? { completedAt: current.welcome.completedAt, replayRequestedAt }
+          : { replayRequestedAt },
+      }));
+      return written.welcome?.replayRequestedAt ?? replayRequestedAt;
     },
 
     setLastProject: (input) => {
