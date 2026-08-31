@@ -31,8 +31,8 @@ interface Scenario {
 const FINAL_REVIEW_MARKER = /\n*<!--\s*rennet:review:[0-9a-f]{64}\s*-->\s*$/;
 
 async function connect(page: Page): Promise<WsRennetBridge> {
-  const port = await page.evaluate(
-    () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
   );
   return new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
 }

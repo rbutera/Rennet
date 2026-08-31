@@ -26,13 +26,7 @@ import {
   TerminalSquare,
   TriangleAlert,
 } from "lucide-react";
-import {
-  type AnimationPlaybackControls,
-  type AnimationSequence,
-  stagger,
-  useAnimate,
-  useReducedMotion,
-} from "motion/react";
+import { type AnimationSequence, stagger, useAnimate, useReducedMotion } from "motion/react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
@@ -282,60 +276,16 @@ const CODE_FRAGMENTS: readonly CodeFragment[] = [
   },
 ];
 
-/**
- * How bright each drifting fragment sits, by index into `CODE_FRAGMENTS`.
- *
- * This used to be an `opacity` keyframe channel on the infinite drift loop
- * (`[0.48, 0.82, 0.58, 0.76, 0.48]`), which forced the compositor to repaint every
- * fragment every frame — measured 2026-08-31 as 11–19% renderer + 5–6% GPU CPU on an
- * untouched welcome screen. The loops are transform-only now so frames composite on the
- * GPU, and the layering the animated channel used to give comes from these fixed values
- * instead: spread across the same 0.48–0.82 range the keyframes covered, alternating
- * near and far so no two neighbours read at the same depth.
- */
-const FRAGMENT_OPACITY = [0.5, 0.78, 0.56, 0.82, 0.62, 0.72, 0.48, 0.8, 0.58, 0.68] as const;
-
 const CODE_PARTICLES = Array.from({ length: 38 }, (_, index) => ({
   id: `code-particle-${index}`,
   symbol: index % 4 === 0 ? "+" : index % 4 === 1 ? "-" : index % 4 === 2 ? "{" : "@",
   left: `${21 + index * 1.55}%`,
   top: `${31 + (index % 7) * 8}%`,
-  // Same trade as FRAGMENT_OPACITY, on the loop that breathed thirty-eight of these
-  // through `opacity: [0.42, 0.9, 0.42]` forever: a fixed depth per particle, stepped by
-  // 7-mod-13 so the spread covers the old 0.42–0.90 range without neighbours matching.
-  opacity: (42 + ((index * 7) % 13) * 4) / 100,
   tone: index % 5 === 1 ? "remove" : index % 5 === 0 || index % 5 === 2 ? "add" : undefined,
 }));
 
 function errorText(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
-}
-
-/**
- * Park `repeat: Infinity` loops while the document is hidden; returns the cleanup that
- * unregisters the listener it added.
- *
- * These loops never end on their own, and a hidden window still runs motion's frame loop
- * — a minimised or backgrounded first run burned CPU indefinitely. The intro, gather and
- * reduced-motion sequences are one-shots short enough to leave alone. No listener when
- * there is no loop to park, so reduced motion registers nothing.
- */
-function parkWhileHidden(loops: readonly AnimationPlaybackControls[]): () => void {
-  if (loops.length === 0) return () => undefined;
-  const sync = () => {
-    for (const loop of loops) {
-      if (document.hidden) loop.pause();
-      else loop.play();
-    }
-  };
-  // The window can already be hidden at mount and the event only reports changes. Only
-  // the hidden case is synced: calling `play()` on a loop motion just started would
-  // restart a delay that has not elapsed yet.
-  if (document.hidden) sync();
-  document.addEventListener("visibilitychange", sync);
-  return () => {
-    document.removeEventListener("visibilitychange", sync);
-  };
 }
 
 function StepProgress({ step, onStep }: { step: number; onStep(next: number): void }) {
@@ -431,9 +381,7 @@ function CodeField() {
           data-fragment
           // biome-ignore lint/suspicious/noArrayIndexKey: the fragment catalogue is a fixed literal
           key={index}
-          // Depth is set once here rather than keyframed by the drift loop; see
-          // FRAGMENT_OPACITY. This overrides the `.rn-code-fragment` base opacity.
-          style={{ ...fragment.place, opacity: FRAGMENT_OPACITY[index] }}
+          style={fragment.place}
         >
           {fragment.lines.map((line, lineIndex) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: fixed literal, never reordered
@@ -458,9 +406,6 @@ function CodeField() {
             {
               left: particle.left,
               top: particle.top,
-              // Fixed depth, for the same reason as the fragments: the breathe loop no
-              // longer carries an opacity channel. Overrides `.rn-code-particle`'s base.
-              opacity: particle.opacity,
             } as CSSProperties
           }
         >
@@ -530,6 +475,82 @@ const EASE_OUT: Cubic = [0.16, 1, 0.3, 1];
 const EASE_IN: Cubic = [0.4, 0, 1, 1];
 const EASE_GATHER: Cubic = [0.76, 0, 0.24, 1];
 
+interface WelcomeIdleAnimation {
+  keyframes: {
+    x: number[];
+    y: number[];
+    rotate?: number[];
+  };
+  transition: {
+    duration: number;
+    repeat: number;
+    ease: "linear" | "easeInOut";
+  };
+}
+
+interface WelcomeIdleControl {
+  pause(): void;
+  play(): void;
+  stop(): void;
+}
+
+interface WelcomeVisibilityTarget {
+  readonly hidden: boolean;
+  addEventListener(type: "visibilitychange", listener: () => void): void;
+  removeEventListener(type: "visibilitychange", listener: () => void): void;
+}
+
+export function welcomeFragmentIdleAnimation(
+  index: number,
+  width: number,
+  height: number,
+): WelcomeIdleAnimation {
+  const directionX = index % 2 === 0 ? 1 : -1;
+  const directionY = index % 3 === 0 ? -1 : 1;
+  const travelX = width * (0.2 + (index % 4) * 0.055);
+  const travelY = height * (0.12 + (index % 5) * 0.035);
+  return {
+    keyframes: {
+      x: [0, directionX * travelX, -directionX * travelX * 0.72, directionX * travelX * 0.38, 0],
+      y: [0, directionY * travelY * 0.55, -directionY * travelY, directionY * travelY * 0.7, 0],
+      rotate: [0, directionX * 7, -directionX * 5, directionX * 3, 0],
+    },
+    transition: { duration: 17 + index * 1.15, repeat: Infinity, ease: "linear" },
+  };
+}
+
+export function welcomeParticleIdleAnimation(index: number): WelcomeIdleAnimation {
+  return {
+    keyframes: {
+      x: [0, ((index % 5) - 2) * 8, 0],
+      y: [0, ((index % 7) - 3) * 6, 0],
+    },
+    transition: {
+      duration: 5.5 + (index % 8) * 0.44,
+      repeat: Infinity,
+      ease: "easeInOut",
+    },
+  };
+}
+
+export function bindWelcomeIdleLoops(
+  loops: readonly WelcomeIdleControl[],
+  target: WelcomeVisibilityTarget,
+): () => void {
+  const sync = () => {
+    for (const loop of loops) {
+      if (target.hidden) loop.pause();
+      else loop.play();
+    }
+  };
+  sync();
+  target.addEventListener("visibilitychange", sync);
+  return () => {
+    target.removeEventListener("visibilitychange", sync);
+    for (const loop of loops) loop.stop();
+  };
+}
+
 function ThemePreview({ id }: { id: ThemePackId }) {
   const scheme = id === "affineur" || id === "github" ? "light" : "dark";
   return (
@@ -584,64 +605,34 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
         return () => controls.stop();
       }
 
-      // Transform-only, deliberately: x/y/rotate composite on the GPU, while the `opacity`
-      // channel these loops used to carry repainted ten fragments and thirty-eight
-      // particles every frame for as long as the screen stayed open. Depth now comes from
-      // FRAGMENT_OPACITY and the particle catalogue, set once at render.
-      const drifts = [
-        ...fragments.map((node, index) => {
-          const directionX = index % 2 === 0 ? 1 : -1;
-          const directionY = index % 3 === 0 ? -1 : 1;
-          const travelX = root.clientWidth * (0.2 + (index % 4) * 0.055);
-          const travelY = root.clientHeight * (0.12 + (index % 5) * 0.035);
-          return animate(
-            node,
-            {
-              x: [
-                0,
-                directionX * travelX,
-                -directionX * travelX * 0.72,
-                directionX * travelX * 0.38,
-                0,
-              ],
-              y: [
-                0,
-                directionY * travelY * 0.55,
-                -directionY * travelY,
-                directionY * travelY * 0.7,
-                0,
-              ],
-              rotate: [0, directionX * 7, -directionX * 5, directionX * 3, 0],
-            },
-            { duration: 17 + index * 1.15, repeat: Infinity, ease: "linear" },
-          );
-        }),
-        // Particles breathe on their own before the click, so the field is alive
-        // rather than a still image waiting to be gathered.
-        ...particles.map((node, index) =>
-          animate(
-            node,
-            {
-              x: [0, ((index % 5) - 2) * 8, 0],
-              y: [0, ((index % 7) - 3) * 6, 0],
-            },
-            { duration: 5.5 + (index % 8) * 0.44, repeat: Infinity, ease: "easeInOut" },
-          ),
-        ),
-      ];
-      const ambient = [
+      const oneShots = [
         animate(OPENING_TAGLINE, { opacity: 1, y: 0 }, { duration: 0.8, ease: EASE_OUT }),
         animate(
           INTRO_ARROW,
           { opacity: 1, scale: 1 },
           { delay: 0.48, duration: 0.5, ease: EASE_OUT },
         ),
-        ...drifts,
       ];
-      const unparkDrifts = parkWhileHidden(drifts);
+      // Infinite idle motion is transform-only. Animating opacity repaints the code field
+      // every frame; its depth comes from the static fragment and particle CSS instead.
+      const loops = [
+        ...fragments.map((node, index) => {
+          const idle = welcomeFragmentIdleAnimation(index, root.clientWidth, root.clientHeight);
+          return animate(node, idle.keyframes, idle.transition);
+        }),
+        // Particles drift on their own before the click, so the field stays alive without
+        // reopening an opacity repaint channel.
+        ...particles.map((node, index) => {
+          const idle = welcomeParticleIdleAnimation(index);
+          return animate(node, idle.keyframes, idle.transition);
+        }),
+      ];
+      // Motion keeps repeat-forever controls running in a hidden window. Park both the
+      // fragment and particle loops there; the finite opening one-shots can finish normally.
+      const stopLoops = bindWelcomeIdleLoops(loops, document);
       return () => {
-        unparkDrifts();
-        for (const control of ambient) control.stop();
+        stopLoops();
+        for (const control of oneShots) control.stop();
       };
     }
 
@@ -756,16 +747,11 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
         ease: "linear",
       },
     );
-
-    // The reel is the other `repeat: Infinity` loop on this screen. It is already
-    // transform-only (a `y` track), so it costs no repaint — but it still keeps motion's
-    // frame loop alive behind a hidden window, so it parks the same way the drifts do.
-    const unparkReel = parkWhileHidden([wordShuffle]);
+    const stopWordShuffle = bindWelcomeIdleLoops([wordShuffle], document);
 
     return () => {
-      unparkReel();
       controls.stop();
-      wordShuffle.stop();
+      stopWordShuffle();
     };
   }, [animate, reduceMotion, scope, started]);
 

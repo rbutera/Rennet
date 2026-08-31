@@ -465,7 +465,10 @@ function ContextMap({
           above it and this strip leads the surface, which is the prototype's split
           between `ContextMapFullView` and the embedded panel. */}
       <div className="context-map-base-strip flex shrink-0 items-center gap-2 border-b border-line px-4 py-2">
-        <span className="shrink-0 text-sm font-medium text-ink">Context Map</span>
+        {/* biome-ignore lint/a11y/useSemanticElements: the global h1 typography changes this embedded strip's styling; ARIA restores the heading semantics without overriding the styling contract. */}
+        <span role="heading" aria-level={1} className="shrink-0 text-sm font-medium text-ink">
+          Context Map
+        </span>
         <span className="context-map-base truncate font-mono text-sm text-ink-faint">
           {knowledge?.repoKey ?? map.baseRef} · {map.baseRef} @ {map.baseOid.slice(0, 12)}
         </span>

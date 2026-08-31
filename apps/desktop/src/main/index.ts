@@ -166,15 +166,19 @@ function registerDaemonForPathResolver(hostDataDir: string): void {
   ipcMain.handle(RESOLVE_DAEMON_FOR_PATH_CHANNEL, async (event, path: unknown) => {
     if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
     if (typeof path !== "string" || path.length === 0) return null;
+    const activeDataDir = daemonDataDir;
+    if (!activeDataDir) {
+      throw new Error("rennet: the daemon has not been started");
+    }
     const locus = detectLocus(path);
-    appendWslConnectLog(hostDataDir, { side: "main", event: "resolve", path, locus });
+    appendWslConnectLog(activeDataDir, { side: "main", event: "resolve", path, locus });
     try {
-      const port = await ensureDaemonForProject(path, hostDataDir);
-      appendWslConnectLog(hostDataDir, { side: "main", event: "resolved", path, locus, port });
+      const port = await ensureDaemonForProject(path, activeDataDir);
+      appendWslConnectLog(activeDataDir, { side: "main", event: "resolved", path, locus, port });
       return port;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      appendWslConnectLog(hostDataDir, { side: "main", event: "failed", path, locus, message });
+      appendWslConnectLog(activeDataDir, { side: "main", event: "failed", path, locus, message });
       throw error;
     }
   });
@@ -442,11 +446,18 @@ app.whenReady().then(async () => {
     .then((eligible) => {
       if (!eligible) return;
       update = startAutoUpdateOnce(isTrustedAppUrl, console, {
-        prepareToApply: () => {
+        prepareToApply: async () => {
           // Same reason as quitCompletely, and here it is the requirement auto-update.ts states
           // outright: the installer cannot replace a bundle a daemon is still running from.
           daemonDataDir = undefined;
-          return prepareOwnedDaemonForUpdate(dataDir);
+          try {
+            await prepareOwnedDaemonForUpdate(dataDir);
+          } catch (error) {
+            // Preparation failed before the updater entered its applying phase, so its later
+            // recovery hook will not run. Restore the port source while Rennet stays open.
+            daemonDataDir = dataDir;
+            throw error;
+          }
         },
         armRelaunchAfterApply:
           process.platform === "darwin"

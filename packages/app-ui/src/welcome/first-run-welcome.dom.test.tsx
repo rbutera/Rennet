@@ -12,6 +12,11 @@ import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
+import {
+  bindWelcomeIdleLoops,
+  welcomeFragmentIdleAnimation,
+  welcomeParticleIdleAnimation,
+} from "./first-run-welcome";
 
 const ROLES: readonly ReviewRoleMapping[] = [
   {
@@ -179,48 +184,11 @@ describe("FirstRunWelcome", () => {
     expect(screen.getByText("Appearance")).toBeTruthy();
   });
 
-  it("gives every fragment and particle a fixed opacity across the old animated range", async () => {
-    // The idle-CPU fix (perf audit 2026-08-31, §1): the ambient loops used to keyframe
-    // `opacity` — `[0.48, 0.82, 0.58, 0.76, 0.48]` on ten fragments and
-    // `[0.42, 0.9, 0.42]` on thirty-eight particles — repainting all of them every frame
-    // forever. What this can prove from the DOM is that the channel is now a static
-    // per-node value covering the same depth range — NOT that the running animation omits
-    // it. Nothing here reads motion's keyframes; see the report.
-    const { container } = mount(
-      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-    );
-    await screen.findByText("You stopped writing the code. You still have to answer for it.");
-    const styleOpacity = (selector: string) =>
-      [...container.querySelectorAll<HTMLElement>(selector)].map((node) =>
-        Number(node.style.opacity),
-      );
-
-    const fragments = styleOpacity("[data-fragment]");
-    expect(fragments).toHaveLength(10);
-    // Every fragment carries one — a bare `""` parses to 0 and fails this.
-    expect(fragments.filter((value) => value >= 0.48 && value <= 0.82)).toHaveLength(10);
-    // Layered, not flat: ten different depths, and no two neighbours at the same one.
-    expect(new Set(fragments).size).toBe(10);
-    expect(fragments.filter((value, index) => index > 0 && value === fragments[index - 1])).toEqual(
-      [],
-    );
-
-    const particles = styleOpacity("[data-particle]");
-    expect(particles).toHaveLength(38);
-    expect(particles.filter((value) => value >= 0.42 && value <= 0.9)).toHaveLength(38);
-    // Thirty-eight particles over thirteen steps repeat by design; adjacent ones must not.
-    expect(new Set(particles).size).toBe(13);
-    expect(particles.filter((value, index) => index > 0 && value === particles[index - 1])).toEqual(
-      [],
-    );
-  });
-
   it("removes the exact visibilitychange listeners it added, on unmount", async () => {
-    // The drift, breathe and reel loops are `repeat: Infinity` and motion keeps its frame
-    // loop running in a hidden window, so the welcome parks them on `document.hidden`.
-    // Observable here: the listener exists while the screen is up, and every handler
-    // registered is later removed BY IDENTITY (a cleanup passing a fresh closure removes
-    // nothing and leaks the loop).
+    // The drift loops are `repeat: Infinity` and motion keeps its frame loop running in a
+    // hidden window, so the welcome parks them on `document.hidden`. Observable here: the
+    // listener exists while the screen is up, and every handler registered is later removed
+    // BY IDENTITY (a cleanup passing a fresh closure removes nothing and leaks the loop).
     // Not observable here: that the handler actually pauses motion — see the report.
     const added = vi.spyOn(document, "addEventListener");
     const removed = vi.spyOn(document, "removeEventListener");
@@ -244,6 +212,90 @@ describe("FirstRunWelcome", () => {
       added.mockRestore();
       removed.mockRestore();
     }
+  });
+
+  it("replaces the opening visibility listener with one for the post-click reel", async () => {
+    const added = vi.spyOn(document, "addEventListener");
+    const removed = vi.spyOn(document, "removeEventListener");
+    try {
+      const { unmount } = mount(
+        <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+
+      await waitFor(() => {
+        const addedHandlers = added.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler);
+        const removedHandlers = removed.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler);
+        expect(addedHandlers.length).toBeGreaterThanOrEqual(2);
+        expect(removedHandlers).toContain(addedHandlers[0]);
+      });
+
+      const postClickHandler = added.mock.calls
+        .filter(([type]) => type === "visibilitychange")
+        .map(([, handler]) => handler)
+        .at(-1);
+      unmount();
+      expect(
+        removed.mock.calls
+          .filter(([type]) => type === "visibilitychange")
+          .map(([, handler]) => handler),
+      ).toContain(postClickHandler);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
+  it("keeps every repeat-forever welcome animation transform-only", () => {
+    const fragments = Array.from({ length: 10 }, (_, index) =>
+      welcomeFragmentIdleAnimation(index, 1_200, 800),
+    );
+    const particles = Array.from({ length: 38 }, (_, index) => welcomeParticleIdleAnimation(index));
+
+    for (const animation of fragments) {
+      expect(Object.keys(animation.keyframes).sort()).toEqual(["rotate", "x", "y"]);
+      expect(animation.transition.repeat).toBe(Infinity);
+    }
+    for (const animation of particles) {
+      expect(Object.keys(animation.keyframes).sort()).toEqual(["x", "y"]);
+      expect(animation.transition.repeat).toBe(Infinity);
+    }
+  });
+
+  it("pauses, resumes, and stops every bound idle loop", () => {
+    let hidden = true;
+    let listener = (): void => undefined;
+    const added = vi.fn((_type: "visibilitychange", next: () => void) => {
+      listener = next;
+    });
+    const removed = vi.fn();
+    const loops = Array.from({ length: 48 }, () => ({
+      pause: vi.fn(),
+      play: vi.fn(),
+      stop: vi.fn(),
+    }));
+
+    const cleanup = bindWelcomeIdleLoops(loops, {
+      get hidden() {
+        return hidden;
+      },
+      addEventListener: added,
+      removeEventListener: removed,
+    });
+    expect(loops.every((loop) => loop.pause.mock.calls.length === 1)).toBe(true);
+    expect(loops.every((loop) => loop.play.mock.calls.length === 0)).toBe(true);
+
+    hidden = false;
+    listener();
+    expect(loops.every((loop) => loop.play.mock.calls.length === 1)).toBe(true);
+
+    cleanup();
+    expect(removed).toHaveBeenCalledWith("visibilitychange", listener);
+    expect(loops.every((loop) => loop.stop.mock.calls.length === 1)).toBe(true);
   });
 
   it("renders each code fragment as toned spans over its full-length source", async () => {
