@@ -256,6 +256,42 @@ function highlightLine(code: string, languageId: LanguageId): Token[] {
 }
 
 /**
+ * Tokenized lines, memoized on (language, text), because scrolling a diff asks for
+ * the SAME lines over and over. A CodeView or DiffFileCard re-renders on every
+ * windowing step and re-tokenizes each painted row; without this, running the
+ * TextMate grammar was the dominant per-frame cost of a scroll.
+ *
+ * The cap is set by geometry, not by guesswork: a CodeView window is ~45 rows
+ * (480px viewport / 18px rows + overscan), and a DiffView keeps roughly ten cards
+ * of ~50 windowed rows mounted at once — so the LIVE set is a few hundred distinct
+ * lines. 2000 is ~4× that, which keeps a scroll back over rows just left behind a
+ * hit, while bounding retained text to a few hundred KB rather than the whole
+ * patchset. An insertion-ordered `Map` is the LRU: a hit is re-inserted at the end,
+ * an overflow evicts the oldest key.
+ *
+ * Entries are SHARED, so every caller treats the returned array as read-only (the
+ * two production callers only iterate/map it).
+ */
+export const TOKEN_CACHE_LIMIT = 2000;
+const tokenCache = new Map<string, Token[]>();
+
+/**
+ * Test seam for the cache: `misses` counts the lines actually run through Shiki, so
+ * a test can prove a repeated (text, lang) tokenizes ONCE and that the cap evicts.
+ * Production reads nothing here.
+ */
+export const tokenCacheProbe = {
+  hits: 0,
+  misses: 0,
+  size: (): number => tokenCache.size,
+  reset: (): void => {
+    tokenCache.clear();
+    tokenCacheProbe.hits = 0;
+    tokenCacheProbe.misses = 0;
+  },
+};
+
+/**
  * Tokenize one line of code for `languageId`. An unknown/absent language, or a
  * line past the length cap, returns a single plain token — fail-closed, never a
  * crash and never fabricated colouring.
@@ -264,11 +300,28 @@ export function tokenizeLine(code: string, languageId: LanguageId | null): Token
   if (code.length === 0) return [];
   if (languageId === null) return [{ text: code, type: "plain" }];
   if (code.length > MAX_HIGHLIGHT_LINE_LENGTH) return [{ text: code, type: "plain" }];
+  // A language id carries no space, so the FIRST space is an unambiguous separator:
+  // every (lang, text) pair maps onto exactly one key.
+  const key = `${languageId} ${code}`;
+  const cached = tokenCache.get(key);
+  if (cached !== undefined) {
+    tokenCache.delete(key);
+    tokenCache.set(key, cached);
+    tokenCacheProbe.hits += 1;
+    return cached;
+  }
   const tokens = highlightLine(code, languageId);
   // A line that shatters into more spans than the row-node budget can hold has no
   // useful token structure — degrade it to plain rather than blow the R16 envelope.
-  if (tokens.length > MAX_HIGHLIGHT_LINE_TOKENS) return [{ text: code, type: "plain" }];
-  return tokens;
+  const result: Token[] =
+    tokens.length > MAX_HIGHLIGHT_LINE_TOKENS ? [{ text: code, type: "plain" }] : tokens;
+  tokenCache.set(key, result);
+  tokenCacheProbe.misses += 1;
+  if (tokenCache.size > TOKEN_CACHE_LIMIT) {
+    const oldest = tokenCache.keys().next().value;
+    if (oldest !== undefined) tokenCache.delete(oldest);
+  }
+  return result;
 }
 
 /** Tokenize diff source with its one-character marker outside the language grammar. */

@@ -560,9 +560,23 @@ export function renderPostProcessPrompt(promptText: string, board: DraftBoard): 
 /** Read a prompt file from an on-disk copy of the `@rennet/prompts` src dir. */
 export type PromptReader = (file: string) => string | Promise<string>;
 
-/** The default node reader: resolves prompt file names against `promptsSrcDir`. */
+/**
+ * The default node reader: resolves prompt file names against `promptsSrcDir`.
+ *
+ * Memoized per file (perf audit §4 M): a round reads every lens prompt for every lens,
+ * and prompt files are shipped alongside the daemon — they cannot change while it runs.
+ * The memo is per-reader, so its lifetime is the composition that created it and a test
+ * that builds a second reader over a different dir shares nothing with the first.
+ */
 export function createNodePromptReader(promptsSrcDir: string): PromptReader {
-  return (file: string) => readFileSync(join(promptsSrcDir, file), "utf8");
+  const cache = new Map<string, string>();
+  return (file: string) => {
+    const hit = cache.get(file);
+    if (hit !== undefined) return hit;
+    const text = readFileSync(join(promptsSrcDir, file), "utf8");
+    cache.set(file, text);
+    return text;
+  };
 }
 
 // ── The per-board arrival event (B04 broadcast; B09 R58 reveal consumes it) ──

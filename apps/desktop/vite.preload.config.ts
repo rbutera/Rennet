@@ -17,7 +17,11 @@ export default defineConfig({
     rollupOptions: {
       external: ["electron", ...builtinModules, ...builtinModules.map((name) => `node:${name}`)],
     },
-    sourcemap: true,
+    // No prod sourcemap (perf audit §6, Wave 4 item 12): `dist/main/index.cjs.map` is the
+    // ONE that stays, because `scripts/smoke-packaged-app.mjs` reads its `sourcesContent`
+    // out of the asar. Nothing reads the preload's — no crash reporter, no
+    // `source-map-support`, and dev debugging goes through the dev server — so it was 8 kB
+    // of dead weight in every package, and the plan doc said it was already gone.
     target: "node24",
   },
 });

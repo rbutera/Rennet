@@ -1,8 +1,9 @@
 {
   "name": "@rennet/prompts",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "license": "LicenseRef-FSL-1.1-MIT",
   "exports": "./src/index.ts",
   "dependencies": {

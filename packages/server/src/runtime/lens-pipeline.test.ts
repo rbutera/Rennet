@@ -1,3 +1,4 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,7 @@ import {
   type BoardMeta,
   boardOutputSchema,
   composeReviewDraft,
+  createNodePromptReader,
   type DesignCoverageMapper,
   designDraftOutputSchema,
   draftToOps,
@@ -3676,6 +3678,35 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     });
     for (const outcome of result.boards) {
       expect(outcome.failure).toContain("structured output exceeded the seat capability");
+    }
+  });
+});
+
+describe("createNodePromptReader (perf audit §4 M)", () => {
+  it("reads each prompt file from disk exactly once, however many lenses ask for it", () => {
+    // A round asks for every lens prompt for every lens, and the prompt files ship with the
+    // daemon — they cannot change while it runs. Counted by MUTATING the file after the
+    // first read: a reader that re-read disk would return the new bytes.
+    const dir = mkdtempSync(join(tmpdir(), "rennet-prompts-"));
+    try {
+      writeFileSync(join(dir, "one.md"), "first");
+      writeFileSync(join(dir, "two.md"), "second");
+      const read = createNodePromptReader(dir);
+
+      expect(read("one.md")).toBe("first");
+      expect(read("two.md")).toBe("second");
+
+      writeFileSync(join(dir, "one.md"), "REWRITTEN");
+      expect(read("one.md")).toBe("first"); // memoized, not re-read
+      // …and the memo is per PATH, not one slot: the other file is still its own text.
+      expect(read("two.md")).toBe("second");
+
+      // The other direction of the control: a reader that has not read `one.md` yet does
+      // see the rewritten bytes, so the assertion above is about the memo and not about
+      // some quirk of the fixture.
+      expect(createNodePromptReader(dir)("one.md")).toBe("REWRITTEN");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

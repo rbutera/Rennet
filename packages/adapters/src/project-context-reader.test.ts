@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProjectSnapshotManifest } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { type ProjectSnapshotManifest, sha256Hex } from "@rennet/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
@@ -346,9 +346,6 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     const { store, manifest, storeDir } = await generate();
     const reader = new ProjectContextReader(store);
 
-    // Sanity: it reads cleanly before tampering.
-    expect(reader.readProjectMap(manifest.repoKey, manifest.baseOid).ok).toBe(true);
-
     // Overwrite the `files` structural shard on disk with bytes that no longer
     // hash to its digest. The store lays shards at <escaped-path>/map/shards/<digest>.json.
     const shardPath = join(
@@ -358,6 +355,12 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
       "shards",
       `${manifest.shards.files.digest}.json`,
     );
+    // Sanity, stated over the FIXTURE rather than over a read: the shard is where the
+    // manifest says and its bytes hash to the declared digest, so what the gate refuses
+    // below is the tamper and not a mislaid fixture. (It cannot be a successful
+    // `readProjectMap` any more — that would seat this snapshot in the verified-snapshot
+    // memo, whose accepted ceiling is pinned by its own test further down.)
+    expect(sha256Hex(readFileSync(shardPath, "utf8"))).toBe(manifest.shards.files.digest);
     writeFileSync(shardPath, '{"slot":"files","version":1,"entries":[]}');
 
     const result = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
@@ -417,4 +420,96 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     expect(r2.ok).toBe(false);
     if (!r2.ok) expect(r2.failure.reason).toBe("absent");
   });
+});
+
+describe("ProjectContextReader — the verified-snapshot memo (perf audit §4 H1)", () => {
+  /** One repo, two commits, a snapshot generated at each — two fingerprints in ONE store. */
+  async function twoGenerations(): Promise<{
+    store: ProjectSnapshotStore;
+    first: ProjectSnapshotManifest;
+    second: ProjectSnapshotManifest;
+  }> {
+    const { root, storeDir, oid } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    const first = (await generator.generate(root, { explicitBaseRef: oid })).manifest;
+    write(root, "packages/b/src/extra.ts", "export function extraB() {}\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "second");
+    const second = (
+      await generator.generate(root, { explicitBaseRef: git(root, "rev-parse", "HEAD") })
+    ).manifest;
+    return { store, first, second };
+  }
+
+  it("reads ZERO shards on a repeat load of the same snapshot, and serves the same map", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+
+    const first = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
+    expect(first.ok).toBe(true);
+
+    // Counted at the store seam every shard read goes through — `verifySnapshotIntegrity`
+    // walks all 3×N per-blob digests plus the 7 structural ones, and `materializeSnapshot`
+    // then re-reads the structural ones. Before the memo this was ≈2×N per call.
+    const loadShard = vi.spyOn(store, "loadShard");
+    const second = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
+    expect(loadShard).toHaveBeenCalledTimes(0);
+    // Zero reads is only worth anything if the answer is unchanged.
+    expect(second).toEqual(first);
+    loadShard.mockRestore();
+  }, 30_000);
+
+  it("is keyed per snapshot: a DIFFERENT base OID misses the memo, re-reads, and serves ITS map", async () => {
+    // The other direction of the control. If this passed with zero reads the memo would be
+    // keyed too loosely and one commit's structure would be served under another's OID —
+    // the failure the fingerprint key exists to make impossible.
+    const { store, first, second } = await twoGenerations();
+    expect(second.fingerprint).not.toBe(first.fingerprint);
+    const reader = new ProjectContextReader(store);
+
+    expect(reader.readProjectMap(first.repoKey, first.baseOid).ok).toBe(true);
+
+    const loadShard = vi.spyOn(store, "loadShard");
+    const result = reader.readProjectMap(second.repoKey, second.baseOid);
+    expect(loadShard.mock.calls.length).toBeGreaterThan(0);
+    loadShard.mockRestore();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Second commit's content, under second commit's OID — not the memoized first.
+    expect(result.map.baseOid).toBe(second.baseOid);
+    expect(result.map.fingerprint).toBe(second.fingerprint);
+    expect(result.map.files.some((f) => f.path === "packages/b/src/extra.ts")).toBe(true);
+  }, 60_000);
+
+  it("STATED CEILING: a shard corrupted AFTER a verified read keeps serving from the memo", async () => {
+    // Not a wish — the accepted cost of the memo, written down so the next reader inherits
+    // the truth instead of the comforting version. Once a fingerprint has verified, the gate
+    // stops re-hashing its shards, so an EXTERNAL mutation of `~/.rennet` inside the memo's
+    // lifetime is no longer refused as `corrupt`. Rennet itself never rewrites a shard's
+    // bytes in place (`advance` is content-addressed), and a fresh daemon re-verifies.
+    const { store, manifest, storeDir } = await generate();
+    const reader = new ProjectContextReader(store);
+    expect(reader.readProjectMap(manifest.repoKey, manifest.baseOid).ok).toBe(true);
+
+    const shardPath = join(
+      storeDir,
+      manifest.repoKey,
+      "map",
+      "shards",
+      `${manifest.shards.files.digest}.json`,
+    );
+    writeFileSync(shardPath, '{"slot":"files","version":1,"entries":[]}');
+    // Same reader, same process: served from the memo, NOT refused.
+    const after = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(after.map.files.length).toBeGreaterThan(0);
+
+    // What this test CANNOT show, named rather than implied: that a restarted daemon
+    // refuses it again. The memo is module-level, so its lifetime is the process, and a
+    // new `ProjectSnapshotStore` over the same dir in THIS process still hits the same
+    // entry. Only a fresh process re-verifies, and a vitest `it` cannot be one.
+  }, 30_000);
 });

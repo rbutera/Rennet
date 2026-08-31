@@ -255,3 +255,68 @@ describe("transcript turns (task 2.3)", () => {
     expect(container.textContent).toContain("After the tool.");
   });
 });
+
+// ── A settled turn does not re-render on a delta to another turn (perf audit §5 H8) ──────
+//
+// The audit's "every Turn re-renders per streamed token": each `ask-delta` rebuilds the rows
+// array, and an unmemoized `Turn` re-grouped its blocks and re-split every paragraph on each
+// one, for every turn in the session. `memo(Turn)` only bites because Wave 2 made a settled
+// turn's row object identity-stable across deltas — so this test is really pinning the pair,
+// and it fails if EITHER the memo goes or row identity starts churning.
+//
+// The probe is an icon component, because an action step renders `step.icon` directly: it
+// counts renders of the settled turn's subtree without instrumenting the component itself.
+describe("transcript re-render blast radius (perf audit §5 H8)", () => {
+  let probeRenders = 0;
+  const Probe = (props: Record<string, unknown>) => {
+    probeRenders += 1;
+    return <svg data-testid="probe" {...props} />;
+  };
+
+  const settledTurn: TranscriptRow = {
+    kind: "turn",
+    id: "settled",
+    speaker: "orchestrator",
+    status: "complete",
+    paragraphs: ["That middleware order is unchanged."],
+    preface: [
+      {
+        kind: "action",
+        id: "settled-a1",
+        label: "Read 2 files",
+        status: "complete",
+        icon: Probe as unknown as typeof FileText,
+      },
+    ],
+  };
+  const liveTurn: TranscriptRow = {
+    kind: "turn",
+    id: "live",
+    speaker: "orchestrator",
+    status: "streaming",
+    paragraphs: ["Pulling"],
+  };
+  const LIVE: ReadonlySet<string> = new Set(["live"]);
+
+  it("a delta to the live turn leaves the settled turn unrendered", () => {
+    probeRenders = 0;
+    const { container, rerender } = mount(
+      <ConversationPane rows={[settledTurn, liveTurn]} liveIds={LIVE} />,
+    );
+    expect(probeRenders).toBe(1);
+
+    // A delta: a NEW rows array and a NEW live-turn object, but the settled turn is the same
+    // object — which is exactly what `foldAskStream` + the per-thread WeakMaps produce.
+    const grown: TranscriptRow = { ...liveTurn, paragraphs: ["Pulling the actual diff"] };
+    rerender(<ConversationPane rows={[settledTurn, grown]} liveIds={LIVE} />);
+    // The delta really landed (this assertion is what stops the one above passing vacuously)…
+    expect(container.textContent).toContain("Pulling the actual diff");
+    // …and the settled turn did not re-render for it.
+    expect(probeRenders).toBe(1);
+
+    // POSITIVE CONTROL: the probe is wired and CAN count. Give the settled turn a fresh row
+    // identity — a real edit to that turn — and it renders again.
+    rerender(<ConversationPane rows={[{ ...settledTurn }, grown]} liveIds={LIVE} />);
+    expect(probeRenders).toBe(2);
+  });
+});

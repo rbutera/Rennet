@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type SessionTranscriptRow, SessionTranscriptRowSchema } from "@rennet/protocol";
 import { z } from "zod";
+import { ParsedFileCache } from "./parsed-file-cache";
 
 /**
  * The durable session-transcript store (issue-set B). A per-session APPEND LOG of the
@@ -29,6 +30,11 @@ import { z } from "zod";
  * version) is unread history we refuse to silently drop, so `read` THROWS and `append`
  * REFUSES rather than clobbering it. Never fabricate rows to look present; never fold real
  * rows away to look empty.
+ *
+ * IN-MEMORY ROWS (perf audit §4 H4). The parsed rows are memoized per session path through
+ * {@link ParsedFileCache}, and `appendUnique` keeps the id set beside them, so an append
+ * costs one `stat` instead of a full read + zod walk + Set rebuild. The write itself is
+ * unchanged — same document, same two fsyncs, same rename.
  */
 
 /** The current transcript-store schema version. Bumped on a breaking row-shape change. */
@@ -53,8 +59,16 @@ export function defaultTranscriptStoreDir(): string {
   return join(homedir(), ".rennet", "transcripts");
 }
 
+/** The memoized parse of one transcript file: its rows and, once `appendUnique` asked,
+ *  the set of ids already present. */
+interface CachedTranscript {
+  rows: SessionTranscriptRow[];
+  ids: Set<string> | undefined;
+}
+
 export class TranscriptStore {
   private tmpSeq = 0;
+  private readonly cache = new ParsedFileCache<CachedTranscript>();
 
   constructor(private readonly dir: string = defaultTranscriptStoreDir()) {
     mkdirSync(dir, { recursive: true });
@@ -100,13 +114,26 @@ export class TranscriptStore {
     return { status: "ok", file: result.data };
   }
 
-  /** Every persisted row for a session, in append order. Absent ⇒ `[]`; corrupt ⇒ THROW. */
-  read(sessionId: string): SessionTranscriptRow[] {
+  /** The memoized transcript for a session, parsed from disk only when the cache misses.
+   *  A corrupt file throws with `suffix` on the detail and is never memoized. */
+  private cachedTranscript(sessionId: string, suffix = ""): CachedTranscript {
+    const path = this.pathFor(sessionId);
+    const hit = this.cache.get(path);
+    if (hit !== undefined) return hit;
     const state = this.readState(sessionId);
     if (state.status === "corrupt") {
-      throw new TranscriptStoreCorruptError(sessionId, state.detail ?? "unknown");
+      throw new TranscriptStoreCorruptError(sessionId, `${state.detail ?? "unknown"}${suffix}`);
     }
-    return state.file.rows;
+    const entry: CachedTranscript = { rows: state.file.rows, ids: undefined };
+    // An ABSENT file has nothing to stamp; that read is already just an ENOENT.
+    if (state.status === "ok") this.cache.set(path, entry);
+    return entry;
+  }
+
+  /** Every persisted row for a session, in append order. Absent ⇒ `[]`; corrupt ⇒ THROW. */
+  read(sessionId: string): SessionTranscriptRow[] {
+    // A copy: the array is memoized, and a caller must not be able to edit store state.
+    return [...this.cachedTranscript(sessionId).rows];
   }
 
   private write(sessionId: string, rows: SessionTranscriptRow[]): void {
@@ -136,14 +163,8 @@ export class TranscriptStore {
    */
   append(sessionId: string, rows: readonly SessionTranscriptRow[]): void {
     if (rows.length === 0) return;
-    const state = this.readState(sessionId);
-    if (state.status === "corrupt") {
-      throw new TranscriptStoreCorruptError(
-        sessionId,
-        `${state.detail ?? "unknown"} — refusing to append over unread history`,
-      );
-    }
-    this.write(sessionId, [...state.file.rows, ...rows]);
+    const cached = this.cachedTranscript(sessionId, " — refusing to append over unread history");
+    this.commit(sessionId, cached, [...rows]);
   }
 
   /**
@@ -153,20 +174,35 @@ export class TranscriptStore {
    */
   appendUnique(sessionId: string, rows: readonly SessionTranscriptRow[]): void {
     if (rows.length === 0) return;
-    const state = this.readState(sessionId);
-    if (state.status === "corrupt") {
-      throw new TranscriptStoreCorruptError(
-        sessionId,
-        `${state.detail ?? "unknown"} — refusing to append over unread history`,
-      );
-    }
-    const known = new Set(state.file.rows.map((row) => row.id));
+    const cached = this.cachedTranscript(sessionId, " — refusing to append over unread history");
+    // The id set is built once per parse and carried forward across appends, rather than
+    // rebuilt from every row on each call.
+    cached.ids ??= new Set(cached.rows.map((row) => row.id));
+    const known = cached.ids;
+    // Intra-batch duplicates are caught by a SEPARATE set, so a write that throws leaves
+    // the memoized id set describing exactly what is on disk — a retry still sees the rows
+    // as new. `commit` is the only place ids join the durable set.
+    const batch = new Set<string>();
     const additions = rows.filter((row) => {
-      if (known.has(row.id)) return false;
-      known.add(row.id);
+      if (known.has(row.id) || batch.has(row.id)) return false;
+      batch.add(row.id);
       return true;
     });
     if (additions.length === 0) return;
-    this.write(sessionId, [...state.file.rows, ...additions]);
+    this.commit(sessionId, cached, additions);
+  }
+
+  /** Land `additions` after `cached`'s rows and memoize the result — the file we just
+   *  wrote IS that state, so the next read serves it without re-parsing our own bytes. */
+  private commit(
+    sessionId: string,
+    cached: CachedTranscript,
+    additions: SessionTranscriptRow[],
+  ): void {
+    const next = [...cached.rows, ...additions];
+    this.write(sessionId, next);
+    const ids = cached.ids;
+    if (ids !== undefined) for (const row of additions) ids.add(row.id);
+    this.cache.set(this.pathFor(sessionId), { rows: next, ids });
   }
 }

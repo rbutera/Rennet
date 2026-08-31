@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, expect, test } from "vitest";
+import { beforeAll, expect, test, vi } from "vitest";
 import { Collapse } from "./collapse";
 import { Command, CommandInput, CommandItem, CommandList } from "./command";
 import {
@@ -79,38 +79,117 @@ test("progress exposes aria-valuenow for a value", () => {
 });
 
 // ── The packet's named proof for collapse ────────────────────────────────────
-// Content stays MOUNTED when closed, and the wrapper carries `inert` so the
-// closed content leaves the tab order. Positive control: dropping `inert={!open}`
-// from collapse.tsx makes the "inert when closed" assertions fail (verified once
-// by hand during authoring, then reverted).
-test("collapse keeps content mounted and tab-order inert when closed", () => {
-  const { container, rerender } = render(
-    <Collapse open>
-      <button type="button">Focusable</button>
-    </Collapse>,
-  );
-  const wrapper = () => container.querySelector('[data-slot="collapse"] > div') as HTMLElement;
+// Children are mounted only WHILE VISIBLE, and the mount straddles the animation in
+// both directions. This replaces the earlier "content stays mounted when closed"
+// proof, which pinned the behaviour the perf audit (§5 H2) named as the #1 node-count
+// driver on a ~700-claim board: a folded board freed nothing.
+//
+// happy-dom runs no CSS transitions and fires no `transitionend`, so the unmount is
+// driven by a timeout matching the `duration-200` class rather than by the event.
+//
+// DO NOT "SIMPLIFY" EITHER HALF AWAY — both are load-bearing and they guard each other.
+// The 199/1 timer split pins `COLLAPSE_MS`, and the `duration-200` className assertion
+// pins the CSS side, so changing ONE of them reddens this test: a bumped `COLLAPSE_MS`
+// fails at `advanceTimersByTime(199)`, a bumped `duration-200` fails at the className.
+// What no assertion here can reach is whether a browser's real transition matches at
+// all — happy-dom runs none — so this pins the pairing, not the animation.
+test("collapse mounts its children only while they are visible", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, rerender } = render(
+      <Collapse open>
+        <button type="button">Focusable</button>
+      </Collapse>,
+    );
+    const track = () => container.querySelector('[data-slot="collapse"]') as HTMLElement;
+    const wrapper = () => container.querySelector('[data-slot="collapse"] > div') as HTMLElement;
+    const child = () => container.querySelector("button");
 
-  // Open: child present, wrapper NOT inert.
-  expect(screen.getByRole("button", { name: "Focusable" })).toBeTruthy();
-  expect(wrapper().hasAttribute("inert")).toBe(false);
+    // Open: child present, wrapper NOT inert, row track full.
+    expect(child()).toBeTruthy();
+    expect(wrapper().hasAttribute("inert")).toBe(false);
+    expect(track().className).toContain("grid-rows-[1fr]");
+    expect(track().className).toContain("transition-[grid-template-rows] duration-200");
 
-  // Closed: child STILL in the document (mounted), wrapper IS inert.
-  rerender(
-    <Collapse open={false}>
-      <button type="button">Focusable</button>
-    </Collapse>,
-  );
-  expect(screen.getByRole("button", { name: "Focusable" })).toBeTruthy();
-  expect(wrapper().hasAttribute("inert")).toBe(true);
+    // Closing: the track collapses immediately, but the children stay for the animation —
+    // a close that snapped to an empty box would animate over nothing.
+    rerender(
+      <Collapse open={false}>
+        <button type="button">Focusable</button>
+      </Collapse>,
+    );
+    expect(child()).toBeTruthy();
+    expect(wrapper().hasAttribute("inert")).toBe(true);
+    expect(track().className).toContain("grid-rows-[0fr]");
+    act(() => vi.advanceTimersByTime(199));
+    expect(child()).toBeTruthy();
 
-  // Reopen: inert gone again.
-  rerender(
-    <Collapse open>
-      <button type="button">Focusable</button>
-    </Collapse>,
-  );
-  expect(wrapper().hasAttribute("inert")).toBe(false);
+    // Closed: the animation is over and the children are GONE.
+    act(() => vi.advanceTimersByTime(1));
+    expect(child()).toBeNull();
+
+    // Reopening mounts in the SAME commit that opens the track, so the animation has real
+    // content to measure from its first frame.
+    rerender(
+      <Collapse open>
+        <button type="button">Focusable</button>
+      </Collapse>,
+    );
+    expect(child()).toBeTruthy();
+    expect(track().className).toContain("grid-rows-[1fr]");
+    expect(wrapper().hasAttribute("inert")).toBe(false);
+    // …and a close timer left over from the fold it interrupted never drops it later.
+    // (Weak assertion, named as such: the mount is re-derived during render, so several
+    // wrong implementations also survive this. It is a regression guard, not a control.)
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(child()).toBeTruthy();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("collapse mounting already-closed schedules no unmount timer", () => {
+  vi.useFakeTimers();
+  const scheduled = vi.spyOn(globalThis, "setTimeout");
+  try {
+    // The board case: hundreds of folded sections mount at once. A closed mount has
+    // nothing mounted to unmount, so it must schedule nothing — the guard's whole point.
+    // CONTROL: drop `!mounted` from the effect's bail in `collapse.tsx` and this goes to 3.
+    render(
+      <>
+        <Collapse open={false}>
+          <button type="button">One</button>
+        </Collapse>
+        <Collapse open={false}>
+          <button type="button">Two</button>
+        </Collapse>
+        <Collapse open={false}>
+          <button type="button">Three</button>
+        </Collapse>
+      </>,
+    );
+    expect(screen.queryByText("One")).toBeNull();
+    expect(scheduled).not.toHaveBeenCalled();
+
+    // …and the guard has not disarmed the real close: an OPEN collapse still schedules
+    // its unmount when it closes, which is the assertion that stops "fix" it by deleting
+    // the timer outright.
+    const { rerender } = render(
+      <Collapse open>
+        <button type="button">Four</button>
+      </Collapse>,
+    );
+    expect(scheduled).not.toHaveBeenCalled();
+    rerender(
+      <Collapse open={false}>
+        <button type="button">Four</button>
+      </Collapse>,
+    );
+    expect(scheduled).toHaveBeenCalledTimes(1);
+  } finally {
+    scheduled.mockRestore();
+    vi.useRealTimers();
+  }
 });
 
 test("resizable clamps a pointer drag to [min, max] and resets on double-click", () => {

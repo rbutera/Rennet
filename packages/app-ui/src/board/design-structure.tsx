@@ -1,6 +1,6 @@
 import type { HostElement, LensBoard, SpecDelta } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import {
   DesignSectionMetadata,
   followBoardAnchor,
@@ -16,6 +16,9 @@ type RequirementElement = ElementOf<"requirement">;
 
 interface CapabilitySummary {
   readonly section: SectionElement;
+  /** The top-level section that holds `section` — the fold a jump has to open, since a
+   *  folded section renders no body and a nested target is not in the document. */
+  readonly fold: string;
   readonly slug: string;
   readonly requirements: number;
   readonly scenarios: number;
@@ -144,6 +147,7 @@ function capabilitySummaries(board: LensBoard): CapabilitySummary[] {
     return [
       {
         section,
+        fold: requirements[0]?.sectionAncestors[0]?.id ?? section.id,
         slug,
         requirements: requirements.length,
         scenarios: scenarioIds.size,
@@ -168,7 +172,8 @@ function SmallLabel({ children }: { readonly children: ReactNode }) {
 
 /** The Design header's capability roll-up, derived from canonical requirement sections. */
 export function DesignCapabilityGrid({ board }: { readonly board: LensBoard }) {
-  const capabilities = capabilitySummaries(board);
+  // Walks every element and every requirement's ancestry — once per board, not per render.
+  const capabilities = useMemo(() => capabilitySummaries(board), [board]);
   if (capabilities.length === 0) return null;
   return (
     <nav data-kind="capability-grid" aria-label="Design capabilities" className="mb-8">
@@ -186,7 +191,7 @@ export function DesignCapabilityGrid({ board }: { readonly board: LensBoard }) {
               ? { "data-spec-deltas": capability.deltas.join(" ") }
               : {})}
             aria-label={`Jump to ${capability.slug}`}
-            onClick={(event) => followBoardAnchor(event, capability.section.id)}
+            onClick={(event) => followBoardAnchor(event, capability.section.id, capability.fold)}
             className={cn(
               "flex min-w-0 flex-col gap-1 rounded-surface border border-line px-3 py-2.5 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
               capability.deltas.includes("added") && "border-l-2 border-l-green/70",

@@ -213,6 +213,15 @@
       transform: translateX(0);
     }
   }
+  /* The `to` frame names ONLY opacity, and that omission is load-bearing (perf audit §5
+   * H9). This animation fills `forwards`, so whatever the last frame declares is retained
+   * on the element for as long as it lives — and `filter: blur(0)` is a filter, not `none`,
+   * so an explicit landing frame left every word span in a live turn holding a stacking
+   * context and a compositing layer forever. `transform: translateY(0)` does the same. With
+   * the properties absent, the implicit `to` frame interpolates each one back to the
+   * element's own underlying value (`filter: none`, `transform: none`) — identical motion,
+   * since `none` IS the identity for both — and the fill then retains `opacity: 1` alone,
+   * which composites nothing. Do not "complete" this keyframe. */
   @keyframes word-in {
     from {
       opacity: 0;
@@ -221,8 +230,6 @@
     }
     to {
       opacity: 1;
-      filter: blur(0);
-      transform: translateY(0);
     }
   }
   @keyframes cv-focus-pulse {

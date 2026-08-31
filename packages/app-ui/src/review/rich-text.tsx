@@ -1,5 +1,5 @@
 import { cn } from "@rennet/ui";
-import { Fragment, type ReactNode, useEffect, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
 import { basename } from "../canvas/symbol";
 import { lineRef } from "./citations";
 import { CitationBlock } from "./code-tabs";
@@ -180,13 +180,17 @@ export interface RichTextProps {
   readonly decorations?: readonly RichTextDecoration[];
 }
 
+/** One shared empty list, so an undecorated `RichText` keeps a stable `decorations`
+ *  identity and its segmentation memo survives its parent's re-renders. */
+const NO_DECORATIONS: readonly RichTextDecoration[] = [];
+
 export function RichText({
   text,
   patchsetId,
   className,
   paragraphClassName,
   keywords = false,
-  decorations = [],
+  decorations = NO_DECORATIONS,
 }: RichTextProps) {
   const [activeRef, setActiveRef] = useState<string | null>(null);
   // The revealed citation is keyed by paragraph index + ref; when the prose or the
@@ -194,181 +198,192 @@ export function RichText({
   // citation can never render below unrelated replacement text.
   // biome-ignore lint/correctness/useExhaustiveDependencies: text/patchsetId are the invalidation keys; activeRef is intentionally reset, not a dep.
   useEffect(() => setActiveRef(null), [text, patchsetId]);
-  const paragraphs = splitParagraphs(text);
 
-  function decorationFor(start: number, end: number): RichTextDecoration | undefined {
-    return decorations.find((decoration) => decoration.start <= start && decoration.end >= end);
-  }
+  // Tokenizing the prose and building its node tree is the per-element cost a big board
+  // pays ~700 times (perf audit §5 H4), and it used to run in the render body — so any
+  // store write anywhere re-parsed every element on the board. It depends on nothing but
+  // the props and the revealed citation, so it is memoized whole.
+  const body = useMemo(() => {
+    const paragraphs = splitParagraphs(text);
 
-  function decorate(children: ReactNode, start: number, end: number, key: string): ReactNode {
-    const decoration = decorationFor(start, end);
-    return <Fragment key={key}>{decoration ? decoration.render(children) : children}</Fragment>;
-  }
-
-  function formatText(value: string, bold: boolean, keyword: boolean): ReactNode {
-    let node: ReactNode = value;
-    if (keyword) {
-      node = <span className="font-semibold tracking-tight text-foreground">{node}</span>;
+    function decorationFor(start: number, end: number): RichTextDecoration | undefined {
+      return decorations.find((decoration) => decoration.start <= start && decoration.end >= end);
     }
-    if (bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
-    return node;
-  }
 
-  function renderTextRun(
-    value: string,
-    start: number,
-    bold: boolean,
-    keyword: boolean,
-  ): ReactNode[] {
-    const end = start + value.length;
-    const points = [
-      ...new Set([
-        start,
-        end,
-        ...decorations.flatMap((decoration) => [decoration.start, decoration.end]),
-      ]),
-    ]
-      .filter((point) => point >= start && point <= end)
-      .sort((a, b) => a - b);
-
-    const nodes: ReactNode[] = [];
-    for (let index = 0; index < points.length - 1; index++) {
-      const partStart = points[index];
-      const partEnd = points[index + 1];
-      if (partStart == null || partEnd == null || partEnd <= partStart) continue;
-      const part = value.slice(partStart - start, partEnd - start);
-      nodes.push(
-        decorate(formatText(part, bold, keyword), partStart, partEnd, `${partStart}:${partEnd}`),
-      );
+    function decorate(children: ReactNode, start: number, end: number, key: string): ReactNode {
+      const decoration = decorationFor(start, end);
+      return <Fragment key={key}>{decoration ? decoration.render(children) : children}</Fragment>;
     }
-    return nodes;
-  }
 
-  function renderTextSegment(segment: InlineSegment): ReactNode[] {
-    if (!keywords) return renderTextRun(segment.value, segment.start, segment.bold, false);
+    function formatText(value: string, bold: boolean, keyword: boolean): ReactNode {
+      let node: ReactNode = value;
+      if (keyword) {
+        node = <span className="font-semibold tracking-tight text-foreground">{node}</span>;
+      }
+      if (bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
+      return node;
+    }
 
-    const nodes: ReactNode[] = [];
-    let last = 0;
-    for (const match of segment.value.matchAll(SPEC_KEYWORD)) {
-      const index = match.index;
-      if (index > last) {
+    function renderTextRun(
+      value: string,
+      start: number,
+      bold: boolean,
+      keyword: boolean,
+    ): ReactNode[] {
+      const end = start + value.length;
+      const points = [
+        ...new Set([
+          start,
+          end,
+          ...decorations.flatMap((decoration) => [decoration.start, decoration.end]),
+        ]),
+      ]
+        .filter((point) => point >= start && point <= end)
+        .sort((a, b) => a - b);
+
+      const nodes: ReactNode[] = [];
+      for (let index = 0; index < points.length - 1; index++) {
+        const partStart = points[index];
+        const partEnd = points[index + 1];
+        if (partStart == null || partEnd == null || partEnd <= partStart) continue;
+        const part = value.slice(partStart - start, partEnd - start);
         nodes.push(
-          ...renderTextRun(
-            segment.value.slice(last, index),
-            segment.start + last,
-            segment.bold,
-            false,
-          ),
+          decorate(formatText(part, bold, keyword), partStart, partEnd, `${partStart}:${partEnd}`),
         );
       }
-      nodes.push(...renderTextRun(match[0], segment.start + index, segment.bold, true));
-      last = index + match[0].length;
+      return nodes;
     }
-    if (last < segment.value.length) {
-      nodes.push(
-        ...renderTextRun(segment.value.slice(last), segment.start + last, segment.bold, false),
-      );
-    }
-    return nodes;
-  }
 
-  function renderTokenSegment(segment: InlineSegment, paragraphIndex: number): ReactNode {
-    let node: ReactNode;
-    if (segment.kind === "citation") {
-      const refId = `${paragraphIndex}:${segment.value}`;
-      const parsed = parseRef(segment.value);
-      // Inline and borderless: a citation is a word in the sentence, and a bordered chip
-      // broke the line it sat in (prototype `rich-text.tsx:298-301`). The prototype sizes
-      // this em-relative (0.86em) so it tracks whatever prose holds it; the design ramp
-      // admits no arbitrary bracketed size, so this takes the nearest ramp step below the
-      // 14px body — and does NOT shrink with a smaller run the way the prototype's does.
-      node = (
-        <button
-          type="button"
-          aria-pressed={activeRef === refId}
-          title={segment.value}
-          onClick={() => setActiveRef((current) => (current === refId ? null : refId))}
-          className={cn(
-            "rounded bg-secondary/60 px-1 py-px font-mono text-xs underline decoration-dotted underline-offset-2 transition-colors",
-            activeRef === refId ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {basename(parsed.path)}:
-          {parsed.endLine !== parsed.startLine
-            ? `${parsed.startLine}-${parsed.endLine}`
-            : parsed.startLine}
-        </button>
-      );
-    } else {
-      // Same em-relative caveat: the prototype's 0.9em becomes the nearest ramp step.
-      node = <code className="font-mono text-12-5 text-foreground">{segment.display}</code>;
-    }
-    if (segment.bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
-    return decorate(node, segment.start, segment.end, `${segment.start}:${segment.end}`);
-  }
+    function renderTextSegment(segment: InlineSegment): ReactNode[] {
+      if (!keywords) return renderTextRun(segment.value, segment.start, segment.bold, false);
 
-  function renderInline(segment: string, paragraphIndex: number, rawOffset: number): ReactNode[] {
-    return inlineSegments(segment, rawOffset).flatMap((source) =>
-      source.kind === "text"
-        ? renderTextSegment(source)
-        : [renderTokenSegment(source, paragraphIndex)],
-    );
-  }
-
-  function renderParagraph(paragraph: ParagraphSource, paragraphIndex: number) {
-    const activeInParagraph = activeRef?.startsWith(`${paragraphIndex}:`)
-      ? activeRef.slice(activeRef.indexOf(":") + 1)
-      : null;
-    const reveal = activeInParagraph
-      ? (() => {
-          const parsed = parseRef(activeInParagraph);
-          return (
-            <CitationBlock
-              citation={lineRef(patchsetId, parsed.path, parsed.startLine, parsed.endLine)}
-            />
+      const nodes: ReactNode[] = [];
+      let last = 0;
+      for (const match of segment.value.matchAll(SPEC_KEYWORD)) {
+        const index = match.index;
+        if (index > last) {
+          nodes.push(
+            ...renderTextRun(
+              segment.value.slice(last, index),
+              segment.start + last,
+              segment.bold,
+              false,
+            ),
           );
-        })()
-      : null;
+        }
+        nodes.push(...renderTextRun(match[0], segment.start + index, segment.bold, true));
+        last = index + match[0].length;
+      }
+      if (last < segment.value.length) {
+        nodes.push(
+          ...renderTextRun(segment.value.slice(last), segment.start + last, segment.bold, false),
+        );
+      }
+      return nodes;
+    }
 
-    // A block whose lines all start with "- " is a bulleted list (a one-item `- x`
-    // paragraph counts); each line keeps the full token pipeline (citations, code,
-    // bold, keywords).
-    const lines = paragraph.text.split("\n");
-    let nextLineStart = paragraph.start;
-    const lineSources = lines.map((line) => {
-      const source = { text: line, start: nextLineStart };
-      nextLineStart += line.length + 1;
-      return source;
-    });
-    if (lineSources.every((line) => line.text.startsWith("- "))) {
+    function renderTokenSegment(segment: InlineSegment, paragraphIndex: number): ReactNode {
+      let node: ReactNode;
+      if (segment.kind === "citation") {
+        const refId = `${paragraphIndex}:${segment.value}`;
+        const parsed = parseRef(segment.value);
+        // Inline and borderless: a citation is a word in the sentence, and a bordered chip
+        // broke the line it sat in (prototype `rich-text.tsx:298-301`). The prototype sizes
+        // this em-relative (0.86em) so it tracks whatever prose holds it; the design ramp
+        // admits no arbitrary bracketed size, so this takes the nearest ramp step below the
+        // 14px body — and does NOT shrink with a smaller run the way the prototype's does.
+        node = (
+          <button
+            type="button"
+            aria-pressed={activeRef === refId}
+            title={segment.value}
+            onClick={() => setActiveRef((current) => (current === refId ? null : refId))}
+            className={cn(
+              "rounded bg-secondary/60 px-1 py-px font-mono text-xs underline decoration-dotted underline-offset-2 transition-colors",
+              activeRef === refId
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {basename(parsed.path)}:
+            {parsed.endLine !== parsed.startLine
+              ? `${parsed.startLine}-${parsed.endLine}`
+              : parsed.startLine}
+          </button>
+        );
+      } else {
+        // Same em-relative caveat: the prototype's 0.9em becomes the nearest ramp step.
+        node = <code className="font-mono text-12-5 text-foreground">{segment.display}</code>;
+      }
+      if (segment.bold) node = <strong className="font-semibold text-foreground">{node}</strong>;
+      return decorate(node, segment.start, segment.end, `${segment.start}:${segment.end}`);
+    }
+
+    function renderInline(segment: string, paragraphIndex: number, rawOffset: number): ReactNode[] {
+      return inlineSegments(segment, rawOffset).flatMap((source) =>
+        source.kind === "text"
+          ? renderTextSegment(source)
+          : [renderTokenSegment(source, paragraphIndex)],
+      );
+    }
+
+    function renderParagraph(paragraph: ParagraphSource, paragraphIndex: number) {
+      const activeInParagraph = activeRef?.startsWith(`${paragraphIndex}:`)
+        ? activeRef.slice(activeRef.indexOf(":") + 1)
+        : null;
+      const reveal = activeInParagraph
+        ? (() => {
+            const parsed = parseRef(activeInParagraph);
+            return (
+              <CitationBlock
+                citation={lineRef(patchsetId, parsed.path, parsed.startLine, parsed.endLine)}
+              />
+            );
+          })()
+        : null;
+
+      // A block whose lines all start with "- " is a bulleted list (a one-item `- x`
+      // paragraph counts); each line keeps the full token pipeline (citations, code,
+      // bold, keywords).
+      const lines = paragraph.text.split("\n");
+      let nextLineStart = paragraph.start;
+      const lineSources = lines.map((line) => {
+        const source = { text: line, start: nextLineStart };
+        nextLineStart += line.length + 1;
+        return source;
+      });
+      if (lineSources.every((line) => line.text.startsWith("- "))) {
+        return (
+          <Fragment key={paragraphIndex}>
+            <ul className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60">
+              {lineSources.map((line, lineIndex) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: bullet lines are a fixed positional list.
+                <li key={lineIndex} className={paragraphClassName}>
+                  {renderInline(line.text.slice(2), paragraphIndex, line.start + 2)}
+                </li>
+              ))}
+            </ul>
+            {reveal}
+          </Fragment>
+        );
+      }
+
       return (
         <Fragment key={paragraphIndex}>
-          <ul className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60">
-            {lineSources.map((line, lineIndex) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: bullet lines are a fixed positional list.
-              <li key={lineIndex} className={paragraphClassName}>
-                {renderInline(line.text.slice(2), paragraphIndex, line.start + 2)}
-              </li>
-            ))}
-          </ul>
+          <p className={paragraphClassName}>
+            {renderInline(paragraph.text, paragraphIndex, paragraph.start)}
+          </p>
           {reveal}
         </Fragment>
       );
     }
 
-    return (
-      <Fragment key={paragraphIndex}>
-        <p className={paragraphClassName}>
-          {renderInline(paragraph.text, paragraphIndex, paragraph.start)}
-        </p>
-        {reveal}
-      </Fragment>
-    );
-  }
+    return paragraphs.map(renderParagraph);
+  }, [text, patchsetId, decorations, keywords, paragraphClassName, activeRef]);
 
   return (
     <div data-rich-text-raw={text} className={cn("flex flex-col gap-2", className)}>
-      {paragraphs.map(renderParagraph)}
+      {body}
     </div>
   );
 }

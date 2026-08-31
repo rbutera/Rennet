@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { CodeBlock } from "../review";
 import { ActionStep } from "./action-step";
 import type { ActivityStep, ContentBlock, TranscriptBlock, TurnRow } from "./chat-data";
@@ -107,14 +108,13 @@ function OrderedTranscript({
   );
 }
 
-export function Turn({
-  turn,
-  animate = false,
-}: {
+interface TurnProps {
   readonly turn: TurnRow;
   /** true only for turns arriving live; historical turns render as records. */
   readonly animate?: boolean;
-}) {
+}
+
+function TurnImpl({ turn, animate = false }: TurnProps) {
   if (turn.speaker === "user") {
     return (
       <div className="flex flex-col items-end gap-1">
@@ -182,3 +182,16 @@ export function Turn({
     </div>
   );
 }
+
+/**
+ * MEMOIZED (perf audit §5 H8). Every `ask-delta` rebuilds the transcript rows array, so
+ * without this every settled turn in a long session re-rendered — re-grouping its blocks,
+ * re-splitting every paragraph — on each streamed token. The memo is only worth anything
+ * because Wave 2 made row identity stable: `chat-data.ts` memoizes a settled thread's rows
+ * on the thread object in a WeakMap, and `foldAskStream` keeps every thread it did not
+ * touch by reference, so `turn` is the SAME object across a delta and the shallow compare
+ * holds. `animate` is a boolean off `liveIds.has(row.id)`. If either ever starts arriving
+ * as a fresh value per delta, this silently stops helping — `conversation.dom.test.tsx`'s
+ * render-count probe is what would notice.
+ */
+export const Turn = memo(TurnImpl);

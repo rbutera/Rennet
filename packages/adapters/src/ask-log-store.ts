@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { foldAsks } from "@rennet/core";
+import { applyAskEvent, foldAsks } from "@rennet/core";
 import {
   type AskEvent,
   type AskEventBody,
@@ -17,6 +17,7 @@ import {
   type AskProjection,
 } from "@rennet/protocol";
 import { z } from "zod";
+import { ParsedFileCache } from "./parsed-file-cache";
 
 /**
  * The durable ask-log store (B11 cluster 1, Q15) — durability for the reviewer's
@@ -42,6 +43,14 @@ import { z } from "zod";
  * state, and `append` REFUSES rather than clobbering the file. This is honest failure,
  * not a gate: the corrupt file is left untouched for a human to recover, and every
  * exit (compose, ask.read) surfaces the fault instead of a fabricated empty projection.
+ *
+ * IN-MEMORY LOG (perf audit §3 H1). The parsed events and their folded projection are
+ * memoized per log path through {@link ParsedFileCache}, so the three `readProjection`
+ * calls each ask write makes (`dispatch/ask.ts`) cost one `stat` apiece instead of three
+ * full reads, three zod walks and three folds. Nothing about the ON-DISK shape changes:
+ * the same pretty-printed document, the same temp+fsync+rename+dir-fsync. The seq
+ * contiguity check still runs on every real parse — a cold read, or any read after the
+ * file changed underneath us — it is simply not re-run against bytes we already validated.
  */
 
 /** The current ask-log-store schema version. Bumped on a breaking shape change. */
@@ -71,8 +80,15 @@ export function defaultAskLogStoreDir(): string {
   return join(homedir(), ".rennet", "asks");
 }
 
+/** The memoized parse of one log file: its events and, once anyone asked, their fold. */
+interface CachedLog {
+  events: AskEvent[];
+  projection: AskProjection | undefined;
+}
+
 export class AskLogStore {
   private tmpSeq = 0;
+  private readonly cache = new ParsedFileCache<CachedLog>();
 
   constructor(private readonly dir: string = defaultAskLogStoreDir()) {
     mkdirSync(dir, { recursive: true });
@@ -141,19 +157,37 @@ export class AskLogStore {
     return { status: "ok", file };
   }
 
+  /** The memoized log for a session, parsed from disk only when the cache misses. A corrupt
+   *  file throws with `suffix` appended to the detail (the append path refuses differently
+   *  from the read path) and is never memoized. */
+  private cachedLog(sessionId: string, suffix = ""): CachedLog {
+    const path = this.pathFor(sessionId);
+    const hit = this.cache.get(path);
+    if (hit !== undefined) return hit;
+    const state = this.readState(sessionId);
+    if (state.status === "corrupt") {
+      throw new AskLogCorruptError(sessionId, `${state.detail ?? "unknown"}${suffix}`);
+    }
+    const entry: CachedLog = { events: state.file.events, projection: undefined };
+    // An ABSENT log has no file to stamp, so there is nothing to memoize against — the
+    // ENOENT read is already the cheap path, and the first append creates the file.
+    if (state.status === "ok") this.cache.set(path, entry);
+    return entry;
+  }
+
   /** The full event log for a session, in append order. Absent ⇒ `[]`; corrupt ⇒ THROW
    *  ({@link AskLogCorruptError}) — never fold unread history away to an empty review. */
   read(sessionId: string): AskEvent[] {
-    const state = this.readState(sessionId);
-    if (state.status === "corrupt") {
-      throw new AskLogCorruptError(sessionId, state.detail ?? "unknown");
-    }
-    return state.file.events;
+    // A copy: the array is memoized, and a caller sorting or splicing it must not edit
+    // the store's state. The events themselves are immutable append-only records.
+    return [...this.cachedLog(sessionId).events];
   }
 
   /** The current projection for a session — `foldAsks` over the log. Corrupt ⇒ THROW. */
   readProjection(sessionId: string): AskProjection {
-    return foldAsks(this.read(sessionId));
+    const cached = this.cachedLog(sessionId);
+    cached.projection ??= foldAsks(cached.events);
+    return cached.projection;
   }
 
   private write(sessionId: string, events: AskEvent[]): void {
@@ -204,19 +238,26 @@ export class AskLogStore {
   appendMany(sessionId: string, bodies: readonly AskEventBody[]): AskEvent[] {
     if (bodies.length === 0) return [];
 
-    const state = this.readState(sessionId);
-    if (state.status === "corrupt") {
-      throw new AskLogCorruptError(
-        sessionId,
-        `${state.detail ?? "unknown"} — refusing to append over unread history`,
-      );
-    }
-    const events = state.file.events;
+    const cached = this.cachedLog(sessionId, " — refusing to append over unread history");
+    const events = cached.events;
     const firstSeq = (events.at(-1)?.seq ?? -1) + 1;
     const appended = bodies.map(
       (body, index) => ({ ...body, sessionId, seq: firstSeq + index }) as AskEvent,
     );
-    this.write(sessionId, [...events, ...appended]);
+    const next = [...events, ...appended];
+    this.write(sessionId, next);
+    // WRITE THROUGH. The file we just landed IS this state, so memoize it rather than
+    // making the next read re-parse what we already hold. The projection extends
+    // incrementally: `applyAskEvent` is the very step `foldAsks` reduces with, so folding
+    // only the appended events onto the prior projection equals a fold over the whole log —
+    // without which each append would still re-walk every event.
+    this.cache.set(this.pathFor(sessionId), {
+      events: next,
+      projection:
+        cached.projection === undefined
+          ? undefined
+          : appended.reduce(applyAskEvent, cached.projection),
+    });
     return appended;
   }
 }

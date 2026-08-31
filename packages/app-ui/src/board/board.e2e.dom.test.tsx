@@ -108,6 +108,21 @@ const kindsIn = (root: ParentNode): Set<string> => {
 
 const lensOf = (c: HTMLElement) => c.querySelector("article[data-lens]")?.getAttribute("data-lens");
 
+/** Open every folded section. `Collapse` mounts only the side it is showing, so a folded
+ *  section contributes NOTHING to the document — which is the point of the fold (perf audit
+ *  §5 H2), and the reason a kind census has to unfold before it counts. */
+async function unfoldAll(
+  container: HTMLElement,
+  user: { click: (el: Element) => Promise<void> },
+): Promise<void> {
+  for (const section of container.querySelectorAll<HTMLElement>(
+    "[data-kind=board-section][data-open=false]",
+  )) {
+    const toggle = section.querySelector<HTMLButtonElement>("h2 button[aria-expanded]");
+    if (toggle) await user.click(toggle);
+  }
+}
+
 beforeEach(() => {
   useRennetStore.getState().reviewActions.resetReview();
   useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } });
@@ -116,17 +131,19 @@ beforeEach(() => {
 describe("board E2E — the full fixture set through the real LensBoardView", () => {
   it("renders every registered content kind across the fixture lenses (real surface, not the pool)", async () => {
     // gen1 carries all five lenses; visiting each mounts its board through the real
-    // Section/registry pipeline. Section keeps children mounted while folded (Collapse
-    // animates grid-rows), so folded sections still contribute their kinds.
+    // Section/registry pipeline. A folded section renders no children, so each lens is
+    // unfolded before its kinds are counted.
     const { container, user } = await renderView("gen1");
     const seen = new Set<string>();
     // The default (Flagged) lens first, then click through the rest.
+    await unfoldAll(container, user);
     for (const k of kindsIn(container)) seen.add(k);
     for (const lens of ["design", "decisions", "sequence", "noise"] as const) {
       const tab = container.querySelector<HTMLButtonElement>(`[data-lens=${lens}]`);
       if (!tab) throw new Error(`no ${lens} tab on gen1`);
       await user.click(tab);
       expect(lensOf(container)).toBe(lens);
+      await unfoldAll(container, user);
       for (const k of kindsIn(container)) seen.add(k);
     }
     for (const kind of CONTENT_KINDS) expect([kind, seen.has(kind)]).toEqual([kind, true]);
@@ -143,6 +160,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     const decisions = container.querySelector<HTMLButtonElement>("[data-lens=decisions]");
     if (!decisions) throw new Error("no decisions tab");
     await user.click(decisions);
+    await unfoldAll(container, user);
     await waitFor(() =>
       expect(
         container.querySelectorAll(
@@ -215,6 +233,11 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(sections.every((s) => s.getAttribute("data-open") === "false")).toBe(true);
     // Folded ⇒ the gist rollup names domain objects on its own line.
     expect(container.querySelector("[data-kind=section-counts]")).toBeTruthy();
+    // …and folded means GONE, not hidden: the whole point of the fold on a 700-claim board
+    // is that the folded bodies cost nothing. Only the fold lines are left.
+    expect(kindsIn(container).has("requirement")).toBe(false);
+    await unfoldAll(container, user);
+    expect(kindsIn(container).has("requirement")).toBe(true);
   });
 
   it("delta marks: gen2 Flagged opens its delta sections expanded with a gold dot that clears on interaction", async () => {
@@ -253,6 +276,7 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     const design = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!design) throw new Error("no design tab");
     await user.click(design);
+    await unfoldAll(container, user);
     const hl = await waitFor(() => {
       const node = container.querySelector<HTMLElement>("[data-kind=prose] [data-quote-highlight]");
       if (!node) throw new Error("no highlight");

@@ -7,7 +7,7 @@ import {
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { FolderPlus } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Component, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { Icon } from "../components/icon";
@@ -27,12 +27,67 @@ import {
 } from "../settings";
 import { useConnectionCapabilities } from "../shell/connection-capabilities";
 import { useRennetStore } from "../store";
-import { FirstRunWelcome } from "../welcome/first-run-welcome";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { resolveProject } from "./project-resolution";
 import { useSlugResolution } from "./slug";
 import { newChatPath, ROUTES } from "./url";
+
+// The welcome wizard is CODE-SPLIT (perf audit 2026-08-31, §6 H2). It is the only
+// module in the whole renderer that imports `motion/react`, and it is the one screen
+// most sessions never mount — an install that has finished the wizard once never sees
+// it again. Eagerly imported, it dragged the animation runtime into the single startup
+// chunk every window parses. `lazy` moves it, and motion with it, into a chunk fetched
+// only when the wizard is actually elected.
+//
+// The fallback is nothing. The welcome owns the whole window, the chunk is a local
+// file, and a spinner for a few milliseconds would be ceremony — the same reason
+// `StartupGate` renders an invisible tree rather than a loading state while settings
+// resolve. Both call sites go through this wrapper so neither has to know it is lazy.
+const FirstRunWelcomeChunk = lazy(async () => ({
+  default: (await import("../welcome/first-run-welcome")).FirstRunWelcome,
+}));
+
+/**
+ * A chunk that fails to load must not take the window with it.
+ *
+ * `Suspense` catches the WAIT, never the rejection: a failed `import()` throws through the
+ * fallback and unmounts the whole tree, so a corrupt or missing chunk file turned the very
+ * first screen an install ever renders into a white void with nothing in it. That is the
+ * one case a lazy boundary buys, and it is why this exists.
+ *
+ * It renders the SAME calm blank as the fallback and the pre-claimed state, plus a console
+ * error for whoever is looking. No dialog, no retry button, no "something went wrong" —
+ * the wizard is elective and the app behind it is intact.
+ */
+export class WelcomeChunkBoundary extends Component<
+  { readonly children: ReactNode },
+  { readonly failed: boolean }
+> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  override componentDidCatch(error: unknown) {
+    console.error("[rennet] the welcome chunk failed to load", error);
+  }
+
+  override render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+function FirstRunWelcome({ settings }: { readonly settings: SettingsView }) {
+  return (
+    <WelcomeChunkBoundary>
+      <Suspense fallback={null}>
+        <FirstRunWelcomeChunk settings={settings} />
+      </Suspense>
+    </WelcomeChunkBoundary>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RennetRouterApp (C01 §4) — the router foundation the later Track-C surfaces mount

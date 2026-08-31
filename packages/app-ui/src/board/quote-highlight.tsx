@@ -5,6 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -198,16 +199,56 @@ function anchorRange(rawText: string, anchor: string): RawTextRange | null {
 
 type AnchorLocator = (text: string, anchor: string) => RawTextRange | null;
 
-function useRangedThreads(text: string, elementId: string, locate: AnchorLocator): RangedThread[] {
+function sameScope(a: readonly KeyedThread[], b: readonly KeyedThread[]): boolean {
+  return a.length === b.length && a.every((x, i) => x.id === b[i]?.id && x.thread === b[i]?.thread);
+}
+
+/**
+ * The threads anchored on THIS element in THIS generation, with a stable identity.
+ *
+ * A quote-thread write replaces the whole `quoteThreads` record, so every element on the
+ * board recomputes its scope — but the scope of an element no thread just changed is
+ * element-wise identical, and returning the previous array is what lets the range
+ * derivation below (and the decorations built from it) skip (perf audit §5 H3: one thread
+ * opened re-scanned ~700 elements). Thread objects are replaced on write, so a reply to a
+ * thread THIS element carries does break the identity, and the popover updates.
+ */
+function useScopedThreads(elementId: string, generation: string): readonly KeyedThread[] {
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
+  const next = useMemo(
+    () =>
+      Object.entries(quoteThreads).flatMap(([id, thread]) =>
+        thread.lifecycle === "detached" ||
+        thread.target !== elementId ||
+        thread.generation !== generation
+          ? []
+          : [{ id, thread }],
+      ),
+    [quoteThreads, elementId, generation],
+  );
+  const held = useRef(next);
+  if (held.current !== next && !sameScope(held.current, next)) held.current = next;
+  return held.current;
+}
+
+/** Locate each scoped thread's anchor in `text`. Exported for the perf test, which counts
+ *  `locate` calls to prove an unrelated thread write does not re-derive this element. */
+export function useRangedThreads(
+  text: string,
+  elementId: string,
+  locate: AnchorLocator,
+): readonly RangedThread[] {
   const generation = useBoardGeneration();
-  return Object.entries(quoteThreads).flatMap(([id, thread]) => {
-    if (thread.lifecycle === "detached") return [];
-    if (thread.target !== elementId || thread.generation !== generation) return [];
-    const range = locate(text, thread.anchor);
-    if (!range || /\n\n+/.test(text.slice(range.start, range.end))) return [];
-    return [{ id, thread, ...range }];
-  });
+  const scoped = useScopedThreads(elementId, generation);
+  return useMemo(
+    () =>
+      scoped.flatMap(({ id, thread }) => {
+        const range = locate(text, thread.anchor);
+        if (!range || /\n\n+/.test(text.slice(range.start, range.end))) return [];
+        return [{ id, thread, ...range }];
+      }),
+    [scoped, text, locate],
+  );
 }
 
 /** Convert possibly overlapping thread ranges to disjoint decorated spans. */
@@ -275,6 +316,7 @@ export function InlineQuoteHighlight({
   ariaExpanded,
 }: InlineQuoteHighlightProps) {
   const matches = useRangedThreads(text, elementId, uniqueRawRange);
+  const decorations = useMemo(() => decorationsFor(matches), [matches]);
   const interactive = onActivate !== undefined;
   return (
     <span
@@ -300,7 +342,7 @@ export function InlineQuoteHighlight({
           }
         : {})}
     >
-      {matches.length === 0 ? text : decoratedPlainText(text, decorationsFor(matches))}
+      {matches.length === 0 ? text : decoratedPlainText(text, decorations)}
     </span>
   );
 }
@@ -337,6 +379,8 @@ export function QuoteHighlightLayer({
   keywords,
 }: QuoteHighlightLayerProps) {
   const matches = useRangedThreads(text, elementId, anchorRange);
+  // Stable while the scope is: `RichText` memoizes its whole segmentation on this array.
+  const decorations = useMemo(() => decorationsFor(matches), [matches]);
   return (
     <div data-quote-target={elementId} className="contents">
       {matches.length === 0 ? (
@@ -354,7 +398,7 @@ export function QuoteHighlightLayer({
           className={className}
           paragraphClassName={paragraphClassName}
           keywords={keywords}
-          decorations={decorationsFor(matches)}
+          decorations={decorations}
         />
       )}
     </div>

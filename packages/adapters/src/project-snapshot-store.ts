@@ -70,6 +70,13 @@ export const PROJECT_CONFIG_VERSION = 1;
  */
 export const MANIFEST_RETENTION = 32;
 
+/**
+ * How many shard paths a store remembers as verified-on-disk (perf audit §4). One
+ * entry is a path string, so 4096 is well under a megabyte and comfortably covers a
+ * large repo's shard set between advances.
+ */
+export const SHARD_PATH_MEMO_LIMIT = 4096;
+
 /** A git OID safe to use as a filename segment (hex only — never a path/separator). */
 function isSafeOid(oid: string): boolean {
   return oid.length > 0 && /^[0-9a-fA-F]+$/.test(oid);
@@ -258,6 +265,13 @@ export class ProjectSnapshotStore {
 
   /** Monotonic suffix for temp files, so concurrent writes never collide. */
   private tmpSeq = 0;
+
+  /**
+   * Shard paths this store has already verified (or just written) in THIS process —
+   * the memo behind {@link shardIsIntact}. Bounded by {@link SHARD_PATH_MEMO_LIMIT} so
+   * a long-lived daemon does not grow it without limit.
+   */
+  private readonly verifiedShardPaths = new Set<string>();
 
   /**
    * The resolved on-disk paths for a project. `repoKey` is ALREADY the escaped,
@@ -507,7 +521,11 @@ export class ProjectSnapshotStore {
       // (re)write the known-good bytes on any absence or mismatch. The write is
       // atomic (temp + rename in the same dir), so a crash mid-rewrite cannot
       // itself leave a truncated shard behind.
-      if (!this.shardIsIntact(path, digest)) this.writeAtomic(path, bytes);
+      if (!this.shardIsIntact(path, digest)) {
+        this.writeAtomic(path, bytes);
+        // Just written from the known-good bytes ⇒ known-good on disk.
+        this.rememberShardOnDisk(path);
+      }
     }
 
     // Canonical bytes (sorted keys, LF) so the stored manifest is itself
@@ -648,12 +666,41 @@ export class ProjectSnapshotStore {
     return next;
   }
 
-  /** Whether an on-disk shard file exists AND its bytes hash back to `digest`. */
+  /**
+   * Whether an on-disk shard file exists AND its bytes hash back to `digest`.
+   *
+   * Memoized per shard PATH (perf audit §4): an incremental advance re-offers a shard
+   * for every unchanged blob, and without this each one is read whole and re-hashed on
+   * every build. Shards are content-addressed, so a path that hashed to its digest once
+   * cannot legitimately mean anything else later. The key is the path, NOT the digest —
+   * two repos can reference the same digest while only one has the file on disk, and a
+   * digest-keyed memo would skip writing it into the other repo's shard dir.
+   *
+   * The corruption this guard exists for (#2: a write truncated by a crash) lands in a
+   * FRESH process, whose memo is empty, so the rewrite still happens.
+   */
   private shardIsIntact(path: string, digest: string): boolean {
+    if (this.verifiedShardPaths.has(path)) return true;
+    let intact: boolean;
     try {
-      return sha256Hex(readFileSync(path, "utf8")) === digest;
+      intact = sha256Hex(readFileSync(path, "utf8")) === digest;
     } catch {
       return false;
+    }
+    if (intact) this.rememberShardOnDisk(path);
+    return intact;
+  }
+
+  /** Record a shard path as known-good on disk, evicting the OLDEST-recorded over the bound.
+   *  Insertion order, not recency: a hit in `shardIsIntact` returns without re-recording, so
+   *  there is nothing to touch and nothing to promote. That is fine for this memo — a build
+   *  re-offers the same shard set, so age tracks relevance closely enough. */
+  private rememberShardOnDisk(path: string): void {
+    this.verifiedShardPaths.add(path);
+    while (this.verifiedShardPaths.size > SHARD_PATH_MEMO_LIMIT) {
+      const oldest = this.verifiedShardPaths.values().next();
+      if (oldest.done) break;
+      this.verifiedShardPaths.delete(oldest.value);
     }
   }
 

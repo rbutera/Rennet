@@ -1,7 +1,8 @@
 // C07 chat-data reducer unit tests. The DOM tests drive the whole dock; these pin the
 // pure fold's load-bearing branches so a regression reddens HERE, fast, with a clear cause.
 import type { ReattachResult, ReviewAskStreamEvent } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { TranscriptRow } from "./chat-data";
 import {
   detachedThreadRowsOf,
   foldAskStream,
@@ -184,6 +185,145 @@ describe("detached quote-thread transcript projection", () => {
       },
     ]);
     expect(second).toEqual(first);
+  });
+});
+
+// ── Per-delta derivation cost (perf audit §3 H2) ─────────────────────────────────────
+// `reattachToRows` used to re-walk every thread, every message and every paragraph split on
+// EVERY streamed token, because `foldAskStream` mints a fresh `ReattachResult` per delta.
+// The derivation is now memoized on the thread / in-flight-turn objects the fold preserves.
+//
+// The seam is the fixture, not the production code: a settled thread exposes `messages`
+// through a counting getter, which is the exact property the per-thread derivation reads, so
+// the count IS the number of derivations. Positive control: drop the `threadRows` WeakMap
+// lookup in `threadToRows` and the counts go 1 → 3 (once per derivation) and the identity
+// assertion below reddens too.
+
+type CountingThread = ReattachResult["threads"][number];
+
+function countingThread(
+  threadId: string,
+  counts: Map<string, number>,
+  messageCount = 3,
+): CountingThread {
+  const messages = Array.from({ length: messageCount }, (_, index) => ({
+    id: `${threadId}-m${index}`,
+    author: (index % 2 === 0 ? "you" : "harness") as "you" | "harness",
+    body: `paragraph one\n\nparagraph two of ${threadId} message ${index}`,
+    status: "complete" as const,
+    time: `2026-08-29T10:0${index}:00.000Z`,
+  }));
+  return {
+    threadId,
+    anchor: { kind: "fragment" as const, label: "conversation", key: threadId },
+    get messages() {
+      counts.set(threadId, (counts.get(threadId) ?? 0) + 1);
+      return messages;
+    },
+  };
+}
+
+const rowIds = (rows: readonly TranscriptRow[]) =>
+  rows.map((row) => (row.kind === "turn" ? row.id : row.kind));
+
+const askDelta = (turnId: string, delta: string, seq: number): ReviewAskStreamEvent => ({
+  kind: "ask-delta",
+  threadId: "live",
+  turnId,
+  channel: "orchestrator",
+  delta,
+  seq,
+});
+
+describe("transcript derivation cost per streamed delta", () => {
+  it("derives each settled thread once across two deltas, re-deriving only the live turn", () => {
+    const counts = new Map<string, number>();
+    const settled = Array.from({ length: 6 }, (_, index) => countingThread(`t${index}`, counts));
+    const s = seen();
+
+    let state: ReattachResult = { threads: settled, inFlight: [] };
+    const first = reattachToRows(state);
+    state = foldAskStream(state, askDelta("live-1", "hello", 1), s);
+    const second = reattachToRows(state);
+    state = foldAskStream(state, askDelta("live-1", " there", 2), s);
+    const third = reattachToRows(state);
+
+    // Six settled threads, three derivations of the transcript: each thread derived ONCE.
+    expect([...counts.values()]).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(counts.size).toBe(6);
+
+    // Same row objects, not merely equal ones — a re-derivation would allocate fresh rows.
+    const settledRowCount = first.length;
+    for (let index = 0; index < settledRowCount; index++) {
+      expect(second[index]).toBe(first[index]);
+      expect(third[index]).toBe(first[index]);
+    }
+
+    // The live turn, and only the live turn, is new text on each delta.
+    const live = third[third.length - 1];
+    if (live?.kind !== "turn") throw new Error("expected the live turn last");
+    expect(live.status).toBe("streaming");
+    expect(live.paragraphs.join(" ")).toBe("hello there");
+    expect(second).toHaveLength(settledRowCount + 1);
+    expect(third).toHaveLength(settledRowCount + 1);
+  });
+
+  it("derives the same rows after K deltas as a from-scratch derivation of the same state", async () => {
+    const counts = new Map<string, number>();
+    const s = seen();
+    let state: ReattachResult = {
+      threads: [countingThread("t0", counts), countingThread("t1", counts, 2)],
+      inFlight: [
+        // A live turn on a thread the snapshot already knows, so the interleaving (thread
+        // rows, then that thread's live turns) is exercised, not just the orphan tail.
+        { threadId: "t0", turnId: "resident", channel: "orchestrator", model: "", bodySoFar: "" },
+      ],
+    };
+    state = foldAskStream(state, askDelta("orphan", "a brand new ask", 1), s);
+    for (let index = 0; index < 8; index++) {
+      state = foldAskStream(state, askDelta("orphan", ` chunk-${index}`, index + 2), s);
+    }
+
+    // Indexing the live turns by thread replaced a nested `threads × inFlight` scan. Equivalence
+    // against a cold derivation cannot see an ordering regression (both sides run the same
+    // code), so the interleaving is pinned literally: a thread's rows, then THAT thread's live
+    // turns, then the live turns whose thread the snapshot never carried.
+    expect(rowIds(reattachToRows(state))).toEqual([
+      "t0-m0",
+      "t0-m1",
+      "t0-m2",
+      "resident::orchestrator",
+      "t1-m0",
+      "t1-m1",
+      "orphan::orchestrator",
+    ]);
+
+    state = foldAskStream(
+      state,
+      { ...complete, threadId: "t1", turnId: "resident", finalBody: "settled reply" },
+      s,
+    );
+
+    const memoized = reattachToRows(state);
+    // The reference derivation runs in a FRESHLY EVALUATED copy of the module, so its caches
+    // are empty whatever they are keyed on. Cloning the state instead was not enough: a memo
+    // keyed on `threadId` (a string a clone reproduces) poisoned the reference too, and this
+    // assertion passed while serving stale rows — the reference has to be cold by
+    // construction, not by hoping the key misses.
+    vi.resetModules();
+    const cold = await import("./chat-data");
+    const fromScratch = cold.reattachToRows(state);
+
+    expect(memoized).toEqual(fromScratch);
+    expect(rowIds(memoized)).toEqual([
+      "t0-m0",
+      "t0-m1",
+      "t0-m2",
+      "t1-m0",
+      "t1-m1",
+      "resident::orchestrator",
+      "orphan::orchestrator",
+    ]);
   });
 });
 

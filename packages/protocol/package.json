@@ -1,8 +1,9 @@
 {
   "name": "@rennet/protocol",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "exports": "./src/index.ts",
   "dependencies": {
     "@wboard/core": "0.1.0-alpha.2",

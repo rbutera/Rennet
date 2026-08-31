@@ -15,7 +15,7 @@
 // repo reference) and is resolved back to the host path via the connection's root
 // table. An unresolvable reference is a typed `invalid_input`, never a guessed path.
 
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { escapePath } from "@rennet/core";
 import type {
@@ -109,6 +109,71 @@ export function buildProjectionContext(
   // Longest first: a repo nested under another must match its own root, not the parent's.
   const roots = [...disambiguated].sort((a, b) => b.hostPath.length - a.hostPath.length);
   return { roots, homeDir, byRepoKey };
+}
+
+/** What {@link createCachedProjectionContext} needs off a stored project: its roots. */
+interface ProjectRoots {
+  readonly path: string;
+  readonly openPath: string;
+  readonly includedRepoPaths?: readonly string[];
+}
+
+/** The inputs the cached projection context is built from. */
+export interface CachedProjectionContextDeps {
+  /** The stored projects — read only when the cache misses. */
+  readonly listProjects: () => readonly ProjectRoots[];
+  /** The dispatch-granted roots. APPEND-ONLY: its size is used as its version. */
+  readonly grantedRoots: ReadonlySet<string>;
+  /** `projects.json` — stat'd (never read) per call to detect any writer's change. */
+  readonly projectsPath: string;
+  readonly homeDir: string;
+}
+
+/**
+ * A memoized {@link buildProjectionContext} over the stored projects (perf audit §4 H3).
+ *
+ * The context is rebuilt inside EVERY projected fan-out — including once per streamed
+ * ask token while a phone is paired — and a rebuild cost a whole `projects.json` read,
+ * a zod parse per project, and a `realpathSync` per root. None of that changes between
+ * two frames of the same turn.
+ *
+ * The cache key is deliberately not a hand-maintained invalidation hook at each mutation
+ * site (a site is easy to add and forget). It is what the roots are actually derived
+ * FROM: the granted-roots set's size — that set is append-only, so size IS its version —
+ * and `projects.json`'s own filesystem identity (nanosecond mtime + size + inode). Any
+ * writer invalidates it: this daemon's own add/rename/remove, a second process, or a
+ * hand edit. The per-call cost drops to one `stat`.
+ *
+ * A missing `projects.json` (nothing added yet) stamps as `absent` and is itself cached,
+ * so the empty-workspace path does not stat-and-rebuild forever either.
+ */
+export function createCachedProjectionContext(
+  deps: CachedProjectionContextDeps,
+): () => ProjectionContext {
+  let cached: { key: string; context: ProjectionContext } | undefined;
+  return () => {
+    const key = `${deps.grantedRoots.size}|${statStamp(deps.projectsPath)}`;
+    if (cached?.key !== key) {
+      const roots = new Set<string>(deps.grantedRoots);
+      for (const project of deps.listProjects()) {
+        roots.add(project.path);
+        roots.add(project.openPath);
+        for (const repoPath of project.includedRepoPaths ?? []) roots.add(repoPath);
+      }
+      cached = { key, context: buildProjectionContext(roots, deps.homeDir) };
+    }
+    return cached.context;
+  };
+}
+
+/** A file's change stamp: ns mtime + size + inode, or `absent`. Never reads the bytes. */
+function statStamp(path: string): string {
+  try {
+    const stats = statSync(path, { bigint: true });
+    return `${stats.mtimeNs}:${stats.size}:${stats.ino}`;
+  } catch {
+    return "absent";
+  }
 }
 
 /** The last two path segments (`parent/name`), for disambiguating a colliding basename. */

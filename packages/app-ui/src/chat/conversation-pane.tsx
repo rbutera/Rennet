@@ -15,6 +15,34 @@ import { Turn } from "./turn";
 // marks the turns that arrived live this mount so they animate; records replay instantly.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// One exhaustive mapping — a new row kind is a TypeScript error here, not a silent drop.
+// MODULE-SCOPED (perf audit §5 H8): the pane re-renders on every streamed delta, so a
+// renderer defined in the body minted a fresh closure per delta for nothing. What actually
+// stops the work is `Turn` being `memo`'d — Wave 2's per-thread WeakMaps make a settled
+// turn's row object identity-stable across deltas, so the memo's shallow compare holds and
+// the transcript's settled turns stop re-rendering per streamed token. The other row kinds
+// are deliberately NOT memoized: their rows are rebuilt fresh each derivation
+// (`detachedThreadRowsOf` and the anchored-thread projection allocate per call), so a memo
+// there would be an unprovable no-op rather than a win.
+function renderRow(
+  row: TranscriptRow,
+  liveIds: ReadonlySet<string>,
+  contextWindow: ContextWindow | undefined,
+): ReactNode {
+  switch (row.kind) {
+    case "turn":
+      return <Turn key={row.id} turn={row} animate={liveIds.has(row.id)} />;
+    case "compact-boundary":
+      return <CompactionRow key={row.id} row={row} contextWindow={contextWindow} />;
+    case "anchored-thread":
+      return <AnchoredThread key={row.threadId} row={row} />;
+    case "detached-threads":
+      return <DetachedThreads key={row.kind} row={row} />;
+    case "context-rebuilt":
+      return <ContextRebuiltMarker key={row.id} row={row} />;
+  }
+}
+
 export function ConversationPane({
   rows,
   liveIds,
@@ -25,22 +53,6 @@ export function ConversationPane({
   readonly contextWindow?: ContextWindow;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  // One exhaustive mapping — a new row kind is a TypeScript error here, not a silent drop.
-  const renderRow = (row: TranscriptRow): ReactNode => {
-    switch (row.kind) {
-      case "turn":
-        return <Turn key={row.id} turn={row} animate={liveIds.has(row.id)} />;
-      case "compact-boundary":
-        return <CompactionRow key={row.id} row={row} contextWindow={contextWindow} />;
-      case "anchored-thread":
-        return <AnchoredThread key={row.threadId} row={row} />;
-      case "detached-threads":
-        return <DetachedThreads key={row.kind} row={row} />;
-      case "context-rebuilt":
-        return <ContextRebuiltMarker key={row.id} row={row} />;
-    }
-  };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `rows.length` is the intended append trigger — the pane auto-scrolls to the bottom when a row is added — not a body reference.
   useEffect(() => {
@@ -64,7 +76,7 @@ export function ConversationPane({
           awaitingFirstReply ? "h-full justify-end gap-3 px-5 py-4" : "gap-6 px-5 py-6",
         )}
       >
-        {rows.map(renderRow)}
+        {rows.map((row) => renderRow(row, liveIds, contextWindow))}
         <div ref={bottomRef} />
       </div>
     </div>

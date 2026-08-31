@@ -14,6 +14,37 @@ const author = { kind: "lens-agent", id: "lens:design" } as const;
 
 beforeEach(() => useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } }));
 
+/** Open every folded top-level section. A folded `Collapse` mounts NO children (perf audit
+ *  §5 H2), so a Design board's bodies are absent from the document until their section is
+ *  open — assert on section content only after this. */
+async function openSections(view: ReturnType<typeof mount>): Promise<void> {
+  await waitFor(() =>
+    expect(view.container.querySelector('[data-kind="board-section"]')).not.toBeNull(),
+  );
+  for (const section of view.container.querySelectorAll<HTMLElement>(
+    '[data-kind="board-section"][data-open="false"]',
+  )) {
+    const toggle = section.querySelector<HTMLButtonElement>("h2 button[aria-expanded]");
+    if (toggle) await view.user.click(toggle);
+  }
+}
+
+/** Record `scrollIntoView` by element id. The jump targets mount only when their fold
+ *  opens, so a spy pinned to a node captured up front would miss the real call. */
+function recordScrolls(): {
+  readonly calls: { id: string; options: unknown }[];
+  restore: () => void;
+} {
+  const calls: { id: string; options: unknown }[] = [];
+  const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+    this: Element,
+    options?: unknown,
+  ) {
+    calls.push({ id: this.id, options });
+  } as () => void);
+  return { calls, restore: () => spy.mockRestore() };
+}
+
 describe("Design board document metadata", () => {
   it("renders header stats, targets the topology source root, and reveals it before scrolling", async () => {
     const board: LensBoard = {
@@ -101,13 +132,6 @@ describe("Design board document metadata", () => {
     if (designSource === null) throw new Error("Design source section did not render");
     const sourceScroll = vi.fn();
     Object.defineProperty(designSource, "scrollIntoView", { value: sourceScroll });
-    const frameCallbacks: FrameRequestCallback[] = [];
-    const animationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        frameCallbacks.push(callback);
-        return frameCallbacks.length;
-      });
     history.replaceState(null, "", "#/s/review-design?lens=design");
     const historyLength = history.length;
     expect(designSource.getAttribute("data-open")).toBe("false");
@@ -115,11 +139,12 @@ describe("Design board document metadata", () => {
     expect(location.hash).toBe("#/s/review-design?lens=design");
     expect(history.length).toBe(historyLength);
     expect(designSource.getAttribute("data-open")).toBe("true");
+    // The scroll is HELD for the fold's own animation (`COLLAPSE_MS`): a jump issued a
+    // frame after the toggle measures a section still growing from 0fr and lands short.
     expect(sourceScroll).not.toHaveBeenCalled();
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks[0]?.(0);
-    expect(sourceScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-    animationFrame.mockRestore();
+    await waitFor(() =>
+      expect(sourceScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" }),
+    );
     await view.user.click(view.getByRole("button", { name: "Open design.md in editor" }));
     await waitFor(() =>
       expect(opened).toEqual([
@@ -354,6 +379,7 @@ describe("Design board document metadata", () => {
     );
 
     expect(await view.findByText("Capabilities")).toBeTruthy();
+    await openSections(view);
 
     const spine = view.container.querySelector('[data-kind="design-proposal-spine"]');
     expect(spine?.querySelectorAll('[data-kind="design-change-row"]')).toHaveLength(2);
@@ -496,6 +522,7 @@ describe("Design board document metadata", () => {
       </BridgeProvider>,
     );
 
+    await openSections(view);
     expect(await view.findByText("Tasks · 1/2")).toBeTruthy();
     expect(view.container.querySelectorAll('[data-kind="task-progress"]')).toHaveLength(1);
     expect(
@@ -913,27 +940,24 @@ describe("Design section metadata", () => {
     ).toBe(true);
 
     const root = view.container.querySelector<HTMLElement>("#prd");
-    const target = view.container.querySelector<HTMLElement>("#non-functional");
-    if (root === null || target === null)
-      throw new Error("BMAD capability topology did not render");
-    const targetScroll = vi.fn();
-    Object.defineProperty(target, "scrollIntoView", { value: targetScroll });
-    const frameCallbacks: FrameRequestCallback[] = [];
-    const animationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        frameCallbacks.push(callback);
-        return frameCallbacks.length;
-      });
+    if (root === null) throw new Error("BMAD capability topology did not render");
+    // The nested capability is inside a FOLDED section, so it is not in the document at
+    // all — the jump has to open the top-level fold and resolve its target afterwards.
+    expect(view.container.querySelector("#non-functional")).toBeNull();
+    const scrolls = recordScrolls();
 
     expect(root.getAttribute("data-open")).toBe("false");
     await view.user.click(cards[1] as HTMLAnchorElement);
     expect(root.getAttribute("data-open")).toBe("true");
-    expect(targetScroll).not.toHaveBeenCalled();
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks[0]?.(0);
-    expect(targetScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-    animationFrame.mockRestore();
+    expect(view.container.querySelector("#non-functional")).not.toBeNull();
+    // Held for the fold's animation, then landed against the settled geometry.
+    expect(scrolls.calls).toEqual([]);
+    await waitFor(() =>
+      expect(scrolls.calls).toEqual([
+        { id: "non-functional", options: { behavior: "smooth", block: "start" } },
+      ]),
+    );
+    scrolls.restore();
   });
 
   it("targets a BMAD story capability at its named source root", async () => {
@@ -1010,28 +1034,23 @@ describe("Design section metadata", () => {
     const card = await view.findByRole("link", { name: "Jump to story:1.1" });
     expect(card.getAttribute("href")).toBe("#story-source");
     const root = view.container.querySelector<HTMLElement>("#story-source");
-    const nested = view.container.querySelector<HTMLElement>("#story-requirements");
-    if (root === null || nested === null) throw new Error("BMAD story topology did not render");
-    const rootScroll = vi.fn();
-    const nestedScroll = vi.fn();
-    Object.defineProperty(root, "scrollIntoView", { value: rootScroll });
-    Object.defineProperty(nested, "scrollIntoView", { value: nestedScroll });
-    const frameCallbacks: FrameRequestCallback[] = [];
-    const animationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        frameCallbacks.push(callback);
-        return frameCallbacks.length;
-      });
+    if (root === null) throw new Error("BMAD story topology did not render");
+    // Folded, so the nested requirements section is not rendered yet; the jump still
+    // lands on the NAMED source root, not on the nested section it contains.
+    expect(view.container.querySelector("#story-requirements")).toBeNull();
+    const scrolls = recordScrolls();
 
     expect(root.getAttribute("data-open")).toBe("false");
     await view.user.click(card);
     expect(root.getAttribute("data-open")).toBe("true");
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks[0]?.(0);
-    expect(rootScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-    expect(nestedScroll).not.toHaveBeenCalled();
-    animationFrame.mockRestore();
+    // Held for the fold's animation, then landed against the settled geometry.
+    expect(scrolls.calls).toEqual([]);
+    await waitFor(() =>
+      expect(scrolls.calls).toEqual([
+        { id: "story-source", options: { behavior: "smooth", block: "start" } },
+      ]),
+    );
+    scrolls.restore();
   });
 
   it("targets a single OpenSpec requirement at its capability root", () => {

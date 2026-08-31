@@ -3,6 +3,10 @@
   "version": "0.1.5",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "./src/daemon-main.ts",
+    "./src/cli-main.ts"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing.ts"
