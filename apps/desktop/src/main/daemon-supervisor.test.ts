@@ -25,6 +25,7 @@ import {
   ensureDaemonForProject,
   isOwnedDaemonRunning,
   prepareOwnedDaemonForUpdate,
+  SKEW_RESTART_LIMIT,
   stopOwnedDaemon,
 } from "./daemon-supervisor";
 
@@ -462,6 +463,87 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(port).toBe(spawned.wsPort);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
     expect(readDaemonFile(dataDir)).toEqual(spawned);
+  });
+
+  it("folds two concurrent ensures for one dataDir into ONE probe and ONE spawn", async () => {
+    // Without this, two renderer `resolveDaemonForPath` calls both read `absent` and both spawn,
+    // and the two daemons race over daemon.json (perf audit §2 H3).
+    const dataDir = makeDir();
+    const spawned = info(888, 47_000);
+    const inFlight = new Map<string, Promise<number>>();
+    let releaseProbe: () => void = () => undefined;
+    const probeGate = new Promise<void>((r) => {
+      releaseProbe = r;
+    });
+    const probe = vi.fn(async (): Promise<DaemonVerdict> => {
+      await probeGate;
+      return { kind: "absent" };
+    });
+    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
+    const deps = {
+      probe,
+      spawn,
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+      inFlight,
+    };
+
+    // Both ensures start before the probe settles; the second must join the in-flight one.
+    const first = ensureDaemon(dataDir, deps);
+    const second = ensureDaemon(dataDir, deps);
+    releaseProbe();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a).toBe(spawned.wsPort);
+    expect(b).toBe(spawned.wsPort);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(inFlight.has(dataDir)).toBe(false); // cleared once settled
+
+    // …and the fold is IN-FLIGHT only: a later ensure re-probes rather than reusing a port.
+    await ensureDaemon(dataDir, deps);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops restarting a daemon that keeps coming back skewed once the cap is spent", async () => {
+    // A daemon that keeps reappearing on the wrong version would otherwise be SIGTERMed and
+    // respawned on every project open, forever (perf audit §2 H3).
+    const dataDir = makeDir();
+    const old = info(999, 48_000); // version 1.2.3 while the app below ships 1.2.4 → skew, always
+    const kill = vi.fn();
+    const spawn = vi.fn();
+    const skewRestarts = new Map<string, number>();
+    const deps = {
+      probe: async () => healthyVerdict(old),
+      spawn,
+      waitForHealthy: async () => healthyVerdict(old),
+      kill,
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.4",
+      env: {},
+      warn: vi.fn(),
+      skewRestarts,
+    };
+
+    for (let attempt = 0; attempt < SKEW_RESTART_LIMIT; attempt += 1) {
+      expect(await ensureDaemon(dataDir, deps)).toBe(old.wsPort);
+    }
+    expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+
+    await expect(ensureDaemon(dataDir, deps)).rejects.toThrow(join(dataDir, "daemon.log"));
+    // The capped attempt signalled and spawned NOTHING — the counts stand where they were.
+    expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(skewRestarts.get(dataDir)).toBe(SKEW_RESTART_LIMIT);
   });
 });
 

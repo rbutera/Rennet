@@ -185,14 +185,61 @@ export interface DaemonSupervisorDeps {
   readonly warn: (message: string) => void;
 }
 
+export interface EnsureDaemonOverrides extends Partial<DaemonSupervisorDeps> {
+  /** dataDir → the IN-FLIGHT ensure for it (injectable so tests get a fresh one). */
+  readonly inFlight?: Map<string, Promise<number>>;
+  /** dataDir → skew restarts already spent this process (injectable so tests get a fresh one). */
+  readonly skewRestarts?: Map<string, number>;
+}
+
+/**
+ * dataDir → the IN-FLIGHT `ensureDaemon`, so two concurrent resolves (the renderer's
+ * `resolveDaemonForPath` IPC is called per project open, and boot/apply-recovery call
+ * `ensureDaemon` directly) fold into ONE probe-and-spawn instead of both reading `absent` and
+ * both spawning a daemon that then races over daemon.json. The entry clears once settled, so a
+ * later call re-probes — no cached port to go stale. Mirrors `wslInFlight` below.
+ */
+const hostInFlight = new Map<string, Promise<number>>();
+
+/** dataDir → skew restarts spent this process; see `SKEW_RESTART_LIMIT`. */
+const hostSkewRestarts = new Map<string, number>();
+
+/**
+ * How many times one process will SIGTERM-and-respawn a version/protocol-skewed daemon for the
+ * same dataDir. A daemon that keeps coming back skewed (a second installation writing the same
+ * claim, a spawn that loses the race to it) would otherwise restart-storm forever, killing a
+ * process and respawning per project open. At the cap the ensure fails instead, and the failure
+ * already names `daemon.log`, where the real cause is.
+ */
+export const SKEW_RESTART_LIMIT = 3;
+
 /**
  * Return the WS port of a healthy daemon for `dataDir`, spawning or skew-restarting one as
  * needed. The spawn runs the Electron binary as Node (`ELECTRON_RUN_AS_NODE`, detached,
  * logging to `<dataDir>/daemon.log`) so the packaged app needs no system Node.
+ *
+ * Single-flighted per dataDir: concurrent callers join the running ensure rather than racing
+ * two spawns.
  */
 export async function ensureDaemon(
   dataDir: string,
-  overrides: Partial<DaemonSupervisorDeps> = {},
+  overrides: EnsureDaemonOverrides = {},
+): Promise<number> {
+  const inFlight = overrides.inFlight ?? hostInFlight;
+  const pending = inFlight.get(dataDir);
+  if (pending) return pending;
+  const started = ensureDaemonOnce(dataDir, overrides);
+  inFlight.set(dataDir, started);
+  try {
+    return await started;
+  } finally {
+    inFlight.delete(dataDir);
+  }
+}
+
+async function ensureDaemonOnce(
+  dataDir: string,
+  overrides: EnsureDaemonOverrides = {},
 ): Promise<number> {
   const deps: DaemonSupervisorDeps = {
     probe: findHealthyDaemon,
@@ -209,6 +256,26 @@ export async function ensureDaemon(
     warn: console.warn,
     ...overrides,
   };
+  const skewRestarts = overrides.skewRestarts ?? hostSkewRestarts;
+  // Restart a skewed daemon, but only while restarts remain: SIGTERM, wait (bounded) for its
+  // claim to clear, then let the caller spawn. Past the cap this throws instead of respawning,
+  // so a daemon that keeps coming back skewed cannot storm.
+  const restartSkewedDaemon = async (pid: number): Promise<void> => {
+    const spent = skewRestarts.get(dataDir) ?? 0;
+    if (spent >= SKEW_RESTART_LIMIT) {
+      throw new Error(
+        `rennet: the daemon for ${dataDir} came back on a mismatched version ${SKEW_RESTART_LIMIT} times; not restarting it again (see ${join(dataDir, "daemon.log")})`,
+      );
+    }
+    skewRestarts.set(dataDir, spent + 1);
+    try {
+      deps.kill(pid, "SIGTERM");
+    } catch {
+      // Already gone — the next spawn overwrites the stale claim.
+    }
+    await waitForClaimGone(dataDir, pid, deps.readClaim);
+  };
+
   const verdict = await deps.probe(dataDir);
   if (verdict.kind === "healthy") {
     if (verdict.identity.version === deps.serverVersion) return verdict.identity.wsPort;
@@ -222,12 +289,7 @@ export async function ensureDaemon(
     deps.warn(
       `rennet: daemon runs server ${verdict.identity.version} but the app ships ${deps.serverVersion}; restarting the bundled daemon`,
     );
-    try {
-      deps.kill(verdict.claim.pid, "SIGTERM");
-    } catch {
-      // Already gone — the next spawn overwrites the stale claim.
-    }
-    await waitForClaimGone(dataDir, verdict.claim.pid, deps.readClaim);
+    await restartSkewedDaemon(verdict.claim.pid);
   }
 
   if (verdict.kind === "incompatible") {
@@ -235,12 +297,7 @@ export async function ensureDaemon(
     deps.warn(
       `rennet: daemon protocol ${verdict.identity.protocolVersion} is incompatible (${verdict.reason}); restarting the bundled daemon`,
     );
-    try {
-      deps.kill(verdict.claim.pid, "SIGTERM");
-    } catch {
-      // Already gone — the next spawn overwrites the stale claim.
-    }
-    await waitForClaimGone(dataDir, verdict.claim.pid, deps.readClaim);
+    await restartSkewedDaemon(verdict.claim.pid);
   }
 
   const spawnEnv: NodeJS.ProcessEnv = { ...deps.env };
@@ -280,7 +337,7 @@ function defaultWslDeps(): EnsureWslDaemonDeps {
 const wslInFlight = new Map<string, Promise<number>>();
 
 export interface DaemonForProjectDeps {
-  /** The host-locus path — TODAY's `ensureDaemon(dataDir)`, unchanged (byte-identical). */
+  /** The host-locus path — `ensureDaemon(dataDir)`, which single-flights per dataDir itself. */
   readonly ensureHostDaemon: (dataDir: string) => Promise<number>;
   /** The WSL orchestrator (packages/server); returns the distro daemon's port + identity. */
   readonly ensureWslDaemon: (
@@ -296,7 +353,8 @@ export interface DaemonForProjectDeps {
 /**
  * Resolve the WS port that serves a project, SELECTED BY its execution locus (design D3/D4).
  *
- * - Host-locus: exactly today's `ensureDaemon(dataDir)` — byte-identical, no WSL code runs.
+ * - Host-locus: `ensureDaemon(dataDir)`, no WSL code runs. Concurrent opens fold into one
+ *   ensure there (`hostInFlight`), the same way this seam folds concurrent WSL opens.
  * - WSL-locus: routes to the project's distro daemon via `ensureWslDaemon`, which itself
  *   self-short-circuits when a healthy same-version daemon already runs (so there is NO stale
  *   port cache to go wrong). Concurrent opens on the SAME distro fold into one in-flight ensure;

@@ -19,7 +19,12 @@ import {
   shell,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
-import { armMacUpdateRelaunch, isAutoUpdateEligible, startAutoUpdateOnce } from "./auto-update";
+import {
+  type AutoUpdateHandle,
+  armMacUpdateRelaunch,
+  isAutoUpdateEligible,
+  startAutoUpdateOnce,
+} from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
 import {
   ensureDaemon,
@@ -346,6 +351,10 @@ app.whenReady().then(async () => {
   // plain Node spawned detached and `rennet serve` runs the same code, so its data root must
   // not depend on whether Electron started it. `RENNET_USER_DATA` still overrides.
   const dataDir = process.env.RENNET_USER_DATA ?? defaultDataDir();
+  // Started here, awaited after the tray: on macOS this shells out to `codesign --deep`, which
+  // hashes every binary in the bundle (seconds). Kicked off now it overlaps the daemon spawn and
+  // the window, instead of stalling the boot path the way the synchronous probe did (§2 H2).
+  const autoUpdateEligible = isAutoUpdateEligible(app.isPackaged);
   let wsPort: number;
   try {
     wsPort = await ensureDaemon(dataDir);
@@ -374,28 +383,9 @@ app.whenReady().then(async () => {
   // store and ONE apply path: the tray subscribes to the same store the renderer badge
   // rides, and its update line calls the same apply. Auto-update is packaged-only (dev/test
   // have no feed); the tray always exists.
-  const update = isAutoUpdateEligible(app.isPackaged)
-    ? startAutoUpdateOnce(isTrustedAppUrl, console, {
-        prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
-        armRelaunchAfterApply:
-          process.platform === "darwin"
-            ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
-            : undefined,
-        recoverAfterApplyFailure: async () => {
-          activeWsPort = await ensureDaemon(dataDir);
-          for (const window of BrowserWindow.getAllWindows()) {
-            if (!window.isDestroyed()) window.destroy();
-          }
-          await ensureWindowShared();
-        },
-        reportApplyFailure: (message) => {
-          dialog.showErrorBox(
-            "Rennet couldn't install the update",
-            `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
-          );
-        },
-      })
-    : undefined;
+  // The tray reads `update` through its closures, so it is built now and the handle lands
+  // whenever the signature verdict started above resolves — boot never waits on codesign.
+  let update: AutoUpdateHandle | undefined;
   const tray = createTray({
     baseDir: __dirname,
     resourcesPath: process.resourcesPath,
@@ -409,9 +399,32 @@ app.whenReady().then(async () => {
     quitCompletely: () => void quitCompletely(dataDir),
   });
   trayController = tray;
-  update?.readiness.subscribe(() => tray.setUpdateReady(true));
-  // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
-  if (update?.readiness.ready) tray.setUpdateReady(true);
+  void autoUpdateEligible.then((eligible) => {
+    if (!eligible) return;
+    update = startAutoUpdateOnce(isTrustedAppUrl, console, {
+      prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
+      armRelaunchAfterApply:
+        process.platform === "darwin"
+          ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
+          : undefined,
+      recoverAfterApplyFailure: async () => {
+        activeWsPort = await ensureDaemon(dataDir);
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.destroy();
+        }
+        await ensureWindowShared();
+      },
+      reportApplyFailure: (message) => {
+        dialog.showErrorBox(
+          "Rennet couldn't install the update",
+          `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
+        );
+      },
+    });
+    update.readiness.subscribe(() => tray.setUpdateReady(true));
+    // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
+    if (update.readiness.ready) tray.setUpdateReady(true);
+  });
 });
 
 // Reopen from the Dock/menu bar (macOS) recreates or focuses the window without a relaunch.
