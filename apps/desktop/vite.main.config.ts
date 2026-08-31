@@ -31,6 +31,10 @@ export default defineConfig({
       // chunk to `.cjs` so it is loaded as CommonJS, matching `index.cjs`.
       output: { chunkFileNames: "[name]-[hash].cjs" },
     },
+    // The ONE prod sourcemap that still ships. `scripts/smoke-packaged-app.mjs` reads
+    // `dist/main/index.cjs.map`'s `sourcesContent` out of the asar to prove the packaged
+    // main bundle carries the updater/boot code it claims — so this map is load-bearing
+    // and must keep `sourcesContent`. The renderer, browser and server maps are off.
     sourcemap: true,
     target: "node24",
   },

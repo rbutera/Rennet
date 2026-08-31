@@ -7,7 +7,7 @@ import {
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { FolderPlus } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { Icon } from "../components/icon";
@@ -27,12 +27,34 @@ import {
 } from "../settings";
 import { useConnectionCapabilities } from "../shell/connection-capabilities";
 import { useRennetStore } from "../store";
-import { FirstRunWelcome } from "../welcome/first-run-welcome";
 import type { RennetHistory } from "./history";
 import { AppLayout } from "./layout";
 import { resolveProject } from "./project-resolution";
 import { useSlugResolution } from "./slug";
 import { newChatPath, ROUTES } from "./url";
+
+// The welcome wizard is CODE-SPLIT (perf audit 2026-08-31, §6 H2). It is the only
+// module in the whole renderer that imports `motion/react`, and it is the one screen
+// most sessions never mount — an install that has finished the wizard once never sees
+// it again. Eagerly imported, it dragged the animation runtime into the single startup
+// chunk every window parses. `lazy` moves it, and motion with it, into a chunk fetched
+// only when the wizard is actually elected.
+//
+// The fallback is nothing. The welcome owns the whole window, the chunk is a local
+// file, and a spinner for a few milliseconds would be ceremony — the same reason
+// `StartupGate` renders an invisible tree rather than a loading state while settings
+// resolve. Both call sites go through this wrapper so neither has to know it is lazy.
+const FirstRunWelcomeChunk = lazy(async () => ({
+  default: (await import("../welcome/first-run-welcome")).FirstRunWelcome,
+}));
+
+function FirstRunWelcome({ settings }: { readonly settings: SettingsView }) {
+  return (
+    <Suspense fallback={null}>
+      <FirstRunWelcomeChunk settings={settings} />
+    </Suspense>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RennetRouterApp (C01 §4) — the router foundation the later Track-C surfaces mount
