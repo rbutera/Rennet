@@ -33,7 +33,6 @@ import type { HarnessEvent, ToolCall } from "./harness";
 type TurnStatus = "streaming" | "complete" | "interrupted";
 type ThoughtBlock = Extract<TranscriptBlock, { kind: "thought" }>;
 type ActionBlock = Extract<TranscriptBlock, { kind: "action" }>;
-type PendingBlock = TranscriptBlock | { kind: "pending-text"; text: string };
 
 export interface HarnessTranscriptProjectorOptions {
   /** Public transcript id to use instead of the harness's turn id. */
@@ -143,15 +142,6 @@ function contentBlocks(text: string): ContentBlock[] {
   return blocks;
 }
 
-function orderedBlocks(pending: readonly PendingBlock[]): TranscriptBlock[] {
-  const blocks: TranscriptBlock[] = [];
-  for (const block of pending) {
-    if (block.kind === "pending-text") blocks.push(...contentBlocks(block.text));
-    else blocks.push(block);
-  }
-  return blocks;
-}
-
 function isActivityStep(block: TranscriptBlock): block is ActivityStep {
   return block.kind === "thought" || block.kind === "action";
 }
@@ -160,30 +150,58 @@ function isContentBlock(block: TranscriptBlock): block is ContentBlock {
   return block.kind === "text" || block.kind === "code";
 }
 
-function turnIdFor(
-  events: readonly HarnessEvent[],
-  options: HarnessTranscriptProjectorOptions,
-): string {
-  if (options.turnId !== undefined && options.turnId !== "") return options.turnId;
-  const harnessTurnId = events.find(
-    (event) => event.turnId !== null && event.turnId !== "",
-  )?.turnId;
-  return harnessTurnId ?? `turn-${events[0]?.seq ?? 0}`;
+/** A row already settled by a flush, plus the recipe for its id.
+ *
+ * Ids embed the turn id, and the turn id can be named by an event that arrives AFTER the row
+ * was settled (a compaction before the harness reported its turn id). Keeping the recipe and
+ * applying it at read is what makes an incremental fold agree with a from-scratch one. */
+interface EmittedRow {
+  /** Carries `id: ""` — the real id is applied by `rows()`, which knows the resolved base. */
+  readonly row: SessionTranscriptRow;
+  readonly idFor: (baseTurnId: string) => string;
 }
 
 /**
- * Project one turn's harness events in arrival order. New rows carry one ordered `blocks`
- * stream plus the legacy `preface` and `body` projections. A compaction flushes the current
- * segment before its boundary row. Content is carried verbatim; the wire projection scrubs it.
+ * The incremental face of the projector: push one event at a time, read the rows at any point.
+ *
+ * `rows()` is NON-DESTRUCTIVE — it projects the current state without settling it — so a live
+ * turn can snapshot after every event and still end up with exactly the rows a from-scratch
+ * fold over the same events produces. That equivalence is the load-bearing property, and
+ * `harness-transcript-fold.test.ts` pins it snapshot-by-snapshot.
+ *
+ * ponytail: a snapshot's `thought`/`action` blocks are the SAME objects the fold keeps
+ * mutating (a later `tool.output` completes an action already handed out). Every caller today
+ * either serializes the snapshot immediately (the live WS frame) or takes it after the turn's
+ * terminal event (persistence), so nothing observes the mutation. Copy blocks on snapshot if a
+ * caller ever retains a mid-turn one.
  */
-export function harnessEventsToRows(
-  events: readonly HarnessEvent[],
-  options: HarnessTranscriptProjectorOptions = {},
-): SessionTranscriptRow[] {
-  const rows: SessionTranscriptRow[] = [];
-  const baseTurnId = turnIdFor(events, options);
+export interface HarnessTranscriptFold {
+  /** Fold one event in, in arrival order. */
+  push(event: HarnessEvent): void;
+  /** The rows for every event pushed so far, including the still-open turn. */
+  rows(): SessionTranscriptRow[];
+}
 
-  let pending: PendingBlock[] = [];
+/**
+ * Project one turn's harness events in arrival order, incrementally. New rows carry one ordered
+ * `blocks` stream plus the legacy `preface` and `body` projections. A compaction flushes the
+ * current segment before its boundary row. Content is carried verbatim; the wire projection
+ * scrubs it.
+ */
+export function createHarnessTranscriptFold(
+  options: HarnessTranscriptProjectorOptions = {},
+): HarnessTranscriptFold {
+  const fixedTurnId =
+    options.turnId !== undefined && options.turnId !== "" ? options.turnId : undefined;
+  let harnessTurnId: string | undefined;
+  let firstSeq: number | undefined;
+  const baseTurnIdOf = (): string => fixedTurnId ?? harnessTurnId ?? `turn-${firstSeq ?? 0}`;
+
+  const emitted: EmittedRow[] = [];
+  // `pending` holds ALREADY-EXPANDED blocks; the one text block that can still grow lives in
+  // `openText` and is expanded when it closes. That is what makes the fold incremental — a
+  // settled text block is fence-parsed once, not once per snapshot.
+  let pending: TranscriptBlock[] = [];
   let finalText: string | undefined;
   let firstReceivedAt: number | undefined;
   let status: TurnStatus = "streaming";
@@ -191,7 +209,7 @@ export function harnessEventsToRows(
 
   const actionByCall = new Map<string, ActionBlock>();
   let openThought: { block: ThoughtBlock; startedAt: number; text: string } | null = null;
-  let openText: Extract<PendingBlock, { kind: "pending-text" }> | null = null;
+  let openText: { text: string } | null = null;
 
   const closeThought = (receivedAt: number, settledStatus: TurnStatus = "complete") => {
     if (openThought === null) return;
@@ -201,7 +219,11 @@ export function harnessEventsToRows(
     openThought = null;
   };
 
+  // Only the LAST entry can still grow: every arm that appends closes the open text block
+  // first, so expanding at close time preserves arrival order exactly.
   const closeText = () => {
+    if (openText === null) return;
+    pending.push(...contentBlocks(openText.text));
     openText = null;
   };
 
@@ -215,32 +237,43 @@ export function harnessEventsToRows(
     }
   };
 
-  const flushTurn = (settledStatus: TurnStatus = status) => {
-    let blocks = orderedBlocks(pending);
+  /** The current turn's row, WITHOUT settling it — safe to call on every snapshot. */
+  const buildTurnRow = (settledStatus: TurnStatus): EmittedRow | null => {
+    const blocks: TranscriptBlock[] =
+      openText === null ? [...pending] : [...pending, ...contentBlocks(openText.text)];
     const hasContent = blocks.some(isContentBlock);
     if (!hasContent && finalText !== undefined && finalText.trim() !== "") {
-      blocks = [...blocks, ...contentBlocks(finalText)];
+      blocks.push(...contentBlocks(finalText));
     }
-    if (blocks.length === 0) return;
+    if (blocks.length === 0) return null;
 
     const preface = blocks.filter(isActivityStep);
     const body = blocks.filter(isContentBlock);
     const paragraphs = body
       .filter((block): block is Extract<ContentBlock, { kind: "text" }> => block.kind === "text")
       .flatMap((block) => splitParagraphs(block.text));
-    const rowId = turnSegment === 0 ? baseTurnId : `${baseTurnId}:segment:${turnSegment}`;
     const time = isoTime(firstReceivedAt);
-    rows.push({
-      kind: "turn",
-      id: rowId,
-      speaker: "orchestrator",
-      status: settledStatus,
-      paragraphs,
-      ...(time === undefined ? {} : { time }),
-      ...(preface.length ? { preface } : {}),
-      ...(body.length ? { body } : {}),
-      blocks,
-    });
+    const segment = turnSegment;
+    return {
+      row: {
+        kind: "turn",
+        id: "",
+        speaker: "orchestrator",
+        status: settledStatus,
+        paragraphs,
+        ...(time === undefined ? {} : { time }),
+        ...(preface.length ? { preface } : {}),
+        ...(body.length ? { body } : {}),
+        blocks,
+      },
+      idFor: (base) => (segment === 0 ? base : `${base}:segment:${segment}`),
+    };
+  };
+
+  const flushTurn = (settledStatus: TurnStatus = status) => {
+    const built = buildTurnRow(settledStatus);
+    if (built === null) return;
+    emitted.push(built);
     turnSegment += 1;
     pending = [];
     finalText = undefined;
@@ -251,7 +284,11 @@ export function harnessEventsToRows(
     openText = null;
   };
 
-  for (const event of events) {
+  const push = (event: HarnessEvent): void => {
+    if (firstSeq === undefined) firstSeq = event.seq;
+    if (harnessTurnId === undefined && event.turnId !== null && event.turnId !== "") {
+      harnessTurnId = event.turnId;
+    }
     switch (event.kind) {
       case "thinking.delta": {
         closeText();
@@ -294,7 +331,7 @@ export function harnessEventsToRows(
         if (event.text.trim() !== "") {
           markReceivedAt(event.receivedAt);
           if (openText === null) {
-            pending.push({ kind: "pending-text", text: event.text });
+            pending.push(...contentBlocks(event.text));
           } else {
             openText.text = event.text;
           }
@@ -306,8 +343,7 @@ export function harnessEventsToRows(
         closeThought(event.receivedAt);
         if (openText === null) {
           markReceivedAt(event.receivedAt);
-          openText = { kind: "pending-text", text: "" };
-          pending.push(openText);
+          openText = { text: "" };
         }
         openText.text += event.text;
         break;
@@ -368,12 +404,15 @@ export function harnessEventsToRows(
         closeText();
         flushTurn("complete");
         const time = isoTime(event.receivedAt);
-        rows.push({
-          kind: "compact-boundary",
-          id: `compact-${baseTurnId}-${event.seq}`,
-          ...(time === undefined ? {} : { time }),
-          ...(event.preTokens === undefined ? {} : { tokensBefore: event.preTokens }),
-          ...(event.postTokens === undefined ? {} : { tokensAfter: event.postTokens }),
+        emitted.push({
+          row: {
+            kind: "compact-boundary",
+            id: "",
+            ...(time === undefined ? {} : { time }),
+            ...(event.preTokens === undefined ? {} : { tokensBefore: event.preTokens }),
+            ...(event.postTokens === undefined ? {} : { tokensAfter: event.postTokens }),
+          },
+          idFor: (base) => `compact-${base}-${event.seq}`,
         });
         break;
       }
@@ -392,8 +431,28 @@ export function harnessEventsToRows(
       default:
         break;
     }
-  }
+  };
 
-  flushTurn();
-  return rows;
+  const rows = (): SessionTranscriptRow[] => {
+    const base = baseTurnIdOf();
+    const out = emitted.map((entry) => ({ ...entry.row, id: entry.idFor(base) }));
+    const trailing = buildTurnRow(status);
+    if (trailing !== null) out.push({ ...trailing.row, id: trailing.idFor(base) });
+    return out;
+  };
+
+  return { push, rows };
+}
+
+/**
+ * Project a whole turn's events at once. The array form of {@link createHarnessTranscriptFold}
+ * — same fold, one shot — so a batch projection and a live incremental one cannot drift apart.
+ */
+export function harnessEventsToRows(
+  events: readonly HarnessEvent[],
+  options: HarnessTranscriptProjectorOptions = {},
+): SessionTranscriptRow[] {
+  const fold = createHarnessTranscriptFold(options);
+  for (const event of events) fold.push(event);
+  return fold.rows();
 }

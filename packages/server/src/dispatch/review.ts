@@ -3,9 +3,9 @@ import { basename } from "node:path";
 import {
   askReview,
   buildHandoffBundle,
+  createHarnessTranscriptFold,
   disclosureFor,
   type HarnessEvent,
-  harnessEventsToRows,
   isRepoRelativePath,
   mechanicalComposition,
   verifyComposedBundle,
@@ -190,23 +190,28 @@ export function reviewHandlers(rt: DispatchRuntime) {
         input.threadId && input.turnId && ctx?.emitAskStream
           ? { threadId: input.threadId, turnId: input.turnId, emit: ctx.emitAskStream }
           : undefined;
-      const harnessEvents: HarnessEvent[] = [];
+      // The live turn's projector. Events fold in one at a time and the events themselves are
+      // NOT retained: the fold is the only thing that ever read them, and each one carries its
+      // raw SDK frame (`native`, whole tool_result payloads), so keeping the array held roughly
+      // a second copy of the harness stream for the turn's whole life (perf audit §4 H2).
+      const activityFold = createHarnessTranscriptFold({
+        turnId: `${stream?.turnId ?? ""}::orchestrator`,
+      });
       let activityRows: SessionTranscriptRow[] = [];
       let activityRowsDirty = false;
-      let activitySnapshotTimer: ReturnType<typeof setTimeout> | undefined;
+      let pendingDelta = "";
+      let liveFrameTimer: ReturnType<typeof setTimeout> | undefined;
       const turnTime = new Date().toISOString();
       const onOrchestratorDelta = stream
         ? (delta: string) => {
             // Grow the registry's live body (#382 M2 finding 5) so a mid-turn reattach
-            // resumes the real cursor, then echo the delta on the stream.
+            // resumes the real cursor — immediately, because `bodyOf` is read on the
+            // interrupt path and must never lag a window behind. The WIRE frame is what
+            // gets coalesced (perf audit §3 M11): `ask-delta` is a pure append on both
+            // clients, so one frame per window carries what N frames carried.
             deps.liveTurns?.appendDelta(stream.turnId, delta);
-            stream.emit({
-              kind: "ask-delta",
-              threadId: stream.threadId,
-              turnId: stream.turnId,
-              channel: "orchestrator",
-              delta,
-            });
+            pendingDelta += delta;
+            scheduleLiveFrames();
           }
         : undefined;
       const onOrchestratorFocus = ctx?.emitAskStream
@@ -344,11 +349,26 @@ export function reviewHandlers(rt: DispatchRuntime) {
           },
         });
       };
-      const emitActivitySnapshot = (): void => {
-        if (!stream || !activityRowsDirty) return;
-        activityRows = harnessEventsToRows(harnessEvents, {
-          turnId: `${stream.turnId}::orchestrator`,
-        });
+      // ONE 50ms coalescing window drives both live frame kinds — the prose delta batch and the
+      // activity snapshot — whatever mixture of events opened it. Tool events used to bypass it
+      // and flush per event, which re-folded the whole turn and re-broadcast the whole row array
+      // per tool call: quadratic CPU and quadratic wire bytes over a tool-heavy turn (perf audit
+      // §3 H3a). The window is a one-shot, not an interval: nothing pending, no timer.
+      const emitLiveFrames = (): void => {
+        if (!stream) return;
+        if (pendingDelta !== "") {
+          const delta = pendingDelta;
+          pendingDelta = "";
+          stream.emit({
+            kind: "ask-delta",
+            threadId: stream.threadId,
+            turnId: stream.turnId,
+            channel: "orchestrator",
+            delta,
+          });
+        }
+        if (!activityRowsDirty) return;
+        activityRows = activityFold.rows();
         activityRowsDirty = false;
         deps.liveTurns?.setRows?.(turnKey, activityRows);
         stream.emit({
@@ -359,38 +379,42 @@ export function reviewHandlers(rt: DispatchRuntime) {
           rows: activityRows,
         });
       };
-      const flushActivitySnapshot = (): void => {
-        if (activitySnapshotTimer !== undefined) {
-          clearTimeout(activitySnapshotTimer);
-          activitySnapshotTimer = undefined;
+      const flushLiveFrames = (): void => {
+        if (liveFrameTimer !== undefined) {
+          clearTimeout(liveFrameTimer);
+          liveFrameTimer = undefined;
         }
-        emitActivitySnapshot();
+        emitLiveFrames();
       };
-      const scheduleActivitySnapshot = (): void => {
-        if (activitySnapshotTimer !== undefined) return;
-        activitySnapshotTimer = setTimeout(() => {
-          activitySnapshotTimer = undefined;
-          emitActivitySnapshot();
+      const scheduleLiveFrames = (): void => {
+        if (liveFrameTimer !== undefined) return;
+        liveFrameTimer = setTimeout(() => {
+          liveFrameTimer = undefined;
+          emitLiveFrames();
         }, LIVE_ACTIVITY_SNAPSHOT_INTERVAL_MS);
       };
       const onOrchestratorEvent = stream
         ? (event: HarnessEvent) => {
-            harnessEvents.push(event);
+            // Every event folds in — including the kinds that project no row, because the fold
+            // reads the envelope's turn id off any of them. The event is not kept afterwards.
+            activityFold.push(event);
             switch (event.kind) {
               case "text.delta":
               case "thinking.delta":
-                activityRowsDirty = true;
-                scheduleActivitySnapshot();
-                break;
               case "text.message":
               case "thinking.message":
               case "tool.started":
               case "tool.output":
               case "tool.denied":
               case "compact_boundary":
-              case "session.ended":
                 activityRowsDirty = true;
-                flushActivitySnapshot();
+                scheduleLiveFrames();
+                break;
+              case "session.ended":
+                // The turn ENDED. A terminal never waits out a window — the dock must not sit
+                // on a stale streaming row for 50ms after the answer landed.
+                activityRowsDirty = true;
+                flushLiveFrames();
                 break;
               default:
                 break;
@@ -417,7 +441,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
               ...(liveTurn ? { abortController: liveTurn } : {}),
             }),
         });
-        flushActivitySnapshot();
+        flushLiveFrames();
         // Terminal events: the orchestrator's tokens already streamed via onDelta;
         // codex is one-shot (no token stream) so its whole answer lands as its
         // completion. Both carry the SAME final answer the invoke returns — the stream
@@ -512,7 +536,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
         // The turn threw (a real failure, or a quit/Stop abort rejecting the in-flight turn):
         // clear the pending flag, tell the stream the truthful outcome, and raise turn-failed,
         // then rethrow. An abort reads as "interrupted"; any other throw as a genuine failure.
-        flushActivitySnapshot();
+        flushLiveFrames();
         clearAskPending();
         const why = error instanceof Error ? error.message : "The turn failed.";
         if (liveTurn?.signal.aborted) {
@@ -526,7 +550,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
         }
         throw error;
       } finally {
-        if (activitySnapshotTimer !== undefined) clearTimeout(activitySnapshotTimer);
+        if (liveFrameTimer !== undefined) clearTimeout(liveFrameTimer);
         // The turn settled — completed, errored, or aborted-on-quit — so it leaves the
         // registry. Running in `finally` is what makes the "leaves when it settles"
         // guarantee hold on the throwing paths too (a quit-abort rejects the in-flight
