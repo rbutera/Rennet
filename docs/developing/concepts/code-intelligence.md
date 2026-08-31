@@ -279,10 +279,8 @@ The launched evidence now says:
 
 So the honest statement of the current cost is **one scope selection, with at
 most two turn attempts, plus at most 64 worker turns when the candidate catalogue
-exceeds 64**. There is no successful five-minute whole-pass measurement yet. The
-24-lane control proved the memory ceiling and the uncapped 16-lane run proved the
-earlier timing sample optimistic. Only a complete guarded `knowledge-swarm@5`
-run can close the bar.
+exceeds 64**. The release proof is a complete guarded `knowledge-swarm@5` run;
+selector success alone does not establish the whole-pass latency or memory bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -368,6 +366,11 @@ the snapshot.
   appears once in either `include` or `exclude`, between one and 64 slices are
   included, and every exclusion has a nonblank reason. A slice that contains a
   declared entry point must be included.
+- The selection catalogue carries every slice id and member path, routing
+  families, entry-point and test membership, structural counts, and a bounded
+  sample of cross-slice paths. Full symbol skeletons, import-edge pairs, and
+  neighbour export names belong to selected workers; duplicating those packets in
+  the selector can overflow the scope turn before the 64-slice cap applies.
 - Selection is whole-slice only. The seat chooses trusted slice ids and never
   supplies or edits file membership. Invalid, partial, repeated, or unknown
   selections retry once, then fail the run before any worker starts.

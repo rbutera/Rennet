@@ -31,8 +31,57 @@ const CANDIDATES = Array.from({ length: MAP_SCOPE_SLICE_CAP + 1 }, (_, index) =>
   candidateAt(index),
 );
 
-function loadedSnapshot(): LoadedSnapshot {
-  const candidateFiles: SnapshotFileEntry[] = CANDIDATES.flatMap((candidate) =>
+const SELECTOR_SCALE_CANDIDATE_COUNT = 97;
+const SELECTOR_SCALE_FILES_PER_CANDIDATE = 25;
+const SELECTOR_SCALE_SIGNAL = "worker-only-symbol-detail-".repeat(8);
+
+const SELECTOR_SCALE_CANDIDATES = Array.from(
+  { length: SELECTOR_SCALE_CANDIDATE_COUNT },
+  (_, candidateIndex) => {
+    const files = Array.from({ length: SELECTOR_SCALE_FILES_PER_CANDIDATE }, (_, fileIndex) => {
+      const path = `scale/s${candidateIndex}/file-${fileIndex}.ts`;
+      return {
+        path,
+        blobOid: `blob:${path}`,
+        symbols: Array.from({ length: 2 }, (_, symbolIndex) => ({
+          name: `${SELECTOR_SCALE_SIGNAL}${candidateIndex}-${fileIndex}-${symbolIndex}`,
+          kind: "function" as const,
+          line: symbolIndex + 1,
+        })),
+      };
+    });
+    const first = files[0];
+    if (first === undefined) throw new Error("selector-scale candidate has no member");
+    return {
+      id: `mod:${first.path}#${String(candidateIndex).padStart(8, "0")}`,
+      files,
+      imports: Array.from({ length: 15 }, (_, edgeIndex) => ({
+        from: (files[edgeIndex % files.length] as (typeof files)[number]).path,
+        to: (files[(edgeIndex + 1) % files.length] as (typeof files)[number]).path,
+      })),
+      neighbors: [
+        {
+          path: first.path,
+          neighbors: Array.from({ length: 44 }, (_, neighborIndex) => ({
+            path: `scale/s${(candidateIndex + neighborIndex + 1) % SELECTOR_SCALE_CANDIDATE_COUNT}/file-${neighborIndex % SELECTOR_SCALE_FILES_PER_CANDIDATE}.ts`,
+            direction: "imports" as const,
+            symbols: Array.from(
+              { length: 7 },
+              (_, symbolIndex) => `${SELECTOR_SCALE_SIGNAL}${neighborIndex}-${symbolIndex}`,
+            ),
+          })),
+          truncated: 5,
+        },
+      ],
+    } satisfies PartitionSlice;
+  },
+);
+
+function loadedSnapshot(
+  candidates: readonly PartitionSlice[] = CANDIDATES,
+  structural: Partial<Pick<SnapshotStructuralInputs, "scopes" | "entryPoints" | "tests">> = {},
+): LoadedSnapshot {
+  const candidateFiles: SnapshotFileEntry[] = candidates.flatMap((candidate) =>
     candidate.files.map((file) => ({
       path: file.path,
       blobOid: file.blobOid,
@@ -49,10 +98,10 @@ function loadedSnapshot(): LoadedSnapshot {
       ...candidateFiles,
       { path: "pnpm-lock.yaml", blobOid: "blob:lock", size: 1, mode: "100644" },
     ],
-    scopes: [],
+    scopes: structural.scopes ?? [],
     edges: [],
-    entryPoints: [],
-    tests: [],
+    entryPoints: structural.entryPoints ?? [],
+    tests: structural.tests ?? [],
     ownership: [],
     conventions: [],
   } satisfies SnapshotStructuralInputs;
@@ -63,6 +112,28 @@ function loadedSnapshot(): LoadedSnapshot {
 }
 
 const SNAPSHOT = loadedSnapshot();
+
+const SELECTOR_SCALE_PATHS = SELECTOR_SCALE_CANDIDATES.flatMap((candidate) =>
+  candidate.files.map((file) => file.path),
+);
+const SELECTOR_SCALE_SNAPSHOT = loadedSnapshot(SELECTOR_SCALE_CANDIDATES, {
+  scopes: Array.from({ length: 13 }, (_, index) => ({
+    name: `scale-${index}`,
+    root: `scale/s${index}`,
+    private: true,
+    tags: [],
+  })),
+  entryPoints: Array.from({ length: 13 }, (_, index) => ({
+    scope: `scale-${index}`,
+    main: "./file-0.ts",
+    bin: [],
+  })),
+  tests: SELECTOR_SCALE_PATHS.slice(0, 558).map((path) => ({
+    path,
+    scope: null,
+    matchedBy: "scale/**/*.ts",
+  })),
+});
 
 function acceptedBody(candidates: readonly PartitionSlice[] = CANDIDATES) {
   return {
@@ -133,7 +204,6 @@ describe("runMapScope", () => {
       selector: { generator: MAP_SCOPE_GENERATOR_ID, cap: MAP_SCOPE_SLICE_CAP },
       scopes: [],
       entryPoints: [],
-      tests: [],
       candidates: CANDIDATES.map((candidate, index) => ({
         sliceId: candidate.id,
         kind: index < MAP_SCOPE_SLICE_CAP ? "module-batch" : "directory-fallback",
@@ -143,12 +213,117 @@ describe("runMapScope", () => {
             : candidate.id,
         ],
         requiredEntryPointPaths: [],
-        files: candidate.files.map((file) => ({ path: file.path, symbols: null })),
-        imports: [],
-        cuts: [],
+        files: candidate.files.map((file) => file.path),
+        testFiles: [],
+        signals: {
+          indexedFiles: 0,
+          declaredSymbols: 0,
+          internalImports: 0,
+          boundaryMembers: 0,
+          boundaryNeighbors: 0,
+          truncatedBoundaryNeighbors: 0,
+          boundaryPathCount: 0,
+          boundaryPaths: [],
+          omittedBoundaryPaths: 0,
+        },
       })).sort((left, right) => left.sliceId.localeCompare(right.sliceId)),
-      mechanicallyIneligible: [{ path: "pnpm-lock.yaml", reason: "lockfile" }],
+      mechanicallyIneligible: [{ reason: "lockfile", files: 1 }],
     });
+  });
+
+  it("bounds a release-scale selector prompt without losing whole-slice coverage facts", async () => {
+    let prompt = "";
+    const firstCandidate = SELECTOR_SCALE_CANDIDATES[0];
+    const firstPath = firstCandidate?.files[0]?.path;
+    if (firstCandidate === undefined || firstPath === undefined) {
+      throw new Error("selector-scale fixture is empty");
+    }
+    const result = await runMapScope({
+      snapshot: SELECTOR_SCALE_SNAPSHOT,
+      candidates: SELECTOR_SCALE_CANDIDATES,
+      provenance: PROVENANCE,
+      runTurn: async (value) => {
+        prompt = value;
+        return emitted(acceptedBody(SELECTOR_SCALE_CANDIDATES));
+      },
+    });
+
+    expect(result.status).toBe("ok");
+    expect(JSON.stringify(SELECTOR_SCALE_CANDIDATES).length).toBeGreaterThan(512 * 1024);
+    expect(prompt.length).toBeLessThanOrEqual(512 * 1024);
+    expect(prompt).not.toContain(SELECTOR_SCALE_SIGNAL);
+    const manifest = manifestFrom(prompt) as {
+      readonly entryPoints: readonly unknown[];
+      readonly candidates: readonly {
+        readonly sliceId: string;
+        readonly requiredEntryPointPaths: readonly string[];
+        readonly files: readonly string[];
+        readonly testFiles: readonly string[];
+        readonly signals: {
+          readonly indexedFiles: number;
+          readonly declaredSymbols: number;
+          readonly internalImports: number | null;
+          readonly boundaryMembers: number;
+          readonly boundaryNeighbors: number;
+          readonly truncatedBoundaryNeighbors: number;
+          readonly boundaryPathCount: number;
+          readonly boundaryPaths: readonly string[];
+          readonly omittedBoundaryPaths: number;
+        };
+      }[];
+    };
+    const summarizedPaths = manifest.candidates.flatMap((candidate) => candidate.files);
+    expect(manifest.candidates).toHaveLength(SELECTOR_SCALE_CANDIDATE_COUNT);
+    expect(new Set(manifest.candidates.map((candidate) => candidate.sliceId))).toEqual(
+      new Set(SELECTOR_SCALE_CANDIDATES.map((candidate) => candidate.id)),
+    );
+    expect(summarizedPaths).toHaveLength(SELECTOR_SCALE_PATHS.length);
+    expect(new Set(summarizedPaths)).toEqual(new Set(SELECTOR_SCALE_PATHS));
+    expect(manifest.entryPoints).toHaveLength(13);
+    expect(manifest.candidates.flatMap((candidate) => candidate.testFiles)).toHaveLength(558);
+    expect(
+      manifest.candidates.find((candidate) => candidate.sliceId === firstCandidate.id),
+    ).toMatchObject({
+      requiredEntryPointPaths: [firstPath],
+      testFiles: firstCandidate.files.map((file) => file.path).sort(),
+      signals: {
+        indexedFiles: SELECTOR_SCALE_FILES_PER_CANDIDATE,
+        declaredSymbols: SELECTOR_SCALE_FILES_PER_CANDIDATE * 2,
+        internalImports: 15,
+        boundaryMembers: 1,
+        boundaryNeighbors: 44,
+        truncatedBoundaryNeighbors: 5,
+        boundaryPathCount: 44,
+        boundaryPaths: expect.any(Array),
+        omittedBoundaryPaths: 20,
+      },
+    });
+    const summarized = manifest.candidates.find(
+      (candidate) => candidate.sliceId === firstCandidate.id,
+    );
+    expect(summarized?.signals.boundaryPaths).toHaveLength(24);
+
+    if (result.status !== "ok") throw new Error(result.failureReason);
+    const coverage = materializeKnowledgeCoverage({
+      snapshot: SELECTOR_SCALE_SNAPSHOT,
+      candidates: SELECTOR_SCALE_CANDIDATES,
+      selection: result,
+      selector: {
+        kind: "council",
+        harness: "claude-code",
+        assignedModel: PROVENANCE.model,
+        model: PROVENANCE.model,
+        effort: "medium",
+        apiKeySource: PROVENANCE.apiKeySource,
+      },
+    });
+    const coveredFiles = coverage.groups.flatMap((group) => group.files);
+    expect(coverage.groups.filter((group) => group.kind === "mapped")).toHaveLength(64);
+    expect(
+      coverage.groups.filter((group) => group.kind === "excluded" && group.source === "scope"),
+    ).toHaveLength(SELECTOR_SCALE_CANDIDATE_COUNT - MAP_SCOPE_SLICE_CAP);
+    expect(coveredFiles).toHaveLength(SELECTOR_SCALE_SNAPSHOT.files.length);
+    expect(new Set(coveredFiles.map((file) => file.path)).size).toBe(coveredFiles.length);
   });
 
   it("canonicalizes accepted decisions in candidate order and reports observed provenance", async () => {
@@ -401,7 +576,7 @@ describe("runMapScope", () => {
 });
 
 describe("mapScopeCatalogueDigest", () => {
-  it("is stable across base/blob identity changes but changes with rendered body facts", () => {
+  it("is stable across base/blob identity changes but binds authoritative catalogue facts", () => {
     const baseline = mapScopeCatalogueDigest(SNAPSHOT, CANDIDATES);
     const rebasedSnapshot: LoadedSnapshot = {
       ...SNAPSHOT,

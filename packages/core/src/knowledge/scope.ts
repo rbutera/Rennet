@@ -14,6 +14,7 @@ import { type PartitionSlice, sliceFamilies } from "./partition";
 
 export const MAP_SCOPE_SLICE_CAP = 64;
 export const MAP_SCOPE_GENERATOR_ID = "map-scope@1" as const;
+const MAP_SCOPE_BOUNDARY_PATH_CAP = 24;
 
 export const MAP_SCOPE_OUTPUT_SCHEMA = {
   type: "object",
@@ -127,7 +128,11 @@ interface MapScopeCatalogue {
   };
   readonly scopes: readonly unknown[];
   readonly entryPoints: readonly unknown[];
-  readonly tests: readonly unknown[];
+  readonly tests: readonly {
+    readonly path: string;
+    readonly scope: string | null;
+    readonly matchedBy: string;
+  }[];
   readonly candidates: readonly MapScopeCatalogueCandidate[];
   readonly mechanicallyIneligible: readonly {
     readonly path: string;
@@ -361,6 +366,56 @@ export function mapScopeCatalogueDigest(
   return catalogueDigest(mapScopeCatalogueFacts(snapshot, candidates).catalogue);
 }
 
+function selectorCatalogue(catalogue: MapScopeCatalogue) {
+  const testPaths = new Set(catalogue.tests.map((test) => test.path));
+  return {
+    selector: catalogue.selector,
+    scopes: catalogue.scopes,
+    entryPoints: catalogue.entryPoints,
+    candidates: catalogue.candidates.map((candidate) => {
+      const boundaryPaths = [
+        ...new Set(
+          candidate.cuts.flatMap((member) => member.neighbors.map((neighbor) => neighbor.path)),
+        ),
+      ].sort(byString);
+      return {
+        sliceId: candidate.sliceId,
+        kind: candidate.kind,
+        families: candidate.families,
+        requiredEntryPointPaths: candidate.requiredEntryPointPaths,
+        files: candidate.files.map((file) => file.path),
+        testFiles: candidate.files.map((file) => file.path).filter((path) => testPaths.has(path)),
+        signals: {
+          indexedFiles: candidate.files.filter((file) => file.symbols !== null).length,
+          declaredSymbols: candidate.files.reduce(
+            (count, file) => count + (file.symbols?.length ?? 0),
+            0,
+          ),
+          internalImports: candidate.imports?.length ?? null,
+          boundaryMembers: candidate.cuts.length,
+          boundaryNeighbors: candidate.cuts.reduce(
+            (count, member) => count + member.neighbors.length,
+            0,
+          ),
+          truncatedBoundaryNeighbors: candidate.cuts.reduce(
+            (count, member) => count + member.truncated,
+            0,
+          ),
+          boundaryPathCount: boundaryPaths.length,
+          boundaryPaths: boundaryPaths.slice(0, MAP_SCOPE_BOUNDARY_PATH_CAP),
+          omittedBoundaryPaths: Math.max(0, boundaryPaths.length - MAP_SCOPE_BOUNDARY_PATH_CAP),
+        },
+      };
+    }),
+    mechanicallyIneligible: MECHANICAL_REASONS.flatMap((reason) => {
+      const files = catalogue.mechanicallyIneligible.filter(
+        (entry) => entry.reason === reason,
+      ).length;
+      return files === 0 ? [] : [{ reason, files }];
+    }),
+  };
+}
+
 function buildPrompt(catalogue: MapScopeCatalogue): string {
   return `Select the whole repository slices that receive mapping workers.
 
@@ -368,7 +423,7 @@ Return exactly {"include": string[], "exclude": {"sliceId": string, "reason": st
 Every offered slice ID must appear exactly once across include and exclude. Omission is invalid.
 Decide only at whole-slice granularity: copy IDs exactly and never name individual files.
 Include at least one and at most ${MAP_SCOPE_SLICE_CAP} slices. Exclusion reasons must be specific and nonblank.
-Any candidate with requiredEntryPointPaths must be included. Mechanically ineligible files are already excluded and are informational only.
+Any candidate with requiredEntryPointPaths must be included. Mechanically ineligible file counts are already excluded and are informational only.
 Prioritize runtime behavior, architecture, persistence, public contracts, entry points, and slices with distinct explanatory roles.
 Use the full ${MAP_SCOPE_SLICE_CAP}-slice allowance when that many candidates have distinct explanatory value.
 Tests, fixtures, documentation, tooling, and adapters are not automatically disposable; include them when they explain behavior or contracts.
@@ -376,7 +431,7 @@ Exclusion means only that the slice gets no worker turn in this generation, not 
 You may inspect the repository checkout when the manifest is insufficient to make a grounded whole-slice decision.
 
 CLASSIFIED CANDIDATE MANIFEST:
-${canonicalize(catalogue)}`;
+${canonicalize(selectorCatalogue(catalogue))}`;
 }
 
 function validateSelection(
