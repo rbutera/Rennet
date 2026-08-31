@@ -425,9 +425,9 @@ describe("routeDelta", () => {
 
   it("routes a deletion under a COALESCED slice's non-head constituent", () => {
     // The real coalescer, not a hand-written slice: thirty constituent families
-    // cross the former 25-file boundary and merge into one slice that keeps only
-    // the FIRST id. The last family is neither equal to nor a prefix of the head,
-    // so a slice carrying only the head answers nothing for a deletion there.
+    // merge into one slice that keeps only the FIRST id. The last family is neither
+    // equal to nor a prefix of the head, so a slice carrying only the head answers
+    // nothing for a deletion there.
     const merged = coalesceFallbackSlices(
       Array.from({ length: 30 }, (_, index) => {
         const suffix = String(index).padStart(2, "0");

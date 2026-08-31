@@ -110,12 +110,15 @@ one-line node summaries lack.
    about what exists) but are not batched for mapping.
 3. **Module batching.** Louvain community detection (graphology, the same
    dependency Understand-Anything uses, subject to the dependency standard)
-   over the import graph, targeting ~25–35 files per batch with
+   over the import graph, targeting ~25–35 files per atomic community chunk with
    deterministic settings, alphabetic splitting for oversized communities,
-   and pooling for singletons. Each batch carries a `neighborMap`: for every
-   file, its cross-batch import neighbours with their exported symbol names,
-   joined from the existing symbols shard. Expected effect on Rennet: roughly
-   200 fragments → 40–60 module batches.
+   and pooling for singletons. Within each most-specific workspace-root bucket,
+   greedily combine adjacent atoms up to 120 files; pure unscoped atoms share one
+   sorted, repo-wide bucket. Atoms whose members span roots remain atomic.
+   Recompute each final batch's `neighborMap` and internal imports from the
+   authoritative graph. The graph-readable fallback tail coalesces within workspace
+   roots up to 160 files; all unscoped families share one deterministic bucket, and
+   the no-graph degradation path keeps its existing 120-file directory partitioning.
 4. **Exact whole-slice scoping.** With 64 or fewer candidate slices, select all
    of them deterministically and spend no model turn. Above 64, route one medium
    `map-scope@1` Council seat over the classified catalogue. It must partition
@@ -282,21 +285,28 @@ candidates in that prefix neither asserted an import relationship nor named the
 neighbour, and only three of 341 hints resolved to a concrete off-slice path.
 
 The current proof combines the worker envelope's eight-high-signal-statement
-ceiling with a 75-file normal-fallback coalesce, exact scope, and the
-cut-endpoint-preserving verify reduction below. On the measured snapshot, the
-coalesce keeps all 2,394 eligible files exactly once and changes 54 fallback
-slices to 39, for 96 candidates. Coalesce caps 90 and 120 also produce six
-uncapped waves while joining more unrelated routing families; 75 keeps more
-hypothesis capacity. `map-scope@1` now selects no more than 64 whole candidates,
-so the guarded run starts at most four 16-lane worker waves. The deterministic
-merge now presents one synthesis group per source slice, retaining every active
-cut endpoint and its highest-ranked local lead. One structured hint may name a
-concrete off-slice path and the unresolved coupling; when a lower-ranked statement
-made it, that anchored local source is shown too. Flagged contradictions remain
-statement-level. Replaying that shape over the preserved eight-statement prefix
-yields 44 cut groups and three flags: 47 work items in one 73,436-byte prompt. All
-241 canonical cut-edge pairs and 170 endpoint paths survive exactly; the verifier
-re-reads those paths instead of receiving every local statement's prose.
+ceiling with post-Louvain module coalescing, graph-readable fallback coalescing,
+exact scope, and the cut-endpoint-preserving verify reduction below. On the
+measured snapshot, it keeps all 2,396 eligible files exactly once and produces 48
+candidates: 28 module batches, largest 118 files, and 20 fallback batches, largest
+159. Eleven module packets combine several atoms, at most eight; each is wholly
+within one most-specific workspace root or wholly unscoped,
+and none mixes roots. Four unscoped fallback packets combine top-level directories,
+at most nine top-level directories, without mixing in a workspace scope. Final
+module membership cuts 2,179 of 4,175 directed resolved relations (52.19%), down
+from 2,674 (64.05%) before coalescing. All 12 entry-point paths remain owned across
+11 required slices. Because 48 is below the scope cap, `map-scope@1` does not run
+and the guarded run starts three 16-lane worker waves.
+
+The deterministic merge presents one synthesis group per source slice, retaining
+every active cut endpoint and its highest-ranked local lead. One structured hint
+may name a concrete off-slice path and the unresolved coupling; when a lower-ranked
+statement made it, that anchored local source is shown too. Flagged contradictions
+remain statement-level. Replaying that shape over the preserved eight-statement
+prefix yields 44 cut groups and three flags: 47 work items in one 73,436-byte
+prompt. All 241 canonical cut-edge pairs and 170 endpoint paths survive exactly;
+the verifier re-reads those paths instead of receiving every local statement's
+prose.
 
 The stored knowledge contract and verify seat's cross-cutting output stay
 uncapped. `knowledge-swarm@5` invalidates every earlier prompt/schema answer;
@@ -305,12 +315,10 @@ flattens to the exact snapshot inventory once: mapped slices, scope exclusions
 with reasons, and mechanical exclusions. A legacy set without coverage remains
 readable, but never claims full mapping and cannot seed an `@5` refresh.
 
-Before exact scope, the measured fit projected roughly 244 seconds through the
-observed deterministic front half and 96-worker phase, leaving about 56 seconds
-for verification. That is not a measurement of the current 64-slice plan. The
-guarded `knowledge-swarm@5` run must complete in five minutes and report the
-scope plan, exact coverage, statement yield, merge residue, time, RSS, swap, and
-pageouts. A faster but materially empty map does not count.
+The 48-worker replay proves the three-wave schedule, not whole-run latency. The
+guarded `knowledge-swarm@5` run must complete in five minutes and report exact
+coverage, statement yield, merge residue, time, RSS, swap, and pageouts. A faster
+but materially empty map does not count.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

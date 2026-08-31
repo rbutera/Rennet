@@ -155,19 +155,20 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
    undirected weighted graph, and Louvain community detection groups them.
    Communities over 35 files split into near-equal chunks of their sorted paths;
    communities under 3 files pool with their scope's other leftovers, up to 25 per
-   pooled batch. Pooling stays inside a workspace scope where the scope has enough
-   leftovers to fill a batch — a small coherent batch reads better than a large
-   incoherent one. Pooling buckets each member individually by its own scope root,
-   so a tiny community that straddles two packages contributes to each package's
-   pool rather than landing wholly in the first member's.
+   pooled batch. These communities, chunks, and pools are atomic inputs to a second
+   deterministic pass. Within each most-specific workspace-root bucket, it
+   greedily joins adjacent atoms up to 120 files; pure unscoped atoms share one
+   sorted, repo-wide bucket. It never splits an atom or joins an atom whose members
+   span roots. After final membership is known, the batcher rebuilds imports and
+   cross-batch neighbors from the authoritative graph.
 2. **The directory fallback.** Files with no import edge — documentation, config,
    assets, an unreferenced leaf — keep the original scope-and-subtree partitioner,
-   and its slices are then *coalesced*: adjacent slices within one workspace scope
-   (or one top-level directory, for unscoped files) merge up to 75 files each. The
-   partitioner alone left a long tail of two- and three-file slices, and every one
-   of them cost a worker turn. Merging is adjacent-only, so a directory is never
-   split across two slices to fill a quota, and a slice already over the cap passes
-   through as it is.
+   and its slices are then coalesced. Adjacent slices within one workspace scope
+   merge up to 160 files. All families outside workspace scopes share one sorted,
+   repo-wide bucket; this can join top-level directories, but it never joins an
+   unscoped file to a workspace scope. The partitioner alone left a long tail of
+   small slices, and every one cost a worker turn. Merging never splits a source
+   slice to fill a quota, and a slice already over the cap passes through as it is.
    The whole eligible inventory takes this tier when the import or symbol shards
    cannot be read: worse partitions, never a refusal to map. That degraded path is
    *not* coalesced — there the fallback already covers the different, whole-tree
@@ -175,18 +176,18 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
 
 ### Measured on Rennet itself
 
-2,428 files, 179 excluded by policy (166 binary, 5 lockfiles, 7 by banner, 1 by
-path), 2,249 eligible, 3,531 resolved import edges.
+The #584 policy replay covers 2,396 eligible files exactly once and produces **48
+candidate slices**:
 
-Those eligible files come out as **105 slices**:
+| Tier | Slices | Largest | Measured composition |
+|---|---:|---:|---|
+| Module batches | 28 | 118 files | Eleven combine several atoms; the largest combines eight; each is wholly within one most-specific workspace root or wholly unscoped |
+| Directory fallback | 20 | 159 files | Four unscoped packets mix top-level directories; the largest spans nine top-level directories and no workspace scope |
 
-| Tier | Slices | Files | Size |
-|---|---|---|---|
-| Module batches | 51 | 1,154 | median 27, mean 22.6, largest 34 |
-| Directory fallback (coalesced) | 54 | 1,095 | median 21, mean 20.3, largest 113 |
-
-That is the W3 reconstruction measurement. By the cap proof on 2026-08-31 the
-repository had grown to **111 slices** at commit `4954bdd7`.
+All 12 declared entry-point paths remain owned across 11 required slices. Final
+module membership cuts 2,179 of 4,175 directed resolved relations, 52.19%, down
+from 2,674, or 64.05%, before coalescing. This is snapshot evidence for the policy,
+not a claim that every repository has the same counts.
 
 Batching itself takes about 110 ms; the clean full snapshot build that feeds it
 takes roughly 30 seconds, dominated by one blob read per path-eligible file.
@@ -217,14 +218,12 @@ questions: 267 of 283 cut-edge candidates in that prefix did not assert an impor
 relationship or name the neighbour, and only three of 341 hints resolved to a
 concrete off-slice path.
 
-The first repair combined two measured worker-phase changes with the
+The current repair combines two measured worker-phase changes with the
 cut-endpoint-preserving verify reduction below. Each partition worker now ranks
-and emits at most eight high-signal anchored hypotheses. Separately, the normal
-edge-less tail coalesces up to 75 files within one scope or top-level directory.
-Replaying the exact snapshot preserved all 2,394 eligible files once and changed
-54 fallback slices to 39, for **96 candidate slices**. A coalesce cap of 120
-produced the same six waves while joining more unrelated routing families, so it
-was rejected.
+and emits at most eight high-signal anchored hypotheses. The partition pass merges
+pure-root module atoms up to 120 files and the graph-readable fallback tail up to
+160 files. The exact replay above reduces the catalogue to 48 candidates without
+omitting an eligible file or an atomic routing family.
 
 The merge now represents that synthesis work once per source slice: every active
 cut endpoint is retained, the worker's highest-ranked local statement starts the
@@ -237,13 +236,13 @@ one 73,436-byte verify prompt**. It preserved all 241 canonical cut-edge pairs a
 170 endpoint paths exactly. This is endpoint preservation, not prose preservation:
 the verifier re-reads those paths instead of receiving every local worker claim.
 
-The 64-slice scope contract now separates that candidate count from worker turns.
+The 64-slice scope contract separates candidate count from worker turns.
 At 64 candidates or fewer, every slice runs and selection spends no model turn.
 Above 64, one medium `map-scope@1` Council seat selects at most 64 whole slices
 and accounts for every remaining candidate with a reason. The current guarded
-proof should therefore launch no more than 64 workers from the 96-slice Rennet
-catalogue. Selection reduces turns; it does not pretend the excluded files were
-mapped.
+proof snapshot has 48 candidates, so it launches all 48 workers in three 16-lane
+waves and spends no selector turn. Selection still applies to a future catalogue
+over 64; it never pretends the excluded files were mapped.
 
 The shared stored knowledge schema and the verify seat's cross-cutting output
 remain uncapped. The scope, worker, and verify contract uses generator
@@ -272,15 +271,16 @@ The launched evidence now says:
   most correlated with measured duration. Its proof must report worker timing,
   statement yield, merge residue, verify timing, and whole-pass wall clock; a
   faster but materially empty map does not pass.
-- **Fewer turns.** The 75-file fallback coalesce reduced the candidate catalogue
-  without omitting a file. `map-scope@1` now caps a larger catalogue at 64
-  selected whole slices. The stored coverage says which files were selected,
-  scope-excluded, or mechanically excluded.
+- **Fewer turns.** Same-scope module atoms and the graph-readable fallback tail
+  coalesce without omitting a file or routing family. The current 48-slice
+  catalogue runs whole. `map-scope@1` still caps a future larger catalogue at 64
+  selected whole slices, and stored coverage records every exclusion.
 
-So the honest statement of the current cost is **one scope selection, with at
-most two turn attempts, plus at most 64 worker turns when the candidate catalogue
-exceeds 64**. The release proof is a complete guarded `knowledge-swarm@5` run;
-selector success alone does not establish the whole-pass latency or memory bar.
+The current snapshot costs **48 worker turns and no scope-selection turn**. The
+general contract remains one scope selection, with at most two attempts, plus at
+most 64 worker turns when a catalogue exceeds 64. The release proof is a complete
+guarded `knowledge-swarm@5` run; candidate count alone does not establish the
+whole-pass latency or memory bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -289,11 +289,10 @@ always yields the same batches in the same order.
 A batch's id is `mod:<lexically-first member path>#<hash>`, where the hash covers
 the batch's sorted member paths. It is a pure function of the batch's content, not
 of Louvain's community numbering, which is an artifact of iteration order and
-means nothing across builds. So a rebuild with no changes reproduces every id, and
-a membership change moves only the affected batch's id while every untouched batch
-keeps its own. The path half is the routing family: it survives membership churn
-that leaves the first member alone, which is how a delta recognises a re-formed
-batch as the same neighbourhood.
+means nothing across builds. A module batch that combines several atoms retains
+every constituent atom's routing family. A deleted file owned by a non-head atom
+therefore reaches the combined successor even though only the first family appears
+in its id.
 
 A coalesced fallback slice follows the same rule with a different first half: the
 hierarchical id of its first constituent, plus `#<hash>` over the merged
@@ -310,6 +309,9 @@ as if those edges did not exist. Each batch therefore carries, per member, its
 one-hop import neighbours *outside* the batch: the neighbour's path, whether the
 member imports it, is imported by it, or both, and the neighbour's exported symbol
 names joined from the symbol shards.
+
+The batcher computes this map after final coalescing. An edge between two atoms
+that merged becomes an internal `imports` entry, not a stale cross-batch neighbor.
 
 The list is capped at 50 neighbours per file, keeping the highest-degree ones, and
 records how many were dropped. A hub's neighbourhood is genuinely larger than what

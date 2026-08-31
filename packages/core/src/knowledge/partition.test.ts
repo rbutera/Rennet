@@ -8,7 +8,7 @@ import {
   buildPartitions,
   coalesceFallbackSlices,
   FALLBACK_COALESCE_CAP,
-  MAX_BATCH_SIZE,
+  MODULE_COALESCE_CAP,
   NEIGHBOR_CAP,
   POOLED_BATCH_CAP,
   partitionIdFamily,
@@ -264,9 +264,9 @@ describe("buildModuleBatches — communities, not directories", () => {
     expect(partitionIdFamily(before[1]?.id ?? "")).toBe(`mod:${CLUSTER_B[0]}`);
   });
 
-  it("splits an oversized community into near-equal chunks, none over the max", () => {
+  it("preserves oversized-community chunks as atoms, then coalesces whole atoms to 120", () => {
     const big = Array.from(
-      { length: 80 },
+      { length: 150 },
       (_, i) => `packages/a/src/f${String(i).padStart(3, "0")}.ts`,
     );
     const batches = buildModuleBatches({
@@ -276,11 +276,121 @@ describe("buildModuleBatches — communities, not directories", () => {
       exportsOf,
     });
     assertTotalCoverage(batches, big.map(file));
-    expect(batches).toHaveLength(3);
-    for (const batch of batches) expect(batch.files.length).toBeLessThanOrEqual(MAX_BATCH_SIZE);
-    expect(batches.map((b) => b.files.length)).toEqual([27, 27, 26]);
-    // Chunking is over SORTED paths, so each chunk is a contiguous run.
-    expect(batches[0]?.files.map((f) => f.path)).toEqual(big.slice(0, 27));
+    expect(MODULE_COALESCE_CAP).toBe(120);
+    expect(batches.map((batch) => batch.files.length)).toEqual([120, 30]);
+    expect(batches[0]?.files.map((entry) => entry.path)).toEqual(big.slice(0, 120));
+    expect(batches[0]?.families).toEqual([0, 30, 60, 90].map((index) => `mod:${big[index]}`));
+    expect(batches[1]?.families).toBeUndefined();
+
+    // A deletion owned by a non-head atom still reaches the combined successor.
+    // No current file lives directly in an ancestor of this deleted path, so the
+    // nearest-directory fallback cannot make this assertion pass by accident.
+    const deleted = "packages/a/retired/deep/gone.ts";
+    const prior = [
+      {
+        id: `mod:${big[90]}#c0ffee00`,
+        files: [file(deleted)],
+        neighbors: [],
+      },
+    ];
+    expect(routeDelta(batches, [deleted], prior).map((batch) => batch.id)).toEqual([
+      batches[0]?.id,
+    ]);
+    const headOnly = batches.map((batch) =>
+      batch === batches[0] ? { ...batch, families: [batch.families?.[0] ?? ""] } : batch,
+    );
+    expect(routeDelta(headOnly, [deleted], prior)).toEqual([]);
+  });
+
+  it("computes root purity after splitting an oversized cross-root community", () => {
+    const crossA = Array.from(
+      { length: 48 },
+      (_, i) => `packages/a/src/cross-${String(i).padStart(3, "0")}.ts`,
+    );
+    const crossB = Array.from(
+      { length: 24 },
+      (_, i) => `packages/b/src/cross-${String(i).padStart(3, "0")}.ts`,
+    );
+    const cross = [...crossA, ...crossB];
+    const batches = buildModuleBatches({
+      files: cross.map(file),
+      scopes: TWO_CLUSTERS.scopes,
+      graph: graphOf(clique(cross)),
+      exportsOf,
+    });
+
+    assertTotalCoverage(batches, cross.map(file));
+    expect(batches.map((batch) => batch.files.length)).toEqual([48, 24]);
+    expect(batches.map((batch) => batch.families?.length ?? 1)).toEqual([2, 1]);
+    expect(
+      batches.map(
+        (batch) =>
+          new Set(batch.files.map((entry) => entry.path.split("/").slice(0, 2).join("/"))).size,
+      ),
+    ).toEqual([1, 1]);
+  });
+
+  it("recomputes imports and neighbors after adjacent same-scope communities merge", () => {
+    const left = Array.from({ length: 6 }, (_, i) => `packages/a/src/left-${i}.ts`);
+    const right = Array.from({ length: 6 }, (_, i) => `packages/a/src/right-${i}.ts`);
+    const bridge = [left[5] as string, right[0] as string] as const;
+    const batches = buildModuleBatches({
+      files: [...left, ...right].map(file),
+      scopes: [{ name: "@x/a", root: "packages/a" }],
+      graph: graphOf([...clique(left), ...clique(right), bridge]),
+      exportsOf,
+    });
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.families).toHaveLength(2);
+    expect(batches[0]?.imports).toContainEqual({ from: bridge[0], to: bridge[1] });
+    expect(batches[0]?.neighbors).toEqual([]);
+  });
+
+  it("coalesces pure unscoped atoms in one sorted repo-wide bucket", () => {
+    const scripts = Array.from({ length: 6 }, (_, i) => `scripts/build-${i}.ts`);
+    const tools = Array.from({ length: 6 }, (_, i) => `tools/check-${i}.ts`);
+    const paths = [...scripts, ...tools];
+    const batches = buildModuleBatches({
+      files: paths.map(file),
+      scopes: [],
+      graph: graphOf([...clique(scripts), ...clique(tools)]),
+      exportsOf,
+    });
+
+    assertTotalCoverage(batches, paths.map(file));
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.families).toHaveLength(2);
+    expect(new Set(batches[0]?.files.map((entry) => entry.path.split("/")[0]))).toEqual(
+      new Set(["scripts", "tools"]),
+    );
+  });
+
+  it("leaves a cross-scope community atomic while same-scope atoms share their scope bucket", () => {
+    const before = Array.from({ length: 6 }, (_, i) => `packages/a/src/a-${i}.ts`);
+    const mixed = [
+      ...Array.from({ length: 3 }, (_, i) => `packages/a/src/m-${i}.ts`),
+      ...Array.from({ length: 3 }, (_, i) => `packages/b/src/m-${i}.ts`),
+    ];
+    const after = Array.from({ length: 6 }, (_, i) => `packages/a/src/z-${i}.ts`);
+    const batches = buildModuleBatches({
+      files: [...before, ...mixed, ...after].map(file),
+      scopes: TWO_CLUSTERS.scopes,
+      graph: graphOf([...clique(before), ...clique(mixed), ...clique(after)]),
+      exportsOf,
+    });
+
+    assertTotalCoverage(batches, [...before, ...mixed, ...after].map(file));
+    expect(batches).toHaveLength(2);
+    expect(batches.map((batch) => batch.files.length)).toEqual([12, 6]);
+    expect(
+      batches.map(
+        (batch) =>
+          new Set(batch.files.map((entry) => entry.path.split("/").slice(0, 2).join("/"))).size,
+      ),
+    ).toEqual([1, 2]);
+    expect(batches[0]?.families).toHaveLength(2);
+    expect(batches[1]?.families).toBeUndefined();
   });
 
   it("pools sub-minimum communities within a scope, capped, rather than one turn each", () => {
@@ -397,20 +507,21 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
     return spec.map(([id, paths]) => ({ id, files: paths.map(file), neighbors: [] }));
   }
 
-  it("merges adjacent slices within one bucket up to the cap, and never across buckets", () => {
+  it("merges within workspace roots and pools every unscoped family together", () => {
     const input = fallbackOf([
       ["@x/a/docs", ["packages/a/docs/one.md", "packages/a/docs/two.md"]],
       ["@x/a/fixtures", ["packages/a/fixtures/x.json", "packages/a/fixtures/y.json"]],
       ["@x/b/docs", ["packages/b/docs/one.md"]],
       ["dir:docs", ["docs/guide.md"]],
+      ["dir:config", ["config/default.json"]],
     ]);
     const out = coalesceFallbackSlices(input, scopes);
     assertTotalCoverage(
       out,
       input.flatMap((slice) => slice.files),
     );
-    // `packages/a`'s two slices merged (4 ≤ the cap); `packages/b` and the unscoped
-    // `docs/` tree each stayed on their own, because a bucket is never crossed.
+    // Workspace roots stay separate. The two unrelated unscoped top-level
+    // directories deliberately share one fallback packet.
     expect(out).toHaveLength(3);
     const merged = out.find((slice) => slice.files.length === 4);
     expect(merged?.files.map((f) => f.path)).toEqual([
@@ -419,10 +530,16 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
       "packages/a/fixtures/x.json",
       "packages/a/fixtures/y.json",
     ]);
-    // A bucket that yielded ONE slice keeps its original id — no hash for a merge
-    // that never happened.
+    const unscoped = out.find((slice) =>
+      slice.files.some((entry) => entry.path === "docs/guide.md"),
+    );
+    expect(unscoped?.files.map((entry) => entry.path)).toEqual([
+      "config/default.json",
+      "docs/guide.md",
+    ]);
+    expect(unscoped?.families).toEqual(["dir:config", "dir:docs"]);
+    // A workspace bucket that yielded one slice keeps its original id.
     expect(out.map((slice) => slice.id)).toContain("@x/b/docs");
-    expect(out.map((slice) => slice.id)).toContain("dir:docs");
   });
 
   it("respects the cap and passes an already-oversized slice through untouched", () => {
@@ -434,8 +551,8 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
     const out = coalesceFallbackSlices(input, scopes);
     expect(out).toHaveLength(2);
     // The oversized slice is its own run, id and membership intact.
-    expect(out[0]?.id).toBe("@x/a/vendor-notes");
-    expect(out[0]?.files).toHaveLength(FALLBACK_COALESCE_CAP + 10);
+    const oversized = out.find((slice) => slice.id === "@x/a/vendor-notes");
+    expect(oversized?.files).toHaveLength(FALLBACK_COALESCE_CAP + 10);
     for (const slice of out) {
       if (slice.files.length > FALLBACK_COALESCE_CAP) continue;
       expect(slice.files.length).toBeLessThanOrEqual(FALLBACK_COALESCE_CAP);
@@ -443,10 +560,10 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
   });
 
   it("cuts the real slice count: many small same-bucket slices become few", () => {
-    // The shape the measurement found on Rennet: a long tail of ~2-file slices.
+    // The shape the measurement found on Rennet: a long tail of small slices.
     const input = fallbackOf(
       Array.from(
-        { length: 76 },
+        { length: 161 },
         (_, i) =>
           [
             `@x/a/d${String(i).padStart(2, "0")}`,
@@ -455,9 +572,9 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
       ),
     );
     const out = coalesceFallbackSlices(input, scopes);
-    expect(FALLBACK_COALESCE_CAP).toBe(75);
-    expect(input).toHaveLength(76);
-    expect(out.map((slice) => slice.files.length)).toEqual([75, 1]);
+    expect(FALLBACK_COALESCE_CAP).toBe(160);
+    expect(input).toHaveLength(161);
+    expect(out.map((slice) => slice.files.length)).toEqual([160, 1]);
     assertTotalCoverage(
       out,
       input.flatMap((slice) => slice.files),
@@ -474,7 +591,10 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
       ["@x/b/fixtures", ["packages/b/fixtures/x.json"]],
     ]);
     const first = coalesceFallbackSlices([...aSlices, ...bSlices], scopes);
-    const again = coalesceFallbackSlices([...aSlices, ...bSlices], scopes);
+    const again = coalesceFallbackSlices(
+      shuffled([...aSlices, ...bSlices], 7),
+      shuffled(scopes, 7),
+    );
     expect(again).toEqual(first);
 
     // Change `packages/a`'s membership only: its id moves, `packages/b`'s does not.
@@ -506,8 +626,8 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
     const merged = coalesced[0] as (typeof coalesced)[number];
     expect(merged.files).toHaveLength(3);
     // The hierarchical half survives as the routing FAMILY.
-    expect(partitionIdFamily(merged.id)).toBe("dir:docs/using");
-    expect(merged.id).not.toBe("dir:docs/using");
+    expect(partitionIdFamily(merged.id)).toBe("dir:docs/developing");
+    expect(merged.id).not.toBe("dir:docs/developing");
 
     // 1. A changed member routes its own (merged) slice.
     expect(routeDelta(coalesced, ["docs/developing/c.md"]).map((s) => s.id)).toEqual([merged.id]);
@@ -555,7 +675,7 @@ describe("neighborMap — the edges batching cut, handed back", () => {
   it("caps a hub's neighbour list and REPORTS the truncation rather than hiding it", () => {
     const hub = "packages/a/src/a-hub.ts";
     const leaves = Array.from(
-      { length: 80 },
+      { length: 155 },
       (_, i) => `packages/a/src/leaf${String(i).padStart(3, "0")}.ts`,
     );
     const batches = buildModuleBatches({
@@ -568,8 +688,9 @@ describe("neighborMap — the edges batching cut, handed back", () => {
     const owning = batches.find((b) => b.files.some((f) => f.path === hub));
     const entry = owning?.neighbors.find((n) => n.path === hub);
     expect(entry?.neighbors).toHaveLength(NEIGHBOR_CAP);
-    // 80 leaves, 26 of them in the hub's own chunk ⇒ 54 outside, 50 kept, 4 dropped.
-    expect(entry?.truncated).toBe(4);
+    // Six 26-file atoms form runs of 104 and 52. The hub owns one of the 104,
+    // leaving 52 outside: 50 kept and two reported as truncated.
+    expect(entry?.truncated).toBe(2);
     expect(entry?.neighbors.every((n) => !owning?.files.some((f) => f.path === n.path))).toBe(true);
   });
 });
