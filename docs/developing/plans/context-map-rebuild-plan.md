@@ -287,11 +287,11 @@ neighbour, and only three of 341 hints resolved to a concrete off-slice path.
 The current proof combines the worker envelope's eight-high-signal-statement
 ceiling with post-Louvain module coalescing, graph-readable fallback coalescing,
 exact scope, and the cut-endpoint-preserving verify reduction below. On the
-measured snapshot, it keeps all 2,396 eligible files exactly once and produces 48
-candidates: 28 module batches, largest 118 files, and 20 fallback batches, largest
-159. Eleven module packets combine several atoms, at most eight; each is wholly
-within one most-specific workspace root or wholly unscoped,
-and none mixes roots. Four unscoped fallback packets combine top-level directories,
+preserved `4d482fd8` snapshot, it keeps all 2,396 eligible files exactly once and
+produces 48 candidates: 28 module batches, largest 118 files, and 20 fallback
+batches, largest 159. Eleven module packets combine several atoms, at most eight;
+each is wholly within one most-specific workspace root or wholly unscoped, and
+none mixes roots. Four unscoped fallback packets combine top-level directories,
 at most nine top-level directories, without mixing in a workspace scope. Final
 module membership cuts 2,179 of 4,175 directed resolved relations (52.19%), down
 from 2,674 (64.05%) before coalescing. All 12 entry-point paths remain owned across
@@ -315,10 +315,10 @@ flattens to the exact snapshot inventory once: mapped slices, scope exclusions
 with reasons, and mechanical exclusions. A legacy set without coverage remains
 readable, but never claims full mapping and cannot seed an `@5` refresh.
 
-The 48-worker replay proves the three-wave schedule, not whole-run latency. The
-guarded `knowledge-swarm@5` run must complete in five minutes and report exact
-coverage, statement yield, merge residue, time, RSS, swap, and pageouts. A faster
-but materially empty map does not count.
+The 48-candidate replay fixes the policy schedule at three 16-lane waves; it does
+not measure whole-run latency. The guarded `knowledge-swarm@5` run must complete
+in five minutes and report exact coverage, statement yield, merge residue, time,
+RSS, swap, and pageouts. A faster but materially empty map does not count.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
