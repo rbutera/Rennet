@@ -45,6 +45,10 @@
     "real-turn": {
       "cache": false,
       "command": "RENNET_LIVE_CLAUDE=1 pnpm exec vitest run packages/adapters/integration"
+    },
+    "real-mcp-isolation": {
+      "cache": false,
+      "command": "RENNET_LIVE_CODEX_MCP_CONFIG=1 pnpm exec vitest run packages/adapters/src/codex-mcp-isolation.real.test.ts"
     }
   }
 }

@@ -109,25 +109,39 @@ JSON-RPC method error. No approval request is queued for a person.
 
 ## MCP configuration
 
-Rennet can give a child a full-table Codex configuration override:
+Rennet can give a child an explicit Codex MCP policy:
 
 ```text
 codex app-server -c mcp_servers=<inline TOML>
 ```
 
-The override replaces the user's complete `mcp_servers` table for that child.
-When Rennet supplies no table, the child inherits the user's configured MCP
-servers. When Rennet supplies its loopback server, that exact table wins.
+Codex deep-merges this value with the user's `mcp_servers` table; an empty
+inline table does not clear configured entries. Before an explicit policy,
+Rennet runs `codex mcp list --json` at the same locus and working directory,
+validates the inventory, then writes one table containing the requested
+loopback servers plus disabled transport-compatible placeholders for every
+other configured server. A discovery or shape failure stops before the
+app-server child starts. A requested name that already exists in the user's
+table also stops before spawn because Codex retains nested transport and header
+fields while merging. When Rennet supplies no policy, it skips discovery and the
+child inherits the user's configured MCP servers.
 
-Context Map `partition-worker` turns are the narrow exception: they receive an
-explicit empty table because they read and inspect the repository through Codex's
-native tools and do not call MCP tools. This keeps their repository and shell
-capability while avoiding eagerly starting every ambient MCP server once per
-parallel worker. Other Codex utility jobs keep inheriting the user table. The
-app-server command does not accept `--ignore-user-config`.
+Context Map `partition-worker` turns are the narrow exception: they request an
+explicitly empty policy because they read and inspect the repository through
+Codex's native tools and do not call MCP tools. The rendered table disables all
+ambient entries without removing repository or shell capability. Other Codex
+utility jobs keep inheriting the user table. The app-server command does not
+accept `--ignore-user-config`.
+
+The installed-CLI control reads the current configured inventory and proves both
+the empty and loopback-only policies without starting a model turn:
+
+```sh
+RENNET_CODEX_BIN=/path/to/codex pnpm nx run rennet-adapters:real-mcp-isolation
+```
 
 The worker fan-out policy follows the harness selected by the Model Council.
-Codex partition workers default to 24 lanes with that empty table; Claude
+Codex partition workers default to 24 lanes with that empty policy; Claude
 partition workers keep their separate 12-lane default. A run that supplies an
 explicit concurrency overrides either default.
 

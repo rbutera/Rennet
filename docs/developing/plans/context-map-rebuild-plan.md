@@ -80,8 +80,9 @@ exploration produces elements the pipeline deletes; (2) every Codex utility
 seat defaults to an empty temp cwd (`packages/adapters/src/codex-exec.ts:202`)
 while the Claude legs of the same jobs get the repo root; (3) no Claude seat
 can reach canvasOps (`ClaudeQueryOptions` has no `mcpServers` field) and Codex
-utility seats get `-c mcp_servers={}`; (4) several prompts say "use ONLY the
-facts below". The in-repo model of the intended posture is the
+utility seats were given a literal `mcp_servers={}` override that Codex
+deep-merges instead of clearing; (4) several prompts say "use ONLY the facts
+below". The in-repo model of the intended posture is the
 finding-verification contract: "you are NOT confined to it — read more of the
 repository, and run it, when that is what it takes to know."
 
@@ -206,9 +207,11 @@ repository and shell tools; other composed seats can use canvasOps.
 - Root Codex utility seats at the repository root, as the swarm seats already
   are.
 - Give Claude seats an `mcpServers` surface. Codex utility seats inherit the
-  user's MCP table unless a job supplies a full-table override; only the
-  Context Map `partition-worker` supplies an empty table because it uses native
-  repository and shell tools instead.
+  user's MCP table unless a job supplies an explicit policy; only the Context
+  Map `partition-worker` requests an empty policy because it uses native
+  repository and shell tools instead. Rennet expands that policy into disabled
+  placeholders for the configured ambient entries because Codex deep-merges
+  inline tables.
 - Re-examine each "use ONLY the facts below" prompt: keep the ones that are
   genuine task framing (delta-digest rephrases a structured account), drop
   the ones that are confinement.
@@ -254,8 +257,9 @@ inherited and eagerly started the user's full ambient MCP table, including
 Playwright, Serena, Nx, and Context7 processes the partition workers never call.
 The app-server wrapper and native process used roughly 100–170 MiB per lane, but
 the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
-in 45.6 seconds. Partition workers now send `-c mcp_servers={}` for that job only;
-other Codex utility jobs keep the global inherit-or-pin behavior. Worker
+in 45.6 seconds. Partition workers now inventory the configured MCP entries and
+send one policy table with each ambient entry disabled; other Codex utility jobs
+keep the global inherit-or-pin behavior. Worker
 concurrency now follows the council-selected harness: Codex gets 24 lanes, while
 Claude keeps its existing 12-lane default. An explicit per-run override still
 wins. At the current 34.7-second median and 37-second mean, 110 turns over 24

@@ -98,8 +98,6 @@ export interface AppServerTurnParams {
   readonly effort?: string;
   /** Already sanitized by the caller (`sanitizeSchemaForCodex`). */
   readonly outputSchema?: unknown;
-  /** canvasOps@2 (and future) loopback MCP servers, pinned as a full-table override. */
-  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   /**
    * #585: start the thread ephemeral — "the thread is ephemeral and should not be
    * materialized on disk" (app-server `ThreadStartParams`, verified against
@@ -548,29 +546,145 @@ export function spawnFailureFrame(error: unknown): CodexTurnResultFrame {
 
 // ── Argv composition ────────────────────────────────────────────────────────────
 
-/** Render the canvasOps MCP servers as an inline-TOML full-table value. */
-function renderMcpServersToml(servers: Readonly<Record<string, { readonly url: string }>>): string {
-  const entries = Object.entries(servers).map(([name, server]) => `${name}={url="${server.url}"}`);
+export interface CodexMcpServerInventoryEntry {
+  readonly name: string;
+  readonly transport: "stdio" | "streamable_http";
+}
+
+export interface CodexMcpListCommandSpec {
+  readonly bin: string;
+  readonly args: readonly string[];
+  readonly cwd: string | undefined;
+}
+
+export interface CodexMcpListCommandResult {
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export type RunCodexMcpList = (spec: CodexMcpListCommandSpec) => Promise<CodexMcpListCommandResult>;
+
+export const defaultRunCodexMcpList: RunCodexMcpList = async ({ bin, args, cwd }) => {
+  const result = await execa(bin, [...args], { cwd, reject: false, stdin: "ignore" });
+  return {
+    exitCode: result.exitCode ?? null,
+    stdout: result.stdout == null ? "" : String(result.stdout),
+    stderr: result.stderr == null ? "" : String(result.stderr),
+  };
+};
+
+/** Validate the untrusted `codex mcp list --json` result at the process seam. */
+export async function readCodexMcpServerInventory(
+  run: RunCodexMcpList,
+  spec: CodexMcpListCommandSpec,
+): Promise<readonly CodexMcpServerInventoryEntry[]> {
+  let result: CodexMcpListCommandResult;
+  try {
+    result = await run(spec);
+  } catch (cause) {
+    throw new Error("codex mcp list --json could not run", { cause });
+  }
+  if (result.exitCode !== 0) {
+    throw new Error(`codex mcp list --json exited ${result.exitCode ?? "without a status"}`);
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(result.stdout);
+  } catch (cause) {
+    throw new Error("codex mcp list --json returned invalid JSON", { cause });
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("codex mcp list --json returned a non-array inventory");
+  }
+
+  const names = new Set<string>();
+  return value.map((raw, index) => {
+    const entry = asRecord(raw);
+    const name = str(entry, "name");
+    const transport = str(asRecord(entry?.transport), "type");
+    if (name === null || name.length === 0) {
+      throw new Error(`codex mcp list --json entry ${index} has no name`);
+    }
+    if (names.has(name)) {
+      throw new Error(`codex mcp list --json contains duplicate server ${tomlString(name)}`);
+    }
+    names.add(name);
+    switch (transport) {
+      case "stdio":
+      case "streamable_http":
+        return { name, transport };
+      default:
+        throw new Error(`codex mcp list --json entry ${index} has an unsupported transport`);
+    }
+  });
+}
+
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+/**
+ * Render one inline table that shadows every configured ambient server. Codex
+ * deep-merges `-c` tables into the user's config, so `{}` cannot clear the
+ * ambient table. Disabled placeholders must retain each entry's transport kind
+ * or Codex rejects the merged config before it observes `enabled=false`.
+ */
+function renderMcpServersToml(
+  servers: Readonly<Record<string, { readonly url: string }>>,
+  ambientServers: readonly CodexMcpServerInventoryEntry[],
+): string {
+  const requested = new Map(Object.entries(servers));
+  const ambient = new Map(ambientServers.map((server) => [server.name, server]));
+  const names = [...new Set([...ambient.keys(), ...requested.keys()])].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+  const entries = names.map((name) => {
+    const requestedServer = requested.get(name);
+    if (requestedServer !== undefined) {
+      if (ambient.has(name)) {
+        throw new Error(`requested MCP server ${tomlString(name)} is already configured by Codex`);
+      }
+      return `${tomlString(name)}={url=${tomlString(requestedServer.url)},enabled=true}`;
+    }
+    const ambientServer = ambient.get(name);
+    if (ambientServer === undefined) {
+      throw new Error(`missing ambient MCP inventory for ${tomlString(name)}`);
+    }
+    if (ambientServer.transport === "stdio") {
+      return `${tomlString(name)}={command="false",args=[],enabled=false}`;
+    }
+    return `${tomlString(name)}={url="http://127.0.0.1",enabled=false}`;
+  });
   return `{${entries.join(",")}}`;
 }
 
 /**
  * The `codex app-server` argv. `codex app-server` REJECTS `--ignore-user-config`
- * (verified: "unexpected argument"), so when Rennet has loopback servers of its own
- * to hand the seat they are pinned with a FULL-TABLE `-c mcp_servers=<inline TOML>`
- * override: it REPLACES the whole table (never merges), so the canvasOps URL the
- * child dials is the one Rennet is actually serving (design D6). No prompt/schema/
- * `-o` flags — the turn rides stdio.
+ * (verified: "unexpected argument"), and `-c` deep-merges tables. An explicit MCP
+ * policy therefore writes one inline table containing Rennet's enabled servers
+ * plus disabled placeholders for every configured ambient server. No prompt,
+ * schema, or `-o` flags are needed because the turn rides stdio.
  *
  * An absent table inherits the user's MCP configuration. An explicit empty table
  * starts no MCP sidecars for a job that does not use them. That does not affect
  * Codex's native repository or shell tools.
  */
+export function buildAppServerArgs(): string[];
+export function buildAppServerArgs(
+  mcpServers: Readonly<Record<string, { readonly url: string }>> | undefined,
+  ambientServers: readonly CodexMcpServerInventoryEntry[],
+): string[];
 export function buildAppServerArgs(
   mcpServers?: Readonly<Record<string, { readonly url: string }>>,
+  ambientServers?: readonly CodexMcpServerInventoryEntry[],
 ): string[] {
   if (mcpServers === undefined) return ["app-server"];
-  return ["app-server", "-c", `mcp_servers=${renderMcpServersToml(mcpServers)}`];
+  if (ambientServers === undefined) {
+    throw new Error("explicit Codex MCP policy requires the configured server inventory");
+  }
+  return ["app-server", "-c", `mcp_servers=${renderMcpServersToml(mcpServers, ambientServers)}`];
 }
 
 // ── The real spawn (execa) ──────────────────────────────────────────────────────

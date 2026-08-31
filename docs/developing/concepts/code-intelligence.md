@@ -202,8 +202,9 @@ The arithmetic is now inside the bar, but its launched proof is still pending:
   29 concurrent workers, or 32 once the build was counted. The first real run at
   16 inherited every ambient MCP server per lane; swap grew by 5.19 GiB and
   pageouts advanced by 5,965 in 87.084 seconds. Codex workers now start with an
-  empty MCP table and default to 24 lanes. A clean launched run must still prove
-  that process family safe.
+  explicit empty MCP policy rendered as disabled placeholders for every
+  configured ambient entry, and default to 24 lanes. A clean launched run must
+  still prove that process family safe.
 - **Shorter turns.** Symbol skeletons and slice-local import edges reduced the
   completed-worker timing to 34.7 seconds median and 37 seconds mean. The
   remaining proof is the complete run, not another extrapolation.
@@ -419,10 +420,10 @@ underneath it refuses to save, reports **superseded**, and keeps its journal so
 the retry costs no turns.
 
 Worker fan-out uses a named, harness-specific default after council resolution:
-24 for Codex partition workers, whose job-scoped empty MCP table removes the
-ambient server tree, and 12 for Claude partition workers. A caller's explicit
-per-run limit wins. The policy is deliberately not adaptive: ambient load does
-not change the recorded run policy.
+24 for Codex partition workers, whose job-scoped empty policy expands into
+disabled placeholders for the configured ambient entries, and 12 for Claude
+partition workers. A caller's explicit per-run limit wins. The policy is
+deliberately not adaptive: ambient load does not change the recorded run policy.
 
 Verify concurrency stays at 4 by a separate policy. W3 changed that pass from a
 second fan-out over every worker statement to a residue-only pass, normally one

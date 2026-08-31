@@ -63,14 +63,21 @@ interface Script {
   readonly usage?: Record<string, number>;
   readonly errorMessage?: string;
   readonly exitBeforeTurn?: boolean;
+  readonly mcpList?: unknown;
+  readonly mcpListSequence?: readonly unknown[];
+  readonly mcpListExitCode?: number | null;
+  readonly mcpListExitCodeSequence?: readonly (number | null)[];
+  readonly mcpListThrows?: boolean;
 }
 
 function fakeExecEffects(script: Script = {}): {
   effects: CodexExecEffects;
   spawns: SpawnCall[];
+  mcpLists: SpawnCall[];
   turnStarts: Record<string, unknown>[];
 } {
   const spawns: SpawnCall[] = [];
+  const mcpLists: SpawnCall[] = [];
   const turnStarts: Record<string, unknown>[] = [];
   const spawn: SpawnAppServer = ({ bin, args, cwd }) => {
     spawns.push({ bin, args, cwd });
@@ -123,8 +130,33 @@ function fakeExecEffects(script: Script = {}): {
     };
     return conn;
   };
-  return { effects: { spawn }, spawns, turnStarts };
+  const runMcpList: CodexExecEffects["runMcpList"] = async (spec) => {
+    const callIndex = mcpLists.length;
+    mcpLists.push(spec);
+    if (script.mcpListThrows) throw new Error("mcp inventory unavailable");
+    const exitCode =
+      script.mcpListExitCodeSequence?.[callIndex] ??
+      (script.mcpListExitCode === undefined ? 0 : script.mcpListExitCode);
+    return {
+      exitCode,
+      stdout: JSON.stringify(script.mcpListSequence?.[callIndex] ?? script.mcpList ?? []),
+      stderr: exitCode ? "mcp list failed" : "",
+    };
+  };
+  return { effects: { spawn, runMcpList }, spawns, mcpLists, turnStarts };
 }
+
+const MCP_INVENTORY = [
+  { name: "Playwright", transport: { type: "stdio", command: "npx" } },
+  {
+    name: "computer-history",
+    transport: { type: "stdio", command: "/private/tool", args: ["serve"] },
+  },
+  {
+    name: "context7",
+    transport: { type: "streamable_http", url: "https://example.invalid/mcp" },
+  },
+] as const;
 
 describe("createCodexExecutor (app-server)", () => {
   it("runs a structured-output turn and returns the parsed final message", async () => {
@@ -269,17 +301,39 @@ describe("createCodexExecutor (app-server)", () => {
   });
 
   it("wsl locus routes the spawn through wsl.exe -e codex app-server with a distro cwd", async () => {
-    const { effects, spawns, turnStarts } = fakeExecEffects({ finalText: "{}" });
+    const { effects, spawns, mcpLists, turnStarts } = fakeExecEffects({
+      finalText: "{}",
+      mcpList: MCP_INVENTORY,
+    });
+    const codex = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/codex";
+    const node = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/node";
     const executor = createCodexExecutor(effects, {
+      bin: codex,
       locus: { kind: "wsl", distro: "Ubuntu" },
       repoRoot: "/home/rai/repo",
+      runtimePath: node,
     });
-    await executor({ model: "m", effort: "low", prompt: "p" });
+    await executor({ model: "m", effort: "low", prompt: "p", mcpServers: {} });
     const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("wsl.exe");
     expect(call.args.slice(0, 2)).toEqual(["-d", "Ubuntu"]);
-    expect(call.args[call.args.indexOf("-e") + 1]).toBe("codex");
-    expect(call.args[call.args.indexOf("-e") + 2]).toBe("app-server");
+    expect(call.args.slice(call.args.indexOf("-e") + 1, call.args.indexOf("-e") + 4)).toEqual([
+      node,
+      codex,
+      "app-server",
+    ]);
+    const list = mcpLists[0] as SpawnCall;
+    expect(list.bin).toBe("wsl.exe");
+    expect(list.args.slice(0, list.args.indexOf("-e"))).toEqual(
+      call.args.slice(0, call.args.indexOf("-e")),
+    );
+    expect(list.args.slice(list.args.indexOf("-e") + 1)).toEqual([
+      node,
+      codex,
+      "mcp",
+      "list",
+      "--json",
+    ]);
     // The turn runs in the DISTRO-NATIVE repo root, not a host path and not a temp dir.
     expect(turnStarts[0]?.cwd).toBe("/home/rai/repo");
   });
@@ -305,27 +359,39 @@ describe("createCodexExecutor (app-server)", () => {
     expect(turnStarts[0]?.cwd).toBe("/elsewhere");
   });
 
-  // ── W5: MCP inheritance and per-turn full-table overrides ──────────────────
+  // ── W5: MCP inheritance and per-turn explicit policies ─────────────────────
 
   it("sends no mcp_servers override when Rennet has none to pin (user MCP survives)", async () => {
-    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const { effects, spawns, mcpLists } = fakeExecEffects({ finalText: "{}" });
     const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     await executor({ model: "m", effort: "low", prompt: "p" });
     expect((spawns[0] as SpawnCall).args).toEqual(["app-server"]);
+    expect(mcpLists).toHaveLength(0);
   });
 
-  it("lets a turn replace the configured MCP table with an explicitly empty table", async () => {
-    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+  it("disables every ambient MCP when a turn requests an explicitly empty table", async () => {
+    const { effects, spawns, mcpLists } = fakeExecEffects({
+      finalText: "{}",
+      mcpList: MCP_INVENTORY,
+    });
     const executor = createCodexExecutor(effects, {
       repoRoot: "/repo",
       mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
     });
     await executor({ model: "m", effort: "low", prompt: "p", mcpServers: {} });
-    expect((spawns[0] as SpawnCall).args).toEqual(["app-server", "-c", "mcp_servers={}"]);
+    expect(mcpLists).toHaveLength(1);
+    expect((spawns[0] as SpawnCall).args).toEqual([
+      "app-server",
+      "-c",
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
+    ]);
   });
 
   it("starts only Context Map partition workers with an empty MCP table", async () => {
-    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const { effects, spawns, mcpLists } = fakeExecEffects({
+      finalText: "{}",
+      mcpList: MCP_INVENTORY,
+    });
     const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     const council = { availability: { installed: ["codex" as const] } };
     const worker = councilSeatTurn(
@@ -348,12 +414,17 @@ describe("createCodexExecutor (app-server)", () => {
     await worker.runTurn("worker", 1);
     await verify.runTurn("verify", 1);
 
-    expect((spawns[0] as SpawnCall).args).toEqual(["app-server", "-c", "mcp_servers={}"]);
+    expect((spawns[0] as SpawnCall).args).toEqual([
+      "app-server",
+      "-c",
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
+    ]);
     expect((spawns[1] as SpawnCall).args).toEqual(["app-server"]);
+    expect(mcpLists).toHaveLength(1);
   });
 
   it("pins Rennet's loopback servers when it has them", async () => {
-    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const { effects, spawns } = fakeExecEffects({ finalText: "{}", mcpList: MCP_INVENTORY });
     const executor = createCodexExecutor(effects, {
       repoRoot: "/repo",
       mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
@@ -362,8 +433,81 @@ describe("createCodexExecutor (app-server)", () => {
     expect((spawns[0] as SpawnCall).args).toEqual([
       "app-server",
       "-c",
-      'mcp_servers={canvasops={url="http://127.0.0.1:5000/mcp"}}',
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"canvasops"={url="http://127.0.0.1:5000/mcp",enabled=true},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
+  });
+
+  it("discovers the ambient MCP inventory once across concurrent turns", async () => {
+    const { effects, mcpLists, spawns } = fakeExecEffects({
+      finalText: "{}",
+      mcpList: MCP_INVENTORY,
+    });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+
+    await Promise.all([
+      executor({ model: "m", effort: "low", prompt: "one", mcpServers: {} }),
+      executor({ model: "m", effort: "low", prompt: "two", mcpServers: {} }),
+    ]);
+
+    expect(mcpLists).toHaveLength(1);
+    expect(spawns).toHaveLength(2);
+  });
+
+  it("reads separate MCP inventories for different effective turn cwd commands", async () => {
+    const { effects, mcpLists } = fakeExecEffects({
+      finalText: "{}",
+      mcpList: MCP_INVENTORY,
+    });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+
+    await executor({ model: "m", effort: "low", prompt: "one", cwd: "/repo-one", mcpServers: {} });
+    await executor({ model: "m", effort: "low", prompt: "two", cwd: "/repo-two", mcpServers: {} });
+
+    expect(mcpLists.map((call) => call.cwd)).toEqual(["/repo-one", "/repo-two"]);
+  });
+
+  it("refreshes the inventory between sequential turns in the same cwd", async () => {
+    const { effects, mcpLists, spawns } = fakeExecEffects({
+      finalText: "{}",
+      mcpListSequence: [[MCP_INVENTORY[0]], MCP_INVENTORY],
+    });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+
+    await executor({ model: "m", effort: "low", prompt: "one", mcpServers: {} });
+    await executor({ model: "m", effort: "low", prompt: "two", mcpServers: {} });
+
+    expect(mcpLists).toHaveLength(2);
+    expect(spawns[0]?.args[2]).not.toContain("context7");
+    expect(spawns[1]?.args[2]).toContain("context7");
+  });
+
+  it("fails before spawn, then retries discovery on the next turn", async () => {
+    const { effects, mcpLists, spawns } = fakeExecEffects({
+      finalText: "{}",
+      mcpListSequence: [[], MCP_INVENTORY],
+      mcpListExitCodeSequence: [2, 0],
+    });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+
+    await expect(
+      executor({ model: "m", effort: "low", prompt: "p", mcpServers: {} }),
+    ).rejects.toThrow(/MCP configuration failed.*mcp list.*exited 2/i);
+    await executor({ model: "m", effort: "low", prompt: "retry", mcpServers: {} });
+    expect(mcpLists).toHaveLength(2);
+    expect(spawns).toHaveLength(1);
+  });
+
+  it("fails before spawn when the ambient MCP inventory is malformed", async () => {
+    const { effects, spawns } = fakeExecEffects({
+      finalText: "{}",
+      mcpList: [{ name: "broken", transport: { type: "sse" } }],
+    });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+
+    await expect(
+      executor({ model: "m", effort: "low", prompt: "p", mcpServers: {} }),
+    ).rejects.toThrow(/MCP configuration failed.*unsupported transport/i);
+    expect(spawns).toHaveLength(0);
   });
 });
 

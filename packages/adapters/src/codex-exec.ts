@@ -29,7 +29,10 @@ import { execa } from "execa";
 import {
   buildAppServerArgs,
   type CodexTurnResultFrame,
+  defaultRunCodexMcpList,
   defaultSpawnAppServer,
+  type RunCodexMcpList,
+  readCodexMcpServerInventory,
   runCodexTurn,
   type SpawnAppServer,
   spawnFailureFrame,
@@ -194,11 +197,14 @@ export function stripNullDeep(value: unknown): unknown {
 export interface CodexExecEffects {
   /** Spawn a live `codex app-server` connection. */
   readonly spawn: SpawnAppServer;
+  /** Read the configured Codex MCP inventory without starting a model turn. */
+  readonly runMcpList: RunCodexMcpList;
 }
 
 /** The real effects: one `codex app-server` child over piped stdio. */
 export const defaultCodexExecEffects: CodexExecEffects = {
   spawn: defaultSpawnAppServer,
+  runMcpList: defaultRunCodexMcpList,
 };
 
 export interface CreateCodexExecutorOptions {
@@ -233,9 +239,9 @@ export interface CreateCodexExecutorOptions {
    */
   readonly repoRoot: string;
   /**
-   * Loopback MCP servers (canvasOps@2) to pin by default, as a full-table
-   * override. A request can replace this table for one job. When both are absent,
-   * Codex inherits the user's configured servers.
+   * Loopback MCP servers (canvasOps@2) to pin by default. A request can replace
+   * this set for one job. When both are absent, Codex inherits the user's
+   * configured servers.
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
 }
@@ -253,6 +259,29 @@ export function createCodexExecutor(
   const bin = options.bin ?? CODEX_EXEC_BIN;
   const locus = options.locus ?? HOST_LOCUS;
   const runtimePath = options.runtimePath;
+  const mcpInventoryPromises = new Map<string, ReturnType<typeof readCodexMcpServerInventory>>();
+  const mcpInventory = async (
+    cwd: string,
+  ): Promise<Awaited<ReturnType<typeof readCodexMcpServerInventory>>> => {
+    const program = runtimePath ?? bin;
+    const args = ["mcp", "list", "--json"];
+    const programArgs = runtimePath === undefined ? args : [bin, ...args];
+    const cmd = locusCommand(locus, program, programArgs, cwd);
+    const key = JSON.stringify([cmd.file, cmd.args, cmd.cwd]);
+    const existing = mcpInventoryPromises.get(key);
+    if (existing !== undefined) return existing;
+    const inventory = readCodexMcpServerInventory(effects.runMcpList, {
+      bin: cmd.file,
+      args: cmd.args,
+      cwd: cmd.cwd,
+    });
+    mcpInventoryPromises.set(key, inventory);
+    try {
+      return await inventory;
+    } finally {
+      if (mcpInventoryPromises.get(key) === inventory) mcpInventoryPromises.delete(key);
+    }
+  };
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
     const reportFailure = (reason: string): void => {
       options.onUsageMeasurement?.({
@@ -274,7 +303,18 @@ export function createCodexExecutor(
     // (the swarm's evidence-reading seats).
     const cwd = req.cwd ?? options.repoRoot;
     const mcpServers = req.mcpServers === undefined ? options.mcpServers : req.mcpServers;
-    const args = buildAppServerArgs(mcpServers);
+    let args: string[];
+    try {
+      args = buildAppServerArgs(
+        mcpServers,
+        mcpServers === undefined ? [] : await mcpInventory(cwd),
+      );
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      const reason = `codex MCP configuration failed: ${detail}`;
+      reportFailure(reason);
+      throw new Error(reason, { cause });
+    }
     const program = runtimePath ?? bin;
     const programArgs = runtimePath === undefined ? args : [bin, ...args];
     const cmd = locusCommand(locus, program, programArgs, cwd);

@@ -40,7 +40,10 @@ import {
 import {
   buildAppServerArgs,
   type CodexTurnResultFrame,
+  defaultRunCodexMcpList,
   defaultSpawnAppServer,
+  type RunCodexMcpList,
+  readCodexMcpServerInventory,
   runCodexTurn,
   type SpawnAppServer,
   spawnFailureFrame,
@@ -57,10 +60,13 @@ import {
 export interface CodexTransportEffects {
   /** Spawn a live `codex app-server` connection. */
   readonly spawn: SpawnAppServer;
+  /** Read the configured Codex MCP inventory without starting a model turn. */
+  readonly runMcpList: RunCodexMcpList;
 }
 
 export const defaultCodexTransportEffects: CodexTransportEffects = {
   spawn: defaultSpawnAppServer,
+  runMcpList: defaultRunCodexMcpList,
 };
 
 /**
@@ -75,6 +81,29 @@ export function createCodexTurnTransport(
   locus: Locus = HOST_LOCUS,
   runtimePath?: string,
 ): CodexTurnTransport {
+  const mcpInventoryPromises = new Map<string, ReturnType<typeof readCodexMcpServerInventory>>();
+  const mcpInventory = async (
+    cwd: string,
+  ): Promise<Awaited<ReturnType<typeof readCodexMcpServerInventory>>> => {
+    const program = runtimePath ?? bin;
+    const args = ["mcp", "list", "--json"];
+    const programArgs = runtimePath === undefined ? args : [bin, ...args];
+    const cmd = locusCommand(locus, program, programArgs, cwd);
+    const key = JSON.stringify([cmd.file, cmd.args, cmd.cwd]);
+    const existing = mcpInventoryPromises.get(key);
+    if (existing !== undefined) return existing;
+    const inventory = readCodexMcpServerInventory(effects.runMcpList, {
+      bin: cmd.file,
+      args: cmd.args,
+      cwd: cmd.cwd,
+    });
+    mcpInventoryPromises.set(key, inventory);
+    try {
+      return await inventory;
+    } finally {
+      if (mcpInventoryPromises.get(key) === inventory) mcpInventoryPromises.delete(key);
+    }
+  };
   return (spec: CodexTurnSpec) => ({
     async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
       // The cwd `turn/start` receives: distro-native for a WSL locus (its stdio is
@@ -86,7 +115,10 @@ export function createCodexTurnTransport(
         if (distroCwd === null) throw new LocusPathUntranslatableError(spec.cwd, locus.distro);
         turnCwd = distroCwd;
       }
-      const args = buildAppServerArgs(spec.mcpServers);
+      const args = buildAppServerArgs(
+        spec.mcpServers,
+        spec.mcpServers === undefined ? [] : await mcpInventory(spec.cwd),
+      );
       // A runtime-hosted codex (an asdf node JS launcher) runs as `<node> <codex>
       // app-server …`; a normal install runs `<codex> app-server …`.
       const program = runtimePath ?? bin;

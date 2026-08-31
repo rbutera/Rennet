@@ -67,6 +67,7 @@ describe("codex WSL locus — real distro round-trip (gated)", () => {
       const spawns: { bin: string; args: readonly string[] }[] = [];
       const base = defaultCodexTransportEffects;
       const effects: CodexTransportEffects = {
+        runMcpList: base.runMcpList,
         spawn: (spawnSpec) => {
           spawns.push({ bin: spawnSpec.bin, args: spawnSpec.args });
           return base.spawn(spawnSpec);
