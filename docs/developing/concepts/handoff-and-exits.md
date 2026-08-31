@@ -271,8 +271,14 @@ for that marker before creating anything, so a retry after a lost response
 returns the review that already landed instead of posting a second one. When no
 matching review exists, the provider adapter reads the pull or merge request's
 live head and refuses a moved head before its first mutation. A matching marker
-or a durable local receipt proves the earlier operation already landed and wins
-over that freshness check.
+proves a one-step provider operation already landed; a durable local receipt proves
+the complete operation. Either wins over that freshness check. GitLab sends the
+descriptor's reviewed body without adding provider-only prose after preview; when
+GitLab needs the textual verdict, the core composer puts that label in the signed
+descriptor first. On an approving retry, the marker proves only that the note
+landed. The adapter also reads whether the current user approved. It returns the
+reused receipt when approval already landed, or rechecks the immutable head and
+performs the missing approval once.
 
 After the provider returns a result, the daemon persists the publication receipt
 by review and marker before it answers the client. `publish.receipt` reads that

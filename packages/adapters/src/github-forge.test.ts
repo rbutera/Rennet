@@ -387,6 +387,7 @@ describe("GitHubForgeAdapter.capabilities", () => {
       supportsBatchedReview: true,
       supportsMultiLineAnchors: true,
       supportsFileLevelThreads: true,
+      requiresReviewVerdictInBody: false,
     });
   });
 });

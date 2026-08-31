@@ -195,6 +195,7 @@ function recordingPublishPort(): ForgePublishPort & { posts: ForgeReviewPost[] }
       supportsBatchedReview: true,
       supportsMultiLineAnchors: true,
       supportsFileLevelThreads: true,
+      requiresReviewVerdictInBody: false,
     },
     buildReviewRequest: (post) => buildGitHubReviewRequest(post),
     findExistingReview: () => Promise.resolve(null),
