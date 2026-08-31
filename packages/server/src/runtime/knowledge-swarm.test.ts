@@ -21,6 +21,34 @@ afterEach(() => {
 });
 
 describe("knowledgeStageLine", () => {
+  it("narrates scope selection before worker fan-out with honest coverage counts", () => {
+    expect(
+      knowledgeStageLine("rennet", {
+        kind: "scope",
+        status: "done",
+        candidates: 96,
+        selected: 64,
+        scopeExcludedFiles: 702,
+        mechanicallyExcludedFiles: 177,
+        attempts: 1,
+      }),
+    ).toMatchObject({
+      note: "Context-map coverage selected",
+      detail:
+        "64 of 96 slices selected; 702 files excluded by scope; 177 mechanically excluded; 1 selector model turn",
+    });
+    expect(
+      knowledgeStageLine("rennet", {
+        kind: "scope",
+        status: "reused",
+        candidates: 96,
+        selected: 64,
+        scopeExcludedFiles: 702,
+        mechanicallyExcludedFiles: 177,
+      }),
+    ).toMatchObject({ note: "Context-map coverage reused" });
+  });
+
   it("narrates a journal REUSE as reuse, never as a turn that ran", () => {
     // A batch answered from the journal cost nothing. Reporting it as "done"
     // alongside the batches that really ran would overstate the run's spend.
@@ -86,7 +114,12 @@ describe("knowledgeOutcomeLine", () => {
           statements: [],
         },
         ranPartitions: 1,
+        selectedPartitions: 1,
         totalPartitions: 1,
+        scopeExcludedFiles: 0,
+        mechanicallyExcludedFiles: 0,
+        removedByCoverage: 0,
+        reusedScopePlan: false,
         failedPartitions: 0,
         reusedPartitions: 0,
         skippedCosmetic: 0,

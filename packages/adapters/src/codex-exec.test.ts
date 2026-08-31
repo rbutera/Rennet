@@ -393,13 +393,19 @@ describe("createCodexExecutor (app-server)", () => {
     ]);
   });
 
-  it("starts only Context Map partition workers with an empty MCP table", async () => {
+  it("starts every Context Map model seat with an empty MCP table", async () => {
     const { effects, spawns, mcpLists } = fakeExecEffects({
       finalText: "{}",
       mcpList: MCP_INVENTORY,
     });
     const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     const council = { availability: { installed: ["codex" as const] } };
+    const scope = councilSeatTurn(
+      "map-scope",
+      { type: "object" },
+      { codexExecutor: executor, repoRoot: "/repo" },
+      council,
+    );
     const worker = councilSeatTurn(
       "partition-worker",
       { type: "object" },
@@ -413,10 +419,12 @@ describe("createCodexExecutor (app-server)", () => {
       council,
     );
 
+    expect("failure" in scope ? scope.failure : null).toBeNull();
     expect("failure" in worker ? worker.failure : null).toBeNull();
     expect("failure" in verify ? verify.failure : null).toBeNull();
-    if ("failure" in worker || "failure" in verify) return;
+    if ("failure" in scope || "failure" in worker || "failure" in verify) return;
 
+    await scope.runTurn("scope", 1);
     await worker.runTurn("worker", 1);
     await verify.runTurn("verify", 1);
 
@@ -427,8 +435,21 @@ describe("createCodexExecutor (app-server)", () => {
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
-    expect((spawns[1] as SpawnCall).args).toEqual(["app-server"]);
-    expect(mcpLists).toHaveLength(1);
+    expect((spawns[1] as SpawnCall).args).toEqual([
+      "app-server",
+      "--disable",
+      "plugins",
+      "-c",
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
+    ]);
+    expect((spawns[2] as SpawnCall).args).toEqual([
+      "app-server",
+      "--disable",
+      "plugins",
+      "-c",
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
+    ]);
+    expect(mcpLists).toHaveLength(3);
   });
 
   it("pins Rennet's loopback servers when it has them", async () => {

@@ -291,6 +291,76 @@ export interface KnowledgeStatement {
 /** The current knowledge-set schema version. Bumped on a breaking statement-shape change. */
 export const KNOWLEDGE_SCHEMA_VERSION = 1;
 
+/** Current swarm identity. Every set bearing it must carry exact model coverage. */
+export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@5" as const;
+
+/** One snapshot file carried by the model-coverage record. */
+export interface KnowledgeCoverageFile {
+  readonly path: string;
+  readonly blobOid: string;
+}
+
+/** Why a tracked file was deterministically ineligible for a mapping worker. */
+export type KnowledgeMechanicalExclusionReason =
+  | "binary"
+  | "lockfile"
+  | "vendored"
+  | "generated-path"
+  | "generated-content";
+
+/**
+ * One exact, trusted coverage group. Slice membership comes from the deterministic
+ * partitioner; a model may choose a slice id, but never supplies its file list.
+ */
+export type KnowledgeCoverageGroup =
+  | {
+      readonly kind: "mapped";
+      readonly sliceId: string;
+      readonly files: readonly KnowledgeCoverageFile[];
+    }
+  | {
+      readonly kind: "excluded";
+      readonly source: "scope";
+      readonly sliceId: string;
+      readonly reason: string;
+      readonly files: readonly KnowledgeCoverageFile[];
+    }
+  | {
+      readonly kind: "excluded";
+      readonly source: "mechanical";
+      readonly reason: KnowledgeMechanicalExclusionReason;
+      readonly files: readonly KnowledgeCoverageFile[];
+    };
+
+/**
+ * The model-knowledge coverage stored atomically with its statements. Flattening
+ * `groups[].files` is the snapshot inventory exactly once; absence on an older set
+ * means coverage was not recorded, never that every file was mapped.
+ */
+export interface KnowledgeCoverage {
+  readonly schemaVersion: 1;
+  readonly catalogueDigest: string;
+  readonly selector:
+    | {
+        readonly kind: "below-cap";
+        readonly cap: number;
+        readonly generator: string;
+      }
+    | {
+        readonly kind: "council";
+        readonly cap: number;
+        readonly generator: string;
+        readonly harness: "claude-code" | "codex";
+        /** The Council assignment used to start the seat. */
+        readonly assignedModel: string;
+        /** The model the harness reported after starting the seat. */
+        readonly model: string;
+        readonly effort: "low" | "medium" | "high" | "xhigh";
+        readonly apiKeySource: string | null;
+      };
+  readonly groups: readonly KnowledgeCoverageGroup[];
+}
+
 /**
  * The stored knowledge set for one repo, pinned to the snapshot it was generated
  * against. This is the on-disk shape under `knowledge/knowledge.json` locally and
@@ -307,5 +377,7 @@ export interface KnowledgeSet {
   readonly snapshotFingerprint: string;
   /** The generator identity that produced the set. */
   readonly generator: string;
+  /** Exact model coverage. Optional only for legacy sets written before `knowledge-swarm@5`. */
+  readonly coverage?: KnowledgeCoverage;
   readonly statements: readonly KnowledgeStatement[];
 }

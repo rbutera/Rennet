@@ -4340,9 +4340,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // ponytail: invalidatedPending is dropped from the view, not yet surfaced as a
       // distinct "pending re-check" tier — add that when the protocol carries it.
       const storedSet = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey);
-      const knowledge = storedSet
-        ? { ...storedSet, statements: [...queryKnowledge(storedSet, gated.snapshot).statements] }
-        : null;
+      let knowledge: typeof storedSet = null;
+      if (storedSet) {
+        const view = queryKnowledge(storedSet, gated.snapshot);
+        const checkedCoverage =
+          view.coverage.kind === "current" || view.coverage.kind === "stale"
+            ? { coverage: view.coverage.exact }
+            : {};
+        knowledge = {
+          schemaVersion: storedSet.schemaVersion,
+          repoKey: storedSet.repoKey,
+          baseOid: storedSet.baseOid,
+          snapshotFingerprint: storedSet.snapshotFingerprint,
+          generator: storedSet.generator,
+          ...checkedCoverage,
+          statements: [...view.statements],
+        };
+      }
       return {
         status: "ok",
         map: queryProjectMap(gated.snapshot),

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HarnessPort, HarnessSession, LoadedSnapshot } from "@rennet/core";
 import {
-  buildPartitions,
   KNOWLEDGE_SWARM_GENERATOR_ID,
   PARTITION_WORKER_OUTPUT_SCHEMA,
   partitionsFromSnapshot,
@@ -182,22 +181,39 @@ describe("knowledge swarm — packet e2e over a real repo (stub turns, productio
     });
     expect(run1.status).toBe("ok");
     if (run1.status !== "ok") return;
-    expect(run1.ranPartitions).toBe(run1.totalPartitions);
 
-    // Exactly-once coverage over the REAL snapshot's scope graph: the union of
-    // the production partitions equals the inventory, pairwise disjoint.
+    // The persisted coverage record, rather than raw partition count, owns the exact
+    // snapshot accounting. Every file is mapped, scope-excluded, or mechanically
+    // excluded exactly once, and every selected slice runs on this fresh baseline.
     const gated = reader.loadFresh(repoKey, oid1);
     expect(gated.ok).toBe(true);
     if (!gated.ok) return;
     const snapshot = snapshotContextFromLoaded(gated.snapshot);
-    const partitions = buildPartitions(snapshot);
-    const seen = new Map<string, number>();
-    for (const slice of partitions)
-      for (const file of slice.files) seen.set(file.path, (seen.get(file.path) ?? 0) + 1);
-    expect([...seen.keys()].sort()).toEqual(snapshot.files.map((f) => f.path).sort());
-    expect([...seen.values()].every((count) => count === 1)).toBe(true);
-    // One worker turn per partition.
-    expect(run1Prompts).toHaveLength(partitions.length);
+    const coverage = run1.set.coverage;
+    expect(coverage).toBeDefined();
+    if (coverage === undefined) return;
+    expect(knowledgeStore.loadLocal(repoKey)?.coverage).toEqual(coverage);
+
+    const mapped = coverage.groups.filter((group) => group.kind === "mapped");
+    const scopeExcluded = coverage.groups.filter(
+      (group) => group.kind === "excluded" && group.source === "scope",
+    );
+    const mechanical = coverage.groups.filter(
+      (group) => group.kind === "excluded" && group.source === "mechanical",
+    );
+    expect(mapped).toHaveLength(run1.selectedPartitions);
+    expect(mapped.length + scopeExcluded.length).toBe(run1.totalPartitions);
+    expect(scopeExcluded.flatMap((group) => group.files)).toHaveLength(run1.scopeExcludedFiles);
+    expect(mechanical.flatMap((group) => group.files)).toHaveLength(run1.mechanicallyExcludedFiles);
+
+    const coveredFiles = coverage.groups.flatMap((group) => group.files);
+    const expectedFiles = snapshot.files.map(({ path, blobOid }) => ({ path, blobOid }));
+    const byPath = (left: { path: string }, right: { path: string }) =>
+      left.path.localeCompare(right.path);
+    expect([...coveredFiles].sort(byPath)).toEqual([...expectedFiles].sort(byPath));
+    expect(new Set(coveredFiles.map((file) => file.path)).size).toBe(coveredFiles.length);
+    expect(run1.ranPartitions).toBe(run1.selectedPartitions);
+    expect(run1Prompts).toHaveLength(run1.selectedPartitions);
 
     // The packet is SKELETON-FED from the real snapshot, not a bare path list: the
     // TypeScript file shows its declared symbol with a line, and the `.md` — which

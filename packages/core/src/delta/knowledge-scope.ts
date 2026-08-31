@@ -1,6 +1,11 @@
 import type { KnowledgeSet, KnowledgeStatement, WorkspaceScope } from "@rennet/protocol";
 import { DEFAULT_ASK_MAX_STATEMENTS } from "../context-ask";
-import { queryKnowledge } from "../knowledge/read";
+import {
+  type KnowledgeCoverageTotals,
+  type KnowledgeCoverageView,
+  knowledgeCoverageTotals,
+  queryKnowledge,
+} from "../knowledge/read";
 import { type LoadedSnapshot, queryImportGraph, underPrefix } from "../project-context";
 import { compareStrings } from "./blast-radius";
 
@@ -72,6 +77,61 @@ export interface ScopedKnowledgeCounts {
   readonly changedPathsWithEdges: number;
 }
 
+type RecordedCoverageSummary = KnowledgeCoverageTotals & {
+  readonly kind: "current" | "stale" | "recorded-unchecked";
+};
+
+/** The mapping run's exact coverage, reduced to the counts this packet must disclose. */
+export type ScopedKnowledgeCoverage =
+  | { readonly kind: "absent" }
+  | { readonly kind: "unrecorded" }
+  | { readonly kind: "invalid" }
+  | RecordedCoverageSummary;
+
+function recordedCoverageSummary(
+  kind: RecordedCoverageSummary["kind"],
+  exact: NonNullable<KnowledgeSet["coverage"]>,
+): RecordedCoverageSummary {
+  return { kind, ...knowledgeCoverageTotals(exact) };
+}
+
+function scopedCoverageFromView(view: KnowledgeCoverageView): ScopedKnowledgeCoverage {
+  switch (view.kind) {
+    case "absent":
+    case "unrecorded":
+      return { kind: view.kind };
+    case "invalid":
+      return { kind: "invalid" };
+    case "current":
+      return recordedCoverageSummary("current", view.exact);
+    case "stale":
+      return recordedCoverageSummary("stale", view.exact);
+  }
+}
+
+function scopedCoverageWithoutSnapshot(set: KnowledgeSet | null): ScopedKnowledgeCoverage {
+  if (set === null) return { kind: "absent" };
+  if (set.coverage === undefined) return { kind: "unrecorded" };
+  return recordedCoverageSummary("recorded-unchecked", set.coverage);
+}
+
+function coverageDisclosure(coverage: ScopedKnowledgeCoverage): string {
+  switch (coverage.kind) {
+    case "absent":
+      return "No knowledge set exists, so model mapping coverage is absent.";
+    case "unrecorded":
+      return "This legacy knowledge set exists, but model mapping coverage was not recorded.";
+    case "invalid":
+      return "The model mapping coverage record does not match the snapshot inventory and is unavailable.";
+    case "current":
+      return `Model mapping coverage is current: ${coverage.mappedFiles} mapped, ${coverage.scopeExcludedFiles} scope-excluded, ${coverage.mechanicallyExcludedFiles} mechanically excluded.`;
+    case "stale":
+      return `Model mapping coverage belongs to an earlier snapshot: ${coverage.mappedFiles} mapped, ${coverage.scopeExcludedFiles} scope-excluded, ${coverage.mechanicallyExcludedFiles} mechanically excluded.`;
+    case "recorded-unchecked":
+      return `Model mapping coverage was recorded but could not be checked without a fresh snapshot: ${coverage.mappedFiles} mapped, ${coverage.scopeExcludedFiles} scope-excluded, ${coverage.mechanicallyExcludedFiles} mechanically excluded.`;
+  }
+}
+
 /**
  * The knowledge a Delta packet carries: a projected, scoped, capped SUBSET of the
  * stored set, plus the disclosure that makes it honest.
@@ -108,6 +168,8 @@ export interface ScopedKnowledge {
   readonly statements: readonly KnowledgeStatement[];
   /** In-scope statements the snapshot invalidated — disclosed, capped. */
   readonly invalidatedPending: readonly KnowledgeStatement[];
+  /** Concise, explicit model-mapping coverage for the source knowledge set. */
+  readonly coverage: ScopedKnowledgeCoverage;
   readonly counts: ScopedKnowledgeCounts;
 }
 
@@ -249,14 +311,16 @@ export function selectPacketKnowledge(input: {
       .filter((s) => !isRejected(s))
       .sort(byChangeRelevanceThenId(input.changedPaths, []));
     const statements = kept.slice(0, cap);
+    const coverage = scopedCoverageWithoutSnapshot(input.set);
     return {
       generator: input.set?.generator ?? null,
       baseOid: input.set?.baseOid ?? "",
       snapshotFingerprint: input.set?.snapshotFingerprint ?? "",
       mode: "unprojected",
-      note: `No fresh project snapshot for this patchset, so statements are carried UNPROJECTED — an invalidated claim cannot be told from a current one here. Rejected statements are still dropped. ${inStore} statement(s) in the store. context.ask reads the same snapshot, so it will refuse here too until the repo map is rebuilt (\`rennet map\`).`,
+      note: `No fresh project snapshot for this patchset, so statements are carried UNPROJECTED. An invalidated claim cannot be told from a current one here. Rejected statements are still dropped. ${inStore} statement(s) in the store. ${coverageDisclosure(coverage)} context.ask reads the same snapshot, so it will refuse here too until the repo map is rebuilt (\`rennet map\`).`,
       statements,
       invalidatedPending: [],
+      coverage,
       counts: {
         inStore,
         rejected: inStore - kept.length,
@@ -273,6 +337,7 @@ export function selectPacketKnowledge(input: {
 
   const snapshot = input.snapshot;
   const view = queryKnowledge(input.set, snapshot);
+  const modelCoverage = scopedCoverageFromView(view.coverage);
   const current = view.statements.filter((s) => !isRejected(s));
   const pending = view.invalidatedPending.filter((s) => !isRejected(s));
   const rejected =
@@ -333,8 +398,8 @@ export function selectPacketKnowledge(input: {
       : "no changed path appears in it (added, or never indexed)";
   const note =
     scope === null
-      ? `The import graph is unusable for this change (${why}), so this is the FULL projected knowledge set rather than a scoped subset, ordered so the statements naming a changed path come first. ${coverage} ${inStore} statement(s) in the store; ask context.ask for anything not below.`
-      : `Scoped by retrieval: the ${changedPaths} changed path(s) plus their 1-hop import neighbours (${scope.size} file(s)), and repo-level statements. ${coverage} ${inStore} statement(s) in the store, ${statements.length} offered below; ask context.ask for anything else you need.`;
+      ? `The import graph is unusable for this change (${why}), so this is the FULL projected knowledge set rather than a scoped subset, ordered so the statements naming a changed path come first. ${coverage} ${inStore} statement(s) in the store; ask context.ask for anything not below. ${coverageDisclosure(modelCoverage)}`
+      : `Scoped by retrieval: the ${changedPaths} changed path(s) plus their 1-hop import neighbours (${scope.size} file(s)), and repo-level statements. ${coverage} ${inStore} statement(s) in the store, ${statements.length} offered below; ask context.ask for anything else you need. ${coverageDisclosure(modelCoverage)}`;
 
   return {
     generator: view.generator,
@@ -344,6 +409,7 @@ export function selectPacketKnowledge(input: {
     note,
     statements,
     invalidatedPending,
+    coverage: modelCoverage,
     counts: {
       inStore,
       rejected,

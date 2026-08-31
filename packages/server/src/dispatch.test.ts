@@ -5811,6 +5811,18 @@ describe("createDispatch — project.contextMap / contextAsk / knowledgeDisposit
     baseOid: "abc123",
     snapshotFingerprint: "fp-1",
     generator: "test",
+    coverage: {
+      schemaVersion: 1 as const,
+      catalogueDigest: "catalogue-1",
+      selector: { kind: "below-cap" as const, cap: 64, generator: "map-scope@1" },
+      groups: [
+        {
+          kind: "mapped" as const,
+          sliceId: "scope:src",
+          files: [{ path: "src/a.ts", blobOid: "blob-1" }],
+        },
+      ],
+    },
     statements: [sampleStatement],
   };
 

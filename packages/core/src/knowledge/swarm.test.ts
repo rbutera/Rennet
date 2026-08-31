@@ -51,7 +51,7 @@ describe("runPartitionWorker", () => {
     expect(PARTITION_WORKER_OUTPUT_SCHEMA.properties.statements).toHaveProperty("maxItems", 8);
     expect(KNOWLEDGE_OUTPUT_SCHEMA.properties.statements).not.toHaveProperty("maxItems");
     expect(MAP_VERIFY_OUTPUT_SCHEMA.properties.crossCutting).not.toHaveProperty("maxItems");
-    expect(KNOWLEDGE_SWARM_GENERATOR_ID).toBe("knowledge-swarm@4");
+    expect(KNOWLEDGE_SWARM_GENERATOR_ID).toBe("knowledge-swarm@5");
     expect(
       PARTITION_WORKER_OUTPUT_SCHEMA.properties.statements.items.properties.hint,
     ).toMatchObject({
@@ -374,6 +374,7 @@ describe("runMapVerify", () => {
     expect(verify.status).toBe("ok");
     expect(verify.confirmed).toBe(1);
     expect(verify.rejected).toBe(0);
+    expect(verify.set?.coverage).toBeNull();
     const byId = new Map(verify.set?.statements.map((s) => [s.id, s.status]));
     expect(byId.get(first?.statement.id ?? "")).toBe("hypothesis");
     expect(byId.get(second?.statement.id ?? "")).toBe("hypothesis");

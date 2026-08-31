@@ -16,7 +16,7 @@
  */
 
 import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
-import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
+import { KNOWLEDGE_SCHEMA_VERSION, KNOWLEDGE_SWARM_GENERATOR_ID } from "@rennet/protocol";
 import type { HarnessTurnResult } from "../harness-run-turn";
 import { mergeWorkerResults, type SeamGroup } from "./merge";
 import type { KnowledgeProvenanceSeed, KnowledgeSnapshotContext } from "./mint";
@@ -34,12 +34,11 @@ import { fileBlobIndex } from "./read";
 /**
  * The swarm generator identity: bump on any prompt/schema change.
  *
- * `@4` keeps the ranked worker-hypothesis ceiling, makes cross-slice hints
- * structured and path-resolvable, and groups verify work per source slice. Earlier
- * sets and journal entries answer a different prompt/schema contract, so they are
- * replaced rather than carried or reused.
+ * `@5` adds the exact whole-slice scope contract and persisted coverage. Earlier
+ * sets have no trustworthy mapped/excluded partition, so they are replaced rather
+ * than carried or reused.
  */
-export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@4";
+export { KNOWLEDGE_SWARM_GENERATOR_ID } from "@rennet/protocol";
 
 type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
 
@@ -366,11 +365,20 @@ export async function boundedAll<T>(
   return results;
 }
 
+/**
+ * Verify output before exact model coverage is attached. The null sentinel keeps
+ * this intermediate shape structurally distinct from a durable `KnowledgeSet`;
+ * only the adapter that owns the snapshot selection may materialize and persist it.
+ */
+export type KnowledgeSetDraft = Omit<KnowledgeSet, "coverage"> & {
+  readonly coverage: null;
+};
+
 export interface MapVerifyResult {
   readonly status: "ok" | "failed";
   readonly failureReason?: string;
   /** The synthesized set, present on `ok`: merged worker statements + cross-cutting mints, deduped. */
-  readonly set?: KnowledgeSet;
+  readonly set?: KnowledgeSetDraft;
   /** How many hypotheses the seat confirmed / rejected (rejected stay in the set as recorded state). */
   readonly confirmed: number;
   readonly rejected: number;
@@ -623,6 +631,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
         baseOid: snapshot.baseOid,
         snapshotFingerprint: snapshot.snapshotFingerprint,
         generator,
+        coverage: null,
         statements: dedupById(merge.statements),
       },
       confirmed: 0,
@@ -749,12 +758,13 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
     crossBoundary?.status === "ok"
       ? [...chunkCrossCutting, ...crossBoundary.crossCutting]
       : chunkCrossCutting;
-  const set: KnowledgeSet = {
+  const set: KnowledgeSetDraft = {
     schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
     repoKey: snapshot.repoKey,
     baseOid: snapshot.baseOid,
     snapshotFingerprint: snapshot.snapshotFingerprint,
     generator,
+    coverage: null,
     statements: dedupById([...byId.values(), ...crossCutting]),
   };
   return {

@@ -94,7 +94,7 @@ knowledge set (`knowledge/knowledge.json`) remain distinct, with statements
 keeping their anchored, falsifiable schema — the thing Understand-Anything's
 one-line node summaries lack.
 
-### Stage 1 — deterministic front half (zero tokens)
+### Stage 1 — structural front half and exact scope
 
 1. **Import-edge shard.** Promote the changeset import extraction to a
    snapshot-wide, per-blob import shard: relative specifiers resolved against
@@ -116,15 +116,18 @@ one-line node summaries lack.
    file, its cross-batch import neighbours with their exported symbol names,
    joined from the existing symbols shard. Expected effect on Rennet: roughly
    200 fragments → 40–60 module batches.
-4. **Optional scoping seat.** A medium-tier model may read the classified,
-   clustered tree and mark subtrees not worth mapping (the #584 approach (b)).
-   With classification and clustering already deterministic, this judgment
-   becomes cheap and reviewable. Whatever it excludes is recorded in the map
-   as excluded-by-policy — completeness semantics stay honest.
+4. **Exact whole-slice scoping.** With 64 or fewer candidate slices, select all
+   of them deterministically and spend no model turn. Above 64, route one medium
+   `map-scope@1` Council seat over the classified catalogue. It must partition
+   every offered slice id exactly once between included and excluded, include no
+   more than 64 whole slices, preserve every entry-point slice, and give a
+   nonblank reason for each exclusion. Invalid output retries once and then
+   fails before workers start. Store the trusted file membership as exact mapped,
+   scope-excluded, and mechanically excluded coverage beside the knowledge set.
 
 ### Stage 2 — light-tier workers
 
-One turn per module batch, routed by the council as today (light tier,
+One turn per selected module batch, routed by the Council as today (light tier,
 Codex-first), cwd at the repository root. Input: the batch's symbol skeleton,
 pre-resolved import data, and neighborMap. Output: anchored statements in the
 existing schema, plus the semantic edges no parser can derive.
@@ -144,10 +147,10 @@ what scripts cannot adjudicate — cross-cutting synthesis across batches — a
 fraction of the statement volume that overflowed the old seat. The overflow
 disappears structurally, not by chunking heroics.
 
-Persistence honesty (#581) becomes tractable at this shape: per-batch results
-journal as they complete, and the journal is promoted into the live store only
-when the set is whole — work survives a crash, and a partial set never
-presents as complete (the P1 invariant at
+Persistence honesty (#581) becomes tractable at this shape: the exact scope plan
+and selected-batch results journal as they complete, and the journal is promoted
+into the live store only when the selected plan is whole. Work survives a crash,
+and a partial set never presents as complete (the P1 invariant at
 `packages/adapters/src/knowledge-swarm.ts:503-510` holds).
 
 ### Stage 4 — refresh
@@ -234,8 +237,8 @@ connected files, median 27); the other 149 are directory-fallback slices holding
 the 1,089 edge-less files at a mean of 7.3 each. At 201 turns the arithmetic
 above lands near twenty minutes, roughly four times the bar. Batching itself is
 65 ms and the clean deterministic build is ~35 s, so the cost is entirely in
-turns. W3 owns the reduction: coalescing the fallback tail, and letting the
-scoping seat decide which of those 1,089 files deserve a turn at all.
+turns. W3 owns coalescing the fallback tail. The later exact-scope work owns the
+hard worker-turn cap.
 
 **W3 measured the first coalesce, and the bar was still not met.** That version
 merged adjacent fallback slices within one scope (or one top-level directory) up
@@ -243,9 +246,10 @@ to 25 files: the tail went 149 → **54** slices and the whole run went 201 →
 **105** slices (51 module batches over 1,154 files, 54 fallback slices over
 1,095). Batching was 113 ms; the clean build was ~30 s.
 
-The W3 snapshot produced 105 turns; the launched cap proof at commit `4954bdd7`
-queued 111 after the repository grew. The scoping seat that would decide an
-edge-less file does not deserve a turn is still unbuilt (Stage 1 point 4).
+The W3 snapshot produced 105 candidates; the launched cap proof at commit
+`4954bdd7` queued all 111 after the repository grew. That uncapped run supplied
+the failure evidence for Stage 1 point 4. The current contract no longer treats
+the candidate count as the worker-turn count.
 
 The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
 inherited and eagerly started the user's full ambient MCP table, including
@@ -277,12 +281,14 @@ Taking only the first eight statements from each preserved worker still yielded
 candidates in that prefix neither asserted an import relationship nor named the
 neighbour, and only three of 341 hints resolved to a concrete off-slice path.
 
-The next proof combines the worker envelope's eight-high-signal-statement ceiling
-with a 75-file normal-fallback coalesce and the cut-endpoint-preserving verify
-reduction below. On the exact snapshot, the coalesce keeps all 2,394 eligible files exactly once
-and changes 54 fallback slices to 39, for 96 total turns and six 16-lane waves.
-Caps 90 and 120 stay at six waves while joining more unrelated routing families;
-75 keeps more hypothesis capacity for the same wave count. The deterministic
+The current proof combines the worker envelope's eight-high-signal-statement
+ceiling with a 75-file normal-fallback coalesce, exact scope, and the
+cut-endpoint-preserving verify reduction below. On the measured snapshot, the
+coalesce keeps all 2,394 eligible files exactly once and changes 54 fallback
+slices to 39, for 96 candidates. Coalesce caps 90 and 120 also produce six
+uncapped waves while joining more unrelated routing families; 75 keeps more
+hypothesis capacity. `map-scope@1` now selects no more than 64 whole candidates,
+so the guarded run starts at most four 16-lane worker waves. The deterministic
 merge now presents one synthesis group per source slice, retaining every active
 cut endpoint and its highest-ranked local lead. One structured hint may name a
 concrete off-slice path and the unresolved coupling; when a lower-ranked statement
@@ -293,14 +299,18 @@ yields 44 cut groups and three flags: 47 work items in one 73,436-byte prompt. A
 re-reads those paths instead of receiving every local statement's prose.
 
 The stored knowledge contract and verify seat's cross-cutting output stay
-uncapped. `knowledge-swarm@4` invalidates every earlier prompt/schema answer;
-regrouped slice membership also changes its own journal keys.
+uncapped. `knowledge-swarm@5` invalidates every earlier prompt/schema answer;
+regrouped slice membership also changes its own journal keys. Its coverage record
+flattens to the exact snapshot inventory once: mapped slices, scope exclusions
+with reasons, and mechanical exclusions. A legacy set without coverage remains
+readable, but never claims full mapping and cannot seed an `@5` refresh.
 
-The measured fit projects roughly 244 seconds through the observed deterministic
-front half and worker phase, leaving about 56 seconds for verification. This is
-not a claim that the bar is met. The guarded run must complete in five minutes and
-report statement yield and merge residue as well as time, RSS, swap, and pageouts.
-A faster but materially empty map does not count.
+Before exact scope, the measured fit projected roughly 244 seconds through the
+observed deterministic front half and 96-worker phase, leaving about 56 seconds
+for verification. That is not a measurement of the current 64-slice plan. The
+guarded `knowledge-swarm@5` run must complete in five minutes and report the
+scope plan, exact coverage, statement yield, merge residue, time, RSS, swap, and
+pageouts. A faster but materially empty map does not count.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
@@ -326,6 +336,8 @@ rather than adding env redirects.
 5. **W5 — consumption retrieval + un-hamstringing** (independent of W1–W4
    except the 1-hop retrieval, which wants W1; the lint-widening, cwd, and
    MCP fixes can land immediately).
+6. **W6 — exact scope + coverage** (`map-scope@1`, the 64-slice cap,
+   journaled selection, `knowledge-swarm@5`, and the guarded whole-pass proof).
 
 Existing data is not migrated: the store's schema version advances and stale
 sets are discarded (zero users; wiping `~/.rennet` is a legitimate answer).

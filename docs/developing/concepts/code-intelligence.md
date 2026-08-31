@@ -217,14 +217,14 @@ questions: 267 of 283 cut-edge candidates in that prefix did not assert an impor
 relationship or name the neighbour, and only three of 341 hints resolved to a
 concrete off-slice path.
 
-The next exact-head proof combines two measured worker-phase changes with the
-cut-endpoint-preserving verify reduction below. Each partition worker ranks and
-emits at most eight high-signal anchored hypotheses. Separately, the normal edge-less tail now
-coalesces up to 75 files within one scope or top-level directory. Replaying the
-exact snapshot preserves all 2,394 eligible files once and changes 54 fallback
-slices to 39, for **96 total turns**: six full 16-lane waves instead of seven. A
-cap of 120 produced the same six waves while joining more unrelated routing
-families, so it was rejected.
+The first repair combined two measured worker-phase changes with the
+cut-endpoint-preserving verify reduction below. Each partition worker now ranks
+and emits at most eight high-signal anchored hypotheses. Separately, the normal
+edge-less tail coalesces up to 75 files within one scope or top-level directory.
+Replaying the exact snapshot preserved all 2,394 eligible files once and changed
+54 fallback slices to 39, for **96 candidate slices**. A coalesce cap of 120
+produced the same six waves while joining more unrelated routing families, so it
+was rejected.
 
 The merge now represents that synthesis work once per source slice: every active
 cut endpoint is retained, the worker's highest-ranked local statement starts the
@@ -237,14 +237,20 @@ one 73,436-byte verify prompt**. It preserved all 241 canonical cut-edge pairs a
 170 endpoint paths exactly. This is endpoint preservation, not prose preservation:
 the verifier re-reads those paths instead of receiving every local worker claim.
 
+The 64-slice scope contract now separates that candidate count from worker turns.
+At 64 candidates or fewer, every slice runs and selection spends no model turn.
+Above 64, one medium `map-scope@1` Council seat selects at most 64 whole slices
+and accounts for every remaining candidate with a reason. The current guarded
+proof should therefore launch no more than 64 workers from the 96-slice Rennet
+catalogue. Selection reduces turns; it does not pretend the excluded files were
+mapped.
+
 The shared stored knowledge schema and the verify seat's cross-cutting output
-remain uncapped. The worker and verify contract uses generator
-`knowledge-swarm@4`, so no `@3` or earlier stored set or journal answer can
-satisfy it; regrouped slice membership also changes the journal key. The worker
-fit projects about 37.5 seconds per turn and roughly 244 seconds through the
-observed deterministic front half and worker phase, leaving about 56 seconds for
-verification. That is deliberately a proof hypothesis rather than a five-minute
-claim.
+remain uncapped. The scope, worker, and verify contract uses generator
+`knowledge-swarm@5`, so no `@4` or earlier stored set or journal answer can
+satisfy it. Regrouped slice membership also changes the journal key. The earlier
+worker fit projected about 37.5 seconds per turn. That projection now supplies a
+proof hypothesis for the selected run, not a five-minute claim.
 
 The launched evidence now says:
 
@@ -263,14 +269,17 @@ The launched evidence now says:
   most correlated with measured duration. Its proof must report worker timing,
   statement yield, merge residue, verify timing, and whole-pass wall clock; a
   faster but materially empty map does not pass.
-- **Fewer turns.** The 75-file fallback coalesce removes one measured worker wave
-  without omitting a file. The scoping seat (deciding that an edge-less file does
-  not deserve a turn at all) remains unbuilt.
+- **Fewer turns.** The 75-file fallback coalesce reduced the candidate catalogue
+  without omitting a file. `map-scope@1` now caps a larger catalogue at 64
+  selected whole slices. The stored coverage says which files were selected,
+  scope-excluded, or mechanically excluded.
 
-So the honest statement of this design's cost is **96 turns, with no successful
-five-minute whole-pass measurement yet**. The 24-lane control proved the memory
-ceiling and the uncapped 16-lane run proved the earlier timing sample optimistic.
-Only a complete guarded run can close the bar.
+So the honest statement of the current cost is **one scope selection, with at
+most two turn attempts, plus at most 64 worker turns when the candidate catalogue
+exceeds 64**. There is no successful five-minute whole-pass measurement yet. The
+24-lane control proved the memory ceiling and the uncapped 16-lane run proved the
+earlier timing sample optimistic. Only a complete guarded `knowledge-swarm@5`
+run can close the bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -337,14 +346,49 @@ of that tree.
 Beside the structural index, the Repo Map stores model-generated knowledge
 claims. `packages/core/src/knowledge/` generates them as a partitioned swarm:
 [module batching](#module-batching) slices the snapshot so every mapping-eligible
-file lands in exactly one slice, a light `partition-worker` council job emits
-anchored claims per slice, a deterministic merge pass combines them, and a
-`map-verify` seat handles what the merge could not settle. Both model jobs
-resolve through the [Model Council](./model-council.md) like every other model
-path. Claims that fail anchor resolution are dropped at mint time, so a stored
-claim always cites spans that resolve against the snapshot. On a baseline
-advance, only partitions containing changed paths re-run and untouched claims
-carry forward.
+file lands in exactly one candidate slice. A scope pass selects whole slices, a
+light `partition-worker` Council job emits anchored claims for each selected
+slice, a deterministic merge combines them, and a `map-verify` seat handles what
+the merge could not settle. All three model jobs resolve through the
+[Model Council](./model-council.md). Claims that fail anchor resolution are
+dropped at mint time, so a stored claim always cites spans that resolve against
+the snapshot.
+
+### Scope selection and exact coverage
+
+`map-scope@1` owns selection before workers start. Its cap is 64 slices.
+
+- With 64 or fewer candidates, the selector includes every slice
+  deterministically and runs no model turn.
+- With more than 64 candidates, one medium Council seat receives the classified
+  candidate catalogue. It must return an exact partition: every offered slice id
+  appears once in either `include` or `exclude`, between one and 64 slices are
+  included, and every exclusion has a nonblank reason. A slice that contains a
+  declared entry point must be included.
+- Selection is whole-slice only. The seat chooses trusted slice ids and never
+  supplies or edits file membership. Invalid, partial, repeated, or unknown
+  selections retry once, then fail the run before any worker starts.
+
+The promoted `knowledge-swarm@5` set stores this decision as exact coverage.
+Flattening its coverage groups yields every `(path, blobOid)` in the structural
+snapshot exactly once. Each group is one of:
+
+- a mapped slice;
+- a slice excluded by `map-scope`, with its reason; or
+- files excluded mechanically as binary, lockfile, vendored, generated by path,
+  or generated by content.
+
+The coverage record carries the catalogue digest and distinguishes deterministic
+below-cap selection from a Council turn. A Council selector records the cap,
+generator, harness, assigned and observed model, effort, and credential source.
+The coverage record is stored atomically with the statements. An older set with
+no coverage remains readable as legacy data, but it cannot serve as carry input
+for an `@5` refresh because absence never means every file was mapped.
+
+On a baseline advance, selected slices whose structure changed run as usual.
+Slices that become newly selected also run, even when file routing would otherwise
+carry them. A claim whose evidence moves outside mapped coverage retires whole;
+claims from unchanged selected slices carry forward byte for byte.
 
 ### What a worker is given
 
@@ -443,11 +487,18 @@ therefore near-repository-wide rather than exhaustive.
 
 ### Persistence: the journal
 
-Each completed batch writes its result to a **journal** — a directory beside
-`knowledge/` in the project's reserved store, never inside it, that no reader
-consults. A re-run at the same target reuses those results instead of re-running
-their turns, so a retry pays only for what actually failed. Narration says
-`reused from the journal` rather than `done`, because no turn was spent.
+Each completed selected batch writes its result to a **journal**, a directory
+beside `knowledge/` in the project's reserved store, never inside it, that no
+reader consults. A re-run at the same target reuses those results instead of
+re-running their turns, so a retry pays only for what actually failed. Narration
+says `reused from the journal` rather than `done`, because no turn was spent.
+
+For a catalogue above 64 slices, the same target also stores `scope-plan.json`
+before any workers start. The plan binds the full candidate catalogue and its
+digest, the 64-slice cap, `map-scope@1`, the selected and excluded slice ids, and
+the Council's harness, model, and effort to a checksum. A retry reuses that exact
+plan. It does not spend another selection turn or let a changed model answer send
+the retry to a different set of workers.
 
 A *target* is the base OID, the snapshot fingerprint, the generator id, the slice
 id, and the slice's exact membership. All five: a re-extraction or a prompt
@@ -459,12 +510,12 @@ slice's membership at its current blob. Anything that does not survive those
 checks reads as "not journaled", which costs one re-run turn — the cheap side of
 the trade against a damaged statement entering a set.
 
-Every batch runs; failures are retried once after the rest have finished; and if
-a batch still fails the run reports **which** slices failed and how many of this
-run's batches are waiting for the next attempt. The store rule is the point of
-keeping the two places apart: the live `knowledge.json` is written once, when the
-set is whole. A partial set never presents as complete, however much of it is
-journaled.
+Every selected batch runs; failures are retried once after the rest have
+finished. If a batch still fails, the run reports **which** slices failed and how
+many selected batches are waiting for the next attempt. The store rule is the
+point of keeping the two places apart: the live `knowledge.json` is written once,
+when the selected plan is whole and its exact coverage can be stored beside it. A
+partial set never presents as complete, however much of it is journaled.
 
 The journal is one directory **per target** — named for a hash of the base OID,
 the snapshot fingerprint and the generator id together, not for the OID alone,

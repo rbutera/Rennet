@@ -6,8 +6,10 @@ import type {
   WorkerCrossSliceHint,
   WorkerStatement,
 } from "@rennet/core";
-import { knowledgeStatementId, validateKnowledgeStatement } from "@rennet/core";
-import { canonicalize, sha256Hex } from "@rennet/protocol";
+import { knowledgeStatementId, providerHarness, validateKnowledgeStatement } from "@rennet/core";
+import type { CouncilResolution, KnowledgeStatement } from "@rennet/protocol";
+import { canonicalize, councilEffortSchema, councilModelSchema, sha256Hex } from "@rennet/protocol";
+import { z } from "zod";
 import { writeAtomic } from "./knowledge-store";
 
 /**
@@ -64,6 +66,9 @@ import { writeAtomic } from "./knowledge-store";
 /** The journal directory name, sibling to `knowledge/` inside the project's store dir. */
 export const KNOWLEDGE_JOURNAL_DIR = "knowledge-journal";
 
+/** The one selector plan inside a target journal; never counted as a worker result. */
+export const KNOWLEDGE_SCOPE_PLAN_FILE = "scope-plan.json";
+
 /**
  * How long a FOREIGN target's journal directory must have sat untouched before a
  * promotion sweeps it. A day, because a live run writes into its own directory as
@@ -92,6 +97,188 @@ export interface JournalTarget {
   readonly baseOid: string;
   readonly snapshotFingerprint: string;
   readonly generator: string;
+}
+
+/** The model-council identity that produced one scope decision. */
+export type ScopePlanResolvedAssignment = Readonly<
+  Pick<Extract<CouncilResolution, { readonly kind: "model" }>, "harness" | "model" | "effort">
+>;
+
+/**
+ * Everything an adapter must know to decide whether a journaled scope plan answers
+ * its current question. Candidate membership is checked but not persisted as a
+ * second private-data copy: the included and excluded whole-slice ids exact-cover it.
+ */
+export interface ScopePlanJournalInput {
+  readonly selectorGenerator: string;
+  readonly catalogueDigest: string;
+  readonly sliceCap: number;
+  readonly candidateSliceIds: readonly string[];
+  readonly assignment: ScopePlanResolvedAssignment;
+}
+
+/** One whole candidate slice the selector deliberately left out. */
+export interface ScopePlanExclusion {
+  readonly sliceId: string;
+  readonly reason: string;
+}
+
+/** The checked selector decision an adapter can replay without another model turn. */
+export interface ScopePlanJournalResult {
+  readonly includedSliceIds: readonly string[];
+  readonly excludedSlices: readonly ScopePlanExclusion[];
+  readonly provenance: KnowledgeStatement["provenance"];
+}
+
+const scopePlanTextSchema = z
+  .string()
+  .min(1)
+  .refine((value) => value === value.trim());
+const scopePlanAssignmentSchema = z
+  .object({
+    harness: z.enum(["claude-code", "codex"]),
+    model: councilModelSchema,
+    effort: councilEffortSchema,
+  })
+  .strict()
+  .refine((assignment) => providerHarness(assignment.model) === assignment.harness);
+const scopePlanInputSchema = z
+  .object({
+    selectorGenerator: scopePlanTextSchema,
+    catalogueDigest: scopePlanTextSchema,
+    sliceCap: z.number().int().positive(),
+    candidateSliceIds: z.array(scopePlanTextSchema).min(1),
+    assignment: scopePlanAssignmentSchema,
+  })
+  .strict()
+  .refine((input) => new Set(input.candidateSliceIds).size === input.candidateSliceIds.length);
+const scopePlanExclusionSchema = z
+  .object({ sliceId: scopePlanTextSchema, reason: scopePlanTextSchema })
+  .strict();
+const scopePlanProvenanceSchema = z
+  .object({
+    generator: scopePlanTextSchema,
+    model: scopePlanTextSchema.nullable(),
+    apiKeySource: scopePlanTextSchema.nullable(),
+  })
+  .strict();
+const scopePlanResultSchema = z
+  .object({
+    includedSliceIds: z.array(scopePlanTextSchema).min(1),
+    excludedSlices: z.array(scopePlanExclusionSchema),
+    provenance: scopePlanProvenanceSchema,
+  })
+  .strict();
+
+const SCOPE_PLAN_SCHEMA_VERSION = 1;
+
+interface ScopePlanRecordBody {
+  readonly schemaVersion: 1;
+  readonly target: JournalTarget;
+  readonly selectorGenerator: string;
+  readonly catalogueDigest: string;
+  readonly sliceCap: number;
+  readonly assignment: ScopePlanResolvedAssignment;
+  readonly includedSliceIds: readonly string[];
+  readonly excludedSlices: readonly ScopePlanExclusion[];
+  readonly provenance: KnowledgeStatement["provenance"];
+}
+
+interface ScopePlanRecord extends ScopePlanRecordBody {
+  readonly checksum: string;
+}
+
+const journalTargetSchema = z
+  .object({
+    baseOid: scopePlanTextSchema,
+    snapshotFingerprint: scopePlanTextSchema,
+    generator: scopePlanTextSchema,
+  })
+  .strict();
+const scopePlanRecordBodySchema = z
+  .object({
+    schemaVersion: z.literal(SCOPE_PLAN_SCHEMA_VERSION),
+    target: journalTargetSchema,
+    selectorGenerator: scopePlanTextSchema,
+    catalogueDigest: scopePlanTextSchema,
+    sliceCap: z.number().int().positive(),
+    assignment: scopePlanAssignmentSchema,
+    includedSliceIds: z.array(scopePlanTextSchema).min(1),
+    excludedSlices: z.array(scopePlanExclusionSchema),
+    provenance: scopePlanProvenanceSchema,
+  })
+  .strict();
+const scopePlanRecordSchema = scopePlanRecordBodySchema.extend({
+  checksum: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+function scopePlanChecksum(body: ScopePlanRecordBody): string {
+  return sha256Hex(canonicalize(body));
+}
+
+function sameTarget(left: JournalTarget, right: JournalTarget): boolean {
+  return (
+    left.baseOid === right.baseOid &&
+    left.snapshotFingerprint === right.snapshotFingerprint &&
+    left.generator === right.generator
+  );
+}
+
+function sameScopePlanIdentity(
+  record: ScopePlanRecordBody,
+  target: JournalTarget,
+  input: ScopePlanJournalInput,
+): boolean {
+  return (
+    sameTarget(record.target, target) &&
+    record.selectorGenerator === input.selectorGenerator &&
+    record.catalogueDigest === input.catalogueDigest &&
+    record.sliceCap === input.sliceCap &&
+    record.assignment.harness === input.assignment.harness &&
+    record.assignment.model === input.assignment.model &&
+    record.assignment.effort === input.assignment.effort
+  );
+}
+
+/**
+ * Check an untrusted plan against the current candidate catalogue, then put both
+ * halves back into candidate order. The exact-cover check is what makes every id a
+ * whole trusted slice, rather than model-authored path or prefix data in disguise.
+ */
+function checkedScopePlan(
+  input: ScopePlanJournalInput,
+  result: ScopePlanJournalResult,
+): ScopePlanJournalResult | null {
+  const parsedInput = scopePlanInputSchema.safeParse(input);
+  const parsedResult = scopePlanResultSchema.safeParse(result);
+  if (!parsedInput.success || !parsedResult.success) return null;
+  if (parsedResult.data.provenance.generator !== parsedInput.data.selectorGenerator) return null;
+  if (parsedResult.data.includedSliceIds.length > parsedInput.data.sliceCap) return null;
+
+  const candidates = new Set(parsedInput.data.candidateSliceIds);
+  const included = new Set(parsedResult.data.includedSliceIds);
+  if (included.size !== parsedResult.data.includedSliceIds.length) return null;
+  const exclusionById = new Map<string, string>();
+  for (const exclusion of parsedResult.data.excludedSlices) {
+    if (exclusionById.has(exclusion.sliceId)) return null;
+    exclusionById.set(exclusion.sliceId, exclusion.reason);
+  }
+  if (included.size + exclusionById.size !== candidates.size) return null;
+  for (const sliceId of included) {
+    if (!candidates.has(sliceId) || exclusionById.has(sliceId)) return null;
+  }
+  for (const sliceId of exclusionById.keys()) {
+    if (!candidates.has(sliceId)) return null;
+  }
+
+  return {
+    includedSliceIds: parsedInput.data.candidateSliceIds.filter((sliceId) => included.has(sliceId)),
+    excludedSlices: parsedInput.data.candidateSliceIds.flatMap((sliceId) => {
+      const reason = exclusionById.get(sliceId);
+      return reason === undefined ? [] : [{ sliceId, reason }];
+    }),
+    provenance: parsedResult.data.provenance,
+  };
 }
 
 /** One journaled batch: exactly what `runPartitionWorker` returned, plus its target. */
@@ -182,6 +369,86 @@ export class KnowledgeJournal {
 
   private pathFor(target: JournalTarget, key: string): string {
     return join(this.dirFor(target), `${key}.json`);
+  }
+
+  private scopePlanPathFor(target: JournalTarget): string {
+    return join(this.dirFor(target), KNOWLEDGE_SCOPE_PLAN_FILE);
+  }
+
+  /**
+   * Read the selector plan only when its bytes, full target, selector identity,
+   * resolved seat and current exact candidate catalogue all still agree.
+   */
+  readScopePlan(
+    target: JournalTarget,
+    input: ScopePlanJournalInput,
+  ): ScopePlanJournalResult | null {
+    const parsedTarget = journalTargetSchema.safeParse(target);
+    const parsedInput = scopePlanInputSchema.safeParse(input);
+    if (!parsedTarget.success || !parsedInput.success) return null;
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(this.scopePlanPathFor(target), "utf8"));
+    } catch {
+      return null;
+    }
+    const parsedRecord = scopePlanRecordSchema.safeParse(raw);
+    if (!parsedRecord.success) return null;
+    const record = parsedRecord.data;
+    const body: ScopePlanRecordBody = {
+      schemaVersion: record.schemaVersion,
+      target: record.target,
+      selectorGenerator: record.selectorGenerator,
+      catalogueDigest: record.catalogueDigest,
+      sliceCap: record.sliceCap,
+      assignment: record.assignment,
+      includedSliceIds: record.includedSliceIds,
+      excludedSlices: record.excludedSlices,
+      provenance: record.provenance,
+    };
+    if (record.checksum !== scopePlanChecksum(body)) return null;
+    if (!sameScopePlanIdentity(body, parsedTarget.data, parsedInput.data)) return null;
+
+    return checkedScopePlan(parsedInput.data, {
+      includedSliceIds: record.includedSliceIds,
+      excludedSlices: record.excludedSlices,
+      provenance: record.provenance,
+    });
+  }
+
+  /**
+   * Atomically journal one validated whole-slice selector plan. An invalid plan or
+   * failed journal write is simply not reusable; neither can fail the live run.
+   */
+  writeScopePlan(
+    target: JournalTarget,
+    input: ScopePlanJournalInput,
+    result: ScopePlanJournalResult,
+  ): void {
+    const parsedTarget = journalTargetSchema.safeParse(target);
+    const checked = checkedScopePlan(input, result);
+    if (!parsedTarget.success || checked === null) return;
+
+    const body: ScopePlanRecordBody = {
+      schemaVersion: SCOPE_PLAN_SCHEMA_VERSION,
+      target: parsedTarget.data,
+      selectorGenerator: input.selectorGenerator,
+      catalogueDigest: input.catalogueDigest,
+      sliceCap: input.sliceCap,
+      assignment: input.assignment,
+      includedSliceIds: checked.includedSliceIds,
+      excludedSlices: checked.excludedSlices,
+      provenance: checked.provenance,
+    };
+    const record: ScopePlanRecord = { ...body, checksum: scopePlanChecksum(body) };
+    try {
+      mkdirSync(this.dirFor(target), { recursive: true });
+      writeAtomic(this.scopePlanPathFor(target), `${canonicalize(record)}\n`);
+    } catch {
+      // Same fail-safe posture as worker entries: a disk failure costs one selector
+      // turn on retry, never the current run or the prior live knowledge set.
+    }
   }
 
   /**
@@ -325,7 +592,9 @@ export class KnowledgeJournal {
   /** How many entries this TARGET's journal holds (for honest reporting; 0 when absent). */
   size(target: JournalTarget): number {
     try {
-      return readdirSync(this.dirFor(target)).filter((name) => name.endsWith(".json")).length;
+      return readdirSync(this.dirFor(target)).filter(
+        (name) => name.endsWith(".json") && name !== KNOWLEDGE_SCOPE_PLAN_FILE,
+      ).length;
     } catch {
       return 0;
     }

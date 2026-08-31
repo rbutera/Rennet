@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PartitionSlice, PartitionWorkerResult } from "@rennet/core";
@@ -9,7 +9,10 @@ import {
   type JournalTarget,
   journalKey,
   journalTargetDir,
+  KNOWLEDGE_SCOPE_PLAN_FILE,
   KnowledgeJournal,
+  type ScopePlanJournalInput,
+  type ScopePlanJournalResult,
   STALE_TARGET_AGE_MS,
 } from "./knowledge-journal";
 
@@ -45,6 +48,20 @@ const SLICE: PartitionSlice = {
   ],
   neighbors: [],
 };
+
+const SCOPE_PLAN_INPUT = {
+  selectorGenerator: "map-scope@1",
+  catalogueDigest: "catalogue-1",
+  sliceCap: 2,
+  candidateSliceIds: ["mod:src/a.ts#aaaaaaaa", "mod:src/b.ts#bbbbbbbb", "dir:docs"],
+  assignment: { harness: "codex", model: "gpt-5.6-terra", effort: "medium" },
+} satisfies ScopePlanJournalInput;
+
+const SCOPE_PLAN_RESULT = {
+  includedSliceIds: ["mod:src/a.ts#aaaaaaaa", "mod:src/b.ts#bbbbbbbb"],
+  excludedSlices: [{ sliceId: "dir:docs", reason: "documentation is not load-bearing" }],
+  provenance: { generator: "map-scope@1", model: "gpt-5.6-terra", apiKeySource: null },
+} satisfies ScopePlanJournalResult;
 
 /** A statement whose id is correct for its content unless `id` overrides it. */
 function statement(input?: {
@@ -84,7 +101,137 @@ function entryPath(dir: string, target: JournalTarget = TARGET): string {
   return join(dir, journalTargetDir(target), `${journalKey(target, SLICE)}.json`);
 }
 
+function scopePlanPath(dir: string, target: JournalTarget = TARGET): string {
+  return join(dir, journalTargetDir(target), KNOWLEDGE_SCOPE_PLAN_FILE);
+}
+
 describe("KnowledgeJournal", () => {
+  it("round-trips a checked scope plan without counting it as a worker entry", () => {
+    const dir = scratchDir();
+    const journal = new KnowledgeJournal(dir);
+
+    journal.writeScopePlan(TARGET, SCOPE_PLAN_INPUT, SCOPE_PLAN_RESULT);
+
+    expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toEqual(SCOPE_PLAN_RESULT);
+    expect(journal.size(TARGET)).toBe(0);
+
+    journal.write(TARGET, SLICE, result([statement()]));
+    expect(journal.size(TARGET)).toBe(1);
+    expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toEqual(SCOPE_PLAN_RESULT);
+  });
+
+  it("refuses a scope plan whose canonical bytes no longer match its checksum", () => {
+    const dir = scratchDir();
+    const journal = new KnowledgeJournal(dir);
+    journal.writeScopePlan(TARGET, SCOPE_PLAN_INPUT, SCOPE_PLAN_RESULT);
+    const path = scopePlanPath(dir);
+    const healthy = readFileSync(path, "utf8");
+
+    // Positive control: this exact record reads before and after the one-field damage.
+    expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toEqual(SCOPE_PLAN_RESULT);
+    const damaged = JSON.parse(healthy) as {
+      excludedSlices: { sliceId: string; reason: string }[];
+    };
+    damaged.excludedSlices[0] = {
+      sliceId: "dir:docs",
+      reason: "edited after the selector returned",
+    };
+    writeFileSync(path, JSON.stringify(damaged));
+    expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toBeNull();
+
+    writeFileSync(path, healthy);
+    expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toEqual(SCOPE_PLAN_RESULT);
+  });
+
+  it("refuses a scope plan copied from a foreign target", () => {
+    const dir = scratchDir();
+    const journal = new KnowledgeJournal(dir);
+    journal.writeScopePlan(TARGET, SCOPE_PLAN_INPUT, SCOPE_PLAN_RESULT);
+    const foreign = { ...TARGET, baseOid: "f".repeat(40) };
+    const foreignDir = join(dir, journalTargetDir(foreign));
+    mkdirSync(foreignDir, { recursive: true });
+    writeFileSync(scopePlanPath(dir, foreign), readFileSync(scopePlanPath(dir), "utf8"));
+
+    expect(journal.readScopePlan(foreign, SCOPE_PLAN_INPUT)).toBeNull();
+    expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toEqual(SCOPE_PLAN_RESULT);
+  });
+
+  it.each([
+    ["selector generator", { ...SCOPE_PLAN_INPUT, selectorGenerator: "map-scope@2" }],
+    ["catalogue digest", { ...SCOPE_PLAN_INPUT, catalogueDigest: "catalogue-2" }],
+    ["slice cap", { ...SCOPE_PLAN_INPUT, sliceCap: 1 }],
+    [
+      "resolved assignment",
+      {
+        ...SCOPE_PLAN_INPUT,
+        assignment: { harness: "claude-code", model: "sonnet-5", effort: "medium" },
+      },
+    ],
+  ] satisfies readonly (readonly [string, ScopePlanJournalInput])[])(
+    "refuses a scope plan for a foreign %s",
+    (_label, foreignInput) => {
+      const journal = new KnowledgeJournal(scratchDir());
+      journal.writeScopePlan(TARGET, SCOPE_PLAN_INPUT, SCOPE_PLAN_RESULT);
+
+      expect(journal.readScopePlan(TARGET, foreignInput)).toBeNull();
+      expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toEqual(SCOPE_PLAN_RESULT);
+    },
+  );
+
+  it.each([
+    [
+      "an unknown slice",
+      {
+        ...SCOPE_PLAN_RESULT,
+        includedSliceIds: ["unknown", "mod:src/b.ts#bbbbbbbb"],
+      },
+    ],
+    ["an uncovered candidate", { ...SCOPE_PLAN_RESULT, excludedSlices: [] }],
+    [
+      "more included slices than the cap",
+      {
+        ...SCOPE_PLAN_RESULT,
+        includedSliceIds: [...SCOPE_PLAN_INPUT.candidateSliceIds],
+        excludedSlices: [],
+      },
+    ],
+    [
+      "a duplicate slice",
+      {
+        ...SCOPE_PLAN_RESULT,
+        excludedSlices: [
+          ...SCOPE_PLAN_RESULT.excludedSlices,
+          { sliceId: "mod:src/a.ts#aaaaaaaa", reason: "duplicate" },
+        ],
+      },
+    ],
+    [
+      "a blank exclusion reason",
+      {
+        ...SCOPE_PLAN_RESULT,
+        excludedSlices: [{ sliceId: "dir:docs", reason: " " }],
+      },
+    ],
+    [
+      "foreign selector provenance",
+      {
+        ...SCOPE_PLAN_RESULT,
+        provenance: { ...SCOPE_PLAN_RESULT.provenance, generator: "map-scope@2" },
+      },
+    ],
+  ] satisfies readonly (readonly [string, ScopePlanJournalResult])[])(
+    "does not persist a scope plan containing %s",
+    (_label, invalid) => {
+      const dir = scratchDir();
+      const journal = new KnowledgeJournal(dir);
+
+      journal.writeScopePlan(TARGET, SCOPE_PLAN_INPUT, invalid);
+
+      expect(journal.readScopePlan(TARGET, SCOPE_PLAN_INPUT)).toBeNull();
+      expect(() => readFileSync(scopePlanPath(dir), "utf8")).toThrow();
+    },
+  );
+
   it("round-trips a completed batch, counts and clears it", () => {
     const dir = scratchDir();
     const journal = new KnowledgeJournal(dir);
@@ -308,7 +455,7 @@ describe("KnowledgeJournal", () => {
     const dir = scratchDir();
     const journal = new KnowledgeJournal(dir);
     const reExtracted: JournalTarget = { ...TARGET, snapshotFingerprint: "fp-2" };
-    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@5" };
+    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@6" };
     for (const target of [TARGET, reExtracted, reworked]) {
       journal.write(target, SLICE, result([statement()]));
       expect(journal.size(target)).toBe(1);

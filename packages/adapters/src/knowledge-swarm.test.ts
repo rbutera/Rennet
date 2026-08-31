@@ -11,10 +11,15 @@ import type {
 } from "@rennet/core";
 import {
   KNOWLEDGE_SWARM_GENERATOR_ID,
+  MAP_SCOPE_GENERATOR_ID,
+  MAP_SCOPE_OUTPUT_SCHEMA,
+  MAP_SCOPE_SLICE_CAP,
   MAP_VERIFY_OUTPUT_SCHEMA,
+  materializeKnowledgeCoverage,
   PARTITION_WORKER_OUTPUT_SCHEMA,
+  partitionsFromSnapshot,
 } from "@rennet/core";
-import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
+import type { KnowledgeCoverage, KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
@@ -38,14 +43,15 @@ const SNAPSHOT = {
     { path: "b/two.ts", blobOid: "blob-b1" },
   ],
   scopes: [
-    { name: "a", root: "a" },
-    { name: "b", root: "b" },
+    { name: "a", root: "a", private: true, tags: [] },
+    { name: "b", root: "b", private: true, tags: [] },
   ],
   // No per-blob shards: the fixture pins the COUNCIL contract, not partitioning, so
   // it presents a snapshot with an empty (but present, and honestly readable) shard
   // index. Every file is then edge-less and lands in the directory fallback tier —
   // the two scope slices this suite expects.
   entryPoints: [],
+  tests: [],
   symbolDigestByBlob: new Map<string, string>(),
   referenceDigestByBlob: new Map<string, string>(),
   importDigestByBlob: new Map<string, string>(),
@@ -160,6 +166,25 @@ function fakeClaudePort(
   } as unknown as HarnessPort;
 }
 
+function rejectingScopeSessionPort(
+  captures: ClaudeCapture[],
+  rejectedCreates: number,
+  body: (capture: ClaudeCapture) => unknown | Promise<unknown>,
+): HarnessPort {
+  const delegate = fakeClaudePort(captures, body);
+  let attempts = 0;
+  return {
+    ...delegate,
+    createSession: async (options: Parameters<HarnessPort["createSession"]>[0]) => {
+      if (options.outputSchema === MAP_SCOPE_OUTPUT_SCHEMA) {
+        attempts += 1;
+        if (attempts <= rejectedCreates) throw new Error(`scope create failed ${attempts}`);
+      }
+      return delegate.createSession(options);
+    },
+  } as HarnessPort;
+}
+
 /** A fake codex executor capturing each request and answering canned output. */
 function fakeCodexExecutor(captures: CodexExecRequest[], body: (req: CodexExecRequest) => unknown) {
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
@@ -208,8 +233,14 @@ function wideSnapshot(partitions: number): LoadedSnapshot {
   return {
     manifest: { repoKey: "repo", baseOid: "oid-wide", fingerprint: "fp-wide" },
     files,
-    scopes: files.map((_, index) => ({ name: `scope-${index}`, root: `scope-${index}` })),
+    scopes: files.map((_, index) => ({
+      name: `scope-${index}`,
+      root: `scope-${index}`,
+      private: true,
+      tags: [],
+    })),
     entryPoints: [],
+    tests: [],
     symbolDigestByBlob: new Map<string, string>(),
     referenceDigestByBlob: new Map<string, string>(),
     importDigestByBlob: new Map<string, string>(),
@@ -289,6 +320,238 @@ async function measureWorkerConcurrency(
 }
 
 describe("knowledge swarm — council-routed contract (no live model)", () => {
+  it("selects at most 64 whole slices, runs only those workers, and stores exact coverage", async () => {
+    const snapshot = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const candidates = partitionsFromSnapshot(snapshot);
+    const selected = candidates.slice(0, MAP_SCOPE_SLICE_CAP);
+    const excluded = candidates[MAP_SCOPE_SLICE_CAP];
+    if (excluded === undefined) throw new Error("wide fixture did not produce 65 slices");
+    const claudeCaptures: ClaudeCapture[] = [];
+    const codexCaptures: CodexExecRequest[] = [];
+    const progress: string[] = [];
+    const scopeAttempts: number[] = [];
+    const { saved, store } = makeStore();
+
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: fakeClaudePort(claudeCaptures, (capture) =>
+        capture.outputSchema === MAP_SCOPE_OUTPUT_SCHEMA
+          ? {
+              include: selected.map((slice) => slice.id),
+              exclude: [{ sliceId: excluded.id, reason: "lower explanatory value" }],
+            }
+          : verifyBody(),
+      ),
+      codexExecutor: fakeCodexExecutor(codexCaptures, () => ({ statements: [] })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-wide",
+      onProgress: (event) => {
+        progress.push(`${event.kind}:${event.status}`);
+        if (event.kind === "scope" && event.attempts !== undefined) {
+          scopeAttempts.push(event.attempts);
+        }
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "ok",
+      ranPartitions: 64,
+      selectedPartitions: 64,
+      totalPartitions: 65,
+      scopeExcludedFiles: 1,
+      reusedScopePlan: false,
+    });
+    expect(claudeCaptures).toEqual([{ model: "sonnet-5", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA }]);
+    expect(codexCaptures).toHaveLength(64);
+    expect(
+      codexCaptures.every((request) => request.outputSchema === PARTITION_WORKER_OUTPUT_SCHEMA),
+    ).toBe(true);
+    expect(progress.slice(0, 2)).toEqual(["scope:running", "scope:done"]);
+    expect(scopeAttempts).toEqual([1]);
+
+    const storedCoverage = saved[0]?.coverage;
+    expect(storedCoverage?.selector).toMatchObject({
+      kind: "council",
+      cap: 64,
+      generator: MAP_SCOPE_GENERATOR_ID,
+      harness: "claude-code",
+      assignedModel: "sonnet-5",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(
+      storedCoverage?.groups
+        .filter((group) => group.kind === "mapped")
+        .map((group) => group.sliceId),
+    ).toEqual(selected.map((slice) => slice.id));
+    expect(
+      storedCoverage?.groups.find((group) => group.kind === "excluded" && group.source === "scope"),
+    ).toMatchObject({ sliceId: excluded.id, reason: "lower explanatory value" });
+    const covered = storedCoverage?.groups.flatMap((group) => group.files) ?? [];
+    expect(covered).toHaveLength(snapshot.files.length);
+    expect(new Set(covered.map((file) => file.path)).size).toBe(snapshot.files.length);
+  });
+
+  it("fails an invalid scope decision before any worker starts or store write occurs", async () => {
+    const snapshot = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const claudeCaptures: ClaudeCapture[] = [];
+    const codexCaptures: CodexExecRequest[] = [];
+    const progress: string[] = [];
+    const scopeAttempts: number[] = [];
+    const { saved, store } = makeStore();
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: fakeClaudePort(claudeCaptures, () => ({ include: [], exclude: [] })),
+      codexExecutor: fakeCodexExecutor(codexCaptures, () => ({ statements: [] })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-wide",
+      onProgress: (event) => {
+        progress.push(`${event.kind}:${event.status}`);
+        if (event.kind === "scope" && event.attempts !== undefined) {
+          scopeAttempts.push(event.attempts);
+        }
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(claudeCaptures).toHaveLength(2);
+    expect(codexCaptures).toHaveLength(0);
+    expect(saved).toHaveLength(0);
+    expect(progress).toEqual(["scope:running", "scope:failed"]);
+    expect(scopeAttempts).toEqual([2]);
+  });
+
+  it("normalizes a rejected Claude scope session and succeeds on the retry", async () => {
+    const snapshot = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const candidates = partitionsFromSnapshot(snapshot);
+    const selected = candidates.slice(0, MAP_SCOPE_SLICE_CAP);
+    const excluded = candidates[MAP_SCOPE_SLICE_CAP];
+    if (excluded === undefined) throw new Error("wide fixture did not produce 65 slices");
+    const claudeCaptures: ClaudeCapture[] = [];
+    const codexCaptures: CodexExecRequest[] = [];
+    const scopeAttempts: number[] = [];
+    const { store } = makeStore();
+
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: rejectingScopeSessionPort(claudeCaptures, 1, (capture) =>
+        capture.outputSchema === MAP_SCOPE_OUTPUT_SCHEMA
+          ? {
+              include: selected.map((slice) => slice.id),
+              exclude: [{ sliceId: excluded.id, reason: "lower explanatory value" }],
+            }
+          : verifyBody(),
+      ),
+      codexExecutor: fakeCodexExecutor(codexCaptures, () => ({ statements: [] })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-wide",
+      onProgress: (event) => {
+        if (event.kind === "scope" && event.attempts !== undefined) {
+          scopeAttempts.push(event.attempts);
+        }
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "ok", ranPartitions: 64 });
+    expect(scopeAttempts).toEqual([2]);
+    expect(claudeCaptures).toEqual([{ model: "sonnet-5", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA }]);
+    expect(codexCaptures).toHaveLength(64);
+  });
+
+  it("returns a typed failure before workers or store writes when Claude scope creation rejects twice", async () => {
+    const snapshot = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const codexCaptures: CodexExecRequest[] = [];
+    const scopeAttempts: number[] = [];
+    const { saved, store } = makeStore();
+
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: rejectingScopeSessionPort([], 2, verifyBody),
+      codexExecutor: fakeCodexExecutor(codexCaptures, () => ({ statements: [] })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-wide",
+      onProgress: (event) => {
+        if (event.kind === "scope" && event.attempts !== undefined) {
+          scopeAttempts.push(event.attempts);
+        }
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: "context-map coverage failed: scope create failed 2",
+    });
+    expect(scopeAttempts).toEqual([2]);
+    expect(codexCaptures).toHaveLength(0);
+    expect(saved).toHaveLength(0);
+  });
+
+  it("reuses the scope plan and completed workers after a partial-run failure", async () => {
+    const snapshot = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const candidates = partitionsFromSnapshot(snapshot);
+    const selected = candidates.slice(0, MAP_SCOPE_SLICE_CAP);
+    const excluded = candidates[MAP_SCOPE_SLICE_CAP];
+    const failingPath = selected[0]?.files[0]?.path;
+    if (excluded === undefined || failingPath === undefined)
+      throw new Error("invalid wide fixture");
+    const { store } = makeStore();
+    const firstScopeCaptures: ClaudeCapture[] = [];
+    const firstWorkerCaptures: CodexExecRequest[] = [];
+    const first = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: fakeClaudePort(firstScopeCaptures, () => ({
+        include: selected.map((slice) => slice.id),
+        exclude: [{ sliceId: excluded.id, reason: "lower explanatory value" }],
+      })),
+      codexExecutor: async (request) => {
+        firstWorkerCaptures.push(request);
+        if (request.prompt.includes(failingPath)) throw new Error("injected worker failure");
+        return { output: { statements: [] } };
+      },
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-wide",
+    });
+    expect(first).toMatchObject({ status: "failed", journaled: 63 });
+    expect(firstScopeCaptures).toHaveLength(1);
+
+    const retryScopeCaptures: ClaudeCapture[] = [];
+    const retryWorkerCaptures: CodexExecRequest[] = [];
+    const retry = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: fakeClaudePort(retryScopeCaptures, (capture) => {
+        if (capture.outputSchema === MAP_SCOPE_OUTPUT_SCHEMA) {
+          throw new Error("journaled scope plan should suppress this turn");
+        }
+        return verifyBody();
+      }),
+      codexExecutor: fakeCodexExecutor(retryWorkerCaptures, () => ({ statements: [] })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-wide",
+    });
+
+    expect(retry).toMatchObject({
+      status: "ok",
+      reusedScopePlan: true,
+      reusedPartitions: 63,
+      ranPartitions: 64,
+    });
+    expect(retryScopeCaptures).toEqual([]);
+    expect(retryWorkerCaptures).toHaveLength(1);
+    expect(retryWorkerCaptures[0]?.prompt).toContain(failingPath);
+  });
+
   it("defaults Codex partition workers to sixteen lanes", async () => {
     const measured = await measureWorkerConcurrency("codex", 16);
 
@@ -515,9 +778,62 @@ function priorSet(overrides: Partial<KnowledgeSet> = {}): KnowledgeSet {
     baseOid: "oid-0",
     snapshotFingerprint: "fp-0",
     generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+    coverage: coverageFor(PRIOR_SNAPSHOT),
     statements: [PRIOR_B_STATEMENT],
     ...overrides,
   };
+}
+
+function coverageFor(snapshot: LoadedSnapshot): KnowledgeCoverage {
+  const candidates = partitionsFromSnapshot(snapshot);
+  return materializeKnowledgeCoverage({
+    snapshot,
+    candidates,
+    selection: {
+      status: "ok",
+      includedSliceIds: candidates.map((candidate) => candidate.id),
+      excludedSlices: [],
+      provenance: { generator: MAP_SCOPE_GENERATOR_ID, model: null, apiKeySource: null },
+      attempts: 0,
+    },
+    selector: { kind: "below-cap" },
+  });
+}
+
+function selectedCoverageFor(
+  snapshot: LoadedSnapshot,
+  includedSliceIds: ReadonlySet<string>,
+): KnowledgeCoverage {
+  const candidates = partitionsFromSnapshot(snapshot);
+  return materializeKnowledgeCoverage({
+    snapshot,
+    candidates,
+    selection: {
+      status: "ok",
+      includedSliceIds: candidates
+        .filter((candidate) => includedSliceIds.has(candidate.id))
+        .map((candidate) => candidate.id),
+      excludedSlices: candidates.flatMap((candidate) =>
+        includedSliceIds.has(candidate.id)
+          ? []
+          : [{ sliceId: candidate.id, reason: "lower explanatory value" }],
+      ),
+      provenance: {
+        generator: MAP_SCOPE_GENERATOR_ID,
+        model: "sonnet-5",
+        apiKeySource: null,
+      },
+      attempts: 1,
+    },
+    selector: {
+      kind: "council",
+      harness: "claude-code",
+      assignedModel: "sonnet-5",
+      model: "sonnet-5",
+      effort: "medium",
+      apiKeySource: null,
+    },
+  });
 }
 
 function storeWithPrior(prior: KnowledgeSet): {
@@ -535,7 +851,13 @@ function storeWithPrior(prior: KnowledgeSet): {
 describe("knowledge swarm — prior-set identity", () => {
   it("an eligible prior set at the current baseline is an honest skip (no turns run)", async () => {
     const codexCaptures: CodexExecRequest[] = [];
-    const { saved, store } = storeWithPrior(priorSet({ baseOid: "oid-1" }));
+    const { saved, store } = storeWithPrior(
+      priorSet({
+        baseOid: "oid-1",
+        snapshotFingerprint: "fp-1",
+        coverage: coverageFor(SNAPSHOT),
+      }),
+    );
     const outcome = await runKnowledgeSwarmForRepo({
       reader: READER,
       knowledgeStore: store,
@@ -548,6 +870,83 @@ describe("knowledge swarm — prior-set identity", () => {
     expect(outcome.status).toBe("skipped");
     expect(codexCaptures).toHaveLength(0);
     expect(saved).toHaveLength(0);
+  });
+
+  it("does not skip or carry from exact-looking coverage that excludes an explicit entry point", async () => {
+    const base = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const snapshot = {
+      ...base,
+      manifest: { ...base.manifest, baseOid: "oid-1", fingerprint: "fp-1" },
+      entryPoints: [{ scope: "scope-0", main: "./file.ts", bin: [] }],
+    } satisfies LoadedSnapshot;
+    const candidates = partitionsFromSnapshot(snapshot);
+    const entryPointSlice = candidates.find((candidate) =>
+      candidate.files.some((file) => file.path === "scope-0/file.ts"),
+    );
+    if (entryPointSlice === undefined) {
+      throw new Error("wide fixture did not produce an entry-point slice");
+    }
+    const validIncluded = new Set(
+      [entryPointSlice, ...candidates.filter((candidate) => candidate.id !== entryPointSlice.id)]
+        .slice(0, MAP_SCOPE_SLICE_CAP)
+        .map((candidate) => candidate.id),
+    );
+    const replacementSlice = candidates.find((candidate) => !validIncluded.has(candidate.id));
+    if (replacementSlice === undefined) {
+      throw new Error("wide fixture did not produce an entry-point slice and replacement slice");
+    }
+    const validCoverage = selectedCoverageFor(snapshot, validIncluded);
+    const invalidCoverage: KnowledgeCoverage = {
+      ...validCoverage,
+      groups: validCoverage.groups.map((group) => {
+        if (group.kind === "mapped" && group.sliceId === entryPointSlice.id) {
+          return {
+            kind: "excluded" as const,
+            source: "scope" as const,
+            sliceId: group.sliceId,
+            reason: "discarded explicit entry point",
+            files: group.files,
+          };
+        }
+        if (
+          group.kind === "excluded" &&
+          group.source === "scope" &&
+          group.sliceId === replacementSlice.id
+        ) {
+          return { kind: "mapped" as const, sliceId: group.sliceId, files: group.files };
+        }
+        return group;
+      }),
+    };
+    const codexCaptures: CodexExecRequest[] = [];
+    const { saved, store } = storeWithPrior(
+      priorSet({
+        baseOid: "oid-1",
+        snapshotFingerprint: "fp-1",
+        coverage: invalidCoverage,
+      }),
+    );
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: { loadFresh: () => ({ ok: true as const, snapshot }) },
+      knowledgeStore: store,
+      claudePort: fakeClaudePort([], (capture) =>
+        capture.outputSchema === MAP_SCOPE_OUTPUT_SCHEMA
+          ? {
+              include: [...validIncluded],
+              exclude: [{ sliceId: replacementSlice.id, reason: "lower explanatory value" }],
+            }
+          : verifyBody(),
+      ),
+      codexExecutor: fakeCodexExecutor(codexCaptures, () => ({ statements: [] })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+    });
+
+    expect(outcome.status).toBe("ok");
+    expect(codexCaptures).toHaveLength(MAP_SCOPE_SLICE_CAP);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.coverage).toEqual(validCoverage);
   });
 
   it("a foreign-generator prior set (the retired flat pass) forces a FULL rerun, never carry", async () => {
@@ -570,6 +969,47 @@ describe("knowledge swarm — prior-set identity", () => {
     expect(codexCaptures).toHaveLength(2);
     expect(saved).toHaveLength(1);
     expect(JSON.stringify(saved[0])).not.toContain("module b does b-things");
+  });
+
+  it("a legacy set without exact coverage forces one full selected rerun", async () => {
+    const codexCaptures: CodexExecRequest[] = [];
+    const { saved, store } = storeWithPrior(priorSet({ coverage: undefined }));
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: store,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: fakeCodexExecutor(codexCaptures, workerBody),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+    });
+
+    expect(outcome.status).toBe("ok");
+    expect(codexCaptures).toHaveLength(2);
+    expect(saved[0]?.coverage).toBeDefined();
+  });
+
+  it("a same-OID re-extraction refreshes every selected slice instead of taking an empty git diff", async () => {
+    const codexCaptures: CodexExecRequest[] = [];
+    const { saved, store } = storeWithPrior(
+      priorSet({ baseOid: "oid-1", snapshotFingerprint: "fp-old" }),
+    );
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: store,
+      claudePort: fakeClaudePort([], verifyBody),
+      codexExecutor: fakeCodexExecutor(codexCaptures, workerBody),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+      git: async () => {
+        throw new Error("same-OID refresh must not ask Git for an empty interval");
+      },
+    });
+
+    expect(outcome.status).toBe("ok");
+    expect(codexCaptures).toHaveLength(2);
+    expect(saved).toHaveLength(1);
   });
 
   it("incremental: delta base is prior.baseOid, only the owning partition re-runs, untouched statements carry byte-identical", async () => {
@@ -604,12 +1044,184 @@ describe("knowledge swarm — prior-set identity", () => {
     if (outcome.status === "ok") expect(outcome.carried).toBe(1);
   });
 
+  it("advances exact map identity across an identical-tree baseline without model turns", async () => {
+    const codexCaptures: CodexExecRequest[] = [];
+    const claudeCaptures: ClaudeCapture[] = [];
+    const { saved, store } = storeWithPrior(priorSet());
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: READER,
+      knowledgeStore: store,
+      claudePort: fakeClaudePort(claudeCaptures, verifyBody),
+      codexExecutor: fakeCodexExecutor(codexCaptures, workerBody),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+      git: async (_root, args) => {
+        if (args[0] === "diff") return "";
+        if (args[0] === "ls-tree") return "a/one.ts\0b/two.ts\0";
+        throw new Error(`unexpected git call: ${args.join(" ")}`);
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "ok", ranPartitions: 0, carried: 1 });
+    expect(codexCaptures).toHaveLength(0);
+    expect(claudeCaptures).toHaveLength(0);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ baseOid: "oid-1", snapshotFingerprint: "fp-1" });
+    expect(saved[0]?.statements).toEqual([PRIOR_B_STATEMENT]);
+    expect(saved[0]?.coverage).toEqual(coverageFor(SNAPSHOT));
+  });
+
+  it("runs newly included coverage, retires newly excluded evidence, and carries unaffected knowledge", async () => {
+    const widePrior = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const priorSnapshot = {
+      ...widePrior,
+      manifest: { ...widePrior.manifest, baseOid: "oid-0", fingerprint: "fp-0" },
+    } satisfies LoadedSnapshot;
+    const wideCurrent = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
+    const currentSnapshot = {
+      ...wideCurrent,
+      manifest: { ...wideCurrent.manifest, baseOid: "oid-1", fingerprint: "fp-1" },
+      scopes: wideCurrent.scopes.map((scope, index) =>
+        index === 0 ? { ...scope, tags: [...scope.tags, "changed-classification"] } : scope,
+      ),
+    } satisfies LoadedSnapshot;
+    const priorCandidates = partitionsFromSnapshot(priorSnapshot);
+    const currentCandidates = partitionsFromSnapshot(currentSnapshot);
+    const priorIncluded = new Set(
+      priorCandidates.slice(0, MAP_SCOPE_SLICE_CAP).map((candidate) => candidate.id),
+    );
+    const newlyExcluded = currentCandidates[0];
+    const newlyIncluded = currentCandidates[MAP_SCOPE_SLICE_CAP];
+    const unaffected = currentCandidates[1];
+    if (newlyExcluded === undefined || newlyIncluded === undefined || unaffected === undefined) {
+      throw new Error("invalid coverage-transition fixture");
+    }
+    const excludedFile = newlyExcluded.files[0];
+    const newlyIncludedFile = newlyIncluded.files[0];
+    const unaffectedFile = unaffected.files[0];
+    if (
+      excludedFile === undefined ||
+      newlyIncludedFile === undefined ||
+      unaffectedFile === undefined
+    ) {
+      throw new Error("coverage-transition slice has no file");
+    }
+    const excludedPath = excludedFile.path;
+    const unaffectedPath = unaffectedFile.path;
+    const prior: KnowledgeSet = {
+      schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+      repoKey: "repo",
+      baseOid: "oid-0",
+      snapshotFingerprint: "fp-0",
+      generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+      coverage: selectedCoverageFor(priorSnapshot, priorIncluded),
+      statements: [
+        {
+          ...PRIOR_B_STATEMENT,
+          id: "newly-excluded",
+          subject: excludedPath,
+          evidence: [{ path: excludedPath, blobOid: excludedFile.blobOid }],
+        },
+        {
+          ...PRIOR_B_STATEMENT,
+          id: "unaffected",
+          subject: unaffectedPath,
+          evidence: [{ path: unaffectedPath, blobOid: unaffectedFile.blobOid }],
+        },
+      ],
+    };
+    const { saved, store } = storeWithPrior(prior);
+    const codexCaptures: CodexExecRequest[] = [];
+    const scopeCaptures: ClaudeCapture[] = [];
+    const currentIncluded = currentCandidates.slice(1);
+    const outcome = await runKnowledgeSwarmForRepo({
+      reader: {
+        loadFresh: (_repoKey, oid) => ({
+          ok: true as const,
+          snapshot: oid === "oid-0" ? priorSnapshot : currentSnapshot,
+        }),
+      },
+      knowledgeStore: store,
+      claudePort: fakeClaudePort(scopeCaptures, (capture) =>
+        capture.outputSchema === MAP_SCOPE_OUTPUT_SCHEMA
+          ? {
+              include: currentIncluded.map((candidate) => candidate.id),
+              exclude: [{ sliceId: newlyExcluded.id, reason: "superseded support surface" }],
+            }
+          : {
+              verdicts: [],
+              crossCutting: [
+                {
+                  subject: "excluded seam",
+                  aspect: "purpose",
+                  claim: "scope-excluded code drives the selected slice",
+                  confidence: "high",
+                  evidence: [{ path: excludedPath }],
+                },
+              ],
+            },
+      ),
+      codexExecutor: fakeCodexExecutor(codexCaptures, () => ({
+        statements: [
+          {
+            subject: "newly included slice",
+            aspect: "purpose",
+            claim: "the newly included slice participates in runtime behavior",
+            confidence: "high",
+            evidence: [{ path: newlyIncludedFile.path }],
+            hint: {
+              path: excludedPath,
+              coupling: "the selected slice appears to cross the excluded boundary",
+            },
+          },
+        ],
+      })),
+      repoKey: "repo",
+      repoRoot: "/repo",
+      baseOid: "oid-1",
+      git: async (_root, args) => {
+        if (args[0] === "diff") return `${excludedPath}\0`;
+        if (args[0] === "ls-tree") {
+          return `${priorSnapshot.files.map((file) => file.path).join("\0")}\0`;
+        }
+        throw new Error(`unexpected git call: ${args.join(" ")}`);
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "ok",
+      ranPartitions: 1,
+      removedByCoverage: 2,
+      carried: 1,
+    });
+    expect(scopeCaptures).toEqual([
+      { model: "sonnet-5", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
+      { model: "sonnet-5", outputSchema: MAP_VERIFY_OUTPUT_SCHEMA },
+    ]);
+    expect(codexCaptures).toHaveLength(1);
+    expect(codexCaptures[0]?.prompt).toContain(newlyIncludedFile.path);
+    expect(saved[0]?.statements.map((statement) => statement.id)).toContain("unaffected");
+    expect(saved[0]?.statements.map((statement) => statement.id)).not.toContain("newly-excluded");
+    expect(JSON.stringify(saved[0]?.statements)).not.toContain(
+      "scope-excluded code drives the selected slice",
+    );
+    expect(
+      saved[0]?.coverage?.groups.find(
+        (group) =>
+          group.kind === "excluded" &&
+          group.source === "scope" &&
+          group.sliceId === newlyExcluded.id,
+      ),
+    ).toMatchObject({ reason: "superseded support surface" });
+  });
+
   it("an unreadable PRIOR snapshot routes every change; a readable one classifies it", async () => {
     // The W4 fail-safe at the live seam, with its own control beside it. Both runs see
     // the same git diff and the same current snapshot. The only difference is whether
     // the prior snapshot can be read — and it is deliberately a snapshot that says
     // "cosmetic" (identical blobOids), so a run that could read it spends no turn and
-    // a run that could not must spend one rather than assume.
+    // a run that could not must refresh every selected slice rather than assume.
     const git: GitExec = async (_root, args) => {
       if (args[0] === "diff") return "a/one.ts\0";
       if (args[0] === "ls-tree") return "a/one.ts\0b/two.ts\0";
@@ -622,7 +1234,14 @@ describe("knowledge swarm — prior-set identity", () => {
       outcome: Awaited<ReturnType<typeof runKnowledgeSwarmForRepo>>;
     }> => {
       const captures: CodexExecRequest[] = [];
-      const { store } = storeWithPrior(priorSet());
+      const loadedPrior = loadFresh("repo", "oid-0");
+      const { store } = storeWithPrior(
+        priorSet({
+          coverage: loadedPrior.ok
+            ? coverageFor(loadedPrior.snapshot)
+            : coverageFor(PRIOR_SNAPSHOT),
+        }),
+      );
       const outcome = await runKnowledgeSwarmForRepo({
         reader: { loadFresh },
         knowledgeStore: store,
@@ -641,7 +1260,7 @@ describe("knowledge swarm — prior-set identity", () => {
         ? { ok: false as const, failure: { reason: "absent" as const } }
         : { ok: true as const, snapshot: SNAPSHOT },
     );
-    expect(refused.turns).toBe(1);
+    expect(refused.turns).toBe(2);
     if (refused.outcome.status === "ok") expect(refused.outcome.skippedCosmetic).toBe(0);
 
     // The control: served an identical prior, the same change is cosmetic and costs
@@ -683,11 +1302,11 @@ describe("knowledge swarm — prior-set identity", () => {
     };
     const runWithPriorFingerprint = async (fingerprint: string): Promise<number> => {
       const captures: CodexExecRequest[] = [];
-      const { store } = storeWithPrior(priorSet());
       const reExtracted = {
         ...COMPARABLE_PRIOR_SNAPSHOT,
         manifest: { repoKey: "repo", baseOid: "oid-0", fingerprint },
       } as unknown as LoadedSnapshot;
+      const { store } = storeWithPrior(priorSet({ coverage: coverageFor(reExtracted) }));
       const outcome = await runKnowledgeSwarmForRepo({
         reader: {
           loadFresh: (_repoKey: string, oid: string) => ({
@@ -709,7 +1328,7 @@ describe("knowledge swarm — prior-set identity", () => {
 
     // `fp-0` is what `priorSet()` records; `fp-re-extracted` is the same commit seen
     // by a later extraction, which the set never learned against.
-    expect(await runWithPriorFingerprint("fp-re-extracted")).toBe(1);
+    expect(await runWithPriorFingerprint("fp-re-extracted")).toBe(2);
     expect(await runWithPriorFingerprint("fp-0")).toBe(0);
   });
 

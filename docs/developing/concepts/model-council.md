@@ -26,13 +26,15 @@ questions, CI analysis, delta digests, pull-request body drafting, handoff
 composition, comment refinement, orchestration, adjudication, and knowledge
 generation.
 
-Knowledge generation runs two council jobs: `partition-worker`, a light batched
-job that reads one [module batch](./code-intelligence.md#module-batching) —
-skeleton, resolved edges, and neighbour map — and emits anchored claims, and
-`map-verify`, a heavier seat that runs *after* a deterministic merge pass and
-sees only what a script could not settle: the cross-batch seams and the flagged
-contradictions. It does not re-adjudicate the swarm, and it runs no turn at all
-when that residue is empty.
+Knowledge generation can run three Council jobs. `map-scope` is a heavy
+per-call job at medium effort. It runs only when the candidate catalogue exceeds
+64 slices and selects at most 64 whole slices. `partition-worker` is a light
+batched job that reads one selected
+[module batch](./code-intelligence.md#module-batching), including its skeleton,
+resolved edges, and neighbour map, and emits anchored claims. `map-verify` is a
+heavier seat that runs *after* a deterministic merge pass and sees only what a
+script could not settle: the cross-batch seams and flagged contradictions. It
+does not re-adjudicate the swarm, and it runs no turn when that residue is empty.
 
 The lens drafting pipeline runs five: `lens-draft` (the drafting seat for the
 Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
@@ -141,9 +143,11 @@ letting the execution path account for retries, multiple seats, reconciliation,
 and follow-up turns against one shared allowance. Review-generation runners use
 a refused grant to stop that runner and expose degraded output. `context.ask`
 records the refusal as an overage and continues the requested answer under Rule
-Zero. The knowledge swarm takes no invocation budget at all: complete map
-coverage is the decided behavior, so its runners have no budget parameter to
-consult.
+Zero. The knowledge swarm takes no invocation budget at all. Its runners have no
+budget parameter to consult, including the conditional `map-scope` turn,
+selected partition workers, retries, and verification. Exact coverage comes
+from recording every snapshot file as mapped, scope-excluded, or mechanically
+excluded. It does not mean every candidate slice receives a worker turn.
 
 ## Review roles in Settings
 
@@ -162,6 +166,10 @@ of the tables, not a second source of truth.
 | Adjudication | `adjudication` |
 | Post-Process | `board-post-process` |
 | Utility | `context-ask-fetch` |
+
+`map-scope` is not a ninth review role. The **Context-Map Workers** row maps only
+`partition-worker`; scope selection keeps its own Council job id and assignments
+but has no separate user-facing role in this settings table.
 
 Settings → Environments → *(host card)* → **Edit Mappings** resolves every role in
 all three availability scenarios and shows the result in two columns: **Dual

@@ -1,21 +1,27 @@
 import type {
+  KnowledgeCoverage,
   KnowledgeSet,
   KnowledgeStatement,
   ProjectSnapshotManifest,
   SnapshotFileEntry,
 } from "@rennet/protocol";
+import { KNOWLEDGE_SWARM_GENERATOR_ID } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { LoadedSnapshot } from "../project-context";
+import { partitionsFromSnapshot } from "./partition";
 import {
   anchorResolves,
   fileBlobIndex,
+  knowledgeCoverageTotals,
   knowledgeStatementId,
   queryKnowledge,
   statementResolves,
   validateKnowledgeAnchor,
+  validateKnowledgeCoverage,
   validateKnowledgeSet,
   validateKnowledgeStatement,
 } from "./read";
+import { MAP_SCOPE_GENERATOR_ID, materializeKnowledgeCoverage } from "./scope";
 
 function file(path: string, blobOid: string): SnapshotFileEntry {
   return { path, blobOid, size: 1, mode: "100644" };
@@ -79,6 +85,59 @@ function set(statements: readonly KnowledgeStatement[]): KnowledgeSet {
   };
 }
 
+function coverage(): KnowledgeCoverage {
+  return {
+    schemaVersion: 1,
+    catalogueDigest: "catalogue-digest",
+    selector: {
+      kind: "council",
+      cap: 64,
+      generator: "map-scope@1",
+      harness: "codex",
+      assignedModel: "gpt-5.6-terra",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+      apiKeySource: null,
+    },
+    groups: [
+      {
+        kind: "mapped",
+        sliceId: "mod:a.ts#1",
+        files: [{ path: "a.ts", blobOid: "a" }],
+      },
+      {
+        kind: "excluded",
+        source: "scope",
+        sliceId: "dir:docs",
+        reason: "Repeated reference material",
+        files: [{ path: "docs/a.md", blobOid: "docs" }],
+      },
+      {
+        kind: "excluded",
+        source: "mechanical",
+        reason: "lockfile",
+        files: [{ path: "pnpm-lock.yaml", blobOid: "lock" }],
+      },
+    ],
+  };
+}
+
+function exactCoverageFor(snapshot: LoadedSnapshot): KnowledgeCoverage {
+  const candidates = partitionsFromSnapshot(snapshot);
+  return materializeKnowledgeCoverage({
+    snapshot,
+    candidates,
+    selection: {
+      status: "ok",
+      includedSliceIds: candidates.map((candidate) => candidate.id),
+      excludedSlices: [],
+      provenance: { generator: MAP_SCOPE_GENERATOR_ID, model: null, apiKeySource: null },
+      attempts: 0,
+    },
+    selector: { kind: "below-cap" },
+  });
+}
+
 describe("validateKnowledgeAnchor", () => {
   it("requires a safe path and a blobOid", () => {
     expect(validateKnowledgeAnchor({ path: "a/b.ts", blobOid: "x" })).toEqual({
@@ -138,6 +197,92 @@ describe("validateKnowledgeSet", () => {
   it("keeps a rejected statement — a human disposition must survive persistence", () => {
     const validated = validateKnowledgeSet(set([statement({ id: "r", status: "rejected" })]));
     expect(validated?.statements.map((s) => s.status)).toEqual(["rejected"]);
+  });
+
+  it("keeps exact coverage and rejects a malformed present coverage claim whole", () => {
+    expect(validateKnowledgeSet({ ...set([]), coverage: coverage() })?.coverage).toEqual(
+      coverage(),
+    );
+    expect(
+      validateKnowledgeSet({
+        ...set([]),
+        coverage: {
+          ...coverage(),
+          groups: [
+            ...coverage().groups,
+            {
+              kind: "mapped",
+              sliceId: "duplicate-path",
+              files: [{ path: "a.ts", blobOid: "a" }],
+            },
+          ],
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects a current swarm set that omits its mandatory exact coverage", () => {
+    expect(
+      validateKnowledgeSet({ ...set([]), generator: KNOWLEDGE_SWARM_GENERATOR_ID }),
+    ).toBeUndefined();
+    expect(validateKnowledgeSet({ ...set([]), generator: "knowledge-swarm@4" })).toBeDefined();
+  });
+});
+
+describe("validateKnowledgeCoverage", () => {
+  it("accepts one exact partition and rejects unknown fields or unsafe paths", () => {
+    expect(validateKnowledgeCoverage(coverage())).toEqual(coverage());
+    expect(validateKnowledgeCoverage({ ...coverage(), invented: true })).toBeUndefined();
+    expect(
+      validateKnowledgeCoverage({
+        ...coverage(),
+        groups: [
+          {
+            kind: "mapped",
+            sliceId: "escape",
+            files: [{ path: "../escape.ts", blobOid: "x" }],
+          },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects duplicate slice ids and duplicate mechanical reason groups", () => {
+    const valid = coverage();
+    const mapped = valid.groups[0] as KnowledgeCoverage["groups"][number];
+    const mechanical = valid.groups[2] as KnowledgeCoverage["groups"][number];
+    expect(
+      validateKnowledgeCoverage({
+        ...valid,
+        groups: [mapped, { ...mapped, files: [{ path: "b.ts", blobOid: "b" }] }],
+      }),
+    ).toBeUndefined();
+    expect(
+      validateKnowledgeCoverage({
+        ...valid,
+        groups: [
+          mechanical,
+          { ...mechanical, files: [{ path: "package-lock.json", blobOid: "other-lock" }] },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects unknown council assignments and assignments owned by the other harness", () => {
+    const valid = coverage();
+    if (valid.selector.kind !== "council") throw new Error("fixture");
+    expect(
+      validateKnowledgeCoverage({
+        ...valid,
+        selector: { ...valid.selector, assignedModel: "gpt-4o" },
+      }),
+    ).toBeUndefined();
+    expect(
+      validateKnowledgeCoverage({
+        ...valid,
+        selector: { ...valid.selector, harness: "claude-code" },
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -216,6 +361,158 @@ describe("queryKnowledge", () => {
     expect(view.statements).toEqual([]);
     expect(view.invalidatedPending).toEqual([]);
     expect(view.baseOid).toBe("oid-current");
+    expect(view.coverage).toEqual({ kind: "absent" });
+  });
+
+  it("distinguishes legacy unrecorded coverage from a current exact coverage record", () => {
+    const snapshot = loadedSnapshot([
+      file("a.ts", "a"),
+      file("docs/a.md", "docs"),
+      file("pnpm-lock.yaml", "lock"),
+    ]);
+    expect(queryKnowledge(set([]), snapshot).coverage).toEqual({ kind: "unrecorded" });
+    const exact = exactCoverageFor(snapshot);
+    expect(queryKnowledge({ ...set([]), coverage: exact }, snapshot).coverage).toEqual({
+      kind: "current",
+      exact,
+    });
+  });
+
+  it("does not present a current-generator set without mandatory coverage as legacy", () => {
+    const snapshot = loadedSnapshot([file("a.ts", "a")]);
+    expect(
+      queryKnowledge({ ...set([]), generator: KNOWLEDGE_SWARM_GENERATOR_ID }, snapshot).coverage,
+    ).toEqual({ kind: "invalid", reason: "required-coverage-missing" });
+  });
+
+  it("marks matching-identity coverage invalid when it omits a snapshot file", () => {
+    const snapshot = loadedSnapshot([
+      file("a.ts", "a"),
+      file("docs/a.md", "docs"),
+      file("pnpm-lock.yaml", "lock"),
+    ]);
+    const valid = exactCoverageFor(snapshot);
+    const exact: KnowledgeCoverage = { ...valid, groups: valid.groups.slice(0, -1) };
+    expect(queryKnowledge({ ...set([]), coverage: exact }, snapshot).coverage).toEqual({
+      kind: "invalid",
+      reason: "inventory-mismatch",
+    });
+  });
+
+  it("marks matching-identity coverage invalid when it claims the wrong blob", () => {
+    const snapshot = loadedSnapshot([
+      file("a.ts", "a"),
+      file("docs/a.md", "docs"),
+      file("pnpm-lock.yaml", "lock"),
+    ]);
+    const valid = exactCoverageFor(snapshot);
+    const [first, ...rest] = valid.groups;
+    if (first?.kind !== "mapped") throw new Error("fixture");
+    const exact: KnowledgeCoverage = {
+      ...valid,
+      groups: [{ ...first, files: [{ path: "a.ts", blobOid: "wrong" }] }, ...rest],
+    };
+    expect(queryKnowledge({ ...set([]), coverage: exact }, snapshot).coverage).toEqual({
+      kind: "invalid",
+      reason: "inventory-mismatch",
+    });
+  });
+
+  it("marks matching-identity coverage invalid when it invents a slice id", () => {
+    const snapshot = loadedSnapshot([
+      file("a.ts", "a"),
+      file("docs/a.md", "docs"),
+      file("pnpm-lock.yaml", "lock"),
+    ]);
+    const valid = exactCoverageFor(snapshot);
+    const [first, ...rest] = valid.groups;
+    if (first?.kind !== "mapped") throw new Error("fixture");
+    const exact: KnowledgeCoverage = {
+      ...valid,
+      selector: {
+        kind: "council",
+        cap: 64,
+        generator: MAP_SCOPE_GENERATOR_ID,
+        harness: "codex",
+        assignedModel: "gpt-5.6-terra",
+        model: "gpt-5.6-terra",
+        effort: "medium",
+        apiKeySource: null,
+      },
+      groups: [{ ...first, sliceId: "invented-slice" }, ...rest],
+    };
+    expect(queryKnowledge({ ...set([]), coverage: exact }, snapshot).coverage).toEqual({
+      kind: "invalid",
+      reason: "inventory-mismatch",
+    });
+  });
+
+  it("marks a Council selector invalid when the candidate catalogue is still below its cap", () => {
+    const snapshot = loadedSnapshot([
+      file("a.ts", "a"),
+      file("docs/a.md", "docs"),
+      file("pnpm-lock.yaml", "lock"),
+    ]);
+    const valid = exactCoverageFor(snapshot);
+    const exact: KnowledgeCoverage = {
+      ...valid,
+      selector: {
+        kind: "council",
+        cap: 64,
+        generator: MAP_SCOPE_GENERATOR_ID,
+        harness: "codex",
+        assignedModel: "gpt-5.6-terra",
+        model: "gpt-5.6-terra",
+        effort: "medium",
+        apiKeySource: null,
+      },
+    };
+    expect(queryKnowledge({ ...set([]), coverage: exact }, snapshot).coverage).toEqual({
+      kind: "invalid",
+      reason: "inventory-mismatch",
+    });
+  });
+
+  it("marks a below-cap record invalid when it excludes an eligible slice", () => {
+    const snapshot = loadedSnapshot([
+      file("a.ts", "a"),
+      file("docs/a.md", "docs"),
+      file("pnpm-lock.yaml", "lock"),
+    ]);
+    const valid = exactCoverageFor(snapshot);
+    const [first, ...rest] = valid.groups;
+    if (first?.kind !== "mapped") throw new Error("fixture");
+    const exact: KnowledgeCoverage = {
+      ...valid,
+      groups: [
+        {
+          kind: "excluded",
+          source: "scope",
+          sliceId: first.sliceId,
+          reason: "Incorrectly excluded below the cap",
+          files: first.files,
+        },
+        ...rest,
+      ],
+    };
+    expect(queryKnowledge({ ...set([]), coverage: exact }, snapshot).coverage).toEqual({
+      kind: "invalid",
+      reason: "inventory-mismatch",
+    });
+  });
+
+  it("keeps exact coverage but marks it stale when it belongs to another snapshot", () => {
+    const snapshot = loadedSnapshot([file("a.ts", "a")]);
+    expect(
+      queryKnowledge(
+        { ...set([]), snapshotFingerprint: "fp-earlier", coverage: coverage() },
+        snapshot,
+      ).coverage,
+    ).toEqual({
+      kind: "stale",
+      exact: coverage(),
+      learnedAgainst: { baseOid: "oid-current", snapshotFingerprint: "fp-earlier" },
+    });
   });
 
   it("serves statements whose anchors resolve as `current`, verbatim + labelled", () => {
@@ -257,5 +554,17 @@ describe("queryKnowledge", () => {
     expect(queryKnowledge(s, snap, { subject: "@t/a" }).statements.map((x) => x.id)).toEqual([
       "a-purpose",
     ]);
+  });
+});
+
+describe("knowledgeCoverageTotals", () => {
+  it("reports mapped, scope-excluded, and mechanically excluded files separately", () => {
+    expect(knowledgeCoverageTotals(coverage())).toEqual({
+      mappedFiles: 1,
+      mappedSlices: 1,
+      scopeExcludedFiles: 1,
+      scopeExcludedSlices: 1,
+      mechanicallyExcludedFiles: 1,
+    });
   });
 });

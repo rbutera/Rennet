@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import { runContextAsk } from "./context-ask";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
+import { partitionsFromSnapshot } from "./knowledge/partition";
+import { MAP_SCOPE_GENERATOR_ID, materializeKnowledgeCoverage } from "./knowledge/scope";
 import { type LoadedSnapshot, materializeSnapshot } from "./project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "./project-snapshot";
 
@@ -92,6 +94,120 @@ const KNOWLEDGE: KnowledgeSet = {
     },
   ],
 };
+
+function wideCoverageFixture(): {
+  readonly snapshot: LoadedSnapshot;
+  readonly knowledgeSet: KnowledgeSet;
+  readonly evidencePath: string;
+  readonly mappedFiles: number;
+  readonly scopeExcludedFiles: number;
+  readonly mechanicallyExcludedFiles: number;
+} {
+  const wideScopes = Array.from({ length: 65 }, (_, index) => {
+    const suffix = index.toString().padStart(2, "0");
+    return {
+      name: `@wide/p${suffix}`,
+      root: `packages/p${suffix}`,
+      sourceRoot: `packages/p${suffix}/src`,
+      type: "library",
+      private: true,
+      tags: [],
+    } satisfies WorkspaceScope;
+  });
+  const wideInputs: SnapshotStructuralInputs = {
+    ...inputs,
+    repoKey: "/wide/.git",
+    baseOid: "oid-wide",
+    files: wideScopes.map(
+      (scope) =>
+        ({
+          path: `${scope.sourceRoot}/index.ts`,
+          blobOid: `blob:${scope.sourceRoot}/index.ts`,
+          size: 1,
+          mode: "100644",
+        }) satisfies SnapshotFileEntry,
+    ),
+    scopes: wideScopes,
+    entryPoints: [],
+  };
+  const built = buildSnapshot(wideInputs, []);
+  const loaded = materializeSnapshot(built.manifest, (digest) => built.shards.get(digest));
+  if (!loaded.ok) throw new Error(`materialize failed: ${loaded.slots.join(",")}`);
+  const snapshot = loaded.snapshot;
+  const candidates = partitionsFromSnapshot(snapshot);
+  if (candidates.length <= 64) throw new Error("wide fixture did not exceed the selector cap");
+  const coverage = materializeKnowledgeCoverage({
+    snapshot,
+    candidates,
+    selection: {
+      status: "ok",
+      includedSliceIds: candidates.slice(0, 64).map((candidate) => candidate.id),
+      excludedSlices: candidates.slice(64).map((candidate) => ({
+        sliceId: candidate.id,
+        reason: "Outside the selected mapping slices",
+      })),
+      provenance: {
+        generator: MAP_SCOPE_GENERATOR_ID,
+        model: "gpt-5.6-terra",
+        apiKeySource: null,
+      },
+      attempts: 1,
+    },
+    selector: {
+      kind: "council",
+      harness: "codex",
+      assignedModel: "gpt-5.6-terra",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+      apiKeySource: null,
+    },
+  });
+  const firstMapped = coverage.groups.find((group) => group.kind === "mapped");
+  const evidenceFile = firstMapped?.files[0];
+  const baseStatement = KNOWLEDGE.statements[0];
+  if (firstMapped?.kind !== "mapped" || evidenceFile === undefined || baseStatement === undefined) {
+    throw new Error("wide fixture has no mapped evidence");
+  }
+  const mappedFiles = coverage.groups.reduce(
+    (count, group) => count + (group.kind === "mapped" ? group.files.length : 0),
+    0,
+  );
+  const scopeExcludedFiles = coverage.groups.reduce(
+    (count, group) =>
+      count + (group.kind === "excluded" && group.source === "scope" ? group.files.length : 0),
+    0,
+  );
+  const mechanicallyExcludedFiles = coverage.groups.reduce(
+    (count, group) =>
+      count + (group.kind === "excluded" && group.source === "mechanical" ? group.files.length : 0),
+    0,
+  );
+  return {
+    snapshot,
+    knowledgeSet: {
+      ...KNOWLEDGE,
+      repoKey: snapshot.manifest.repoKey,
+      baseOid: snapshot.manifest.baseOid,
+      snapshotFingerprint: snapshot.manifest.fingerprint,
+      coverage,
+      statements: [
+        {
+          ...baseStatement,
+          subject: firstMapped.sliceId,
+          evidence: [{ path: evidenceFile.path, blobOid: evidenceFile.blobOid }],
+          learnedAgainst: {
+            baseOid: snapshot.manifest.baseOid,
+            snapshotFingerprint: snapshot.manifest.fingerprint,
+          },
+        },
+      ],
+    },
+    evidencePath: evidenceFile.path,
+    mappedFiles,
+    scopeExcludedFiles,
+    mechanicallyExcludedFiles,
+  };
+}
 
 const COUNCIL: CouncilResolveContext = { availability: { installed: ["claude-code"] } };
 
@@ -226,6 +342,39 @@ describe("runContextAsk", () => {
     expect(prompt).toContain("evidence=k1:0 statement=k1");
     expect(prompt).toContain("claim: core holds the deterministic reads");
     expect(prompt).toContain("PROJECT FILE NAMES (navigation only; NOT evidence)");
+  });
+
+  it("tells the model and caller when exact map coverage excluded files", async () => {
+    const fixture = wideCoverageFixture();
+    let prompt = "";
+    const result = await runContextAsk({
+      snapshot: fixture.snapshot,
+      knowledgeSet: fixture.knowledgeSet,
+      query: { question: "what is in core?" },
+      council: COUNCIL,
+      runTurn: async (value) => {
+        prompt = value;
+        return {
+          status: "emitted",
+          body: {
+            answer: "core holds deterministic reads",
+            confidence: "high",
+            evidence: [{ evidenceId: "k1:0", path: fixture.evidencePath }],
+          },
+        };
+      },
+      maxRetries: 0,
+    });
+
+    expect(prompt).toContain("MODEL KNOWLEDGE COVERAGE");
+    expect(prompt).toContain(
+      `${fixture.mappedFiles} file(s) mapped; ${fixture.scopeExcludedFiles} scope-excluded; ${fixture.mechanicallyExcludedFiles} mechanically excluded`,
+    );
+    expect(result.status).toBe("answered");
+    if (result.status !== "answered") throw new Error("unreachable");
+    expect(result.answer.consulted).toContain(
+      `context.knowledge coverage (${fixture.mappedFiles} mapped; ${fixture.scopeExcludedFiles} scope-excluded; ${fixture.mechanicallyExcludedFiles} mechanically excluded)`,
+    );
   });
 
   it("never offers a rejected statement as evidence to the orchestrator", async () => {

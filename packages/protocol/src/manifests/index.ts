@@ -53,6 +53,7 @@ export const COUNCIL_JOB_IDS = [
   "board-post-process",
   "round-report",
   "partition-worker",
+  "map-scope",
   "map-verify",
   "project-scout",
   "related-context-retrieval",
