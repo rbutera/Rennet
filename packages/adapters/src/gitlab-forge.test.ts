@@ -129,7 +129,7 @@ describe("GitLabForgeAdapter", () => {
     );
   });
 
-  it("folds threads into a marker-bearing note and reconciles a retry before posting", async () => {
+  it("sends the exact previewed body in the marker note and reconciles a retry", async () => {
     const artifact = {
       opener: "This is ready for review.",
       comments: [
@@ -162,11 +162,12 @@ describe("GitLabForgeAdapter", () => {
     const { adapter, calls } = scripted([ok(existing)]);
 
     expect(post.threads).toEqual([]);
+    expect(post.body).toMatch(/^\*\*Rennet review verdict: Changes requested\*\*/);
     expect(post.body).toContain("`src/a.ts:4`");
-    expect(adapter.buildReviewRequest(post).requests[0]).toMatchObject({
+    expect(adapter.buildReviewRequest(post).requests[0]).toEqual({
       endpoint: "projects/acme%2Fplatform%2Fwidget/merge_requests/42/notes",
       method: "POST",
-      body: { body: expect.stringContaining("Changes requested") },
+      body: { body: post.body },
     });
     await expect(adapter.publishReview(post)).resolves.toEqual({
       reviewRef: "77",
@@ -203,10 +204,11 @@ describe("GitLabForgeAdapter", () => {
     ]);
     const request = adapter.buildReviewRequest(post);
     expect(request.requests).toEqual([
-      expect.objectContaining({
+      {
         endpoint: "projects/acme%2Fplatform%2Fwidget/merge_requests/42/notes",
-        body: { body: expect.stringContaining(post.marker) },
-      }),
+        method: "POST",
+        body: { body: post.body },
+      },
       {
         endpoint: "projects/acme%2Fplatform%2Fwidget/merge_requests/42/approve",
         method: "POST",
@@ -225,6 +227,7 @@ describe("GitLabForgeAdapter", () => {
       expect.stringContaining("/notes"),
       expect.stringContaining("/approve"),
     ]);
+    expect(calls[2]?.stdin).toBe(JSON.stringify({ body: post.body }));
     expect(calls[3]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
 
     const existing = {
@@ -232,16 +235,162 @@ describe("GitLabForgeAdapter", () => {
       body: `landed\n\n<!-- rennet:review:${post.marker} -->`,
       web_url: null,
     };
-    const retry = scripted([ok(existing), ok({ approved: true })]);
+    const retry = scripted([
+      ok(existing),
+      ok({ username: "rai" }),
+      ok({ approved_by: [{ user: { username: "rai" } }] }),
+    ]);
     await expect(retry.adapter.publishReview(post)).resolves.toMatchObject({
       reviewRef: "88",
       reused: true,
     });
-    expect(retry.calls).toHaveLength(2);
-    expect(retry.calls[1]?.args).toContain(
-      "projects/acme%2Fplatform%2Fwidget/merge_requests/42/approve",
-    );
-    expect(retry.calls[1]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
+    expect(retry.calls.map((call) => call.args[1])).toEqual([
+      expect.stringContaining("/notes?"),
+      "user",
+      expect.stringContaining("/approvals"),
+    ]);
+    expect(retry.calls.some((call) => call.args[1]?.endsWith("/approve"))).toBe(false);
+  });
+
+  it("does not repeat an approval after its response is lost and the marker note reconciles", async () => {
+    const artifact = { opener: "The reviewed head is ready.", comments: [], bodyNotes: [] };
+    let approvalMutations = 0;
+    let approvalStateReads = 0;
+    let noteMutations = 0;
+    let viewerApproved = false;
+    const notes: { id: number; body: string }[] = [];
+    const run: GitLabForgeCommandRunner = async (command) => {
+      const endpoint = command.args[1] ?? "";
+      if (endpoint.includes("/notes?")) {
+        return ok(notes.map((note) => JSON.stringify(note)).join("\n"));
+      }
+      if (endpoint === "user") return ok({ username: "rai" });
+      if (endpoint.endsWith("/approvals")) {
+        approvalStateReads += 1;
+        return ok({
+          approved_by: viewerApproved ? [{ user: { username: "rai" } }] : [],
+        });
+      }
+      if (endpoint.endsWith("/merge_requests/42")) return ok(mr());
+      if (endpoint.endsWith("/merge_requests/42/notes")) {
+        noteMutations += 1;
+        const parsed: unknown = JSON.parse(command.stdin ?? "{}");
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          !("body" in parsed) ||
+          typeof parsed.body !== "string"
+        ) {
+          throw new Error("GitLab note body is missing");
+        }
+        const body = parsed.body;
+        notes.push({ id: 88, body });
+        return ok({ id: 88, body, web_url: null });
+      }
+      if (endpoint.endsWith("/merge_requests/42/approve")) {
+        approvalMutations += 1;
+        viewerApproved = true;
+        if (approvalMutations === 1) {
+          throw new Error("socket closed after GitLab accepted the approval");
+        }
+        return ok({ approved: true });
+      }
+      throw new Error(`unexpected command: ${command.args.join(" ")}`);
+    };
+    const adapter = new GitLabForgeAdapter({
+      detectionDeps: detection(),
+      locus: { kind: "host" },
+      repositoryRoot: "/code/widget",
+      run,
+    });
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      verdict: "APPROVE",
+      capabilities: adapter.capabilities,
+    });
+
+    await expect(adapter.publishReview(post)).rejects.toThrow(/unreachable/i);
+    await expect(adapter.publishReview(post)).resolves.toEqual({
+      reviewRef: "88",
+      url: "https://gitlab.com/acme/platform/widget/-/merge_requests/42#note_88",
+      reused: true,
+    });
+    expect(noteMutations).toBe(1);
+    expect(approvalMutations).toBe(1);
+    expect(approvalStateReads).toBe(1);
+  });
+
+  it("finishes a note-only approval retry after checking the current head", async () => {
+    const artifact = { opener: "The reviewed head is ready.", comments: [], bodyNotes: [] };
+    const adapterForCapabilities = new GitLabForgeAdapter({
+      detectionDeps: detection(),
+      locus: { kind: "host" },
+      repositoryRoot: "/code/widget",
+      run: vi.fn(),
+    });
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      verdict: "APPROVE",
+      capabilities: adapterForCapabilities.capabilities,
+    });
+    const existing = { id: 88, body: post.body, web_url: null };
+    const { adapter, calls } = scripted([
+      ok(existing),
+      ok({ username: "rai" }),
+      ok({ approved_by: [] }),
+      ok(mr()),
+      ok({ approved: true }),
+    ]);
+
+    await expect(adapter.publishReview(post)).resolves.toEqual({
+      reviewRef: "88",
+      url: "https://gitlab.com/acme/platform/widget/-/merge_requests/42#note_88",
+      reused: true,
+    });
+    expect(calls.map((call) => call.args[1])).toEqual([
+      expect.stringContaining("/notes?"),
+      "user",
+      expect.stringContaining("/approvals"),
+      expect.stringMatching(/\/merge_requests\/42$/),
+      expect.stringMatching(/\/merge_requests\/42\/approve$/),
+    ]);
+    expect(calls.filter((call) => call.args[1]?.endsWith("/notes"))).toHaveLength(0);
+  });
+
+  it("refuses a moved head before finishing a note-only approval retry", async () => {
+    const artifact = { opener: "The reviewed head is ready.", comments: [], bodyNotes: [] };
+    const adapterForCapabilities = new GitLabForgeAdapter({
+      detectionDeps: detection(),
+      locus: { kind: "host" },
+      repositoryRoot: "/code/widget",
+      run: vi.fn(),
+    });
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      verdict: "APPROVE",
+      capabilities: adapterForCapabilities.capabilities,
+    });
+    const { adapter, calls } = scripted([
+      ok({ id: 88, body: post.body, web_url: null }),
+      ok({ username: "rai" }),
+      ok({ approved_by: [] }),
+      ok(mr({ sha: "new-head" })),
+    ]);
+
+    await expect(adapter.publishReview(post)).rejects.toThrow(/head moved/i);
+    expect(calls.map((call) => call.args[1])).toEqual([
+      expect.stringContaining("/notes?"),
+      "user",
+      expect.stringContaining("/approvals"),
+      expect.stringMatching(/\/merge_requests\/42$/),
+    ]);
+    expect(calls.some((call) => call.args[1]?.endsWith("/approve"))).toBe(false);
   });
 
   it("checks the live head before creating a note", async () => {

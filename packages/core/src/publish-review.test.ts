@@ -35,6 +35,7 @@ const CAPS: ForgeCapabilities = {
   supportsBatchedReview: true,
   supportsMultiLineAnchors: true,
   supportsFileLevelThreads: true,
+  requiresReviewVerdictInBody: false,
 };
 
 const OPENER = "I reviewed the change and checked the points below.";
@@ -597,6 +598,28 @@ describe("buildForgeReviewPost (issue #21)", () => {
     expect(unbatched.body).toContain("`src/a.ts:5`");
     expect(unbatched.body).toContain("`src/b.ts:9`");
     expect(unbatched.ledger.filter((entry) => entry.kind === "thread-fold")).toHaveLength(2);
+  });
+
+  it("puts a provider-required verdict label in the signed body before preview", () => {
+    const verdictLabels = [
+      ["APPROVE", "Approved"],
+      ["REQUEST_CHANGES", "Changes requested"],
+      ["COMMENT", "Commented"],
+    ] as const;
+
+    for (const [event, label] of verdictLabels) {
+      const composed = buildForgeReviewPost(artifact(), {
+        reviewId: `rev-${event}`,
+        target: TARGET,
+        payload,
+        capabilities: { ...CAPS, requiresReviewVerdictInBody: true },
+        verdict: event,
+      });
+      expect(composed.body.startsWith(`**Rennet review verdict: ${label}**\n\n${OPENER}\n\n`)).toBe(
+        true,
+      );
+    }
+    expect(post.body).not.toContain("Rennet review verdict:");
   });
 
   it("renders each disposition TYPE into its body independently of the resolved review event", () => {

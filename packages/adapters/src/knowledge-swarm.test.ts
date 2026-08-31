@@ -298,6 +298,7 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       expect(req.effort).toBe("low");
       expect(req.outputSchema).toBe(PARTITION_WORKER_OUTPUT_SCHEMA);
       expect(req.cwd).toBe("/repo");
+      expect(req.mcpServers).toEqual({});
     }
     // One verify turn on the Claude port with sonnet-5 and the VERIFY schema.
     expect(claudeCaptures).toHaveLength(1);

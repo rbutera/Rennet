@@ -21,6 +21,7 @@ const CAPS = {
   supportsBatchedReview: true,
   supportsMultiLineAnchors: true,
   supportsFileLevelThreads: true,
+  requiresReviewVerdictInBody: false,
 };
 
 function post(comments: ReviewCommentInput[], reviewId = "rev-1"): ForgeReviewPost {

@@ -203,8 +203,12 @@ external mutation.
 For someone else's pull or merge request, Rennet submits the previewed review.
 A deterministic marker and forge read-back make retries idempotent. GitHub posts
 one batched review. GitLab.com folds anchored comments into one review note and
-uses the native approval endpoint for an approval. The renderer does not
-construct a different review body after preview.
+uses the native approval endpoint for an approval. A forge capability tells the
+core composer when the signed body must name the verdict. Each adapter then sends
+that exact reviewed body without adding provider-only prose after preview. An
+approving GitLab retry checks the current user's approval state: an existing
+approval returns the reused marker receipt, while a note-only retry rechecks the
+immutable head and performs the missing approval once.
 
 For the user's own branch, posting pushes the named branch to the effective push
 remote and opens a GitHub pull request or GitLab.com merge request from the

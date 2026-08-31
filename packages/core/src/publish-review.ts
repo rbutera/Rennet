@@ -465,6 +465,12 @@ const TYPE_LABEL: Record<DispositionType, string> = {
   approve: "Approval",
 };
 
+const REVIEW_EVENT_LABEL: Record<ForgeReviewEvent, string> = {
+  APPROVE: "Approved",
+  REQUEST_CHANGES: "Changes requested",
+  COMMENT: "Commented",
+};
+
 /**
  * Render a comment body with its disposition type as a legible prefix, so each thread keeps
  * its own classification within the review-level event. An empty body renders as the bare label.
@@ -589,7 +595,9 @@ export function buildForgeReviewPost(
   // body bytes happen to match.
   const event = resolveReviewEvent([...artifact.comments, ...artifact.bodyNotes], options.verdict);
   const marker = buildReviewMarker(options.reviewId, options.target, options.payload, event);
-  const sections: string[] = [artifact.opener];
+  const sections: string[] = options.capabilities.requiresReviewVerdictInBody
+    ? [`**Rennet review verdict: ${REVIEW_EVENT_LABEL[event]}**`, artifact.opener]
+    : [artifact.opener];
 
   // The BODY stratum (B11 finding 2): a pathless/prose ask has no diff line, so it is woven
   // into the review body under a "Review notes" heading rather than dropped — and each is
@@ -717,8 +725,9 @@ export interface ForgePublishPort {
   ): Promise<ForgePublishOutcome | null>;
   /**
    * Post the provider-specific review operation. Idempotent: queries for the marker
-   * first and reuses its review note rather than double-posting. Providers with a
-   * separate approval mutation reconcile that mutation against the reused note.
+   * first and reuses its review rather than double-posting. A provider with a separate
+   * approval mutation verifies whether the current user already approved before it
+   * decides whether the marker proves the complete operation or only its review note.
    * Throws {@link ForgeRateLimited} on a secondary rate limit — never retries into a
    * storm.
    */
