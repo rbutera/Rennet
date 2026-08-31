@@ -33,6 +33,23 @@ The desktop and browser shells reach the daemon through `@rennet/client`. The
 React app does not spawn harnesses, and the Electron main process does not own
 model routing.
 
+### Scripted owner-loop proof stays outside production
+
+The owner-loop integration proof uses a lane-unique JSON plan to implement a
+`HarnessPort` in tests. The plan is schema-validated before the test server is
+created, writes one JSONL invocation record per turn, and applies coding edits
+as exact replacements under `SessionSpec.cwd`. Reloading the plan reloads the
+ledger, so a restarted daemon cannot replay a consumed coding step.
+
+This is a test composition, not a daemon mode. The production daemon never reads
+the plan and has no environment variable or command-line flag that selects canned
+harness responses. The Electron journey starts an E2E-owned daemon process,
+injects the test port through `RennetServerOptions.testHarnessPort`, and then
+launches the unchanged desktop client against the daemon claim. The client still
+uses the real WebSocket protocol, persistence stores, capture path, board runtime,
+round coordinator, and restart behavior. The spec is committed as a launched
+journey but is not part of the browser-free local gate.
+
 ## The normalized session
 
 The current port exposes descriptor and health information plus one operation:

@@ -1,0 +1,465 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { GenerationStore, RoundOperationStore } from "@rennet/adapters";
+import {
+  type CommandOutput,
+  commandIdFor,
+  generationIdForPatchset,
+  LENS_KINDS,
+  parseCommandOutput,
+} from "@rennet/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRennetServer, type RennetServer } from "./create-server";
+import {
+  OWNER_LOOP_ROUND_ONE_ASK,
+  OWNER_LOOP_ROUND_ONE_BODY,
+  OWNER_LOOP_ROUND_TWO_ASK,
+  OWNER_LOOP_ROUND_TWO_BODY,
+  OWNER_LOOP_SEQUENCE_QUOTE,
+  OWNER_LOOP_SOURCE,
+  OWNER_LOOP_SPEC,
+  writeOwnerLoopScriptedHarnessPlan,
+} from "./owner-loop-proof-fixture";
+import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
+
+function git(root: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd: root }).toString().trim();
+}
+
+function writeRepoFile(root: string, path: string, contents: string): void {
+  const target = join(root, path);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, contents);
+}
+
+function seedTargetRepo(root: string): void {
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "rennet@example.test");
+  git(root, "config", "user.name", "Rennet Test");
+  git(root, "config", "core.excludesFile", "/dev/null");
+  writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'base';\n");
+  writeRepoFile(
+    root,
+    OWNER_LOOP_SPEC,
+    [
+      "## ADDED Requirements",
+      "",
+      "### Requirement: Keep the owner-loop value source-backed",
+      "The system SHALL keep the owner-loop value source-backed.",
+      "",
+      "#### Scenario: Review the owner loop",
+      "WHEN the owner loop is reviewed",
+      "THEN the current value remains source-backed.",
+      "",
+      `Implementation: \`${OWNER_LOOP_SOURCE}\``,
+      "",
+    ].join("\n"),
+  );
+  git(root, "add", OWNER_LOOP_SOURCE, OWNER_LOOP_SPEC);
+  git(root, "commit", "-qm", "base");
+  git(root, "remote", "add", "origin", "git@github.com:owner/target.git");
+  git(root, "checkout", "-qb", "feature/shared");
+  writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
+  git(root, "add", OWNER_LOOP_SOURCE);
+  git(root, "commit", "-qm", "reviewed owner value");
+}
+
+function seedDecoyRepo(root: string): void {
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "rennet@example.test");
+  git(root, "config", "user.name", "Rennet Test");
+  git(root, "config", "core.excludesFile", "/dev/null");
+  writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'decoy-base';\n");
+  git(root, "add", OWNER_LOOP_SOURCE);
+  git(root, "commit", "-qm", "decoy base");
+  git(root, "remote", "add", "origin", "git@github.com:owner/decoy.git");
+  git(root, "checkout", "-qb", "feature/shared");
+  writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'decoy-reviewed';\n");
+  git(root, "add", OWNER_LOOP_SOURCE);
+  git(root, "commit", "-qm", "decoy reviewed value");
+}
+
+function invocationRecords(path: string): Array<Record<string, unknown>> {
+  const text = readFileSync(path, "utf8").trim();
+  return text === "" ? [] : text.split("\n").map((line) => JSON.parse(line));
+}
+
+async function waitForPreparedSession(server: RennetServer, sessionId: string): Promise<string> {
+  let reviewId = "";
+  await vi.waitFor(
+    async () => {
+      const listed = parseCommandOutput("session.list", await server.dispatch("session.list", {}));
+      const session = listed.sessions.find((candidate) => candidate.id === sessionId);
+      if (session?.preparation?.status === "failed") {
+        throw new Error(session.preparation.reason);
+      }
+      expect(session?.preparation).toBeUndefined();
+      expect(session?.reviewId).toBeDefined();
+      reviewId = session?.reviewId ?? "";
+    },
+    { timeout: 30_000, interval: 25 },
+  );
+  return reviewId;
+}
+
+async function waitForFiveBoards(
+  server: RennetServer,
+  reviewId: string,
+  generation: string,
+  patchsetId: string,
+): Promise<Map<string, string>> {
+  const boardIds = new Map<string, string>();
+  await vi.waitFor(
+    async () => {
+      for (const lens of LENS_KINDS) {
+        const read = parseCommandOutput(
+          "board.read",
+          await server.dispatch("board.read", { reviewId, generation, lens }),
+        );
+        expect(read.failure).toBeUndefined();
+        expect(read.absence).toBeUndefined();
+        expect(read.board?.generation).toBe(generation);
+        if (read.board !== null) boardIds.set(lens, read.board.boardId);
+        if (!read.board?.elements.some((element) => element.kind === "code_ref")) {
+          throw new Error(`${lens} board lost its code anchor: ${JSON.stringify(read.board)}`);
+        }
+        const refs = read.board?.elements.filter((element) => element.kind === "code_ref") ?? [];
+        expect(refs.every((element) => element.data.path === OWNER_LOOP_SOURCE)).toBe(true);
+        if (!refs.every((element) => element.data.patchset_id === patchsetId)) {
+          throw new Error(
+            `${lens} board cited the wrong patchset: ${JSON.stringify({ patchsetId, refs })}`,
+          );
+        }
+      }
+    },
+    { timeout: 30_000, interval: 50 },
+  );
+  return boardIds;
+}
+
+async function expectFrozenBoardsRemainReadable(
+  server: RennetServer,
+  reviewId: string,
+  generation: string,
+  boardIds: ReadonlyMap<string, string>,
+): Promise<void> {
+  for (const lens of LENS_KINDS) {
+    const read = parseCommandOutput(
+      "board.read",
+      await server.dispatch("board.read", { reviewId, generation, lens }),
+    );
+    expect(read.board?.generation).toBe(generation);
+    expect(read.board?.boardId).toBe(boardIds.get(lens));
+  }
+}
+
+async function waitForRoundReturn(
+  server: RennetServer,
+  dataDir: string,
+  sessionId: string,
+  reviewId: string,
+  expectedRounds: number,
+  consumedAsk: string,
+  invocationLog: string,
+): Promise<CommandOutput<"session.rounds">["records"]> {
+  let records: CommandOutput<"session.rounds">["records"] = [];
+  await vi.waitFor(
+    async () => {
+      const rounds = parseCommandOutput(
+        "session.rounds",
+        await server.dispatch("session.rounds", { reviewId }),
+      );
+      const asks = parseCommandOutput(
+        "ask.read",
+        await server.dispatch("ask.read", { sessionId: reviewId }),
+      );
+      const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+      const operation = operationStore.read(sessionId);
+      operationStore.close();
+      if (operation?.state.phase === "failed") {
+        throw new Error(
+          `owner-loop round failed: ${operation.state.failure.reason}; rounds=${JSON.stringify(rounds.records)}; invocations=${JSON.stringify(invocationRecords(invocationLog))}`,
+        );
+      }
+      expect(rounds.records).toHaveLength(expectedRounds);
+      expect(asks.projection.stagedAsks[consumedAsk]).toBeUndefined();
+      records = rounds.records;
+    },
+    { timeout: 45_000, interval: 50 },
+  );
+  return records;
+}
+
+describe("#685 owner loop through a real server", () => {
+  const dirs: string[] = [];
+  const shutdowns: Array<() => void> = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    vi.unstubAllEnvs();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("keeps one exact repository coherent across Context Map, five boards, two rounds, and restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-owner-loop-685-"));
+    const home = join(root, "home");
+    const dataDir = join(root, "data");
+    const workspace = join(root, "workspace");
+    mkdirSync(join(workspace, "target"), { recursive: true });
+    mkdirSync(join(workspace, "decoy"), { recursive: true });
+    const target = realpathSync(join(workspace, "target"));
+    const decoy = realpathSync(join(workspace, "decoy"));
+    mkdirSync(home, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    dirs.push(root);
+    seedTargetRepo(target);
+    seedDecoyRepo(decoy);
+    const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(root);
+    vi.stubEnv("HOME", home);
+    const env = {
+      ...process.env,
+      HOME: home,
+      RENNET_DISABLE_HARNESS: "1",
+    };
+
+    const first = await createRennetServer({
+      dataDir,
+      env,
+      testHarnessPort: loadScriptedHarnessPlan(planPath),
+    });
+    shutdowns.push(first.shutdown);
+    const added = parseCommandOutput(
+      "projects.add",
+      await first.dispatch("projects.add", {
+        commandId: randomUUID(),
+        discovery: {
+          path: workspace,
+          kind: "workspace",
+          repos: [
+            { name: "target", path: target, branches: 2 },
+            { name: "decoy", path: decoy, branches: 2 },
+          ],
+          primaryBranch: "main",
+          source: "local",
+        },
+        includedRepos: ["target", "decoy"],
+        primaryBranch: "main",
+      }),
+    );
+    const context = parseCommandOutput(
+      "project.process",
+      await first.dispatch("project.process", {
+        commandId: commandIdFor(`project.process:${added.project.id}`),
+        projectId: added.project.id,
+      }),
+    );
+    if (context.run?.status === "failed") throw new Error(context.run.reason);
+    expect(context.run?.status).toBe("done");
+    expect(context.repos.map((repo) => [repo.path, repo.ok])).toEqual([
+      [target, true],
+      [decoy, true],
+    ]);
+
+    const minted = parseCommandOutput(
+      "session.mint",
+      await first.dispatch("session.mint", {
+        projectId: added.project.id,
+        commandId: randomUUID(),
+        branch: "feature/shared",
+        repository: "owner/target",
+      }),
+    );
+    expect(minted.session).not.toBeNull();
+    const sessionId = minted.session?.id ?? "";
+    const reviewId = await waitForPreparedSession(first, sessionId);
+    const initial = parseCommandOutput(
+      "review.load",
+      await first.dispatch("review.load", { commandId: randomUUID(), reviewId }),
+    ).review;
+    expect(initial.repositoryRoot).toBe(target);
+    expect(initial.patchsets.at(-1)?.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
+    expect(readFileSync(join(decoy, OWNER_LOOP_SOURCE), "utf8")).toContain("decoy-reviewed");
+
+    const initialGeneration = generationIdForPatchset(initial.activePatchsetId);
+    const initialBoardIds = await waitForFiveBoards(
+      first,
+      reviewId,
+      initialGeneration,
+      initial.activePatchsetId,
+    );
+    const missing = parseCommandOutput(
+      "board.read",
+      await first.dispatch("board.read", {
+        reviewId,
+        generation: "gen:missing-positive-control",
+        lens: "sequence",
+      }),
+    );
+    expect(missing.board).toBeNull();
+
+    await first.dispatch("ask.quoteOpen", {
+      sessionId: reviewId,
+      threadId: "owner-loop-quote",
+      thread: {
+        anchor: OWNER_LOOP_SEQUENCE_QUOTE,
+        target: "sequence-step",
+        generation: initialGeneration,
+        lifecycle: "attached",
+        messages: [{ author: "user", text: "Keep this reading anchor." }],
+      },
+    });
+    await first.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: OWNER_LOOP_ROUND_ONE_ASK,
+        anchor: `${OWNER_LOOP_SOURCE}:1`,
+        type: "request-change",
+        body: OWNER_LOOP_ROUND_ONE_BODY,
+      },
+    });
+    const roundOneDispatch = parseCommandOutput(
+      "round.dispatch",
+      await first.dispatch("round.dispatch", { reviewId }),
+    );
+    expect(roundOneDispatch.dispatched).toBe(true);
+    const afterRoundOne = await waitForRoundReturn(
+      first,
+      dataDir,
+      sessionId,
+      reviewId,
+      1,
+      OWNER_LOOP_ROUND_ONE_ASK,
+      invocationLog,
+    );
+    const roundOneGeneration = afterRoundOne[0]?.boardGeneration ?? "";
+    expect(roundOneGeneration).not.toBe(initialGeneration);
+    expect(afterRoundOne[0]?.frozenPredecessor).toBe(initialGeneration);
+    const roundOneBoardIds = await waitForFiveBoards(
+      first,
+      reviewId,
+      roundOneGeneration,
+      afterRoundOne[0]?.resultPatchsetId ?? "",
+    );
+    const afterRoundOneAsks = parseCommandOutput(
+      "ask.read",
+      await first.dispatch("ask.read", { sessionId: reviewId }),
+    );
+    expect(afterRoundOneAsks.projection.quoteThreads["owner-loop-quote"]).toMatchObject({
+      lifecycle: "attached",
+      target: "sequence-step",
+      generation: roundOneGeneration,
+    });
+
+    first.shutdown();
+    shutdowns.pop();
+    const editRecordsBeforeRestart = invocationRecords(invocationLog).filter(
+      (record) => record.kind === "edit",
+    );
+    expect(editRecordsBeforeRestart.map((record) => record.stepId)).toEqual(["round-one-edit"]);
+
+    const restarted = await createRennetServer({
+      dataDir,
+      env,
+      testHarnessPort: loadScriptedHarnessPlan(planPath),
+    });
+    shutdowns.push(restarted.shutdown);
+    parseCommandOutput("projects.list", await restarted.dispatch("projects.list", {}));
+    const durableRounds = parseCommandOutput(
+      "session.rounds",
+      await restarted.dispatch("session.rounds", { reviewId }),
+    );
+    expect(durableRounds.records).toHaveLength(1);
+    expect(
+      invocationRecords(invocationLog).filter((record) => record.kind === "edit"),
+    ).toHaveLength(1);
+
+    await restarted.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: OWNER_LOOP_ROUND_TWO_ASK,
+        anchor: `${OWNER_LOOP_SOURCE}:1`,
+        type: "request-change",
+        body: OWNER_LOOP_ROUND_TWO_BODY,
+      },
+    });
+    const roundTwoDispatch = parseCommandOutput(
+      "round.dispatch",
+      await restarted.dispatch("round.dispatch", { reviewId }),
+    );
+    expect(roundTwoDispatch.dispatched).toBe(true);
+    const afterRoundTwo = await waitForRoundReturn(
+      restarted,
+      dataDir,
+      sessionId,
+      reviewId,
+      2,
+      OWNER_LOOP_ROUND_TWO_ASK,
+      invocationLog,
+    );
+    const roundTwoGeneration = afterRoundTwo[1]?.boardGeneration ?? "";
+    expect(roundTwoGeneration).not.toBe(roundOneGeneration);
+    expect(afterRoundTwo[1]?.frozenPredecessor).toBe(roundOneGeneration);
+    await waitForFiveBoards(
+      restarted,
+      reviewId,
+      roundTwoGeneration,
+      afterRoundTwo[1]?.resultPatchsetId ?? "",
+    );
+    const afterRoundTwoAsks = parseCommandOutput(
+      "ask.read",
+      await restarted.dispatch("ask.read", { sessionId: reviewId }),
+    );
+    expect(afterRoundTwoAsks.projection.quoteThreads["owner-loop-quote"]).toMatchObject({
+      lifecycle: "attached",
+      target: "sequence-step",
+      generation: roundTwoGeneration,
+    });
+    await expectFrozenBoardsRemainReadable(restarted, reviewId, initialGeneration, initialBoardIds);
+    await expectFrozenBoardsRemainReadable(
+      restarted,
+      reviewId,
+      roundOneGeneration,
+      roundOneBoardIds,
+    );
+
+    const generations = new GenerationStore(join(dataDir, "generations"));
+    expect(generations.load(initialGeneration)?.status).toBe("frozen");
+    expect(generations.load(roundOneGeneration)?.status).toBe("frozen");
+    expect(generations.load(roundTwoGeneration)?.status).toBe("live");
+    const finalReview = parseCommandOutput(
+      "review.load",
+      await restarted.dispatch("review.load", { commandId: randomUUID(), reviewId }),
+    ).review;
+    expect(finalReview.activePatchsetId).toBe(generations.load(roundTwoGeneration)?.patchsetId);
+    expect(readFileSync(join(target, OWNER_LOOP_SOURCE), "utf8")).toBe(
+      "export const ownerValue = 'round-two';\n",
+    );
+    expect(readFileSync(join(decoy, OWNER_LOOP_SOURCE), "utf8")).toBe(
+      "export const ownerValue = 'decoy-reviewed';\n",
+    );
+
+    const editRecords = invocationRecords(invocationLog).filter((record) => record.kind === "edit");
+    expect(editRecords.map((record) => record.stepId)).toEqual([
+      "round-one-edit",
+      "round-two-edit",
+    ]);
+    expect(editRecords.every((record) => record.cwd !== target)).toBe(true);
+    expect(
+      editRecords.every(
+        (record) =>
+          typeof record.cwd === "string" && record.cwd.startsWith(join(dataDir, "round-worktrees")),
+      ),
+    ).toBe(true);
+    expect(editRecords[1]?.resumed).toBe(true);
+    const records = invocationRecords(invocationLog);
+    for (const stepId of ["design", "sequence", "decisions", "flagged", "noise"]) {
+      expect(records.filter((record) => record.stepId === stepId)).toHaveLength(3);
+    }
+    expect(records.filter((record) => record.stepId === "design-coverage")).toHaveLength(3);
+    expect(records.filter((record) => record.stepId === "report-round-one")).toHaveLength(1);
+    expect(records.filter((record) => record.stepId === "report-round-two")).toHaveLength(1);
+  }, 120_000);
+});

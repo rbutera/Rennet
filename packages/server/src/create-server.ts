@@ -938,6 +938,8 @@ export interface RennetServerOptions {
    * way), so a WSL update reports that plainly instead of shipping the wrong file.
    */
   readonly hostBundlePath?: string;
+  /** Test-composition seam for a hermetic harness. The production daemon never supplies it. */
+  readonly testHarnessPort?: HarnessPort;
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
@@ -1209,6 +1211,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
   // light-tier turn runs the distro's claude/codex — not the host's.
   async function claudeAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+    if (options.testHarnessPort !== undefined) return options.testHarnessPort;
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
   }
@@ -1941,7 +1944,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<FlaggedReviewRun> {
     const patchset = activePatchset(review);
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
+    const adapter = options.testHarnessPort ?? discoveredAdapter;
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
@@ -2107,7 +2111,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (requirements.length === 0) return { status: "ok", edges: [] };
 
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
+    const adapter = options.testHarnessPort ?? discoveredAdapter;
     // No model seat ⇒ cannot compute; honest failed (no chips), never a fabricated zero.
     if (!adapter) return { status: "failed", edges: [] };
 
@@ -2190,7 +2195,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<NoiseReview> {
     const patchset = activePatchset(review);
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
+    const adapter = options.testHarnessPort ?? discoveredAdapter;
     if (!adapter) {
       return { status: "failed", reason: "no model harness is available to classify noise" };
     }
