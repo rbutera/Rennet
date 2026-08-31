@@ -8,6 +8,7 @@ import type {
   HarnessSession,
   LoadedSnapshot,
   PartitionSlice,
+  SessionSpec,
 } from "@rennet/core";
 import {
   KNOWLEDGE_SWARM_GENERATOR_ID,
@@ -19,7 +20,12 @@ import {
   PARTITION_WORKER_OUTPUT_SCHEMA,
   partitionsFromSnapshot,
 } from "@rennet/core";
-import type { KnowledgeCoverage, KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
+import type {
+  CouncilEffort,
+  KnowledgeCoverage,
+  KnowledgeSet,
+  KnowledgeStatement,
+} from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
@@ -131,6 +137,7 @@ function makeStore(): {
 
 interface ClaudeCapture {
   readonly model: string | undefined;
+  readonly effort: CouncilEffort | undefined;
   readonly outputSchema: unknown;
 }
 
@@ -140,11 +147,12 @@ function fakeClaudePort(
   body: (capture: ClaudeCapture) => unknown | Promise<unknown>,
 ): HarnessPort {
   return {
-    createSession: async (options: {
-      model?: string;
-      outputSchema?: unknown;
-    }): Promise<HarnessSession> => {
-      const capture = { model: options.model, outputSchema: options.outputSchema };
+    createSession: async (options: SessionSpec): Promise<HarnessSession> => {
+      const capture = {
+        model: options.model,
+        effort: options.effort,
+        outputSchema: options.outputSchema,
+      };
       captures.push(capture);
       const session = {
         send: async () => {
@@ -363,7 +371,9 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
       scopeExcludedFiles: 1,
       reusedScopePlan: false,
     });
-    expect(claudeCaptures).toEqual([{ model: "sonnet-5", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA }]);
+    expect(claudeCaptures).toEqual([
+      { model: "sonnet-5", effort: "medium", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
+    ]);
     expect(codexCaptures).toHaveLength(64);
     expect(
       codexCaptures.every((request) => request.outputSchema === PARTITION_WORKER_OUTPUT_SCHEMA),
@@ -460,7 +470,9 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
 
     expect(outcome).toMatchObject({ status: "ok", ranPartitions: 64 });
     expect(scopeAttempts).toEqual([2]);
-    expect(claudeCaptures).toEqual([{ model: "sonnet-5", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA }]);
+    expect(claudeCaptures).toEqual([
+      { model: "sonnet-5", effort: "medium", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
+    ]);
     expect(codexCaptures).toHaveLength(64);
   });
 
@@ -611,6 +623,7 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     // One verify turn on the Claude port with sonnet-5 and the VERIFY schema.
     expect(claudeCaptures).toHaveLength(1);
     expect(claudeCaptures[0]?.model).toBe("sonnet-5");
+    expect(claudeCaptures[0]?.effort).toBe("medium");
     expect(claudeCaptures[0]?.outputSchema).toBe(MAP_VERIFY_OUTPUT_SCHEMA);
     // The set persisted, statements minted through the honesty contract, and the
     // worker's hint died at synthesis (never stored). The `b` worker's off-slice
@@ -1196,8 +1209,8 @@ describe("knowledge swarm — prior-set identity", () => {
       carried: 1,
     });
     expect(scopeCaptures).toEqual([
-      { model: "sonnet-5", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
-      { model: "sonnet-5", outputSchema: MAP_VERIFY_OUTPUT_SCHEMA },
+      { model: "sonnet-5", effort: "medium", outputSchema: MAP_SCOPE_OUTPUT_SCHEMA },
+      { model: "sonnet-5", effort: "medium", outputSchema: MAP_VERIFY_OUTPUT_SCHEMA },
     ]);
     expect(codexCaptures).toHaveLength(1);
     expect(codexCaptures[0]?.prompt).toContain(newlyIncludedFile.path);

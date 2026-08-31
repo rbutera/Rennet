@@ -5,6 +5,7 @@ import {
   type HarnessInProcessTool,
   isResumeVanished,
   type SessionOutcome,
+  type SessionSpec,
 } from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -409,11 +410,13 @@ describe("ClaudeAdapter session", () => {
       }),
       env: { PATH: "/usr/bin", HOME: "/home/rai" },
     });
-    const session = await adapter.createSession({
+    const sessionSpec = {
       cwd: "/repo",
       model: "haiku",
+      effort: "low",
       outputSchema: { type: "object" },
-    });
+    } satisfies SessionSpec;
+    const session = await adapter.createSession(sessionSpec);
     await session.send({ prompt: "act" });
     const options: ClaudeQueryOptions | undefined = capturedArgs[0]?.options;
     if (!options) throw new Error("queryFn was not invoked with options");
@@ -427,6 +430,7 @@ describe("ClaudeAdapter session", () => {
     expect(options.allowedTools).toContain("Bash");
     expect(options.disallowedTools).toBeUndefined();
     expect(options.model).toBe("haiku");
+    expect(options.effort).toBe("low");
     expect(options.outputSchema).toEqual({ type: "object" });
     // Full env spread (the SDK replaces the child env), plus the scoped marker.
     expect(options.env.PATH).toBe("/usr/bin");

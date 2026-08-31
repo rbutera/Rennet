@@ -186,6 +186,7 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   }
   if (options.abortController) sdkOptions.abortController = options.abortController;
   if (options.model !== undefined) sdkOptions.model = mapCouncilModel(options.model);
+  if (options.effort !== undefined) sdkOptions.effort = options.effort;
   if (options.allowedTools !== undefined) sdkOptions.allowedTools = [...options.allowedTools];
   if (options.disallowedTools !== undefined) {
     sdkOptions.disallowedTools = [...options.disallowedTools];

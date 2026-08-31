@@ -20,7 +20,7 @@ import {
   type ToolKind,
   type TurnInput,
 } from "@rennet/core";
-import type { RspTokenUsage } from "@rennet/protocol";
+import type { CouncilEffort, RspTokenUsage } from "@rennet/protocol";
 import { compareVersions } from "./harness-discovery";
 import { readTestedRange } from "./harness-tested-range";
 
@@ -81,6 +81,7 @@ export interface ClaudeQueryOptions {
   /** Arguments prepended by the SDK before its own Claude argv (WSL transport). */
   readonly executableArgs?: readonly string[];
   readonly model?: string;
+  readonly effort?: CouncilEffort;
   readonly allowedTools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   /**
@@ -728,6 +729,7 @@ export class ClaudeAdapter implements HarnessPort {
       env,
       abortController: abort,
       ...(spec.model === undefined ? {} : { model: spec.model }),
+      ...(spec.effort === undefined ? {} : { effort: spec.effort }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
       // The MCP surface (W5), configured on the adapter exactly as the Codex adapter

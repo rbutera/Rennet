@@ -177,6 +177,7 @@ export interface SwarmTurnOptions {
 export function createClaudeSwarmTurn(
   port: HarnessPort,
   model: string,
+  effort: CouncilEffort,
   outputSchema: unknown,
   options: SwarmTurnOptions,
   now: () => number = Date.now,
@@ -209,6 +210,7 @@ export function createClaudeSwarmTurn(
         cwd: options.cwd,
         outputSchema,
         model,
+        effort,
         // #585: Rennet's internal one-shot turn — never the user's session history.
         ephemeral: true,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -503,7 +505,7 @@ export function councilSeatTurn(
     harness: resolution.harness,
     model: resolution.model,
     effort: resolution.effort,
-    runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, schema, {
+    runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),

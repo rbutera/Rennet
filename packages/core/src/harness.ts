@@ -13,7 +13,7 @@
  * in B09, the consuming turn of the frozen `HarnessCursor`.
  */
 
-import type { RspTokenUsage } from "@rennet/protocol";
+import type { CouncilEffort, RspTokenUsage } from "@rennet/protocol";
 
 export type HarnessId = "claude-code" | "codex" | "omp";
 
@@ -327,6 +327,7 @@ export function envelope(context: EnvelopeContext, native: unknown): HarnessEven
 export interface SessionSpec {
   readonly cwd: string;
   readonly model?: string;
+  readonly effort?: CouncilEffort;
   readonly systemPrompt?: { readonly mode: "replace" | "append"; readonly text: string };
   readonly allowedTools?: readonly string[];
   readonly outputSchema?: unknown;

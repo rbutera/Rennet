@@ -147,6 +147,13 @@ describe("toSdkOptions", () => {
     expect(sdk.executableArgs).toEqual(["-d", "Ubuntu", "-e", "/home/rai/bin/claude"]);
   });
 
+  it("passes a council effort through to the SDK", () => {
+    const options = { ...baseOptions(), effort: "medium" } satisfies ClaudeQueryOptions;
+    const sdk = toSdkOptions(options);
+
+    expect(sdk.effort).toBe("medium");
+  });
+
   it("strips the draft-2020-12 $schema meta the CLI ajv cannot resolve, keeping the body", () => {
     // A Zod-v4-shaped schema: the top-level `$schema` names the draft-2020-12 meta-schema
     // that the installed `claude` --json-schema (ajv) rejects, exiting 1 before the turn.
