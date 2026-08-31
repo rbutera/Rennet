@@ -63,7 +63,10 @@ export default defineConfig({
       external: ["electron", ...builtinModules, ...builtinModules.map((name) => `node:${name}`)],
       output: { chunkFileNames: "[name]-[hash].cjs" },
     },
-    sourcemap: true,
+    // No prod sourcemap: 6.5 MB (+2.3 MB for the SDK chunk) of the packaged app that
+    // nothing reads — the daemon has no source-map-support and no crash reporter, and the
+    // packaged-app smoke test reads `dist/main/index.cjs.map` only. See vite.main.config.ts.
+    sourcemap: false,
     target: "node24",
   },
 });

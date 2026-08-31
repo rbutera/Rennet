@@ -8,6 +8,7 @@ import type {
 } from "@rennet/protocol";
 import { persistedThreadSchema } from "@rennet/protocol";
 import { z } from "zod";
+import { ParsedFileCache } from "./parsed-file-cache";
 
 /**
  * The conversation THREAD store (issue #251) — durability for the inline research
@@ -32,6 +33,14 @@ import { z } from "zod";
  * reattach", not crash the review. A file that could not be parsed is LEFT UNTOUCHED so
  * a human can recover it; a subsequent write lays down a clean shape only for the
  * thread it touches.
+ *
+ * IN-MEMORY THREADS (perf audit §4 H4). The parsed file is memoized per review path
+ * through {@link ParsedFileCache}, so `putMessage` — called ~4× per turn and previously
+ * re-parsing and rewriting the WHOLE conversation each time — costs one `stat` to read.
+ * The on-disk shape is untouched. The crash-recovery transform still runs on EVERY
+ * `loadThreads`, cache hit or not: a `streaming` placeholder this process just wrote is
+ * read back `interrupted` exactly as it was before, because the transform is a property
+ * of reading, not of parsing.
  */
 
 /** The current thread-store schema version. Bumped on a breaking shape change. */
@@ -70,6 +79,7 @@ export function recoverInterruptedTurns(thread: PersistedThreadWire): PersistedT
 
 export class FileThreadStore {
   private tmpSeq = 0;
+  private readonly cache = new ParsedFileCache<PersistedThreadWire[]>();
 
   constructor(private readonly dir: string = defaultThreadStoreDir()) {
     mkdirSync(dir, { recursive: true });
@@ -105,12 +115,30 @@ export class FileThreadStore {
       : { status: "malformed", file: empty };
   }
 
+  /** The memoized threads for a review, parsed from disk only when the cache misses.
+   *  `malformed` is reported to the caller and never memoized. */
+  private cachedThreads(reviewId: string): {
+    threads: PersistedThreadWire[];
+    malformed: boolean;
+  } {
+    const path = this.pathFor(reviewId);
+    const hit = this.cache.get(path);
+    if (hit !== undefined) return { threads: hit, malformed: false };
+    const state = this.readState(reviewId);
+    // An ABSENT file has nothing to stamp, so there is nothing to memoize against; that
+    // read is already just an ENOENT, and the first write creates the file.
+    if (state.status === "ok") this.cache.set(path, state.file.threads);
+    return { threads: state.file.threads, malformed: state.status === "malformed" };
+  }
+
   /**
    * Load the persisted threads for a review, WITH the crash-recovery transform applied
    * (every `streaming` message → `interrupted`). Missing/malformed ⇒ `[]` (fail-safe).
    */
   loadThreads(reviewId: string): PersistedThreadWire[] {
-    return this.readState(reviewId).file.threads.map(recoverInterruptedTurns);
+    // The transform runs per READ, not per parse: a `streaming` message this process
+    // wrote a moment ago must still read back `interrupted`, cache hit or not.
+    return this.cachedThreads(reviewId).threads.map(recoverInterruptedTurns);
   }
 
   private write(reviewId: string, threads: PersistedThreadWire[]): void {
@@ -119,6 +147,9 @@ export class FileThreadStore {
     const tmp = `${path}.tmp-${process.pid}-${this.tmpSeq++}`;
     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
     renameSync(tmp, path);
+    // Write through: the file we just landed IS `threads`, so the next read serves it
+    // from memory instead of re-parsing bytes this process produced.
+    this.cache.set(path, threads);
   }
 
   /**
@@ -134,11 +165,11 @@ export class FileThreadStore {
       harnessVersionAtCreation?: string;
     },
   ): void {
-    const state = this.readState(reviewId);
-    if (state.status === "malformed") {
+    const state = this.cachedThreads(reviewId);
+    if (state.malformed) {
       throw new Error(`refusing to overwrite a malformed thread file for review ${reviewId}`);
     }
-    if (state.file.threads.some((existing) => existing.threadId === thread.threadId)) return;
+    if (state.threads.some((existing) => existing.threadId === thread.threadId)) return;
     const created: PersistedThreadWire = {
       threadId: thread.threadId,
       anchor: thread.anchor,
@@ -147,7 +178,7 @@ export class FileThreadStore {
         : {}),
       messages: [],
     };
-    this.write(reviewId, [...state.file.threads, created]);
+    this.write(reviewId, [...state.threads, created]);
   }
 
   /**
@@ -156,12 +187,12 @@ export class FileThreadStore {
    * that does not exist is a no-op (the caller upserts it first). Refuses on malformed.
    */
   putMessage(reviewId: string, threadId: string, message: PersistedThreadMessageWire): void {
-    const state = this.readState(reviewId);
-    if (state.status === "malformed") {
+    const state = this.cachedThreads(reviewId);
+    if (state.malformed) {
       throw new Error(`refusing to overwrite a malformed thread file for review ${reviewId}`);
     }
     let touched = false;
-    const threads = state.file.threads.map((thread) => {
+    const threads = state.threads.map((thread) => {
       if (thread.threadId !== threadId) return thread;
       touched = true;
       const has = thread.messages.some((existing) => existing.id === message.id);

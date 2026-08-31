@@ -1,13 +1,17 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   commands,
   projectProcessEventSchema,
   type ReviewAskStreamEvent,
   reviewAskStreamEventSchema,
 } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import {
   buildProjectionContext,
+  createCachedProjectionContext,
   INBOUND_HOST_PATH_FIELDS,
   INBOUND_REPO_RELATIVE_PATH_FIELDS,
   ProjectionResolveError,
@@ -881,5 +885,98 @@ describe("recursive path-field coverage guard", () => {
   it("keeps the runtime inbound tables aligned with their classified top-level fields", () => {
     expect(INBOUND_HOST_PATH_FIELDS["review.capture"]).toContain("repoPath");
     expect(INBOUND_REPO_RELATIVE_PATH_FIELDS["review.setDisposition"]).toContain("path");
+  });
+});
+
+describe("createCachedProjectionContext (perf audit §4 H3)", () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function projectsFile(contents?: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "rennet-projection-"));
+    scratch.push(dir);
+    const path = join(dir, "projects.json");
+    if (contents !== undefined) writeFileSync(path, contents);
+    return path;
+  }
+
+  const projectAt = (path: string) => ({ path, openPath: path });
+
+  it("reads the projects once across repeated calls and serves the same roots", () => {
+    const projectsPath = projectsFile('{"projects":[]}\n');
+    const listProjects = vi.fn(() => [projectAt(REPO)]);
+    const contextOf = createCachedProjectionContext({
+      listProjects,
+      grantedRoots: new Set<string>(),
+      projectsPath,
+      homeDir: HOME,
+    });
+
+    const first = contextOf();
+    const second = contextOf();
+    const third = contextOf();
+    // One read of the project store, not three — this ran per projected frame, which is
+    // per streamed ask token with a phone paired.
+    expect(listProjects).toHaveBeenCalledTimes(1);
+    expect(second.roots.map((r) => r.hostPath)).toEqual(first.roots.map((r) => r.hostPath));
+    expect(third).toBe(first); // the identical built table, not a re-derived twin
+  });
+
+  it("invalidates when projects.json changes on disk, whoever wrote it", () => {
+    // The control in the other direction, and the reason the key is the FILE's identity
+    // rather than a hook at each `projectStore` mutation: a site is easy to add and forget,
+    // and a second process writing the file would be missed entirely.
+    const projectsPath = projectsFile('{"projects":[]}\n');
+    let projects = [projectAt(REPO)];
+    const listProjects = vi.fn(() => projects);
+    const contextOf = createCachedProjectionContext({
+      listProjects,
+      grantedRoots: new Set<string>(),
+      projectsPath,
+      homeDir: HOME,
+    });
+
+    expect(contextOf().byRepoKey.size).toBe(1);
+    projects = [projectAt(REPO), projectAt(OTHER)];
+    writeFileSync(projectsPath, '{"projects":[{"stand-in":true}]}\n');
+
+    const after = contextOf();
+    expect(listProjects).toHaveBeenCalledTimes(2);
+    expect(after.roots.map((r) => r.hostPath).sort()).toEqual([OTHER, REPO].sort());
+  });
+
+  it("invalidates when the granted-roots set grows", () => {
+    // `allowedRoots` is append-only in `create-server`, so its size is its version. A review
+    // whose repository root was just granted must be nameable on the next frame.
+    const projectsPath = projectsFile('{"projects":[]}\n');
+    const granted = new Set<string>();
+    const listProjects = vi.fn(() => [] as { path: string; openPath: string }[]);
+    const contextOf = createCachedProjectionContext({
+      listProjects,
+      grantedRoots: granted,
+      projectsPath,
+      homeDir: HOME,
+    });
+
+    expect(contextOf().roots).toEqual([]);
+    granted.add(REPO);
+    expect(contextOf().roots.map((r) => r.hostPath)).toEqual([REPO]);
+    expect(listProjects).toHaveBeenCalledTimes(2);
+  });
+
+  it("caches the empty-workspace answer too, with no projects.json on disk", () => {
+    const projectsPath = projectsFile(); // never written
+    const listProjects = vi.fn(() => [] as { path: string; openPath: string }[]);
+    const contextOf = createCachedProjectionContext({
+      listProjects,
+      grantedRoots: new Set<string>(),
+      projectsPath,
+      homeDir: HOME,
+    });
+    contextOf();
+    contextOf();
+    expect(listProjects).toHaveBeenCalledTimes(1);
   });
 });

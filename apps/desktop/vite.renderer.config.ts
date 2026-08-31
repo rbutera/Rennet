@@ -13,7 +13,12 @@ export default defineConfig({
   build: {
     emptyOutDir: true,
     outDir: resolve(here, "dist/renderer"),
-    sourcemap: true,
+    // No prod sourcemap. The renderer map was 7 MB of the packaged app, shipped for
+    // nobody: nothing reads it at runtime (no crash reporter, no source-map-support) and
+    // dev debugging goes through the Vite dev server, which serves its own. Only
+    // `dist/main/index.cjs.map` still ships — `scripts/smoke-packaged-app.mjs` reads its
+    // `sourcesContent` to prove the packaged main bundle carries the code it claims.
+    sourcemap: false,
     target: "chrome142",
   },
 });

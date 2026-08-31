@@ -1,5 +1,5 @@
 import type { SourceRef, SpecDelta } from "@rennet/protocol";
-import { cn } from "@rennet/ui";
+import { COLLAPSE_MS, cn } from "@rennet/ui";
 import { FileText } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { Icon } from "../components/icon";
@@ -36,21 +36,51 @@ type SourceChipKind = "artifact" | "source" | "related-file";
 const SOURCE_CHIP =
   "inline-flex max-w-full items-center gap-1 rounded-chip border border-line bg-surface px-1.5 py-0.5 font-mono text-2xs text-ink-soft";
 
-export function followBoardAnchor(event: MouseEvent<HTMLAnchorElement>, targetId: string): void {
+/**
+ * Jump to a board element, unfolding the section that holds it first.
+ *
+ * `foldId` names the TOP-LEVEL section the target lives in, and defaults to the target
+ * itself (which is what a section-level chip links to). It has to be given separately for
+ * a nested target, because a folded section mounts no body — the target is not in the
+ * document to be found through, only the always-mounted top-level section is. The scroll
+ * therefore re-resolves the target AFTER the fold, never before.
+ *
+ * WHEN it re-resolves is the whole correctness of the jump. `Collapse` animates its
+ * `grid-template-rows` over `COLLAPSE_MS`, so for that window the newly opened section is
+ * still growing from ~0 height: a `scrollIntoView` a frame after the click computes its
+ * offset against a section that has barely opened and lands SHORT of the target — the
+ * behaviour reads as a jump that missed. So the fold's own duration is what we wait, from
+ * the one constant `Collapse` uses (importing it is the point; a second literal 200 here
+ * would drift the first time the animation is retuned).
+ *
+ * Under `prefers-reduced-motion` the track snaps instead of animating, so the geometry is
+ * final as soon as the toggle's render commits and the scroll goes on the next frame.
+ * Either way it is one frame or one timeout — never a synchronous call, because the
+ * toggle's click is dispatched inside our own React event and the target does not exist
+ * until that render commits.
+ */
+export function followBoardAnchor(
+  event: MouseEvent<HTMLAnchorElement>,
+  targetId: string,
+  foldId: string = targetId,
+): void {
   event.preventDefault();
-  const target = document.getElementById(targetId);
-  if (target === null) return;
-  const scroll = () => target.scrollIntoView({ behavior: "smooth", block: "start" });
-  const foldedSection = target.closest<HTMLElement>(
-    '[data-kind="board-section"][data-open="false"]',
-  );
+  const scroll = () =>
+    document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const foldedSection = document
+    .getElementById(foldId)
+    ?.closest<HTMLElement>('[data-kind="board-section"][data-open="false"]');
   const toggle = foldedSection?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
   if (toggle === undefined || toggle === null) {
     scroll();
     return;
   }
   toggle.click();
-  requestAnimationFrame(scroll);
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true) {
+    requestAnimationFrame(scroll);
+    return;
+  }
+  setTimeout(scroll, COLLAPSE_MS);
 }
 
 function SourceChip({

@@ -269,7 +269,7 @@ import {
   createProjectProcessJournal,
   type ProjectProcessJournalRecord,
 } from "./project-process-journal";
-import { buildProjectionContext } from "./projection";
+import { createCachedProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
 import {
@@ -1681,6 +1681,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
   };
 
+  // APPEND-ONLY, and load-bearing: `createCachedProjectionContext` uses this set's SIZE as
+  // its version, so a root may be added but never removed or swapped in place.
   const allowedRoots = new Set<string>();
   // Proactive Repo Map rehydration (#143/#243): keeps each built project's structural
   // snapshot and model-backed knowledge warm as its reference branch advances.
@@ -4718,6 +4720,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }),
   });
 
+  // The cached half of the R19 projection context — the root table (perf audit §4 H3).
+  // Rebuilt only when the granted-roots set grew or `projects.json` changed on disk.
+  const projectionRootsContext = createCachedProjectionContext({
+    listProjects: () => projectStore.list(),
+    grantedRoots: allowedRoots,
+    projectsPath: join(dataDir, "projects.json"),
+    homeDir: homedir(),
+  });
+
   // The loopback WS transport (#378). Started here — after dispatch exists — and
   // awaited so `createRennetServer` resolves only once the socket is `listening`,
   // so no `wsPort` is ever published before it accepts connections. (The desktop shell
@@ -4742,22 +4753,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // truthfully instead of showing controls that silently no-op against a pre-M2 daemon.
     act: true,
     // The R19 projection context: every host root the server could name — the granted
-    // roots ∪ every stored project path — rebuilt per request so a new project is
-    // referenceable at once. Loopback connections never consult it.
-    projectionContext: () => {
-      const roots = new Set<string>(allowedRoots);
-      for (const project of projectStore.list()) {
-        roots.add(project.path);
-        roots.add(project.openPath);
-        for (const repoPath of project.includedRepoPaths ?? []) roots.add(repoPath);
-      }
+    // roots ∪ every stored project path. A new project is still referenceable at once
+    // (the cache keys on `projects.json`'s own change stamp), but the rebuild no longer
+    // runs per projected frame — which is per streamed ask token with a phone paired
+    // (perf audit §4 H3). Loopback connections never consult it.
+    projectionContext: () => ({
+      ...projectionRootsContext(),
       // `reviewIsRunning` feeds the projected review's `attention.running` (#383 batch); the
       // listener adds `reviewNeedsYou` from its own attention registry when attention is on.
-      return {
-        ...buildProjectionContext(roots, homedir()),
-        reviewIsRunning: (reviewId) => inFlightReviews.has(reviewId),
-      };
-    },
+      // Live per call, over the cached root table.
+      reviewIsRunning: (reviewId) => inFlightReviews.has(reviewId),
+    }),
     // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
     listen: daemonSettingsStore.read().daemon?.listen,
     // The served browser UI (#381); absent ⇒ headless.

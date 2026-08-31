@@ -47,6 +47,44 @@ describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
     // …and the duration collapse it sits beside is still there — the pair is the rule.
     expect(block[1]).toMatch(/animation-duration:\s*0\.01ms\s*!important/);
   });
+
+  // Perf audit §5 H9. `--animate-word-in` fills `forwards`, and a live turn renders one
+  // animating span per arriving word — so whatever the LANDING frame declares is retained
+  // on those spans for as long as they live. `filter: blur(0)` is a filter, not `none`: it
+  // is a stacking context and a compositing layer per word, kept for the transcript's
+  // lifetime. `transform: translateY(0)` is the same trap. Naming only `opacity` lets the
+  // implicit `to` frame interpolate each of them back to the element's underlying `none`,
+  // which is the identity value for both — same motion, nothing retained.
+  //
+  // WHAT THIS CANNOT CATCH, same limit as the rule above: it reads source text. It proves
+  // the landing frame is declared this way, not that a browser then releases the layer.
+  // Re-adding `filter: blur(0)` to the `to` frame reddens it — that is the reversion it is
+  // here for. `streaming-prose.dom.test.tsx` covers the DOM half (a settled word is text,
+  // so it carries no animation at all).
+  it("lands word-in on opacity alone, so its forwards fill retains no filter or transform", () => {
+    const start = css.indexOf("@keyframes word-in {");
+    expect(start).toBeGreaterThan(-1);
+    const open = css.indexOf("{", start);
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < css.length && end === -1; i += 1) {
+      if (css[i] === "{") depth += 1;
+      else if (css[i] === "}" && --depth === 0) end = i;
+    }
+    const body = css.slice(open + 1, end);
+    const from = /from\s*\{([^}]*)\}/.exec(body)?.[1] ?? "";
+    const to = /\bto\s*\{([^}]*)\}/.exec(body)?.[1] ?? "";
+
+    // The reveal itself is unchanged: it still blurs and lifts on the way IN.
+    expect(from).toMatch(/filter:\s*blur\(/);
+    expect(from).toMatch(/transform:\s*translateY\(/);
+    // It just does not land on either.
+    expect(to).toMatch(/opacity:\s*1/);
+    expect(to).not.toMatch(/filter/);
+    expect(to).not.toMatch(/transform/);
+    // …which only matters because the fill is `forwards`.
+    expect(css).toMatch(/--animate-word-in:\s*word-in\s[^;]*forwards/);
+  });
 });
 
 // Two component-source contracts used to live here and no longer do, because the

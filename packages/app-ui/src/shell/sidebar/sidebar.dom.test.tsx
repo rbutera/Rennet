@@ -107,6 +107,14 @@ function mountSidebar(opts: {
   return { ...utils, history, bridge };
 }
 
+/** Open a project row so its session list exists. A project is folded by default, and a
+ *  folded `Collapse` mounts NO children (perf audit §5 H2 — a folded list used to sit in
+ *  the DOM behind `inert`), so its sessions are simply not in the document until it opens. */
+async function openProject(view: ReturnType<typeof mountSidebar>, name: string): Promise<void> {
+  const row = (await view.findByText(name)).closest("button");
+  if (row?.getAttribute("aria-expanded") === "false") fireEvent.click(row);
+}
+
 const SESSIONS: readonly SessionSeed[] = [
   { id: "s1", projectId: "p1", title: "Alpha", target: "your-branch" },
   {
@@ -189,12 +197,14 @@ describe("sidebar structure (C03 §2)", () => {
 
 describe("sidebar tree (C03 §3)", () => {
   it("renders host + project + session rows from the projection", async () => {
-    const { getByText, findByText } = mountSidebar({
+    const view = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
     });
-    expect(await findByText("atlas")).toBeTruthy();
+    const { getByText } = view;
+    expect(await view.findByText("atlas")).toBeTruthy();
     expect(getByText("This machine")).toBeTruthy();
+    await openProject(view, "atlas");
     expect(getByText("Alpha")).toBeTruthy();
     expect(getByText("Beta")).toBeTruthy();
   });
@@ -224,15 +234,16 @@ describe("sidebar tree (C03 §3)", () => {
   });
 
   it("shows a reviewed session's green tick beside the title (R36), not a recolored icon", async () => {
-    const { findByLabelText } = mountSidebar({
+    const view = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: [
         { id: "s1", projectId: "p1", title: "Done", target: "your-pr", targetState: "reviewed" },
       ],
     });
+    await openProject(view, "atlas");
     // The separate tick carries the "Reviewed" name; the leading target icon stays "Your PR".
-    expect(await findByLabelText("Reviewed")).toBeTruthy();
-    expect(await findByLabelText("Your PR")).toBeTruthy();
+    expect(await view.findByLabelText("Reviewed")).toBeTruthy();
+    expect(await view.findByLabelText("Your PR")).toBeTruthy();
   });
 
   it("unfolds a project through the ui slice (aria-expanded + ui.sidebarFolds)", async () => {
@@ -277,27 +288,28 @@ describe("sidebar tree (C03 §3)", () => {
 
   // The half the default alone cannot reach: a project with a STORED fold answers
   // `false` for expanded no matter which session you are in, so arriving in it left
-  // the row you just opened hidden. `Collapse` keeps content mounted, so presence
-  // proves nothing — the `inert` subtree is what "hidden" means here.
+  // the row you just opened hidden. Hidden now means ABSENT — a folded `Collapse`
+  // mounts no children — so the row's arrival in the document is the whole assertion.
   it("navigating into a folded project reveals the session you opened", async () => {
     useRennetStore.setState((s) => ({ ui: { ...s.ui, sidebarFolds: { p2: true } } }));
-    const { getByText, findByText, history } = mountSidebar({
+    const { getByText, findByText, queryByText, history } = mountSidebar({
       projects: [project("p1", "atlas"), project("p2", "beacon")],
       sessions: [...SESSIONS, { id: "s3", projectId: "p2", title: "Gamma", target: "your-branch" }],
     });
-    await findByText("Gamma");
+    await findByText("beacon");
     expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("false");
-    expect(getByText("Gamma").closest("[inert]")).not.toBeNull();
+    expect(queryByText("Gamma")).toBeNull();
 
     history.navigate("/s/s3");
     await waitFor(() =>
       expect(getByText("beacon").closest("button")?.getAttribute("aria-expanded")).toBe("true"),
     );
     expect(useRennetStore.getState().ui.sidebarFolds.p2).toBe(false);
-    expect(getByText("Gamma").closest("[inert]")).toBeNull();
+    expect(await findByText("Gamma")).toBeTruthy();
     // ...and ONLY that project: the sibling you did not navigate into is untouched,
     // so this is an arrival opening one list, not a route clearing every fold.
     expect(getByText("atlas").closest("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(queryByText("Alpha")).toBeNull();
   });
 
   // The unfold is keyed on the active project CHANGING, so it fires on arrival and
@@ -336,11 +348,13 @@ describe("sidebar tree (C03 §3)", () => {
   });
 
   it("renames a session on Enter and keeps the old title on Escape", async () => {
-    const { getByText, findByText, getByRole, getByLabelText, queryByText } = mountSidebar({
+    const view = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
     });
-    await findByText("Alpha");
+    const { getByText, getByRole, getByLabelText, queryByText } = view;
+    await openProject(view, "atlas");
+    await view.findByText("Alpha");
     // Escape does NOT commit.
     fireEvent.contextMenu(getByText("Alpha"));
     fireEvent.click(getByRole("menuitem", { name: "Rename" }));
@@ -417,22 +431,26 @@ describe("sidebar tree (C03 §3)", () => {
   });
 
   it("archives a session, removing its row", async () => {
-    const { getByText, findByText, getByRole, queryByText } = mountSidebar({
+    const view = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
     });
-    await findByText("Alpha");
+    const { getByText, getByRole, queryByText } = view;
+    await openProject(view, "atlas");
+    await view.findByText("Alpha");
     fireEvent.contextMenu(getByText("Alpha"));
     fireEvent.click(getByRole("menuitem", { name: "Archive" }));
     await waitFor(() => expect(queryByText("Alpha")).toBeNull());
   });
 
   it("pins a session into the Pinned section and unpins it away", async () => {
-    const { getByText, findByText, getAllByText, getByRole, queryByText } = mountSidebar({
+    const view = mountSidebar({
       projects: [project("p1", "atlas")],
       sessions: SESSIONS,
     });
-    await findByText("Alpha");
+    const { getByText, getAllByText, getByRole, queryByText } = view;
+    await openProject(view, "atlas");
+    await view.findByText("Alpha");
     expect(queryByText("Pinned")).toBeNull();
     fireEvent.contextMenu(getByText("Alpha"));
     fireEvent.click(getByRole("menuitem", { name: "Pin" }));

@@ -26,6 +26,7 @@ import {
   forgeReviewPostDescriptor,
   type HandoffRunPort,
   type HarnessEvent,
+  harnessEventsToRows,
   type PatchsetCapturePort,
   type ReviewArtifact,
   type ReviewBodyNote,
@@ -3824,6 +3825,155 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
   });
 });
 
+describe("createDispatch — review.ask live-frame coalescing (perf audit §3 H3a / M11)", () => {
+  // The live turn's two frame kinds — the prose `ask-delta` and the activity `ask-state` —
+  // share ONE 50ms coalescing window. Tool events used to bypass it entirely and flush per
+  // event, which re-folded the whole turn and rebroadcast the whole row array per tool call.
+  // These tests drive the clock explicitly, so a window that silently became per-event again
+  // shows up as a frame count, not as a slow test.
+  //
+  // Positive controls, each applied to `dispatch/review.ts` alone and reverted (2026-08-31):
+  // routing tool events back through the immediate flush reddens the burst test; emitting each
+  // prose chunk as its own frame reddens the batching test; scheduling `session.ended` instead
+  // of flushing it reddens the terminal test AND NOTHING ELSE in the suite.
+  const WINDOW_MS = 50;
+
+  function harnessEvent(seq: number, body: object): HarnessEvent {
+    return {
+      seq,
+      harness: "claude-code",
+      sessionId: "harness-session",
+      turnId: "native-turn",
+      receivedAt: Date.parse("2026-08-29T10:00:00.000Z") + seq,
+      native: {},
+      ...body,
+    } as HarnessEvent;
+  }
+  const toolStarted = (seq: number, id: string): HarnessEvent =>
+    harnessEvent(seq, {
+      kind: "tool.started",
+      call: {
+        id,
+        name: "Read",
+        input: { file_path: `src/${id}.ts` },
+        parentToolCallId: null,
+        kind: "read",
+      },
+    });
+  const toolOutput = (seq: number, id: string): HarnessEvent =>
+    harnessEvent(seq, {
+      kind: "tool.output",
+      callId: id,
+      ok: true,
+      output: {},
+      text: `read ${id}`,
+    });
+
+  /** Run one streamed turn whose port body drives the fake clock itself, and return the frames.
+   *  Only the timer functions are faked, and only for the dispatch — the capture above it does
+   *  real work. */
+  async function streamedTurn(
+    run: (ports: {
+      onEvent: (event: HarnessEvent) => void;
+      onDelta: (delta: string) => void;
+      states: () => number;
+    }) => Promise<void>,
+  ): Promise<ReviewAskStreamEvent[]> {
+    const h = harness();
+    const review = await capturedReview(h.dispatch);
+    const seen: ReviewAskStreamEvent[] = [];
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onDelta, onEvent }) => {
+      await run({
+        onEvent: (event) => onEvent?.(event),
+        onDelta: (delta) => onDelta?.(delta),
+        states: () => seen.filter((frame) => frame.kind === "ask-state").length,
+      });
+      return { model: "Orchestrator · Claude", answer: "done" };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await h.dispatch(
+        "review.ask",
+        {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          question: "what changed?",
+          threadId: "th",
+          turnId: "tn",
+        },
+        { emitAskStream: (event) => seen.push(event) },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+    return seen;
+  }
+
+  it("folds a burst of tool events into ONE snapshot per window, not one per event", async () => {
+    const counts: number[] = [];
+    const stream: HarnessEvent[] = [];
+    const seen = await streamedTurn(async ({ onEvent, states }) => {
+      for (let i = 0; i < 8; i += 1) {
+        stream.push(toolStarted(i * 2 + 1, `t${i}`), toolOutput(i * 2 + 2, `t${i}`));
+      }
+      for (const event of stream) onEvent(event);
+      counts.push(states()); // mid-window: 16 tool events, nothing on the wire yet
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+      counts.push(states()); // the window closed: exactly one snapshot for all 16
+      const late = toolStarted(99, "t99");
+      stream.push(late);
+      onEvent(late);
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+      counts.push(states()); // a later event opens its OWN window — coalescing, not muting
+    });
+    expect(counts).toEqual([0, 1, 2]);
+    // …and the rows the incremental fold broadcast are exactly the rows a from-scratch
+    // projection of the same events produces, so the live path cannot drift from the batch one.
+    const last = seen.filter((frame) => frame.kind === "ask-state").at(-1);
+    if (last?.kind !== "ask-state") throw new Error("expected an ask-state");
+    expect(last.rows).toEqual(harnessEventsToRows(stream, { turnId: "tn::orchestrator" }));
+  });
+
+  it("batches ask-delta per window, concatenated in arrival order", async () => {
+    const seen = await streamedTurn(async ({ onDelta }) => {
+      onDelta("alpha ");
+      onDelta("beta ");
+      onDelta("gamma");
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+      onDelta(" delta");
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+    });
+    // Two windows, two frames — each carrying its own chunks joined in the order they arrived.
+    // Distinct words, so a reordering inside a batch would not survive this assertion.
+    const deltas = seen.filter((frame) => frame.kind === "ask-delta");
+    expect(deltas.map((frame) => (frame.kind === "ask-delta" ? frame.delta : ""))).toEqual([
+      "alpha beta gamma",
+      " delta",
+    ]);
+  });
+
+  it("flushes the terminal event's snapshot immediately — a settled turn never waits out a window", async () => {
+    const counts: number[] = [];
+    const seen = await streamedTurn(async ({ onEvent, states }) => {
+      onEvent(toolStarted(1, "t1"));
+      counts.push(states()); // the tool event is coalescing
+      onEvent(
+        harnessEvent(2, {
+          kind: "session.ended",
+          outcome: { status: "completed", finalText: "done" },
+        }),
+      );
+      counts.push(states()); // the terminal landed WITHOUT the clock being advanced
+      return Promise.resolve();
+    });
+    expect(counts).toEqual([0, 1]);
+    const last = seen.filter((frame) => frame.kind === "ask-state").at(-1);
+    if (last?.kind !== "ask-state") throw new Error("expected an ask-state");
+    const turn = last.rows.find((row) => row.kind === "turn");
+    expect(turn?.kind === "turn" ? turn.status : "").toBe("complete");
+  });
+});
+
 describe("createDispatch — review.ask token streaming (issue #251)", () => {
   async function openReview() {
     const h = harness();
@@ -3861,12 +4011,12 @@ describe("createDispatch — review.ask token streaming (issue #251)", () => {
       { emitAskStream: (event) => events.push(event) },
     )) as { primary: { answer: string } };
 
+    // The turn's chunks arrive inside one coalescing window, so they reach the wire as ONE
+    // `ask-delta` carrying them IN ORDER (perf audit §3 M11 — the frame count is a transport
+    // detail, the text order is not). Both clients fold `ask-delta` by appending, so the
+    // concatenation is what they render either way; see `foldAskStream` / `foldStreamEvent`.
     const deltas = events.filter((e) => e.kind === "ask-delta");
-    expect(deltas.map((e) => (e.kind === "ask-delta" ? e.delta : ""))).toEqual([
-      "Hel",
-      "lo ",
-      "world",
-    ]);
+    expect(deltas.map((e) => (e.kind === "ask-delta" ? e.delta : ""))).toEqual(["Hello world"]);
     const complete = events.find((e) => e.kind === "ask-complete");
     expect(complete).toMatchObject({
       channel: "orchestrator",
@@ -3955,7 +4105,7 @@ describe("createDispatch — review.ask token streaming (issue #251)", () => {
     );
   });
 
-  it("coalesces delta-heavy activity and forces one complete terminal snapshot", async () => {
+  it("coalesces delta-heavy activity into one snapshot and one delta batch, then a complete terminal snapshot", async () => {
     const { dispatch, reviewAsk, review } = await openReview();
     const event = (seq: number, body: object): HarnessEvent =>
       ({
@@ -3998,7 +4148,10 @@ describe("createDispatch — review.ask token streaming (issue #251)", () => {
       { emitAskStream: (streamEvent) => events.push(streamEvent) },
     );
 
-    expect(events.filter((streamEvent) => streamEvent.kind === "ask-delta")).toHaveLength(50);
+    // 50 prose chunks, ONE frame — and the frame carries all 50, nothing dropped.
+    const deltas = events.filter((streamEvent) => streamEvent.kind === "ask-delta");
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]?.kind === "ask-delta" ? deltas[0].delta : "").toBe(prose);
     const states = events.filter((streamEvent) => streamEvent.kind === "ask-state");
     expect(states).toHaveLength(1);
     const terminalState = states[0];
@@ -5904,12 +6057,12 @@ describe("F1 E2E — review.ask over the LIVE orchestrator port (#570)", () => {
 
     // The deltas the FAKE TURN emitted reached the wire, in order — the streaming
     // source cluster 1 lit. Before F1 the SDK emitted no partial frames at all, so
-    // this list was empty and the dock sat silent for the whole turn.
+    // this list was empty and the dock sat silent for the whole turn. The three chunks
+    // land in one coalescing window, so they arrive as one in-order batch rather than
+    // three frames; what is asserted is that the turn's text got there, ordered.
     const deltas = events.filter((e) => e.kind === "ask-delta");
     expect(deltas.map((e) => (e.kind === "ask-delta" ? e.delta : ""))).toEqual([
-      "b is ",
-      "exported but ",
-      "never imported.",
+      "b is exported but never imported.",
     ]);
     // Exactly one terminal, carrying the TURN's text — not a canned constant.
     const terminals = events.filter(
