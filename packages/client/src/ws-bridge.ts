@@ -30,8 +30,15 @@ import {
 import { ConnectionError } from "./connection-error";
 
 export interface WsRennetBridgeOptions {
-  /** The loopback WS URL the server bound, e.g. `ws://127.0.0.1:<port>`. */
-  readonly url: string;
+  /**
+   * The loopback WS URL the server bound, e.g. `ws://127.0.0.1:<port>` — or a THUNK for an
+   * endpoint that is not known when the bridge is constructed. The desktop shell creates its
+   * window BEFORE the daemon is healthy (perf audit §2/§6 H1), so its port arrives late; the
+   * thunk is called once per connection ATTEMPT and awaited. A rejection is reported as
+   * `offline`, so a late or never-arriving daemon rides the supervisor's ordinary outage and
+   * reconnect path instead of needing a second waiting surface.
+   */
+  readonly url: string | (() => Promise<string>);
   /** First reconnect delay in ms; doubles each attempt up to the ceiling (default 500). */
   readonly initialBackoffMs?: number;
   /** Reconnect backoff ceiling in ms (default 8000). */
@@ -100,7 +107,7 @@ interface ReadyWaiter {
  * as a thrown in-process dispatch), matching the desktop's pre-WS behaviour.
  */
 export class WsRennetBridge implements RennetBridge {
-  readonly #url: string;
+  readonly #url: string | (() => Promise<string>);
   readonly #initialBackoff: number;
   readonly #maxBackoff: number;
   readonly #deviceToken: string | undefined;
@@ -111,6 +118,11 @@ export class WsRennetBridge implements RennetBridge {
   /** In-flight server→client requests; a `serverRequestResolved` deletes an id so a late answer is dropped. */
   readonly #pendingServerRequests = new Set<string>();
   #socket: WebSocket | null = null;
+  /** Non-null while a THUNK url is resolving — the window in which there is no socket yet but
+   *  the bridge is not disconnected either. `#whenReady` waits on it so an invoke made during a
+   *  late endpoint's resolution behaves exactly as it does for a string url (which opens its
+   *  socket in the constructor), instead of failing "not connected". */
+  #urlPending: Promise<void> | null = null;
   #backoff: number;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #closed = false;
@@ -297,12 +309,39 @@ export class WsRennetBridge implements RennetBridge {
         this.#readyWaiters.add({ socket, resolve, reject });
       });
     }
+    // A late endpoint is still resolving: no socket yet, but not disconnected either. Waiting
+    // terminates — `#urlPending` is cleared before the open (or the offline) it resolves into.
+    const urlPending = this.#urlPending;
+    if (urlPending) return urlPending.then(() => this.#whenReady());
     return Promise.reject(new Error("WsRennetBridge is not connected"));
   }
 
   #connect(): void {
     if (this.#closed) return;
-    const socket = new WebSocket(this.#url);
+    const url = this.#url;
+    if (typeof url === "string") {
+      this.#open(url);
+      return;
+    }
+    // A late endpoint (the desktop's daemon port). Failing to resolve one is an OUTAGE, not a
+    // terminal handshake error: the daemon may still be spawning, and the supervisor already
+    // paints and retries that state.
+    this.#urlPending = url().then(
+      (resolved) => {
+        this.#urlPending = null;
+        if (!this.#closed) this.#open(resolved);
+      },
+      () => {
+        this.#urlPending = null;
+        if (this.#closed) return;
+        this.#onLifecycle?.({ kind: "offline" });
+        if (this.#autoReconnect) this.#scheduleReconnect();
+      },
+    );
+  }
+
+  #open(url: string): void {
+    const socket = new WebSocket(url);
     this.#socket = socket;
     this.#readySocket = null;
     this.#handshakeFailure = null;

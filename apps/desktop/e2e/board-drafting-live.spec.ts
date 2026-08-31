@@ -43,8 +43,8 @@ function liveEnv(disableHarness: boolean): NodeJS.ProcessEnv {
 /** Capture `repository` into a review through the app's own daemon, and open its route.
  *  `review.capture` fires `onReviewOpened`, which is what kicks the drafting under test. */
 async function openCapturedReview(page: Page, repository: string): Promise<string> {
-  const port = await page.evaluate(
-    () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
   );
   const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
   try {

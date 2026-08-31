@@ -150,8 +150,8 @@ export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
 export async function completeWelcome(page: Page, wsPort?: number): Promise<void> {
   const port =
     wsPort ??
-    (await page.evaluate(
-      () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+    (await page.evaluate(() =>
+      (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
     ));
   const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
   try {

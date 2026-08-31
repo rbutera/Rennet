@@ -45,6 +45,7 @@ import type { RennetPreload } from "./index";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
+const WS_PORT_CHANNEL = "rennet:ws-port";
 
 function preload(): RennetPreload {
   return harness.exposed as RennetPreload;
@@ -144,5 +145,33 @@ describe("preload update surface", () => {
   it("forwards the Full Disk Access settings action through its narrow channel", async () => {
     harness.invokeResults.set(OPEN_FULL_DISK_ACCESS_CHANNEL, true);
     await expect(preload().openFullDiskAccessSettings()).resolves.toBe(true);
+  });
+});
+
+describe("preload daemon port (perf audit §2/§6 H1 — delivered late, not via argv)", () => {
+  it("asks MAIN for the ensured port", async () => {
+    harness.invokeResults.set(WS_PORT_CHANNEL, 51_234);
+    await expect(preload().wsPort()).resolves.toBe(51_234);
+  });
+
+  it("propagates a daemon that never came up, rather than reporting a port", async () => {
+    // MAIN owns the failure surface (dialog naming daemon.log, then quit). The renderer's job
+    // is only to not paint a connected app over a daemon that is not there.
+    harness.invokeErrors.set(WS_PORT_CHANNEL, new Error("daemon failed to start"));
+    await expect(preload().wsPort()).rejects.toThrow("daemon failed to start");
+  });
+
+  it("ignores a `--rennet-ws-port=` argv flag — the port does not exist at window creation", async () => {
+    // The OLD contract: MAIN injected the port as a boot-time argv constant, which is only
+    // possible while boot waits for daemon health. A flag left on the argv must not win.
+    process.argv.push("--rennet-ws-port=40000");
+    try {
+      vi.resetModules();
+      await import("./index");
+      harness.invokeResults.set(WS_PORT_CHANNEL, 51_234);
+      await expect(preload().wsPort()).resolves.toBe(51_234);
+    } finally {
+      process.argv.pop();
+    }
   });
 });

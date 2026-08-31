@@ -37,7 +37,11 @@ const updateLifecycleFragments = {
     "armRelaunchAfterApply:",
     "armMacUpdateRelaunch(",
     "recoverAfterApplyFailure: async () => {",
-    "activeWsPort = await ensureDaemon(dataDir);",
+    // The recovery re-ensures the daemon and PUBLISHES that ensure, so the window it recreates
+    // dials the new daemon. It is a promise now, not a resolved port: boot creates the window
+    // before the daemon is healthy (perf audit §2/§6 H1) and the renderer asks for the port.
+    "daemonPort = ensureDaemon(dataDir);",
+    "await daemonPort;",
     "await ensureWindowShared();",
     "applyUpdate: () => void update?.applyUpdate()",
   ],

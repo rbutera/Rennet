@@ -16,7 +16,10 @@ const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
-const WS_PORT_ARG = "--rennet-ws-port=";
+// The daemon's WS port used to ride the renderer argv as a boot-time constant. It cannot: MAIN
+// creates the window BEFORE the daemon is healthy now (perf audit §2/§6 H1), so the port is an
+// answer that arrives later, over this channel.
+const WS_PORT_CHANNEL = "rennet:ws-port";
 const VERSION_ARG = "--rennet-version=";
 
 /** A downloaded-and-ready update, as pushed (or replayed) by MAIN. */
@@ -52,8 +55,14 @@ export interface RennetPreload {
   readonly platform: string;
   /** The host app version (`app.getVersion()`), read from the injected argv flag. */
   readonly version: string;
-  /** The loopback WS port the server bound (#378), read from the injected argv flag. */
-  readonly wsPort: number;
+  /**
+   * The loopback WS port the daemon bound (#378), asked of MAIN. It resolves LATE on a cold
+   * start — the window exists before the daemon is healthy — and rejects when the daemon never
+   * comes up, which MAIN surfaces itself (dialog naming daemon.log, then quit). The renderer
+   * hands it to its bridge as a late endpoint, so the shell paints and the connection
+   * supervisor sits in `connecting` meanwhile.
+   */
+  wsPort(): Promise<number>;
   /**
    * Installed WSL distros (`wsl.exe -l -q`), or `[]` off win32 / with no WSL / on
    * any error — never rejects. Backs the source-aware project picker's WSL branch.
@@ -83,17 +92,15 @@ export interface RennetPreload {
   openFullDiskAccessSettings(): Promise<boolean>;
 }
 
-// The WS port is a boot-time constant injected via webPreferences.additionalArguments;
-// it lands in the sandboxed preload's `process.argv`.
-const wsPortArg = process.argv.find((arg) => arg.startsWith(WS_PORT_ARG));
-const wsPort = wsPortArg ? Number.parseInt(wsPortArg.slice(WS_PORT_ARG.length), 10) : 0;
+// The app version IS a boot-time constant injected via webPreferences.additionalArguments;
+// it lands in the sandboxed preload's `process.argv`. The WS port no longer can be — see above.
 const versionArg = process.argv.find((arg) => arg.startsWith(VERSION_ARG));
 const version = versionArg ? versionArg.slice(VERSION_ARG.length) : "";
 
 const preload: RennetPreload = {
   platform: process.platform,
   version,
-  wsPort,
+  wsPort: () => ipcRenderer.invoke(WS_PORT_CHANNEL) as Promise<number>,
   listWslDistros: () => ipcRenderer.invoke(LIST_WSL_DISTROS_CHANNEL) as Promise<string[]>,
   resolveDaemonForPath: (path) =>
     ipcRenderer.invoke(RESOLVE_DAEMON_FOR_PATH_CHANNEL, path) as Promise<number | null>,

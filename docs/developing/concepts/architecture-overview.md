@@ -67,6 +67,16 @@ The desktop reads the daemon claim, verifies it through `/healthz`, and reuses a
 healthy daemon. Otherwise it starts the server as a detached child and records
 the new claim. The daemon removes its claim during graceful shutdown.
 
+Startup does not wait for that. The desktop begins the daemon ensure and creates
+its window immediately, so the shell paints while the daemon probes, spawns, and
+comes up healthy. The window therefore cannot receive the WebSocket port as a
+launch argument: the renderer asks for it over the `rennet:ws-port` IPC channel,
+which answers with that run's ensure. Until it answers, the renderer's
+connection supervisor sits in `connecting` and the app shows its ordinary
+pre-connection state. A daemon that never starts names its cause and
+`daemon.log`, then the app quits. Update-apply recovery replaces the published
+ensure, so the window it recreates dials the daemon that replaced the old one.
+
 Closing every desktop window leaves the tray process and daemon available. The
 desktop's complete-quit action stops a daemon that the desktop owns.
 

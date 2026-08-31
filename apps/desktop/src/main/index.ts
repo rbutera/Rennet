@@ -70,10 +70,12 @@ const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const WSL_CONNECT_LOG_FILE = "wsl-connect.log";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
 const APP_ORIGIN = "app://rennet";
-// The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
-// process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
-// under contextIsolation + sandbox).
-const WS_PORT_ARG = "--rennet-ws-port=";
+// The renderer asks for the daemon's WS port here instead of reading it from argv. It CANNOT
+// be an argv constant any more: the window is created before the daemon is healthy (perf audit
+// §2/§6 H1), so the port does not exist when `webPreferences` is built. The handler answers
+// with the in-flight ensure, so a renderer that asks early simply waits — and a renderer that
+// asks after an update-recovery re-ensure gets the NEW daemon's port, not a stale one.
+const WS_PORT_CHANNEL = "rennet:ws-port";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -197,7 +199,7 @@ function registerAppProtocol(): void {
   });
 }
 
-async function createWindow(wsPort: number): Promise<void> {
+async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
     width: 1420,
     height: 900,
@@ -239,9 +241,9 @@ async function createWindow(wsPort: number): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      // The loopback WS port the renderer's WsRennetBridge connects to (#378). Appended
-      // to the renderer process argv; the sandboxed preload reads it and exposes it.
-      additionalArguments: [`${WS_PORT_ARG}${wsPort}`, `--rennet-version=${app.getVersion()}`],
+      // The app version stays a boot-time argv constant (it is known before the window is).
+      // The WS port is NOT: it arrives over `rennet:ws-port` once the daemon is healthy.
+      additionalArguments: [`--rennet-version=${app.getVersion()}`],
     },
   });
   // Keep the versioned title: Electron replaces the window title with the page's
@@ -267,9 +269,21 @@ async function createWindow(wsPort: number): Promise<void> {
   await window.loadURL(`${APP_ORIGIN}/`);
 }
 
-// The daemon's WS port for THIS run, so tray "Open Rennet" / macOS `activate` can recreate a
-// window that re-dials the same daemon after the last one closed (tray-presence residency).
-let activeWsPort: number | undefined;
+// The daemon ensure for THIS run, as a PROMISE (perf audit §2/§6 H1). Boot no longer waits on
+// it before creating the window, so the port is a pending answer rather than a known number:
+// the renderer awaits it over `rennet:ws-port`, and tray "Open Rennet" / macOS `activate`
+// recreate a window that re-dials the same ensure (tray-presence residency). Update-apply
+// recovery REPLACES it with a fresh ensure, so a recreated window dials the new daemon.
+let daemonPort: Promise<number> | undefined;
+
+/** Hand the renderer the ensured daemon port. No sender check: this returns the same loopback
+ *  integer the renderer's own argv used to carry verbatim, so narrowing it protects nothing. */
+function registerWsPortHandler(): void {
+  ipcMain.handle(
+    WS_PORT_CHANNEL,
+    () => daemonPort ?? Promise.reject(new Error("rennet: the daemon has not been started")),
+  );
+}
 // Retained at module scope so the tray is never garbage-collected — Electron drops a Tray whose
 // only reference is a local, and in dev nothing else holds it, leaving a window-less, tray-less,
 // un-quittable resident app (review finding 1). Destroyed on `will-quit`.
@@ -300,7 +314,7 @@ async function ensureWindowShared(): Promise<void> {
     },
     showDock: () => dock.show(),
     recreate: async () => {
-      if (activeWsPort !== undefined) await createWindow(activeWsPort);
+      if (daemonPort) await createWindow();
     },
   });
   // A window lifecycle event is a cue that owned-daemon state may have moved — re-probe so the
@@ -358,10 +372,16 @@ app.whenReady().then(async () => {
   // window creation below, so a rejection in that gap is an unhandled rejection at boot. A
   // probe that cannot answer is not a Developer-ID signature, which is "not eligible".
   const autoUpdateEligible = isAutoUpdateEligible(app.isPackaged).catch(() => false);
-  let wsPort: number;
-  try {
-    wsPort = await ensureDaemon(dataDir);
-  } catch (error) {
+  // STARTED, not awaited (perf audit §2/§6 H1). This used to gate `new BrowserWindow`: a cold
+  // start paid a 500ms probe, a spawn and a 10s health poll — with a version-skew SIGTERM and
+  // its 5s claim-wait ahead of that — before a single pixel. The window needs the port only to
+  // build a ws:// URL, and the renderer now asks for that over IPC, so the shell paints and the
+  // connection supervisor sits in its ordinary `connecting` state while the daemon comes up.
+  daemonPort = ensureDaemon(dataDir);
+  // The failure surface is unchanged (name the cause, name daemon.log, quit) — it just lands on
+  // a visible window now instead of a black screen. Attached HERE so a rejection nobody asked
+  // for is still handled: the renderer may never invoke `rennet:ws-port`.
+  daemonPort.catch((error) => {
     const cause = (error instanceof Error ? error.message : String(error))
       .replace(/\s+/g, " ")
       .trim();
@@ -370,8 +390,7 @@ app.whenReady().then(async () => {
       `Cause: ${cause}\nLog: ${join(dataDir, "daemon.log")}`,
     );
     app.quit();
-    return;
-  }
+  });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
@@ -379,8 +398,8 @@ app.whenReady().then(async () => {
   registerListWslDistrosHandler();
   registerFullDiskAccessHandler();
   registerDaemonForPathResolver(dataDir);
-  await createWindow(wsPort);
-  activeWsPort = wsPort;
+  registerWsPortHandler();
+  await createWindow();
 
   // Tray-resident presence (tray-presence). The updater and the tray share ONE readiness
   // store and ONE apply path: the tray subscribes to the same store the renderer badge
@@ -412,7 +431,8 @@ app.whenReady().then(async () => {
             ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
             : undefined,
         recoverAfterApplyFailure: async () => {
-          activeWsPort = await ensureDaemon(dataDir);
+          daemonPort = ensureDaemon(dataDir);
+          await daemonPort;
           for (const window of BrowserWindow.getAllWindows()) {
             if (!window.isDestroyed()) window.destroy();
           }
