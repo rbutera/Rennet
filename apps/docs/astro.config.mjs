@@ -139,6 +139,10 @@ export default defineConfig({
                     label: "Context map rebuild plan",
                     link: "/developing/plans/context-map-rebuild-plan/",
                   },
+                  {
+                    label: "Performance audit (2026-08-31)",
+                    link: "/developing/plans/perf-audit-2026-08-31/",
+                  },
                 ],
               },
               {
