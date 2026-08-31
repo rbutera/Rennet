@@ -1009,6 +1009,80 @@ if (RACE_ROLE !== undefined) {
       expect(first.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual([unitAId]);
     });
 
+    it("reloads and settles the exact selected-branch landing after restart", () => {
+      const selectedHead = "a".repeat(40);
+      const workerHead = "b".repeat(40);
+      const branchWorkspace = {
+        ...workspace,
+        sourceParentHead: selectedHead,
+        sourceHead: selectedHead,
+      };
+      const branchCommits = {
+        ...changedCommits,
+        baseHead: selectedHead,
+        from: selectedHead,
+        to: workerHead,
+      };
+      const landingAttempt = {
+        effect: "source-landing",
+        strategy: "branch-ref-v1",
+        executionId: "landing-selected-branch",
+        branch: "feat/test",
+        expectedHead: selectedHead,
+        baselineCommit: selectedHead,
+        workerHead,
+        startedAt: 9,
+      } satisfies RoundSourceLandingAttempt;
+      const active = operation({
+        revision: 10,
+        state: {
+          phase: "source-landing",
+          workspace: branchWorkspace,
+          worker: changedWorker,
+          gate: changedGate,
+          commits: branchCommits,
+          landing: landingAttempt,
+        },
+      });
+      const dir = tempStoreDir();
+      const firstStore = new RoundOperationStore(dir);
+      firstStore.close();
+      insertStoredEnvelope(dir, {
+        sessionId: active.sessionId,
+        operationId: active.operationId,
+        revision: active.revision,
+        envelopeJson: JSON.stringify({
+          version: ROUND_OPERATION_STORE_VERSION,
+          operation: active,
+        }),
+      });
+      const restarted = new RoundOperationStore(dir);
+      const recovered = restarted.read(active.sessionId);
+      if (recovered?.state.phase !== "source-landing") {
+        throw new Error("selected-branch landing did not survive restart");
+      }
+
+      const settled = restarted.compareAndSwap(expectation(recovered), {
+        state: {
+          ...recovered.state,
+          phase: "source-landed",
+          landing: { ...landingAttempt, outcome: "applied", landedAt: 10 },
+        },
+        updatedAt: 10,
+      });
+
+      expect(settled.state).toMatchObject({
+        phase: "source-landed",
+        landing: {
+          strategy: "branch-ref-v1",
+          branch: "feat/test",
+          expectedHead: selectedHead,
+          outcome: "applied",
+        },
+      });
+      restarted.close();
+    });
+
     it("claims only an initial claimed operation", () => {
       const store = new RoundOperationStore(tempStoreDir());
       expect(() => store.claimIfIdle(operation({ operationId: "revision", revision: 1 }))).toThrow(
