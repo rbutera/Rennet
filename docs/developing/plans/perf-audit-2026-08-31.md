@@ -1,4 +1,8 @@
-# Performance audit — desktop app + daemon (2026-08-31)
+---
+title: Performance audit — desktop app + daemon (2026-08-31)
+description: CPU and memory audit of the Electron app and the daemon — six static sweeps, live baseline measurements, a Bun feasibility verdict, and a four-wave ranked fix plan.
+status: in-progress
+---
 
 Scope: `apps/desktop` (Electron 43, React 19) and the daemon (`packages/server`, entry `daemon-main.ts`, plus `adapters`/`core` it pulls in). CPU and memory, idle and under load. A Bun runtime switch for the daemon is in scope as a candidate remedy, evaluated last as an isolated A/B.
 
