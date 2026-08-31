@@ -40,7 +40,7 @@ Per-process footprint, app freshly launched and left untouched, 6 samples over 6
 - **Idle CPU verdict: not idle.** Renderer burns 11–19% and GPU 5–6% with zero interaction. **Attributed by CDP CPU profile (15 s, `app://rennet/#/new-chat`): JS is only 0.9% busy — the samples are all motion/react's frame loop (`tick`/`transform`/`updateAndNotify`). The cost is style/paint/composite driven by `first-run-welcome.tsx:274`: ten code fragments on `repeat: Infinity` 17–26 s animations of x/y/rotate/opacity (opacity ⇒ repaint every frame), mounted via `routes/app.tsx:346` whenever welcome is unclaimed. A fresh install idles at ~25% combined CPU until the user adds a project.** Wave 1 pauses the loops while `document.hidden` and removes their opacity channels; #719 owns the required integrated re-measurement.
 - Daemon at idle is clean: 0% CPU, `/healthz` answers in ~0.4 ms.
 - `~/.rennet` on this machine: 78 MB, 13 744 files (nearly all under `projects/`). SQLite (`rennet.sqlite` + WAL) tiny.
-- Startup timing: not measured numerically this pass (cold-start structure is established statically in §2 H1/§6 H1 — window serialised behind daemon health, up to ~15 s worst case). Measure on the fix branch as the H1 before/after.
+- Startup timing: not measured numerically in the baseline pass. Wave 1 removed the structural serialization described in §2 H1/§6 H1; issue #719 owns integrated cold-start before/after measurement.
 
 ## Findings
 
@@ -173,7 +173,7 @@ Structural cost: the desktop daemon today runs as **the Electron binary with `EL
 
 Where Bun would actually pay: daemon cold-start (relevant because startup H1 serialises window on daemon boot — though fixing H1 removes most of that), spawn-heavy paths (git/gh/harness spawns), and baseline RSS. Where it wouldn't: the daemon idles at 0% CPU already; hot cost is in the renderer, which Bun never touches.
 
-Recommendation: **not first**. Fix H1 (unserialize window/daemon), ship renderer fixes, then A/B `bun run` on the CLI daemon form with the sqlite shim behind a flag — measured, reversible, no packaging commitment until numbers justify signing a second binary.
+Recommendation: **not first**. Wave 1 is implemented; defer the Bun A/B until #719 remeasures it and Wave 2 lands. Then test `bun run` on the CLI daemon form with the sqlite shim behind a flag — measured, reversible, no packaging commitment until numbers justify signing a second binary.
 
 ## Fix plan (ranked)
 
