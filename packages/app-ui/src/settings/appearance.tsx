@@ -6,7 +6,7 @@ import { Icon } from "../components/icon";
 import { CODE_THEMES } from "./assets/code-theme";
 import { THEME_PACKS } from "./assets/theme-packs";
 import { PillChoice, Row, Section, Segmented } from "./atoms";
-import { useSetAppearance, useSettingsView } from "./data";
+import { useResetWelcome, useSetAppearance, useSettingsView } from "./data";
 import { ProvenanceChip } from "./provenance-chip";
 import { useThemePref } from "./theme-pref";
 
@@ -136,7 +136,44 @@ export function AppearancePage() {
 
       <ThemePackSection />
       <CodeThemeSection />
+      <FirstRunSection />
     </>
+  );
+}
+
+/**
+ * Replay the first-run welcome (Rule Zero: a capability, not a gate). Until this row
+ * existed the wizard was unreachable after setup — `settings.completeWelcome` had no
+ * counterpart. One click writes the replay stamp and the `settings.get` refetch reopens
+ * the wizard over this page; there is no "are you sure", because nothing is destroyed:
+ * the replayed wizard's Project step offers to continue with a project this client
+ * already has, and its Ready step writes the completion stamp straight back.
+ */
+function FirstRunSection() {
+  const { mutate, pending } = useResetWelcome();
+  const [error, setError] = useState<string>();
+  return (
+    <Section title="First Run" caption="~/.rennet/client-settings.json">
+      <Row label="Welcome" hint="walk the first-run setup again">
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={pending}
+          onClick={() => {
+            setError(undefined);
+            mutate({}).catch((reason: unknown) => setError(errorText(reason)));
+          }}
+        >
+          <Icon icon={RotateCcw} className="size-3" />
+          Replay the first-run welcome
+        </Button>
+      </Row>
+      {error ? (
+        <div className="py-1 text-2xs text-destructive" role="alert">
+          The write failed: {error}
+        </div>
+      ) : null}
+    </Section>
   );
 }
 

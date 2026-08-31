@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import {
   basename,
   groupReferencesByFile,
@@ -7,6 +8,7 @@ import {
   type SymbolNeighbors,
   type SymbolTier,
 } from "../canvas/symbol";
+import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SymbolInspector — the in-app symbol preview (Rai, wireframes #8 + #11).
@@ -337,9 +339,10 @@ function Breadcrumb({
         // biome-ignore lint/suspicious/noArrayIndexKey: a breadcrumb is positional history — the same symbol legitimately recurs at different positions, so the index IS the crumb's identity.
         <span className="symbol-crumb-item inline-flex items-center gap-1" key={`${name}:${index}`}>
           {index > 0 ? (
-            <span className="symbol-crumb-sep font-mono text-2xs text-ink-faint" aria-hidden="true">
-              ›
-            </span>
+            <Icon
+              icon={ChevronRight}
+              className="symbol-crumb-sep size-2.5 shrink-0 text-muted-foreground/50"
+            />
           ) : null}
           <button
             type="button"

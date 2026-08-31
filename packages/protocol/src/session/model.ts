@@ -399,6 +399,23 @@ const legacySourceLandingAttemptShape = {
 export const LegacyRoundSourceLandingAttemptSchema = z.object(legacySourceLandingAttemptShape);
 export type LegacyRoundSourceLandingAttempt = z.infer<typeof LegacyRoundSourceLandingAttemptSchema>;
 
+const branchRefSourceLandingAttemptShape = {
+  ...roundSourceLandingBase,
+  strategy: z.literal("branch-ref-v1"),
+  branch: id,
+  expectedHead: gitObjectId,
+};
+
+export const BranchRefRoundSourceLandingAttemptSchema = z
+  .object(branchRefSourceLandingAttemptShape)
+  .refine((landing) => landing.baselineCommit === landing.expectedHead, {
+    message: "branch-ref landing baseline must be the selected branch head",
+    path: ["baselineCommit"],
+  });
+export type BranchRefRoundSourceLandingAttempt = z.infer<
+  typeof BranchRefRoundSourceLandingAttemptSchema
+>;
+
 const transactionalSourceLandingAttemptShape = {
   ...roundSourceLandingBase,
   strategy: z.literal("exclusive-move-v1"),
@@ -476,6 +493,7 @@ export type TransactionalRoundSourceLandingAttempt = z.infer<
 
 export const RoundSourceLandingAttemptSchema = z.union([
   TransactionalRoundSourceLandingAttemptSchema,
+  BranchRefRoundSourceLandingAttemptSchema,
   LegacyRoundSourceLandingAttemptSchema,
 ]);
 export type RoundSourceLandingAttempt = z.infer<typeof RoundSourceLandingAttemptSchema>;
@@ -490,6 +508,20 @@ const LegacyRoundSourceLandingReceiptSchema = z.discriminatedUnion("outcome", [
   z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("applied") }),
   z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("already-applied") }),
 ]);
+
+export const BranchRefRoundSourceLandingReceiptSchema = z
+  .object({
+    ...branchRefSourceLandingAttemptShape,
+    outcome: z.enum(["unchanged", "applied", "already-applied"]),
+    landedAt: z.number().int().nonnegative(),
+  })
+  .refine((landing) => landing.baselineCommit === landing.expectedHead, {
+    message: "branch-ref landing baseline must be the selected branch head",
+    path: ["baselineCommit"],
+  });
+export type BranchRefRoundSourceLandingReceipt = z.infer<
+  typeof BranchRefRoundSourceLandingReceiptSchema
+>;
 
 export const TransactionalRoundSourceLandingReceiptSchema = z
   .object({
@@ -519,6 +551,7 @@ export type TransactionalRoundSourceLandingReceipt = z.infer<
 
 export const RoundSourceLandingReceiptSchema = z.union([
   TransactionalRoundSourceLandingReceiptSchema,
+  BranchRefRoundSourceLandingReceiptSchema,
   LegacyRoundSourceLandingReceiptSchema,
 ]);
 export type RoundSourceLandingReceipt = z.infer<typeof RoundSourceLandingReceiptSchema>;
@@ -1002,6 +1035,18 @@ export const RoundOperationSchema = z
         code: "custom",
         path: ["state", "landing"],
         message: "does not match the settled commit range",
+      });
+    }
+    if (
+      landing?.strategy === "branch-ref-v1" &&
+      (operation.sourceTarget.kind !== "branch" ||
+        operation.sourceTarget.branch !== landing.branch ||
+        workspace?.sourceParentHead !== landing.expectedHead)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "landing"],
+        message: "does not match the selected branch source",
       });
     }
     if (

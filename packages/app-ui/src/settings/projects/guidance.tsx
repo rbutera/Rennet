@@ -21,9 +21,11 @@ import { UnbackedNote } from "./unbacked-note";
 // the projection cannot address (`prefsBackedByProject`).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Severity reads in three registers, none of them gold: danger for high, copper
+// `warn` for medium (a flag to weigh), quiet raised for low.
 const SEVERITY_CHIP: Record<GuidanceSeverity, string> = {
   high: "bg-danger-soft text-danger",
-  medium: "bg-accent-soft text-accent-ink",
+  medium: "bg-warn-soft text-warn",
   low: "bg-raised text-ink-soft",
 };
 
@@ -182,7 +184,7 @@ function GuidanceList({
             >
               {rule.severity}
             </span>
-            <span className="text-xs text-ink">{rule.rule}</span>
+            <span className="text-13 text-foreground/90">{rule.rule}</span>
             {disabled ? null : (
               <button
                 type="button"

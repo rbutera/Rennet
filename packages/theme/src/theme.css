@@ -83,21 +83,28 @@
   --color-del: var(--rn-del);
   --color-del-ink: var(--rn-del-ink);
 
-  /* type — three voices plus code (root DESIGN.md §Typography) */
+  /* type — three voices plus code, and the prose alias (root DESIGN.md §Typography) */
   --font-sans: var(--rn-font-sans);
   --font-serif: var(--rn-font-serif);
   --font-display: var(--rn-font-display);
   --font-mono: var(--rn-font-mono);
+  /* chat + prose runs sans; flip back to --rn-font-serif to try serif body */
+  --font-prose: var(--rn-font-sans);
 
-  /* the desktop ramp (packages/app-ui/DESIGN.md): 10/11/12/13/14/16/18/20/24 +
-   * display clamp. Tailwind defaults cover xs(12)–2xl(24); text-10 (dense badges),
-   * 2xs(11), text-13 (dense list rows) and display are ours. */
+  /* the desktop ramp (packages/app-ui/DESIGN.md): 10/11/12/12.5/13/14/15/16/18/
+   * 20/24 + display clamp. Tailwind defaults cover xs(12)–2xl(24); text-10 (dense
+   * badges), 2xs(11), text-12-5 (dense body copy), text-13 (dense list rows),
+   * text-15 (chat and review prose) and display are ours. */
   --text-10: 0.625rem;
   --text-10--line-height: 1.4;
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1.3;
+  --text-12-5: 0.78125rem;
+  --text-12-5--line-height: 1.4;
   --text-13: 0.8125rem;
   --text-13--line-height: 1.4;
+  --text-15: 0.9375rem;
+  --text-15--line-height: 1.5;
   --text-display: clamp(2.125rem, 5vw, 3.5rem);
   --text-display--line-height: 1.02;
 
@@ -123,10 +130,19 @@
   --color-primary-foreground: var(--rn-accent-ink);
   --color-secondary: var(--rn-raised);
   --color-secondary-foreground: var(--rn-ink);
+  /* the raised fill under a pointer: 5% of the scheme's ink mixed in, so hover
+   * DARKENS on light and LIGHTENS on dark. A brightness filter only ever goes
+   * one way and washes the light scheme out. Derived here, not in palette.css,
+   * because it is a function of two palette colours rather than a new one —
+   * every theme pack inherits it by rebinding raised and ink. */
+  --color-secondary-hover: color-mix(in oklch, var(--rn-raised), var(--rn-ink) 5%);
   --color-muted: var(--rn-raised);
   --color-muted-foreground: var(--rn-ink-soft);
   --color-destructive: var(--rn-danger);
   --color-destructive-foreground: var(--rn-surface);
+  /* digits/glyphs sitting ON the danger fill stay white in both schemes
+     (destructive-foreground tracks surface, which goes near-black in dark) */
+  --color-on-danger: var(--rn-on-danger);
   --color-border: var(--rn-line);
   --color-input: var(--rn-line-strong);
   --color-ring: var(--rn-accent-line);

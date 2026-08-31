@@ -28,6 +28,7 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
+  Spinner,
   toast,
 } from "@rennet/ui";
 import {
@@ -36,7 +37,6 @@ import {
   ChevronDown,
   CircleHelp,
   FolderPlus,
-  Loader2,
   Map as MapIcon,
   MessageSquarePlus,
   Monitor,
@@ -54,9 +54,10 @@ import {
 import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachOptional } from "../../coach/context";
+import { useCoachAnchor } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useUpdateReady } from "../../components/update-ready";
-import { useBridge } from "../../data";
+import { useBridge, useCommand } from "../../data";
 import {
   archivedPath,
   newChatPath,
@@ -148,7 +149,7 @@ function UpdateControl() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-sm font-medium text-update-ink transition-colors hover:brightness-110"
+        className="ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-13 font-medium text-update-ink transition-colors hover:bg-update/90"
       >
         <Icon icon={RefreshCw} className="size-3.5 shrink-0" />
         <span>Update</span>
@@ -182,13 +183,13 @@ function HelpPopover({
   // rather than throwing — no gate, just an honestly-inert control until it can act.
   const coach = useCoachOptional();
   const rowClass =
-    "flex h-8 items-center rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink";
+    "flex h-8 items-center rounded-chip px-2 text-left text-13 text-foreground/90 transition-colors hover:bg-secondary";
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={trigger} />
-      <PopoverContent align={align} className="w-52 gap-0.5 p-1">
-        <PopoverHeader className="px-2 pt-1">
-          <PopoverTitle className="text-xs text-ink-soft">Help</PopoverTitle>
+      <PopoverContent align={align} className="w-52 gap-0 p-1">
+        <PopoverHeader className="px-2 pt-1.5">
+          <PopoverTitle className="text-13">Help</PopoverTitle>
         </PopoverHeader>
         <a href={DOCS_URL} target="_blank" rel="noreferrer" className={rowClass}>
           Documentation
@@ -340,7 +341,7 @@ function SessionRow({
             }
           }}
           aria-label="Session name"
-          className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none"
+          className="min-w-0 flex-1 bg-transparent text-13 text-ink outline-none"
         />
       </div>
     );
@@ -368,8 +369,8 @@ function SessionRow({
             />
             <span
               className={cn(
-                "truncate text-sm leading-tight",
-                active ? "text-ink" : "text-ink-soft",
+                "truncate text-13 leading-tight",
+                active ? "text-ink" : "text-foreground/80",
               )}
             >
               {session.title}
@@ -387,7 +388,7 @@ function SessionRow({
                 icon={Pin}
                 aria-label="Pinned"
                 aria-hidden={false}
-                className="size-3 shrink-0 text-ink-faint"
+                className="size-2.5 shrink-0 text-muted-foreground/60"
               />
             ) : null}
             {/* Unread orchestrator activity — verdigris, the machine's register. The
@@ -400,7 +401,7 @@ function SessionRow({
               />
             ) : null}
           </span>
-          <span className="pl-[18px] text-2xs text-ink-faint">{sublabel}</span>
+          <span className="pl-[18px] text-2xs text-muted-foreground">{sublabel}</span>
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -433,8 +434,22 @@ function SidebarActions() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
   const projects = hosts.flatMap((host) => host.projects);
-  const rowClass =
-    "flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink";
+  // New Chat is the block's primary act, so it reads a step brighter than its
+  // siblings and lets its glyph stay muted; Search, Add Project and Add Environment
+  // are the quiet ones that come UP to full ink on hover.
+  const rowBase =
+    "flex h-8 items-center gap-2 rounded-chip px-2 text-left text-13 transition-colors hover:bg-raised";
+  const rowClass = cn(rowBase, "text-muted-foreground hover:text-ink");
+  const primaryRowClass = cn(rowBase, "text-foreground/90");
+  // The `new-chat` coach mark anchors THIS row, not the New Chat view's project
+  // header (prototype `app-sidebar.tsx`): the mark says "Start Here", and on a truly
+  // empty install the sidebar row is the thing you have not found yet — the view it
+  // used to point at is a surface you can only reach by having already found it.
+  // Gated on the sessions read having ARRIVED and being empty, so the mark never
+  // elects during the load window and then withdraws.
+  const { data: sessionsData } = useCommand("session.list", {});
+  const noSessionsAnywhere = sessionsData !== undefined && sessionsData.sessions.length === 0;
+  const newChatAnchorRef = useCoachAnchor("new-chat", noSessionsAnywhere);
   return (
     <div className="flex flex-col gap-0.5 px-2">
       <button type="button" onClick={() => setCommandMenuOpen(true)} className={rowClass}>
@@ -447,8 +462,8 @@ function SidebarActions() {
         onPick={(id) => navigate(newChatPath(id))}
         onNewProject={() => openDialog("add-project")}
         trigger={
-          <button type="button" className={rowClass}>
-            <Icon icon={MessageSquarePlus} className="size-3.5 shrink-0" />
+          <button type="button" ref={newChatAnchorRef} className={primaryRowClass}>
+            <Icon icon={MessageSquarePlus} className="size-3.5 shrink-0 text-muted-foreground" />
             <span>New Chat</span>
           </button>
         }
@@ -469,7 +484,7 @@ function SidebarActions() {
  *  sessions. Self-wiring: tree, folds, projection mutations, active-route highlight. */
 function SidebarTree() {
   const folds = useRennetStore((s) => s.ui.sidebarFolds);
-  const toggleFold = useRennetStore((s) => s.uiActions.toggleFold);
+  const setFolded = useRennetStore((s) => s.uiActions.setFolded);
   const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
@@ -489,6 +504,15 @@ function SidebarTree() {
     projectNameRef.current?.focus();
     projectNameRef.current?.select();
   }, [renamingProjectId]);
+
+  // Navigating into a project OPENS it (prototype `app-sidebar.tsx`). The stored fold
+  // is a reviewer's answer about a project they were looking at; it must not survive
+  // into a session they just opened and hide the row they are standing on. Keyed on
+  // the active project CHANGING, so this fires on arrival and never again — folding
+  // the project you are already in stays folded, because the effect does not re-run.
+  useEffect(() => {
+    if (activeProjectId) setFolded(activeProjectId, false);
+  }, [activeProjectId, setFolded]);
 
   const projects = hosts.flatMap((host) => host.projects);
   const pinned = projects.flatMap((project) =>
@@ -561,8 +585,8 @@ function SidebarTree() {
         {pinned.length > 0 ? (
           <div className="flex flex-col">
             <div className="flex h-6 items-center gap-1.5 px-2">
-              <Icon icon={Pin} className="size-3 shrink-0 text-accent" />
-              <span className="truncate text-2xs font-medium uppercase tracking-wide text-ink-faint">
+              <Icon icon={Pin} className="size-3 shrink-0 text-primary/70" />
+              <span className="truncate text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
                 Pinned
               </span>
             </div>
@@ -584,33 +608,41 @@ function SidebarTree() {
             <div className="flex h-6 items-center gap-1.5 px-2">
               <Icon
                 icon={host.kind === "local" ? Monitor : Server}
-                className="size-3 shrink-0 text-ink-faint"
+                className="size-3 shrink-0 text-muted-foreground/60"
               />
-              <span className="truncate text-2xs font-medium uppercase tracking-wide text-ink-faint">
+              <span className="truncate text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
                 {host.label}
               </span>
             </div>
 
             {host.projects.map((project) => {
-              const expanded = folds[project.id] !== true || project.id === activeProjectId;
+              // Folded by DEFAULT (prototype `app-sidebar.tsx`): a project opens only
+              // because it holds the session you are in, or because you opened it. The
+              // old default was open-unless-folded, which on a multi-project install
+              // meant scrolling past every other repo's sessions to find your own. An
+              // ABSENT fold entry is now "untouched", and the default answers it; once
+              // the reviewer has toggled a project, their answer wins in both directions
+              // — including keeping the active project's own list shut.
+              const folded = folds[project.id];
+              const expanded = folded === undefined ? project.id === activeProjectId : !folded;
               const activeCount = project.sessions.filter((s) => !s.archived).length;
               const renaming = renamingProjectId === project.id;
               return (
                 <ContextMenu key={project.id}>
                   <ContextMenuTrigger render={<div className="flex flex-col" />}>
                     {renaming ? (
-                      <div className="rounded-chip bg-raised px-2 py-1">
-                        <div className="flex min-h-5 items-center gap-1.5">
+                      <div className="rounded-chip bg-raised px-2">
+                        <div className="flex h-7 items-center gap-1.5">
                           <Icon
                             icon={ChevronDown}
                             className={cn(
-                              "size-3 shrink-0 text-ink-faint transition-transform",
+                              "size-3 shrink-0 text-muted-foreground transition-transform",
                               !expanded && "-rotate-90",
                             )}
                           />
                           <ProjectIcon
                             icon={glyphByProject[project.id]}
-                            className="size-3.5 shrink-0 text-ink-faint"
+                            className="size-3.5 shrink-0 text-muted-foreground"
                           />
                           <input
                             ref={projectNameRef}
@@ -629,19 +661,19 @@ function SidebarTree() {
                               }
                             }}
                             aria-label="Project name"
-                            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none disabled:text-ink-faint"
+                            className="min-w-0 flex-1 bg-transparent text-13 text-ink outline-none disabled:text-muted-foreground"
                           />
                           {projectRenamePending ? (
-                            <Icon
-                              icon={Loader2}
-                              className="size-3 shrink-0 animate-spin text-ink-faint"
+                            <Spinner
+                              className="size-3 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
                             />
                           ) : (
-                            <span className="text-2xs text-ink-faint">{activeCount}</span>
+                            <span className="text-2xs text-muted-foreground">{activeCount}</span>
                           )}
                         </div>
                         {projectRenameError ? (
-                          <p role="alert" className="pt-1 pl-[30px] text-2xs text-danger">
+                          <p role="alert" className="pb-1.5 pl-[30px] text-2xs text-danger">
                             {projectRenameError}
                           </p>
                         ) : null}
@@ -649,29 +681,29 @@ function SidebarTree() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => toggleFold(project.id)}
+                        onClick={() => setFolded(project.id, expanded)}
                         aria-expanded={expanded}
-                        className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised"
+                        className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-13 text-foreground/90 transition-colors hover:bg-raised"
                       >
                         <Icon
                           icon={ChevronDown}
                           className={cn(
-                            "size-3 shrink-0 text-ink-faint transition-transform",
+                            "size-3 shrink-0 text-muted-foreground transition-transform",
                             !expanded && "-rotate-90",
                           )}
                         />
                         <ProjectIcon
                           icon={glyphByProject[project.id]}
-                          className="size-3.5 shrink-0 text-ink-faint"
+                          className="size-3.5 shrink-0 text-muted-foreground"
                         />
                         <span className="flex-1 truncate">{project.name}</span>
                         {project.indexing ? (
-                          <span className="flex items-center gap-1 text-2xs text-ink-faint">
-                            <Icon icon={Loader2} className="size-3 animate-spin" />
+                          <span className="flex items-center gap-1 text-2xs text-muted-foreground">
+                            <Spinner className="size-3" aria-hidden="true" />
                             indexing
                           </span>
                         ) : (
-                          <span className="text-2xs text-ink-faint">{activeCount}</span>
+                          <span className="text-2xs text-muted-foreground">{activeCount}</span>
                         )}
                       </button>
                     )}
@@ -697,7 +729,7 @@ function SidebarTree() {
                         <button
                           type="button"
                           onClick={() => navigate(newChatPath(project.id))}
-                          className="group/newchat flex h-7 items-center gap-1.5 rounded-chip px-2 text-left text-xs text-ink-faint transition-colors hover:bg-accent-soft hover:text-accent"
+                          className="group/newchat flex h-7 items-center gap-1.5 rounded-chip px-2 text-left text-xs text-muted-foreground/60 transition-colors hover:bg-primary/10 hover:text-primary"
                         >
                           <Icon
                             icon={Plus}
@@ -740,8 +772,8 @@ function SidebarTree() {
   );
 }
 
-/** The footer — Archived (when > 0), then Update · Help · Settings (C03 order, the
- *  C03 order, read left-to-right). Self-wiring. */
+/** The footer — Archived (when > 0), then Settings · Help read left-to-right with
+ *  Update pushed to the far edge by its own `ml-auto`. Self-wiring. */
 function SidebarFooter() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
@@ -754,36 +786,40 @@ function SidebarFooter() {
         <button
           type="button"
           onClick={() => navigate(archivedPath())}
-          className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+          className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-13 text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
         >
           <Icon icon={Archive} className="size-3.5 shrink-0" />
           <span className="flex-1">Archived</span>
-          <span className="text-2xs text-ink-faint">{archivedCount}</span>
+          <span className="text-2xs text-muted-foreground">{archivedCount}</span>
         </button>
       ) : null}
+      {/* Settings · Help, then Update pushed to the far edge by its own `ml-auto`
+          (prototype `app-sidebar.tsx`). The two standing controls read left-to-right
+          as a pair; Update is an event, not a peer, so it sits apart and renders
+          nothing at all until one is ready. */}
       <div className="flex items-center gap-1">
-        <UpdateControl />
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={() => navigate(settingsPath("appearance"))}
+          className="flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+        >
+          <Icon icon={Settings} className="size-3.5" />
+        </button>
         <HelpPopover
           trigger={
             <button
               type="button"
               aria-label="Help"
               title="Help"
-              className="flex size-8 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+              className="flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
             >
               <Icon icon={CircleHelp} className="size-3.5" />
             </button>
           }
         />
-        <button
-          type="button"
-          aria-label="Settings"
-          title="Settings"
-          onClick={() => navigate(settingsPath("appearance"))}
-          className="flex size-8 shrink-0 items-center justify-center rounded-chip text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-        >
-          <Icon icon={Settings} className="size-3.5" />
-        </button>
+        <UpdateControl />
       </div>
     </div>
   );
@@ -824,14 +860,17 @@ export function Sidebar() {
       data-region="sidebar"
       data-open={open}
       className={cn(
-        "rennet-sidebar h-full shrink-0 overflow-hidden bg-surface transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        // No ground of its own: the sidebar shares the frame's ONE seamless canvas
+        // (board prototype `app/globals.css` — `--color-sidebar: var(--rn-canvas)`),
+        // so the hairline is the only thing separating it from the pane beside it.
+        "rennet-sidebar h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
         open ? "w-64 border-r border-line" : "w-0",
       )}
     >
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
           {/* Header — state 1's corner slot: lights → wordmark → toggle (C20).
-              The 81px light reserve, the `navigation-titlebar` drag rule and the
+              The 81px light reserve, the `app-region-drag` utility and the
               collapse toggle all live in `CornerSlot` now; the lockup is the real
               scheme-swapped vector artwork (never a font), dropped 16px → 14px on
               darwin so it still clears the toggle inside the 256px panel (#557). */}

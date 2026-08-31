@@ -1,3 +1,4 @@
+import type { FindingAccord } from "@rennet/protocol";
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -17,8 +18,8 @@ import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from 
 // a callout when present; every finding keeps its actions even without that optional marker.
 
 const SEVERITY_CHIP: Record<"high" | "medium" | "low", string> = {
-  high: "bg-danger-soft text-danger",
-  medium: "bg-primary/15 text-primary",
+  high: "bg-destructive/15 text-destructive",
+  medium: "bg-warn-soft text-warn",
   low: "bg-secondary text-muted-foreground",
 };
 
@@ -29,32 +30,82 @@ function splitFix(concern: string): { body: string; fix: string | null } {
   return { body: body.trim(), fix: rest.join("**Fix:**").trim() };
 }
 
+/** What the pill can actually claim, once the tallies AND the accord stamp are in. */
+type ConcurrenceRead = "concur" | "split" | "conflict" | "solo" | "unstamped";
+
+const CONCURRENCE_TONE: Record<ConcurrenceRead, string> = {
+  // Every seat raised it, at comparable severity — the one green claim.
+  concur: "border-green-line text-green",
+  // A real disagreement between seats: the verdigris model register.
+  split: "border-model-line text-model",
+  conflict: "border-model-line text-model",
+  // Nothing to compare (one seat) or nothing verifiable (no stamp): state it, quietly.
+  solo: "border-border text-muted-foreground",
+  unstamped: "border-border text-muted-foreground",
+};
+
+/**
+ * The cross-model concurrence read, as ONE bordered tinted pill (prototype
+ * `lens-board.tsx:503-516`) rather than a row of plain per-model counts.
+ *
+ * **The tallies alone cannot answer the question this pill asks.** `foldConcurrence`
+ * (`server/runtime/lens-pipeline.ts:226-241`) stamps `[{a,1,1},{b,1,1}]` for a concurring
+ * pair — and for a severity CONFLICT, where both seats raised the finding at materially
+ * different severities and neither answered "no concern" (`core/finding-reconcile.ts`,
+ * the conflict arm of `reconcileFindings`). Byte-identical. Reading `sum(agree) ===
+ * sum(total)` as agreement therefore printed a green "concur 2/2" over a disagreement.
+ *
+ * So the pipeline also stamps `accord`, and the green concurrence claim is made ONLY on
+ * `accord === "concur"`. The other reads:
+ *
+ * - `conflict` — both raised it, incompatible severities. Named, in the model register.
+ * - `split` — one seat raised it, another answered "no concern" (`agree: 0`). Names who did.
+ * - `solo` — ONE tally, the single-harness degrade (`stampSingleSeatConcurrence`, `:398-410`).
+ *   No second opinion exists, so there is no split to report: it reads as the seat, muted.
+ * - `unstamped` — a board drafted before `accord`, whose tallies are the ambiguous pair.
+ *   It may be either, so it states the tally and claims nothing. Never green.
+ */
 function Concurrence({
   tallies,
-  dimmed,
+  accord,
 }: {
   readonly tallies: readonly { model: string; agree: number; total: number }[];
-  readonly dimmed: boolean;
+  readonly accord: FindingAccord | undefined;
 }) {
   if (tallies.length === 0) return null;
+  const agree = tallies.reduce((sum, t) => sum + t.agree, 0);
+  const total = tallies.reduce((sum, t) => sum + t.total, 0);
+  const raisers = tallies.filter((t) => t.agree > 0).map((t) => t.model);
+  const detail = tallies.map((t) => `${t.model}: ${t.agree} of ${t.total} agree`).join(", ");
+  // Absent accord: a partial tally is unambiguously a split (a seat said no concern), but a
+  // FULL one is exactly the pair a conflict produces — so it degrades, it does not guess.
+  const read: ConcurrenceRead =
+    tallies.length === 1 ? "solo" : (accord ?? (agree === total ? "unstamped" : "split"));
+  const label =
+    read === "solo"
+      ? (tallies[0]?.model ?? "")
+      : read === "concur"
+        ? `concur ${agree}/${total}`
+        : read === "conflict"
+          ? "severity split"
+          : read === "split" && raisers.length > 0
+            ? `${raisers.join(" · ")} only`
+            : `${agree}/${total} flagged`;
   return (
     <span
-      className={cn(
-        "flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground",
-        dimmed && "opacity-60",
-      )}
+      data-kind="finding-concurrence"
+      data-accord={read}
+      data-concur={read === "concur"}
+      className={cn("shrink-0 rounded border px-1.5 py-0.5 text-10", CONCURRENCE_TONE[read])}
+      title={detail}
     >
-      {tallies.map((t) => (
-        <span key={t.model} title={`${t.model}: ${t.agree} of ${t.total} agree`}>
-          {t.model} {t.agree}/{t.total}
-        </span>
-      ))}
+      {label}
     </span>
   );
 }
 
 export function FindingElement({ element }: { readonly element: ElementOf<"finding"> }) {
-  const { severity, concern, status: boardStatus, code, concurrence } = element.data;
+  const { severity, concern, status: boardStatus, code, concurrence, accord } = element.data;
   const generation = useBoardGeneration();
   const boardId = useBoardId();
   const patchsetId = useBoardPatchsetId();
@@ -113,7 +164,12 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
   }
 
   return (
-    <div data-kind="finding" data-status={status} data-element-id={element.id}>
+    <div
+      data-kind="finding"
+      data-status={status}
+      data-element-id={element.id}
+      className={cn("transition-opacity", dimmed && "opacity-50")}
+    >
       <h3 className="contents">
         <button
           type="button"
@@ -132,21 +188,15 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             className={cn(
               "mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wide",
               SEVERITY_CHIP[severity],
-              dimmed && "opacity-60",
             )}
           >
             {severity}
           </span>
-          <span
-            className={cn(
-              "min-w-0 flex-1 font-semibold text-base text-foreground leading-snug",
-              dimmed && "opacity-60",
-            )}
-          >
+          <span className="min-w-0 flex-1 font-semibold text-base text-foreground leading-snug">
             {summary}
             {status !== "open" && <span className="sr-only">, {status}</span>}
           </span>
-          <Concurrence tallies={concurrence} dimmed={dimmed} />
+          <Concurrence tallies={concurrence} accord={accord} />
         </button>
       </h3>
       <Collapse open={open}>
@@ -155,10 +205,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             text={body}
             elementId={element.id}
             patchsetId={patchsetId}
-            paragraphClassName={cn(
-              "text-foreground/90 text-sm leading-relaxed",
-              dimmed && "opacity-60",
-            )}
+            paragraphClassName="text-foreground/90 text-sm leading-relaxed"
           />
           <div
             className={cn(
@@ -168,17 +215,14 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
           >
             {fix ? (
               <>
-                <h4 className={cn("font-semibold text-sm text-foreground", dimmed && "opacity-60")}>
+                <h4 className="font-medium text-2xs text-muted-foreground uppercase tracking-wide">
                   Fix
                 </h4>
                 <QuoteHighlightLayer
                   text={fix}
                   elementId={element.id}
                   patchsetId={patchsetId}
-                  paragraphClassName={cn(
-                    "text-foreground/90 text-sm leading-relaxed",
-                    dimmed && "opacity-60",
-                  )}
+                  paragraphClassName="text-foreground/90 text-sm leading-relaxed"
                 />
               </>
             ) : null}
@@ -187,7 +231,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
                 <button
                   type="button"
                   onClick={toggleDismissal}
-                  className="rounded border border-border px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-secondary hover:text-foreground"
+                  className="rounded border border-border px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
                   {dismissedByReviewer ? "Dismissed · Undo" : "Dismiss"}
                 </button>
@@ -195,7 +239,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
               <button
                 type="button"
                 onClick={discussFinding}
-                className="rounded border border-border px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-secondary hover:text-foreground"
+                className="rounded border border-border px-2 py-0.5 text-2xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               >
                 Discuss
               </button>

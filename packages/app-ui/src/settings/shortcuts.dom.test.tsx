@@ -13,6 +13,7 @@
 // that read and rearms with no reload — so what the page advertises stays exactly what
 // fires once the old settings-screen is deleted.
 import { afterEach, describe, expect, it } from "vitest";
+import { KEY_ACTIONS } from "../command/key-actions";
 import { BridgeProvider } from "../data";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
@@ -176,6 +177,62 @@ describe("ShortcutsPage — live remap (the cluster-11 keyboard reconciliation)"
       fireEvent.keyDown(window, { key: "e", metaKey: true });
     });
     expect(useRennetStore.getState().ui.sidebarOpen).toBe(false);
+    cleanup();
+  });
+});
+
+describe("ShortcutsPage — the prototype's 32px row rhythm", () => {
+  // Asserted as the class FORM, not a measured pixel: happy-dom applies no Tailwind, so
+  // `getBoundingClientRect` reports 0 for every row and would pass whatever we shipped.
+  // `classList.contains` tokenises, so `h-8` does NOT match a row carrying `min-h-8`.
+  function rows(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll('[data-slot="shortcut-row"]'));
+  }
+
+  it("gives every ordinary row a fixed h-8 single line", async () => {
+    const { container, findByText } = mount(
+      <BridgeProvider bridge={shortcutsBridge()}>
+        <ShortcutsPage />
+      </BridgeProvider>,
+    );
+    await findByText("Toggle Sidebar");
+    const all = rows(container);
+    expect(all).toHaveLength(KEY_ACTIONS.length);
+    for (const [index, row] of all.entries()) {
+      expect(row.classList.contains("h-8")).toBe(true);
+      expect(row.classList.contains("min-h-8")).toBe(false);
+      // The group survived the move onto the one line. This pins PRESENCE and order,
+      // NOT layout — a stacked flex-col yields the same textContent, so what actually
+      // forbids the two-line row is the `h-8` above, and this only catches the group
+      // being dropped to buy the height back.
+      const def = KEY_ACTIONS[index];
+      expect(row.textContent?.startsWith(`${def?.title}${def?.group}`)).toBe(true);
+    }
+    cleanup();
+  });
+
+  it("expands only the exceptional rows — a conflict, and the recorder", async () => {
+    // ⌘B now binds BOTH Settings and Toggle Sidebar, so those two rows carry the
+    // wrapping conflict warning and the other four stay at 32px.
+    const { container, findByText, getByLabelText } = mount(
+      <BridgeProvider bridge={settingsBridge({ keybindings: { settings: "mod+b" } })}>
+        <ShortcutsPage />
+      </BridgeProvider>,
+    );
+    await findByText("Toggle Sidebar");
+    const expanded = rows(container).filter((row) => row.classList.contains("min-h-8"));
+    expect(expanded.map((row) => row.classList.contains("h-8"))).toEqual([false, false]);
+    // Catalogue order, so the sidebar row comes first — a positional assertion, since a
+    // pair of `toContain` checks would pass on any two expanded rows.
+    expect(expanded[0]?.textContent?.startsWith("Toggle Sidebar")).toBe(true);
+    expect(expanded[1]?.textContent?.startsWith("Settings")).toBe(true);
+
+    // The recorder is the other exceptional state: opening it expands its own row.
+    const commandMenu = rows(container).find((row) => row.textContent?.startsWith("Command Menu"));
+    expect(commandMenu?.classList.contains("h-8")).toBe(true);
+    fireEvent.click(getByLabelText("Change Command Menu"));
+    await waitFor(() => expect(commandMenu?.classList.contains("min-h-8")).toBe(true));
+    expect(commandMenu?.classList.contains("h-8")).toBe(false);
     cleanup();
   });
 });

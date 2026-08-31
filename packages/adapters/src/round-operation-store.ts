@@ -137,6 +137,10 @@ function sameSourceLandingAttempt(
   if (left.strategy === undefined || right.strategy === undefined) {
     return left.strategy === right.strategy;
   }
+  if (left.strategy === "branch-ref-v1" || right.strategy === "branch-ref-v1") {
+    if (left.strategy !== "branch-ref-v1" || right.strategy !== "branch-ref-v1") return false;
+    return left.branch === right.branch && left.expectedHead === right.expectedHead;
+  }
   return sameReceipt(left.units, right.units) && sameReceipt(left.unitReceipts, right.unitReceipts);
 }
 

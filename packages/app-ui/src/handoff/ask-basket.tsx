@@ -1,6 +1,7 @@
 import { Badge, Button, cn } from "@rennet/ui";
 import { X } from "lucide-react";
 import { useMemo } from "react";
+import { Icon } from "../components/icon";
 import {
   type DispositionKind,
   type StagedAsk,
@@ -60,7 +61,7 @@ function AskRow({ ask }: { ask: StagedAsk }) {
         className="shrink-0 text-muted-foreground hover:text-foreground"
         onClick={() => unstageAsk(ask.id)}
       >
-        <X aria-hidden="true" />
+        <Icon icon={X} />
       </Button>
     </li>
   );

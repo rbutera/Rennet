@@ -1,15 +1,9 @@
 import { Toast as ToastPrimitive } from "@base-ui/react/toast";
-import {
-  CircleCheckIcon,
-  InfoIcon,
-  Loader2Icon,
-  OctagonXIcon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { CircleCheckIcon, InfoIcon, OctagonXIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import type * as React from "react";
 import { cn } from "../lib/utils";
 import { Button } from "./button";
+import { Spinner } from "./spinner";
 
 const toast = ToastPrimitive.createToastManager();
 
@@ -151,7 +145,9 @@ function ToastIcon({ type }: { type: string | undefined }) {
   }
 
   if (type === "loading") {
-    icon = <Loader2Icon className="animate-spin" strokeWidth={1.6} aria-hidden="true" />;
+    // The kit's one busy glyph, not a second hand-rolled spinner. Decorative: the
+    // toast is itself a live region, and its title is what gets announced.
+    icon = <Spinner aria-hidden="true" />;
   }
 
   if (!icon) {

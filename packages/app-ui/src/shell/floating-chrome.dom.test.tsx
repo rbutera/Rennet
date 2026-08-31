@@ -18,6 +18,7 @@ import { RunRoute } from "../rounds/run-route";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { AppLayout } from "../routes/layout";
+import { DEFAULT_VIEW, VIEW_KINDS } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
@@ -173,6 +174,10 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     const run = region.querySelector('[data-screen="session-run"]');
     if (!run) throw new Error("the run route did not render its live surface");
     expect(run.className).toContain("overflow-y-auto");
+    // ...and it is MARKED, so the clearance lands on it. The mark is the whole contract
+    // now that the stylesheet no longer infers a primary scroller from the utility names
+    // it happens to type.
+    expect(run.className).toContain("chrome-scroll-clearance");
     // The two halves that make it real: the scroller is a flex child, of a flex column.
     expect(run.parentElement).toBe(region);
     expect(region.className).toContain("flex-col");
@@ -198,24 +203,77 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
       activePatchsetId: "ps-1",
       repositoryRoot: "/home/dev/rennet",
     } as unknown as Review;
-    const { container, findByText } = mount(
+    const { container } = mount(
       <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
         <Router hook={history.hook} searchHook={history.searchHook}>
           <ReviewWorkspace review={review} />
         </Router>
       </BridgeProvider>,
     );
-    await findByText(/REVIEW ·/);
-    // The rule's own selector, run against the live tree: it must match exactly the pane's
-    // one primary scroller. Matching NOTHING is the regression.
-    const scrollers = container.querySelectorAll(".min-h-0.flex-1.overflow-y-auto");
+    // Wait for the board itself — it used to be the `REVIEW ·` eyebrow, which the board
+    // no longer carries.
+    await waitFor(() =>
+      expect(container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull(),
+    );
+    // The mark, run against the live tree: exactly ONE element in the pane claims the
+    // clearance. Matching NOTHING is the original regression; matching several would mean
+    // two nested surfaces each clearing the chips, which is the failure the old
+    // utility-name selector could produce silently in any branch that typed the same three
+    // layout classes.
+    const scrollers = container.querySelectorAll(".chrome-scroll-clearance");
     expect(scrollers.length).toBe(1);
     const scroller = scrollers[0];
-    if (!scroller) throw new Error("the board branch has no primary scroller");
+    if (!scroller) throw new Error("the board branch has no marked primary scroller");
+    expect(scroller.className).toContain("overflow-y-auto");
     // ...and it is the element that actually carries the review document, not some
     // unrelated bounded list that happens to match the selector.
     expect(scroller.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
   });
+
+  // The clearance is only real where a scroller CLAIMS it. Nothing used to notice a
+  // session branch losing its claim: the stylesheet inferred the scroller from the
+  // `min-h-0 flex-1 overflow-y-auto` trio, so a branch that restyled its layout dropped
+  // the clearance silently and read under the chips. Every session view the workspace can
+  // land on is checked here, by view. The list is DERIVED from `VIEW_KINDS` rather than
+  // hand-typed, so a new branch cannot be added without one: the hand-typed version claimed
+  // "every session view" while omitting `?view=map` — the branch that wave actually added.
+  for (const view of VIEW_KINDS.map((kind) => (kind === DEFAULT_VIEW ? "" : `?view=${kind}`))) {
+    it(`marks exactly one primary scroller on the ${view || "board"} view`, async () => {
+      const review = {
+        id: "cs-1",
+        activePatchsetId: "ps-1",
+        repositoryRoot: "/home/dev/rennet",
+        // The diff branch needs a real changed file: with none it renders a centred
+        // notice instead of the pane, and a notice has no scroller to mark.
+        patchsets: [
+          {
+            id: "ps-1",
+            files: [
+              {
+                path: "packages/core/src/a.ts",
+                status: "modified",
+                additions: 1,
+                deletions: 0,
+                binary: false,
+                patch: ["@@ -1,1 +1,1 @@", "-const y = 2", "+const y = 3"].join("\n"),
+              },
+            ],
+          },
+        ],
+      } as unknown as Review;
+      const history = memoryHistory(`/s/review-1${view}`);
+      const { container } = mount(
+        <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <ReviewWorkspace review={review} />
+          </Router>
+        </BridgeProvider>,
+      );
+      await waitFor(() =>
+        expect(container.querySelectorAll(".chrome-scroll-clearance").length).toBe(1),
+      );
+    });
+  }
 
   it("gives a TAKEOVER surface plain clearance, never the scroll treatment", () => {
     // Settings has its own in-flow header; scrolling its content through it would be

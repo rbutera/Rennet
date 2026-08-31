@@ -8,31 +8,47 @@
 const VIEW_W = 726.868;
 const VIEW_H = 126.0;
 
+// The two halves of the same artwork, as viewBox windows onto it — the mark group
+// sits at 0,0 and the wordmark group at 246.7,7 with its own scale, so cropping the
+// viewBox is exactly the authored geometry, no second copy of the path data. The
+// welcome's opening animates them separately (the mark lands, the wordmark wipes in);
+// everywhere else asks for the whole lockup and gets the identical drawing.
+const PARTS = {
+  mark: { x: 0, y: 0, w: 222.703, h: 126.0 },
+  wordmark: { x: 246.7, y: 7.0, w: 480.168, h: 112.0 },
+} as const;
+
 export function RennetLockup({
   size,
   className,
+  part,
 }: {
   readonly size: number;
   readonly className?: string;
+  /** Draw one half of the lockup. Parts are decorative; the caller names the assembly. */
+  readonly part?: keyof typeof PARTS;
 }) {
+  const box = part ? PARTS[part] : { x: 0, y: 0, w: VIEW_W, h: VIEW_H };
   return (
     <svg
-      width={(size * VIEW_W) / VIEW_H}
+      width={(size * box.w) / box.h}
       height={size}
-      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+      viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
       className={className}
-      role="img"
-      aria-label="Rennet"
+      role={part ? undefined : "img"}
+      aria-label={part ? undefined : "Rennet"}
+      aria-hidden={part ? true : undefined}
       focusable="false"
     >
-      <g transform="translate(0.000 0.000) scale(0.48632435 0.48632435)">
-        <g
-          transform="translate(-0.000000,258.808714) scale(0.080000,-0.100000)"
-          fill="var(--rn-mark-ink)"
-          stroke="none"
-        >
-          <path
-            d="M2250 2583 c-356 -15 -752 -64 -1050 -129 -690 -152 -1134 -434
+      {part === "wordmark" ? null : (
+        <g transform="translate(0.000 0.000) scale(0.48632435 0.48632435)">
+          <g
+            transform="translate(-0.000000,258.808714) scale(0.080000,-0.100000)"
+            fill="var(--rn-mark-ink)"
+            stroke="none"
+          >
+            <path
+              d="M2250 2583 c-356 -15 -752 -64 -1050 -129 -690 -152 -1134 -434
 -1190 -756 -28 -160 52 -321 232 -463 183 -144 450 -262 808 -354 579 -150
 1308 -202 1986 -141 l129 12 46 51 47 50 -9 31 c-5 17 -9 49 -9 71 l0 41 -50
 49 c-27 26 -47 52 -45 56 3 4 47 15 98 24 l92 18 55 68 c30 38 56 69 56 69 1
@@ -97,17 +113,19 @@ l70 18 31 52 c17 28 38 59 46 68 l16 18 -22 90 -22 90 -85 47 c-46 25 -86 47
 24 -143 15z M3470 245 c-25 -9 -38 -23 -52 -54 l-17 -41 13 -31 c8 -20 27 -37
 52 -48 33 -15 45 -16 74 -6 19 6 45 26 56 43 l21 31 -11 42 -11 42 -43 18
 c-24 11 -44 18 -45 18 -1 -1 -18 -7 -37 -14z"
-          />
+            />
+          </g>
         </g>
-      </g>
-      <g transform="translate(246.700 7.000) scale(0.40385872 0.40385872)">
-        <g
-          transform="translate(0.000000,277.122199) scale(0.100000,-0.100000)"
-          fill="var(--rn-mark-ink)"
-          stroke="none"
-        >
-          <path
-            d="M0 1401 l0 -1371 205 0 205 0 0 570 0 570 253 0 252 0 428 -570 427
+      )}
+      {part === "mark" ? null : (
+        <g transform="translate(246.700 7.000) scale(0.40385872 0.40385872)">
+          <g
+            transform="translate(0.000000,277.122199) scale(0.100000,-0.100000)"
+            fill="var(--rn-mark-ink)"
+            stroke="none"
+          >
+            <path
+              d="M0 1401 l0 -1371 205 0 205 0 0 570 0 570 253 0 252 0 428 -570 427
 -570 241 0 241 0 -9 13 c-5 6 -46 59 -89 117 -120 157 -595 778 -701 915 -51
 66 -93 123 -93 126 0 3 39 16 87 28 190 48 320 118 440 237 l81 81 41 84 c57
 118 74 199 74 344 l-1 120 -21 78 c-11 43 -34 106 -50 140 -61 127 -178 242
@@ -150,9 +168,10 @@ c-243 -31 -448 -130 -609 -292 -164 -165 -257 -363 -281 -601 l-10 -103 10
 -370 19z m231 -184 c42 -8 108 -29 145 -46 l69 -33 70 -71 c81 -83 135 -179
 165 -300 11 -44 20 -112 20 -153 l0 -73 -616 0 -617 0 7 66 c4 36 20 107 36
 158 54 167 174 314 318 389 135 71 254 89 403 63z"
-          />
+            />
+          </g>
         </g>
-      </g>
+      )}
     </svg>
   );
 }

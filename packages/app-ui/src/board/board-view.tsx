@@ -108,7 +108,7 @@ export function LensBoardView({
     <main
       data-kind="lens-board-view"
       className={cn(
-        "mx-auto flex w-full flex-col gap-6 p-6",
+        "mx-auto flex w-full flex-col gap-8 px-8 py-8",
         board?.document.measure === "structured" ? "max-w-[960px]" : "max-w-[760px]",
       )}
     >
@@ -237,7 +237,9 @@ function BoardHeader({ board }: { readonly board: LensBoard }) {
   const document: BoardDocument = board.document;
   return (
     <header className="mb-8 flex flex-col gap-4">
-      <h1 className="font-display text-2xl text-foreground tracking-tight">{document.title}</h1>
+      <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
+        {document.title}
+      </h1>
       {document.stats && document.stats.length > 0 ? (
         <dl data-kind="board-stats" className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
           {document.stats.map((stat) => (
@@ -286,8 +288,8 @@ function BoardIntro({ markdown }: { readonly markdown: string }) {
     <RichText
       text={markdown}
       patchsetId={patchsetId}
-      className="max-w-[640px]"
-      paragraphClassName="text-base leading-relaxed text-foreground/85"
+      className="-mt-3"
+      paragraphClassName="text-sm leading-relaxed text-muted-foreground"
     />
   );
 }

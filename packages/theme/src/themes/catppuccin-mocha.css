@@ -45,6 +45,7 @@
   /* danger */
   --rn-danger: #d20f39;
   --rn-danger-soft: rgb(210 15 57 / 0.1);
+  --rn-on-danger: #ffffff;
   /* paper */
   --rn-sheet: #ffffff;
   --rn-sheet-ink: #4c4f69;
@@ -106,6 +107,7 @@
   /* danger */
   --rn-danger: #f38ba8;
   --rn-danger-soft: rgb(243 139 168 / 0.15);
+  --rn-on-danger: #ffffff;
   /* paper */
   --rn-sheet: #1e1e2e;
   --rn-sheet-ink: #cdd6f4;

@@ -130,7 +130,13 @@ export function ProjectProcessing({
           ) : succeeded ? (
             <Icon icon={Check} className="size-5.5" />
           ) : (
-            <Icon icon={Sparkles} className="size-5" />
+            // Still digesting: the glyph breathes with the ring. Settled states carry no
+            // animation at all rather than an `animation: none` override, so there is no
+            // second place for the done/failed branches to fall out of step.
+            <Icon
+              icon={Sparkles}
+              className="size-5 animate-processing-pulse motion-reduce:animate-none"
+            />
           )}
         </span>
         <p className="processing-headline mt-1.5 font-display text-2xl text-ink" aria-live="polite">

@@ -1,10 +1,14 @@
 import type { LensBoard } from "@rennet/protocol";
 import { board, codeRef, finding, message, prose, section } from "./helpers";
 
+// Both seats raised it at comparable severity. The tallies alone cannot say that — a
+// severity CONFLICT folds to the same two rows — so the pipeline's `accord` stamp rides
+// with them, and the fixture carries it the way a real reconciled board does.
 const BOTH_AGREE = [
   { model: "claude", agree: 1, total: 1 },
   { model: "codex", agree: 1, total: 1 },
 ];
+const CONCUR = "concur" as const;
 
 // Flagged lens — exclusively what is currently flagged. Two medium findings, one
 // carrying a human `discuss` thread anchored to the cited code (its text is
@@ -19,6 +23,7 @@ export const flaggedBoard: LensBoard = board("flagged", "gen1", "flagged-gen1", 
         severity: "medium",
         status: "open",
         concurrence: BOTH_AGREE,
+        accord: CONCUR,
         code: ["cr-f1"],
         concern:
           "`refreshAndPersist` logs `attempt` at the start of the exchange, then a terminal record on only three routes (`declined`, `network`, `persisted`). Two reachable exits — a non-decline exchange error, and a persistence failure after a successful rotation — emit `attempt` and nothing after it, leaving daemon.log reading the same as a process that died mid-exchange.\n\n**Fix:** write a secret-free terminal record on every exit.",
@@ -27,6 +32,7 @@ export const flaggedBoard: LensBoard = board("flagged", "gen1", "flagged-gen1", 
         severity: "medium",
         status: "open",
         concurrence: BOTH_AGREE,
+        accord: CONCUR,
         code: ["cr-f2"],
         concern:
           "GitHub can accept the refresh POST and rotate the pair, then reset the response connection with `ECONNRESET`. That code is in `NETWORK_CODES`, so the copy reads 'Your connection and token are untouched' — but the token is touched: the stored refresh token is now dead. Skipping the retry is right; the reporting is wrong.\n\n**Fix:** represent a post-send network failure as an unknown outcome rather than asserting the credential survived.",
@@ -74,6 +80,7 @@ export const flaggedGen2Board: LensBoard = board("flagged", "gen2", "flagged-gen
         severity: "medium",
         status: "addressed",
         concurrence: BOTH_AGREE,
+        accord: CONCUR,
         code: ["cr-f2"],
         concern:
           "This round stopped `resolveGitHubAuth` from asserting that the credential survived a post-send reset — it now classifies that case as an unknown outcome rather than `network`-with-untouched-copy. The user-facing copy string still reads as reassurance, so the classification is fixed and the wording is not.\n\n**Fix:** replace the 'connection and token are untouched' copy with an unknown-state message on the post-send path.",

@@ -61,7 +61,7 @@ export function OutboundMarkdown({
             text={block.text}
             patchsetId={patchsetId}
             paragraphClassName={cn(
-              "text-sm leading-relaxed text-foreground/85",
+              "text-13 leading-relaxed text-foreground/85",
               index > 0 && "mt-2",
             )}
           />

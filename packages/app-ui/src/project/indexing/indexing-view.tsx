@@ -8,8 +8,15 @@ import {
   type ProjectScoutAnswer,
   type ProjectScoutQuestionnaire,
 } from "@rennet/protocol";
-import { Toggle, ToggleGroup } from "@rennet/ui";
-import { Check, Loader2, MapIcon, MessageSquarePlus, TriangleAlert } from "lucide-react";
+import { Spinner, Toggle, ToggleGroup } from "@rennet/ui";
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  MapIcon,
+  MessageSquarePlus,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
@@ -102,6 +109,27 @@ function narrationLine(
   }
 }
 
+/**
+ * Where the scout's narration ends and the map's begins — the seam the questionnaire sits
+ * in. The scout READS the project, the questionnaire asks about what it read, and the map
+ * is built with those answers; rendering the questions above the whole timeline put the
+ * answer before the question and left the map steps looking like they preceded it.
+ *
+ * The boundary is the LAST scout-phase narration: a `scout-ready` event (the one that
+ * carries the questionnaire) or a `step` the host stamped `phase: "scout"`. Both are the
+ * host's own word for it — nothing here infers a phase from a label. Zero means the scout
+ * has said nothing yet, which is also when there is no questionnaire to place.
+ */
+function scoutBoundary(events: readonly ProjectProcessEvent[]): number {
+  let boundary = 0;
+  for (const [index, event] of events.entries()) {
+    if (event.kind === "scout-ready" || (event.kind === "step" && event.phase === "scout")) {
+      boundary = index + 1;
+    }
+  }
+  return boundary;
+}
+
 function currentPhase(events: readonly ProjectProcessEvent[]): ProjectProcessPhase {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
@@ -159,13 +187,15 @@ function legacyRun(
 function StepLine({ label, detail, status }: TimelineLine) {
   const running = status === "running" || status === "queued";
   return (
-    <div className="flex items-center gap-2 text-sm" data-step-status={status}>
+    <div className="flex items-center gap-1.5 text-12-5" data-step-status={status}>
       {running ? (
-        <Icon icon={Loader2} className="size-3.5 shrink-0 animate-spin text-model" />
+        // Decorative: every running step would otherwise announce "Loading" as its own
+        // live region, and the step's own label is what carries the state.
+        <Spinner className="size-3 shrink-0 text-model" aria-hidden="true" />
       ) : status === "failed" ? (
-        <Icon icon={TriangleAlert} className="size-3.5 shrink-0 text-danger" />
+        <Icon icon={TriangleAlert} className="size-3 shrink-0 text-danger" />
       ) : (
-        <Icon icon={Check} className="size-3.5 shrink-0 text-ink-faint" />
+        <Icon icon={Check} className="size-3 shrink-0 text-muted-foreground/70" />
       )}
       <span className={running ? "truncate text-ink" : "truncate text-ink-soft"}>
         {label}
@@ -252,24 +282,51 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
     [events, background],
   );
 
+  const boundary = scoutBoundary(timeline.map(({ event }) => event));
+  const scoutSteps = timeline.slice(0, boundary);
+  const mapSteps = timeline.slice(boundary);
+  const renderStep = ({ event, key }: (typeof timeline)[number]) => {
+    // The "still running" flag is about the whole timeline's tail, not the slice's — a
+    // scout step is never the live one once map steps exist below it.
+    const line = narrationLine(event, event === timeline.at(-1)?.event && !terminal, terminal);
+    return line ? <StepLine key={key} {...line} /> : null;
+  };
+  // Nothing has narrated yet: one honest "what is happening now" line, under the phase the
+  // host last reported. It belongs with the map steps so the questionnaire stays above it.
+  const placeholder =
+    !terminal && timeline.every(({ event }) => narrationLine(event, false, false) === null) ? (
+      <StepLine
+        label={
+          phase === "scout"
+            ? "Reading the project"
+            : phase === "map"
+              ? "Building the structural map"
+              : "Building the knowledge map"
+        }
+        status="running"
+      />
+    ) : null;
+
   return (
     <section
       data-screen="project-indexing"
       data-status={status}
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas"
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
         <button
           type="button"
           onClick={() => navigate(newChatPath())}
           aria-label="Back"
-          className="flex size-7 items-center justify-center rounded-control text-ink-faint hover:bg-raised hover:text-ink"
+          className="flex size-6 items-center justify-center rounded-control text-ink-faint transition-colors hover:bg-raised hover:text-ink"
         >
-          <Icon icon={MapIcon} className="size-4" />
+          {/* Back is a back arrow. This control rendered a MAP glyph — a label that told
+              the reviewer it opened the Context Map while it navigated to New Chat. */}
+          <Icon icon={ArrowLeft} className="size-3.5" />
         </button>
         <span className="flex min-w-0 items-center gap-1.5 text-sm">
           <span className="shrink-0 font-medium text-ink">{project?.name ?? projectId}</span>
-          <span className="text-ink-faint">›</span>
+          <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
           <span className="text-ink-soft">{status}</span>
         </span>
         <kbd className="ml-auto rounded-chip border border-line px-1.5 py-0.5 text-2xs text-ink-faint">
@@ -279,32 +336,21 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[560px] flex-col gap-6 px-8 pt-[10vh] pb-16">
+          {/* Scout steps → the questionnaire they produced → the map steps that answer it.
+              One `renderStep` over two slices of ONE timeline, so a step cannot be dropped
+              or doubled by the split: `scoutBoundary` only chooses where the cut falls. */}
+          {scoutSteps.length > 0 ? (
+            <div className="flex flex-col gap-2">{scoutSteps.map(renderStep)}</div>
+          ) : null}
+
           {questionnaire ? <ScoutQuestionnaire questionnaire={questionnaire} /> : null}
 
-          <div className="flex flex-col gap-2">
-            {timeline.map(({ event, key }, index) => {
-              const line = narrationLine(
-                event,
-                index === timeline.length - 1 && !terminal,
-                terminal,
-              );
-              if (!line) return null;
-              return <StepLine key={key} {...line} />;
-            })}
-            {!terminal &&
-            timeline.every(({ event }) => narrationLine(event, false, false) === null) ? (
-              <StepLine
-                label={
-                  phase === "scout"
-                    ? "Reading the project"
-                    : phase === "map"
-                      ? "Building the structural map"
-                      : "Building the knowledge map"
-                }
-                status="running"
-              />
-            ) : null}
-          </div>
+          {mapSteps.length > 0 || placeholder !== null ? (
+            <div className="flex flex-col gap-2">
+              {mapSteps.map(renderStep)}
+              {placeholder}
+            </div>
+          ) : null}
 
           {run && terminal ? <CompletionBlock run={run} ctaRef={ctaRef} /> : null}
         </div>
@@ -332,29 +378,34 @@ function CompletionBlock({
 
   return (
     <>
-      <div className="flex flex-col gap-1.5 rounded-surface border border-line px-4 py-3.5">
+      <div className="flex flex-col gap-3 rounded-lg border border-line px-4 py-3.5">
         <div className="flex items-center gap-2">
           <Icon
             icon={ready ? Check : TriangleAlert}
             className={`size-4 shrink-0 ${ready ? "text-green" : "text-danger"}`}
           />
-          <span className="text-sm font-medium text-ink">
+          <span className="text-13 font-medium text-ink">
             {ready ? "Context Map Ready" : `Project ${run.phase} failed`}
           </span>
           {counts ? <span className="truncate text-xs text-ink-soft">{counts}</span> : null}
-          {hasMap ? (
+        </div>
+        {run.status === "failed" ? (
+          <span className="text-xs text-ink-soft">{run.reason}</span>
+        ) : null}
+        {/* The map control sits on its OWN line, not `ml-auto` on the heading row: pushed
+            to the far right it read as chrome belonging to the card, and the counts
+            beside it truncated to make room for it. */}
+        {hasMap ? (
+          <div>
             <button
               type="button"
               onClick={() => navigate(projectMapPath(run.projectId))}
-              className="ml-auto flex shrink-0 items-center gap-1.5 rounded-control border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised"
+              className="flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-12-5 font-medium text-foreground/90 transition-colors hover:bg-raised"
             >
               <Icon icon={MapIcon} className="size-3.5" />
               View Context Map
             </button>
-          ) : null}
-        </div>
-        {run.status === "failed" ? (
-          <span className="text-xs text-ink-soft">{run.reason}</span>
+          </div>
         ) : null}
       </div>
 
@@ -362,7 +413,7 @@ function CompletionBlock({
         ref={startReviewRef}
         type="button"
         onClick={() => navigate(newChatPath(run.projectId))}
-        className="flex w-full items-center justify-center gap-2 rounded-surface bg-accent-fill px-6 py-4 text-base font-medium text-accent-ink hover:opacity-90"
+        className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-fill px-6 py-4 text-15 font-medium text-accent-ink transition-opacity hover:opacity-90"
       >
         <Icon icon={MessageSquarePlus} className="size-5" />
         Start a Review
@@ -384,8 +435,8 @@ function ProvenanceChip({ provenance }: { readonly provenance: ProjectScoutAnswe
     <span
       className={
         provenance === "detected"
-          ? "shrink-0 rounded-chip border border-line px-1.5 py-px text-2xs uppercase tracking-wide text-ink-faint"
-          : "shrink-0 rounded-chip border border-model/40 px-1.5 py-px text-2xs uppercase tracking-wide text-model"
+          ? "shrink-0 rounded border border-line px-1 py-px text-10 uppercase tracking-wide text-ink-faint"
+          : "shrink-0 rounded border border-model/40 px-1 py-px text-10 uppercase tracking-wide text-model"
       }
     >
       {provenance}
@@ -413,7 +464,7 @@ function ScoutQuestionnaire({
 
   if (dismissed) {
     return (
-      <div className="flex items-center gap-2 rounded-surface border border-line px-4 py-3">
+      <div className="flex items-center gap-2 rounded-lg border border-line px-4 py-3">
         <Icon icon={Check} className="size-3.5 shrink-0 text-green" />
         <span className="text-sm text-ink-soft">Set these anytime in Settings → Projects</span>
       </div>
@@ -421,7 +472,7 @@ function ScoutQuestionnaire({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-surface border border-line px-4 py-3.5">
+    <div className="flex flex-col gap-3 rounded-lg border border-line px-4 py-3.5">
       <div className="flex flex-col">
         <span className="flex items-center gap-2 text-sm font-medium text-ink">
           Scout finished — does this look right?
@@ -429,7 +480,7 @@ function ScoutQuestionnaire({
             {questionnaire.detected} detected · {questionnaire.guessed} guessed
           </span>
         </span>
-        <span className="text-sm text-ink-soft">
+        <span className="text-xs text-ink-soft">
           The map is already continuing. Skipping is fine; everything stays editable in Settings.
         </span>
       </div>
@@ -480,7 +531,7 @@ function ScoutQuestionnaire({
         <button
           type="button"
           onClick={() => setDismissed(true)}
-          className="rounded-control border border-line px-3 py-1.5 text-sm font-medium text-ink hover:bg-raised"
+          className="rounded-control border border-line px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-raised"
         >
           Looks right
         </button>

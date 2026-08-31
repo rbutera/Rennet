@@ -65,6 +65,7 @@
   /* danger */
   --rn-danger: #b23b2b;
   --rn-danger-soft: rgb(178 59 43 / 0.1);
+  --rn-on-danger: #ffffff;
   /* paper — what leaves the machine (cream in the bright room) */
   --rn-sheet: #f7f5ef;
   --rn-sheet-ink: #23211c;
@@ -133,6 +134,7 @@
   --rn-model-line: rgb(159 208 192 / 0.36);
   --rn-danger: #db7a6a;
   --rn-danger-soft: rgb(219 122 106 / 0.14);
+  --rn-on-danger: #ffffff;
   --rn-sheet: #1c1712;
   --rn-sheet-ink: #efe7db;
   --rn-sheet-soft: #b6ab99;
@@ -186,6 +188,7 @@
     --rn-model-line: rgb(159 208 192 / 0.36);
     --rn-danger: #db7a6a;
     --rn-danger-soft: rgb(219 122 106 / 0.14);
+    --rn-on-danger: #ffffff;
     --rn-sheet: #1c1712;
     --rn-sheet-ink: #efe7db;
     --rn-sheet-soft: #b6ab99;

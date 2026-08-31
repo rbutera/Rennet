@@ -3,15 +3,18 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, expect, test } from "vitest";
 import { Collapse } from "./collapse";
+import { Command, CommandInput, CommandItem, CommandList } from "./command";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
 } from "./context-menu";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "./input-group";
 import { Kbd } from "./kbd";
 import { Progress } from "./progress";
 import { ResizeHandle } from "./resizable";
+import { Switch } from "./switch";
 import { Toggle } from "./toggle";
 import { ToggleGroup } from "./toggle-group";
 
@@ -229,6 +232,99 @@ test("toggle-group applies the vertical class against Base UI's data-orientation
   expect(group.className).not.toContain("data-vertical:flex-col");
 });
 
+// ── Why CommandItem styles on `data-[selected=true]`, not `data-selected` ─────
+// cmdk stamps `data-selected` on EVERY row — "false" on the ones that are not
+// highlighted — so a presence-matching Tailwind variant (`data-selected:bg-muted`,
+// which the upstream template uses) lights the whole list at once. This pins the
+// attribute's real shape, and pins the class to the equality form.
+//
+// What it cannot catch: whether the styles those variants carry are the right ones.
+// It proves the SELECTOR, not the paint.
+test("cmdk marks unselected rows data-selected='false', so only the =true form may be styled", () => {
+  render(
+    <Command>
+      <CommandList>
+        <CommandItem value="alpha">Alpha</CommandItem>
+        <CommandItem value="beta">Beta</CommandItem>
+      </CommandList>
+    </Command>,
+  );
+  const rows = screen.getAllByRole("option");
+  expect(rows).toHaveLength(2);
+  // cmdk highlights the first row on mount; the second is NOT highlighted — and still
+  // carries the attribute. Presence-matching would style both.
+  expect(rows[0]?.getAttribute("data-selected")).toBe("true");
+  expect(rows[1]?.getAttribute("data-selected")).toBe("false");
+  for (const row of rows) {
+    expect(row.className).toContain("data-[selected=true]:bg-muted");
+    // The bare presence form must not appear (it would be a superset of the above).
+    expect(row.className).not.toMatch(/(?:^|\s|:)data-selected:/);
+  }
+});
+
+test("an input-group addon focuses the control, and yields to a button inside it", async () => {
+  let hits = 0;
+  render(
+    <InputGroup>
+      <InputGroupInput aria-label="Address" />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton onClick={() => hits++}>Clear</InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>,
+  );
+  const input = screen.getByLabelText("Address");
+  const addon = document.querySelector('[data-slot="input-group-addon"]') as HTMLElement;
+
+  // Clicking the addon's own padding is a focus shorthand for the control.
+  fireEvent.click(addon, { target: addon });
+  expect(document.activeElement).toBe(input);
+
+  // Clicking the button inside it runs the button — it does not get eaten by the focus hop.
+  input.blur();
+  const clear = screen.getByRole("button", { name: "Clear" });
+  await userEvent.click(clear);
+  expect(hits).toBe(1);
+  // `hits === 1` alone passes with the guard DELETED — the button's own handler runs
+  // either way; what the guard buys is that focus stays on the button instead of being
+  // yanked to the control by the addon's bubbled handler. That is the assertion.
+  expect(document.activeElement).toBe(clear);
+});
+
+// The command pill's focus ring is drawn by the GROUP, for one NAMED slot, and the
+// input's own outline is off — so if the input's slot and the group's ring selector
+// ever disagree, keyboard focus is invisible (DESIGN.md's focus rule). happy-dom has
+// no cascade to observe, so the proof is the join: read the slot the ring selector
+// actually names, then assert the element Tab lands on carries exactly that slot.
+// Renaming either side reddens this.
+test("the command input carries the very slot the input-group ring selector names", async () => {
+  const { container } = render(
+    <>
+      {/* This suite does not auto-clean between tests, so a bare Tab would walk the
+       *  EARLIER tests' still-mounted trees. Seeding from a button in this tree makes
+       *  the traversal land here regardless of what is left over. */}
+      <button type="button">before the palette</button>
+      <Command>
+        <CommandInput aria-label="Search commands" />
+        <CommandList>
+          <CommandItem value="alpha">Alpha</CommandItem>
+        </CommandList>
+      </Command>
+    </>,
+  );
+  const group = container.querySelector('[data-slot="input-group"]') as HTMLElement;
+  const ringSlot = /has-\[\[data-slot=([a-z-]+)\]:focus-visible\]:ring-3/.exec(
+    group.className,
+  )?.[1];
+  expect(ringSlot).toBe("input-group-control");
+
+  (container.querySelector("button") as HTMLElement).focus();
+  await userEvent.tab();
+  const focused = document.activeElement as HTMLElement;
+  expect(focused).toBe(container.querySelector("[cmdk-input]"));
+  expect(focused.getAttribute("aria-label")).toBe("Search commands");
+  expect(focused.getAttribute("data-slot")).toBe(ringSlot);
+});
+
 test("toggle and toggle-group honor a FUNCTION-form className (cn/clsx would drop it)", () => {
   render(
     <Toggle value="x" className={() => "fn-sentinel-toggle"}>
@@ -246,4 +342,22 @@ test("toggle and toggle-group honor a FUNCTION-form className (cn/clsx would dro
   );
   const group = container.querySelector('[data-slot="toggle-group"]') as HTMLElement;
   expect(group.classList.contains("fn-sentinel-group")).toBe(true);
+});
+
+test("switch sm is the 28x16 settings proportion, with the thumb size unchanged", () => {
+  // The settings rows' switch. It rendered 24x14 against the design's 28x16, which beside
+  // a 28px-wide row control read as a different component. The THUMB is the invariant:
+  // widening the track must not fatten the knob, so both are asserted together.
+  const { container } = render(<Switch size="sm" aria-label="Include" />);
+  const track = container.querySelector('[data-slot="switch"]') as HTMLElement;
+  const thumb = container.querySelector('[data-slot="switch-thumb"]') as HTMLElement;
+
+  expect(track.className).toContain("data-[size=sm]:w-7");
+  expect(track.className).toContain("data-[size=sm]:h-4");
+  expect(track.className).not.toContain("data-[size=sm]:w-[24px]");
+  expect(thumb.className).toContain("group-data-[size=sm]/switch:size-3");
+
+  // The checked travel has to follow the track, or the knob overruns or stops short: the
+  // 28px track less its 1px transparent border each side, less the 12px thumb, is 14px.
+  expect(thumb.className).toContain("group-data-[size=sm]/switch:data-checked:translate-x-3.5");
 });

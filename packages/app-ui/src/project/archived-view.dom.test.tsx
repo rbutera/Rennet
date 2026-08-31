@@ -176,10 +176,10 @@ describe("ArchivedView — C10 §9 enrichment", () => {
     // recent (default): now < 2d < 3w — the fuzzy times parse to a real order.
     expect(orderedTitles()).toEqual(["Fix the parser", "Review the auth refactor", "Bump deps"]);
     // project: rennet (p1: s1, s2) before webapp (p2: s3), ties broken by recency.
-    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "project" }));
     expect(orderedTitles()).toEqual(["Review the auth refactor", "Bump deps", "Fix the parser"]);
     // title: alphabetical.
-    fireEvent.click(screen.getByRole("button", { name: "Title" }));
+    fireEvent.click(screen.getByRole("button", { name: "title" }));
     expect(orderedTitles()).toEqual(["Bump deps", "Fix the parser", "Review the auth refactor"]);
   });
 
