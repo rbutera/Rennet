@@ -28,6 +28,8 @@ interface Scenario {
   composition?: ReviewComposition;
 }
 
+const FINAL_REVIEW_MARKER = /\n*<!--\s*rennet:review:[0-9a-f]{64}\s*-->\s*$/;
+
 async function connect(page: Page): Promise<WsRennetBridge> {
   const port = await page.evaluate(
     () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
@@ -168,8 +170,79 @@ async function sessionIdFromRoute(page: Page): Promise<string> {
   return decodeURIComponent(encodedSessionId);
 }
 
-async function assertVisiblePreview(page: Page, composition: ReviewComposition): Promise<void> {
+interface VisibleReviewBlock {
+  readonly kind: "heading" | "prose";
+  readonly text: string;
+}
+
+function expectedVisibleReviewBlocks(markdown: string): VisibleReviewBlock[] {
+  const blocks: VisibleReviewBlock[] = [];
+  let prose: string[] = [];
+  const flushProse = () => {
+    const text = prose.join("\n").trim();
+    if (text) blocks.push({ kind: "prose", text });
+    prose = [];
+  };
+  for (const line of markdown.split("\n")) {
+    if (line.startsWith("## ")) {
+      flushProse();
+      blocks.push({ kind: "heading", text: line.slice(3).trim() });
+    } else if (line.trim() === "") {
+      flushProse();
+    } else {
+      prose.push(line);
+    }
+  }
+  flushProse();
+  return blocks;
+}
+
+async function assertExactVisibleReviewBody(page: Page, postBody: string): Promise<void> {
+  const expectedMarkdown = postBody.replace(FINAL_REVIEW_MARKER, "");
+  const actual = await page.locator('[data-kind="outbound-review-body"]').evaluate((root) => ({
+    markdown: root.getAttribute("data-outbound-markdown"),
+    blocks: Array.from(root.children).map((block) => {
+      if (block.tagName === "H3") {
+        return { kind: "heading", text: (block.textContent ?? "").trim() };
+      }
+      const raw = block.getAttribute("data-rich-text-raw");
+      if (raw === null) throw new Error("visible review-body block has no source text");
+      return { kind: "prose", text: raw };
+    }),
+  }));
+  expect(actual.markdown).toBe(expectedMarkdown);
+  expect(actual.blocks).toEqual(expectedVisibleReviewBlocks(expectedMarkdown));
+}
+
+async function swapFirstTwoVisibleReviewBlocks(page: Page): Promise<void> {
+  await page.locator('[data-kind="outbound-review-body"]').evaluate((root) => {
+    const first = root.firstElementChild;
+    const second = first?.nextElementSibling;
+    if (first === null || second === null || second === undefined) {
+      throw new Error("review-body control needs two visible blocks");
+    }
+    root.insertBefore(second, first);
+  });
+}
+
+async function assertVisiblePreview(
+  page: Page,
+  composition: ReviewComposition,
+  proveWholeBodyControl = false,
+): Promise<void> {
   await expect(page.getByText("Review Body", { exact: true })).toBeVisible();
+  await assertExactVisibleReviewBody(page, composition.post.body);
+  if (proveWholeBodyControl) {
+    const visibleBody = composition.post.body.replace(FINAL_REVIEW_MARKER, "");
+    await swapFirstTwoVisibleReviewBlocks(page);
+    try {
+      await expect(assertExactVisibleReviewBody(page, composition.post.body)).rejects.toThrow();
+    } finally {
+      await swapFirstTwoVisibleReviewBlocks(page);
+    }
+    await assertExactVisibleReviewBody(page, composition.post.body);
+    await expect(assertExactVisibleReviewBody(page, `${visibleBody}\n\nDRIFT`)).rejects.toThrow();
+  }
   await expect(page.getByText(composition.artifact.opener, { exact: true })).toBeVisible();
   for (const note of composition.artifact.bodyNotes) {
     await expect(page.getByText(note.body, { exact: true }).first()).toBeVisible();
@@ -296,7 +369,11 @@ async function runOrdinaryPublication(
   await stageSourceBackedReview(page, captured, dataDir);
   const composition = await selectVerdict(page, scenario.verdict);
   scenario.composition = composition;
-  await assertVisiblePreview(page, composition);
+  await assertVisiblePreview(
+    page,
+    composition,
+    captured.repository.provider === "github" && scenario.verdict === "APPROVE",
+  );
   await assertByteDriftRefused(page, recorder, captured, composition);
 
   const githubBefore = recorder.githubPublications.length;

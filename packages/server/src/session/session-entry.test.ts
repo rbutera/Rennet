@@ -43,6 +43,11 @@ const GITLAB_WIDGET = {
   owner: "acme",
   name: "widget",
 } satisfies ForgeRepoIdentity;
+const GITHUB_GADGET = {
+  forge: "github",
+  owner: "acme",
+  name: "gadget",
+} satisfies ForgeRepoIdentity;
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
@@ -187,6 +192,47 @@ describe("SessionEntry.enter — re-entry reattaches (never a second session)", 
 });
 
 describe("SessionEntry.enterSuccessor — replacement survives every interruption point", () => {
+  it("replaces only the selected repository when one project has an identical branch and PR", () => {
+    const store = fakeStore();
+    const entry = new SessionEntry(store, mintDeps(["widget-old", "gadget-old", "widget-fresh"]));
+    const widgetTarget = {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/widget",
+      forgeRepository: GITHUB_WIDGET,
+    } satisfies Target;
+    const gadgetTarget = {
+      branch: "main",
+      prNumber: 7,
+      repository: "acme/gadget",
+      forgeRepository: GITHUB_GADGET,
+    } satisfies Target;
+    const widget = entry.enter("proj", widgetTarget);
+    const gadget = entry.enter("proj", gadgetTarget, "/repos/gadget");
+    const gadgetBefore = structuredClone(gadget.session);
+
+    const successor = entry.enterSuccessor(widget.session.id, "proj", widgetTarget);
+
+    expect(successor).toMatchObject({
+      reattached: false,
+      session: {
+        id: "widget-fresh",
+        projectId: "proj",
+        repository: "acme/widget",
+        forgeRepository: GITHUB_WIDGET,
+        claim: { branch: "main", prNumber: 7 },
+      },
+    });
+    expect(successor.session).not.toHaveProperty("repositoryRoot");
+    expect(successor.session.id).not.toBe(gadget.session.id);
+    expect(store.sessions.find((session) => session.id === gadget.session.id)).toEqual(
+      gadgetBefore,
+    );
+    expect(
+      store.sessions.find((session) => session.id === widget.session.id)?.archivedAt,
+    ).toBeUndefined();
+  });
+
   it("persists the fresh claimant while the refused review's session remains live", () => {
     const store = fakeStore();
     const entry = new SessionEntry(store, mintDeps(["old", "fresh"]));
