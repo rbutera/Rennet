@@ -18,22 +18,16 @@
 //     app tree binds (`routes/app.tsx`). Its round state is the `session.roundEvents`
 //     catch-up read with the `roundProgress` push channel folded in, reduced through the
 //     production `advance`. No fixture clock, no tick, no `setTimeout`.
-//   • The progress prefix is the legacy delta stream retained for compatibility. The
-//     terminal receipt is the current coordinator's production `operation` snapshot.
-//     Each event is parsed through `RoundEventSchema`; the ledger refresh assertion is
-//     therefore pinned to the event shape create-server publishes now.
+//   • Progress is the coordinator's durable `operation` snapshot stream. Each event is
+//     parsed through `RoundEventSchema`; the ledger refresh assertion is therefore pinned
+//     to the event shape create-server publishes now.
 //   • The RECORD is the durable one — parsed through `RoundLedgerRecordSchema`, carrying the
 //     `frozenPredecessor` C15 2.2 stamps (distinct from `boardGeneration`), which is what
 //     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open. Its exact
 //     report projection is the production `session.rounds` shape, so the live source supplies
 //     the greeting without a fixture-only provider override.
 // ─────────────────────────────────────────────────────────────────────────────
-import type {
-  ComposedHandoffBundle,
-  Review,
-  RoundEvent,
-  RoundLedgerRecord,
-} from "@rennet/protocol";
+import type { CommandOutput, Review, RoundEvent, RoundLedgerRecord } from "@rennet/protocol";
 import { RoundEventSchema, RoundLedgerRecordSchema } from "@rennet/protocol";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -72,33 +66,46 @@ const routeResolutionHandlers: MemoryBridgeHandlers = {
 
 const REPORT_BOARD_ID = "report-round-1";
 
-const TERMINAL_OPERATION = RoundEventSchema.parse({
-  type: "operation",
-  snapshot: {
-    operationId: "operation-c15",
-    revision: 10,
-    createdAt: Date.UTC(2026, 7, 29, 9, 30),
-    roundNumber: 1,
-    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
-    askCount: 2,
-    gatePlan: { kind: "configured", command: "pnpm check" },
-    state: {
-      phase: "completed",
-      workspace: { status: "done" },
-      worker: { status: "done", fileCount: 3 },
-      gate: { status: "passed", durationMs: 12_400, projectCount: 7 },
-      commits: { status: "done", count: 1 },
-      result: {
-        kind: "changed",
-        report: {
-          status: "verified",
-          reportBoardId: REPORT_BOARD_ID,
-          generation: "gen2",
-        },
-      },
+const OPERATION_IDENTITY = {
+  operationId: "operation-c15",
+  createdAt: Date.UTC(2026, 7, 29, 9, 30),
+  roundNumber: 1,
+  sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+  askCount: 2,
+  gatePlan: { kind: "configured", command: "pnpm check" },
+} as const;
+const WORKSPACE = { status: "done" } as const;
+const WORKER = { status: "done", fileCount: 3 } as const;
+const GATE = { status: "passed", durationMs: 12_400, projectCount: 7 } as const;
+const COMMITS = { status: "done", count: 1 } as const;
+const COMPLETED_STATE = {
+  phase: "completed",
+  workspace: WORKSPACE,
+  worker: WORKER,
+  gate: GATE,
+  commits: COMMITS,
+  result: {
+    kind: "changed",
+    report: {
+      status: "verified",
+      reportBoardId: REPORT_BOARD_ID,
+      generation: "gen2",
     },
   },
-});
+} as const;
+
+function progressEvent(
+  revision: number,
+  state: unknown,
+  progress: { readonly draining?: boolean } = {},
+): RoundEvent {
+  return RoundEventSchema.parse({
+    type: "operation",
+    snapshot: { ...OPERATION_IDENTITY, revision, ...progress, state },
+  });
+}
+
+const TERMINAL_OPERATION = progressEvent(10, COMPLETED_STATE);
 
 /**
  * The round the server ran, as it really came over the wire. Parsed — not cast —
@@ -106,52 +113,46 @@ const TERMINAL_OPERATION = RoundEventSchema.parse({
  * than quietly diverging from the emitter.
  */
 const SERVER_ROUND: readonly RoundEvent[] = [
-  // ── create-server.ts's dispatch half ──
-  { type: "dispatched" },
-  {
-    type: "prep",
-    rows: [
-      {
-        id: "asks",
-        label: "Folded the round's asks into one work order",
-        status: "done",
-        detail: "2 asks",
-      },
-    ],
-  },
-  { type: "worker", rows: [{ id: "turn", label: "Ran the work order", status: "running" }] },
-  {
-    type: "worker",
-    rows: [{ id: "turn", label: "Ran the work order", status: "done", detail: "3 files changed" }],
-  },
-  { type: "gate" },
-  { type: "committed" },
-  // ── rounds.ts's regeneration half (runRound's onProgress sink) ──
-  { type: "report", reportBoardId: REPORT_BOARD_ID },
-  {
-    type: "lens",
-    lanes: [
-      { id: "design", label: "Design", status: "running" },
-      { id: "sequence", label: "Sequence", status: "queued" },
-      { id: "decisions", label: "Decisions", status: "queued" },
-      { id: "flagged", label: "Flagged", status: "queued" },
-      { id: "noise", label: "Noise", status: "queued" },
-    ],
-  },
-  {
-    type: "lens",
-    lanes: [
-      // Design's sections MOVED this generation, so its lane reads `reworked` — the 3.3
-      // hard constraint at the reviewer's eye. The rest carried byte-identically.
-      { id: "design", label: "Design", status: "done", verdict: "reworked" },
-      { id: "sequence", label: "Sequence", status: "done", verdict: "carrying-forward" },
-      { id: "decisions", label: "Decisions", status: "done", verdict: "carrying-forward" },
-      { id: "flagged", label: "Flagged", status: "done", verdict: "reworked" },
-      { id: "noise", label: "Noise", status: "done", verdict: "carrying-forward" },
-    ],
-  },
+  progressEvent(0, { phase: "claimed" }),
+  progressEvent(1, { phase: "prepared", workspace: WORKSPACE }),
+  progressEvent(2, {
+    phase: "worker-running",
+    workspace: WORKSPACE,
+    worker: { status: "running" },
+  }),
+  progressEvent(3, { phase: "worker-settled", workspace: WORKSPACE, worker: WORKER }),
+  progressEvent(4, {
+    phase: "gate-running",
+    workspace: WORKSPACE,
+    worker: WORKER,
+    gate: { status: "running" },
+  }),
+  progressEvent(5, {
+    phase: "committing",
+    workspace: WORKSPACE,
+    worker: WORKER,
+    gate: GATE,
+    commits: { status: "running" },
+  }),
+  progressEvent(6, {
+    phase: "report-drafting",
+    workspace: WORKSPACE,
+    worker: WORKER,
+    gate: GATE,
+    commits: COMMITS,
+    report: { status: "drafting" },
+  }),
+  progressEvent(7, {
+    phase: "report-verifying",
+    workspace: WORKSPACE,
+    worker: WORKER,
+    gate: GATE,
+    commits: COMMITS,
+    report: { status: "verifying" },
+  }),
+  progressEvent(8, COMPLETED_STATE, { draining: true }),
   TERMINAL_OPERATION,
-].map((event) => RoundEventSchema.parse(event));
+];
 
 /** The DURABLE record the round wrote (C15 2.2) — the frozen predecessor is a distinct
  *  id from the generation it composed, which is the whole of finding F3. */
@@ -174,14 +175,8 @@ const DURABLE_RECORD: RoundLedgerRecord = RoundLedgerRecordSchema.parse({
   reworkCount: 2,
 } satisfies RoundLedgerRecord);
 
-/** A minimal-but-schema-real `round.dispatch` answer — the command's output shape. The
- *  UI ignores it (dispatch returns void); it exists so the write is a real command
- *  round-trip rather than a swallowed rejection. */
-const dispatchAnswer = (
-  reviewId: string,
-): { workOrder: ComposedHandoffBundle } & {
-  dispatched: boolean;
-} => ({
+/** A minimal-but-schema-real accepted `round.dispatch` answer. */
+const dispatchAnswer = (reviewId: string): CommandOutput<"round.dispatch"> => ({
   workOrder: {
     reviewId,
     patchsetId: "ps-1",
@@ -192,6 +187,11 @@ const dispatchAnswer = (
     traceMap: {},
   },
   dispatched: true,
+  acceptedOperation: {
+    ...OPERATION_IDENTITY,
+    revision: 0,
+    state: { phase: "claimed" },
+  },
 });
 
 function LiveScope({ children }: { readonly children: ReactNode }) {
@@ -297,7 +297,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     // reviewer's own dispatch is the round's first fact, so the takeover does not bounce
     // off an `absent` round it simply has not been told about yet.
     const run = () => r.container.querySelector('[data-screen="session-run"]');
-    expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
+    await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`));
     expect(run()?.getAttribute("data-phase")).toBe("dispatching");
     shown(`1 · dispatch → round.dispatch(${REVIEW_ID}) → held ${history.history.at(-1)}`);
 
@@ -305,11 +305,11 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     for (const event of SERVER_ROUND.slice(0, 3)) push(event);
     expect(run()?.getAttribute("data-phase")).toBe("working");
     expect(r.container.querySelector('[data-row="asks"]')?.textContent).toContain(
-      "Folded the round's asks into one work order",
+      "Applied the round's asks",
     );
-    expect(r.container.querySelector('[data-row="turn"]')?.textContent).toContain("running");
+    expect(r.container.querySelector('[data-row="worker"]')?.textContent).toContain("running");
     push(SERVER_ROUND[3] as RoundEvent); // the worker turn settles — one real event forward
-    expect(r.container.querySelector('[data-row="turn"]')?.textContent).toContain(
+    expect(r.container.querySelector('[data-row="worker"]')?.textContent).toContain(
       "3 files changed",
     );
     push(SERVER_ROUND[4] as RoundEvent); // gate
@@ -320,15 +320,15 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
 
     // ── 3 · THE RUN HOLDS THROUGH REPORT AND REGENERATION ─────────────────────
     push(SERVER_ROUND[6] as RoundEvent);
-    push(SERVER_ROUND[7] as RoundEvent); // the first lens lane starts
+    push(SERVER_ROUND[7] as RoundEvent); // report verification starts
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
-    expect(run()?.getAttribute("data-phase")).toBe("composing");
+    expect(run()?.getAttribute("data-phase")).toBe("verifying");
     expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
     expect(r.queryByTestId("reveal-new-boards")).toBeNull();
     shown("3 · report and regeneration held the run route; reveal absent");
 
     // ── 4 · SETTLED LANES STILL DO NOT NAVIGATE EARLY ────────────────────────
-    push(SERVER_ROUND[8] as RoundEvent); // every lane settles with its real verdict
+    push(SERVER_ROUND[8] as RoundEvent); // Return is still draining into the durable stores
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
 
     // ── 5 · VERIFIED COMPLETION RETURNS WITH THE SETTLED ACCOUNT ─────────────

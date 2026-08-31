@@ -5,7 +5,7 @@ import {
   newCommandId,
   type Review,
 } from "@rennet/protocol";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { useCommand, useMutation } from "../data";
@@ -13,6 +13,7 @@ import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
+import type { RoundDispatchViewState } from "../handoff/rounds-lanes";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { DiffViewContainer } from "../review";
 import { useAskLog } from "../review/ask-log";
@@ -262,7 +263,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         </div>
       ) : null}
       {view === "handoff" ? (
-        <HandoffMount review={review} slug={slug} navigate={navigate} />
+        <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "map" ? (
         // `?view=map` shows this session's PROJECT context map — the destination the top
         // bar's Map toggle has advertised since C03 §4.3 and the one the docs describe
@@ -445,8 +446,8 @@ function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
 // PR draft) through the `<HandoffView>` mount cluster 5 left taking no props.
 //
 // Dispatch wiring (C09 cluster 4): `onDispatch` closes C8's seam — reset the run slice at the
-// dispatch act (NOT on the run route's cold reattach), fire the rounds seam's `dispatch(slug)`,
-// then take over the live run route. The app tree supplies the LIVE source (`routes/app.tsx`'s
+// accepted dispatch act (NOT on the run route's cold reattach), then take over the live run route.
+// The app tree supplies the LIVE source (`routes/app.tsx`'s
 // `LiveRoundsScope`, C15 3.2), whose `dispatch` is unconditional — so on the shipping path
 // `onDispatch` IS wired and the button goes live the moment an ask stages. `dispatch` is absent
 // only under the honest-absent default (a tree with no rounds scope, i.e. unit mounts), and there
@@ -464,11 +465,39 @@ function HandoffMount({
   const exits = useHandoffExits(review, recapture);
   const dispatch = useRoundDispatch();
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
+  const [dispatchState, setDispatchState] = useState<RoundDispatchViewState>({ status: "idle" });
+  const dispatchLifecycle = useRef({ mounted: true, slug, request: 0 });
+  useLayoutEffect(() => {
+    dispatchLifecycle.current.mounted = true;
+    return () => {
+      dispatchLifecycle.current.mounted = false;
+      dispatchLifecycle.current.request += 1;
+    };
+  }, []);
   const onDispatch = dispatch
     ? () => {
-        resetRun();
-        dispatch(slug);
-        navigate(sessionRunPath(slug));
+        const request = ++dispatchLifecycle.current.request;
+        setDispatchState({ status: "sending" });
+        void dispatch(slug).then((outcome) => {
+          const current = dispatchLifecycle.current;
+          if (!current.mounted || current.slug !== slug || current.request !== request) return;
+          switch (outcome.status) {
+            case "accepted":
+              resetRun();
+              navigate(sessionRunPath(slug));
+              return;
+            case "not-dispatched":
+              setDispatchState({ status: "not-dispatched", reason: outcome.reason });
+              return;
+            case "rejected":
+              setDispatchState({ status: "failed", reason: outcome.reason });
+              return;
+            default: {
+              const exhaustive: never = outcome;
+              return exhaustive;
+            }
+          }
+        });
       }
     : undefined;
   return (
@@ -481,6 +510,7 @@ function HandoffMount({
       onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}
       onDispatch={onDispatch}
+      dispatchState={dispatchState}
       onOpenPr={exits.onOpenPr}
       onRevise={exits.onRevise}
       unavailable={exits.unavailable}

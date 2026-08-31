@@ -160,9 +160,10 @@ export function createTimelineRoundsSource(opts?: {
     roundState: () => roundStateAtTick(tick, timeline),
     roundRecords: () => records,
     reportBoard: (id) => reportBoards[id],
-    dispatch: () => {
+    dispatch: async () => {
       dispatches += 1;
       if (tick <= 0) tick = 1; // dispatch starts the run (absent → dispatching)
+      return { status: "accepted" };
     },
   };
 

@@ -27,6 +27,8 @@ export interface HandoffViewProps {
   readonly pr?: RoundsLanesProps["pr"];
   /** Dispatch a work-order round from the rounds lanes (the C9 run is out of scope). */
   readonly onDispatch?: RoundsLanesProps["onDispatch"];
+  /** The accepted/refused state of the current dispatch request. */
+  readonly dispatchState?: RoundsLanesProps["dispatchState"];
   /** The Open-Pull-Request egress, threaded to the rounds lanes (wired in cluster 6). */
   readonly onOpenPr?: RoundsLanesProps["onOpenPr"];
   /** Selection-steer Revise — B11's `review.reviseSpan`, threaded to whichever lane renders. */
@@ -44,6 +46,7 @@ export function HandoffView({
   onSetVerdict,
   pr,
   onDispatch,
+  dispatchState,
   onOpenPr,
   onRevise,
   unavailable,
@@ -68,6 +71,7 @@ export function HandoffView({
       review={review}
       pr={pr}
       onDispatch={onDispatch}
+      dispatchState={dispatchState}
       onOpenPr={onOpenPr}
       onRevise={onRevise}
       unavailable={unavailable}

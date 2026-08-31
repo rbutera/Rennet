@@ -347,6 +347,12 @@ provenance, text, and anchor. The same **Revise / Drop / Explain** steering
 works on an ask's text. **Dispatch Round** sits beneath the cards. The pull
 or merge request waits as a single muted line at the foot.
 
+Dispatch becomes available when at least one staged comment or request-change
+gives the coding worker something to address. Questions and approvals stay with
+the review; Rennet does not turn them into code work. If the daemon finds no
+coding work when asked to dispatch, the page stays here, says that no round
+started, and keeps the staged notes.
+
 Work orders exist on your own branch only. A teammate PR never offers one.
 
 ### Open the pull or merge request
@@ -375,7 +381,7 @@ flowchart LR
   gen --> stage
 ```
 
-Dispatching moves you to the run, live: the detached worktree created, the
+An accepted dispatch moves you to the run, live: the detached worktree created, the
 round's asks applied, the worker's activity as a table of steps, your project's
 gate command running and resolving, the commits, and finally the round report
 being drafted and verified. Closing and reopening the run, or following its
