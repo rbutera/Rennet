@@ -136,7 +136,7 @@ describe("Codex transport locus composition", () => {
     expect(spawns).toHaveLength(1);
     const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("codex");
-    expect(call.args[0]).toBe("app-server");
+    expect(call.args.slice(0, 3)).toEqual(["app-server", "--disable", "plugins"]);
     expect(call.cwd).toBe("/home/rai/repo");
     // The inventory is read once, then ambient servers are disabled in the same table.
     expect(mcpLists).toHaveLength(1);
@@ -214,7 +214,13 @@ describe("Codex transport locus composition", () => {
     const e = call.args.indexOf("-e");
     expect(call.args[e + 1]).toBe(node); // the paired runtime, verbatim
     expect(call.args[e + 2]).toBe(codex); // the codex launcher, verbatim
-    expect(call.args[e + 3]).toBe("app-server");
+    expect(call.args.slice(e + 3)).toEqual([
+      "app-server",
+      "--disable",
+      "plugins",
+      "-c",
+      "mcp_servers={}",
+    ]);
     const list = mcpLists[0] as SpawnCall;
     expect(list.bin).toBe("wsl.exe");
     const listE = list.args.indexOf("-e");
@@ -266,8 +272,8 @@ describe("Codex transport locus composition", () => {
     await drive(transport, spec);
 
     expect(mcpLists).toHaveLength(2);
-    expect(spawns[0]?.args[2]).not.toContain("context7");
-    expect(spawns[1]?.args[2]).toContain("context7");
+    expect(spawns[0]?.args[4]).not.toContain("context7");
+    expect(spawns[1]?.args[4]).toContain("context7");
   });
 
   it("fails before spawn, then retries agentic MCP discovery", async () => {

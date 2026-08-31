@@ -112,7 +112,7 @@ JSON-RPC method error. No approval request is queued for a person.
 Rennet can give a child an explicit Codex MCP policy:
 
 ```text
-codex app-server -c mcp_servers=<inline TOML>
+codex app-server --disable plugins -c mcp_servers=<inline TOML>
 ```
 
 Codex deep-merges this value with the user's `mcp_servers` table; an empty
@@ -120,11 +120,13 @@ inline table does not clear configured entries. Before an explicit policy,
 Rennet runs `codex mcp list --json` at the same locus and working directory,
 validates the inventory, then writes one table containing the requested
 loopback servers plus disabled transport-compatible placeholders for every
-other configured server. A discovery or shape failure stops before the
+other configured server. It also disables Codex plugins for that child so
+plugin discovery cannot start background refresh processes outside the explicit
+MCP policy. A discovery or shape failure stops before the
 app-server child starts. A requested name that already exists in the user's
 table also stops before spawn because Codex retains nested transport and header
 fields while merging. When Rennet supplies no policy, it skips discovery and the
-child inherits the user's configured MCP servers.
+child inherits the user's configured MCP servers and plugin behavior.
 
 Context Map `partition-worker` turns are the narrow exception: they request an
 explicitly empty policy because they read and inspect the repository through

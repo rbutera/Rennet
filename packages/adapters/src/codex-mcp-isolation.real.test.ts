@@ -36,7 +36,7 @@ describe("Codex MCP isolation — installed CLI (gated, no model turn)", () => {
       args: ["mcp", "list", "--json"],
       cwd: process.cwd(),
     });
-    const config = buildAppServerArgs({}, inventory)[2];
+    const config = buildAppServerArgs({}, inventory)[4];
     expect(config).toBeDefined();
 
     const isolated = await listConfiguredServers(config);
@@ -55,7 +55,7 @@ describe("Codex MCP isolation — installed CLI (gated, no model turn)", () => {
     const config = buildAppServerArgs(
       { [requestedName]: { url: "http://127.0.0.1:9/mcp" } },
       inventory,
-    )[2];
+    )[4];
     expect(config).toBeDefined();
 
     const isolated = await listConfiguredServers(config);

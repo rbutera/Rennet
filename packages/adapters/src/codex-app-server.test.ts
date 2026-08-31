@@ -682,6 +682,8 @@ describe("buildAppServerArgs", () => {
       ]),
     ).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"canvasops"={url="http://127.0.0.1:5000/mcp",enabled=true},"computer-history"={command="false",args=[],enabled=false},"team.github tools"={url="http://127.0.0.1",enabled=false}}',
     ]);
@@ -700,6 +702,8 @@ describe("buildAppServerArgs", () => {
       ]),
     ).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"team.github tools"={url="http://127.0.0.1",enabled=false}}',
     ]);
@@ -713,6 +717,8 @@ describe("buildAppServerArgs", () => {
       ),
     ).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
       'mcp_servers={"quote\\"\\\\dot. space"={url="http://127.0.0.1:5000/mcp?key=\\"\\\\value",enabled=true}}',
     ]);

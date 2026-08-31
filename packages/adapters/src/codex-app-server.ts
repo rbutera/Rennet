@@ -663,9 +663,10 @@ function renderMcpServersToml(
 /**
  * The `codex app-server` argv. `codex app-server` REJECTS `--ignore-user-config`
  * (verified: "unexpected argument"), and `-c` deep-merges tables. An explicit MCP
- * policy therefore writes one inline table containing Rennet's enabled servers
- * plus disabled placeholders for every configured ambient server. No prompt,
- * schema, or `-o` flags are needed because the turn rides stdio.
+ * policy therefore disables plugin discovery and writes one inline table
+ * containing Rennet's enabled servers plus disabled placeholders for every
+ * configured ambient server. No prompt, schema, or `-o` flags are needed because
+ * the turn rides stdio.
  *
  * An absent table inherits the user's MCP configuration. An explicit empty table
  * starts no MCP sidecars for a job that does not use them. That does not affect
@@ -684,7 +685,13 @@ export function buildAppServerArgs(
   if (ambientServers === undefined) {
     throw new Error("explicit Codex MCP policy requires the configured server inventory");
   }
-  return ["app-server", "-c", `mcp_servers=${renderMcpServersToml(mcpServers, ambientServers)}`];
+  return [
+    "app-server",
+    "--disable",
+    "plugins",
+    "-c",
+    `mcp_servers=${renderMcpServersToml(mcpServers, ambientServers)}`,
+  ];
 }
 
 // ── The real spawn (execa) ──────────────────────────────────────────────────────

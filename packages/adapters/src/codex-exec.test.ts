@@ -317,10 +317,14 @@ describe("createCodexExecutor (app-server)", () => {
     const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("wsl.exe");
     expect(call.args.slice(0, 2)).toEqual(["-d", "Ubuntu"]);
-    expect(call.args.slice(call.args.indexOf("-e") + 1, call.args.indexOf("-e") + 4)).toEqual([
+    expect(call.args.slice(call.args.indexOf("-e") + 1)).toEqual([
       node,
       codex,
       "app-server",
+      "--disable",
+      "plugins",
+      "-c",
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
     const list = mcpLists[0] as SpawnCall;
     expect(list.bin).toBe("wsl.exe");
@@ -382,6 +386,8 @@ describe("createCodexExecutor (app-server)", () => {
     expect(mcpLists).toHaveLength(1);
     expect((spawns[0] as SpawnCall).args).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
@@ -416,6 +422,8 @@ describe("createCodexExecutor (app-server)", () => {
 
     expect((spawns[0] as SpawnCall).args).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
@@ -432,6 +440,8 @@ describe("createCodexExecutor (app-server)", () => {
     await executor({ model: "m", effort: "low", prompt: "p" });
     expect((spawns[0] as SpawnCall).args).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"canvasops"={url="http://127.0.0.1:5000/mcp",enabled=true},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
@@ -477,8 +487,8 @@ describe("createCodexExecutor (app-server)", () => {
     await executor({ model: "m", effort: "low", prompt: "two", mcpServers: {} });
 
     expect(mcpLists).toHaveLength(2);
-    expect(spawns[0]?.args[2]).not.toContain("context7");
-    expect(spawns[1]?.args[2]).toContain("context7");
+    expect(spawns[0]?.args[4]).not.toContain("context7");
+    expect(spawns[1]?.args[4]).toContain("context7");
   });
 
   it("fails before spawn, then retries discovery on the next turn", async () => {

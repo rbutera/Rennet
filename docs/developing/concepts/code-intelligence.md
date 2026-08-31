@@ -209,8 +209,9 @@ The arithmetic is now inside the bar, but its launched proof is still pending:
   16 inherited every ambient MCP server per lane; swap grew by 5.19 GiB and
   pageouts advanced by 5,965 in 87.084 seconds. Codex workers now start with an
   explicit empty MCP policy rendered as disabled placeholders for every
-  configured ambient entry, and default to 24 lanes. A clean launched run must
-  still prove that process family safe.
+  configured ambient entry, with plugin discovery disabled so each child cannot
+  start its own refresh process, and default to 24 lanes. A clean launched run
+  must still prove that process family safe.
 - **Shorter turns.** Symbol skeletons and slice-local import edges reduced the
   completed-worker timing to 34.7 seconds median and 37 seconds mean. The
   remaining proof is the complete run, not another extrapolation.

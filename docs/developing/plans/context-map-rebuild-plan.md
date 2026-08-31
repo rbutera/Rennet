@@ -211,7 +211,7 @@ repository and shell tools; other composed seats can use canvasOps.
   Map `partition-worker` requests an empty policy because it uses native
   repository and shell tools instead. Rennet expands that policy into disabled
   placeholders for the configured ambient entries because Codex deep-merges
-  inline tables.
+  inline tables, and disables Codex plugin discovery for that child.
 - Re-examine each "use ONLY the facts below" prompt: keep the ones that are
   genuine task framing (delta-digest rephrases a structured account), drop
   the ones that are confinement.
@@ -258,8 +258,8 @@ Playwright, Serena, Nx, and Context7 processes the partition workers never call.
 The app-server wrapper and native process used roughly 100–170 MiB per lane, but
 the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
 in 45.6 seconds. Partition workers now inventory the configured MCP entries and
-send one policy table with each ambient entry disabled; other Codex utility jobs
-keep the global inherit-or-pin behavior. Worker
+send one policy table with each ambient entry disabled and plugin discovery
+disabled; other Codex utility jobs keep the global inherit-or-pin behavior. Worker
 concurrency now follows the council-selected harness: Codex gets 24 lanes, while
 Claude keeps its existing 12-lane default. An explicit per-run override still
 wins. At the current 34.7-second median and 37-second mean, 110 turns over 24
