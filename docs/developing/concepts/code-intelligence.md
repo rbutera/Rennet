@@ -186,23 +186,45 @@ Those eligible files come out as **105 slices**:
 | Directory fallback (coalesced) | 54 | 1,095 | median 21, mean 20.3, largest 113 |
 
 That is the W3 reconstruction measurement. By the cap proof on 2026-08-31 the
-repository had grown to **111 slices** at commit `cf7c9ad3`.
+repository had grown to **111 slices** at commit `4954bdd7`.
 
 Batching itself takes about 110 ms; the clean full snapshot build that feeds it
 takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
 #### The five-minute bar is not proved yet
 
-111 slices is 111 worker turns. Completed workers with the current input measure
-34.7 seconds median and 37 seconds mean. At the Codex worker default of 16, those
-figures project to **241–257 seconds of worker wall clock**, or 271–287 seconds
-with the 30-second deterministic build in front of it, about 4.51–4.78 minutes.
-A Claude worker keeps the separate 12-lane default because its process family has
-a different footprint.
-Dividing turn time by lanes gives wall clock — there is no separate, smaller
-"wall" figure to quote, and the target is five minutes.
+111 slices is 111 worker turns. The first clean 16-lane run at `4954bdd7`
+disproved the earlier 34.7–37 second sample as a whole-run predictor. At 315.485
+seconds, 88 workers had started, 72 had completed, none had failed, and the verify
+seat had not begun. All 16 lanes started before the first terminal event and the
+scheduler kept them full. The guard stopped the process group when pageouts grew
+by 1,009; descendant RSS remained below the 4 GiB ceiling at 3,954,736 KiB,
+ambient MCP and plugin-refresh process counts stayed zero, and the reap left no
+survivors.
 
-The arithmetic is now inside the bar, but its launched proof is still pending:
+Those 72 completed workers took 61.048 seconds median and 61.055 seconds mean.
+Their journals held 1,043 statements, 14.5 per worker on average. Statement count
+tracked duration more closely than file count did (Pearson 0.770 versus 0.634),
+with a fitted duration of roughly `8.36 + 3.638 × statements` seconds. That is a
+correlation over a censored run, not proof that requesting less output causes the
+whole saving.
+
+The deterministic merge over those preserved journals produced 879 residue
+entries (878 seams, four flagged statements, six verify chunks). Keeping only
+each worker's first eight statements would still leave 439 residue entries and
+three verify chunks in this partial run. Hints are common and deliberately join
+the residue, so the older 24% stand-in density is not a safe timing assumption.
+
+The next exact-head proof tests a narrower worker contract: each partition worker
+ranks and emits at most eight high-signal anchored hypotheses. The shared stored
+knowledge schema and the verify seat's cross-cutting output remain uncapped. The
+prompt/schema change uses generator `knowledge-swarm@3`, so no `@2` stored set or
+journal answer can satisfy it. The fit projects about 37.5 seconds per completed
+worker and roughly 278 seconds through the deterministic front half and worker
+phase; verification still has to fit after that, so this is deliberately a proof
+hypothesis rather than a five-minute claim.
+
+The launched evidence now says:
 
 - **More lanes.** The old bare-path prompt took 78 seconds and would have needed
   29 concurrent workers, or 32 once the build was counted. The first real run at
@@ -213,18 +235,19 @@ The arithmetic is now inside the bar, but its launched proof is still pending:
   control still reached 4,822,304 KiB (4.60 GiB) descendant RSS after 22.074
   seconds, with 24 workers active, zero ambient MCP or plugin-refresh processes,
   and no completed worker. The guard reaped the process group with zero survivors.
-  That rejects 24 as the default; the ruled 16-lane cap needs the complete run.
-- **Shorter turns.** Symbol skeletons and slice-local import edges reduced the
-  completed-worker timing to 34.7 seconds median and 37 seconds mean. The
-  remaining proof is the complete run, not another extrapolation.
+  That rejects 24 as the default. The complete 16-lane run stayed below the RSS
+  ceiling but crossed the independent pageout guard after five minutes.
+- **Shorter turns.** The scoped eight-hypothesis worker schema attacks the term
+  most correlated with measured duration. Its proof must report worker timing,
+  statement yield, merge residue, verify timing, and whole-pass wall clock; a
+  faster but materially empty map does not pass.
 - **Fewer turns.** The scoping seat (deciding that an edge-less file does not
   deserve a turn at all) is unbuilt.
 
-So the honest statement of this design's cost is **111 turns and a projected
-4.51–4.78 minutes on the default Codex path**. It is arithmetic from completed
-workers, not a stopwatch reading for the full run. The clean 24-lane control
-proved the memory ceiling, not the five-minute bar; the launched 16-lane run is
-still required.
+So the honest statement of this design's cost is **111 turns, with no successful
+five-minute whole-pass measurement yet**. The 24-lane control proved the memory
+ceiling and the uncapped 16-lane run proved the earlier timing sample optimistic.
+Only a complete guarded run can close the bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -322,6 +345,13 @@ saving comes from better inputs, not from denying a capable seat its tools. The
 anchor-or-drop rule is unchanged and is what keeps that freedom honest — a
 citation that does not resolve against the slice's own file index is dropped at
 mint.
+
+One worker emits at most eight statements, ranked highest-signal first. This is a
+ceiling on pre-merge hypotheses from one slice, not a cap on the stored knowledge
+set or on the verify seat's cross-cutting synthesis; both of those schemas remain
+uncapped. Rennet does not silently truncate a longer returned array. The provider
+receives the scoped schema, and the measured proof checks the resulting journals
+against the ceiling.
 
 ### The deterministic merge
 

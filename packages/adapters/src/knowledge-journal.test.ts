@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PartitionSlice, PartitionWorkerResult } from "@rennet/core";
-import { knowledgeStatementId } from "@rennet/core";
+import { KNOWLEDGE_SWARM_GENERATOR_ID, knowledgeStatementId } from "@rennet/core";
 import type { KnowledgeStatement } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -34,7 +34,7 @@ function scratchDir(): string {
 const TARGET: JournalTarget = {
   baseOid: "a".repeat(40),
   snapshotFingerprint: "fp-1",
-  generator: "knowledge-swarm@2",
+  generator: KNOWLEDGE_SWARM_GENERATOR_ID,
 };
 
 const SLICE: PartitionSlice = {
@@ -197,7 +197,7 @@ describe("KnowledgeJournal", () => {
     journal.write(TARGET, SLICE, result([statement()]));
     // Same git OID, same slice, same membership — a prompt rework or a re-extraction
     // is still a different question, and the old answer is not an answer to it.
-    expect(journal.read({ ...TARGET, generator: "knowledge-swarm@1" }, SLICE)).toBeNull();
+    expect(journal.read({ ...TARGET, generator: "knowledge-swarm@2" }, SLICE)).toBeNull();
     expect(journal.read({ ...TARGET, snapshotFingerprint: "fp-2" }, SLICE)).toBeNull();
     expect(journal.read(TARGET, SLICE)).not.toBeNull();
   });
@@ -233,7 +233,7 @@ describe("KnowledgeJournal", () => {
     const dir = scratchDir();
     const journal = new KnowledgeJournal(dir);
     const reExtracted: JournalTarget = { ...TARGET, snapshotFingerprint: "fp-2" };
-    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@3" };
+    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@4" };
     for (const target of [TARGET, reExtracted, reworked]) {
       journal.write(target, SLICE, result([statement()]));
       expect(journal.size(target)).toBe(1);

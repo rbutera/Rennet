@@ -243,14 +243,10 @@ tail went 149 → **54** slices and the whole run went 201 → **105** slices (5
 module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
 113 ms; the clean build is ~30 s.
 
-The W3 snapshot produced 105 turns; the launched cap proof at commit `cf7c9ad3`
-queued 111 after the repository grew. The old bare-path worker measurement was
-78 seconds. At the earlier concurrency of 12 that projected to **~11.9 minutes
-of worker wall clock**, or 12.4 minutes with the build, against a five-minute
-bar. That figure is obsolete for the current worker input: completed workers now
-measure 34.7 seconds median and 37 seconds mean. The scoping seat that would
-decide an edge-less file does not deserve a turn is still unbuilt (Stage 1 point
-4), so the run still owns all 111 turns.
+The W3 snapshot produced 105 turns; the launched cap proof at commit `4954bdd7`
+queued 111 after the repository grew. The scoping seat that would decide an
+edge-less file does not deserve a turn is still unbuilt (Stage 1 point 4), so the
+run still owns all 111 turns.
 
 The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
 inherited and eagerly started the user's full ambient MCP table, including
@@ -266,10 +262,31 @@ wins. The clean 24-lane control at `cf7c9ad3` reached 4,822,304 KiB (4.60 GiB)
 descendant RSS after 22.074 seconds with all 24 workers active, zero ambient MCP
 or plugin-refresh processes, and no completed worker. The guard stopped and
 reaped the run with zero survivors, so 24 is not a safe default on the measured
-host. At the current 34.7-second median and 37-second mean, 111 turns over 16
-lanes plus the 30-second build project to **271–287 seconds total**, about
-4.51–4.78 minutes. That is arithmetic from completed workers, not a completed
-16-lane run, so the five-minute claim still needs that clean launched proof.
+host.
+
+The clean 16-lane run at `4954bdd7` then stayed below the RSS ceiling but crossed
+the independent pageout guard after 315.485 seconds. At that point 88 of 111
+workers had started, 72 had completed, none had failed, and verification had not
+started. The completed workers measured 61.048 seconds median and 61.055 seconds
+mean and emitted 1,043 statements, 14.5 per worker. Statement count correlated
+with duration more strongly than file count did (0.770 versus 0.634).
+
+Running the deterministic merge over those 72 journals yielded 879 residue
+entries, including 878 seams, four flagged statements, and six verify chunks.
+Taking only the first eight statements from each preserved worker still yielded
+439 residue entries and three chunks. Hints appear on 622 of the 1,043 statements
+and join the residue by contract, so the old 24% stand-in density materially
+understates the live verify workload.
+
+The next proof therefore scopes only the partition-worker envelope to at most
+eight high-signal statements. The stored knowledge contract and verify seat stay
+uncapped, and `knowledge-swarm@3` invalidates every earlier journal answer. The
+measured fit projects roughly 278 seconds through the deterministic front half
+and worker phase, leaving verification too little credible time on its own. This
+is not a claim that the bar is met: a separate turn-count reduction is still
+needed. The guarded run must then complete in five minutes and report statement
+yield and merge residue as well as time, RSS, swap, and pageouts. A faster but
+materially empty map does not count.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

@@ -34,13 +34,11 @@ import { fileBlobIndex } from "./read";
 /**
  * The swarm generator identity: bump on any prompt/schema change.
  *
- * `@2` is the context-map rebuild's W3 rework — skeleton-fed worker packets, the
- * deterministic merge, and a verify seat that sees only the residue. A `@1` set is a
- * different pipeline's output and is replaced rather than carried, and a `@1`
- * journal entry is refused rather than reused (it is part of the journal's target
- * key), so the rework cannot inherit answers to the questions it stopped asking.
+ * `@3` adds a ranked worker-hypothesis ceiling to the W3 skeleton-fed packets.
+ * Earlier sets and journal entries answer a different prompt/schema contract, so
+ * they are replaced rather than carried or reused.
  */
-export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@2";
+export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@3";
 
 type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
 
@@ -51,6 +49,8 @@ type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
  * `hint` per statement — context for the verify/synthesis seat, discardable,
  * never stored.
  */
+export const PARTITION_WORKER_STATEMENT_CAP = 8;
+
 export const PARTITION_WORKER_OUTPUT_SCHEMA = (() => {
   const statement = KNOWLEDGE_OUTPUT_SCHEMA.properties.statements.items;
   return {
@@ -58,6 +58,7 @@ export const PARTITION_WORKER_OUTPUT_SCHEMA = (() => {
     properties: {
       statements: {
         type: "array",
+        maxItems: PARTITION_WORKER_STATEMENT_CAP,
         items: {
           ...statement,
           properties: { ...statement.properties, hint: { type: "string" } },
@@ -173,7 +174,7 @@ working directory IS the repository checkout and you are FREE to read any of it;
 reading is targeted, not forbidden. Read the source when the skeleton cannot
 answer your question, which is most of the time for a WHY. What you must not do
 is claim from a filename: evidence means code you actually read.`,
-    "\nEmit the knowledge statements for this slice.",
+    `\nEmit at most ${PARTITION_WORKER_STATEMENT_CAP} knowledge statements for this slice, highest-signal first.`,
   ].join("\n");
 }
 

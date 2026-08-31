@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { HarnessTurnResult } from "../harness-run-turn";
-import type { KnowledgeSnapshotContext } from "./mint";
+import { KNOWLEDGE_OUTPUT_SCHEMA, type KnowledgeSnapshotContext } from "./mint";
 import type { PartitionSlice } from "./partition";
-import { runMapVerify, runPartitionWorker } from "./swarm";
+import {
+  KNOWLEDGE_SWARM_GENERATOR_ID,
+  MAP_VERIFY_OUTPUT_SCHEMA,
+  PARTITION_WORKER_OUTPUT_SCHEMA,
+  runMapVerify,
+  runPartitionWorker,
+} from "./swarm";
 
 const SNAPSHOT: KnowledgeSnapshotContext = {
   repoKey: "repo",
@@ -41,6 +47,17 @@ function rawStatement(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("runPartitionWorker", () => {
+  it("caps only worker hypotheses and invalidates prior worker answers", async () => {
+    expect(PARTITION_WORKER_OUTPUT_SCHEMA.properties.statements).toHaveProperty("maxItems", 8);
+    expect(KNOWLEDGE_OUTPUT_SCHEMA.properties.statements).not.toHaveProperty("maxItems");
+    expect(MAP_VERIFY_OUTPUT_SCHEMA.properties.crossCutting).not.toHaveProperty("maxItems");
+    expect(KNOWLEDGE_SWARM_GENERATOR_ID).toBe("knowledge-swarm@3");
+
+    const packet = await packetFor(SLICE);
+    expect(packet).toContain("Emit at most 8");
+    expect(packet).toContain("highest-signal");
+  });
+
   it("mints anchored hypotheses and keeps the hint in the envelope only", async () => {
     const result = await runPartitionWorker({
       slice: SLICE,
