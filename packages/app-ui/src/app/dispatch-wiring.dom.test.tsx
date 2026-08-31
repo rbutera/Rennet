@@ -320,4 +320,38 @@ describe("dispatch wiring (C09 cluster 4)", () => {
       if (outcome.status !== "accepted") expect(r.queryByText(outcome.reason)).toBeNull();
     },
   );
+
+  it("ignores a late accepted answer after the session subtree unmounts", async () => {
+    act(() => {
+      store().reviewActions.stageAsk({
+        id: "src/a.ts:5",
+        anchor: "src/a.ts:5",
+        type: "request-change",
+        body: "guard the boundary",
+      });
+      store().runActions.setRoundProgress(0.5);
+    });
+    let settle: ((answer: RoundDispatchOutcome) => void) | undefined;
+    const source: RoundsSource = {
+      ...createTimelineRoundsSource({ startTick: 0 }).source,
+      dispatch: () =>
+        new Promise<RoundDispatchOutcome>((resolve) => {
+          settle = resolve;
+        }),
+    };
+    const { r, history } = mountApp(source);
+
+    await r.user.click(r.getByRole("button", { name: "Dispatch Round" }));
+    act(() => history.navigate("/new-chat"));
+    await waitFor(() => expect(r.queryByRole("button", { name: "Dispatch Round" })).toBeNull());
+
+    await act(async () => {
+      settle?.({ status: "accepted" });
+      await Promise.resolve();
+    });
+
+    expect(history.history.at(-1)).toBe("/new-chat");
+    expect(store().run.roundProgress).toBe(0.5);
+    expect(r.container.querySelector('[data-screen="session-run"]')).toBeNull();
+  });
 });

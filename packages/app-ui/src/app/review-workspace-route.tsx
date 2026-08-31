@@ -467,10 +467,6 @@ function HandoffMount({
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
   const [dispatchState, setDispatchState] = useState<RoundDispatchViewState>({ status: "idle" });
   const dispatchLifecycle = useRef({ mounted: true, slug, request: 0 });
-  if (dispatchLifecycle.current.slug !== slug) {
-    dispatchLifecycle.current.slug = slug;
-    dispatchLifecycle.current.request += 1;
-  }
   useEffect(() => {
     dispatchLifecycle.current.mounted = true;
     return () => {

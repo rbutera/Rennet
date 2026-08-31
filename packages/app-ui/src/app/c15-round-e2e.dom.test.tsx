@@ -297,7 +297,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     // reviewer's own dispatch is the round's first fact, so the takeover does not bounce
     // off an `absent` round it simply has not been told about yet.
     const run = () => r.container.querySelector('[data-screen="session-run"]');
-    expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
+    await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`));
     expect(run()?.getAttribute("data-phase")).toBe("dispatching");
     shown(`1 · dispatch → round.dispatch(${REVIEW_ID}) → held ${history.history.at(-1)}`);
 
