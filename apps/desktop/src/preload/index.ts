@@ -104,11 +104,17 @@ const preload: RennetPreload = {
       if (parsed) listener(parsed);
     };
     ipcRenderer.on(UPDATE_READY_CHANNEL, handler);
-    // Replay: MAIN caches readiness, so a late subscriber still learns of it.
-    void ipcRenderer.invoke(UPDATE_READY_CHANNEL).then((payload) => {
-      const parsed = parseUpdateReady(payload);
-      if (parsed) listener(parsed);
-    });
+    // Replay: MAIN caches readiness, so a late subscriber still learns of it. On a packaged,
+    // signed macOS build the handler is registered only after the codesign probe resolves, so
+    // this invoke RELIABLY rejects with "no handler registered" when the renderer subscribes
+    // first — swallowed, because no cached readiness is the same answer as "nothing staged".
+    void ipcRenderer
+      .invoke(UPDATE_READY_CHANNEL)
+      .then((payload) => {
+        const parsed = parseUpdateReady(payload);
+        if (parsed) listener(parsed);
+      })
+      .catch(() => undefined);
     return () => ipcRenderer.removeListener(UPDATE_READY_CHANNEL, handler);
   },
   applyUpdate: () => ipcRenderer.send(UPDATE_APPLY_CHANNEL),

@@ -154,15 +154,30 @@ async function codesignHasDeveloperId(appPath: string): Promise<boolean> {
 }
 
 /**
- * A verifier that runs its probe AT MOST ONCE per process: the running bundle's signature cannot
- * change while it runs, so the second caller reuses the first verdict — and a caller arriving
- * mid-probe joins the same promise rather than starting a second `codesign` walk.
+ * A verifier that runs its probe AT MOST ONCE per app path: the running bundle's signature
+ * cannot change while it runs, so the second caller for the same path reuses the first verdict —
+ * and a caller arriving mid-probe joins the same promise rather than starting a second `codesign`
+ * walk. Keyed by path, because a single-slot memo answers for whatever bundle asked FIRST, and
+ * `hasDeveloperIdSignature` derives the path from an argument callers may vary.
+ *
+ * A REJECTION is not a verdict, so it is not kept: the real probe never rejects (it catches and
+ * answers false), but an injected one can, and caching that promise would make one failed probe
+ * the permanent answer for the life of the process.
  */
 export function createSignatureVerifier(
   probe: (appPath: string) => Promise<boolean> = codesignHasDeveloperId,
 ): (appPath: string) => Promise<boolean> {
-  let verdict: Promise<boolean> | null = null;
-  return (appPath) => (verdict ??= probe(appPath));
+  const verdicts = new Map<string, Promise<boolean>>();
+  return (appPath) => {
+    const cached = verdicts.get(appPath);
+    if (cached) return cached;
+    const verdict = probe(appPath).catch((error) => {
+      verdicts.delete(appPath);
+      throw error;
+    });
+    verdicts.set(appPath, verdict);
+    return verdict;
+  };
 }
 
 const verifyDeveloperIdOnce = createSignatureVerifier();

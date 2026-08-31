@@ -205,11 +205,15 @@ const hostInFlight = new Map<string, Promise<number>>();
 const hostSkewRestarts = new Map<string, number>();
 
 /**
- * How many times one process will SIGTERM-and-respawn a version/protocol-skewed daemon for the
- * same dataDir. A daemon that keeps coming back skewed (a second installation writing the same
- * claim, a spawn that loses the race to it) would otherwise restart-storm forever, killing a
- * process and respawning per project open. At the cap the ensure fails instead, and the failure
- * already names `daemon.log`, where the real cause is.
+ * How many CONSECUTIVE times one process will SIGTERM-and-respawn a version/protocol-skewed
+ * daemon for the same dataDir. A daemon that keeps coming back skewed (a second installation
+ * writing the same claim, a spawn that loses the race to it) would otherwise restart-storm
+ * forever, killing a process and respawning per project open. At the cap the ensure fails
+ * instead, and the failure already names `daemon.log`, where the real cause is.
+ *
+ * Consecutive, because the counter is cleared the moment an ensure resolves on a healthy
+ * same-version daemon: the cap exists to stop a STORM, and a storm is a run of failures. One
+ * skew today and another next week must not add up to a permanently unstartable data dir.
  */
 export const SKEW_RESTART_LIMIT = 3;
 
@@ -276,30 +280,6 @@ async function ensureDaemonOnce(
     await waitForClaimGone(dataDir, pid, deps.readClaim);
   };
 
-  const verdict = await deps.probe(dataDir);
-  if (verdict.kind === "healthy") {
-    if (verdict.identity.version === deps.serverVersion) return verdict.identity.wsPort;
-    // The daemon updates WITH the app (the header doctrine) — but the protocol-only
-    // check let a healthy OLDER daemon serve a freshly updated shell forever.
-    // Field bug, lancelot 2026-08-19: a 0.2.14 daemon kept serving a 0.2.18 app,
-    // so none of the shipped egress fixes were live and every project.detail
-    // waited undici's 300s headers timeout ("5 minutes plus"). Same posture as
-    // protocol skew: restart with no ceremony. In-flight turns fold to
-    // `interrupted` via lazy crash recovery; reviews persist in sqlite.
-    deps.warn(
-      `rennet: daemon runs server ${verdict.identity.version} but the app ships ${deps.serverVersion}; restarting the bundled daemon`,
-    );
-    await restartSkewedDaemon(verdict.claim.pid);
-  }
-
-  if (verdict.kind === "incompatible") {
-    // D3/D10: the shell owns the newer bundle, so it restarts — no ceremony, just a log.
-    deps.warn(
-      `rennet: daemon protocol ${verdict.identity.protocolVersion} is incompatible (${verdict.reason}); restarting the bundled daemon`,
-    );
-    await restartSkewedDaemon(verdict.claim.pid);
-  }
-
   const spawnEnv: NodeJS.ProcessEnv = { ...deps.env };
   // The daemon resolves its own data dir from `--data-dir` (spawnDaemon passes it), so the
   // shell's RENNET_USER_DATA override must not double-apply from the inherited env.
@@ -308,15 +288,51 @@ async function ensureDaemonOnce(
   // fs load cannot starve undici's DNS for GitHub (see daemon-main.ts). Setting it
   // at spawn guarantees it precedes the pool's first use; an explicit value wins.
   spawnEnv.UV_THREADPOOL_SIZE ??= "16";
-  deps.spawn({
-    dataDir,
-    execPath: deps.execPath,
-    entryPath: deps.entryPath,
-    serverVersion: deps.serverVersion,
-    env: spawnEnv,
-  });
-  const healthy = await deps.waitForHealthy(dataDir);
-  return healthy.identity.wsPort;
+
+  // One pass is "kill what is skewed, spawn ours, then PROVE what answered is ours". The proof
+  // is the loop: a respawn that comes back skewed is another skewed daemon, not an answer, so it
+  // is re-checked exactly like the one found at probe time and counted against the same cap.
+  // Without the re-check the ensure resolved with whatever protocol-compatible daemon happened
+  // to win the race — including the foreign installation whose skew triggered the restart — and
+  // the renderer talked to it for the rest of the session.
+  let verdict: DaemonVerdict = await deps.probe(dataDir);
+  for (;;) {
+    if (verdict.kind === "healthy") {
+      if (verdict.identity.version === deps.serverVersion) {
+        // A clean ensure ends the streak: the cap counts CONSECUTIVE skew restarts.
+        skewRestarts.delete(dataDir);
+        return verdict.identity.wsPort;
+      }
+      // The daemon updates WITH the app (the header doctrine) — but the protocol-only
+      // check let a healthy OLDER daemon serve a freshly updated shell forever.
+      // Field bug, lancelot 2026-08-19: a 0.2.14 daemon kept serving a 0.2.18 app,
+      // so none of the shipped egress fixes were live and every project.detail
+      // waited undici's 300s headers timeout ("5 minutes plus"). Same posture as
+      // protocol skew: restart with no ceremony. In-flight turns fold to
+      // `interrupted` via lazy crash recovery; reviews persist in sqlite.
+      deps.warn(
+        `rennet: daemon runs server ${verdict.identity.version} but the app ships ${deps.serverVersion}; restarting the bundled daemon`,
+      );
+      await restartSkewedDaemon(verdict.claim.pid);
+    } else if (verdict.kind === "incompatible") {
+      // D3/D10: the shell owns the newer bundle, so it restarts — no ceremony, just a log.
+      deps.warn(
+        `rennet: daemon protocol ${verdict.identity.protocolVersion} is incompatible (${verdict.reason}); restarting the bundled daemon`,
+      );
+      await restartSkewedDaemon(verdict.claim.pid);
+    }
+
+    deps.spawn({
+      dataDir,
+      execPath: deps.execPath,
+      entryPath: deps.entryPath,
+      serverVersion: deps.serverVersion,
+      env: spawnEnv,
+    });
+    // `waitForHealthy` only ever answers `healthy` (it throws on protocol skew), so the one
+    // thing left to check is the version — which the top of the loop does.
+    verdict = await deps.waitForHealthy(dataDir);
+  }
 }
 
 /** The WSL deps the shell hands `ensureWslDaemon`: this app's version + host bundle + the real runner. */

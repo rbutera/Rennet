@@ -6,6 +6,7 @@ const harness = vi.hoisted(() => ({
   removed: [] as Array<{ channel: string; handler: unknown }>,
   sent: [] as Array<{ channel: string; payload?: unknown }>,
   invokeResults: new Map<string, unknown>(),
+  invokeErrors: new Map<string, Error>(),
 }));
 
 vi.mock("electron", () => ({
@@ -29,7 +30,12 @@ vi.mock("electron", () => ({
       );
     },
     send: (channel: string, payload?: unknown) => harness.sent.push({ channel, payload }),
-    invoke: (channel: string) => Promise.resolve(harness.invokeResults.get(channel) ?? null),
+    invoke: (channel: string) => {
+      const error = harness.invokeErrors.get(channel);
+      return error
+        ? Promise.reject(error)
+        : Promise.resolve(harness.invokeResults.get(channel) ?? null);
+    },
   },
 }));
 
@@ -55,6 +61,7 @@ beforeEach(async () => {
   harness.removed.length = 0;
   harness.sent.length = 0;
   harness.invokeResults.clear();
+  harness.invokeErrors.clear();
   vi.resetModules();
   await import("./index");
 });
@@ -97,6 +104,27 @@ describe("preload update surface", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(seen).toEqual([]);
+  });
+
+  it("swallows a replay invoke that MAIN has no handler for yet", async () => {
+    // Packaged + signed macOS: MAIN registers the replay handler only once the codesign probe
+    // resolves (seconds), so a renderer subscribing first RELIABLY gets "No handler registered".
+    // Uncaught, that was an Unhandled Rejection in the renderer on every signed boot.
+    harness.invokeErrors.set(UPDATE_READY_CHANNEL, new Error("No handler registered"));
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const seen: unknown[] = [];
+      preload().onUpdateReady((info) => seen.push(info));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(rejections).toEqual([]);
+      // …and the subscription survives the failed replay: a later push still lands.
+      pushReady({ version: "4.0.0" });
+      expect(seen).toEqual([{ version: "4.0.0" }]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("unsubscribe removes the push listener", () => {

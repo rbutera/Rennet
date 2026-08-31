@@ -314,12 +314,17 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     return dir;
   }
 
-  function info(pid: number, wsPort: number, protocolVersion = PROTOCOL_VERSION): DaemonInfo {
+  function info(
+    pid: number,
+    wsPort: number,
+    protocolVersion = PROTOCOL_VERSION,
+    version = "1.2.3",
+  ): DaemonInfo {
     return {
       pid,
       wsPort,
       protocolVersion,
-      version: "1.2.3",
+      version,
       startedAt: "2026-08-18T00:00:00.000Z",
     };
   }
@@ -434,16 +439,19 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("restarts a HEALTHY daemon running an older server version — the daemon updates with the app", async () => {
+  it("restarts a HEALTHY older-version daemon, resolves on the NEW one, and ends the skew streak", async () => {
     // Field bug (lancelot, 2026-08-19): a healthy 0.2.14 daemon kept serving a 0.2.18 app
     // forever because only protocol skew triggered a restart, so shipped fixes never reached it.
     const dataDir = makeDir();
-    const old = info(666, 45_000);
-    const spawned = info(777, 46_000);
+    const old = info(666, 45_000); // ships 1.2.3 while the app below ships 1.2.4
+    const spawned = info(777, 46_000, PROTOCOL_VERSION, "1.2.4"); // the bundled daemon, ours
     writeDaemonFile(dataDir, old);
     const kill = vi.fn(() => removeDaemonFile(dataDir, old.pid));
     const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
     const warn = vi.fn();
+    // Two skew restarts already spent (one short of the cap), so the clean resolve below has a
+    // streak to end. Without the clear, one skew today plus two next week bricks the data dir.
+    const skewRestarts = new Map<string, number>([[dataDir, SKEW_RESTART_LIMIT - 1]]);
 
     const port = await ensureDaemon(dataDir, {
       probe: async () => healthyVerdict(old),
@@ -456,13 +464,58 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       serverVersion: "1.2.4",
       env: {},
       warn,
+      skewRestarts,
     });
 
     expect(kill).toHaveBeenCalledWith(old.pid, "SIGTERM");
     expect(spawn).toHaveBeenCalledOnce();
+    // The port is the RESPAWNED daemon's, and the re-check let it through because its version
+    // matched — not because the ensure stopped asking after the kill.
     expect(port).toBe(spawned.wsPort);
+    expect(port).not.toBe(old.wsPort);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
     expect(readDaemonFile(dataDir)).toEqual(spawned);
+    expect(skewRestarts.has(dataDir)).toBe(false);
+  });
+
+  it("re-checks the RESPAWNED daemon and retries in the SAME ensure when it comes back skewed", async () => {
+    // The gap this closes: after the SIGTERM the ensure accepted whatever answered, on protocol
+    // compatibility alone. A foreign 1.2.3 daemon that won the respawn race — the very daemon
+    // whose skew triggered the restart — was handed to the renderer for the rest of the session.
+    const dataDir = makeDir();
+    const foreign = info(1001, 49_000); // 1.2.3; the app below ships 1.2.4
+    const ours = info(1002, 49_100, PROTOCOL_VERSION, "1.2.4");
+    const kill = vi.fn();
+    const spawn = vi.fn();
+    let healthyCalls = 0;
+    const waitForHealthy = vi.fn(async () => {
+      healthyCalls += 1;
+      // The first respawn loses the race to the foreign daemon; the second wins.
+      return healthyCalls === 1 ? healthyVerdict(foreign) : healthyVerdict(ours);
+    });
+    const skewRestarts = new Map<string, number>();
+
+    const port = await ensureDaemon(dataDir, {
+      probe: async () => healthyVerdict(foreign),
+      spawn,
+      waitForHealthy,
+      kill,
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.4",
+      env: {},
+      warn: vi.fn(),
+      skewRestarts,
+    });
+
+    expect(port).toBe(ours.wsPort);
+    expect(port).not.toBe(foreign.wsPort); // the skewed identity is never the answer
+    // Two restarts inside ONE ensure — the retry is the loop, not a second caller.
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledTimes(2);
+    expect(waitForHealthy).toHaveBeenCalledTimes(2);
+    expect(skewRestarts.has(dataDir)).toBe(false); // resolved clean, so the streak is over
   });
 
   it("folds two concurrent ensures for one dataDir into ONE probe and ONE spawn", async () => {
@@ -511,18 +564,20 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(probe).toHaveBeenCalledTimes(2);
   });
 
-  it("stops restarting a daemon that keeps coming back skewed once the cap is spent", async () => {
-    // A daemon that keeps reappearing on the wrong version would otherwise be SIGTERMed and
-    // respawned on every project open, forever (perf audit §2 H3).
+  it("caps a daemon that keeps coming back skewed, and never hands out its port", async () => {
+    // The daemon at this dataDir is not ours and never becomes ours: the probe AND every
+    // respawn answer on 1.2.3 while the app ships 1.2.4 (a second installation writing the same
+    // claim). Left unbounded that is a SIGTERM-and-respawn storm (perf audit §2 H3); left
+    // unchecked after the respawn it is worse — the renderer talks to the foreign daemon.
     const dataDir = makeDir();
-    const old = info(999, 48_000); // version 1.2.3 while the app below ships 1.2.4 → skew, always
+    const foreign = info(999, 48_000);
     const kill = vi.fn();
     const spawn = vi.fn();
     const skewRestarts = new Map<string, number>();
     const deps = {
-      probe: async () => healthyVerdict(old),
+      probe: async () => healthyVerdict(foreign),
       spawn,
-      waitForHealthy: async () => healthyVerdict(old),
+      waitForHealthy: async () => healthyVerdict(foreign),
       kill,
       readClaim: () => null,
       entryPath: "/bundle/server.cjs",
@@ -533,17 +588,18 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       skewRestarts,
     };
 
-    for (let attempt = 0; attempt < SKEW_RESTART_LIMIT; attempt += 1) {
-      expect(await ensureDaemon(dataDir, deps)).toBe(old.wsPort);
-    }
-    expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
-    expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
-
+    // It REJECTS rather than resolving: there is no port here a caller may be given, and
+    // `foreign.wsPort` is the one a version-blind ensure would have returned.
     await expect(ensureDaemon(dataDir, deps)).rejects.toThrow(join(dataDir, "daemon.log"));
-    // The capped attempt signalled and spawned NOTHING — the counts stand where they were.
+    // The whole cap is spent inside that one ensure — one kill and one spawn per restart.
     expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
     expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
     expect(skewRestarts.get(dataDir)).toBe(SKEW_RESTART_LIMIT);
+
+    // A later open still refuses, and signals nothing more: the counts stand where they were.
+    await expect(ensureDaemon(dataDir, deps)).rejects.toThrow(join(dataDir, "daemon.log"));
+    expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
   });
 });
 

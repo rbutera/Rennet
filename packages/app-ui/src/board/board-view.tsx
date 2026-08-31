@@ -35,10 +35,13 @@ import { Section } from "./section";
 // to force-open on Flagged and leaving it undefined elsewhere gives both behaviours.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** How often an unsettled board re-reads its lenses, and how many consecutive
- *  learned-nothing reads it takes before the poll gives up (10 minutes of silence). */
+/** How often an unsettled board re-reads its lenses, how many consecutive
+ *  learned-nothing reads it takes before the poll SLOWS (10 minutes of silence), and the
+ *  cadence it slows to. It never stops — see the effect below for why. */
 const POLL_MS = 5_000;
 const POLL_LIMIT = 120;
+const SLOW_POLL_MS = 60_000;
+const SLOW_POLL_EVERY = SLOW_POLL_MS / POLL_MS;
 
 export interface LensBoardViewProps {
   /** The review whose boards are read — half of the `board.read` identity. */
@@ -78,45 +81,56 @@ export function LensBoardView({
   // board for this generation yet" until the window happened to regain focus (the only other
   // thing that invalidates `board.read`). `useCommand` has no polling, so this is it.
   //
-  // ponytail: a 5s poll while any lens is still missing, BOUNDED two ways because the
-  // unbounded version polled a never-settling board for as long as it was on screen (perf
-  // audit 2026-08-31, §1 H1) — a review whose Noise lens legitimately drafted nothing never
-  // settles, so "stop when it settles" is not a stop condition. (1) A hidden document polls
-  // not at all, and a paused tick spends no budget, so a window left in the background for an
-  // hour comes back with its full window intact. (2) `POLL_LIMIT` consecutive ticks that
-  // observed NO change in any lens's status end the poll: at 5s that is ten minutes of
-  // complete silence, far longer than the gap between two lenses landing in a slow round
-  // (drafting is per-lens minutes, and any arrival restarts the window through `statusKey`).
-  // Remounting the board restarts it too. Upgrade path: a daemon-side board-arrival channel
-  // (the `roundProgress` push already proves the transport), at which point this whole
-  // effect goes and neither bound is needed.
+  // ponytail: a 5s poll while any lens is still missing, THROTTLED two ways because the
+  // unthrottled version polled a never-settling board at 5s for as long as it was on screen
+  // (perf audit 2026-08-31, §1 H1) — a review whose Noise lens legitimately drafted nothing
+  // never settles, so "stop when it settles" is not a stop condition. (1) A hidden document
+  // polls not at all, and a paused tick spends no budget, so a window left in the background
+  // for an hour comes back with its full window intact. (2) After `POLL_LIMIT` consecutive
+  // ticks that observed NO lens status change, the poll drops to `SLOW_POLL_MS` — at 5s that
+  // is ten minutes of complete silence before slowing, far longer than the gap between two
+  // lenses landing in a slow round (drafting is per-lens minutes, and any status change
+  // restarts the fast window through `statusKey`).
+  //
+  // It slows rather than STOPS, because for most reviews this poll is the only way a board
+  // ever arrives on screen: the focus-invalidate escape hatch is gated on `fromWorkingTree`
+  // (app/review-workspace-route.tsx), so a PR-snapshot review whose board first lands after
+  // the budget would sit on "no board yet" until the reviewer remounted it. One read a minute
+  // is not the burn the audit measured; a silent surface is a bug. Upgrade path: a daemon-side
+  // board-arrival channel (the `roundProgress` push already proves the transport), at which
+  // point this whole effect goes and neither throttle is needed.
   const refreshBoards = useRefreshCommand("board.read");
   const awaitingLenses = !lensReadsSettled(resolutions);
-  // The observable "something happened": a lens moving off missing/pending, or a settled
-  // lens changing its answer. A background refetch that returns the same thing keeps the
-  // same statuses, so an unchanged key means the poll genuinely learned nothing.
+  // The observable "something happened": a lens moving BETWEEN statuses — missing/pending to
+  // valid/absent/failed/invalid, or back. This is a STATUS key, not a content key: a settled
+  // lens that re-drafts different content stays `valid` and does NOT restart the budget. An
+  // unchanged key means no lens changed status, which is exactly what the budget counts.
   const statusKey = Object.values(resolutions)
     .map((resolution) => resolution.status)
     .join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: statusKey is an intentional re-run trigger, not a body reference — a lens changing its answer must restart the poll's budget, and re-running the effect is what resets `spent`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: statusKey is an intentional re-run trigger, not a body reference — a lens changing status must restart the poll's fast window, and re-running the effect is what resets `spent`.
   useEffect(() => {
     if (!awaitingLenses) return;
     let spent = 0;
     const tick = () => {
       if (document.hidden) return;
-      if (++spent > POLL_LIMIT) {
-        clearInterval(timer);
-        return;
-      }
+      spent += 1;
+      // Past the budget the interval keeps waking but only reads once a minute.
+      if (spent > POLL_LIMIT && spent % SLOW_POLL_EVERY !== 0) return;
       refreshBoards();
     };
     const timer = setInterval(tick, POLL_MS);
-    // Electron throttles a hidden window's timers to about one wake a minute, so coming
-    // back to the window reads immediately instead of waiting out a throttled tick.
-    document.addEventListener("visibilitychange", tick);
+    // Electron throttles a hidden window's timers to about one wake a minute, so coming back
+    // to the window reads immediately instead of waiting out a throttled tick. This read is
+    // free of the budget: returning to the window is the user telling us to look again, and
+    // charging it would let alt-tabbing burn the very window it is meant to refresh.
+    const onVisibility = () => {
+      if (!document.hidden) refreshBoards();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [awaitingLenses, refreshBoards, statusKey]);
 

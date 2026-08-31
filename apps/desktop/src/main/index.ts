@@ -354,7 +354,10 @@ app.whenReady().then(async () => {
   // Started here, awaited after the tray: on macOS this shells out to `codesign --deep`, which
   // hashes every binary in the bundle (seconds). Kicked off now it overlaps the daemon spawn and
   // the window, instead of stalling the boot path the way the synchronous probe did (§2 H2).
-  const autoUpdateEligible = isAutoUpdateEligible(app.isPackaged);
+  // `.catch` here, not at the use site: the promise floats across the daemon ensure and the
+  // window creation below, so a rejection in that gap is an unhandled rejection at boot. A
+  // probe that cannot answer is not a Developer-ID signature, which is "not eligible".
+  const autoUpdateEligible = isAutoUpdateEligible(app.isPackaged).catch(() => false);
   let wsPort: number;
   try {
     wsPort = await ensureDaemon(dataDir);
@@ -399,32 +402,37 @@ app.whenReady().then(async () => {
     quitCompletely: () => void quitCompletely(dataDir),
   });
   trayController = tray;
-  void autoUpdateEligible.then((eligible) => {
-    if (!eligible) return;
-    update = startAutoUpdateOnce(isTrustedAppUrl, console, {
-      prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
-      armRelaunchAfterApply:
-        process.platform === "darwin"
-          ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
-          : undefined,
-      recoverAfterApplyFailure: async () => {
-        activeWsPort = await ensureDaemon(dataDir);
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed()) window.destroy();
-        }
-        await ensureWindowShared();
-      },
-      reportApplyFailure: (message) => {
-        dialog.showErrorBox(
-          "Rennet couldn't install the update",
-          `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
-        );
-      },
-    });
-    update.readiness.subscribe(() => tray.setUpdateReady(true));
-    // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
-    if (update.readiness.ready) tray.setUpdateReady(true);
-  });
+  void autoUpdateEligible
+    .then((eligible) => {
+      if (!eligible) return;
+      update = startAutoUpdateOnce(isTrustedAppUrl, console, {
+        prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
+        armRelaunchAfterApply:
+          process.platform === "darwin"
+            ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
+            : undefined,
+        recoverAfterApplyFailure: async () => {
+          activeWsPort = await ensureDaemon(dataDir);
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.isDestroyed()) window.destroy();
+          }
+          await ensureWindowShared();
+        },
+        reportApplyFailure: (message) => {
+          dialog.showErrorBox(
+            "Rennet couldn't install the update",
+            `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
+          );
+        },
+      });
+      update.readiness.subscribe(() => tray.setUpdateReady(true));
+      // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
+      if (update.readiness.ready) tray.setUpdateReady(true);
+    })
+    // The catch is on the DERIVED promise, not on `autoUpdateEligible`: what throws here is the
+    // callback (`startAutoUpdateOnce` on a bundle Squirrel.Mac refuses), and auto-update is
+    // best-effort — it degrades to no badge, never to an unhandled rejection.
+    .catch((error) => console.warn("rennet: auto-update setup failed", error));
 });
 
 // Reopen from the Dock/menu bar (macOS) recreates or focuses the window without a relaunch.

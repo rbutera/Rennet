@@ -438,6 +438,35 @@ describe("auto-update eligibility", () => {
     expect(await Promise.all([first, second])).toEqual([true, true]);
     expect(probe).toHaveBeenCalledTimes(1);
   });
+
+  it("answers per app path rather than once, for whichever bundle asked first", async () => {
+    const probe = vi.fn(async (appPath: string) => appPath === "/Signed.app");
+    const verify = createSignatureVerifier(probe);
+
+    expect(await verify("/Signed.app")).toBe(true);
+    // A single-slot memo returns the FIRST bundle's verdict here, calling the probe once.
+    expect(await verify("/Unsigned.app")).toBe(false);
+    expect(probe).toHaveBeenCalledTimes(2);
+    // …and each path is still memoised on its own.
+    expect(await verify("/Signed.app")).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-probes after a probe REJECTS — a failure is not a cached verdict", async () => {
+    // The real probe answers false rather than throwing, so only an injected one reaches this.
+    // Caching the rejected promise made one failed probe the permanent answer for the process.
+    let attempt = 0;
+    const probe = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("codesign unavailable");
+      return true;
+    });
+    const verify = createSignatureVerifier(probe);
+
+    await expect(verify("/Rennet.app")).rejects.toThrow("codesign unavailable");
+    expect(await verify("/Rennet.app")).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("stagedNewerVersion", () => {
