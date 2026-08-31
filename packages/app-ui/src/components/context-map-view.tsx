@@ -8,7 +8,8 @@ import {
   type ProjectProcessEvent,
   type ProjectRepositoryAddress,
 } from "@rennet/protocol";
-import { ArrowLeft, Check, LoaderCircle, RotateCcw, X } from "lucide-react";
+import { Spinner } from "@rennet/ui";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, RotateCcw, X } from "lucide-react";
 import {
   type FormEvent,
   forwardRef,
@@ -96,11 +97,47 @@ export function discussPrompt(statement: KnowledgeStatementPayload): string {
   return `About "${statement.subject}": the claim "${statement.claim}" — is this right? Revise it against the evidence.`;
 }
 
+/**
+ * The Context Map's takeover header — the 40px tier every takeover surface carries
+ * (board prototype `components/context-map.tsx`): an icon back button, the
+ * `project › Context Map` trail, and the `esc` hint that `ContextMapView`'s window
+ * handler makes true. It renders identically over the loading/error state and the
+ * loaded map, so the header does not resize under the reviewer when the map arrives.
+ */
+function MapHeader({ projectId, onBack }: { projectId: string; onBack(): void }) {
+  const { data: projectsData } = useCommand("projects.list", {});
+  // The id is the honest fallback until the list resolves — never a placeholder name.
+  const projectName =
+    (projectsData?.projects ?? []).find((candidate) => candidate.id === projectId)?.name ??
+    projectId;
+  return (
+    <header className="context-map-bar flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-3">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label="Back"
+        className="context-map-back mr-0.5 flex size-6 items-center justify-center rounded-control text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+      >
+        <Icon icon={ArrowLeft} className="size-3.5" />
+      </button>
+      <span className="flex min-w-0 items-center gap-1.5 text-13">
+        <span className="shrink-0 font-medium text-ink">{projectName}</span>
+        <Icon icon={ChevronRight} className="size-3 shrink-0 text-muted-foreground/50" />
+        <span className="context-map-title text-ink-soft">Context Map</span>
+      </span>
+      <kbd className="ml-auto rounded-chip border border-line px-1 py-0.5 text-10 text-ink-faint">
+        esc
+      </kbd>
+    </header>
+  );
+}
+
 export function ContextMapView({
   projectId,
   repositoryAddress,
   onBack,
   showAskRail = true,
+  takeover = true,
   onDiscuss,
 }: {
   projectId: string;
@@ -109,6 +146,12 @@ export function ContextMapView({
   /** The project-scoped ask rail. The router-side map view (C12) hides it — the
    *  session chat column plays that role there — and leaves it on elsewhere. */
   showAskRail?: boolean;
+  /** Whether this mount OWNS the window: it then carries the 40px takeover header (Back,
+   *  the `project › Context Map` trail, the `esc` keycap) and the window Escape handler
+   *  that keycap advertises. False for the in-session `?view=map` mount, which sits INSIDE
+   *  the session's own chrome — a second Back, a second trail and a stolen Escape there
+   *  are all the session's chrome duplicated or overridden. */
+  takeover?: boolean;
   /** Where a statement's "discuss" goes when there is no ask rail (the router map view hands
    *  it to the project's New Chat, prefilled). Absent AND no ask rail ⇒ no discuss button. */
   onDiscuss?(statement: KnowledgeStatementPayload): void;
@@ -192,6 +235,19 @@ export function ContextMapView({
     }
   }, [build, mapQuery.data, mapQuery.fetching, mapQuery.stale]);
 
+  // Escape leaves the map, the way every other takeover surface behaves — which is what
+  // makes the header's `esc` hint true rather than decoration. Only when this mount IS the
+  // takeover: embedded in a session, a window-wide Escape handler would fire from the chat
+  // composer and navigate the reviewer off the map they were reading.
+  useEffect(() => {
+    if (!takeover) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onBack();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack, takeover]);
+
   if (mapQuery.data?.status === "ok" && !mapQuery.error && !mapQuery.fetching && !mapQuery.stale) {
     return (
       <ContextMap
@@ -201,6 +257,7 @@ export function ContextMapView({
         knowledge={mapQuery.data.knowledge}
         onBack={onBack}
         showAskRail={showAskRail}
+        takeover={takeover}
         onDiscuss={onDiscuss}
       />
     );
@@ -220,22 +277,12 @@ export function ContextMapView({
     );
   }
   return (
-    <div className="context-map min-h-screen flex flex-col bg-canvas">
-      <header className="context-map-bar flex items-center gap-4 px-6 pt-5 pb-4 border-b border-line">
-        <button
-          type="button"
-          onClick={onBack}
-          className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
-        >
-          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
-          Back
-        </button>
-        <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
-      </header>
+    <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
+      {takeover ? <MapHeader projectId={projectId} onBack={onBack} /> : null}
       <div className="context-map-status flex max-w-xl flex-col gap-3 px-8 py-10 text-ink-soft">
         <div className="flex items-center gap-2 font-serif text-base">
           {mapQuery.pending || build.kind === "processing" || build.kind === "refreshing" ? (
-            <Icon icon={LoaderCircle} className="size-4 animate-spin text-accent" />
+            <Spinner className="size-4 text-accent" />
           ) : null}
           <span role={mapQuery.error || build.kind === "error" ? "alert" : undefined}>
             {mapQuery.error
@@ -259,7 +306,7 @@ export function ContextMapView({
         {mapQuery.error || build.kind === "error" ? (
           <button
             type="button"
-            className="inline-flex w-fit items-center gap-1.5 rounded-chip border border-line px-2.5 py-1.5 text-sm text-ink-soft hover:bg-raised hover:text-ink"
+            className="inline-flex w-fit items-center gap-1.5 rounded-chip border border-line px-2.5 py-1.5 text-sm text-ink-soft transition-colors hover:bg-raised hover:text-ink"
             onClick={() => {
               setRetryMode(build.kind === "error" ? build.retry : "resume");
               setBuild({ kind: "idle" });
@@ -334,6 +381,7 @@ function ContextMap({
   knowledge,
   onBack,
   showAskRail,
+  takeover,
   onDiscuss,
 }: {
   projectId: string;
@@ -342,6 +390,7 @@ function ContextMap({
   knowledge: KnowledgeSetPayload | null;
   onBack(): void;
   showAskRail: boolean;
+  takeover: boolean;
   onDiscuss?(statement: KnowledgeStatementPayload): void;
 }) {
   const { mutate: persistDisposition } = useMutation("project.knowledgeDisposition");
@@ -408,33 +457,34 @@ function ContextMap({
   // and enrichment trails structure, so a lagging set must not read as "current".
   const knowledgeBehind = knowledge !== null && knowledge.baseOid !== map.baseOid;
   return (
-    <div className="context-map min-h-screen flex flex-col bg-canvas">
-      <header className="context-map-bar flex items-center gap-4 px-6 pt-5 pb-4 border-b border-line">
-        <button
-          type="button"
-          onClick={onBack}
-          className="context-map-back inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-chip border border-line text-ink-soft hover:bg-raised hover:text-ink"
-        >
-          <Icon icon={ArrowLeft} className="h-3.5 w-3.5" />
-          Back
-        </button>
-        <h1 className="context-map-title font-display text-xl text-ink">Context Map</h1>
-        <span className="context-map-base font-mono text-sm text-ink-faint truncate">
+    <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
+      {takeover ? <MapHeader projectId={projectId} onBack={onBack} /> : null}
+      {/* The base strip is its OWN row under the 40px header (prototype `MapBaseLine`),
+          never folded into it: the header is the takeover tier, and what the map was
+          built from is content about the map. Embedded in a session there is no header
+          above it and this strip leads the surface, which is the prototype's split
+          between `ContextMapFullView` and the embedded panel. */}
+      <div className="context-map-base-strip flex shrink-0 items-center gap-2 border-b border-line px-4 py-2">
+        {/* biome-ignore lint/a11y/useSemanticElements: the global h1 typography changes this embedded strip's styling; ARIA restores the heading semantics without overriding the styling contract. */}
+        <span role="heading" aria-level={1} className="shrink-0 text-sm font-medium text-ink">
+          Context Map
+        </span>
+        <span className="context-map-base truncate font-mono text-sm text-ink-faint">
           {knowledge?.repoKey ?? map.baseRef} · {map.baseRef} @ {map.baseOid.slice(0, 12)}
         </span>
         {knowledgeBehind ? (
-          <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-2xs font-semibold">
+          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-10 font-semibold">
             ◐ knowledge behind map
           </span>
         ) : (
-          <span className="context-map-fresh inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-2xs font-semibold">
+          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-10 font-semibold">
             ● current
           </span>
         )}
-      </header>
+      </div>
       <div className="context-map-main flex flex-1 min-h-0">
-        <section className="context-map-col flex flex-col min-w-0 w-[26rem] border-r border-line">
-          <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
+        <section className="context-map-col flex flex-col min-w-0 w-64 shrink-0 border-r border-line">
+          <div className="context-map-col-title px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
             Structure — {map.scopes.length} scopes · {fileCount.toLocaleString()} files
           </div>
           <div className="context-map-scroll flex-1 overflow-auto py-1.5">
@@ -465,7 +515,7 @@ function ContextMap({
         </section>
         {showAskRail ? (
           <section className="context-map-col flex flex-col min-w-0 w-[24rem]">
-            <div className="context-map-col-title px-4 py-2.5 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
+            <div className="context-map-col-title px-3 py-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint border-b border-line">
               Orchestrator — project session
             </div>
             <AskRail ref={askRef} projectId={projectId} repositoryAddress={repositoryAddress} />
@@ -495,10 +545,28 @@ function Tree({
   );
 }
 
+// Selection is the quiet raised ground, not gold — gold is the reserve. The hover
+// tone is deliberately HALF that ground (`bg-secondary/50`): at full strength a
+// hovered row is pixel-identical to the selected one and impersonates it.
 function rowClass(selected: boolean): string {
-  return `context-map-row flex items-center gap-1.5 w-full py-1 pr-3 text-left text-ink-soft hover:bg-raised hover:text-ink ${
-    selected ? "is-selected bg-accent-surface text-ink" : ""
+  return `context-map-row flex items-center gap-1.5 w-full py-1 pr-3 text-left transition-colors ${
+    selected
+      ? "is-selected bg-secondary text-foreground"
+      : "text-ink-soft hover:bg-secondary/50 hover:text-ink"
   }`;
+}
+
+/** The fold marker: ONE chevron that rotates, not two glyphs swapped. The rotation is
+ *  the affordance — a static `▾`/`▸` pair reads as two different characters blinking. */
+function Twisty({ open }: { open: boolean }) {
+  return (
+    <Icon
+      icon={ChevronDown}
+      className={`context-map-twist size-3 shrink-0 text-ink-faint transition-transform ${
+        open ? "" : "-rotate-90"
+      }`}
+    />
+  );
 }
 
 function ScopeRow({
@@ -523,9 +591,9 @@ function ScopeRow({
           onSelect({ kind: "scope", scope: scope.name });
         }}
       >
-        <span className="context-map-twist w-3 text-ink-faint">{open ? "▾" : "▸"}</span>
-        <span className="context-map-name flex-1 truncate text-ink">{scope.name}</span>
-        <span className="context-map-count text-2xs text-ink-faint">
+        <Twisty open={open} />
+        <span className="context-map-name flex-1 truncate">{short(scope.name)}</span>
+        <span className="context-map-count text-10 text-ink-faint">
           {scope.in.length > 0 ? `⇦${scope.in.length} ` : ""}
           {scope.tree.fileCount}f
         </span>
@@ -604,9 +672,9 @@ function DirRow({
         style={{ paddingLeft: `${0.75 + depth * 0.85}rem` }}
         onClick={() => setOpen(!open)}
       >
-        <span className="context-map-twist w-3 text-ink-faint">{open ? "▾" : "▸"}</span>
+        <Twisty open={open} />
         <span className="context-map-name flex-1 truncate">{dir.name}/</span>
-        <span className="context-map-count text-2xs text-ink-faint">{dir.fileCount}f</span>
+        <span className="context-map-count text-10 text-ink-faint">{dir.fileCount}f</span>
       </button>
       {open ? (
         <DirChildren
@@ -643,8 +711,8 @@ function FileRow({
       style={{ paddingLeft: `${0.75 + depth * 0.85}rem` }}
       onClick={() => onSelect({ kind: "file", scope, path: file.path })}
     >
-      <span className="context-map-twist w-3" />
-      <span className="context-map-name flex-1 truncate">{base}</span>
+      <span className="context-map-twist size-3 shrink-0" />
+      <span className="context-map-name flex-1 truncate text-2xs">{base}</span>
     </button>
   );
 }
@@ -669,14 +737,18 @@ function Neighborhood({
     );
   }
   const width = 720;
-  const height = 300;
+  // The canvas grows with the busier side rather than sitting at a fixed 300: a scope
+  // with eight importers stops cramming its nodes into a strip they overlap in, and a
+  // scope with one stops floating in empty space. 44px per node is the row pitch that
+  // keeps the 28px node boxes apart; 200 is the floor a one-edge neighborhood needs.
+  const height = Math.max(200, Math.max(ins.length, outs.length) * 44 + 60);
   const cx = width / 2;
   const cy = height / 2;
   const nodeWidth = 128;
   const place = (list: string[], side: "left" | "right") =>
     list.map((name, index) => {
       const step = height / (list.length + 1);
-      return { name, x: side === "left" ? 120 : width - 120, y: step * (index + 1) };
+      return { name, x: side === "left" ? 110 : width - 110, y: step * (index + 1) };
     });
   const inNodes = place(ins, "left");
   const outNodes = place(outs, "right");
@@ -755,16 +827,16 @@ function Neighborhood({
         height={32}
         rx="6"
       />
-      <text fill="var(--rn-ink)" fontSize="14" x={cx} y={cy + 4} textAnchor="middle">
+      <text fill="var(--rn-ink)" fontSize="13" x={cx} y={cy + 4} textAnchor="middle">
         {short(scope.name)}
       </text>
       {ins.length > 0 ? (
-        <text fill="var(--rn-ink-faint)" fontSize="11" x={120} y={16} textAnchor="middle">
+        <text fill="var(--rn-ink-faint)" fontSize="11" x={110} y={16} textAnchor="middle">
           imported by
         </text>
       ) : null}
       {outs.length > 0 ? (
-        <text fill="var(--rn-ink-faint)" fontSize="11" x={width - 120} y={16} textAnchor="middle">
+        <text fill="var(--rn-ink-faint)" fontSize="11" x={width - 110} y={16} textAnchor="middle">
           imports
         </text>
       ) : null}
@@ -795,12 +867,12 @@ function DetailTabs({
   const relevant = knowledgeForSelection(statements, selection, scope);
   return (
     <div className="context-map-detail flex flex-col flex-1 min-h-0">
-      <div className="context-map-tabs flex gap-1 px-4 pt-3 border-b border-line">
+      <div className="context-map-tabs flex gap-1 px-4 pt-2 border-b border-line">
         {(["knowledge", "details"] as const).map((name) => (
           <button
             key={name}
             type="button"
-            className={`context-map-tab px-3 py-1.5 rounded-t-md text-sm ${
+            className={`context-map-tab px-3 py-1.5 rounded-t-md text-12-5 transition-colors ${
               tab === name
                 ? "is-active text-ink border-b-2 border-accent"
                 : "text-ink-soft hover:text-ink"
@@ -855,12 +927,12 @@ function KnowledgePanel({
       {statements.map((statement) => (
         <article
           key={statement.id}
-          className={`context-map-claim rounded-surface border p-3 ${
+          className={`context-map-claim rounded-md border p-3 ${
             statement.status === "rejected"
               ? "border-line bg-surface opacity-60"
               : statement.status === "confirmed"
                 ? "border-green-line bg-surface"
-                : "border-line bg-raised"
+                : "border-line bg-secondary/30"
           }`}
         >
           <div className="context-map-claim-head flex items-center gap-2 mb-1.5">
@@ -876,13 +948,17 @@ function KnowledgePanel({
                   ? "bg-green-soft text-green"
                   : statement.status === "rejected"
                     ? "bg-surface text-ink-faint"
-                    : "bg-accent-soft text-accent"
+                    : // Verdigris, the machine's voice: an unconfirmed statement is the
+                      // model talking, and gold is not the model's colour.
+                      "bg-model-soft text-model"
               }`}
             >
               {statement.status}
             </span>
           </div>
-          <div className="context-map-claim-body text-base text-ink">{statement.claim}</div>
+          <div className="context-map-claim-body text-13 leading-relaxed text-foreground/90">
+            {statement.claim}
+          </div>
           <div className="context-map-claim-evidence mt-1.5 text-2xs text-ink-faint font-mono truncate">
             evidence: {statement.evidence.map((anchor) => anchor.path).join(", ") || "—"} ·{" "}
             {statement.provenance.generator}
@@ -892,22 +968,22 @@ function KnowledgePanel({
               <button
                 type="button"
                 onClick={() => onConfirm(statement.id)}
-                className="context-map-confirm inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-green-line text-green text-sm hover:bg-green-soft"
+                className="context-map-confirm inline-flex items-center gap-1 px-2 py-1 rounded-md border border-green-line text-green text-2xs transition-colors hover:bg-green-soft"
               >
-                <Icon icon={Check} className="h-3 w-3" /> confirm
+                <Icon icon={Check} className="size-3" /> confirm
               </button>
               <button
                 type="button"
                 onClick={() => onReject(statement.id)}
-                className="context-map-reject inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-danger"
+                className="context-map-reject inline-flex items-center gap-1 px-2 py-1 rounded-md border border-line text-ink-soft text-2xs transition-colors hover:bg-raised hover:text-danger"
               >
-                <Icon icon={X} className="h-3 w-3" /> reject
+                <Icon icon={X} className="size-3" /> reject
               </button>
               {onDiscuss ? (
                 <button
                   type="button"
                   onClick={() => onDiscuss(statement)}
-                  className="context-map-discuss inline-flex items-center gap-1 px-2.5 py-1 rounded-chip border border-line text-ink-soft text-sm hover:bg-raised hover:text-ink"
+                  className="context-map-discuss inline-flex items-center gap-1 px-2 py-1 rounded-md border border-line text-ink-soft text-2xs transition-colors hover:bg-raised hover:text-ink"
                 >
                   ↪ discuss
                 </button>
@@ -931,7 +1007,7 @@ function DetailsPanel({
 }) {
   if (selection.kind === "file") {
     return (
-      <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-12-5">
         <dt className="text-ink-faint">path</dt>
         <dd className="font-mono text-ink truncate">{selection.path}</dd>
         <dt className="text-ink-faint">scope</dt>
@@ -941,7 +1017,7 @@ function DetailsPanel({
   }
   if (!scope) return null;
   return (
-    <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+    <dl className="context-map-kv grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-12-5">
       <dt className="text-ink-faint">scope</dt>
       <dd className="text-ink">{scope.name}</dd>
       <dt className="text-ink-faint">root</dt>

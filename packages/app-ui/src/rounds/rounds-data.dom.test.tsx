@@ -138,8 +138,9 @@ describe("rounds-data seam — the single rounds resolution point", () => {
     let dispatched = 0;
     const dispatchable: RoundsSource = {
       ...fixtureCompletedRoundsSource,
-      dispatch: () => {
+      dispatch: async () => {
         dispatched += 1;
+        return { status: "accepted" };
       },
     };
     const { getByText } = mount(

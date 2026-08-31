@@ -1,6 +1,7 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
+import { promisify } from "node:util";
 import { app, autoUpdater, BrowserWindow, ipcMain } from "electron";
 import { type IUpdateSource, UpdateSourceType, updateElectronApp } from "update-electron-app";
 
@@ -130,36 +131,74 @@ export const APPLY_HANDOFF_TIMEOUT_MS = 3_000;
 /** The public repository updates come from. */
 export const UPDATE_REPO = "rbutera/rennet";
 
-export function hasDeveloperIdSignature(
+const execFileAsync = promisify(execFile);
+
+/**
+ * The real macOS Developer-ID probe. `--deep --strict` hashes every binary in the bundle, so it
+ * costs SECONDS on a packaged app — it runs off-thread (`execFile`, not `execFileSync`) because
+ * synchronously it stalled the main process through renderer boot, starving IPC and the `app://`
+ * protocol handler (perf audit 2026-08-31, §2 H2).
+ */
+async function codesignHasDeveloperId(appPath: string): Promise<boolean> {
+  try {
+    await execFileAsync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath]);
+    const { stderr } = await execFileAsync("/usr/bin/codesign", [
+      "--display",
+      "--verbose=4",
+      appPath,
+    ]);
+    return /Authority=Developer ID Application:/.test(stderr);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A verifier that runs its probe AT MOST ONCE per app path: the running bundle's signature
+ * cannot change while it runs, so the second caller for the same path reuses the first verdict —
+ * and a caller arriving mid-probe joins the same promise rather than starting a second `codesign`
+ * walk. Keyed by path, because a single-slot memo answers for whatever bundle asked FIRST, and
+ * `hasDeveloperIdSignature` derives the path from an argument callers may vary.
+ *
+ * A REJECTION is not a verdict, so it is not kept: the real probe never rejects (it catches and
+ * answers false), but an injected one can, and caching that promise would make one failed probe
+ * the permanent answer for the life of the process.
+ */
+export function createSignatureVerifier(
+  probe: (appPath: string) => Promise<boolean> = codesignHasDeveloperId,
+): (appPath: string) => Promise<boolean> {
+  const verdicts = new Map<string, Promise<boolean>>();
+  return (appPath) => {
+    const cached = verdicts.get(appPath);
+    if (cached) return cached;
+    const verdict = probe(appPath).catch((error) => {
+      verdicts.delete(appPath);
+      throw error;
+    });
+    verdicts.set(appPath, verdict);
+    return verdict;
+  };
+}
+
+const verifyDeveloperIdOnce = createSignatureVerifier();
+
+export async function hasDeveloperIdSignature(
   platform: NodeJS.Platform = process.platform,
   execPath: string = process.execPath,
-  verify: (appPath: string) => boolean = (appPath) => {
-    try {
-      execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], {
-        stdio: "ignore",
-      });
-      const result = spawnSync("/usr/bin/codesign", ["--display", "--verbose=4", appPath], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      return result.status === 0 && /Authority=Developer ID Application:/.test(result.stderr);
-    } catch {
-      return false;
-    }
-  },
-): boolean {
+  verify: (appPath: string) => boolean | Promise<boolean> = verifyDeveloperIdOnce,
+): Promise<boolean> {
   if (platform !== "darwin") return true;
   const appPath = resolve(dirname(execPath), "../..");
   return verify(appPath);
 }
 
-export function isAutoUpdateEligible(
+export async function isAutoUpdateEligible(
   isPackaged: boolean,
   platform: NodeJS.Platform = process.platform,
   execPath: string = process.execPath,
-  verify?: (appPath: string) => boolean,
-): boolean {
-  return isPackaged && hasDeveloperIdSignature(platform, execPath, verify);
+  verify?: (appPath: string) => boolean | Promise<boolean>,
+): Promise<boolean> {
+  return isPackaged && (await hasDeveloperIdSignature(platform, execPath, verify));
 }
 
 // Wire the Electron-maintained update client. `notifyUser: false`

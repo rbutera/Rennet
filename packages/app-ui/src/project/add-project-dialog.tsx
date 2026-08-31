@@ -235,7 +235,7 @@ export function AddProjectFlow({
             <button
               key={option.id}
               type="button"
-              className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-base text-ink hover:bg-raised sm:py-1.5"
+              className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-sm text-ink hover:bg-raised sm:py-1.5"
               onClick={() => void selectSource(option.id)}
             >
               <Icon
@@ -244,7 +244,7 @@ export function AddProjectFlow({
               />
               <span className="flex-1 truncate">{option.label}</span>
               {option.id === current?.id ? (
-                <Icon icon={Check} className="size-4 flex-none text-accent" />
+                <Icon icon={Check} className="size-4 flex-none" />
               ) : null}
             </button>
           ))}
@@ -253,7 +253,7 @@ export function AddProjectFlow({
               <Separator className="my-1" />
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-base text-ink hover:bg-raised sm:py-1.5"
+                className="flex w-full items-center gap-2 rounded-control px-2 py-2 text-left text-sm text-ink hover:bg-raised sm:py-1.5"
                 onClick={() => {
                   setSourceOpen(false);
                   openDialog("add-environment");

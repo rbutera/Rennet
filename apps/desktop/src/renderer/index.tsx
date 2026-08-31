@@ -24,7 +24,8 @@ if (preload.platform) {
 
 // The connections surface (#381, design D4): the renderer now mounts `ConnectionHost`
 // rather than `RennetApp` directly. The DEFAULT target is this machine's own daemon (the
-// loopback port the preload injected). A SAVED remote target is a `WsRennetBridge` at its
+// loopback port the preload ASKS MAIN for — the window is created before the daemon is healthy,
+// so the port arrives as a late endpoint rather than in argv). A SAVED remote target is a `WsRennetBridge` at its
 // host with its device token. The in-app directory browser (source-aware project selection)
 // retired the native directory picker AND the remote path prompt — `repository.choose` now
 // always arrives with a `{ path }` the browser supplied, on whichever source's daemon is
@@ -70,11 +71,19 @@ function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close
   };
 }
 
+// The daemon's port arrives over IPC, not argv: MAIN creates this window before the daemon is
+// healthy (perf audit §2/§6 H1), so it does not exist when this module runs. Asked PER CONNECT
+// ATTEMPT rather than cached, so a reconnect after MAIN re-ensured the daemon (update-apply
+// recovery) dials the daemon that replaced the old one. The supervisor sits in its ordinary
+// `connecting` state until this lands, and MAIN owns the failure surface if it never does.
+const localWsUrl = (): Promise<string> => preload.wsPort().then((port) => `ws://127.0.0.1:${port}`);
+
+// No `port`: the local target's endpoint is not known when this module runs. ConnectionTarget
+// already documents an absent port as "the shell's default", which is exactly what it is.
 const DEFAULT_TARGET: ConnectionTarget = {
   id: "local",
   label: "This machine",
   host: "127.0.0.1",
-  port: preload.wsPort,
 };
 
 // WSL connect flow (shell side): pick a WSL directory → resolve+attach that distro's in-distro
@@ -86,7 +95,7 @@ const resolveDaemonTarget = (path: string): Promise<DaemonResolution> =>
 function createConnection(target: ConnectionTarget): Connection {
   const isLocal = target.id === DEFAULT_TARGET.id;
   const url = isLocal
-    ? `ws://127.0.0.1:${preload.wsPort}`
+    ? localWsUrl
     : `ws://${target.port ? `${target.host}:${target.port}` : target.host}`;
   const supervisor = new ConnectionSupervisor({
     daemonId: target.id,

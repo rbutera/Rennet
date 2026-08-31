@@ -158,7 +158,10 @@ lanes depend on the entry mode:
   ask, Dispatch Round) and the change request is a single muted destination
   line; when nothing is left to ask, the surface IS the change request — title,
   drafted description, and **Open Pull Request** or **Open Merge Request** for
-  the resolved provider. Primacy flips with the state; nothing explains the flip.
+  the resolved provider. **Dispatch Round** is live only when that set contains
+  a comment or request-change the coding worker can address. Questions and
+  approvals remain staged review notes; Rennet never turns them into code work.
+  Primacy flips with the state; nothing explains the flip.
 - **Retrospective** — no exits.
 
 When the daemon **refuses to compose** an exit — a comment carrying a path that
@@ -168,6 +171,11 @@ carries on. There is nothing to dismiss and nothing to retry past: a refusal is 
 fact about this review, not a step in a ceremony. What it replaces is worse than
 the refusal itself, which is a Post Review that renders dead with no account of
 why, or a Changes surface that simply never becomes the change request.
+
+Round dispatch follows the same rule. The client waits for the daemon's
+`dispatched` receipt before opening the run view. An honest `dispatched: false`
+stays on Changes, names that no coding round started, and leaves every staged
+review note intact.
 
 ## Living drafts
 
@@ -271,8 +279,14 @@ for that marker before creating anything, so a retry after a lost response
 returns the review that already landed instead of posting a second one. When no
 matching review exists, the provider adapter reads the pull or merge request's
 live head and refuses a moved head before its first mutation. A matching marker
-or a durable local receipt proves the earlier operation already landed and wins
-over that freshness check.
+proves a one-step provider operation already landed; a durable local receipt proves
+the complete operation. Either wins over that freshness check. GitLab sends the
+descriptor's reviewed body without adding provider-only prose after preview; when
+GitLab needs the textual verdict, the core composer puts that label in the signed
+descriptor first. On an approving retry, the marker proves only that the note
+landed. The adapter also reads whether the current user approved. It returns the
+reused receipt when approval already landed, or rechecks the immutable head and
+performs the missing approval once.
 
 After the provider returns a result, the daemon persists the publication receipt
 by review and marker before it answers the client. `publish.receipt` reads that
@@ -317,14 +331,24 @@ The exits themselves:
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
-  identical re-dispatch retries. Board **regeneration** is the tail of the same
-  dispatch. Once the worker result is written to the durable dispatch record,
-  the round assembles its collation from the active patchset and runs the
-  drafting pipeline for real, minting a new generation and freezing the prior
-  one. A failure after that commit point — no active patchset to regenerate
-  over, or a regeneration that throws — closes the round's progress channel
-  with a terminal failure and leaves the checkpoint evidence intact for a
-  regeneration-only retry. Recovery also owns the earlier execution phases. If
+  identical re-dispatch retries. A branch round lands on the branch selected by
+  the New-chat row, never whichever branch happens to be checked out at the
+  repository path. An unmounted selected branch advances atomically from its
+  captured head; a selected branch checked out in this or a sibling worktree is
+  fast-forwarded there so its ref, index, and files remain coherent. Unrelated
+  local edits survive, while an overlapping edit leaves both the branch and
+  checkout unchanged. A restart adopts the durable landing receipt instead of
+  landing twice, and a no-op round does not invent a commit. Board
+  **regeneration** is the tail of the same dispatch. Once the worker result is
+  written to the durable dispatch record, the successor is captured from the
+  persisted source base OID through the landed worker OID. The selected base and
+  head branch names remain provenance, but later ref moves cannot change that
+  round result. The round then assembles its collation from the active patchset
+  and runs the drafting pipeline for real, minting a new generation and freezing
+  the prior one. A failure after that commit point — no active patchset
+  to regenerate over, or a regeneration that throws — closes the round's
+  progress channel with a terminal failure and leaves the checkpoint evidence
+  intact for a regeneration-only retry. Recovery also owns the earlier execution phases. If
   the daemon restarts while the coding worker is running, it reconstructs the
   worker's partial diff and changed-path evidence from the preserved detached
   worktree, records an actionable failed receipt, and never invokes that worker
@@ -478,7 +502,13 @@ that host's repair.
    against the round's own diff, not the asks that went out — a round can
    dispatch five asks and rework nothing, and the number has to be able to say
    so. A round whose report never drafted states no number rather than a zero it
-   cannot stand behind.
+   cannot stand behind. That line is a disclosure: opening it shows the round's
+   **trigger queue** (the asks it dispatched, named by the words the report's
+   outcomes recorded, and by their thread id when the report never accounted for
+   one) and its **run** (the gate the round ran and the commit range the worker
+   landed). Nothing there narrates what the drafters did: the per-lens carry and
+   rework verdicts exist only while a round is live and are never persisted onto
+   the record, so a settled round cannot recover them and does not pretend to.
 7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
    — a header control beside Map · Diff that exists exactly when a round has
    completed, never a disabled tab. One row per round; each opens that round's

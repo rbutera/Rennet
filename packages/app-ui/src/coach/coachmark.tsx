@@ -2,6 +2,7 @@ import { Popover, PopoverContent } from "@rennet/ui";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Icon } from "../components/icon";
 import { useCoachOptional, useCoachStore } from "./context";
 import { MARK_BY_ID, type MarkId } from "./marks";
 import { useCoachElement } from "./registry";
@@ -24,16 +25,29 @@ import type { CoachStore } from "./store";
 /** Breathing room between the anchor and the cutout edge. */
 const PAD = 6;
 
+/** How often the anchor's box is re-measured while a mark is on screen. */
+const MEASURE_MS = 250;
+
 interface AnchorBox {
   rect: DOMRect | null;
   radius: string;
 }
 
 /**
- * Track the anchor element's live box for the spotlight cutout. A rAF poll beats
- * wiring scroll listeners onto every ancestor: the mark is on screen for seconds,
- * and it stays glued through sidebar width transitions and board scroll without
- * knowing anything about the surfaces it decorates.
+ * Track the anchor element's live box for the spotlight cutout. Polling beats wiring
+ * scroll listeners onto every ancestor: the mark is on screen for seconds, and it stays
+ * glued through sidebar width transitions and board scroll without knowing anything
+ * about the surfaces it decorates.
+ *
+ * The cadence is 4Hz, not per-frame. `getBoundingClientRect` + `getComputedStyle` force
+ * style and layout, so the rAF loop this replaced made the renderer recalculate layout at
+ * display rate — 120Hz on a ProMotion panel — for as long as any mark was elected (perf
+ * audit 2026-08-31, §1 H3). The trade is up to 250ms of lag behind a fast scroll; the
+ * cutout is a soft 50%-scrim spotlight, so it reads as trailing rather than broken. A
+ * hidden document is measured not at all: an unseen mark is worth no layout whatsoever.
+ * Returning to the window measures on the spot rather than waiting for the next tick,
+ * because Electron throttles a hidden window's timers to about one wake a minute — a
+ * mark left over a control the window resized under would otherwise sit visibly wrong.
  */
 function useAnchorBox(el: Element | null): AnchorBox {
   const [box, setBox] = useState<AnchorBox>({ rect: null, radius: "0px" });
@@ -45,9 +59,8 @@ function useAnchorBox(el: Element | null): AnchorBox {
       setBox({ rect: null, radius: "0px" });
       return;
     }
-    let raf = 0;
-    const tick = () => {
-      raf = requestAnimationFrame(tick);
+    const measure = () => {
+      if (document.hidden) return;
       const rect = el.getBoundingClientRect();
       const radius = window.getComputedStyle(el).borderRadius;
       const next = `${rect.x},${rect.y},${rect.width},${rect.height},${radius}`;
@@ -55,8 +68,13 @@ function useAnchorBox(el: Element | null): AnchorBox {
       key.current = next;
       setBox({ rect, radius });
     };
-    tick();
-    return () => cancelAnimationFrame(raf);
+    measure();
+    const timer = setInterval(measure, MEASURE_MS);
+    document.addEventListener("visibilitychange", measure);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", measure);
+    };
   }, [el]);
 
   return box;
@@ -140,7 +158,7 @@ function ActiveCoachmark({ id }: { id: MarkId }) {
           className="w-78 gap-2 p-3.5 ring-1 ring-primary/30 motion-reduce:animate-none"
         >
           <div className="flex items-start gap-2">
-            <span className="flex-1 text-sm font-semibold tracking-tight text-foreground">
+            <span className="flex-1 text-12-5 font-semibold tracking-tight text-foreground">
               {mark.title}
             </span>
             <button
@@ -149,14 +167,14 @@ function ActiveCoachmark({ id }: { id: MarkId }) {
               aria-label="Dismiss tip"
               className="-mr-1 -mt-0.5 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
-              <X className="size-3.5" aria-hidden="true" />
+              <Icon icon={X} className="size-3.5" aria-hidden="true" />
             </button>
           </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">{mark.body}</p>
+          <p className="text-13 leading-[1.55] text-muted-foreground">{mark.body}</p>
           <button
             type="button"
             onClick={skipEverything}
-            className="w-fit text-xs text-muted-foreground/70 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground"
+            className="w-fit text-2xs text-muted-foreground/70 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground"
           >
             Skip all tips
           </button>

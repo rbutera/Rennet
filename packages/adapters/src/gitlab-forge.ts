@@ -62,6 +62,9 @@ const noteSchema = z.object({
   body: z.string(),
   web_url: z.url().nullable().optional(),
 });
+const approvalStateSchema = z.object({
+  approved_by: z.array(z.object({ user: userSchema })),
+});
 
 type MergeRequest = z.infer<typeof mergeRequestSchema>;
 type CommitStatus = z.infer<typeof statusSchema>;
@@ -165,22 +168,13 @@ function statusOutcome(status: CommitStatus): "passing" | "failing" | "pending" 
   return "pending";
 }
 
-function reviewBody(post: ForgeReviewPost): string {
-  const verdict =
-    post.event === "APPROVE"
-      ? "Approved"
-      : post.event === "REQUEST_CHANGES"
-        ? "Changes requested"
-        : "Commented";
-  return `**Rennet review verdict: ${verdict}**\n\n${post.body}`;
-}
-
 export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePublishPort {
   readonly capabilities: ForgeCapabilities = {
     supportsThreadResolution: false,
     supportsBatchedReview: false,
     supportsMultiLineAnchors: false,
     supportsFileLevelThreads: false,
+    requiresReviewVerdictInBody: true,
   };
 
   private readonly run: GitLabForgeCommandRunner;
@@ -435,7 +429,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     const note = {
       endpoint: `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}/notes`,
       method: "POST",
-      body: { body: reviewBody(post) },
+      body: { body: post.body },
     };
     return {
       requests:
@@ -474,31 +468,50 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
       : { reviewRef: String(note.id), url: noteUrl(target, note.id), reused: true };
   }
 
+  private async viewerHasApproved(target: ForgeReviewTarget): Promise<boolean> {
+    const viewer = await this.resolveViewer();
+    if (viewer === null) return false;
+    const stdout = await this.execute([
+      "api",
+      `projects/${projectPath(target.ref.repo)}/merge_requests/${target.ref.number}/approvals`,
+      "--hostname",
+      "gitlab.com",
+      "--output",
+      "json",
+    ]);
+    const state = decodeJson(stdout, approvalStateSchema, "GitLab approval state");
+    return state.approved_by.some(({ user }) => user.username === viewer);
+  }
+
+  private async assertCurrentHead(post: ForgeReviewPost): Promise<void> {
+    const current = decodeJson(
+      await this.execute([
+        "api",
+        `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}`,
+        "--hostname",
+        "gitlab.com",
+        "--output",
+        "json",
+      ]),
+      mergeRequestSchema,
+      "GitLab merge request",
+    );
+    if (current.sha !== post.target.headOid) {
+      throw new Error(
+        `Publish refused: the merge-request head moved from ${post.target.headOid} to ${current.sha}.`,
+      );
+    }
+  }
+
   async publishReview(post: ForgeReviewPost): Promise<ForgePublishOutcome> {
     const existing = await this.findExistingReview(post.target, post.marker);
     const requests = this.buildReviewRequest(post).requests;
     const noteRequest = requests[0];
     if (noteRequest === undefined) throw new Error("GitLab review note request is missing.");
 
-    let outcome = existing;
-    if (outcome === null) {
-      const current = decodeJson(
-        await this.execute([
-          "api",
-          `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}`,
-          "--hostname",
-          "gitlab.com",
-          "--output",
-          "json",
-        ]),
-        mergeRequestSchema,
-        "GitLab merge request",
-      );
-      if (current.sha !== post.target.headOid) {
-        throw new Error(
-          `Publish refused: the merge-request head moved from ${post.target.headOid} to ${current.sha}.`,
-        );
-      }
+    let outcome: ForgePublishOutcome;
+    if (existing === null) {
+      await this.assertCurrentHead(post);
       const stdout = await this.execute(
         [
           "api",
@@ -520,6 +533,12 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
         url: noteUrl(post.target, note.id),
         reused: false,
       };
+    } else {
+      outcome = existing;
+      const approvalRequest = requests[1];
+      if (approvalRequest === undefined) return outcome;
+      if (await this.viewerHasApproved(post.target)) return outcome;
+      await this.assertCurrentHead(post);
     }
 
     const approvalRequest = requests[1];

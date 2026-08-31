@@ -90,7 +90,7 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
           aria-label="Project name"
           placeholder={project.fallbackName}
           className={cn(
-            "w-56 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none",
+            "w-56 rounded-md border border-line bg-surface px-2 py-1.5 text-13 text-ink placeholder:text-ink-faint focus-visible:border-accent-line focus-visible:outline-none",
             !nameBacked && "cursor-not-allowed opacity-60",
           )}
         />
@@ -104,7 +104,7 @@ export function IdentitySection({ project }: { readonly project: SidebarProject 
             const picked = next[0] as ProjectIconName | undefined;
             if (picked) projection.setProjectGlyph(project.id, picked);
           }}
-          className="flex w-auto flex-wrap gap-1 bg-transparent p-0"
+          className="flex w-auto flex-wrap gap-1 border-transparent bg-transparent p-0"
         >
           {PROJECT_ICON_NAMES.map((iconName) => (
             <Toggle

@@ -163,6 +163,7 @@ export class GitHubForgeAdapter implements ForgePort {
     supportsBatchedReview: true,
     supportsMultiLineAnchors: true,
     supportsFileLevelThreads: true,
+    requiresReviewVerdictInBody: false,
   };
 
   constructor(private readonly config: GitHubForgeConfig) {}

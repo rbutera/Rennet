@@ -55,7 +55,7 @@ export function EnvironmentsPage() {
           <Button
             variant="outline"
             size="xs"
-            className="ml-2"
+            className="ml-2 rounded-md border-line px-2 py-1 text-xs font-medium text-foreground/90"
             onClick={() => openDialog("add-environment")}
           >
             <Icon icon={Plus} />

@@ -109,6 +109,9 @@ function fakeBridge(
     switch (name) {
       case "project.contextMap":
         return mapResult;
+      // The takeover header names the project it belongs to, so the surface asks for it.
+      case "projects.list":
+        return { projects: [{ id: "project-1", name: "atlas" }] };
       case "project.knowledgeDisposition": {
         // The store is authoritative: echo the persisted statement with the flipped
         // status (not the pre-disposition hypothesis) — the reconciliation the UI relies on.
@@ -166,10 +169,32 @@ describe("ContextMapView — the Context Map surface", () => {
           .length,
       ).toBeGreaterThan(0),
     );
-    expect(calls[0]).toEqual({ name: "project.contextMap", input: { projectId: "project-1" } });
+    // The map is read for the project under review. (Not `calls[0]`: the header's own
+    // `projects.list` is a child, and a child's effect runs before its parent's, so the
+    // ORDER of these two is React's, not this surface's — only their presence is ours.)
+    expect(calls).toContainEqual({
+      name: "project.contextMap",
+      input: { projectId: "project-1" },
+    });
+    // The 40px takeover header: an icon Back, the `project › Context Map` trail, `esc`.
+    const bar = container.querySelector(".context-map-bar");
+    expect(bar?.className).toContain("h-10");
+    expect(bar?.textContent).toContain("atlas");
+    expect(bar?.textContent).toContain("Context Map");
+    expect(bar?.textContent).toContain("esc");
+    expect(bar?.querySelector('[aria-label="Back"]')).not.toBeNull();
+    // The base the map was built from is its OWN strip under the header, not folded in.
+    expect(bar?.textContent).not.toContain("abcdef012345");
+    expect(container.querySelector(".context-map-base-strip")?.textContent).toContain(
+      "abcdef012345",
+    );
     const tree = container.querySelector(".context-map-tree");
-    expect(tree?.textContent).toContain("@rennet/core");
-    expect(tree?.textContent).toContain("@rennet/ui");
+    // Scope rows carry the SHORT name (the graph nodes and the prototype both do), so
+    // this is an exact-equality check on the row's own name span, not a `toContain`
+    // that "core" would satisfy just as happily against an unstripped "@rennet/core".
+    expect(
+      [...(tree?.querySelectorAll(".context-map-name") ?? [])].map((n) => n.textContent),
+    ).toEqual(["core", "ui"]);
     // Two files under core roll up to a "2f" count on its row.
     expect(tree?.textContent).toContain("2f");
   });
@@ -542,7 +567,7 @@ describe("ContextMapView — the Context Map surface", () => {
     );
     // Select @rennet/ui in the tree → its claim replaces core's.
     const uiRow = [...container.querySelectorAll(".context-map-tree .context-map-row")].find(
-      (row) => row.textContent?.includes("@rennet/ui"),
+      (row) => row.querySelector(".context-map-name")?.textContent === "ui",
     );
     fireEvent.click(uiRow as Element);
     await waitFor(() =>
@@ -639,5 +664,53 @@ describe("ContextMapView — the Context Map surface", () => {
       projectId: "project-1",
       question: "why doesn't ui import core?",
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The takeover/embedded split. `/projects/:id/map` OWNS the window: the 40px header
+// (Back, trail, `esc`) and the window Escape that keycap advertises. The session's
+// `?view=map` renders the same surface INSIDE the session's chrome, where that header
+// is a second Back and a second trail and that Escape fires from the chat composer.
+// Nothing exercised Escape at all before this pair, while the keycap claimed it worked.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ContextMapView — takeover chrome vs an in-session mount", () => {
+  it("leaves the map on a window Escape when it is the takeover, making the `esc` keycap true", async () => {
+    const { bridge } = fakeBridge();
+    const onBack = vi.fn();
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={onBack} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-tree")).not.toBeNull());
+    expect(container.querySelector(".context-map-bar")?.textContent).toContain("esc");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders no takeover chrome and installs no window Escape when embedded in a session", async () => {
+    const { bridge } = fakeBridge();
+    const onBack = vi.fn();
+    const { container } = mount(
+      <BridgeProvider bridge={bridge}>
+        <ProductContextMapView projectId="project-1" onBack={onBack} takeover={false} />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-tree")).not.toBeNull());
+    // No second header: no second Back, no second trail, no keycap promising an Escape.
+    expect(container.querySelector(".context-map-bar")).toBeNull();
+    expect(container.querySelector('[aria-label="Back"]')).toBeNull();
+    // Escape anywhere in the window (the session's chat composer) does NOT navigate the
+    // reviewer off the map. This assertion passes vacuously if the listener is simply
+    // never reached for some other reason — the takeover case above is what proves the
+    // same key press DOES fire the same handler when the listener is installed.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onBack).not.toHaveBeenCalled();
+    // The gate is on the CHROME, not the surface: the map itself still renders.
+    const baseStrip = container.querySelector(".context-map-base-strip");
+    expect(baseStrip).not.toBeNull();
+    expect(baseStrip?.querySelector('[role="heading"][aria-level="1"]')?.textContent).toBe(
+      "Context Map",
+    );
   });
 });

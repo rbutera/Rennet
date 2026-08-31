@@ -33,6 +33,12 @@ export function useSetAppearance(): MutationResult<"settings.setAppearance"> {
   return useMutation("settings.setAppearance", { invalidates: ["settings.get"] });
 }
 
+/** Replay the first-run welcome. Stales `settings.get`, which is what the startup gate
+ *  reads — so the refetch is what actually reopens the wizard, with no reload. */
+export function useResetWelcome(): MutationResult<"settings.resetWelcome"> {
+  return useMutation("settings.resetWelcome", { invalidates: ["settings.get"] });
+}
+
 /** Set / unbind (`null`) / reset (omit) a command's keybinding override (#44). */
 export function useSetKeybinding(): MutationResult<"settings.setKeybinding"> {
   return useMutation("settings.setKeybinding", { invalidates: ["settings.get"] });

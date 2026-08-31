@@ -16,7 +16,7 @@ export function ActionStep({ step }: { readonly step: ActionStepData }) {
   const detail = !isRunning && step.doneDetail !== undefined ? step.doneDetail : step.detail;
 
   return (
-    <div className="flex max-w-[640px] items-center gap-1.5 text-xs">
+    <div className="flex max-w-[640px] items-center gap-1.5 text-12-5">
       <Icon
         className={cn(
           "size-3 shrink-0",

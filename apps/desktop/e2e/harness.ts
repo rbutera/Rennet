@@ -150,8 +150,8 @@ export function modelFreeEnv(homeDir: string): NodeJS.ProcessEnv {
 export async function completeWelcome(page: Page, wsPort?: number): Promise<void> {
   const port =
     wsPort ??
-    (await page.evaluate(
-      () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+    (await page.evaluate(() =>
+      (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
     ));
   const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
   try {
@@ -200,7 +200,9 @@ export async function openWorkingTreeReview(page: Page): Promise<void> {
     .locator('[data-row="target"]', { hasText: /Current Checkout/ })
     .first()
     .click();
-  await expect(page.getByText(/^REVIEW ·/)).toBeVisible({ timeout: 180_000 });
+  // The board itself is the landmark. It was the `REVIEW · <repo>` eyebrow, which the board
+  // no longer carries — the board opens on the board.
+  await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 180_000 });
 }
 
 /** The review workspace's Diff view — the raw patchset, behind the top bar's session-view pill. */
@@ -227,6 +229,12 @@ export async function launchRennet(options: {
   userData: string;
   home: string;
   /**
+   * The default harness launches the detached daemon and therefore owns stopping it.
+   * A spec that has already claimed `daemon.json` with an injected in-process server
+   * keeps ownership itself; signalling that claim's pid would terminate Playwright.
+   */
+  ownsDaemon?: boolean;
+  /**
    * Override the model-free environment. The deterministic specs take the default;
    * the LIVE spec (F1 6.2) needs the reviewer's real `claude` on PATH and their real
    * HOME, because the whole point of it is to drive an actual harness turn.
@@ -247,12 +255,14 @@ export async function launchRennet(options: {
   // isolated daemon would orphan under its throwaway data dir. Wrap `close` (harness-only;
   // the specs stay untouched) so every `application.close()` also stops the daemon it
   // spawned, before the spec removes the data dir.
-  const nativeClose = application.close.bind(application);
-  application.close = async (...args: Parameters<ElectronApplication["close"]>) => {
-    const result = await nativeClose(...args);
-    await stopDaemon(options.userData);
-    return result;
-  };
+  if (options.ownsDaemon !== false) {
+    const nativeClose = application.close.bind(application);
+    application.close = async (...args: Parameters<ElectronApplication["close"]>) => {
+      const result = await nativeClose(...args);
+      await stopDaemon(options.userData);
+      return result;
+    };
+  }
   return { application };
 }
 

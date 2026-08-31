@@ -106,10 +106,10 @@ export function LensSwitcher({
             data-absent={absence === undefined ? undefined : absence}
             onClick={() => onSelect(lens)}
             className={cn(
-              "relative flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 font-medium text-sm transition-colors",
+              "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 py-2 font-medium text-13 transition-colors",
               active
                 ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             <span className="relative flex shrink-0">
@@ -118,7 +118,7 @@ export function LensSwitcher({
                 <span
                   data-testid="lens-open-count"
                   aria-hidden="true"
-                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-2xs text-destructive-foreground leading-none"
+                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
                 >
                   {openCount}
                 </span>

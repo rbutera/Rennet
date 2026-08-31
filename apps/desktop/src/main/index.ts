@@ -19,7 +19,12 @@ import {
   shell,
 } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
-import { armMacUpdateRelaunch, isAutoUpdateEligible, startAutoUpdateOnce } from "./auto-update";
+import {
+  type AutoUpdateHandle,
+  armMacUpdateRelaunch,
+  isAutoUpdateEligible,
+  startAutoUpdateOnce,
+} from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
 import {
   ensureDaemon,
@@ -65,10 +70,12 @@ const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const WSL_CONNECT_LOG_FILE = "wsl-connect.log";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
 const APP_ORIGIN = "app://rennet";
-// The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
-// process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
-// under contextIsolation + sandbox).
-const WS_PORT_ARG = "--rennet-ws-port=";
+// The renderer asks for the daemon's WS port here instead of reading it from argv. It CANNOT
+// be an argv constant any more: the window is created before the daemon is healthy (perf audit
+// §2/§6 H1), so the port does not exist when `webPreferences` is built. The handler answers
+// with the in-flight ensure, so a renderer that asks early simply waits — and a renderer that
+// asks after an update-recovery re-ensure gets the NEW daemon's port, not a stale one.
+const WS_PORT_CHANNEL = "rennet:ws-port";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -159,15 +166,19 @@ function registerDaemonForPathResolver(hostDataDir: string): void {
   ipcMain.handle(RESOLVE_DAEMON_FOR_PATH_CHANNEL, async (event, path: unknown) => {
     if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
     if (typeof path !== "string" || path.length === 0) return null;
+    const activeDataDir = daemonDataDir;
+    if (!activeDataDir) {
+      throw new Error("rennet: the daemon has not been started");
+    }
     const locus = detectLocus(path);
-    appendWslConnectLog(hostDataDir, { side: "main", event: "resolve", path, locus });
+    appendWslConnectLog(activeDataDir, { side: "main", event: "resolve", path, locus });
     try {
-      const port = await ensureDaemonForProject(path, hostDataDir);
-      appendWslConnectLog(hostDataDir, { side: "main", event: "resolved", path, locus, port });
+      const port = await ensureDaemonForProject(path, activeDataDir);
+      appendWslConnectLog(activeDataDir, { side: "main", event: "resolved", path, locus, port });
       return port;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      appendWslConnectLog(hostDataDir, { side: "main", event: "failed", path, locus, message });
+      appendWslConnectLog(activeDataDir, { side: "main", event: "failed", path, locus, message });
       throw error;
     }
   });
@@ -192,7 +203,7 @@ function registerAppProtocol(): void {
   });
 }
 
-async function createWindow(wsPort: number): Promise<void> {
+async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
     width: 1420,
     height: 900,
@@ -210,7 +221,7 @@ async function createWindow(wsPort: number): Promise<void> {
     // "darwin"` (the preload's `process.platform`). That reserve is the corner slot's
     // own geometry now — `packages/app-ui/src/shell/corner-slot.tsx`, which moves
     // between the sidebar header, the chat header and a floating pill as panes
-    // collapse, and carries the `navigation-titlebar` drag rule wherever it lands.
+    // collapse, and carries the `app-region-drag` utility wherever it lands.
     // No `trafficLightPosition` override: the default inset is what the corner slot's
     // 76px reserve and 40px strip were sized against (#557). NOT verified against a real
     // window — C20's E2E geometry check has never run (#569), so the clearance is
@@ -234,9 +245,9 @@ async function createWindow(wsPort: number): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      // The loopback WS port the renderer's WsRennetBridge connects to (#378). Appended
-      // to the renderer process argv; the sandboxed preload reads it and exposes it.
-      additionalArguments: [`${WS_PORT_ARG}${wsPort}`, `--rennet-version=${app.getVersion()}`],
+      // The app version stays a boot-time argv constant (it is known before the window is).
+      // The WS port is NOT: it arrives over `rennet:ws-port` once the daemon is healthy.
+      additionalArguments: [`--rennet-version=${app.getVersion()}`],
     },
   });
   // Keep the versioned title: Electron replaces the window title with the page's
@@ -262,9 +273,35 @@ async function createWindow(wsPort: number): Promise<void> {
   await window.loadURL(`${APP_ORIGIN}/`);
 }
 
-// The daemon's WS port for THIS run, so tray "Open Rennet" / macOS `activate` can recreate a
-// window that re-dials the same daemon after the last one closed (tray-presence residency).
-let activeWsPort: number | undefined;
+// The data dir this run supervises, set the moment boot starts its daemon ensure (perf audit
+// §2/§6 H1). Boot no longer waits on that ensure before creating the window, so the port is an
+// answer the renderer asks for over `rennet:ws-port` rather than a number the window is built
+// with, and tray "Open Rennet" / macOS `activate` recreate a window once boot has got this far.
+//
+// A dataDir, NOT the ensure's promise: publishing the promise meant one failed generation (an
+// update-apply recovery whose ensure rejected, a probe that threw) stayed on the channel
+// forever — every later invoke inherited that rejection until the process restarted. Calling
+// `ensureDaemon` per invoke costs nothing extra: it single-flights per dataDir, so concurrent
+// asks still fold onto one probe-and-spawn, a healthy daemon short-circuits on the probe, and a
+// failed generation self-heals because the next ask re-probes instead of replaying the failure.
+//
+// Cleared while a teardown is in flight (tray Quit completely, update apply), and that is the
+// whole point of it being a mutable dataDir: the renderer's bridge reconnects every 500ms and
+// asks per attempt, so a handler that kept ensuring would spawn a FRESH detached daemon out of
+// the reconnect the SIGTERM itself provoked — holding the bundle open exactly when
+// `quitAndInstall()` needs it released. Undefined, the handler answers its existing rejection,
+// the bridge classifies offline and keeps retrying, which is right for an app on its way out.
+let daemonDataDir: string | undefined;
+
+/** Hand the renderer the ensured daemon port. No sender check: this returns the same loopback
+ *  integer the renderer's own argv used to carry verbatim, so narrowing it protects nothing. */
+function registerWsPortHandler(): void {
+  ipcMain.handle(WS_PORT_CHANNEL, () =>
+    daemonDataDir
+      ? ensureDaemon(daemonDataDir)
+      : Promise.reject(new Error("rennet: the daemon has not been started")),
+  );
+}
 // Retained at module scope so the tray is never garbage-collected — Electron drops a Tray whose
 // only reference is a local, and in dev nothing else holds it, leaving a window-less, tray-less,
 // un-quittable resident app (review finding 1). Destroyed on `will-quit`.
@@ -295,7 +332,7 @@ async function ensureWindowShared(): Promise<void> {
     },
     showDock: () => dock.show(),
     recreate: async () => {
-      if (activeWsPort !== undefined) await createWindow(activeWsPort);
+      if (daemonDataDir) await createWindow();
     },
   });
   // A window lifecycle event is a cue that owned-daemon state may have moved — re-probe so the
@@ -314,6 +351,8 @@ const isPrimaryInstance = acquireSingleInstance({
 
 /** Tray "Quit completely": stop the OWNED daemon (graceful), then exit. No prompt (spec). */
 async function quitCompletely(dataDir: string): Promise<void> {
+  // Before the stop, not after: the renderer reconnects while the SIGTERM lands.
+  daemonDataDir = undefined;
   await stopOwnedDaemon(dataDir);
   app.quit();
 }
@@ -346,10 +385,24 @@ app.whenReady().then(async () => {
   // plain Node spawned detached and `rennet serve` runs the same code, so its data root must
   // not depend on whether Electron started it. `RENNET_USER_DATA` still overrides.
   const dataDir = process.env.RENNET_USER_DATA ?? defaultDataDir();
-  let wsPort: number;
-  try {
-    wsPort = await ensureDaemon(dataDir);
-  } catch (error) {
+  // Started here, awaited after the tray: on macOS this shells out to `codesign --deep`, which
+  // hashes every binary in the bundle (seconds). Kicked off now it overlaps the daemon spawn and
+  // the window, instead of stalling the boot path the way the synchronous probe did (§2 H2).
+  // `.catch` here, not at the use site: the promise floats across the daemon ensure and the
+  // window creation below, so a rejection in that gap is an unhandled rejection at boot. A
+  // probe that cannot answer is not a Developer-ID signature, which is "not eligible".
+  const autoUpdateEligible = isAutoUpdateEligible(app.isPackaged).catch(() => false);
+  // From here on `rennet:ws-port` can answer, by ensuring this data dir's daemon on demand.
+  daemonDataDir = dataDir;
+  // STARTED, not awaited (perf audit §2/§6 H1). This used to gate `new BrowserWindow`: a cold
+  // start paid a 500ms probe, a spawn and a 10s health poll — with a version-skew SIGTERM and
+  // its 5s claim-wait ahead of that — before a single pixel. The window needs the port only to
+  // build a ws:// URL, and the renderer now asks for that over IPC, so the shell paints and the
+  // connection supervisor sits in its ordinary `connecting` state while the daemon comes up.
+  // The failure surface is unchanged (name the cause, name daemon.log, quit) — it just lands on
+  // a visible window now instead of a black screen. Attached HERE so a rejection nobody asked
+  // for is still handled: the renderer may never invoke `rennet:ws-port`.
+  ensureDaemon(dataDir).catch((error) => {
     const cause = (error instanceof Error ? error.message : String(error))
       .replace(/\s+/g, " ")
       .trim();
@@ -358,8 +411,7 @@ app.whenReady().then(async () => {
       `Cause: ${cause}\nLog: ${join(dataDir, "daemon.log")}`,
     );
     app.quit();
-    return;
-  }
+  });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
@@ -367,35 +419,16 @@ app.whenReady().then(async () => {
   registerListWslDistrosHandler();
   registerFullDiskAccessHandler();
   registerDaemonForPathResolver(dataDir);
-  await createWindow(wsPort);
-  activeWsPort = wsPort;
+  registerWsPortHandler();
+  await createWindow();
 
   // Tray-resident presence (tray-presence). The updater and the tray share ONE readiness
   // store and ONE apply path: the tray subscribes to the same store the renderer badge
   // rides, and its update line calls the same apply. Auto-update is packaged-only (dev/test
   // have no feed); the tray always exists.
-  const update = isAutoUpdateEligible(app.isPackaged)
-    ? startAutoUpdateOnce(isTrustedAppUrl, console, {
-        prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
-        armRelaunchAfterApply:
-          process.platform === "darwin"
-            ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
-            : undefined,
-        recoverAfterApplyFailure: async () => {
-          activeWsPort = await ensureDaemon(dataDir);
-          for (const window of BrowserWindow.getAllWindows()) {
-            if (!window.isDestroyed()) window.destroy();
-          }
-          await ensureWindowShared();
-        },
-        reportApplyFailure: (message) => {
-          dialog.showErrorBox(
-            "Rennet couldn't install the update",
-            `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
-          );
-        },
-      })
-    : undefined;
+  // The tray reads `update` through its closures, so it is built now and the handle lands
+  // whenever the signature verdict started above resolves — boot never waits on codesign.
+  let update: AutoUpdateHandle | undefined;
   const tray = createTray({
     baseDir: __dirname,
     resourcesPath: process.resourcesPath,
@@ -409,9 +442,52 @@ app.whenReady().then(async () => {
     quitCompletely: () => void quitCompletely(dataDir),
   });
   trayController = tray;
-  update?.readiness.subscribe(() => tray.setUpdateReady(true));
-  // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
-  if (update?.readiness.ready) tray.setUpdateReady(true);
+  void autoUpdateEligible
+    .then((eligible) => {
+      if (!eligible) return;
+      update = startAutoUpdateOnce(isTrustedAppUrl, console, {
+        prepareToApply: async () => {
+          // Same reason as quitCompletely, and here it is the requirement auto-update.ts states
+          // outright: the installer cannot replace a bundle a daemon is still running from.
+          daemonDataDir = undefined;
+          try {
+            await prepareOwnedDaemonForUpdate(dataDir);
+          } catch (error) {
+            // Preparation failed before the updater entered its applying phase, so its later
+            // recovery hook will not run. Restore the port source while Rennet stays open.
+            daemonDataDir = dataDir;
+            throw error;
+          }
+        },
+        armRelaunchAfterApply:
+          process.platform === "darwin"
+            ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
+            : undefined,
+        recoverAfterApplyFailure: async () => {
+          // The apply did not happen, so the app is staying: put the data dir back BEFORE the
+          // ensure, so `rennet:ws-port` answers again and `ensureWindowShared` may recreate.
+          daemonDataDir = dataDir;
+          await ensureDaemon(dataDir);
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.isDestroyed()) window.destroy();
+          }
+          await ensureWindowShared();
+        },
+        reportApplyFailure: (message) => {
+          dialog.showErrorBox(
+            "Rennet couldn't install the update",
+            `Rennet could not complete the update, so the app stayed open.\n\n${message}\n\nTry the update again.`,
+          );
+        },
+      });
+      update.readiness.subscribe(() => tray.setUpdateReady(true));
+      // Staged-at-boot: readiness may already be set (seeded before the tray existed) — sync it.
+      if (update.readiness.ready) tray.setUpdateReady(true);
+    })
+    // The catch is on the DERIVED promise, not on `autoUpdateEligible`: what throws here is the
+    // callback (`startAutoUpdateOnce` on a bundle Squirrel.Mac refuses), and auto-update is
+    // best-effort — it degrades to no badge, never to an unhandled rejection.
+    .catch((error) => console.warn("rennet: auto-update setup failed", error));
 });
 
 // Reopen from the Dock/menu bar (macOS) recreates or focuses the window without a relaunch.

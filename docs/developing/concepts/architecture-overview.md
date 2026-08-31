@@ -67,6 +67,30 @@ The desktop reads the daemon claim, verifies it through `/healthz`, and reuses a
 healthy daemon. Otherwise it starts the server as a detached child and records
 the new claim. The daemon removes its claim during graceful shutdown.
 
+Startup does not wait for that. The desktop begins the daemon ensure and creates
+its window immediately, so the shell paints while the daemon probes, spawns, and
+comes up healthy. The window therefore cannot receive the WebSocket port as a
+launch argument: the renderer asks for it over the `rennet:ws-port` IPC channel,
+which ensures that data directory's daemon on demand and answers with its port.
+Until it answers, the renderer's connection supervisor sits in `connecting` and
+the app shows its ordinary pre-connection state. A daemon that never starts names
+its cause and `daemon.log`, then the app quits. Every ask ensures afresh, so an
+ask that follows a failed start re-probes instead of replaying that failure, and
+the window recreated after update-apply recovery dials whichever daemon is
+current. One exception: while a teardown is in flight — the tray's complete quit,
+or the update handoff — the channel refuses the ask instead of ensuring, so the
+renderer's reconnect cannot put a fresh daemon back on the bundle the installer
+is about to replace. A failed apply restores the data directory, and the next ask
+ensures again.
+
+Starts and stops for one data directory are serialized. Concurrent ensures fold
+into a single probe and spawn, and a stop — the tray's complete quit, or the
+update handoff below — never runs until the ensure ahead of it has spawned its
+daemon and verified it healthy, so the installer is never handed a daemon that
+started behind its back. Ensures fold only while no stop has been queued between
+them; one that arrives after a stop waits for that stop and probes again, rather
+than answering with a port the stop is about to kill.
+
 Closing every desktop window leaves the tray process and daemon available. The
 desktop's complete-quit action stops a daemon that the desktop owns.
 

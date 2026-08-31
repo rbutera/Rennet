@@ -266,7 +266,7 @@ describe("Agent enablement persists across leaving Settings (P1-2)", () => {
     );
     // Leave Settings entirely (the takeover unmounts), then reopen it.
     act(() => history.navigate("/new-chat"));
-    await first.findByText("No open branches or change requests yet.");
+    await first.findByText("no open branches or change requests yet");
     act(() => history.navigate("/settings/environments"));
     // The provider lives above the route switch, so the disabled choice survived.
     expect((await claudeToggle(first.findByRole)).getAttribute("aria-checked")).toBe("false");

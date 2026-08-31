@@ -17,8 +17,12 @@ describe("rennet store", () => {
       expect(store.getState().ui.sidebarOpen).toBe(true);
       store.getState().uiActions.toggleSidebar();
       expect(store.getState().ui.sidebarOpen).toBe(false);
-      store.getState().uiActions.toggleFold("node-a");
+      // An untouched node is ABSENT, not `false` — the surface owns the default.
+      expect(store.getState().ui.sidebarFolds["node-a"]).toBeUndefined();
+      store.getState().uiActions.setFolded("node-a", true);
       expect(store.getState().ui.sidebarFolds["node-a"]).toBe(true);
+      store.getState().uiActions.setFolded("node-a", false);
+      expect(store.getState().ui.sidebarFolds["node-a"]).toBe(false);
     });
 
     it("opens the command menu with a mode; an omitted mode is search", () => {

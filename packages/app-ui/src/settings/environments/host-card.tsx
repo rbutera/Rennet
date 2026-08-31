@@ -152,7 +152,7 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
           <span className="truncate text-sm font-medium text-ink">{host.name}</span>
         )}
         {host.os === "wsl" ? (
-          <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 font-mono text-2xs text-ink-soft">
+          <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 font-mono text-10 text-ink-soft">
             WSL
           </span>
         ) : null}

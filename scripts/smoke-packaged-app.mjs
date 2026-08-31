@@ -33,11 +33,19 @@ const updateLifecycleFragments = {
     'autoUpdater.on("error", (error) => void handleUpdaterError(error))',
   ],
   main: [
-    "prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir)",
+    "prepareToApply: async () => {",
+    "await prepareOwnedDaemonForUpdate(dataDir);",
+    "daemonDataDir = dataDir;\n            throw error;",
+    "const activeDataDir = daemonDataDir;",
+    "ensureDaemonForProject(path, activeDataDir)",
     "armRelaunchAfterApply:",
     "armMacUpdateRelaunch(",
     "recoverAfterApplyFailure: async () => {",
-    "activeWsPort = await ensureDaemon(dataDir);",
+    // The recovery re-ensures the daemon before recreating windows. There is no published
+    // promise to go stale: boot creates the window before the daemon is healthy (perf audit
+    // §2/§6 H1) and the renderer's every `rennet:ws-port` ask runs `ensureDaemon` per invoke,
+    // which single-flights per dataDir and self-heals after a failed generation.
+    "await ensureDaemon(dataDir);",
     "await ensureWindowShared();",
     "applyUpdate: () => void update?.applyUpdate()",
   ],

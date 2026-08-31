@@ -125,6 +125,17 @@ export function actionEntries(): MenuEntry[] {
       keywords: ["add", "environment", "host", "remote"],
       action: { kind: "open-dialog", dialog: "add-environment" },
     },
+    // Replays the first-run welcome. A hand-authored Actions row rather than a
+    // `exposure.commandMenu` registry row, because the registry's label IS the command
+    // id (#465) and "settings.resetWelcome" is not a thing to read in a menu. The action
+    // still dispatches the real command through the one seam — no second code path.
+    {
+      id: "action:replay-welcome",
+      group: "Actions",
+      title: "Replay the first-run welcome",
+      keywords: ["welcome", "onboarding", "first run", "replay", "setup", "reset"],
+      action: { kind: "registry-command", command: "settings.resetWelcome" },
+    },
   ];
 }
 

@@ -41,8 +41,9 @@ test("shell navigation and project rename reach real destinations", async () => 
     await addProject(page, repository);
     await openWorkingTreeReview(page);
 
-    // On the board: its own eyebrow is the marker for "the default view is on screen".
-    const board = page.getByText(/^REVIEW ·/);
+    // On the board: the board element is the marker for "the default view is on screen".
+    // (It was the `REVIEW ·` eyebrow, which the board no longer carries.)
+    const board = page.locator('[data-kind="lens-board-view"]');
     const map = page.locator(".context-map-title");
     await expect(board).toBeVisible();
     await expect(map).toHaveCount(0);

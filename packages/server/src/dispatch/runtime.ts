@@ -673,6 +673,7 @@ export interface DispatchDeps {
     start(input: {
       projectId: string;
       commandId: string;
+      replacesSessionId?: string;
       target?: {
         branch: string;
         prNumber?: number;

@@ -15,6 +15,8 @@ export interface HandoffViewProps {
   readonly review: Review;
   /** The Post Review egress, threaded to the teammate-PR lane (wired in cluster 6). */
   readonly onPost?: PostReviewLaneProps["onPost"];
+  /** Capture a fresh immutable review after the provider reports that the head moved. */
+  readonly onRecapture?: PostReviewLaneProps["onRecapture"];
   /** Durable publication receipt for the current review composition. */
   readonly receipt?: PostReviewLaneProps["receipt"];
   /** The composed outbound review the Post Review lane previews and posts (exact-preview). */
@@ -25,6 +27,8 @@ export interface HandoffViewProps {
   readonly pr?: RoundsLanesProps["pr"];
   /** Dispatch a work-order round from the rounds lanes (the C9 run is out of scope). */
   readonly onDispatch?: RoundsLanesProps["onDispatch"];
+  /** The accepted/refused state of the current dispatch request. */
+  readonly dispatchState?: RoundsLanesProps["dispatchState"];
   /** The Open-Pull-Request egress, threaded to the rounds lanes (wired in cluster 6). */
   readonly onOpenPr?: RoundsLanesProps["onOpenPr"];
   /** Selection-steer Revise — B11's `review.reviseSpan`, threaded to whichever lane renders. */
@@ -36,11 +40,13 @@ export interface HandoffViewProps {
 export function HandoffView({
   review,
   onPost,
+  onRecapture,
   receipt,
   reviewDraft,
   onSetVerdict,
   pr,
   onDispatch,
+  dispatchState,
   onOpenPr,
   onRevise,
   unavailable,
@@ -52,6 +58,7 @@ export function HandoffView({
       <PostReviewLane
         review={review}
         onPost={onPost}
+        onRecapture={onRecapture}
         receipt={receipt}
         draft={reviewDraft}
         onSetVerdict={onSetVerdict}
@@ -64,6 +71,7 @@ export function HandoffView({
       review={review}
       pr={pr}
       onDispatch={onDispatch}
+      dispatchState={dispatchState}
       onOpenPr={onOpenPr}
       onRevise={onRevise}
       unavailable={unavailable}

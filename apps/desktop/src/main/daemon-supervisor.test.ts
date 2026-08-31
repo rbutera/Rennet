@@ -25,6 +25,7 @@ import {
   ensureDaemonForProject,
   isOwnedDaemonRunning,
   prepareOwnedDaemonForUpdate,
+  SKEW_RESTART_LIMIT,
   stopOwnedDaemon,
 } from "./daemon-supervisor";
 
@@ -313,12 +314,17 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     return dir;
   }
 
-  function info(pid: number, wsPort: number, protocolVersion = PROTOCOL_VERSION): DaemonInfo {
+  function info(
+    pid: number,
+    wsPort: number,
+    protocolVersion = PROTOCOL_VERSION,
+    version = "1.2.3",
+  ): DaemonInfo {
     return {
       pid,
       wsPort,
       protocolVersion,
-      version: "1.2.3",
+      version,
       startedAt: "2026-08-18T00:00:00.000Z",
     };
   }
@@ -433,16 +439,19 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  it("restarts a HEALTHY daemon running an older server version — the daemon updates with the app", async () => {
+  it("restarts a HEALTHY older-version daemon, resolves on the NEW one, and ends the skew streak", async () => {
     // Field bug (lancelot, 2026-08-19): a healthy 0.2.14 daemon kept serving a 0.2.18 app
     // forever because only protocol skew triggered a restart, so shipped fixes never reached it.
     const dataDir = makeDir();
-    const old = info(666, 45_000);
-    const spawned = info(777, 46_000);
+    const old = info(666, 45_000); // ships 1.2.3 while the app below ships 1.2.4
+    const spawned = info(777, 46_000, PROTOCOL_VERSION, "1.2.4"); // the bundled daemon, ours
     writeDaemonFile(dataDir, old);
     const kill = vi.fn(() => removeDaemonFile(dataDir, old.pid));
     const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
     const warn = vi.fn();
+    // Two skew restarts already spent (one short of the cap), so the clean resolve below has a
+    // streak to end. Without the clear, one skew today plus two next week bricks the data dir.
+    const skewRestarts = new Map<string, number>([[dataDir, SKEW_RESTART_LIMIT - 1]]);
 
     const port = await ensureDaemon(dataDir, {
       probe: async () => healthyVerdict(old),
@@ -455,13 +464,142 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       serverVersion: "1.2.4",
       env: {},
       warn,
+      skewRestarts,
     });
 
     expect(kill).toHaveBeenCalledWith(old.pid, "SIGTERM");
     expect(spawn).toHaveBeenCalledOnce();
+    // The port is the RESPAWNED daemon's, and the re-check let it through because its version
+    // matched — not because the ensure stopped asking after the kill.
     expect(port).toBe(spawned.wsPort);
+    expect(port).not.toBe(old.wsPort);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("restarting the bundled daemon"));
     expect(readDaemonFile(dataDir)).toEqual(spawned);
+    expect(skewRestarts.has(dataDir)).toBe(false);
+  });
+
+  it("re-checks the RESPAWNED daemon and retries in the SAME ensure when it comes back skewed", async () => {
+    // The gap this closes: after the SIGTERM the ensure accepted whatever answered, on protocol
+    // compatibility alone. A foreign 1.2.3 daemon that won the respawn race — the very daemon
+    // whose skew triggered the restart — was handed to the renderer for the rest of the session.
+    const dataDir = makeDir();
+    const foreign = info(1001, 49_000); // 1.2.3; the app below ships 1.2.4
+    const ours = info(1002, 49_100, PROTOCOL_VERSION, "1.2.4");
+    const kill = vi.fn();
+    const spawn = vi.fn();
+    let healthyCalls = 0;
+    const waitForHealthy = vi.fn(async () => {
+      healthyCalls += 1;
+      // The first respawn loses the race to the foreign daemon; the second wins.
+      return healthyCalls === 1 ? healthyVerdict(foreign) : healthyVerdict(ours);
+    });
+    const skewRestarts = new Map<string, number>();
+
+    const port = await ensureDaemon(dataDir, {
+      probe: async () => healthyVerdict(foreign),
+      spawn,
+      waitForHealthy,
+      kill,
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.4",
+      env: {},
+      warn: vi.fn(),
+      skewRestarts,
+    });
+
+    expect(port).toBe(ours.wsPort);
+    expect(port).not.toBe(foreign.wsPort); // the skewed identity is never the answer
+    // Two restarts inside ONE ensure — the retry is the loop, not a second caller.
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledTimes(2);
+    expect(waitForHealthy).toHaveBeenCalledTimes(2);
+    expect(skewRestarts.has(dataDir)).toBe(false); // resolved clean, so the streak is over
+  });
+
+  it("folds two concurrent ensures for one dataDir into ONE probe and ONE spawn", async () => {
+    // Without this, two renderer `resolveDaemonForPath` calls both read `absent` and both spawn,
+    // and the two daemons race over daemon.json (perf audit §2 H3).
+    const dataDir = makeDir();
+    const spawned = info(888, 47_000);
+    const inFlight = new Map<string, Promise<number>>();
+    let releaseProbe: () => void = () => undefined;
+    const probeGate = new Promise<void>((r) => {
+      releaseProbe = r;
+    });
+    const probe = vi.fn(async (): Promise<DaemonVerdict> => {
+      await probeGate;
+      return { kind: "absent" };
+    });
+    const spawn = vi.fn(() => writeDaemonFile(dataDir, spawned));
+    const deps = {
+      probe,
+      spawn,
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+      inFlight,
+    };
+
+    // Both ensures start before the probe settles; the second must join the in-flight one.
+    const first = ensureDaemon(dataDir, deps);
+    const second = ensureDaemon(dataDir, deps);
+    releaseProbe();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a).toBe(spawned.wsPort);
+    expect(b).toBe(spawned.wsPort);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(inFlight.has(dataDir)).toBe(false); // cleared once settled
+
+    // …and the fold is IN-FLIGHT only: a later ensure re-probes rather than reusing a port.
+    await ensureDaemon(dataDir, deps);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps a daemon that keeps coming back skewed, and never hands out its port", async () => {
+    // The daemon at this dataDir is not ours and never becomes ours: the probe AND every
+    // respawn answer on 1.2.3 while the app ships 1.2.4 (a second installation writing the same
+    // claim). Left unbounded that is a SIGTERM-and-respawn storm (perf audit §2 H3); left
+    // unchecked after the respawn it is worse — the renderer talks to the foreign daemon.
+    const dataDir = makeDir();
+    const foreign = info(999, 48_000);
+    const kill = vi.fn();
+    const spawn = vi.fn();
+    const skewRestarts = new Map<string, number>();
+    const deps = {
+      probe: async () => healthyVerdict(foreign),
+      spawn,
+      waitForHealthy: async () => healthyVerdict(foreign),
+      kill,
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.4",
+      env: {},
+      warn: vi.fn(),
+      skewRestarts,
+    };
+
+    // It REJECTS rather than resolving: there is no port here a caller may be given, and
+    // `foreign.wsPort` is the one a version-blind ensure would have returned.
+    await expect(ensureDaemon(dataDir, deps)).rejects.toThrow(join(dataDir, "daemon.log"));
+    // The whole cap is spent inside that one ensure — one kill and one spawn per restart.
+    expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(skewRestarts.get(dataDir)).toBe(SKEW_RESTART_LIMIT);
+
+    // A later open still refuses, and signals nothing more: the counts stand where they were.
+    await expect(ensureDaemon(dataDir, deps)).rejects.toThrow(join(dataDir, "daemon.log"));
+    expect(kill).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
+    expect(spawn).toHaveBeenCalledTimes(SKEW_RESTART_LIMIT);
   });
 });
 
@@ -585,5 +723,419 @@ describe("createWslRunner (real short-lived process → {stdout, code}, never th
     const { stdout, code } = await run({ file: "/nonexistent/definitely-not-here", args: [] });
     expect(code).not.toBe(0);
     expect(stdout).toBe("");
+  });
+});
+
+describe("start/stop serialization per dataDir (installer handoff safety)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "rennet-daemon-ops-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function info(pid: number, wsPort: number): DaemonInfo {
+    return {
+      pid,
+      wsPort,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "1.2.3",
+      startedAt: "2026-08-18T00:00:00.000Z",
+    };
+  }
+
+  /** A gate a test opens by hand, so an op can be held mid-flight. */
+  function gate(): { wait: Promise<void>; open: () => void } {
+    let open: () => void = () => undefined;
+    const wait = new Promise<void>((r) => {
+      open = r;
+    });
+    return { wait, open };
+  }
+
+  it("holds a stop until an in-flight ensure has spawned AND health-verified the daemon", async () => {
+    // The reviewer finding this exists for: `prepareOwnedDaemonForUpdate` probed `absent` while
+    // an ensure was mid-spawn, reported "stopped", and the installer got a LIVE bundle-backed
+    // daemon it had been told was gone.
+    // BOTH phases are gated by hand. A lock released after the spawn but before the health poll
+    // would still hand the installer a live daemon (the spawned process is up; only the ensure's
+    // proof of it is missing), so this test fails unless the stop waits for `waitForHealthy`.
+    const dataDir = makeDir();
+    const spawned: DaemonInfo = info(777, 46_000);
+    const ops = new Map<string, Promise<unknown>>();
+    const order: string[] = [];
+    const probeGate = gate();
+    const healthGate = gate();
+
+    const ensuring = ensureDaemon(dataDir, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      probe: async () => {
+        await probeGate.wait;
+        return { kind: "absent" };
+      },
+      spawn: () => {
+        order.push("spawn");
+      },
+      waitForHealthy: async () => {
+        await healthGate.wait;
+        order.push("healthy");
+        return healthyVerdict(spawned);
+      },
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    // The stop arrives WHILE the ensure is parked in its probe.
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    // Give the stop every chance to run early — it must not have probed yet.
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]);
+
+    probeGate.open();
+    // The daemon is SPAWNED and the ensure is parked in its health poll: still held.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["spawn"]);
+
+    healthGate.open();
+    expect(await ensuring).toBe(spawned.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    // Sequence, not membership: the whole ensure finished before the stop looked at the daemon.
+    expect(order).toEqual(["spawn", "healthy", "stop-probe"]);
+  });
+
+  it("holds an ensure until an in-flight stop has SIGTERMed and watched the claim clear", async () => {
+    // The reverse race: the installer handoff is underway and a project open (or the tray's
+    // ensure) arrives. It must not spawn a daemon into the middle of the stop — and "the middle"
+    // is mostly the window AFTER the SIGTERM, while the stop is still polling for the dying
+    // daemon to drop its claim. A spawn there writes a fresh daemon.json over the one being
+    // waited on, so the stop times out reporting failure while a live daemon runs.
+    // This stop therefore has real work to finish (a healthy claim, a kill, a poll held open by
+    // the test); an `absent` stop would return before the ensure could possibly interleave and
+    // would pass no matter when the lock was released.
+    const dataDir = makeDir();
+    const dying: DaemonInfo = info(779, 46_200);
+    const spawned: DaemonInfo = info(778, 46_100);
+    const ops = new Map<string, Promise<unknown>>();
+    const order: string[] = [];
+    const claimGate = gate();
+    let claimCleared = false;
+
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return healthyVerdict(dying);
+      },
+      kill: () => {
+        order.push("stop-kill");
+      },
+      readClaim: () => (claimCleared ? null : dying),
+      isAlive: () => !claimCleared,
+      // The claim only clears when the TEST releases it, so the stop parks inside its poll.
+      sleep: async () => {
+        order.push("stop-poll");
+        await claimGate.wait;
+      },
+      warn: vi.fn(),
+    });
+
+    const ensuring = ensureDaemon(dataDir, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      probe: async () => ({ kind: "absent" }),
+      spawn: () => {
+        order.push("spawn");
+      },
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    // Signalled and parked mid-poll: the ensure must not have spawned into that window.
+    expect(order).toEqual(["stop-probe", "stop-kill", "stop-poll"]);
+
+    claimCleared = true;
+    claimGate.open();
+    expect(await stopping).toEqual({ kind: "stopped" });
+    expect(await ensuring).toBe(spawned.wsPort);
+    expect(order).toEqual(["stop-probe", "stop-kill", "stop-poll", "spawn"]);
+  });
+
+  it("a REJECTED ensure does not wedge the chain for every later stop", async () => {
+    // The chain's tail must settle either way. `ensureDaemon` is the op that genuinely rejects
+    // (the skew cap, a probe that throws) — if its rejection stayed on the tail, the tray's
+    // "Quit completely" and the installer handoff would both hang forever afterwards.
+    const dataDir = makeDir();
+    const ops = new Map<string, Promise<unknown>>();
+
+    await expect(
+      ensureDaemon(dataDir, {
+        ops,
+        inFlight: new Map<string, Promise<number>>(),
+        probe: async () => {
+          throw new Error("probe exploded");
+        },
+        spawn: vi.fn(),
+        waitForHealthy: async () => healthyVerdict(info(781, 46_400)),
+        kill: vi.fn(),
+        readClaim: () => null,
+        entryPath: "/bundle/server.cjs",
+        execPath: "/electron",
+        serverVersion: "1.2.3",
+        env: {},
+        warn: vi.fn(),
+      }),
+    ).rejects.toThrow("probe exploded");
+
+    const stopped = await stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => ({ kind: "absent" }),
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    expect(stopped).toEqual({ kind: "stopped" });
+  });
+
+  it("serializes per dataDir, not globally: an unrelated data dir is never held", async () => {
+    const held = makeDir();
+    const other = makeDir();
+    const spawned: DaemonInfo = info(780, 46_300);
+    const ops = new Map<string, Promise<unknown>>();
+    const stopGate = gate();
+
+    const stopping = stopOwnedDaemon(held, {
+      ops,
+      probe: async () => {
+        await stopGate.wait;
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+
+    // `other` resolves while `held` is still parked — a global lock would deadlock this await.
+    const port = await ensureDaemon(other, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      probe: async () => ({ kind: "absent" }),
+      spawn: vi.fn(),
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+    expect(port).toBe(spawned.wsPort);
+
+    stopGate.open();
+    expect(await stopping).toEqual({ kind: "stopped" });
+  });
+  it("does NOT fold a later ensure onto an in-flight one once a stop has been queued between them", async () => {
+    // Ensure A is in flight, a stop lands behind it, then ensure B arrives. Single-flighting on
+    // its own folds B onto A — A is still the in-flight entry — and B resolves with the port the
+    // stop is about to kill. B must instead queue behind the stop and probe afresh.
+    const dataDir = makeDir();
+    const first: DaemonInfo = info(790, 46_500);
+    const second: DaemonInfo = info(791, 46_600);
+    const ops = new Map<string, Promise<unknown>>();
+    const inFlight = new Map<string, Promise<number>>();
+    const order: string[] = [];
+    const probeGate = gate();
+    let probes = 0;
+    let spawns = 0;
+    const ensureDeps = {
+      ops,
+      inFlight,
+      probe: async (): Promise<DaemonVerdict> => {
+        probes += 1;
+        // A parks here so the stop and B both arrive while it is in flight.
+        if (probes === 1) await probeGate.wait;
+        order.push(`ensure-probe-${probes}`);
+        return { kind: "absent" };
+      },
+      spawn: () => {
+        spawns += 1;
+        order.push(`spawn-${spawns}`);
+      },
+      waitForHealthy: async () => healthyVerdict(spawns === 1 ? first : second),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    };
+
+    const ensuringA = ensureDaemon(dataDir, ensureDeps);
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    const ensuringB = ensureDaemon(dataDir, ensureDeps);
+
+    probeGate.open();
+    expect(await ensuringA).toBe(first.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    // The load-bearing assertion: B answers with ITS daemon's port, not the one the stop killed.
+    expect(await ensuringB).toBe(second.wsPort);
+    expect(order).toEqual(["ensure-probe-1", "spawn-1", "stop-probe", "ensure-probe-2", "spawn-2"]);
+  });
+
+  it("leaves the in-flight entry to the ensure that refused to fold, so a third caller still folds", async () => {
+    // The other half of the no-fold-across-a-stop rule: once B refuses to fold, B OWNS the
+    // in-flight entry. A's `finally` must clear the map only while the entry is still A's.
+    // Clearing it unconditionally strands B — a third caller arriving while B is mid-probe
+    // reads an empty map and queues a THIRD probe-and-spawn behind it, which is the very
+    // double-spawn single-flighting exists to stop.
+    const dataDir = makeDir();
+    const first: DaemonInfo = info(794, 46_900);
+    const second: DaemonInfo = info(795, 47_100);
+    const ops = new Map<string, Promise<unknown>>();
+    const inFlight = new Map<string, Promise<number>>();
+    const probeGateA = gate();
+    const probeGateB = gate();
+    let probes = 0;
+    let spawns = 0;
+    const ensureDeps = {
+      ops,
+      inFlight,
+      probe: async (): Promise<DaemonVerdict> => {
+        probes += 1;
+        // A parks so the stop and B both arrive behind it; B parks so it is still IN FLIGHT
+        // when the third caller asks — the only window in which folding is even possible.
+        if (probes === 1) await probeGateA.wait;
+        if (probes === 2) await probeGateB.wait;
+        return { kind: "absent" };
+      },
+      spawn: () => {
+        spawns += 1;
+      },
+      waitForHealthy: async () => healthyVerdict(spawns === 1 ? first : second),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    };
+
+    const ensuringA = ensureDaemon(dataDir, ensureDeps);
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => ({ kind: "absent" }),
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    const ensuringB = ensureDaemon(dataDir, ensureDeps);
+
+    probeGateA.open();
+    // Awaiting A's returned promise runs its `finally` — the statement under test — before the
+    // third caller below ever asks.
+    expect(await ensuringA).toBe(first.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+
+    const ensuringC = ensureDaemon(dataDir, ensureDeps);
+    probeGateB.open();
+    expect(await ensuringB).toBe(second.wsPort);
+    expect(await ensuringC).toBe(second.wsPort);
+    // The load-bearing pair: C joined B rather than starting a generation of its own.
+    expect(probes).toBe(2);
+    expect(spawns).toBe(2);
+    expect(inFlight.has(dataDir)).toBe(false); // …and B cleared its own entry on the way out.
+  });
+
+  it("keeps a queued stop out of a skew restart's kill→respawn window", async () => {
+    // A skew restart is a kill, a bounded wait for the dead daemon's claim to clear, then a
+    // spawn — the one ensure path that signals a process itself. A stop probing inside that
+    // window reads `absent` (old daemon gone, new one not spawned yet) and reports "stopped"
+    // while a respawn is already coming: the installer-handoff lie the chain exists to prevent.
+    // It spends the LAST restart the cap allows, so the capped path is the one interleaved.
+    const dataDir = makeDir();
+    const skewed: DaemonInfo = { ...info(792, 46_700), version: "0.0.1" };
+    const fresh: DaemonInfo = info(793, 46_800);
+    const ops = new Map<string, Promise<unknown>>();
+    const skewRestarts = new Map<string, number>([[dataDir, SKEW_RESTART_LIMIT - 1]]);
+    const order: string[] = [];
+    let claimCleared = false;
+
+    const ensuring = ensureDaemon(dataDir, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      skewRestarts,
+      probe: async () => {
+        order.push("ensure-probe");
+        return healthyVerdict(skewed);
+      },
+      spawn: () => {
+        order.push("spawn");
+      },
+      waitForHealthy: async () => healthyVerdict(fresh),
+      kill: () => {
+        order.push("kill");
+      },
+      // Held by the test: the ensure sits in `waitForClaimGone` until the claim goes.
+      readClaim: () => (claimCleared ? null : skewed),
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+
+    // Signalled, and parked waiting for the claim: nothing respawned, nothing stopped.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(order).toEqual(["ensure-probe", "kill"]);
+
+    claimCleared = true;
+    expect(await ensuring).toBe(fresh.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    expect(order).toEqual(["ensure-probe", "kill", "spawn", "stop-probe"]);
+    // Spent, then forgiven: the cap counts CONSECUTIVE restarts and this ensure ended healthy.
+    expect(skewRestarts.get(dataDir)).toBeUndefined();
   });
 });

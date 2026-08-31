@@ -2,9 +2,11 @@ import { cn } from "@rennet/ui";
 import { basename } from "../canvas/symbol";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The shared `basename:line` chip (C4): ONE presentational component for code-tabs' and
-// rich-text's citation chips, instead of each hand-rolling its own markup (the spike
-// duplicated it). Full path stays in the title for hover.
+// The standalone `basename:line` chip (C4). It is what `AnchorReveal` reveals citations
+// with: chips sitting on their own line, where the border is what makes them read as
+// citations. The two surfaces that DON'T use it both sit inside something else — a
+// CodeTabs tab strip and a citation mid-sentence — and each carries its own quieter
+// treatment there. Full path stays in the title for hover.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ReferenceChipProps {

@@ -1,13 +1,13 @@
 import { cn } from "@rennet/ui";
-import { Info, TriangleAlert } from "lucide-react";
-import { Icon } from "../../components/icon";
 import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { useBoardPatchsetId } from "./element-context";
 
-// `callout` (C05 3.1) — an emphasized aside. `variant` picks the tone: `warn` reads
-// danger-toned (the one warning hue the palette carries), anything else reads as a
-// neutral `info` aside. Body is markdown through `RichText`. Theme tokens only.
+// `callout` (C05 3.1) — an emphasized aside. `variant` picks the tone: `warn` takes a
+// barely-there danger wash and its border, anything else reads as a neutral `info`
+// aside. No icon column: the tint IS the signal, and a glyph on every aside turns a
+// quiet emphasis into an alarm (prototype `lens-board.tsx:333-341`). Body is markdown
+// through `RichText`. Theme tokens only.
 
 export function CalloutElement({ element }: { readonly element: ElementOf<"callout"> }) {
   const { variant, body } = element.data;
@@ -19,19 +19,15 @@ export function CalloutElement({ element }: { readonly element: ElementOf<"callo
       data-variant={variant}
       data-element-id={element.id}
       className={cn(
-        "flex gap-2 rounded-md border px-3 py-2.5",
-        warn ? "border-danger/40 bg-danger-soft" : "border-border bg-secondary/40",
+        "rounded-md border px-3 py-2",
+        warn ? "border-destructive/40 bg-destructive/5" : "border-border bg-secondary/40",
       )}
     >
-      <Icon
-        icon={warn ? TriangleAlert : Info}
-        className={cn("mt-0.5 size-4 shrink-0", warn ? "text-danger" : "text-muted-foreground")}
-      />
       <QuoteHighlightLayer
         text={body}
         elementId={element.id}
         patchsetId={patchsetId}
-        paragraphClassName="text-sm leading-relaxed text-foreground/90"
+        paragraphClassName="text-13 leading-relaxed text-foreground/90"
       />
     </div>
   );

@@ -35,6 +35,14 @@ import { Section } from "./section";
 // to force-open on Flagged and leaving it undefined elsewhere gives both behaviours.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** How often an unsettled board re-reads its lenses, how many consecutive
+ *  learned-nothing reads it takes before the poll SLOWS (10 minutes of silence), and the
+ *  cadence it slows to. It never stops — see the effect below for why. */
+const POLL_MS = 5_000;
+const POLL_LIMIT = 120;
+const SLOW_POLL_MS = 60_000;
+const SLOW_POLL_EVERY = SLOW_POLL_MS / POLL_MS;
+
 export interface LensBoardViewProps {
   /** The review whose boards are read — half of the `board.read` identity. */
   readonly reviewId: string;
@@ -73,18 +81,58 @@ export function LensBoardView({
   // board for this generation yet" until the window happened to regain focus (the only other
   // thing that invalidates `board.read`). `useCommand` has no polling, so this is it.
   //
-  // ponytail: a 5s poll while any lens is still missing, which means a review whose Noise
-  // lens legitimately drafted nothing keeps polling for as long as the board is on screen —
-  // five loopback reads every five seconds, no model spend. Upgrade path: a daemon-side
+  // ponytail: a 5s poll while any lens is still missing, THROTTLED two ways because the
+  // unthrottled version polled a never-settling board at 5s for as long as it was on screen
+  // (perf audit 2026-08-31, §1 H1) — a review whose Noise lens legitimately drafted nothing
+  // never settles, so "stop when it settles" is not a stop condition. (1) A hidden document
+  // polls not at all, and a paused tick spends no budget, so a window left in the background
+  // for an hour comes back with its full window intact. (2) After `POLL_LIMIT` consecutive
+  // ticks that observed NO lens status change, the poll drops to `SLOW_POLL_MS` — at 5s that
+  // is ten minutes of complete silence before slowing, far longer than the gap between two
+  // lenses landing in a slow round (drafting is per-lens minutes, and any status change
+  // restarts the fast window through `statusKey`).
+  //
+  // It slows rather than STOPS, because for most reviews this poll is the only way a board
+  // ever arrives on screen: the focus-invalidate escape hatch is gated on `fromWorkingTree`
+  // (app/review-workspace-route.tsx), so a PR-snapshot review whose board first lands after
+  // the budget would sit on "no board yet" until the reviewer remounted it. One read a minute
+  // is not the burn the audit measured; a silent surface is a bug. Upgrade path: a daemon-side
   // board-arrival channel (the `roundProgress` push already proves the transport), at which
-  // point this whole effect goes.
+  // point this whole effect goes and neither throttle is needed.
   const refreshBoards = useRefreshCommand("board.read");
   const awaitingLenses = !lensReadsSettled(resolutions);
+  // The observable "something happened": a lens moving BETWEEN statuses — missing/pending to
+  // valid/absent/failed/invalid, or back. This is a STATUS key, not a content key: a settled
+  // lens that re-drafts different content stays `valid` and does NOT restart the budget. An
+  // unchanged key means no lens changed status, which is exactly what the budget counts.
+  const statusKey = Object.values(resolutions)
+    .map((resolution) => resolution.status)
+    .join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: statusKey is an intentional re-run trigger, not a body reference — a lens changing status must restart the poll's fast window, and re-running the effect is what resets `spent`.
   useEffect(() => {
     if (!awaitingLenses) return;
-    const timer = setInterval(refreshBoards, 5_000);
-    return () => clearInterval(timer);
-  }, [awaitingLenses, refreshBoards]);
+    let spent = 0;
+    const tick = () => {
+      if (document.hidden) return;
+      spent += 1;
+      // Past the budget the interval keeps waking but only reads once a minute.
+      if (spent > POLL_LIMIT && spent % SLOW_POLL_EVERY !== 0) return;
+      refreshBoards();
+    };
+    const timer = setInterval(tick, POLL_MS);
+    // Electron throttles a hidden window's timers to about one wake a minute, so coming back
+    // to the window reads immediately instead of waiting out a throttled tick. This read is
+    // free of the budget: returning to the window is the user telling us to look again, and
+    // charging it would let alt-tabbing burn the very window it is meant to refresh.
+    const onVisibility = () => {
+      if (!document.hidden) refreshBoards();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [awaitingLenses, refreshBoards, statusKey]);
 
   // A generation may not carry every lens. A genuinely missing selected lens falls back
   // to the first populated, empty, or failed lens in canonical order. Invalid and pending
@@ -108,7 +156,7 @@ export function LensBoardView({
     <main
       data-kind="lens-board-view"
       className={cn(
-        "mx-auto flex w-full flex-col gap-6 p-6",
+        "mx-auto flex w-full flex-col gap-8 px-8 py-8",
         board?.document.measure === "structured" ? "max-w-[960px]" : "max-w-[760px]",
       )}
     >
@@ -237,7 +285,9 @@ function BoardHeader({ board }: { readonly board: LensBoard }) {
   const document: BoardDocument = board.document;
   return (
     <header className="mb-8 flex flex-col gap-4">
-      <h1 className="font-display text-2xl text-foreground tracking-tight">{document.title}</h1>
+      <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
+        {document.title}
+      </h1>
       {document.stats && document.stats.length > 0 ? (
         <dl data-kind="board-stats" className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
           {document.stats.map((stat) => (
@@ -286,8 +336,8 @@ function BoardIntro({ markdown }: { readonly markdown: string }) {
     <RichText
       text={markdown}
       patchsetId={patchsetId}
-      className="max-w-[640px]"
-      paragraphClassName="text-base leading-relaxed text-foreground/85"
+      className="-mt-3"
+      paragraphClassName="text-sm leading-relaxed text-muted-foreground"
     />
   );
 }

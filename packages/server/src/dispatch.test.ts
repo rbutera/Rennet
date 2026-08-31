@@ -147,6 +147,7 @@ const PUBLISH_CAPABILITIES: ForgeCapabilities = {
   supportsBatchedReview: true,
   supportsMultiLineAnchors: true,
   supportsFileLevelThreads: true,
+  requiresReviewVerdictInBody: false,
 };
 
 class InMemoryStore implements ReviewStorePort {
@@ -4276,6 +4277,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       setCoachmarks: vi.fn((input: CoachMarks) => input),
       setThemePack: vi.fn((themePack) => themePack),
       completeWelcome: vi.fn(() => "2026-08-28T12:00:00.000Z"),
+      resetWelcome: vi.fn(() => "2026-08-29T09:30:00.000Z"),
       setLastProject: vi.fn((input) => input),
       setTrackerValue: vi.fn(() => ({})),
       setProjectValue: vi.fn(async (input: { key: string }) => ({
@@ -4368,6 +4370,12 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       rules: [{ rule: "keep main releasable", severity: "high" }],
     });
     expect(saved.status).toBe("applied");
+
+    // resetWelcome threads through to the dep and returns ITS stamp, not a fresh clock —
+    // the value the startup gate reads is the value the write actually persisted.
+    const replay = (await dispatch("settings.resetWelcome", {})) as { replayRequestedAt: string };
+    expect(settings.resetWelcome).toHaveBeenCalledTimes(1);
+    expect(replay.replayRequestedAt).toBe("2026-08-29T09:30:00.000Z");
 
     // setKeybinding threads the payload to the dep and returns the stored map (#44).
     const kb = (await dispatch("settings.setKeybinding", {

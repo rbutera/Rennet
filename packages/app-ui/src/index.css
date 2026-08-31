@@ -2,9 +2,13 @@
  *
  * Tailwind v4 + the shared @rennet/theme tokens. Components style themselves
  * with utilities (bg-canvas, text-ink-soft, rounded-control, font-display …);
- * this file holds only what utilities cannot express: the base document
- * material, browser-owned surfaces (scrollbars, selection, caret, focus), the
- * diff/syntax vocabulary consumed by generated code markup, and keyframes.
+ * this file holds only what utilities cannot express: the base document material,
+ * browser-owned surfaces (scrollbars, selection, caret, focus), the app's motion
+ * vocabulary as `@theme --animate-*` (so every keyframe reaches a call site as a real
+ * `animate-…` utility), the `@utility` definitions for properties Tailwind has none for
+ * (`-webkit-app-region`, the floating-chrome clearance), the welcome's sub-ramp
+ * decorative type, the processing orb's masked conic ring, and the diff/syntax
+ * vocabulary consumed by generated code markup.
  *
  * The old styles.css / tokens.css / canvas.css glass world is deleted. One
  * seamless opaque window; separation by surface steps and hairlines.
@@ -93,14 +97,12 @@
    * disable the ::-webkit-scrollbar styling wherever they apply, and a
    * universal `*` rule also taxes style recalc across huge diff trees. */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--rn-line-strong);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
+    background: var(--rn-line);
+    border-radius: 4px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -112,12 +114,6 @@
     outline: 3px solid var(--rn-accent);
     outline-offset: 1px;
   }
-  /* The full-viewport keyboard canvas region draws its ring INSET — an outset
-   * ring on a min-h-screen element clips off-screen and under the titlebar. */
-  .canvas-app:focus-visible {
-    outline-offset: -3px;
-  }
-
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -126,856 +122,206 @@
       animation-duration: 0.01ms !important;
       /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat every inline/animation style */
       animation-iteration-count: 1 !important;
+      /* The DELAY has to go too, and it is the one a duration collapse cannot reach. A
+       * staggered reveal sets its delay INLINE per element (the streamed word, the welcome
+       * tool row, the skeleton row): collapse only the duration and every element still
+       * waits out its full stagger — and the streamed word, which takes its settled opacity
+       * from a `forwards` fill, waits it out at `opacity-0`. Zeroing the delay is what makes
+       * "reduced motion" mean "already settled" instead of "invisible, briefly". */
+      /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat every inline/animation style */
+      animation-delay: 0ms !important;
       /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat every inline/animation style */
       transition-duration: 0.01ms !important;
     }
   }
 }
 
-/* The in-app titlebar is the window drag surface on macOS (frameless
- * hiddenInset window); its interactive children opt back out. */
-@layer components {
-  .rn-startup-content {
-    display: contents;
-  }
-  .rn-startup-pending {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .navigation-titlebar {
-    -webkit-app-region: drag;
-  }
-  .navigation-titlebar button,
-  .navigation-titlebar a,
-  .navigation-titlebar input,
-  .navigation-titlebar code {
-    -webkit-app-region: no-drag;
-  }
+/* Window drag regions (macOS frameless `hiddenInset`). The strip standing in for the
+ * titlebar drags the window; every interactive thing inside it opts back out — one
+ * explicit class per control.
+ *
+ * This replaces `.navigation-titlebar` plus a `button, a, input, code` opt-out list.
+ * That list knew four tag names, so anything else interactive inside the strip — a
+ * `div[role="button"]`, a span trigger, a kit control that renders its own wrapper —
+ * stayed a drag surface and swallowed its own clicks. A class the author puts on the
+ * control cannot fall out of date with the markup the way a tag list does.
+ *
+ * `-webkit-app-region` is Electron/Chromium-only and invisible to jsdom/happy-dom, so
+ * a DOM test can assert the class is present but never that the window drags. */
+@utility app-region-drag {
+  -webkit-app-region: drag;
+}
+@utility app-region-no-drag {
+  -webkit-app-region: no-drag;
 }
 
-/* First-run welcome. It owns the complete window until setup hands off to New Chat. */
-@layer components {
-  .rn-welcome-shell {
-    min-height: 100dvh;
-    overflow: hidden;
-    background: var(--rn-canvas);
-    color: var(--rn-ink);
-  }
-  .rn-welcome-header {
-    height: 58px;
-    padding: 0 28px;
-    border-bottom: 1px solid var(--rn-line);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--rn-canvas);
-  }
-  .rn-welcome-header > span {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-welcome-main {
-    min-height: calc(100dvh - 58px);
-  }
-  .rn-welcome-shell.is-first-step .rn-welcome-main {
-    min-height: 100dvh;
-  }
-  .rn-welcome-footer {
-    position: fixed;
-    z-index: 50;
-    left: 50%;
-    bottom: 14px;
-    transform: translateX(-50%);
-  }
-  .rn-welcome-progress {
-    padding: 4px 6px;
-    border: 1px solid var(--rn-line);
-    border-radius: 999px;
-    background: var(--rn-surface);
-    display: flex;
-    align-items: center;
-    gap: 3px;
-  }
-  .rn-welcome-progress-item {
-    border: 0;
-    background: none;
-    padding: 6px 8px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--rn-ink-faint);
-  }
-  .rn-welcome-progress-item > span {
-    width: 22px;
-    height: 22px;
-    border: 1px solid var(--rn-line-strong);
-    border-radius: 999px;
-    display: grid;
-    place-items: center;
-    font-size: var(--text-2xs);
-    font-weight: 700;
-  }
-  .rn-welcome-progress-item em {
-    font-style: normal;
-    font-size: var(--text-xs);
-  }
-  .rn-welcome-progress-item.is-active {
-    color: var(--rn-ink);
-  }
-  .rn-welcome-progress-item.is-active > span {
-    border-color: var(--rn-accent-fill);
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-  }
-  .rn-appearance-stage {
-    position: relative;
-    min-height: 100dvh;
-    overflow: hidden;
-    padding: clamp(48px, 6vh, 82px) 4vw 118px;
-  }
-  .rn-welcome-hero {
-    position: relative;
-    z-index: 2;
-    min-height: 292px;
-    display: grid;
-    justify-items: center;
-    align-content: start;
-    text-align: center;
-  }
-  .rn-assembled-logo {
-    width: clamp(360px, 44vw, 640px);
-    height: clamp(88px, 11vw, 126px);
-    margin-top: clamp(42px, 7vh, 72px);
-    display: grid;
-    place-items: center;
-    opacity: 0;
-    transform: scale(0.92);
-    filter: blur(2px);
-  }
-  .rn-assembled-logo svg {
-    width: 100%;
-    height: auto;
-  }
-  .rn-message-stage {
-    position: relative;
-    width: 100vw;
-    min-height: 70px;
-    margin-top: 20px;
-    display: grid;
-    place-items: center;
-  }
-  .rn-opening-tagline,
-  .rn-review-tagline {
-    position: absolute;
-    inset: 0;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.35em;
-    color: var(--rn-ink-soft);
-    font-family: var(--font-sans);
-    font-size: var(--text-lg);
-    letter-spacing: -0.015em;
-    opacity: 0;
-    transform: translateY(10px);
-    white-space: nowrap;
-  }
-  .rn-review-tagline {
-    color: var(--rn-ink);
-  }
-  .rn-review-tagline > span {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  .rn-review-word {
-    min-width: 9.4em;
-    text-align: left;
-    font-weight: 600;
-    animation: rn-word-change 420ms ease-out both;
-  }
-  @keyframes rn-word-change {
+/* The app's authored motion, all of it. A keyframe is theme vocabulary, not a class:
+ * declared here as `--animate-*` it becomes a real `animate-…` utility, so a call site
+ * composes it with variants (`motion-reduce:animate-none`) and twMerge can override it.
+ * Nothing below is hand-wired to a bare class name. */
+@theme {
+  /* The welcome's stage entrance. It re-fires because WelcomeShell remounts <main> per
+   * step; a CSS animation on a persistent node plays once and never again. */
+  --animate-welcome-step: rn-welcome-step-in 460ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  /* A welcome tool row dealing itself in. Each row carries its own animation-delay. */
+  --animate-welcome-row: rn-welcome-row-in 420ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  /* Streaming prose word reveal (C07 chat transcript): each word of a LIVE orchestrator
+   * turn fades + un-blurs in, staggered by a per-word animation-delay set inline.
+   * Records render with `animate=false`, so this plays only on arrival.
+   *
+   * `forwards` (not `both`) is only safe because `streaming-prose.tsx` puts `opacity-0`
+   * on each animating word as a CLASS, so a word is invisible before its delay elapses.
+   * A `forwards` fill covers the tail, never the head. Delete that `opacity-0` and every
+   * delayed word flashes at full opacity, then restarts — at which point this needs `both`.
+   *
+   * That same `opacity-0` is why the call site must NOT carry `motion-reduce:animate-none`:
+   * with no animation the `forwards` fill never lands and every streamed word stays
+   * invisible. Reduced motion is served by the base rule instead (duration → 0.01ms AND
+   * delay → 0ms, the `forwards` fill retains the `to` frame → opacity 1), which snaps to the
+   * settled state. The delay half is not optional: the stagger is set inline per word, so
+   * without it a collapsed duration still leaves later words at `opacity-0` until their
+   * stagger expires. */
+  --animate-word-in: word-in 260ms ease-out forwards;
+  /* Deixis focus pulse: when conversation points at code, the row flashes a gold inset
+   * once (700ms) and settles. The settled state is "no shadow", so dropping the animation
+   * under reduced motion lands on it — `motion-reduce:animate-none` is safe here. */
+  --animate-cv-focus-pulse: cv-focus-pulse 700ms ease-out 1 both;
+  /* The processing orb's glyph pulse — a utility on the icon itself. The orb's RING has
+   * no `--animate-*` partner on purpose: it animates a `::before`, which cannot carry a
+   * class, so the utility would never be used and Tailwind would tree-shake the variable
+   * away. Its keyframe still belongs here (keyframes declared in `@theme` are emitted
+   * whether or not a utility references them) and the pseudo names it directly. */
+  --animate-processing-pulse: processing-pulse 1.6s ease-in-out infinite;
+
+  @keyframes rn-welcome-step-in {
     from {
-      opacity: 0;
-      transform: translateY(6px);
-      filter: blur(3px);
+      opacity: 0.2;
+      transform: translateY(12px);
     }
     to {
       opacity: 1;
       transform: translateY(0);
-      filter: blur(0);
     }
   }
-  .rn-intro-arrow {
-    width: 46px;
-    height: 46px;
-    margin-top: 10px;
-    border: 1px solid var(--rn-accent-fill);
-    border-radius: 999px;
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-    display: grid;
-    place-items: center;
-    opacity: 0;
-    transform: scale(0.86);
+  @keyframes rn-welcome-row-in {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
   }
-  .rn-intro-arrow:hover {
-    filter: brightness(0.96);
-    transform: translateX(2px);
+  @keyframes word-in {
+    from {
+      opacity: 0;
+      filter: blur(2px);
+      transform: translateY(0.15em);
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateY(0);
+    }
   }
-  .rn-intro-arrow svg {
-    width: 20px;
-    height: 20px;
+  @keyframes cv-focus-pulse {
+    0%,
+    35% {
+      box-shadow:
+        inset 3px 0 0 0 var(--rn-accent),
+        inset 0 0 10px 0 var(--rn-accent);
+    }
+    100% {
+      box-shadow:
+        inset 0 0 0 0 transparent,
+        inset 0 0 0 0 transparent;
+    }
   }
-  .rn-code-field {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    overflow: hidden;
+  @keyframes processing-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
+  @keyframes processing-pulse {
+    0%,
+    100% {
+      opacity: 0.65;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
+
+/* First-run welcome. The wizard styles itself with Tailwind utilities; what stays here
+ * is what utilities cannot express — the code rain's sub-ramp decorative type with its
+ * syntax tones, and the theme-preview miniature's 8px faux-diff. */
+@layer components {
+  /* The code rain stays hand-written CSS: its 9px type is below the ramp floor (the
+   * design-ramp test pins this exact selector and value as decorative micro-type),
+   * and per-fragment placement rides inline styles from the fragment catalogue in
+   * first-run-welcome.tsx. */
   .rn-code-fragment {
     position: absolute;
     margin: 0;
     padding: 7px 9px;
-    border-left: 1px solid var(--rn-line-strong);
-    color: var(--rn-syn-var);
+    border-left: 1px solid color-mix(in srgb, var(--rn-line-strong) 65%, transparent);
+    color: var(--rn-ink-faint);
     font: 9px / 1.62 var(--font-mono);
     white-space: pre;
-    opacity: 0.52;
-    will-change: transform, opacity;
+    opacity: 0.58;
+    /* Infinite idle motion only changes transforms; including opacity here would
+       promote a repaint channel the performance fix deliberately removed. */
+    will-change: transform;
   }
-  .rn-code-fragment span {
+  .rn-code-fragment > span {
     display: block;
+    min-height: 1.62em;
   }
-  .rn-code-fragment.fragment-0 {
-    left: 1%;
-    top: 4%;
+  /* The prototype's syntax hues are fixed values chosen against one theme. These ride
+   * the shared --rn-syn-* code palette instead, so the rain retints as the reader
+   * tries theme packs on the very screen it drifts behind. */
+  .rn-code-field [data-tone="keyword"] {
+    color: var(--rn-syn-kw);
   }
-  .rn-code-fragment.fragment-1 {
-    left: 34%;
-    top: 1%;
+  .rn-code-field [data-tone="function"] {
+    color: var(--rn-syn-fn);
   }
-  .rn-code-fragment.fragment-2 {
-    right: 1%;
-    top: 9%;
+  .rn-code-field [data-tone="type"] {
+    color: var(--rn-syn-type);
   }
-  .rn-code-fragment.fragment-3 {
-    left: 7%;
-    top: 36%;
+  .rn-code-field [data-tone="string"] {
+    color: var(--rn-syn-str);
   }
-  .rn-code-fragment.fragment-4 {
-    right: 4%;
-    top: 40%;
-    color: var(--rn-add-ink);
+  .rn-code-field [data-tone="literal"] {
+    color: var(--rn-syn-num);
   }
-  .rn-code-fragment.fragment-5 {
-    left: 26%;
-    top: 25%;
-  }
-  .rn-code-fragment.fragment-6 {
-    right: 24%;
-    top: 30%;
-  }
-  .rn-code-fragment.fragment-7 {
-    left: 2%;
-    bottom: 5%;
+  .rn-code-field [data-tone="comment"] {
     color: var(--rn-syn-cmt);
+    font-style: italic;
   }
-  .rn-code-fragment.fragment-8 {
-    right: 6%;
-    bottom: 9%;
+  .rn-code-field [data-tone="hunk"] {
+    color: var(--rn-ink-faint);
   }
-  .rn-code-fragment.fragment-9 {
-    left: 39%;
-    bottom: 3%;
+  .rn-code-field [data-tone="remove"] {
+    color: var(--rn-del-ink);
+  }
+  .rn-code-field [data-tone="add"] {
+    color: var(--rn-add-ink);
   }
   .rn-code-particle {
     position: absolute;
-    color: var(--rn-syn-kw);
-    font: 12px var(--font-mono);
-    opacity: 0.66;
+    color: var(--rn-ink-faint);
+    font: var(--text-xs) var(--font-mono);
+    opacity: 0.7;
   }
-  .rn-appearance-card {
-    position: relative;
-    z-index: 3;
-    visibility: hidden;
-    width: min(1160px, 92vw);
-    margin: clamp(20px, 3vh, 34px) auto 0;
-    padding: 30px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-window);
-    background: var(--rn-surface);
-    opacity: 0;
-    transform: translateY(60px) scale(0.98);
-    filter: blur(3px);
-  }
-  .rn-card-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-  }
-  .rn-eyebrow {
-    margin: 0 0 7px;
-    color: var(--rn-accent);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: var(--text-2xs);
-    font-weight: 700;
-  }
-  .rn-card-heading h2 {
-    margin: 0;
-    font-size: var(--text-lg);
-    font-weight: 600;
-  }
-  .rn-scheme-control {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-control);
-    overflow: hidden;
-  }
-  .rn-scheme-control button {
-    min-width: 110px;
-    height: 40px;
-    border: 0;
-    border-right: 1px solid var(--rn-line);
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    color: var(--rn-ink-soft);
-  }
-  .rn-scheme-control button:last-child {
-    border-right: 0;
-  }
-  .rn-scheme-control button.is-selected {
-    background: var(--rn-raised);
-    color: var(--rn-ink);
-    box-shadow: inset 0 -2px var(--rn-accent-fill);
-  }
-  .rn-scheme-control svg {
-    width: 17px;
-    height: 17px;
-  }
-  .rn-theme-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 18px;
-    margin: 24px 0 28px;
-  }
-  .rn-theme-card {
-    position: relative;
-    border: 1px solid transparent;
-    background: transparent;
-    border-radius: var(--radius-surface);
-    padding: 8px 8px 10px;
-  }
-  .rn-theme-card:hover {
-    background: var(--rn-raised);
-  }
-  .rn-theme-card.is-selected {
-    border-color: var(--rn-accent-line);
-    background: var(--rn-accent-soft);
-  }
-  .rn-theme-card > span + span {
-    display: block;
-    margin-top: 10px;
-    color: var(--rn-ink);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-  .rn-theme-card > i {
-    position: absolute;
-    right: 2px;
-    top: 2px;
-    width: 23px;
-    height: 23px;
-    display: grid;
-    place-items: center;
-    border-radius: 999px;
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-  }
-  .rn-theme-card > i svg {
-    width: 13px;
-  }
-  .rn-theme-preview {
-    height: 104px;
-    padding: 11px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-control);
-    display: block;
-    text-align: left;
-  }
-  .rn-theme-preview > i {
-    display: flex;
-    gap: 4px;
-  }
-  .rn-theme-preview > i b {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background: currentColor;
-    opacity: 0.32;
-  }
+  /* The theme-preview miniature's faux diff: 8px, the ramp's other pinned exemption. */
   .rn-theme-preview code {
     display: block;
     margin-top: 17px;
     font: 8px / 1.8 var(--font-mono);
     white-space: nowrap;
-  }
-  .rn-theme-preview code span {
-    color: var(--rn-del-ink);
-  }
-  .rn-theme-preview code strong {
-    color: var(--rn-add-ink);
-  }
-  .rn-card-footer {
-    padding-top: 18px;
-    border-top: 1px solid var(--rn-line);
-    display: flex;
-    justify-content: center;
-  }
-  .rn-content-stage {
-    width: min(900px, calc(100vw - 48px));
-    margin: 0 auto;
-    padding: clamp(54px, 8vh, 94px) 0 120px;
-  }
-  .rn-stage-copy {
-    max-width: 650px;
-    margin-bottom: 36px;
-  }
-  .rn-stage-copy h1,
-  .rn-ready-stage h1 {
-    margin: 0 0 12px;
-    font-family: var(--font-display);
-    font-size: var(--text-display);
-    font-weight: 500;
-    letter-spacing: -0.035em;
-    line-height: 1.05;
-  }
-  .rn-stage-copy > p:last-child,
-  .rn-ready-stage > p {
-    margin: 0;
-    max-width: 610px;
-    color: var(--rn-ink-soft);
-    line-height: 1.65;
-  }
-  .rn-step-actions {
-    margin-top: 30px;
-    padding-top: 22px;
-    border-top: 1px solid var(--rn-line);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .rn-tool-list {
-    display: grid;
-    gap: 10px;
-  }
-  .rn-tool-row {
-    min-height: 84px;
-    padding: 15px 18px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-    display: grid;
-    grid-template-columns: 48px 1fr auto;
-    gap: 16px;
-    align-items: center;
-  }
-  .rn-tool-mark {
-    width: 44px;
-    height: 44px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-control);
-    background: var(--rn-raised);
-    display: grid;
-    place-items: center;
-  }
-  .rn-tool-mark svg {
-    width: 24px;
-    height: 24px;
-  }
-  .rn-tool-row h3 {
-    margin: 0;
-    font-size: var(--text-sm);
-    font-weight: 600;
-  }
-  .rn-tool-row h3 code {
-    margin-left: 10px;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-    font-weight: 400;
-  }
-  .rn-tool-row p {
-    margin: 5px 0 0;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-status-pill {
-    border-radius: 999px;
-    padding: 6px 9px;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    white-space: nowrap;
-  }
-  .rn-status-pill svg {
-    width: 13px;
-    height: 13px;
-  }
-  .rn-status-pill.is-good {
-    color: var(--rn-green);
-    background: var(--rn-green-soft);
-  }
-  .rn-status-pill.is-muted {
-    color: var(--rn-ink-faint);
-    background: var(--rn-raised);
-  }
-  .rn-plain-note {
-    margin-top: 18px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-plain-note svg {
-    width: 18px;
-    height: 18px;
-    color: var(--rn-green);
-  }
-  .rn-harness-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 14px;
-  }
-  .rn-harness-card {
-    position: relative;
-    min-height: 118px;
-    padding: 20px;
-    display: grid;
-    grid-template-columns: 50px 1fr auto;
-    gap: 14px;
-    align-items: center;
-    text-align: left;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-  }
-  .rn-harness-card.is-selected {
-    border-color: var(--rn-accent-line);
-    background: var(--rn-accent-soft);
-  }
-  .rn-harness-card > span:nth-child(2) {
-    display: grid;
-    gap: 5px;
-  }
-  .rn-harness-card small {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-  }
-  .rn-harness-card > i {
-    position: absolute;
-    top: 9px;
-    right: 9px;
-    width: 20px;
-    height: 20px;
-    border-radius: 999px;
-    background: var(--rn-accent-fill);
-    color: var(--rn-accent-ink);
-    display: grid;
-    place-items: center;
-  }
-  .rn-harness-card > i svg {
-    width: 12px;
-  }
-  .rn-orchestrator-note {
-    margin: 14px 0;
-    padding: 13px 16px;
-    border-left: 3px solid var(--rn-accent-fill);
-    background: var(--rn-surface);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .rn-orchestrator-note > svg {
-    color: var(--rn-accent);
-  }
-  .rn-orchestrator-note div {
-    display: grid;
-    gap: 3px;
-  }
-  .rn-orchestrator-note span {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-  }
-  .rn-dual-card {
-    width: 100%;
-    min-height: 126px;
-    padding: 20px 22px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-    display: grid;
-    grid-template-columns: 126px 1fr auto;
-    gap: 20px;
-    align-items: center;
-    text-align: left;
-  }
-  .rn-dual-card.is-selected {
-    border-color: var(--rn-accent-line);
-  }
-  .rn-dual-marks {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-  }
-  .rn-dual-marks svg {
-    width: 34px;
-    height: 34px;
-  }
-  .rn-dual-plus {
-    color: var(--rn-accent);
-    font-size: var(--text-xl);
-  }
-  .rn-dual-card > span:nth-child(2) {
-    display: grid;
-    gap: 7px;
-  }
-  .rn-dual-card > span:nth-child(2) strong {
-    font-family: var(--font-display);
-    font-size: var(--text-xl);
-    font-weight: 500;
-  }
-  .rn-dual-card small {
-    color: var(--rn-ink-soft);
-    line-height: 1.55;
-  }
-  .rn-dual-card > i {
-    width: 42px;
-    height: 24px;
-    padding: 3px;
-    border-radius: 999px;
-    background: var(--rn-line-strong);
-  }
-  .rn-dual-card > i b {
-    display: block;
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    background: var(--rn-surface);
-    transition: transform 180ms ease;
-  }
-  .rn-dual-card > i.is-on {
-    background: var(--rn-accent-fill);
-  }
-  .rn-dual-card > i.is-on b {
-    transform: translateX(18px);
-  }
-  .rn-harness-error {
-    min-height: 370px;
-    padding: 48px;
-    border: 1px solid var(--rn-danger);
-    border-radius: var(--radius-window);
-    background: var(--rn-surface);
-    text-align: center;
-    display: grid;
-    place-items: center;
-    align-content: center;
-  }
-  .rn-harness-error > span {
-    width: 70px;
-    height: 70px;
-    border-radius: var(--radius-window);
-    background: var(--rn-danger-soft);
-    color: var(--rn-danger);
-    display: grid;
-    place-items: center;
-  }
-  .rn-harness-error > span svg {
-    width: 36px;
-    height: 36px;
-  }
-  .rn-harness-error h2 {
-    margin: 22px auto 9px;
-    font-family: var(--font-display);
-    font-size: var(--text-2xl);
-    font-weight: 500;
-  }
-  .rn-harness-error p {
-    max-width: 540px;
-    margin: 0 auto;
-    color: var(--rn-ink-soft);
-    line-height: 1.6;
-  }
-  .rn-harness-error > div {
-    margin-top: 25px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .rn-harness-error a {
-    min-height: 36px;
-    padding: 0 14px;
-    border: 1px solid var(--rn-line-strong);
-    border-radius: var(--radius-control);
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    font-weight: 600;
-  }
-  .rn-harness-error a svg {
-    width: 15px;
-  }
-  .rn-access-note {
-    margin-bottom: 18px;
-    padding: 14px 16px;
-    border-radius: var(--radius-control);
-    background: var(--rn-raised);
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 12px;
-    align-items: center;
-  }
-  .rn-access-note > svg {
-    color: var(--rn-green);
-  }
-  .rn-access-note > div {
-    display: grid;
-    gap: 3px;
-  }
-  .rn-access-note span {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-xs);
-  }
-  .rn-add-project-flow {
-    padding: 24px;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-window);
-    background: var(--rn-surface);
-  }
-  .rn-add-project-flow [role="dialog"] {
-    box-shadow: none;
-  }
-  .rn-inline-error {
-    margin: 12px 0 0;
-    padding: 10px 12px;
-    border: 1px solid var(--rn-danger);
-    border-radius: var(--radius-control);
-    background: var(--rn-danger-soft);
-    color: var(--rn-ink);
-    font-size: var(--text-xs);
-  }
-  .rn-ready-stage {
-    min-height: calc(100dvh - 58px);
-    width: min(780px, calc(100vw - 48px));
-    margin: 0 auto;
-    padding: clamp(70px, 10vh, 120px) 0 120px;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-  .rn-ready-mark {
-    position: relative;
-    width: 280px;
-    height: 80px;
-    margin-bottom: 22px;
-    display: grid;
-    place-items: center;
-  }
-  .rn-ready-mark > i {
-    position: absolute;
-    right: 0;
-    bottom: -4px;
-    width: 31px;
-    height: 31px;
-    border: 4px solid var(--rn-canvas);
-    border-radius: 999px;
-    background: var(--rn-green);
-    color: var(--rn-surface);
-    display: grid;
-    place-items: center;
-  }
-  .rn-ready-mark > i svg {
-    width: 14px;
-  }
-  .rn-ready-stage > p {
-    max-width: 620px;
-  }
-  .rn-ready-summary {
-    width: 100%;
-    margin: 32px 0;
-    border: 1px solid var(--rn-line);
-    border-radius: var(--radius-surface);
-    background: var(--rn-surface);
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .rn-ready-summary > span {
-    padding: 18px;
-    display: grid;
-    gap: 5px;
-    border-right: 1px solid var(--rn-line);
-  }
-  .rn-ready-summary > span:last-child {
-    border-right: 0;
-  }
-  .rn-ready-summary small {
-    color: var(--rn-ink-faint);
-    font-size: var(--text-2xs);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .rn-ready-stage > button:last-child {
-    margin-top: 10px;
-  }
-
-  @media (max-width: 800px) {
-    .rn-theme-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .rn-card-heading {
-      align-items: stretch;
-      flex-direction: column;
-    }
-    .rn-harness-grid {
-      grid-template-columns: 1fr;
-    }
-    .rn-dual-card {
-      grid-template-columns: 84px 1fr auto;
-    }
-    .rn-welcome-progress-item em {
-      display: none;
-    }
-  }
-  @media (max-height: 760px) {
-    .rn-appearance-stage {
-      padding-top: 20px;
-    }
-    .rn-assembled-logo {
-      margin-top: 20px;
-      height: 88px;
-    }
-    .rn-theme-preview {
-      height: 78px;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .rn-review-word {
-      animation: none;
-    }
   }
 }
 
@@ -993,50 +339,53 @@
  *    ones pass beneath; `scroll-padding-top` keeps programmatic scroll targets
  *    (anchor jumps, `scrollIntoView`) clear of the chips too.
  *
- * The descendant selector names the repo-wide idiom for a pane's PRIMARY scroller
- * (`min-h-0 flex-1 overflow-y-auto`); secondary scrollers (a diff view's fixed-width
- * aside, the composer's textarea, a bounded list) do not carry all three and are
- * correctly left alone. */
+ * Which scroller gets it is stated at the scroller, with `chrome-scroll-clearance`. It
+ * used to be inferred from a descendant selector on the Tailwind class names a primary
+ * scroller happens to type (`.min-h-0.flex-1.overflow-y-auto`) — a structural contract
+ * written in utility names, which silently changed meaning whenever a pane's layout
+ * classes changed and matched every branch that typed the same three by coincidence. */
 @layer components {
   .rennet-floating-chrome,
   .rennet-floating-chrome-scroll {
     /* The vertical room the chip layer needs (an 11-unit / 44px chip row). Declared
-     * once and inherited by the scroller below. NOT an `--rn-*` name: that prefix
+     * once and inherited by the marked scroller below. NOT an `--rn-*` name: that prefix
      * belongs to `@rennet/theme`'s palette and consumer stylesheets may not define one. */
     --floating-chrome-clearance: 2.75rem;
   }
   .rennet-floating-chrome {
     padding-top: var(--floating-chrome-clearance);
   }
-  .rennet-floating-chrome-scroll .min-h-0.flex-1.overflow-y-auto {
-    padding-top: var(--floating-chrome-clearance);
-    scroll-padding-top: var(--floating-chrome-clearance);
-  }
 }
 
-/* Streaming caret: the assistant's in-flight message blinks a gold caret at
- * the end of its serif body. The is-streaming class is the state hook. */
-@layer components {
-  .thread-message.is-streaming .thread-message-body::after {
-    content: "";
-    display: inline-block;
-    width: 2px;
-    height: 1em;
-    margin-left: 2px;
-    vertical-align: text-bottom;
-    background: var(--rn-accent);
-    animation: thread-stream-caret 1s step-end infinite;
-  }
-  @keyframes thread-stream-caret {
-    50% {
-      opacity: 0;
-    }
-  }
+/* The marker a SESSION pane puts on its primary scroller. The clearance is the inherited
+ * `--floating-chrome-clearance`, which only exists under a floating-chrome region — so the
+ * class is inert in states 1 and 2 (sidebar or chat dock owns the corner) and the same
+ * marked element needs no conditional. The fallback is the whole gate; without it the
+ * padding would apply everywhere.
+ *
+ * It belongs on session surfaces only: a TAKEOVER region already takes its clearance as
+ * padding on the region itself, so a marked scroller inside one would clear the chips twice. */
+@utility chrome-scroll-clearance {
+  padding-top: var(--floating-chrome-clearance, 0px);
+  scroll-padding-top: var(--floating-chrome-clearance, 0px);
 }
 
-/* Processing orb: the one ambient authored moment while a project digests —
- * a gold light ring spins until done/failed stills it. progress-feed's
- * .processing-dot shares processing-pulse. */
+/* Processing orb: the one ambient authored moment while a project digests — a gold light
+ * ring spins until done/failed stills it. The ring is a `::before` drawn from a conic
+ * gradient behind a radial mask, which no utility expresses and no class can reach, so
+ * the pseudo and its state branches stay hand-written here. Its keyframe still lives with
+ * the rest of the motion vocabulary in the `@theme` block above — `processing-spin`, named
+ * directly by the `animation:` shorthand below. It has NO `--animate-*` partner on purpose:
+ * a pseudo-element cannot carry a class, so the utility that variable would mint is one
+ * nothing could ever use, and Tailwind would tree-shake the variable away. A keyframe
+ * declared in `@theme` is emitted whether or not a utility references it, so the
+ * hand-written rule below still finds it. (Same reasoning, stated from the other side, at
+ * `--animate-processing-pulse` in the `@theme` block.)
+ *
+ * The orb's CHILD pulse is a plain animation on a real element, so it is a utility at the
+ * call site (`animate-processing-pulse` in project-processing.tsx, applied only while the
+ * dump is still running) rather than a `.processing-orb > *` rule with `is-done` /
+ * `is-failed` overrides. */
 @layer components {
   .processing-orb::before {
     content: "";
@@ -1059,150 +408,11 @@
   }
   .processing-orb > * {
     position: relative;
-    animation: processing-pulse 1.6s ease-in-out infinite;
   }
   .processing-orb.is-done::before,
   .processing-orb.is-failed::before {
     animation: none;
     background: none;
-  }
-  .processing-orb.is-done > *,
-  .processing-orb.is-failed > * {
-    animation: none;
-  }
-  @keyframes processing-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes processing-pulse {
-    0%,
-    100% {
-      opacity: 0.65;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-}
-
-/* Calm roll-up (#62): per-row disposition clusters stay in the DOM and tab
- * order but only paint when the row is engaged (hover or focus-within). The
- * parent relationships cross component files, so the rule lives centrally. */
-@layer components {
-  .flat-element .disposition-bar.is-compact,
-  .decision .disposition-bar.is-compact,
-  .cohort-head .disposition-bar.is-compact {
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .flat-element:hover .disposition-bar.is-compact,
-  .flat-element:focus-within .disposition-bar.is-compact,
-  .decision:hover .disposition-bar.is-compact,
-  .decision:focus-within .disposition-bar.is-compact,
-  .cohort-head:hover .disposition-bar.is-compact,
-  .cohort-head:focus-within .disposition-bar.is-compact {
-    opacity: 1;
-  }
-  .code-view-head .disposition-cluster.is-compact {
-    margin-left: auto;
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .code-view-head:hover .disposition-cluster.is-compact,
-  .code-view-head:focus-within .disposition-cluster.is-compact {
-    opacity: 1;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .flat-element .disposition-bar.is-compact,
-    .decision .disposition-bar.is-compact,
-    .cohort-head .disposition-bar.is-compact,
-    .code-view-head .disposition-cluster.is-compact {
-      transition: none;
-    }
-  }
-}
-
-/* Busy shimmer: indeterminate progress bars slide their fill. */
-@layer components {
-  .busy-bar,
-  .ai-loading-bar-fill {
-    animation: busy 1s ease-in-out infinite alternate;
-  }
-  @keyframes busy {
-    to {
-      transform: translateX(185%);
-    }
-  }
-}
-
-/* Hold-to-sign fill: the publish signature inks in only while held. The
- * resting fill is inert (w-0, no animation) — pinned by styles-contract. */
-@layer components {
-  .publish-sheet-sign.is-arming {
-    opacity: 0.72;
-  }
-  .publish-sheet-sign.is-holding .publish-sheet-sign-fill {
-    animation-name: sign-hold-fill;
-    animation-timing-function: linear;
-    animation-fill-mode: forwards;
-  }
-  @keyframes sign-hold-fill {
-    from {
-      width: 0;
-    }
-    to {
-      width: 100%;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .publish-sheet-sign.is-holding .publish-sheet-sign-fill {
-      animation-timing-function: steps(5, end);
-    }
-  }
-}
-
-/* Streaming prose word reveal (C07 chat transcript): each word of a LIVE
- * orchestrator turn fades + un-blurs in, staggered by a per-word animation-delay
- * set inline. Records render with `animate=false` (no `.animate-word-in`), so this
- * plays only on arrival. The base reduced-motion rule snaps it to the settled state
- * (duration → 0.01ms, `both` fill lands on the `to` frame → opacity 1). */
-@layer components {
-  .animate-word-in {
-    animation: word-in 260ms ease-out both;
-  }
-  @keyframes word-in {
-    from {
-      opacity: 0;
-      filter: blur(4px);
-      transform: translateY(2px);
-    }
-    to {
-      opacity: 1;
-      filter: blur(0);
-      transform: translateY(0);
-    }
-  }
-}
-
-/* Deixis focus pulse: when conversation points at code, the row flashes a
- * gold inset once (700ms) and settles. */
-@layer components {
-  .code-view-row.cv-focus {
-    animation: cv-focus-pulse 700ms ease-out 1 both;
-  }
-  @keyframes cv-focus-pulse {
-    0%,
-    35% {
-      box-shadow:
-        inset 3px 0 0 0 var(--rn-accent),
-        inset 0 0 10px 0 var(--rn-accent);
-    }
-    100% {
-      box-shadow:
-        inset 0 0 0 0 transparent,
-        inset 0 0 0 0 transparent;
-    }
   }
 }
 

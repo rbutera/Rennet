@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import type { Project, ProjectProcessEvent } from "@rennet/protocol";
+import { useLayoutEffect } from "react";
 import { describe, expect, it } from "vitest";
 import { act, mount, waitFor } from "../test/dom";
 import { MemoryBridge } from "../test/memory-bridge";
@@ -24,6 +25,7 @@ function project(id: string): Project {
 // `commandId` is `z.uuid()`. A stub driven with a made-up id is a stub driven with a value
 // the daemon would refuse — the exact gap that let a dead chat dock ship green.
 const PROCESS_ID = "0d5a0a2b-6b0f-4c8e-9a2b-1f7c3d5e9a10";
+const PROCESS_ID_B = "a9b18d5f-c932-4d91-a22d-750ba48f77f8";
 const REMOVE_ID = "3b9c1e44-2a7d-4f61-8c0b-5e2a9d4f7b31";
 
 function ProjectsCount() {
@@ -86,6 +88,72 @@ describe("data seam", () => {
     };
     act(() => bridge.emitProgress(PROCESS_ID, event));
     await waitFor(() => expect(getByText("repos:1")).toBeTruthy());
+  });
+
+  it("drops an old subscription frame after render switches the active key", async () => {
+    const bridge = new MemoryBridge({
+      "project.process": () => new Promise<never>(() => undefined),
+    });
+    const event: ProjectProcessEvent = {
+      kind: "repo-done",
+      repo: "atlas",
+      summary: { repo: "atlas", path: "/repos/atlas", ok: true },
+    };
+    const foldedBy: string[] = [];
+    function Processing({
+      processId,
+      label,
+      emitOldInLayout = false,
+    }: {
+      readonly processId: string;
+      readonly label: string;
+      readonly emitOldInLayout?: boolean;
+    }) {
+      useCommand("project.process", { commandId: processId, projectId: "p1" });
+      useCommandStream({
+        channel: "progress",
+        delivery: "delta",
+        subscriptionKey: processId,
+        command: { name: "project.process", input: { commandId: processId, projectId: "p1" } },
+        fold: (prev, streamed) => {
+          foldedBy.push(label);
+          return {
+            repos:
+              streamed.kind === "repo-done"
+                ? [...(prev?.repos ?? []), streamed.summary]
+                : (prev?.repos ?? []),
+          };
+        },
+      });
+      useLayoutEffect(() => {
+        if (emitOldInLayout) bridge.emitProgress(PROCESS_ID, event);
+      }, [emitOldInLayout]);
+      return null;
+    }
+    const { rerender } = mount(
+      <BridgeProvider bridge={bridge}>
+        <Processing processId={PROCESS_ID} label="A" />
+      </BridgeProvider>,
+    );
+
+    act(() => bridge.emitProgress(PROCESS_ID, event));
+    expect(foldedBy).toEqual(["A"]);
+    rerender(
+      <BridgeProvider bridge={bridge}>
+        <Processing processId={PROCESS_ID} label="A2" />
+      </BridgeProvider>,
+    );
+    act(() => bridge.emitProgress(PROCESS_ID, event));
+    expect(foldedBy).toEqual(["A", "A2"]);
+
+    rerender(
+      <BridgeProvider bridge={bridge}>
+        <Processing processId={PROCESS_ID_B} label="B" emitOldInLayout />
+      </BridgeProvider>,
+    );
+    expect(foldedBy).toEqual(["A", "A2"]);
+    act(() => bridge.emitProgress(PROCESS_ID_B, event));
+    expect(foldedBy).toEqual(["A", "A2", "B"]);
   });
 
   it("a mutation invalidates its declared prefix and the read refetches", async () => {

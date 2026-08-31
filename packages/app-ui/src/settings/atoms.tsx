@@ -37,7 +37,7 @@ export function Section({
   return (
     <section data-slot="settings-section" className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="flex items-center gap-2 text-sm font-medium text-ink">
+        <span className="flex items-center gap-2 text-15 font-medium text-ink">
           {title}
           {titleExtra}
         </span>
@@ -77,7 +77,7 @@ export function Row({
     return (
       <div className="flex flex-col gap-1.5 py-2.5">
         <div className="flex flex-col">
-          <span className="text-xs font-medium text-ink">{label}</span>
+          <span className="text-13 font-medium text-ink">{label}</span>
           {hint ? <span className="text-xs text-ink-soft">{hint}</span> : null}
         </div>
         {children}
@@ -87,7 +87,7 @@ export function Row({
   return (
     <div className="flex min-h-11 items-center gap-3 py-2">
       <div className="flex min-w-0 flex-col">
-        <span className="text-xs font-medium text-ink">{label}</span>
+        <span className="text-13 font-medium text-ink">{label}</span>
         {hint ? <span className="text-xs text-ink-soft">{hint}</span> : null}
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>
@@ -139,9 +139,10 @@ export function Segmented<T extends string>({
  * Appearance page hand-rolled this as a `role="radiogroup"` of `role="radio"` buttons;
  * autopsy S6 forbids that (the same rule that put {@link Segmented} on the kit), so this
  * ports the visual onto the kit's single-select `ToggleGroup` too — the segmented
- * container's joined chrome overridden to a border-less, wrapping pill layout, each pill
+ * container's tray chrome overridden to a border-less, wrapping pill layout, each pill
  * the kit's `outline` toggle restyled onto Rennet tokens (raised fill + accent-line
- * border when lit, never the kit's default gold accent fill).
+ * border when lit — the border is what distinguishes a lit pill here, since the kit's
+ * own lit fill is now that same quiet raised tone).
  */
 export function PillChoice<T extends string>({
   options,
@@ -162,7 +163,7 @@ export function PillChoice<T extends string>({
         const picked = next[0] as T | undefined;
         if (picked && picked !== value) onChange(picked);
       }}
-      className="flex w-auto flex-wrap gap-1.5 bg-transparent p-0"
+      className="flex w-auto flex-wrap gap-1.5 border-transparent bg-transparent p-0"
     >
       {options.map((option) => (
         <Toggle
@@ -170,6 +171,8 @@ export function PillChoice<T extends string>({
           value={option.id}
           size="sm"
           variant="outline"
+          // Already the prototype's `border-ring bg-secondary` lit pill: `ring` aliases
+          // accent-line and `secondary` aliases raised, so these name the same values.
           className="rounded-md border-line px-2.5 text-xs text-ink-soft hover:bg-raised/50 hover:text-ink data-pressed:border-accent-line data-pressed:bg-raised data-pressed:text-ink"
         >
           {option.label}

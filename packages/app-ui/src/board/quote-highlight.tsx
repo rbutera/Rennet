@@ -53,7 +53,7 @@ function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThrea
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   return (
-    <span className="absolute bottom-full left-0 z-50 mb-1.5 block w-[340px] cursor-auto rounded-md border border-border bg-popover p-2.5 font-sans not-italic shadow-overlay">
+    <span className="absolute bottom-full left-0 z-50 mb-1.5 block w-[360px] cursor-auto rounded-md border border-border bg-popover p-2.5 font-sans not-italic shadow-lg">
       {threads.map(({ id, thread }) => (
         <span
           key={id}
@@ -70,9 +70,9 @@ function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThrea
                 // biome-ignore lint/suspicious/noArrayIndexKey: an append-only exchange is a stable positional list.
                 key={index}
                 className={cn(
-                  "block text-2xs leading-relaxed",
+                  "block text-12-5 leading-relaxed",
                   message.author === "user"
-                    ? "self-end max-w-[260px] rounded-lg bg-secondary px-2.5 py-1.5 text-foreground/95"
+                    ? "self-end max-w-[280px] rounded-lg bg-secondary px-2.5 py-1.5 text-foreground/95"
                     : "text-foreground/85",
                 )}
               >
@@ -101,7 +101,7 @@ function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThrea
             }}
             placeholder="Reply…"
             rows={1}
-            className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-2xs leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
+            className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-12-5 leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:outline-none"
           />
         </span>
       ))}
@@ -174,8 +174,8 @@ function QuoteHighlight({
           "cursor-pointer rounded-sm px-0.5 shadow-[inset_0_-1.5px_0_0] transition-colors [box-decoration-break:clone]",
           explainOnly
             ? "bg-muted-foreground/15 shadow-muted-foreground/50 hover:bg-muted-foreground/25"
-            : "bg-primary/15 shadow-primary/60 hover:bg-primary/25",
-          open && (explainOnly ? "bg-muted-foreground/25" : "bg-primary/30"),
+            : "bg-green/20 shadow-green/70 hover:bg-green/30",
+          open && (explainOnly ? "bg-muted-foreground/25" : "bg-green/35"),
         )}
       >
         {children}

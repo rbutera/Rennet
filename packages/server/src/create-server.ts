@@ -83,6 +83,7 @@ import {
   gitForRepoFactory,
   isGitHubNetworkError,
   KnowledgeStore,
+  landRoundBranch,
   landRoundChanges,
   listDir,
   loadConventionCatalogue,
@@ -96,6 +97,7 @@ import {
   PublishCompositionStore,
   PublishReceiptStore,
   parseGitHubPrRef,
+  planRoundBranchLanding,
   prepareRoundWorkspace,
   prWorktreePath,
   RepoWatcher,
@@ -587,6 +589,36 @@ export async function captureBranchPatchset(input: {
   });
 }
 
+export async function captureLandedBranchPatchset(input: {
+  readonly git: GitExec;
+  readonly locus: Locus;
+  readonly repoPath: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+  readonly headOid: string;
+  readonly baseOid: string;
+  readonly resolveProjectSnapshotId: (repositoryRoot: string, baseOid: string) => Promise<string>;
+}): Promise<Patchset> {
+  const gitRoot = (await input.git(input.repoPath, ["rev-parse", "--show-toplevel"])).trim();
+  const root = input.locus.kind === "wsl" ? toWindowsView(gitRoot, input.locus.distro) : gitRoot;
+  const headOid = (
+    await input.git(root, ["rev-parse", "--verify", `${input.headOid}^{commit}`])
+  ).trim();
+  const baseOid = (
+    await input.git(root, ["rev-parse", "--verify", `${input.baseOid}^{commit}`])
+  ).trim();
+  return captureRangePatchset(input.git, {
+    root,
+    locus: input.locus,
+    baseOid,
+    headOid,
+    baseRef: input.baseRef,
+    headRef: input.headRef,
+    source: "local-branch",
+    projectSnapshotId: await input.resolveProjectSnapshotId(root, baseOid),
+  });
+}
+
 function detectedLocusForRepo(repoRoot: string): Locus {
   return resolveLocus(detectLocus(repoRoot)).value;
 }
@@ -939,6 +971,8 @@ export interface RennetServerOptions {
    * way), so a WSL update reports that plainly instead of shipping the wrong file.
    */
   readonly hostBundlePath?: string;
+  /** Test-composition seam for a hermetic harness. The production daemon never supplies it. */
+  readonly testHarnessPort?: HarnessPort;
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
@@ -1213,6 +1247,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
   // light-tier turn runs the distro's claude/codex — not the host's.
   async function claudeAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+    if (options.testHarnessPort !== undefined) return options.testHarnessPort;
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
   }
@@ -1945,7 +1980,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<FlaggedReviewRun> {
     const patchset = activePatchset(review);
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
+    const adapter = options.testHarnessPort ?? discoveredAdapter;
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
@@ -2111,7 +2147,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (requirements.length === 0) return { status: "ok", edges: [] };
 
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
+    const adapter = options.testHarnessPort ?? discoveredAdapter;
     // No model seat ⇒ cannot compute; honest failed (no chips), never a fabricated zero.
     if (!adapter) return { status: "failed", edges: [] };
 
@@ -2194,7 +2231,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<NoiseReview> {
     const patchset = activePatchset(review);
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
+    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
+    const adapter = options.testHarnessPort ?? discoveredAdapter;
     if (!adapter) {
       return { status: "failed", reason: "no model harness is available to classify noise" };
     }
@@ -2938,7 +2976,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
       : { ...common, outcome: "failed" as const, termination: result.termination };
   };
-  const roundSourceLandingPorts = createRoundSourceLandingPorts({
+  const checkoutSourceLandingPorts = createRoundSourceLandingPorts({
     planLegacy: (operation) => {
       if (operation.state.phase !== "commits-settled") {
         throw new Error("Round source landing planned before commits settled.");
@@ -2973,6 +3011,39 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     ...(roundSourceLanding === undefined ? {} : { injection: roundSourceLanding }),
   });
+  const roundSourceLandingPorts: ReturnType<typeof createRoundSourceLandingPorts> = {
+    ...checkoutSourceLandingPorts,
+    planSourceLanding: (operation) => {
+      if (
+        options.roundSourceLanding !== undefined ||
+        operation.sourceTarget.kind !== "branch" ||
+        sourcePatchsetFor(operation).source !== "local-branch"
+      ) {
+        return checkoutSourceLandingPorts.planSourceLanding(operation);
+      }
+      if (operation.state.phase !== "commits-settled") {
+        throw new Error("Selected-branch landing planned before commits settled.");
+      }
+      return planRoundBranchLanding({
+        git: gitForRepo(operation.repoRoot),
+        repoRoot: operation.repoRoot,
+        executionId: randomUUID(),
+        branch: operation.sourceTarget.branch,
+        expectedHead: operation.state.workspace.sourceParentHead,
+        baselineCommit: operation.state.commits.from,
+        workerHead: operation.state.commits.to,
+        startedAt: Date.now(),
+      });
+    },
+    landSourceChanges: ({ operation, attempt }) =>
+      attempt.strategy === "branch-ref-v1"
+        ? landRoundBranch({
+            git: gitForRepo(operation.repoRoot),
+            repoRoot: operation.repoRoot,
+            attempt,
+          })
+        : checkoutSourceLandingPorts.landSourceChanges({ operation, attempt }),
+  };
 
   const storedRoundReportVerification = {
     reviewById: (reviewId: string) => service.reviewById(reviewId),
@@ -3110,11 +3181,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (operation.state.phase !== "report-drafting") {
           throw new Error("Round report started outside its durable drafting phase.");
         }
-        await dispatch("review.regenerate", {
-          commandId: randomUUID(),
-          reviewId: operation.reviewId,
-          repoPath: operation.repoRoot,
-        });
+        const sourcePatchset = sourcePatchsetFor(operation);
+        if (operation.sourceTarget.kind === "branch" && sourcePatchset.source === "local-branch") {
+          const base = sourcePatchset.repository.baseRef;
+          if (base === undefined) {
+            throw new Error("Selected-branch round lost its base branch.");
+          }
+          const git = gitForRepo(operation.repoRoot);
+          const patchset = await captureLandedBranchPatchset({
+            git,
+            locus: locusForRepo(operation.repoRoot),
+            repoPath: operation.repoRoot,
+            headRef: operation.sourceTarget.branch,
+            baseRef: base,
+            headOid: operation.state.landing.workerHead,
+            baseOid: sourcePatchset.repository.baseOid,
+            resolveProjectSnapshotId: (root, baseOid) =>
+              ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
+          });
+          await service.activatePatchset(attempt.executionId, operation.reviewId, patchset);
+        } else {
+          await dispatch("review.regenerate", {
+            commandId: attempt.executionId,
+            reviewId: operation.reviewId,
+            repoPath: operation.repoRoot,
+          });
+        }
         const review = service.reviewById(operation.reviewId);
         if (review === null) throw new Error("Round recapture did not return its review.");
         const session = sessionForOperation(operation);
@@ -3867,7 +3959,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Mint first and return immediately. The durable preparation snapshot owns the capture
       // and first-generation work after navigation, including cancellation, retry, restart
       // recovery, and the exact lens events emitted by the server pipeline.
-      start: async ({ projectId, commandId, target }) => {
+      start: async ({ projectId, commandId, replacesSessionId, target }) => {
         const legacyPrRef =
           target?.prNumber === undefined || target.forgeRepository !== undefined
             ? null
@@ -3883,7 +3975,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const entered =
           target === undefined
             ? { session: mintSession(projectId), reattached: false }
-            : sessionEntry.enter(projectId, identityTarget ?? target);
+            : replacesSessionId === undefined
+              ? sessionEntry.enter(projectId, identityTarget ?? target)
+              : sessionEntry.enterSuccessor(replacesSessionId, projectId, identityTarget ?? target);
         if (!entered.reattached) sessionStore.save(entered.session);
         const current = sessionStore.load(entered.session.id) ?? entered.session;
         const prepared =
@@ -3899,6 +3993,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 commandId,
                 ...(identityTarget === undefined ? {} : { target: identityTarget }),
               });
+        if (replacesSessionId !== undefined) sessionStore.archive(replacesSessionId);
         return { session: sidebarSessionFor(prepared), reattached: entered.reattached };
       },
       cancelPreparation: (sessionId) => {
@@ -4625,7 +4720,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   // The loopback WS transport (#378). Started here — after dispatch exists — and
   // awaited so `createRennetServer` resolves only once the socket is `listening`,
-  // giving the desktop shell a real `wsPort` before it loads the window.
+  // so no `wsPort` is ever published before it accepts connections. (The desktop shell
+  // no longer waits on any of this to show its window: it creates the window first and
+  // asks MAIN for the port over IPC — perf audit §2/§6 H1.)
   wsListener = await startWsListener({
     dispatch,
     serverVersion,

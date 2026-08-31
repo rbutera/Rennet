@@ -232,8 +232,8 @@ async function currentSessionReview(page: Page): Promise<{
   const slug = /^#\/s\/([^?]+)/.exec(hash)?.[1];
   if (slug === undefined) throw new Error(`expected a session route, got ${hash}`);
   const sessionId = decodeURIComponent(slug);
-  const port = await page.evaluate(
-    () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
   );
   const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
   try {
