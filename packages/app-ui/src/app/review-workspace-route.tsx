@@ -5,7 +5,7 @@ import {
   newCommandId,
   type Review,
 } from "@rennet/protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { useCommand, useMutation } from "../data";
@@ -467,7 +467,7 @@ function HandoffMount({
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
   const [dispatchState, setDispatchState] = useState<RoundDispatchViewState>({ status: "idle" });
   const dispatchLifecycle = useRef({ mounted: true, slug, request: 0 });
-  useEffect(() => {
+  useLayoutEffect(() => {
     dispatchLifecycle.current.mounted = true;
     return () => {
       dispatchLifecycle.current.mounted = false;

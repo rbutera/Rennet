@@ -16,6 +16,7 @@ import {
   type Review,
   type RoundOperationProgressSnapshot,
 } from "@rennet/protocol";
+import { useLayoutEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
 import { BridgeProvider } from "../data";
@@ -92,23 +93,33 @@ afterEach(() => {
   });
 });
 
+function SettleOnLayout({ settle }: { readonly settle: () => void }) {
+  useLayoutEffect(settle, [settle]);
+  return <span>left session</span>;
+}
+
 /** The two routes (workspace + run) cluster 7 wires under ONE rounds source. */
-function routes() {
+function routes(settleOnLeave?: () => void) {
   return (
     <Switch>
       <Route path={ROUTES.sessionRun}>{(p) => <RunRoute slug={p.slug ?? ""} />}</Route>
       <Route path={ROUTES.session}>{() => <ReviewWorkspace review={review} />}</Route>
+      {settleOnLeave ? (
+        <Route path={ROUTES.newChat}>
+          <SettleOnLayout settle={settleOnLeave} />
+        </Route>
+      ) : null}
     </Switch>
   );
 }
 
 /** Mount those routes under a FIXTURE source — the seam's behaviour, not the app's wiring. */
-function mountApp(source: RoundsSource) {
+function mountApp(source: RoundsSource, settleOnLeave?: () => void) {
   const history = memoryHistory("/s/s-1?view=handoff");
   const r = mount(
     <BridgeProvider bridge={new MemoryBridge({})}>
       <Router hook={history.hook} searchHook={history.searchHook}>
-        <RoundsSourceProvider value={source}>{routes()}</RoundsSourceProvider>
+        <RoundsSourceProvider value={source}>{routes(settleOnLeave)}</RoundsSourceProvider>
       </Router>
     </BridgeProvider>,
   );
@@ -339,16 +350,12 @@ describe("dispatch wiring (C09 cluster 4)", () => {
           settle = resolve;
         }),
     };
-    const { r, history } = mountApp(source);
+    const { r, history } = mountApp(source, () => settle?.({ status: "accepted" }));
 
     await r.user.click(r.getByRole("button", { name: "Dispatch Round" }));
     act(() => history.navigate("/new-chat"));
-    await waitFor(() => expect(r.queryByRole("button", { name: "Dispatch Round" })).toBeNull());
-
-    await act(async () => {
-      settle?.({ status: "accepted" });
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(r.getByText("left session")).toBeTruthy());
+    await act(async () => Promise.resolve());
 
     expect(history.history.at(-1)).toBe("/new-chat");
     expect(store().run.roundProgress).toBe(0.5);
