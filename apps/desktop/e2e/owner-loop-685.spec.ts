@@ -155,8 +155,8 @@ async function startTestDaemon(options: {
 }
 
 async function bridgeFor(page: Page): Promise<WsRennetBridge> {
-  const port = await page.evaluate(
-    () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
   );
   return new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
 }
