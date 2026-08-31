@@ -34,6 +34,8 @@ import {
 
 const REVIEW = "rev-live";
 const SESSION = "session-live";
+const OTHER_REVIEW = "rev-other";
+const OTHER_SESSION = "session-other";
 
 const OPERATION_BASE = {
   operationId: "operation-live",
@@ -169,6 +171,21 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
       <span>rounds:{unavailable === undefined ? "readable" : `unavailable/${unavailable}`}</span>
       <button type="button" onClick={() => void dispatch?.(slug)}>
         dispatch
+      </button>
+    </>
+  );
+}
+
+function CrossSessionProbe() {
+  const dispatch = useRoundDispatch();
+  const first = useRoundState(SESSION);
+  const second = useRoundState(OTHER_SESSION);
+  return (
+    <>
+      <span>first:{first.phase}</span>
+      <span>second:{second.phase}</span>
+      <button type="button" onClick={() => void dispatch?.(SESSION)}>
+        dispatch first
       </button>
     </>
   );
@@ -562,8 +579,28 @@ describe("the mounted transcript refresh receipts", () => {
 // round under way. The intent now says only what is true, and the receipt is what
 // settles it — confirmed by the daemon's own events, or refuted out loud.
 describe("dispatch is an intent until the daemon answers (C15 finding 7)", () => {
+  function completedRound(): RoundEvent {
+    return operationEvent(
+      {
+        phase: "completed",
+        ...SETTLED_OPERATION,
+        result: {
+          kind: "changed",
+          report: {
+            status: "verified",
+            reportBoardId: "report-round-1",
+            generation: "generation-round-1",
+          },
+        },
+      },
+      10,
+      { draining: false, rerunRequested: false },
+    );
+  }
+
   function bridgeWith(
     dispatchImpl: (reviewId: string) => Promise<CommandOutput<"round.dispatch">>,
+    seed: readonly RoundEvent[] = [],
   ): {
     readonly bridge: MemoryBridge;
     readonly readsStarted: () => boolean;
@@ -573,7 +610,7 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
       ...resolutionHandlers,
       "session.roundEvents": () => {
         readsStarted = true;
-        return { events: [] };
+        return { events: [...seed] };
       },
       "session.rounds": () => ({ records: [] }),
       "round.dispatch": ({ reviewId }) => dispatchImpl(reviewId),
@@ -605,6 +642,64 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
     // THE LIE THIS GUARDS: the round never started, so nothing may claim it did.
     await waitFor(() => expect(getByText("phase:failed/no work order to dispatch")).toBeTruthy());
   });
+
+  it("restores a completed round when the transport rejects before accepting another", async () => {
+    let refuse: ((reason?: unknown) => void) | undefined;
+    const { bridge, readsStarted } = bridgeWith(
+      () =>
+        new Promise<CommandOutput<"round.dispatch">>((_resolve, reject) => {
+          refuse = reject;
+        }),
+      [completedRound()],
+    );
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
+
+    act(() => getByText("dispatch").click());
+    await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+    await act(async () => {
+      refuse?.(new Error("transport closed"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+  });
+
+  it.each(["not-dispatched", "missing-operation", "transport-rejected"] as const)(
+    "keeps a live accepted operation when the later receipt is %s",
+    async (settlement) => {
+      let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+      let refuse: ((reason?: unknown) => void) | undefined;
+      const { bridge } = bridgeWith(
+        () =>
+          new Promise<CommandOutput<"round.dispatch">>((resolve, reject) => {
+            answer = resolve;
+            refuse = reject;
+          }),
+        [completedRound()],
+      );
+      const { getByText } = mountLive(bridge);
+      await waitFor(() => expect(getByText("phase:composed/generation-round-1")).toBeTruthy());
+
+      act(() => getByText("dispatch").click());
+      await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+      act(() =>
+        bridge.emitRoundProgress(
+          REVIEW,
+          operationEvent({ phase: "claimed" }, 11, { draining: false, rerunRequested: false }),
+        ),
+      );
+      await act(async () => {
+        if (settlement === "not-dispatched") answer?.(dispatchAnswer(REVIEW, undefined, false));
+        else if (settlement === "missing-operation") answer?.(dispatchAnswer(REVIEW));
+        else refuse?.(new Error("transport closed"));
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+    },
+  );
 
   it("an honest dispatched:false receipt clears the pending intent", async () => {
     let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
@@ -696,6 +791,61 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
 
     await waitFor(() => expect(eventReads).toBeGreaterThan(1));
     expect(getByText("phase:dispatching")).toBeTruthy();
+  });
+
+  it("keeps a late accepted dispatch keyed to its original review after the route changes", async () => {
+    let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+    const otherReview: Review = { ...RESOLVED_REVIEW, id: OTHER_REVIEW };
+    const otherSession: SidebarSession = {
+      ...SESSION_ROW,
+      id: OTHER_SESSION,
+      reviewId: OTHER_REVIEW,
+      title: "Other review",
+    };
+    const bridge = new MemoryBridge({
+      "session.list": () => ({ sessions: [SESSION_ROW, otherSession] }),
+      "review.load": ({ reviewId }) => ({
+        review: reviewId === REVIEW ? RESOLVED_REVIEW : otherReview,
+        repositoryPresent: true,
+      }),
+      "session.roundEvents": () => ({ events: [] }),
+      "session.rounds": () => ({ records: [] }),
+      "round.dispatch": () =>
+        new Promise<CommandOutput<"round.dispatch">>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    const history = memoryHistory(`/s/${SESSION}/run`);
+    const r = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveScope>
+            <CrossSessionProbe />
+          </LiveScope>
+        </Router>
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(r.getByText("first:absent")).toBeTruthy());
+
+    act(() => r.getByText("dispatch first").click());
+    await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
+    act(() => history.navigate(`/s/${OTHER_SESSION}/run`));
+    await waitFor(() => expect(r.getByText("second:absent")).toBeTruthy());
+
+    await act(async () => {
+      answer?.(
+        dispatchAnswer(REVIEW, {
+          ...OPERATION_BASE,
+          revision: 0,
+          state: { phase: "claimed" },
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(r.getByText("second:absent")).toBeTruthy();
+
+    act(() => history.navigate(`/s/${SESSION}/run`));
+    await waitFor(() => expect(r.getByText("first:dispatching")).toBeTruthy());
   });
 });
 

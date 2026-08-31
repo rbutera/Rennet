@@ -188,9 +188,7 @@ export function useReportBoard(reportBoardId: string): ReportBoardResolution {
 /** The dispatch capability for the current source — present under the app tree's
  *  `LiveRoundsScope`, `undefined` under the honest-absent default (⇒ the Dispatch button
  *  stays inert). `HandoffMount` reads this and threads it to the handoff lanes. */
-export function useRoundDispatch():
-  | ((slug: string) => Promise<RoundDispatchOutcome>)
-  | undefined {
+export function useRoundDispatch(): ((slug: string) => Promise<RoundDispatchOutcome>) | undefined {
   return useContext(RoundsSourceContext).dispatch;
 }
 
@@ -393,6 +391,26 @@ export function useLiveRoundsSource(): RoundsSource {
         : // Asked, and nothing back yet. The client's own intent, stated as such.
           { phase: "dispatching" };
     };
+    const writeEvents = (
+      base: readonly RoundEvent[],
+      appended: readonly RoundEvent[],
+    ): readonly RoundEvent[] => {
+      let written: readonly RoundEvent[] = NO_EVENTS;
+      cache.setData(
+        commandKey("session.roundEvents", { reviewId: reviewId ?? "" }),
+        (cached) => {
+          const cachedEvents =
+            (cached as { readonly events?: readonly RoundEvent[] } | undefined)?.events ??
+            NO_EVENTS;
+          const currentStream = streamKey.current === reviewId ? streamed.current : NO_EVENTS;
+          written = mergeRoundEvents([...base, ...cachedEvents], [...currentStream, ...appended]);
+          if (streamKey.current === reviewId) streamed.current = written;
+          return { events: [...written] };
+        },
+        { supersedeInFlight: true },
+      );
+      return written;
+    };
     return {
       roundState: stateFor,
       roundRecords: (forSlug: string) => (forSlug === slug ? (records ?? NO_RECORDS) : NO_RECORDS),
@@ -412,12 +430,7 @@ export function useLiveRoundsSource(): RoundsSource {
               type: "operation",
               snapshot: output.acceptedOperation,
             };
-            streamed.current = mergeRoundEvents(streamed.current, [accepted]);
-            cache.setData(
-              commandKey("session.roundEvents", { reviewId }),
-              () => ({ events: [...streamed.current] }),
-              { supersedeInFlight: true },
-            );
+            writeEvents(NO_EVENTS, [accepted]);
             cache.invalidate(commandKey("session.roundEvents", { reviewId }));
           })
           .catch(() => undefined);
@@ -445,22 +458,14 @@ export function useLiveRoundsSource(): RoundsSource {
           if (!output.dispatched) {
             const reason =
               "Rennet did not start a coding round. Questions and approvals remain staged for the review.";
-            cache.setData(
-              commandKey("session.roundEvents", { reviewId }),
-              () => ({ events: [...previousEvents] }),
-              { supersedeInFlight: true },
-            );
+            writeEvents(previousEvents, NO_EVENTS);
             setIntent(undefined);
             return { status: "not-dispatched", reason };
           }
           if (output.acceptedOperation === undefined) {
             const reason =
               "Rennet did not receive the accepted operation for this coding round. Try dispatching again.";
-            cache.setData(
-              commandKey("session.roundEvents", { reviewId }),
-              () => ({ events: [...previousEvents] }),
-              { supersedeInFlight: true },
-            );
+            writeEvents(previousEvents, NO_EVENTS);
             setIntent({ slug: forSlug, status: "rejected", reason });
             return { status: "rejected", reason };
           }
@@ -468,16 +473,12 @@ export function useLiveRoundsSource(): RoundsSource {
             type: "operation",
             snapshot: output.acceptedOperation,
           };
-          streamed.current = mergeRoundEvents(streamed.current, [accepted]);
-          cache.setData(
-            commandKey("session.roundEvents", { reviewId }),
-            () => ({ events: [...streamed.current] }),
-            { supersedeInFlight: true },
-          );
+          writeEvents(NO_EVENTS, [accepted]);
           cache.invalidate(commandKey("session.roundEvents", { reviewId }));
           return { status: "accepted" };
         } catch (reason: unknown) {
           const message = failureText(reason);
+          writeEvents(previousEvents, NO_EVENTS);
           setIntent({ slug: forSlug, status: "rejected", reason: message });
           return { status: "rejected", reason: message };
         }

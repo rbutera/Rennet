@@ -263,7 +263,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         </div>
       ) : null}
       {view === "handoff" ? (
-        <HandoffMount review={review} slug={slug} navigate={navigate} />
+        <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "map" ? (
         // `?view=map` shows this session's PROJECT context map — the destination the top
         // bar's Map toggle has advertised since C03 §4.3 and the one the docs describe
@@ -466,10 +466,25 @@ function HandoffMount({
   const dispatch = useRoundDispatch();
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
   const [dispatchState, setDispatchState] = useState<RoundDispatchViewState>({ status: "idle" });
+  const dispatchLifecycle = useRef({ mounted: true, slug, request: 0 });
+  if (dispatchLifecycle.current.slug !== slug) {
+    dispatchLifecycle.current.slug = slug;
+    dispatchLifecycle.current.request += 1;
+  }
+  useEffect(() => {
+    dispatchLifecycle.current.mounted = true;
+    return () => {
+      dispatchLifecycle.current.mounted = false;
+      dispatchLifecycle.current.request += 1;
+    };
+  }, []);
   const onDispatch = dispatch
     ? () => {
+        const request = ++dispatchLifecycle.current.request;
         setDispatchState({ status: "sending" });
         void dispatch(slug).then((outcome) => {
+          const current = dispatchLifecycle.current;
+          if (!current.mounted || current.slug !== slug || current.request !== request) return;
           switch (outcome.status) {
             case "accepted":
               resetRun();

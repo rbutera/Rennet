@@ -42,11 +42,7 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
   return { promise, resolve };
 }
 
-function stage(
-  anchor: string,
-  body = `body for ${anchor}`,
-  type: StagedAsk["type"] = "comment",
-) {
+function stage(anchor: string, body = `body for ${anchor}`, type: StagedAsk["type"] = "comment") {
   act(() => store().reviewActions.stageAsk({ id: anchor, anchor, type, body }));
 }
 

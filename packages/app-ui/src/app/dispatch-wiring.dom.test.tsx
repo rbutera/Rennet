@@ -19,7 +19,11 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
 import { BridgeProvider } from "../data";
-import { RoundsSourceProvider } from "../rounds/rounds-data";
+import {
+  type RoundDispatchOutcome,
+  type RoundsSource,
+  RoundsSourceProvider,
+} from "../rounds/rounds-data";
 import { RunRoute } from "../rounds/run-route";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
@@ -99,7 +103,7 @@ function routes() {
 }
 
 /** Mount those routes under a FIXTURE source — the seam's behaviour, not the app's wiring. */
-function mountApp(source: ReturnType<typeof createTimelineRoundsSource>["source"]) {
+function mountApp(source: RoundsSource) {
   const history = memoryHistory("/s/s-1?view=handoff");
   const r = mount(
     <BridgeProvider bridge={new MemoryBridge({})}>
@@ -148,9 +152,7 @@ function roundDispatchOutput(
   });
 }
 
-function liveBridge(
-  dispatch: NonNullable<MemoryBridgeHandlers["round.dispatch"]>,
-): MemoryBridge {
+function liveBridge(dispatch: NonNullable<MemoryBridgeHandlers["round.dispatch"]>): MemoryBridge {
   const handlers: MemoryBridgeHandlers = {
     ...frontDoorHandlers(),
     ...sessionHandlers([{ id: "rev-1", projectId: "proj-1" }]),
@@ -211,9 +213,7 @@ describe("dispatch wiring (C09 cluster 4)", () => {
     // shipped permanently disabled could have passed review.
     const history = memoryHistory("/s/rev-1?view=handoff");
     const bridge = liveBridge(() => roundDispatchOutput("rev-1", true, ACCEPTED_OPERATION));
-    const r = mount(
-      <RennetRouterApp bridge={bridge} history={history} />,
-    );
+    const r = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
     const button = await r.findByRole("button", { name: "Dispatch Round" });
     expect(button.hasAttribute("disabled")).toBe(false);
@@ -271,4 +271,53 @@ describe("dispatch wiring (C09 cluster 4)", () => {
     expect(notAccepted.getAttribute("role")).toBe("alert");
     expect(r.container.querySelector('[data-screen="session-run"]')).toBeNull();
   });
+
+  it.each([
+    { name: "accepted", outcome: { status: "accepted" } as const },
+    {
+      name: "not dispatched",
+      outcome: { status: "not-dispatched", reason: "late A no-round" } as const,
+    },
+    {
+      name: "rejected",
+      outcome: { status: "rejected", reason: "late A failure" } as const,
+    },
+  ])(
+    "ignores a late $name answer after the route moves to another session",
+    async ({ outcome }) => {
+      act(() => {
+        store().reviewActions.stageAsk({
+          id: "src/a.ts:5",
+          anchor: "src/a.ts:5",
+          type: "request-change",
+          body: "guard the boundary",
+        });
+        store().runActions.setRoundProgress(0.5);
+      });
+      let settle: ((answer: RoundDispatchOutcome) => void) | undefined;
+      const source: RoundsSource = {
+        ...createTimelineRoundsSource({ startTick: 0 }).source,
+        dispatch: () =>
+          new Promise<RoundDispatchOutcome>((resolve) => {
+            settle = resolve;
+          }),
+      };
+      const { r, history } = mountApp(source);
+
+      await r.user.click(r.getByRole("button", { name: "Dispatch Round" }));
+      act(() => history.navigate("/s/s-2?view=handoff"));
+      await waitFor(() => expect(r.getByRole("button", { name: "Dispatch Round" })).toBeTruthy());
+
+      await act(async () => {
+        settle?.(outcome);
+        await Promise.resolve();
+      });
+
+      expect(history.history.at(-1)).toBe("/s/s-2?view=handoff");
+      expect(store().run.roundProgress).toBe(0.5);
+      expect(r.container.querySelector('[data-screen="session-run"]')).toBeNull();
+      expect(r.queryByText("Dispatching…")).toBeNull();
+      if (outcome.status !== "accepted") expect(r.queryByText(outcome.reason)).toBeNull();
+    },
+  );
 });

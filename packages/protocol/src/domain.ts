@@ -71,8 +71,10 @@ export interface DispositionAnchor {
 export type DispositionType = "approve" | "request-change" | "comment" | "question";
 
 /** Dispositions a coding round can address by changing the checkout. */
-export const CODING_ROUND_DISPOSITION_TYPES = ["request-change", "comment"] as const satisfies
-  readonly DispositionType[];
+export const CODING_ROUND_DISPOSITION_TYPES = [
+  "request-change",
+  "comment",
+] as const satisfies readonly DispositionType[];
 export type CodingRoundDispositionType = (typeof CODING_ROUND_DISPOSITION_TYPES)[number];
 
 /** Questions are answered in conversation; approval asks the worker to leave the code alone. */
