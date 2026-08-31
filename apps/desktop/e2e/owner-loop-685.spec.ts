@@ -1,6 +1,6 @@
 import { type ChildProcess, execFileSync, fork } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import { generationIdForPatchset, LENS_KINDS } from "@rennet/protocol";
@@ -75,12 +75,23 @@ function seedRepo(root: string, name: "target" | "decoy"): void {
 }
 
 function seedWorkspace(): { workspace: string; target: string; decoy: string } {
-  const workspace = makeTempDir("rennet-e2e-685-workspace-");
+  const workspace = realpathSync(makeTempDir("rennet-e2e-685-workspace-"));
   const target = join(workspace, "target");
   const decoy = join(workspace, "decoy");
   seedRepo(target, "target");
   seedRepo(decoy, "decoy");
   return { workspace, target, decoy };
+}
+
+function gateCapableEnv(home: string): NodeJS.ProcessEnv {
+  const environment = modelFreeEnv(home);
+  const nodeBin = dirname(process.execPath);
+  const npm = join(nodeBin, process.platform === "win32" ? "npm.cmd" : "npm");
+  if (!existsSync(npm)) throw new Error(`npm is missing beside the test Node binary: ${npm}`);
+  return {
+    ...environment,
+    PATH: [nodeBin, environment.PATH].filter(Boolean).join(delimiter),
+  };
 }
 
 async function startTestDaemon(options: {
@@ -123,7 +134,7 @@ async function startTestDaemon(options: {
   const child = fork(bundlePath, [], {
     cwd: resolve("."),
     env: {
-      ...modelFreeEnv(options.home),
+      ...gateCapableEnv(options.home),
       RENNET_USER_DATA: options.userData,
       RENNET_OWNER_LOOP_PLAN: options.planPath,
       RENNET_SERVER_VERSION: desktopPackage.version,
@@ -166,15 +177,30 @@ function assertProductionBundleBoundary(): void {
   }
 }
 
-async function expectFiveSourceBackedBoards(page: Page): Promise<void> {
+async function expectFiveSourceBackedBoards(
+  page: Page,
+  bridge: WsRennetBridge,
+  reviewId: string,
+  generation: string,
+  patchsetId: string,
+): Promise<void> {
   for (const lens of LENS_KINDS) {
     const tab = page.locator(`[data-kind="lens-switcher"] [data-lens="${lens}"]`);
     await expect(tab).toBeVisible();
     await tab.click();
     const board = page.locator(`article[data-lens="${lens}"]`);
     await expect(board).toBeVisible({ timeout: 30_000 });
-    await expect(board.locator('[data-kind="code_ref"]').first()).toBeVisible();
-    await expect(board).toContainText(OWNER_LOOP_SOURCE);
+    const read = await bridge.invoke("board.read", { reviewId, generation, lens });
+    expect(read.failure).toBeUndefined();
+    expect(read.absence).toBeUndefined();
+    expect(read.board?.generation).toBe(generation);
+    expect(read.board?.elements.length).toBeGreaterThan(0);
+    await expect(board).toContainText(read.board?.document.title ?? "missing board title");
+    await expect(board.locator(`[title*="${OWNER_LOOP_SOURCE}"]`).first()).toBeVisible();
+    const refs = read.board?.elements.filter((element) => element.kind === "code_ref") ?? [];
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs.every((element) => element.data.path === OWNER_LOOP_SOURCE)).toBe(true);
+    expect(refs.some((element) => element.data.patchset_id === patchsetId)).toBe(true);
   }
 }
 
@@ -220,8 +246,14 @@ async function stageAskFromSequenceBoard(
   return id;
 }
 
-async function dispatchVisibleRound(page: Page, askBody: string): Promise<void> {
-  await page.getByRole("button", { name: "Continue, 1 staged" }).click();
+async function dispatchVisibleRound(
+  page: Page,
+  askBody: string,
+  expectedExitCount: number,
+): Promise<void> {
+  await page
+    .getByRole("button", { name: `Continue, ${expectedExitCount} staged`, exact: true })
+    .click();
   await page.getByRole("button", { name: "Dispatch Round" }).click();
   await expect(page.locator('[data-screen="session-run"]')).toBeVisible({ timeout: 30_000 });
   const greeting = page.locator('[data-screen="round-greeting"]');
@@ -282,8 +314,6 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
         .locator('[data-kind="lens-switcher"] [data-lens]')
         .evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens"))),
     ).toEqual([...LENS_KINDS]);
-    await expectFiveSourceBackedBoards(page);
-
     bridge = await bridgeFor(page);
     const sessions = await bridge.invoke("session.list", {});
     const session = sessions.sessions.find((candidate) => candidate.reviewId !== undefined);
@@ -294,6 +324,14 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       reviewId,
     });
     expect(initialReview.review.repositoryRoot).toBe(target);
+    const initialGeneration = generationIdForPatchset(initialReview.review.activePatchsetId);
+    await expectFiveSourceBackedBoards(
+      page,
+      bridge,
+      reviewId,
+      initialGeneration,
+      initialReview.review.activePatchsetId,
+    );
 
     await page
       .locator('[data-slot="toggle-group"]')
@@ -333,18 +371,25 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
     expect(decoyMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
     await page.getByRole("button", { name: "Back to board" }).click();
 
-    const initialGeneration = generationIdForPatchset(initialReview.review.activePatchsetId);
     const roundOneThreadId = await stageAskFromSequenceBoard(
       page,
       bridge,
       reviewId,
       OWNER_LOOP_ROUND_ONE_BODY,
     );
-    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY);
-    await expectFiveSourceBackedBoards(page);
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY, 1);
     const afterRoundOne = await bridge.invoke("session.rounds", { reviewId });
     expect(afterRoundOne.records).toHaveLength(1);
     const roundOneGeneration = afterRoundOne.records[0]?.boardGeneration ?? "";
+    const roundOnePatchset = afterRoundOne.records[0]?.resultPatchsetId ?? "";
+    expect(roundOnePatchset).not.toBe("");
+    await expectFiveSourceBackedBoards(
+      page,
+      bridge,
+      reviewId,
+      roundOneGeneration,
+      roundOnePatchset,
+    );
     expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne.records[0]?.frozenPredecessor).toBe(initialGeneration);
     const afterRoundOneAsks = await bridge.invoke("ask.read", { sessionId: reviewId });
@@ -395,12 +440,14 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       reviewId,
       OWNER_LOOP_ROUND_TWO_BODY,
     );
-    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY);
-    await expectFiveSourceBackedBoards(page);
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY, 2);
     const finalRounds = await bridge.invoke("session.rounds", { reviewId });
     expect(finalRounds.records).toHaveLength(2);
     expect(finalRounds.records[1]?.frozenPredecessor).toBe(finalRounds.records[0]?.boardGeneration);
     const finalGeneration = finalRounds.records[1]?.boardGeneration ?? "";
+    const finalPatchset = finalRounds.records[1]?.resultPatchsetId ?? "";
+    expect(finalPatchset).not.toBe("");
+    await expectFiveSourceBackedBoards(page, bridge, reviewId, finalGeneration, finalPatchset);
     const finalAsks = await bridge.invoke("ask.read", { sessionId: reviewId });
     for (const threadId of [roundOneThreadId, roundTwoThreadId]) {
       expect(finalAsks.projection.quoteThreads[threadId]).toMatchObject({

@@ -221,7 +221,11 @@ function noiseBoard(): DraftBoard {
       {
         id: "noise-section",
         kind: "section",
-        data: { author, title: "Behavioral change", children: ["noise-verdict"] },
+        data: {
+          author,
+          title: "Behavioral change",
+          children: ["noise-verdict", "noise-code"],
+        },
       },
     ],
     skippedHunks: [],
