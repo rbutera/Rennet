@@ -69,12 +69,14 @@ describe("ForgeRepoIdentity", () => {
       prNumber: 7,
       repository: "acme/widget",
       forgeRepository: github,
+      replacesSessionId: "session-old",
     });
 
     expect(local.forgeRepository).toEqual(github);
     expect(pullRequest.forgeRepository).toEqual(github);
     expect(sidebar.forgeRepository).toEqual(github);
     expect(mint.forgeRepository).toEqual(github);
+    expect(mint.replacesSessionId).toBe("session-old");
   });
 
   it("rejects a structured identity that contradicts its legacy owner/name", () => {

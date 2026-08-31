@@ -2,12 +2,13 @@ import {
   currentGenerationId,
   isReviewStale,
   isWorkingTreeReview,
+  newCommandId,
   type Review,
 } from "@rennet/protocol";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
-import { useMutation } from "../data";
+import { useCommand, useMutation } from "../data";
 import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
@@ -459,7 +460,8 @@ function HandoffMount({
   slug: string;
   navigate: (to: string) => void;
 }) {
-  const exits = useHandoffExits(review);
+  const recapture = useLatestReviewRecapture(review, slug, navigate);
+  const exits = useHandoffExits(review, recapture);
   const dispatch = useRoundDispatch();
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
   const onDispatch = dispatch
@@ -473,6 +475,7 @@ function HandoffMount({
     <HandoffView
       review={review}
       onPost={exits.onPost}
+      onRecapture={exits.onRecapture}
       receipt={exits.receipt}
       reviewDraft={exits.reviewDraft}
       onSetVerdict={exits.onSetVerdict}
@@ -483,4 +486,38 @@ function HandoffMount({
       unavailable={exits.unavailable}
     />
   );
+}
+
+function useLatestReviewRecapture(
+  review: Review,
+  slug: string,
+  navigate: (to: string) => void,
+): (() => Promise<void>) | undefined {
+  const { data } = useCommand("session.list", {});
+  const session = data?.sessions.find(
+    (candidate) => candidate.id === slug || candidate.reviewId === review.id,
+  );
+  const { mutate: mint } = useMutation("session.mint", { invalidates: ["session.list"] });
+  const target = review.postTarget;
+
+  const recapture = useCallback(async () => {
+    if (session?.claim === undefined || target === undefined) {
+      throw new Error("This review has no session target to capture again.");
+    }
+    const started = await mint({
+      projectId: session.projectId,
+      commandId: newCommandId(),
+      branch: session.claim.branch,
+      prNumber: target.number,
+      repository: `${target.repo.owner}/${target.repo.name}`,
+      forgeRepository: target.repo,
+      replacesSessionId: session.id,
+    });
+    if (started.session === null || started.session.id === session.id) {
+      throw new Error("The latest review could not be started.");
+    }
+    navigate(sessionPath(started.session.id));
+  }, [mint, navigate, session, target]);
+
+  return session?.claim !== undefined && target !== undefined ? recapture : undefined;
 }

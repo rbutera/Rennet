@@ -15,6 +15,8 @@ export interface HandoffViewProps {
   readonly review: Review;
   /** The Post Review egress, threaded to the teammate-PR lane (wired in cluster 6). */
   readonly onPost?: PostReviewLaneProps["onPost"];
+  /** Capture a fresh immutable review after the provider reports that the head moved. */
+  readonly onRecapture?: PostReviewLaneProps["onRecapture"];
   /** Durable publication receipt for the current review composition. */
   readonly receipt?: PostReviewLaneProps["receipt"];
   /** The composed outbound review the Post Review lane previews and posts (exact-preview). */
@@ -36,6 +38,7 @@ export interface HandoffViewProps {
 export function HandoffView({
   review,
   onPost,
+  onRecapture,
   receipt,
   reviewDraft,
   onSetVerdict,
@@ -52,6 +55,7 @@ export function HandoffView({
       <PostReviewLane
         review={review}
         onPost={onPost}
+        onRecapture={onRecapture}
         receipt={receipt}
         draft={reviewDraft}
         onSetVerdict={onSetVerdict}

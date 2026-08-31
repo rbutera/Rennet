@@ -8,7 +8,7 @@ interface OutboundBlock {
 
 const FINAL_REVIEW_MARKER = /\n*<!--\s*rennet:review:[0-9a-f]{64}\s*-->\s*$/;
 
-function outboundBlocks(markdown: string, hideFinalReviewMarker: boolean): OutboundBlock[] {
+function outboundBlocks(markdown: string): OutboundBlock[] {
   const blocks: OutboundBlock[] = [];
   let prose: string[] = [];
   const flushProse = () => {
@@ -16,8 +16,7 @@ function outboundBlocks(markdown: string, hideFinalReviewMarker: boolean): Outbo
     if (text) blocks.push({ kind: "prose", text });
     prose = [];
   };
-  const visible = hideFinalReviewMarker ? markdown.replace(FINAL_REVIEW_MARKER, "") : markdown;
-  for (const line of visible.split("\n")) {
+  for (const line of markdown.split("\n")) {
     if (line.startsWith("## ")) {
       flushProse();
       blocks.push({ kind: "heading", text: line.slice(3).trim() });
@@ -41,9 +40,16 @@ export function OutboundMarkdown({
   readonly patchsetId: string;
   readonly hideFinalReviewMarker?: boolean;
 }) {
+  const visibleMarkdown = hideFinalReviewMarker
+    ? markdown.replace(FINAL_REVIEW_MARKER, "")
+    : markdown;
   return (
-    <div className="flex flex-col">
-      {outboundBlocks(markdown, hideFinalReviewMarker).map((block, index) => {
+    <div
+      data-kind="outbound-review-body"
+      data-outbound-markdown={visibleMarkdown}
+      className="flex flex-col"
+    >
+      {outboundBlocks(visibleMarkdown).map((block, index) => {
         const key = `${index}-${block.kind}-${block.text.slice(0, 16)}`;
         if (block.kind === "heading") {
           return (

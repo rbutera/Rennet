@@ -229,6 +229,12 @@ export async function launchRennet(options: {
   userData: string;
   home: string;
   /**
+   * The default harness launches the detached daemon and therefore owns stopping it.
+   * A spec that has already claimed `daemon.json` with an injected in-process server
+   * keeps ownership itself; signalling that claim's pid would terminate Playwright.
+   */
+  ownsDaemon?: boolean;
+  /**
    * Override the model-free environment. The deterministic specs take the default;
    * the LIVE spec (F1 6.2) needs the reviewer's real `claude` on PATH and their real
    * HOME, because the whole point of it is to drive an actual harness turn.
@@ -249,12 +255,14 @@ export async function launchRennet(options: {
   // isolated daemon would orphan under its throwaway data dir. Wrap `close` (harness-only;
   // the specs stay untouched) so every `application.close()` also stops the daemon it
   // spawned, before the spec removes the data dir.
-  const nativeClose = application.close.bind(application);
-  application.close = async (...args: Parameters<ElectronApplication["close"]>) => {
-    const result = await nativeClose(...args);
-    await stopDaemon(options.userData);
-    return result;
-  };
+  if (options.ownsDaemon !== false) {
+    const nativeClose = application.close.bind(application);
+    application.close = async (...args: Parameters<ElectronApplication["close"]>) => {
+      const result = await nativeClose(...args);
+      await stopDaemon(options.userData);
+      return result;
+    };
+  }
   return { application };
 }
 

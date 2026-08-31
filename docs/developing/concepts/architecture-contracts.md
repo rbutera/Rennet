@@ -210,6 +210,14 @@ approving GitLab retry checks the current user's approval state: an existing
 approval returns the reused marker receipt, while a note-only retry rechecks the
 immutable head and performs the missing approval once.
 
+When that live head differs, the refused review remains unchanged and receives no
+publication receipt. **Review latest revision** first persists a new session for
+the same provider-qualified pull or merge request, then archives the old session's
+target claim and routes to the new preparation progress. An interrupted transfer
+therefore leaves at least one live claimant. The fresh review owns a new patchset
+and a newly composed payload at the new head; the refused review remains readable
+at its original head and with its original bytes.
+
 For the user's own branch, posting pushes the named branch to the effective push
 remote and opens a GitHub pull request or GitLab.com merge request from the
 previewed title and body. If an exact open request already exists for that source

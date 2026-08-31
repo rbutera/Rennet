@@ -1586,10 +1586,20 @@ const definitions = {
         /** Provider-qualified repository identity from the selected row. Optional for legacy
          * clients and rows without a forge remote. */
         forgeRepository: forgeRepoIdentitySchema.optional(),
+        /**
+         * The refused review session whose target claim this mint replaces. The host persists
+         * the fresh claimant before archiving this session, so an interruption cannot hide the
+         * only review. Absent keeps ordinary mint-or-reattach behavior unchanged.
+         */
+        replacesSessionId: z.string().min(1).optional(),
       })
       .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
         path: ["forgeRepository"],
         message: "forgeRepository must name the same owner/name as repository",
+      })
+      .refine((input) => input.replacesSessionId === undefined || input.branch !== undefined, {
+        path: ["branch"],
+        message: "a replacement session must name the target branch",
       }),
     output: z.object({
       session: sidebarSessionSchema.nullable(),
