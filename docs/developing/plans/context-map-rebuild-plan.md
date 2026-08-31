@@ -195,7 +195,8 @@ gives the full projected set, no fresh snapshot gives the stored set marked
 explicitly unprojected. The same seam (`assembleRoundCollation`) now feeds
 `fanInIndexFromSnapshot` into the blast radius, so fan-in is an edge-backed
 count rather than a *not assessed* mark whenever the snapshot can answer. The
-exploration half — canvasOps on every seat — is W5a's.
+exploration half is W5a's. Context Map partition workers use Codex's native
+repository and shell tools; other composed seats can use canvasOps.
 
 ### Un-hamstringing (same change, not a separate track)
 
@@ -204,8 +205,10 @@ exploration half — canvasOps on every seat — is W5a's.
   a drafter that read beyond the diff can say so.
 - Root Codex utility seats at the repository root, as the swarm seats already
   are.
-- Give Claude seats an `mcpServers` surface and stop wiping the Codex utility
-  seats' MCP table without substituting canvasOps.
+- Give Claude seats an `mcpServers` surface. Codex utility seats inherit the
+  user's MCP table unless a job supplies a full-table override; only the
+  Context Map `partition-worker` supplies an empty table because it uses native
+  repository and shell tools instead.
 - Re-examine each "use ONLY the facts below" prompt: keep the ones that are
   genuine task framing (delta-digest rephrases a structured account), drop
   the ones that are confinement.
@@ -251,6 +254,15 @@ packets should shorten the turn but have never completed a live timing run, and
 the scoping seat that would decide an edge-less file does not deserve a turn at
 all is still unbuilt (Stage 1 point 4). So the design's honest cost is 110 turns
 and a projected ~12.4 minutes; a launched run has not proved the five-minute bar.
+
+The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
+inherited and eagerly started the user's full ambient MCP table, including
+Playwright, Serena, Nx, and Context7 processes the partition workers never call.
+The app-server wrapper and native process used roughly 100–170 MiB per lane, but
+the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
+in 45.6 seconds. Partition workers now send `-c mcp_servers={}` for that job only;
+other Codex utility jobs keep the global inherit-or-pin behavior. The concurrency
+cap remains 12, and the five-minute claim still needs a clean launched rerun.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

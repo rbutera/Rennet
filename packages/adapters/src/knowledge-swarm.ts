@@ -1,6 +1,7 @@
 import {
   boundedAll,
   buildPartitions,
+  type CodexExecRequest,
   type CodexExecutor,
   dedupById,
   describeSnapshotGateFailure,
@@ -105,7 +106,7 @@ async function pathsAtOid(git: GitExec, root: string, oid: string): Promise<stri
 
 /** Options shared by both concrete turn builders. */
 export interface SwarmTurnOptions {
-  /** The read-only session's working directory (the repo root). Claude seats only. */
+  /** The session's working directory (the repo root). Claude seats only. */
   readonly cwd: string;
   readonly signal?: AbortSignal;
   /** Optional cost-metrics tap (the same seam the cost harness reads). */
@@ -211,7 +212,7 @@ export function createCodexSwarmTurn(
   model: string,
   effort: string,
   outputSchema: unknown,
-  options: Pick<SwarmTurnOptions, "signal" | "cwd">,
+  options: Pick<SwarmTurnOptions, "signal" | "cwd"> & Pick<CodexExecRequest, "mcpServers">,
 ): RunTurn {
   return async function runTurn(prompt: string): Promise<HarnessTurnResult> {
     try {
@@ -221,6 +222,7 @@ export function createCodexSwarmTurn(
         prompt,
         outputSchema,
         cwd: options.cwd,
+        ...(options.mcpServers === undefined ? {} : { mcpServers: options.mcpServers }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       return {
@@ -388,6 +390,11 @@ export function councilSeatTurn(
         schema,
         {
           cwd: deps.repoRoot,
+          // Mapping fans out many light workers. Codex starts every configured MCP
+          // server eagerly, even though these workers read the repository through
+          // native tools. Keep the empty table job-scoped: every other Codex council
+          // job inherits the executor's table as before.
+          ...(jobId === "partition-worker" ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         },
       ),

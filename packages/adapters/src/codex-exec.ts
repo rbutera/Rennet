@@ -233,9 +233,9 @@ export interface CreateCodexExecutorOptions {
    */
   readonly repoRoot: string;
   /**
-   * Loopback MCP servers (canvasOps@2) to pin for the turn, as a FULL-TABLE
-   * override. Absent ⇒ no `mcp_servers` override at all, so the seat keeps the
-   * user's own configured servers rather than being handed an empty table.
+   * Loopback MCP servers (canvasOps@2) to pin by default, as a full-table
+   * override. A request can replace this table for one job. When both are absent,
+   * Codex inherits the user's configured servers.
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
 }
@@ -273,7 +273,8 @@ export function createCodexExecutor(
     // as a NARROWING override for a caller that means a specific other checkout
     // (the swarm's evidence-reading seats).
     const cwd = req.cwd ?? options.repoRoot;
-    const args = buildAppServerArgs(options.mcpServers);
+    const mcpServers = req.mcpServers === undefined ? options.mcpServers : req.mcpServers;
+    const args = buildAppServerArgs(mcpServers);
     const program = runtimePath ?? bin;
     const programArgs = runtimePath === undefined ? args : [bin, ...args];
     const cmd = locusCommand(locus, program, programArgs, cwd);
