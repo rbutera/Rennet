@@ -155,6 +155,81 @@ describe("hand-off exits (C08 cluster 6)", () => {
     },
   );
 
+  it("clears moved-head recovery after a later successful post", async () => {
+    let attempts = 0;
+    let remoteRevision = 0;
+    const r = mountHandoff(review({ postTarget }), {
+      "ask.read": () => ({ projection: EMPTY_PROJECTION }),
+      "session.list": () => ({
+        sessions: [
+          {
+            id: "x",
+            projectId: "p1",
+            title: "feature/review",
+            target: "your-pr",
+            claim: { branch: "feature/review", prNumber: 7 },
+            repository: "acme/orbital",
+            forgeRepository: postTarget.repo,
+            reviewId: "r1",
+            createdAt: 1,
+          },
+        ],
+      }),
+      "publish.compose": () => {
+        const opener = remoteRevision === 0 ? ARTIFACT.opener : "Fresh composition after posting.";
+        return {
+          status: "review",
+          artifact: { ...ARTIFACT, opener },
+          post: { ...POST, body: `${opener}\n\n${POST.body}` },
+          ledger: LEDGER,
+          payload: `${PAYLOAD}:${remoteRevision}`,
+          destination: "acme/orbital#7",
+          title: "acme/orbital#7",
+          compositionId: `comp-${remoteRevision}`,
+        };
+      },
+      "publish.review": () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("Publish refused: the pull-request head moved from abc to def.");
+        }
+        return {
+          dryRun: false,
+          request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
+          marker: "m-success",
+          ledger: [],
+          outcome: { reviewRef: "R_2", url: "https://x/success", reused: false },
+        };
+      },
+    });
+    stage("src/a.ts:5", "request-change");
+
+    expect(await r.findByRole("button", { name: /Post Review/ })).toBeTruthy();
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+    expect(await r.findByRole("button", { name: "Review latest revision" })).toBeTruthy();
+
+    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
+    expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
+
+    remoteRevision = 1;
+    act(() =>
+      r.bridge.emitAskProjection("r1", {
+        ...EMPTY_PROJECTION,
+        stagedAsks: {
+          remote: {
+            id: "remote",
+            anchor: "Review summary",
+            type: "comment",
+            body: "added after publication",
+          },
+        },
+      }),
+    );
+
+    expect(await r.findByText("Fresh composition after posting.")).toBeTruthy();
+    expect(r.queryByRole("button", { name: "Review latest revision" })).toBeNull();
+  });
+
   it("Post Review renders and posts the exact aggregate, then receipts", async () => {
     const calls: string[] = [];
     let posted: CommandInput<"publish.review"> | undefined;

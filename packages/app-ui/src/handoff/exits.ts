@@ -211,6 +211,7 @@ export function useHandoffExits(review: Review, recapture?: () => Promise<void>)
     // addressed review's persisted target. Real egress happens on this click alone.
     if (!reviewComposed) throw new Error("The review is not composed yet.");
     const verdict = reviewComposed.post.event;
+    setMovedReviewId(null);
     try {
       const result = await postReview({
         commandId: crypto.randomUUID(),
