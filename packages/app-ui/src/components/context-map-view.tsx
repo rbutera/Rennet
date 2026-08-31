@@ -1,5 +1,6 @@
 import {
   commandIdFor,
+  KNOWLEDGE_SWARM_GENERATOR_ID,
   type KnowledgeDispositionResult,
   type KnowledgeSetPayload,
   type KnowledgeStatementPayload,
@@ -30,6 +31,163 @@ import { messageFrom } from "../lib/message-from";
 import { Icon } from "./icon";
 
 const short = (name: string) => name.replace("@rennet/", "");
+
+type ExactKnowledgeCoverage = NonNullable<KnowledgeSetPayload["coverage"]>;
+
+interface CoverageTotals {
+  readonly mappedFiles: number;
+  readonly scopeExcludedFiles: number;
+  readonly mechanicallyExcludedFiles: number;
+}
+
+type MapKnowledgeCoverage =
+  | { readonly kind: "absent" }
+  | { readonly kind: "behind" }
+  | { readonly kind: "unrecorded" }
+  | { readonly kind: "invalid" }
+  | {
+      readonly kind: "current";
+      readonly exact: ExactKnowledgeCoverage;
+      readonly totals: CoverageTotals;
+    };
+
+type SelectionKnowledgeCoverage =
+  | Exclude<MapKnowledgeCoverage, { readonly kind: "current" }>
+  | {
+      readonly kind: "current";
+      readonly totals: CoverageTotals;
+      readonly scopeReasons: readonly string[];
+      readonly mechanicalReasons: readonly string[];
+    };
+
+function coverageTotals(coverage: ExactKnowledgeCoverage): CoverageTotals {
+  let mappedFiles = 0;
+  let scopeExcludedFiles = 0;
+  let mechanicallyExcludedFiles = 0;
+  for (const group of coverage.groups) {
+    if (group.kind === "mapped") mappedFiles += group.files.length;
+    else if (group.source === "scope") scopeExcludedFiles += group.files.length;
+    else mechanicallyExcludedFiles += group.files.length;
+  }
+  return { mappedFiles, scopeExcludedFiles, mechanicallyExcludedFiles };
+}
+
+function coverageMatchesMap(coverage: ExactKnowledgeCoverage, map: ProjectMapPayload): boolean {
+  const covered = new Map<string, string>();
+  for (const group of coverage.groups) {
+    for (const file of group.files) {
+      if (covered.has(file.path)) return false;
+      covered.set(file.path, file.blobOid);
+    }
+  }
+  if (covered.size !== map.files.length) return false;
+  const mapPaths = new Set<string>();
+  for (const file of map.files) {
+    if (mapPaths.has(file.path) || covered.get(file.path) !== file.blobOid) return false;
+    mapPaths.add(file.path);
+  }
+  return true;
+}
+
+function mapKnowledgeCoverage(
+  map: ProjectMapPayload,
+  knowledge: KnowledgeSetPayload | null,
+): MapKnowledgeCoverage {
+  if (knowledge === null) return { kind: "absent" };
+  if (knowledge.baseOid !== map.baseOid || knowledge.snapshotFingerprint !== map.fingerprint) {
+    return { kind: "behind" };
+  }
+  if (knowledge.coverage === undefined) {
+    return knowledge.generator === KNOWLEDGE_SWARM_GENERATOR_ID
+      ? { kind: "invalid" }
+      : { kind: "unrecorded" };
+  }
+  if (!coverageMatchesMap(knowledge.coverage, map)) return { kind: "invalid" };
+  return {
+    kind: "current",
+    exact: knowledge.coverage,
+    totals: coverageTotals(knowledge.coverage),
+  };
+}
+
+function underRoot(path: string, root: string): boolean {
+  return root === "" || path === root || path.startsWith(`${root}/`);
+}
+
+function coverageForSelection(
+  coverage: MapKnowledgeCoverage,
+  selection: Selection,
+  scope: ScopeNode | undefined,
+): SelectionKnowledgeCoverage {
+  if (coverage.kind !== "current") return coverage;
+  let mappedFiles = 0;
+  let scopeExcludedFiles = 0;
+  let mechanicallyExcludedFiles = 0;
+  const scopeReasons = new Set<string>();
+  const mechanicalReasons = new Set<string>();
+  const includes = (path: string): boolean =>
+    selection.kind === "file" ? path === selection.path : underRoot(path, scope?.root ?? "");
+
+  for (const group of coverage.exact.groups) {
+    const files = group.files.filter((file) => includes(file.path));
+    if (files.length === 0) continue;
+    if (group.kind === "mapped") mappedFiles += files.length;
+    else if (group.source === "scope") {
+      scopeExcludedFiles += files.length;
+      scopeReasons.add(group.reason);
+    } else {
+      mechanicallyExcludedFiles += files.length;
+      mechanicalReasons.add(group.reason);
+    }
+  }
+
+  return {
+    kind: "current",
+    totals: { mappedFiles, scopeExcludedFiles, mechanicallyExcludedFiles },
+    scopeReasons: [...scopeReasons],
+    mechanicalReasons: [...mechanicalReasons],
+  };
+}
+
+function coverageCountsLabel(totals: CoverageTotals): string {
+  return `${totals.mappedFiles} mapped · ${totals.scopeExcludedFiles} scope-excluded · ${totals.mechanicallyExcludedFiles} mechanically excluded`;
+}
+
+function selectionCoverageLabel(coverage: SelectionKnowledgeCoverage): string {
+  switch (coverage.kind) {
+    case "absent":
+      return "Knowledge has not been generated for this map.";
+    case "behind":
+      return "This knowledge belongs to an earlier map.";
+    case "unrecorded":
+      return "This older knowledge set did not record model mapping coverage.";
+    case "invalid":
+      return "The knowledge coverage record does not match this map and is unavailable.";
+    case "current":
+      return `Selection coverage: ${coverageCountsLabel(coverage.totals)}.`;
+  }
+}
+
+function emptyKnowledgeLabel(coverage: SelectionKnowledgeCoverage): string {
+  if (coverage.kind !== "current") return selectionCoverageLabel(coverage);
+  const { totals } = coverage;
+  if (
+    totals.mappedFiles === 0 &&
+    totals.scopeExcludedFiles > 0 &&
+    totals.mechanicallyExcludedFiles === 0
+  ) {
+    const reasons = coverage.scopeReasons.join("; ");
+    return `This selection was deliberately excluded from model mapping${reasons === "" ? "." : `: ${reasons}.`}`;
+  }
+  if (
+    totals.mappedFiles === 0 &&
+    totals.scopeExcludedFiles === 0 &&
+    totals.mechanicallyExcludedFiles > 0
+  ) {
+    return `This selection was mechanically excluded from model mapping: ${coverage.mechanicalReasons.join(", ")}.`;
+  }
+  return `No statements were learned for this selection. ${selectionCoverageLabel(coverage)}`;
+}
 
 type AskTurn =
   | { id: string; role: "user"; text: string }
@@ -453,9 +611,19 @@ function ContextMap({
     : onDiscuss;
 
   const fileCount = map.files.length;
-  // The knowledge layer is loaded independently of the (gate-fresh) structural map
-  // and enrichment trails structure, so a lagging set must not read as "current".
-  const knowledgeBehind = knowledge !== null && knowledge.baseOid !== map.baseOid;
+  const modelCoverage = mapKnowledgeCoverage(map, knowledge);
+  const selectedCoverage = coverageForSelection(modelCoverage, selection, selectedScope);
+  const coverageIsCurrent = modelCoverage.kind === "current";
+  const freshnessLabel =
+    modelCoverage.kind === "behind"
+      ? "◐ knowledge behind map"
+      : modelCoverage.kind === "absent"
+        ? "○ knowledge not generated"
+        : modelCoverage.kind === "unrecorded"
+          ? "◐ knowledge current · coverage unrecorded"
+          : modelCoverage.kind === "invalid"
+            ? "◐ knowledge coverage invalid"
+            : `● knowledge current · ${coverageCountsLabel(modelCoverage.totals)}`;
   return (
     <div className="context-map flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
       {takeover ? <MapHeader projectId={projectId} onBack={onBack} /> : null}
@@ -472,15 +640,13 @@ function ContextMap({
         <span className="context-map-base truncate font-mono text-sm text-ink-faint">
           {knowledge?.repoKey ?? map.baseRef} · {map.baseRef} @ {map.baseOid.slice(0, 12)}
         </span>
-        {knowledgeBehind ? (
-          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface text-ink-soft text-10 font-semibold">
-            ◐ knowledge behind map
-          </span>
-        ) : (
-          <span className="context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-green-line bg-surface text-green text-10 font-semibold">
-            ● current
-          </span>
-        )}
+        <span
+          className={`context-map-fresh ml-auto inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border bg-surface text-10 font-semibold ${
+            coverageIsCurrent ? "border-green-line text-green" : "border-line text-ink-soft"
+          }`}
+        >
+          {freshnessLabel}
+        </span>
       </div>
       <div className="context-map-main flex flex-1 min-h-0">
         <section className="context-map-col flex flex-col min-w-0 w-64 shrink-0 border-r border-line">
@@ -507,6 +673,7 @@ function ContextMap({
             selection={selection}
             scope={selectedScope}
             statements={statements}
+            coverage={selectedCoverage}
             map={map}
             onConfirm={(id) => void disposition(id, "confirmed")}
             onReject={(id) => void disposition(id, "rejected")}
@@ -849,6 +1016,7 @@ function DetailTabs({
   selection,
   scope,
   statements,
+  coverage,
   map,
   onConfirm,
   onReject,
@@ -857,6 +1025,7 @@ function DetailTabs({
   selection: Selection;
   scope: ScopeNode | undefined;
   statements: KnowledgeStatementPayload[];
+  coverage: SelectionKnowledgeCoverage;
   map: ProjectMapPayload;
   onConfirm(id: string): void;
   onReject(id: string): void;
@@ -888,6 +1057,7 @@ function DetailTabs({
           <KnowledgePanel
             statements={relevant}
             subject={subject}
+            coverage={coverage}
             onConfirm={onConfirm}
             onReject={onReject}
             onDiscuss={onDiscuss}
@@ -903,12 +1073,14 @@ function DetailTabs({
 function KnowledgePanel({
   statements,
   subject,
+  coverage,
   onConfirm,
   onReject,
   onDiscuss,
 }: {
   statements: KnowledgeStatementPayload[];
   subject: string;
+  coverage: SelectionKnowledgeCoverage;
   onConfirm(id: string): void;
   onReject(id: string): void;
   onDiscuss?(statement: KnowledgeStatementPayload): void;
@@ -919,10 +1091,11 @@ function KnowledgePanel({
         Model-derived, evidence-backed statements about {subject}. Each stays a labelled hypothesis
         until evidence or a human confirms it.
       </p>
+      <p className="context-map-coverage text-sm text-ink-faint">
+        {selectionCoverageLabel(coverage)}
+      </p>
       {statements.length === 0 ? (
-        <p className="context-map-note text-sm text-ink-faint">
-          Nothing learned about this selection yet.
-        </p>
+        <p className="context-map-note text-sm text-ink-faint">{emptyKnowledgeLabel(coverage)}</p>
       ) : null}
       {statements.map((statement) => (
         <article
@@ -1144,6 +1317,10 @@ function AskBubble({ turn }: { turn: AskTurn }) {
     );
   }
   const result = turn.result;
+  const coverageConsulted =
+    result.status === "failed"
+      ? undefined
+      : result.answer.consulted.find((entry) => entry.startsWith("context.knowledge coverage"));
   return (
     <div className="context-map-msg is-orchestrator self-start max-w-[85%]">
       <div className="context-map-who text-2xs uppercase text-ink-faint mb-0.5">orchestrator</div>
@@ -1164,6 +1341,11 @@ function AskBubble({ turn }: { turn: AskTurn }) {
               evidence: {result.answer.evidence.map((anchor) => anchor.path).join(", ")}
             </div>
           ) : null}
+          {coverageConsulted === undefined ? null : (
+            <div className="context-map-consulted mt-1.5 text-2xs text-ink-faint">
+              {coverageConsulted}
+            </div>
+          )}
         </div>
       )}
     </div>

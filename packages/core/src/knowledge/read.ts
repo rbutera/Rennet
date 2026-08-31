@@ -27,20 +27,59 @@
 
 import type {
   AnchorSpan,
+  CouncilModel,
   KnowledgeAnchor,
   KnowledgeAspect,
   KnowledgeConfidence,
+  KnowledgeCoverage,
+  KnowledgeCoverageFile,
+  KnowledgeCoverageGroup,
+  KnowledgeMechanicalExclusionReason,
   KnowledgeSet,
   KnowledgeStatement,
   KnowledgeStatus,
 } from "@rennet/protocol";
-import { canonicalize, KNOWLEDGE_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
+import {
+  canonicalize,
+  councilModelSchema,
+  KNOWLEDGE_SCHEMA_VERSION,
+  KNOWLEDGE_SWARM_GENERATOR_ID,
+  sha256Hex,
+} from "@rennet/protocol";
 import type { LoadedSnapshot, SnapshotGateFailure } from "../project-context";
 import { isSafeRepoRelativePath } from "../project-context";
+import { partitionsFromSnapshot } from "./partition";
+import {
+  MAP_SCOPE_GENERATOR_ID,
+  type MapScopeSelectorProvenance,
+  type MapScopeSuccess,
+  materializeKnowledgeCoverage,
+} from "./scope";
 
 const CONFIDENCES: readonly KnowledgeConfidence[] = ["high", "medium", "low"];
 const STATUSES: readonly KnowledgeStatus[] = ["hypothesis", "confirmed", "rejected"];
 const ASPECTS: readonly KnowledgeAspect[] = ["purpose", "convention", "why"];
+const MECHANICAL_EXCLUSION_REASONS: readonly KnowledgeMechanicalExclusionReason[] = [
+  "binary",
+  "lockfile",
+  "vendored",
+  "generated-path",
+  "generated-content",
+];
+
+function harnessForCouncilModel(model: CouncilModel): "claude-code" | "codex" {
+  switch (model) {
+    case "haiku":
+    case "sonnet-5":
+    case "opus-4.8":
+      return "claude-code";
+    case "gpt-5.5":
+    case "gpt-5.6-sol":
+    case "gpt-5.6-terra":
+    case "gpt-5.6-luna":
+      return "codex";
+  }
+}
 
 // ── Validation (fail-safe: a malformed stored statement is dropped, never trusted) ──
 
@@ -135,6 +174,153 @@ export function validateKnowledgeStatement(value: unknown): KnowledgeStatement |
   };
 }
 
+function validateCoverageFiles(
+  value: unknown,
+  seenPaths: Set<string>,
+): readonly KnowledgeCoverageFile[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const files: KnowledgeCoverageFile[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+    const raw = entry as Record<string, unknown>;
+    if (Object.keys(raw).sort().join(",") !== "blobOid,path") return undefined;
+    if (!isString(raw.path) || !isSafeRepoRelativePath(raw.path) || !isString(raw.blobOid)) {
+      return undefined;
+    }
+    if (seenPaths.has(raw.path)) return undefined;
+    seenPaths.add(raw.path);
+    files.push({ path: raw.path, blobOid: raw.blobOid });
+  }
+  return files;
+}
+
+/**
+ * Validate an exact model-coverage claim. Coverage is one whole trust unit: unlike
+ * independent statements, one malformed or duplicated group invalidates the set
+ * because every group's meaning depends on the others forming one partition.
+ */
+export function validateKnowledgeCoverage(value: unknown): KnowledgeCoverage | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (Object.keys(raw).sort().join(",") !== "catalogueDigest,groups,schemaVersion,selector") {
+    return undefined;
+  }
+  if (raw.schemaVersion !== 1 || !isString(raw.catalogueDigest) || !Array.isArray(raw.groups)) {
+    return undefined;
+  }
+
+  const selectorRaw = raw.selector;
+  if (!selectorRaw || typeof selectorRaw !== "object" || Array.isArray(selectorRaw)) {
+    return undefined;
+  }
+  const selector = selectorRaw as Record<string, unknown>;
+  if (
+    !Number.isInteger(selector.cap) ||
+    (selector.cap as number) < 1 ||
+    !isString(selector.generator)
+  ) {
+    return undefined;
+  }
+  let validatedSelector: KnowledgeCoverage["selector"];
+  if (selector.kind === "below-cap") {
+    if (Object.keys(selector).sort().join(",") !== "cap,generator,kind") return undefined;
+    validatedSelector = {
+      kind: "below-cap",
+      cap: selector.cap as number,
+      generator: selector.generator,
+    };
+  } else if (selector.kind === "council") {
+    if (
+      Object.keys(selector).sort().join(",") !==
+      "apiKeySource,assignedModel,cap,effort,generator,harness,kind,model"
+    ) {
+      return undefined;
+    }
+    const assignedModel = councilModelSchema.safeParse(selector.assignedModel);
+    if (
+      (selector.harness !== "claude-code" && selector.harness !== "codex") ||
+      !assignedModel.success ||
+      harnessForCouncilModel(assignedModel.data) !== selector.harness ||
+      !isString(selector.model) ||
+      !["low", "medium", "high", "xhigh"].includes(selector.effort as string) ||
+      (selector.apiKeySource !== null && typeof selector.apiKeySource !== "string")
+    ) {
+      return undefined;
+    }
+    validatedSelector = {
+      kind: "council",
+      cap: selector.cap as number,
+      generator: selector.generator,
+      harness: selector.harness,
+      assignedModel: assignedModel.data,
+      model: selector.model,
+      effort: selector.effort as "low" | "medium" | "high" | "xhigh",
+      apiKeySource: selector.apiKeySource,
+    };
+  } else {
+    return undefined;
+  }
+
+  const seenPaths = new Set<string>();
+  const seenSlices = new Set<string>();
+  const seenMechanicalReasons = new Set<KnowledgeMechanicalExclusionReason>();
+  const groups: KnowledgeCoverageGroup[] = [];
+  for (const entry of raw.groups) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+    const group = entry as Record<string, unknown>;
+    const files = validateCoverageFiles(group.files, seenPaths);
+    if (files === undefined) return undefined;
+    if (group.kind === "mapped") {
+      if (Object.keys(group).sort().join(",") !== "files,kind,sliceId") return undefined;
+      if (!isString(group.sliceId) || seenSlices.has(group.sliceId)) return undefined;
+      seenSlices.add(group.sliceId);
+      groups.push({ kind: "mapped", sliceId: group.sliceId, files });
+      continue;
+    }
+    if (group.kind !== "excluded") return undefined;
+    if (group.source === "scope") {
+      if (Object.keys(group).sort().join(",") !== "files,kind,reason,sliceId,source") {
+        return undefined;
+      }
+      if (
+        !isString(group.sliceId) ||
+        seenSlices.has(group.sliceId) ||
+        !isString(group.reason) ||
+        group.reason !== group.reason.trim()
+      ) {
+        return undefined;
+      }
+      seenSlices.add(group.sliceId);
+      groups.push({
+        kind: "excluded",
+        source: "scope",
+        sliceId: group.sliceId,
+        reason: group.reason,
+        files,
+      });
+      continue;
+    }
+    if (group.source !== "mechanical") return undefined;
+    if (Object.keys(group).sort().join(",") !== "files,kind,reason,source") return undefined;
+    if (
+      !MECHANICAL_EXCLUSION_REASONS.includes(group.reason as KnowledgeMechanicalExclusionReason) ||
+      seenMechanicalReasons.has(group.reason as KnowledgeMechanicalExclusionReason)
+    ) {
+      return undefined;
+    }
+    const reason = group.reason as KnowledgeMechanicalExclusionReason;
+    seenMechanicalReasons.add(reason);
+    groups.push({ kind: "excluded", source: "mechanical", reason, files });
+  }
+
+  return {
+    schemaVersion: 1,
+    catalogueDigest: raw.catalogueDigest,
+    selector: validatedSelector,
+    groups,
+  };
+}
+
 /**
  * Validate a stored {@link KnowledgeSet}, or `undefined` on any problem. Every
  * malformed STATEMENT inside is dropped (not the whole set) so a single bad
@@ -149,6 +335,9 @@ export function validateKnowledgeSet(value: unknown): KnowledgeSet | undefined {
     return undefined;
   if (!isString(raw.generator)) return undefined;
   if (!Array.isArray(raw.statements)) return undefined;
+  const coverage = raw.coverage === undefined ? undefined : validateKnowledgeCoverage(raw.coverage);
+  if (raw.coverage !== undefined && coverage === undefined) return undefined;
+  if (raw.generator === KNOWLEDGE_SWARM_GENERATOR_ID && coverage === undefined) return undefined;
 
   const statements: KnowledgeStatement[] = [];
   for (const entry of raw.statements) {
@@ -161,6 +350,7 @@ export function validateKnowledgeSet(value: unknown): KnowledgeSet | undefined {
     baseOid: raw.baseOid,
     snapshotFingerprint: raw.snapshotFingerprint,
     generator: raw.generator,
+    ...(coverage === undefined ? {} : { coverage }),
     statements,
   };
 }
@@ -232,6 +422,169 @@ export interface KnowledgeQuery {
   readonly path?: string;
 }
 
+/** Concise accounting over one exact coverage record. */
+export interface KnowledgeCoverageTotals {
+  readonly mappedFiles: number;
+  readonly mappedSlices: number;
+  readonly scopeExcludedFiles: number;
+  readonly scopeExcludedSlices: number;
+  readonly mechanicallyExcludedFiles: number;
+}
+
+/**
+ * Count the trusted groups without flattening away why a file was excluded.
+ * Consumers use this summary for prompt and UI disclosure; the exact record stays
+ * available on {@link KnowledgeCoverageView} when a caller needs slice membership.
+ */
+export function knowledgeCoverageTotals(coverage: KnowledgeCoverage): KnowledgeCoverageTotals {
+  let mappedFiles = 0;
+  let mappedSlices = 0;
+  let scopeExcludedFiles = 0;
+  let scopeExcludedSlices = 0;
+  let mechanicallyExcludedFiles = 0;
+
+  for (const group of coverage.groups) {
+    if (group.kind === "mapped") {
+      mappedFiles += group.files.length;
+      mappedSlices += 1;
+    } else if (group.source === "scope") {
+      scopeExcludedFiles += group.files.length;
+      scopeExcludedSlices += 1;
+    } else {
+      mechanicallyExcludedFiles += group.files.length;
+    }
+  }
+
+  return {
+    mappedFiles,
+    mappedSlices,
+    scopeExcludedFiles,
+    scopeExcludedSlices,
+    mechanicallyExcludedFiles,
+  };
+}
+
+/**
+ * Exact model-coverage state relative to the snapshot being read. `unrecorded`
+ * is reserved for legacy sets, while `absent` means there is no knowledge set at
+ * all. A stale record remains inspectable but can never be mistaken for current.
+ */
+export type KnowledgeCoverageView =
+  | { readonly kind: "absent" }
+  | { readonly kind: "unrecorded" }
+  | {
+      readonly kind: "invalid";
+      readonly reason: "inventory-mismatch" | "required-coverage-missing";
+    }
+  | { readonly kind: "current"; readonly exact: KnowledgeCoverage }
+  | {
+      readonly kind: "stale";
+      readonly exact: KnowledgeCoverage;
+      readonly learnedAgainst: {
+        readonly baseOid: string;
+        readonly snapshotFingerprint: string;
+      };
+    };
+
+/**
+ * Whether this is the canonical coverage the deterministic partitioner and
+ * selector contract produce for the loaded snapshot. Shape validation alone
+ * cannot prove slice membership, selector eligibility, or exact file inventory.
+ */
+export function knowledgeCoverageMatchesSnapshot(
+  coverage: KnowledgeCoverage,
+  snapshot: LoadedSnapshot,
+): boolean {
+  try {
+    const candidates = partitionsFromSnapshot(snapshot);
+    const mappedSliceIds = coverage.groups.flatMap((group) =>
+      group.kind === "mapped" ? [group.sliceId] : [],
+    );
+    const excludedSlices = coverage.groups.flatMap((group) =>
+      group.kind === "excluded" && group.source === "scope"
+        ? [{ sliceId: group.sliceId, reason: group.reason }]
+        : [],
+    );
+    if (coverage.selector.kind === "below-cap" && candidates.length > coverage.selector.cap) {
+      return false;
+    }
+    if (
+      coverage.selector.kind === "council" &&
+      (candidates.length <= coverage.selector.cap ||
+        mappedSliceIds.length < 1 ||
+        mappedSliceIds.length > coverage.selector.cap)
+    ) {
+      return false;
+    }
+
+    const selection: MapScopeSuccess =
+      coverage.selector.kind === "below-cap"
+        ? {
+            status: "ok",
+            includedSliceIds: candidates.map((candidate) => candidate.id),
+            excludedSlices: [],
+            provenance: {
+              generator: MAP_SCOPE_GENERATOR_ID,
+              model: null,
+              apiKeySource: null,
+            },
+            attempts: 0,
+          }
+        : {
+            status: "ok",
+            includedSliceIds: mappedSliceIds,
+            excludedSlices,
+            provenance: {
+              generator: MAP_SCOPE_GENERATOR_ID,
+              model: coverage.selector.model,
+              apiKeySource: coverage.selector.apiKeySource,
+            },
+            attempts: 0,
+          };
+    const selector: MapScopeSelectorProvenance =
+      coverage.selector.kind === "below-cap"
+        ? { kind: "below-cap" }
+        : {
+            kind: "council",
+            harness: coverage.selector.harness,
+            assignedModel: coverage.selector.assignedModel,
+            model: coverage.selector.model,
+            effort: coverage.selector.effort,
+            apiKeySource: coverage.selector.apiKeySource,
+          };
+    const expected = materializeKnowledgeCoverage({ snapshot, candidates, selection, selector });
+    return canonicalize(expected) === canonicalize(coverage);
+  } catch {
+    return false;
+  }
+}
+
+function coverageView(set: KnowledgeSet | null, snapshot: LoadedSnapshot): KnowledgeCoverageView {
+  if (set === null) return { kind: "absent" };
+  if (set.coverage === undefined) {
+    return set.generator === KNOWLEDGE_SWARM_GENERATOR_ID
+      ? { kind: "invalid", reason: "required-coverage-missing" }
+      : { kind: "unrecorded" };
+  }
+  if (
+    set.baseOid === snapshot.manifest.baseOid &&
+    set.snapshotFingerprint === snapshot.manifest.fingerprint
+  ) {
+    if (!knowledgeCoverageMatchesSnapshot(set.coverage, snapshot)) {
+      return { kind: "invalid", reason: "inventory-mismatch" };
+    }
+    return { kind: "current", exact: set.coverage };
+  }
+  return {
+    kind: "stale",
+    exact: set.coverage,
+    learnedAgainst: {
+      baseOid: set.baseOid,
+      snapshotFingerprint: set.snapshotFingerprint,
+    },
+  };
+}
+
 /**
  * The served knowledge view: statements pinned to the CURRENT snapshot, split
  * into the `statements` that are current (every anchor resolves) and the
@@ -244,6 +597,8 @@ export interface KnowledgeView {
   readonly snapshotFingerprint: string;
   /** The generator identity behind the set, or null when no set exists yet. */
   readonly generator: string | null;
+  /** Exact model coverage, explicitly absent, legacy-unrecorded, current, or stale. */
+  readonly coverage: KnowledgeCoverageView;
   /** Statements current at this snapshot (all anchors resolve), verbatim + labelled. */
   readonly statements: readonly KnowledgeStatement[];
   /** Statements whose inputs the current snapshot invalidated — disclosed as pending. */
@@ -302,7 +657,13 @@ export function queryKnowledge(
     snapshotFingerprint: snapshot.manifest.fingerprint,
   };
   if (!set) {
-    return { ...identity, generator: null, statements: [], invalidatedPending: [] };
+    return {
+      ...identity,
+      generator: null,
+      coverage: coverageView(null, snapshot),
+      statements: [],
+      invalidatedPending: [],
+    };
   }
 
   const filesByPath = fileBlobIndex(snapshot.files);
@@ -320,6 +681,7 @@ export function queryKnowledge(
   return {
     ...identity,
     generator: set.generator,
+    coverage: coverageView(set, snapshot),
     statements: current,
     invalidatedPending: pending,
   };

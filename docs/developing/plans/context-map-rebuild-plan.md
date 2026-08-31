@@ -80,8 +80,9 @@ exploration produces elements the pipeline deletes; (2) every Codex utility
 seat defaults to an empty temp cwd (`packages/adapters/src/codex-exec.ts:202`)
 while the Claude legs of the same jobs get the repo root; (3) no Claude seat
 can reach canvasOps (`ClaudeQueryOptions` has no `mcpServers` field) and Codex
-utility seats get `-c mcp_servers={}`; (4) several prompts say "use ONLY the
-facts below". The in-repo model of the intended posture is the
+utility seats were given a literal `mcp_servers={}` override that Codex
+deep-merges instead of clearing; (4) several prompts say "use ONLY the facts
+below". The in-repo model of the intended posture is the
 finding-verification contract: "you are NOT confined to it — read more of the
 repository, and run it, when that is what it takes to know."
 
@@ -93,7 +94,7 @@ knowledge set (`knowledge/knowledge.json`) remain distinct, with statements
 keeping their anchored, falsifiable schema — the thing Understand-Anything's
 one-line node summaries lack.
 
-### Stage 1 — deterministic front half (zero tokens)
+### Stage 1 — structural front half and exact scope
 
 1. **Import-edge shard.** Promote the changeset import extraction to a
    snapshot-wide, per-blob import shard: relative specifiers resolved against
@@ -109,21 +110,27 @@ one-line node summaries lack.
    about what exists) but are not batched for mapping.
 3. **Module batching.** Louvain community detection (graphology, the same
    dependency Understand-Anything uses, subject to the dependency standard)
-   over the import graph, targeting ~25–35 files per batch with
+   over the import graph, targeting ~25–35 files per atomic community chunk with
    deterministic settings, alphabetic splitting for oversized communities,
-   and pooling for singletons. Each batch carries a `neighborMap`: for every
-   file, its cross-batch import neighbours with their exported symbol names,
-   joined from the existing symbols shard. Expected effect on Rennet: roughly
-   200 fragments → 40–60 module batches.
-4. **Optional scoping seat.** A medium-tier model may read the classified,
-   clustered tree and mark subtrees not worth mapping (the #584 approach (b)).
-   With classification and clustering already deterministic, this judgment
-   becomes cheap and reviewable. Whatever it excludes is recorded in the map
-   as excluded-by-policy — completeness semantics stay honest.
+   and pooling for singletons. Within each most-specific workspace-root bucket,
+   greedily combine adjacent atoms up to 120 files; pure unscoped atoms share one
+   sorted, repo-wide bucket. Atoms whose members span roots remain atomic.
+   Recompute each final batch's `neighborMap` and internal imports from the
+   authoritative graph. The graph-readable fallback tail coalesces within workspace
+   roots up to 160 files; all unscoped families share one deterministic bucket, and
+   the no-graph degradation path keeps its existing 120-file directory partitioning.
+4. **Exact whole-slice scoping.** With 64 or fewer candidate slices, select all
+   of them deterministically and spend no model turn. Above 64, route one medium
+   `map-scope@1` Council seat over the classified catalogue. It must partition
+   every offered slice id exactly once between included and excluded, include no
+   more than 64 whole slices, preserve every entry-point slice, and give a
+   nonblank reason for each exclusion. Invalid output retries once and then
+   fails before workers start. Store the trusted file membership as exact mapped,
+   scope-excluded, and mechanically excluded coverage beside the knowledge set.
 
 ### Stage 2 — light-tier workers
 
-One turn per module batch, routed by the council as today (light tier,
+One turn per selected module batch, routed by the Council as today (light tier,
 Codex-first), cwd at the repository root. Input: the batch's symbol skeleton,
 pre-resolved import data, and neighborMap. Output: anchored statements in the
 existing schema, plus the semantic edges no parser can derive.
@@ -143,10 +150,10 @@ what scripts cannot adjudicate — cross-cutting synthesis across batches — a
 fraction of the statement volume that overflowed the old seat. The overflow
 disappears structurally, not by chunking heroics.
 
-Persistence honesty (#581) becomes tractable at this shape: per-batch results
-journal as they complete, and the journal is promoted into the live store only
-when the set is whole — work survives a crash, and a partial set never
-presents as complete (the P1 invariant at
+Persistence honesty (#581) becomes tractable at this shape: the exact scope plan
+and selected-batch results journal as they complete, and the journal is promoted
+into the live store only when the selected plan is whole. Work survives a crash,
+and a partial set never presents as complete (the P1 invariant at
 `packages/adapters/src/knowledge-swarm.ts:503-510` holds).
 
 ### Stage 4 — refresh
@@ -206,9 +213,11 @@ repository and shell tools; other composed seats can use canvasOps.
 - Root Codex utility seats at the repository root, as the swarm seats already
   are.
 - Give Claude seats an `mcpServers` surface. Codex utility seats inherit the
-  user's MCP table unless a job supplies a full-table override; only the
-  Context Map `partition-worker` supplies an empty table because it uses native
-  repository and shell tools instead.
+  user's MCP table unless a job supplies an explicit policy; only the Context
+  Map `partition-worker` requests an empty policy because it uses native
+  repository and shell tools instead. Rennet expands that policy into disabled
+  placeholders for the configured ambient entries because Codex deep-merges
+  inline tables, and disables Codex plugin discovery for that child.
 - Re-examine each "use ONLY the facts below" prompt: keep the ones that are
   genuine task framing (delta-digest rephrases a structured account), drop
   the ones that are confinement.
@@ -218,12 +227,11 @@ repository and shell tools; other composed seats can use canvasOps.
 ## Speed accounting against the 5-minute bar
 
 The deterministic half is seconds (Understand-Anything's equivalent runs a
-459-file repo in ~12 s; ours is incremental besides). At ~50 batches, even
-today's measured 78 s/turn clears the bar at concurrency ~13; skeleton-first
-inputs shrink turns, and the 16 GB host has headroom for 8–12 lanes it never
-had for 52. Any ramp test measures RSS per lane and swap pressure alongside
-throughput — the machine, not the provider, is the ceiling. The concurrency
-default becomes a named, tested policy rather than an unrevisited 4.
+459-file repo in ~12 s; ours is incremental besides). The original planning
+arithmetic used the now-obsolete bare-path measurement of 78 seconds per turn:
+at ~50 batches it cleared the bar around concurrency 13. Any ramp test measures
+RSS per lane and swap pressure alongside throughput. The concurrency default
+becomes a named, tested policy rather than an unrevisited 4.
 
 **W2 measured it, and the "~50 batches" premise is wrong.** On Rennet at the
 end of W2: 2,420 files, 179 excluded by policy, 2,241 eligible, 3,506 resolved
@@ -232,37 +240,86 @@ connected files, median 27); the other 149 are directory-fallback slices holding
 the 1,089 edge-less files at a mean of 7.3 each. At 201 turns the arithmetic
 above lands near twenty minutes, roughly four times the bar. Batching itself is
 65 ms and the clean deterministic build is ~35 s, so the cost is entirely in
-turns. W3 owns the reduction: coalescing the fallback tail, and letting the
-scoping seat decide which of those 1,089 files deserve a turn at all.
+turns. W3 owns coalescing the fallback tail. The later exact-scope work owns the
+hard worker-turn cap.
 
-**W3 measured the coalesce, and the bar is still not met.** Adjacent fallback
-slices now merge within one scope (or one top-level directory) up to 25 files: the
-tail went 149 → **54** slices and the whole run went 201 → **105** slices (51
-module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
-113 ms; the clean build is ~30 s.
+**W3 measured the first coalesce, and the bar was still not met.** That version
+merged adjacent fallback slices within one scope (or one top-level directory) up
+to 25 files: the tail went 149 → **54** slices and the whole run went 201 →
+**105** slices (51 module batches over 1,154 files, 54 fallback slices over
+1,095). Batching was 113 ms; the clean build was ~30 s.
 
-The W3 snapshot produced 105 turns; the launched cap proof at commit `96bdbb51`
-queued 110 after the repository grew. 110 turns × 78 s is 8,580 s of turn time.
-At the named concurrency of 12 that projects to **~11.9 minutes of worker wall
-clock**, or 12.4 minutes with the build, against a five-minute bar.
-Turn time ÷ lanes *is* the wall clock; there is no smaller figure to quote. To
-clear the bar at 78 s/turn takes ≥29 lanes (≥32 with the build). The 16-lane proof
-was aborted after 87.084 seconds: its 16 Codex worker process families held 2.59
-GiB resident, swap grew by 5.19 GiB, and pageouts advanced by 5,965. That activated
-the recorded fallback to 12. The two other routes are unfinished: skeleton-fed
-packets should shorten the turn but have never completed a live timing run, and
-the scoping seat that would decide an edge-less file does not deserve a turn at
-all is still unbuilt (Stage 1 point 4). So the design's honest cost is 110 turns
-and a projected ~12.4 minutes; a launched run has not proved the five-minute bar.
+The W3 snapshot produced 105 candidates; the launched cap proof at commit
+`4954bdd7` queued all 111 after the repository grew. That uncapped run supplied
+the failure evidence for Stage 1 point 4. The current contract no longer treats
+the candidate count as the worker-turn count.
 
 The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
 inherited and eagerly started the user's full ambient MCP table, including
 Playwright, Serena, Nx, and Context7 processes the partition workers never call.
 The app-server wrapper and native process used roughly 100–170 MiB per lane, but
 the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
-in 45.6 seconds. Partition workers now send `-c mcp_servers={}` for that job only;
-other Codex utility jobs keep the global inherit-or-pin behavior. The concurrency
-cap remains 12, and the five-minute claim still needs a clean launched rerun.
+in 45.6 seconds. Partition workers now inventory the configured MCP entries and
+send one policy table with each ambient entry disabled and plugin discovery
+disabled; other Codex utility jobs keep the global inherit-or-pin behavior. Worker
+concurrency now follows the council-selected harness: Codex gets 16 lanes, while
+Claude keeps its existing 12-lane default. An explicit per-run override still
+wins. The clean 24-lane control at `cf7c9ad3` reached 4,822,304 KiB (4.60 GiB)
+descendant RSS after 22.074 seconds with all 24 workers active, zero ambient MCP
+or plugin-refresh processes, and no completed worker. The guard stopped and
+reaped the run with zero survivors, so 24 is not a safe default on the measured
+host.
+
+The clean 16-lane run at `4954bdd7` then stayed below the RSS ceiling but crossed
+the independent pageout guard after 315.485 seconds. At that point 88 of 111
+workers had started, 72 had completed, none had failed, and verification had not
+started. The completed workers measured 61.048 seconds median and 61.055 seconds
+mean and emitted 1,043 statements, 14.5 per worker. Statement count correlated
+with duration more strongly than file count did (0.770 versus 0.634).
+
+The then-current statement-level merge over those 72 journals yielded 879 residue
+entries, including 878 seams, four flagged statements, and six verify chunks.
+Taking only the first eight statements from each preserved worker still yielded
+439 entries and three chunks. This was mostly adjacency expansion: 267 of 283 cut
+candidates in that prefix neither asserted an import relationship nor named the
+neighbour, and only three of 341 hints resolved to a concrete off-slice path.
+
+The current proof combines the worker envelope's eight-high-signal-statement
+ceiling with post-Louvain module coalescing, graph-readable fallback coalescing,
+exact scope, and the cut-endpoint-preserving verify reduction below. Replaying the
+`b709f925` policy over the preserved `ac3533d6` snapshot keeps all 2,396 eligible
+files exactly once and produces 48 candidates: 28 module batches, largest 118
+files, and 20 fallback batches, largest 159. Eleven module packets combine several
+atoms, at most eight; each is wholly within one most-specific workspace root or
+wholly unscoped, and none mixes roots. Four unscoped fallback packets combine
+top-level directories,
+at most nine top-level directories, without mixing in a workspace scope. Final
+module membership cuts 2,179 of 4,175 directed resolved relations (52.19%), down
+from 2,674 (64.05%) before coalescing. All 12 entry-point paths remain owned across
+11 required slices. Because 48 is below the scope cap, `map-scope@1` does not run
+and the guarded run starts three 16-lane worker waves.
+
+The deterministic merge presents one synthesis group per source slice, retaining
+every active cut endpoint and its highest-ranked local lead. One structured hint
+may name a concrete off-slice path and the unresolved coupling; when a lower-ranked
+statement made it, that anchored local source is shown too. Flagged contradictions
+remain statement-level. Replaying that shape over the preserved eight-statement
+prefix yields 44 cut groups and three flags: 47 work items in one 73,436-byte
+prompt. All 241 canonical cut-edge pairs and 170 endpoint paths survive exactly;
+the verifier re-reads those paths instead of receiving every local statement's
+prose.
+
+The stored knowledge contract and verify seat's cross-cutting output stay
+uncapped. `knowledge-swarm@5` invalidates every earlier prompt/schema answer;
+regrouped slice membership also changes its own journal keys. Its coverage record
+flattens to the exact snapshot inventory once: mapped slices, scope exclusions
+with reasons, and mechanical exclusions. A legacy set without coverage remains
+readable, but never claims full mapping and cannot seed an `@5` refresh.
+
+The 48-candidate replay fixes the policy schedule at three 16-lane waves; it does
+not measure whole-run latency. The guarded `knowledge-swarm@5` run must complete
+in five minutes and report exact coverage, statement yield, merge residue, time,
+RSS, swap, and pageouts. A faster but materially empty map does not count.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and
@@ -288,6 +345,8 @@ rather than adding env redirects.
 5. **W5 — consumption retrieval + un-hamstringing** (independent of W1–W4
    except the 1-hop retrieval, which wants W1; the lint-widening, cwd, and
    MCP fixes can land immediately).
+6. **W6 — exact scope + coverage** (`map-scope@1`, the 64-slice cap,
+   journaled selection, `knowledge-swarm@5`, and the guarded whole-pass proof).
 
 Existing data is not migrated: the store's schema version advances and stale
 sets are discarded (zero users; wiping `~/.rennet` is a legitimate answer).

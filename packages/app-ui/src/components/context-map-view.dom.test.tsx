@@ -9,6 +9,7 @@
 // behavioural — rendered nodes and recorded command inputs.
 import {
   commandIdFor,
+  KNOWLEDGE_SWARM_GENERATOR_ID,
   type KnowledgeSetPayload,
   type ProjectContextMapResult,
   type ProjectMapPayload,
@@ -96,6 +97,106 @@ const knowledge: KnowledgeSetPayload = {
   ],
 };
 
+const coverageScopes = Array.from({ length: 65 }, (_, index) => {
+  const suffix = index.toString().padStart(2, "0");
+  return {
+    name: `@wide/p${suffix}`,
+    root: `packages/p${suffix}`,
+    path: `packages/p${suffix}/src/index.ts`,
+    blobOid: `coverage-blob-${suffix}`,
+  };
+});
+
+const mapWithCoverage: ProjectMapPayload = {
+  ...map,
+  fingerprint: "fp-coverage",
+  files: [
+    ...coverageScopes.map((scope) => ({
+      path: scope.path,
+      blobOid: scope.blobOid,
+      size: 10,
+      mode: "100644" as const,
+    })),
+    { path: "pnpm-lock.yaml", blobOid: "coverage-lock", size: 10, mode: "100644" },
+  ],
+  scopes: coverageScopes.map((scope) => ({
+    name: scope.name,
+    root: scope.root,
+    private: false,
+    tags: [],
+  })),
+  edges: [],
+  entryPoints: [],
+};
+
+const knowledgeWithCoverage: KnowledgeSetPayload = {
+  schemaVersion: 1,
+  repoKey: "rennet-wide",
+  baseOid: mapWithCoverage.baseOid,
+  snapshotFingerprint: mapWithCoverage.fingerprint,
+  generator: "knowledge-pass@1",
+  statements: [
+    {
+      id: "coverage-k1",
+      subject: coverageScopes[0]?.name ?? "@wide/p00",
+      aspect: "purpose",
+      claim: "Owns the first mapped slice.",
+      evidence: [
+        {
+          path: coverageScopes[0]?.path ?? "packages/p00/src/index.ts",
+          blobOid: coverageScopes[0]?.blobOid ?? "coverage-blob-00",
+        },
+      ],
+      confidence: "high",
+      status: "hypothesis",
+      provenance: { generator: "knowledge-pass@1", model: "claude", apiKeySource: null },
+      learnedAgainst: {
+        baseOid: mapWithCoverage.baseOid,
+        snapshotFingerprint: mapWithCoverage.fingerprint,
+      },
+    },
+  ],
+  coverage: {
+    schemaVersion: 1,
+    catalogueDigest: "catalogue-fixture",
+    selector: {
+      kind: "council",
+      cap: 64,
+      generator: "map-scope@1",
+      harness: "codex",
+      assignedModel: "gpt-5.6-terra",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+      apiKeySource: null,
+    },
+    groups: [
+      ...coverageScopes.slice(0, 64).map((scope) => ({
+        kind: "mapped" as const,
+        sliceId: scope.name,
+        files: [{ path: scope.path, blobOid: scope.blobOid }],
+      })),
+      {
+        kind: "excluded" as const,
+        source: "scope",
+        sliceId: coverageScopes[64]?.name ?? "@wide/p64",
+        reason: "Lower-priority application shell",
+        files: [
+          {
+            path: coverageScopes[64]?.path ?? "packages/p64/src/index.ts",
+            blobOid: coverageScopes[64]?.blobOid ?? "coverage-blob-64",
+          },
+        ],
+      },
+      {
+        kind: "excluded" as const,
+        source: "mechanical",
+        reason: "lockfile",
+        files: [{ path: "pnpm-lock.yaml", blobOid: "coverage-lock" }],
+      },
+    ],
+  },
+};
+
 function fakeBridge(
   mapResult: ProjectContextMapResult = { status: "ok", map, knowledge },
   dispositionOutcome: "ok" | "not-found" | "throw" = "ok",
@@ -131,7 +232,11 @@ function fakeBridge(
             answer: "Because the boundary contract forbids it.",
             evidence: [{ path: "packages/ui/package.json", blobOid: "b9" }],
             confidence: "high",
-            consulted: ["packages/ui/package.json"],
+            consulted: [
+              "context.knowledge (1 statements)",
+              "context.knowledge coverage (1 mapped; 1 scope-excluded; 1 mechanically excluded)",
+              "context.map (3 files)",
+            ],
             cost: {
               turns: 1,
               model: "claude",
@@ -577,6 +682,91 @@ describe("ContextMapView — the Context Map surface", () => {
     );
   });
 
+  it("shows exact mapped and excluded file counts instead of calling partial knowledge complete", async () => {
+    const { bridge } = fakeBridge({
+      status: "ok",
+      map: mapWithCoverage,
+      knowledge: knowledgeWithCoverage,
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-fresh")).not.toBeNull());
+
+    const freshness = container.querySelector(".context-map-fresh")?.textContent;
+    expect(freshness).toContain("64 mapped");
+    expect(freshness).toContain("1 scope-excluded");
+    expect(freshness).toContain("1 mechanically excluded");
+    expect(freshness).not.toBe("● current");
+  });
+
+  it("refuses to call matching-identity coverage current when its inventory is partial", async () => {
+    const exact = knowledgeWithCoverage.coverage;
+    if (exact === undefined) throw new Error("fixture");
+    const { bridge } = fakeBridge({
+      status: "ok",
+      map: mapWithCoverage,
+      knowledge: {
+        ...knowledgeWithCoverage,
+        coverage: { ...exact, groups: exact.groups.slice(0, 2) },
+      },
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-fresh")).not.toBeNull());
+    expect(container.querySelector(".context-map-fresh")?.textContent).toContain(
+      "coverage invalid",
+    );
+    expect(container.querySelector(".context-map-fresh")?.textContent).not.toContain("64 mapped");
+  });
+
+  it("calls current-swarm knowledge without its mandatory coverage invalid", async () => {
+    const { bridge } = fakeBridge({
+      status: "ok",
+      map,
+      knowledge: { ...knowledge, generator: KNOWLEDGE_SWARM_GENERATOR_ID },
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-fresh")).not.toBeNull());
+    expect(container.querySelector(".context-map-fresh")?.textContent).toContain(
+      "coverage invalid",
+    );
+    expect(container.querySelector(".context-map-fresh")?.textContent).not.toContain(
+      "coverage unrecorded",
+    );
+  });
+
+  it("explains an empty selection that was deliberately scope-excluded", async () => {
+    const { bridge } = fakeBridge({
+      status: "ok",
+      map: mapWithCoverage,
+      knowledge: knowledgeWithCoverage,
+    });
+    const { container } = mount(
+      <ContextMapView bridge={bridge} projectId="project-1" onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(container.querySelector(".context-map-tree")).not.toBeNull());
+    const uiRow = [...container.querySelectorAll(".context-map-tree .context-map-row")].find(
+      (row) => row.querySelector(".context-map-name")?.textContent === "@wide/p64",
+    );
+    fireEvent.click(uiRow as Element);
+
+    await waitFor(() =>
+      expect(container.querySelector(".context-map-knowledge")?.textContent).toContain(
+        "deliberately excluded from model mapping",
+      ),
+    );
+    expect(container.querySelector(".context-map-knowledge")?.textContent).toContain(
+      "Lower-priority application shell",
+    );
+    expect(container.querySelector(".context-map-knowledge")?.textContent).not.toContain(
+      "Nothing learned about this selection yet",
+    );
+  });
+
   it("confirms a statement through project.knowledgeDisposition", async () => {
     const { bridge, calls } = fakeBridge();
     const { container } = mount(
@@ -664,6 +854,9 @@ describe("ContextMapView — the Context Map surface", () => {
       projectId: "project-1",
       question: "why doesn't ui import core?",
     });
+    expect(container.querySelector(".context-map-consulted")?.textContent).toContain(
+      "1 scope-excluded",
+    );
   });
 });
 

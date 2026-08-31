@@ -424,33 +424,41 @@ describe("routeDelta", () => {
   });
 
   it("routes a deletion under a COALESCED slice's non-head constituent", () => {
-    // The real coalescer, not a hand-written slice: `dir:docs/a` and `dir:docs/b`
-    // merge into one slice that keeps only the FIRST id. `dir:docs/b` is neither
-    // equal to nor a prefix of `dir:docs/a`, so a merged slice carrying just the
-    // head family answers nothing for a path deleted under `docs/b` — while being
-    // the very slice those files now live in.
+    // The real coalescer, not a hand-written slice: thirty constituent families
+    // merge into one slice that keeps only the FIRST id. The last family is neither
+    // equal to nor a prefix of the head, so a slice carrying only the head answers
+    // nothing for a deletion there.
     const merged = coalesceFallbackSlices(
-      [
-        { id: "dir:docs/a", files: [{ path: "docs/a/x.md", blobOid: "1" }], neighbors: [] },
-        { id: "dir:docs/b", files: [{ path: "docs/b/deep/y.md", blobOid: "2" }], neighbors: [] },
-      ],
+      Array.from({ length: 30 }, (_, index) => {
+        const suffix = String(index).padStart(2, "0");
+        return {
+          id: `dir:docs/d${suffix}`,
+          files: [{ path: `docs/d${suffix}/deep/kept.md`, blobOid: suffix }],
+          neighbors: [],
+        };
+      }),
       [],
     );
     expect(merged).toHaveLength(1);
-    expect(merged[0]?.families).toEqual(["dir:docs/a", "dir:docs/b"]);
+    expect(merged[0]?.families).toHaveLength(30);
+    expect(merged[0]?.families).toContain("dir:docs/d29");
 
     const prior: readonly PartitionSlice[] = [
-      { id: "dir:docs/b", files: [{ path: "docs/b/gone.md", blobOid: "3" }], neighbors: [] },
+      {
+        id: "dir:docs/d29",
+        files: [{ path: "docs/d29/gone.md", blobOid: "gone" }],
+        neighbors: [],
+      },
     ];
-    // Rule 2 is deliberately dead here: nothing survives DIRECTLY in `docs/b`, nor
-    // in `docs`, nor at the repo root, so the walk-up finds no owner and rule 1 is
-    // the only thing that can answer. Without every constituent's family it does
-    // not, and this expectation reads `[]`.
-    expect(routeDelta(merged, ["docs/b/gone.md"], prior).map((s) => s.id)).toEqual([merged[0]?.id]);
+    // Rule 2 is deliberately dead here: nothing survives directly at `docs/d29`,
+    // `docs`, or the repo root. Only the retained non-head family can answer.
+    expect(routeDelta(merged, ["docs/d29/gone.md"], prior).map((s) => s.id)).toEqual([
+      merged[0]?.id,
+    ]);
     // The control, in-test: reduce the merged slice to the head family alone — the
     // exact shape before this fix — and the same deletion routes nothing.
-    const headOnly = merged.map((slice) => ({ ...slice, families: ["dir:docs/a"] }));
-    expect(routeDelta(headOnly, ["docs/b/gone.md"], prior)).toEqual([]);
+    const headOnly = merged.map((slice) => ({ ...slice, families: ["dir:docs/d00"] }));
+    expect(routeDelta(headOnly, ["docs/d29/gone.md"], prior)).toEqual([]);
   });
 });
 

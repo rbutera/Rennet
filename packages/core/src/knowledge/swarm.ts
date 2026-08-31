@@ -10,15 +10,15 @@
  *
  * Statements are minted through `mint.ts` — the same honesty contract as the
  * flat pass (anchor-or-drop, hypothesis stamping, authoritative blobOids). The
- * worker's optional free-text `hint` exists only in the worker result envelope
- * for the synthesizer's benefit; it never enters a `KnowledgeStatement` and
- * dies at synthesis (reconciliation 7).
+ * worker's optional structured `hint` names one concrete off-slice path and the
+ * unresolved coupling. It exists only in the worker result envelope, never enters
+ * a `KnowledgeStatement`, and dies at synthesis (reconciliation 7).
  */
 
 import type { KnowledgeSet, KnowledgeStatement } from "@rennet/protocol";
-import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
+import { KNOWLEDGE_SCHEMA_VERSION, KNOWLEDGE_SWARM_GENERATOR_ID } from "@rennet/protocol";
 import type { HarnessTurnResult } from "../harness-run-turn";
-import { mergeWorkerResults } from "./merge";
+import { mergeWorkerResults, type SeamGroup } from "./merge";
 import type { KnowledgeProvenanceSeed, KnowledgeSnapshotContext } from "./mint";
 import {
   dedupById,
@@ -34,23 +34,22 @@ import { fileBlobIndex } from "./read";
 /**
  * The swarm generator identity: bump on any prompt/schema change.
  *
- * `@2` is the context-map rebuild's W3 rework — skeleton-fed worker packets, the
- * deterministic merge, and a verify seat that sees only the residue. A `@1` set is a
- * different pipeline's output and is replaced rather than carried, and a `@1`
- * journal entry is refused rather than reused (it is part of the journal's target
- * key), so the rework cannot inherit answers to the questions it stopped asking.
+ * `@5` adds the exact whole-slice scope contract and persisted coverage. Earlier
+ * sets have no trustworthy mapped/excluded partition, so they are replaced rather
+ * than carried or reused.
  */
-export const KNOWLEDGE_SWARM_GENERATOR_ID = "knowledge-swarm@2";
+export { KNOWLEDGE_SWARM_GENERATOR_ID } from "@rennet/protocol";
 
 type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
 
 // ── Partition worker ─────────────────────────────────────────────────────────
 
 /**
- * The worker output schema: the statement contract plus one optional free-text
- * `hint` per statement — context for the verify/synthesis seat, discardable,
- * never stored.
+ * The worker output schema: the statement contract plus one optional structured
+ * off-slice `hint` per statement — discardable synthesis context, never stored.
  */
+export const PARTITION_WORKER_STATEMENT_CAP = 8;
+
 export const PARTITION_WORKER_OUTPUT_SCHEMA = (() => {
   const statement = KNOWLEDGE_OUTPUT_SCHEMA.properties.statements.items;
   return {
@@ -58,20 +57,38 @@ export const PARTITION_WORKER_OUTPUT_SCHEMA = (() => {
     properties: {
       statements: {
         type: "array",
+        maxItems: PARTITION_WORKER_STATEMENT_CAP,
         items: {
           ...statement,
-          properties: { ...statement.properties, hint: { type: "string" } },
+          properties: {
+            ...statement.properties,
+            hint: {
+              type: "object",
+              additionalProperties: false,
+              required: ["path", "coupling"],
+              properties: {
+                path: { type: "string" },
+                coupling: { type: "string" },
+              },
+            },
+          },
         },
       },
     },
   } as const;
 })();
 
+/** One concrete off-slice lead for the synthesis seat; never stored. */
+export interface WorkerCrossSliceHint {
+  readonly path: string;
+  readonly coupling: string;
+}
+
 /** One minted statement plus the worker's discardable synthesis hint. */
 export interface WorkerStatement {
   readonly statement: KnowledgeStatement;
-  /** Free text for the verify seat only; never enters the stored set. */
-  readonly hint?: string;
+  /** A path-resolved lead for the verify seat only; never enters the stored set. */
+  readonly hint?: WorkerCrossSliceHint;
 }
 
 export interface PartitionWorkerInput {
@@ -87,7 +104,10 @@ export interface PartitionWorkerResult {
   readonly sliceId: string;
   readonly status: "ok" | "failed";
   readonly failureReason?: string;
-  /** Minted (hypothesis-labelled) statements with their envelope-only hints. */
+  /**
+   * Minted hypotheses in the worker's signal ranking. The merge uses the first as
+   * a seam-group lead, so journals must preserve this order.
+   */
   readonly statements: readonly WorkerStatement[];
   readonly droppedAnchors: number;
   readonly droppedStatements: number;
@@ -159,10 +179,11 @@ function buildWorkerPrompt(slice: PartitionSlice, snapshot: KnowledgeSnapshotCon
     KNOWLEDGE_CONTRACT,
     `\nYou are ONE worker in a partitioned swarm; other workers cover the rest of
 the repository. Your slice is the complete list below — cite ONLY these files.
-You may also emit an optional free-text 'hint' per statement: context a
-cross-slice synthesizer might need (a suspicion that a pattern continues
-elsewhere, a coupling you cannot see the other end of). Hints are discarded
-after synthesis — never facts, never stored.`,
+You may also emit one optional structured 'hint' per statement with exactly two
+fields: 'path', a concrete repo-relative path outside your slice, and 'coupling',
+the unresolved coupling that a cross-slice synthesizer should inspect there.
+Omit the hint unless you can name that path and explain the unresolved coupling.
+Hints are discarded after synthesis — never facts, never stored.`,
     `\nYOUR SLICE (${slice.files.length} files at base ${snapshot.baseOid.slice(0, 12)}),
 with each file's declared top-level symbols:\n${skeletons}`,
     renderSliceImports(slice),
@@ -173,7 +194,7 @@ working directory IS the repository checkout and you are FREE to read any of it;
 reading is targeted, not forbidden. Read the source when the skeleton cannot
 answer your question, which is most of the time for a WHY. What you must not do
 is claim from a filename: evidence means code you actually read.`,
-    "\nEmit the knowledge statements for this slice.",
+    `\nEmit at most ${PARTITION_WORKER_STATEMENT_CAP} knowledge statements for this slice, highest-signal first.`,
   ].join("\n");
 }
 
@@ -190,6 +211,7 @@ export async function runPartitionWorker(
   const { slice, snapshot, provenance, runTurn, maxRetries = 1 } = input;
   const generator = provenance.generator ?? KNOWLEDGE_SWARM_GENERATOR_ID;
   const filesByPath = fileBlobIndex(slice.files);
+  const inventoryPaths = new Set(snapshot.files.map((file) => file.path));
   const prompt = buildWorkerPrompt(slice, snapshot);
   const tally: MintTally = { droppedAnchors: 0, droppedStatements: 0 };
   let lastFailure = "the partition worker did not complete";
@@ -210,10 +232,32 @@ export async function runPartitionWorker(
     for (const raw of parseStatements(turn.body)) {
       const minted = mintStatement(raw, filesByPath, snapshot, observed, generator, tally);
       if (minted === undefined) continue;
-      const hint = (raw as Record<string, unknown>).hint;
+      const rawHint = (raw as Record<string, unknown>).hint;
+      const hint = (() => {
+        if (typeof rawHint !== "object" || rawHint === null || Array.isArray(rawHint)) return;
+        const candidate = rawHint as Record<string, unknown>;
+        if (
+          Object.keys(candidate).sort().join(",") !== "coupling,path" ||
+          typeof candidate.path !== "string" ||
+          typeof candidate.coupling !== "string"
+        ) {
+          return;
+        }
+        const path = candidate.path.trim();
+        const coupling = candidate.coupling.trim();
+        if (
+          path.length === 0 ||
+          coupling.length === 0 ||
+          filesByPath.has(path) ||
+          !inventoryPaths.has(path)
+        ) {
+          return;
+        }
+        return { path, coupling } satisfies WorkerCrossSliceHint;
+      })();
       statements.push({
         statement: minted,
-        ...(typeof hint === "string" && hint.length > 0 ? { hint } : {}),
+        ...(hint === undefined ? {} : { hint }),
       });
     }
     return {
@@ -282,25 +326,23 @@ export interface MapVerifyInput {
 }
 
 /**
- * Residue entries per verify turn. A ceiling, not the expected size: since W3 the
- * seat receives only the deterministic pass's RESIDUE (cross-batch seams and flagged
- * contradictions), not every hypothesis the swarm minted, so on a real repository
- * the residue is normally one chunk or two.
+ * Residue work items per verify turn. A seam work item is one source-slice group,
+ * not one local statement; contradictions and reverify entries remain statement
+ * work items. The seat never receives every hypothesis the swarm minted.
  *
- * The number is inherited from the shape that broke: the seat used to receive EVERY
- * partition's statements in one prompt — Rennet itself, 199 partitions, ~1,900
- * statements — which exceeded the harness context window, died with "Prompt is too
- * long", and discarded the whole run. 150 renders to roughly 12k tokens, well inside
- * any seat, and remains the hard bound if a repository ever produces a residue that
- * large.
+ * The ceiling is inherited from the shape that broke: the seat used to receive
+ * every partition statement in one prompt. Grouping removes repeated local
+ * statements, but a group can carry several endpoint pairs, so item count is not a
+ * token guarantee. It remains a second bound while the guarded proof measures the
+ * rendered one-chunk shape on Rennet.
  */
 export const MAP_VERIFY_CHUNK_SIZE = 150;
 
 /**
- * Concurrent verify turns. Lower than the worker fan-out
- * (`DEFAULT_SWARM_CONCURRENCY`) on purpose: a verify turn re-reads cited spans and
- * carries a larger prompt, and there are only ever a handful of them now that the
- * seat sees the residue rather than the whole set.
+ * Concurrent verify turns. Lower than either harness's partition-worker fan-out
+ * policy on purpose: a verify turn re-reads cited spans and carries a larger prompt,
+ * and there are only ever a handful of them now that the seat sees the residue
+ * rather than the whole set.
  */
 export const MAP_VERIFY_CONCURRENCY = 4;
 
@@ -323,11 +365,20 @@ export async function boundedAll<T>(
   return results;
 }
 
+/**
+ * Verify output before exact model coverage is attached. The null sentinel keeps
+ * this intermediate shape structurally distinct from a durable `KnowledgeSet`;
+ * only the adapter that owns the snapshot selection may materialize and persist it.
+ */
+export type KnowledgeSetDraft = Omit<KnowledgeSet, "coverage"> & {
+  readonly coverage: null;
+};
+
 export interface MapVerifyResult {
   readonly status: "ok" | "failed";
   readonly failureReason?: string;
   /** The synthesized set, present on `ok`: merged worker statements + cross-cutting mints, deduped. */
-  readonly set?: KnowledgeSet;
+  readonly set?: KnowledgeSetDraft;
   /** How many hypotheses the seat confirmed / rejected (rejected stay in the set as recorded state). */
   readonly confirmed: number;
   readonly rejected: number;
@@ -336,9 +387,9 @@ export interface MapVerifyResult {
   readonly droppedAnchors: number;
   readonly droppedStatements: number;
   /**
-   * What the deterministic pass did, and how much of it the seat had to see.
-   * `residue / merged` is the measurement the W3 redesign exists to move: it used to
-   * be 1.0 by construction, which is the ratio that overflowed the seat.
+   * What the deterministic pass did, and how much work the seat had to see.
+   * `merged` counts stored statements; `residue` counts grouped synthesis items plus
+   * statement-level flags, so they deliberately have different units.
    */
   readonly merged: number;
   readonly residue: number;
@@ -357,24 +408,56 @@ function renderHypothesis(entry: WorkerStatement): string {
       return `${a.path}${span}${a.symbol ? ` (${a.symbol})` : ""}`;
     })
     .join(", ");
-  const hint = entry.hint ? `\n  hint: ${entry.hint}` : "";
+  const hint = entry.hint
+    ? `\n  hint path: ${entry.hint.path}\n  unresolved coupling: ${entry.hint.coupling}`
+    : "";
   return `- id=${s.id}\n  [${s.aspect}/${s.confidence}] ${s.subject}: ${s.claim}\n  evidence: ${anchors}${hint}`;
 }
 
-/** One residue entry: a seam candidate, or a flagged statement with its reason. */
-type ResidueEntry = { readonly entry: WorkerStatement; readonly flagReason?: string };
+type ResidueEntry =
+  | { readonly kind: "seam-group"; readonly group: SeamGroup }
+  | {
+      readonly kind: "flagged-statement";
+      readonly statement: KnowledgeStatement;
+      readonly reason: string;
+    };
 
 function renderResidue(residue: ResidueEntry): string {
-  const base = renderHypothesis(residue.entry);
-  return residue.flagReason === undefined ? base : `${base}\n  FLAGGED: ${residue.flagReason}`;
+  if (residue.kind === "flagged-statement") {
+    return `${renderHypothesis({ statement: residue.statement })}\n  FLAGGED: ${residue.reason}`;
+  }
+  const { group } = residue;
+  const lead = renderHypothesis({ statement: group.leadStatement })
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  const cutEdges = group.cutEdges
+    .map((edge) => `    ${edge.localPath} -> ${edge.offSlicePath}`)
+    .join("\n");
+  const hint =
+    group.hint === undefined
+      ? ""
+      : `\n  off-slice hint: ${group.hint.path}\n  unresolved coupling: ${group.hint.coupling}${
+          group.hint.sourceStatement.id === group.leadStatement.id
+            ? ""
+            : `\n  anchored local hint source:\n${renderHypothesis({
+                statement: group.hint.sourceStatement,
+              })
+                .split("\n")
+                .map((line) => `    ${line}`)
+                .join("\n")}`
+        }`;
+  return `- source slice=${group.sourceSliceId}\n  highest-ranked local lead:\n${lead}\n  active cut endpoints:${
+    cutEdges.length === 0 ? " none (hint-only group)" : `\n${cutEdges}`
+  }${hint}`;
 }
 
 function buildVerifyPrompt(
   entries: readonly ResidueEntry[],
   snapshot: KnowledgeSnapshotContext,
 ): string {
-  const flagged = entries.filter((residue) => residue.flagReason !== undefined).length;
-  const seams = entries.length - flagged;
+  const seamGroups = entries.filter((residue) => residue.kind === "seam-group");
+  const flagged = entries.filter((residue) => residue.kind === "flagged-statement");
   return [
     KNOWLEDGE_CONTRACT,
     `\nYou are the VERIFY/SYNTHESIS seat over a partitioned worker swarm. A
@@ -386,14 +469,14 @@ residue that a script cannot settle.
 
 Two kinds, and they want different things from you:
 
-1. SEAM statements (${seams} below, unflagged). These sit on an import edge that
-   the partitioning CUT, and the file on the other side of that edge carries
-   claims from a DIFFERENT worker. No single worker could see both halves. Read
-   them together and mint the CROSS-CUTTING statements that only exist when they
-   are read together. Do not restate a claim already listed — it is already
-   recorded. Leave these unverdicted unless you positively disprove one.
+1. SEAM GROUPS (${seamGroups.length} below). Each is one source slice, its
+   highest-ranked local lead, and EVERY active cut endpoint another slice wrote
+   about. A hint-only group instead names one concrete off-slice path and the
+   unresolved non-import coupling. Read the listed paths together and mint only
+   the CROSS-CUTTING statements no single worker could see. These groups are
+   synthesis material, not verdict requests; do not emit verdicts for their leads.
 
-2. FLAGGED statements (${flagged} below, each with a FLAGGED: line). The script
+2. FLAGGED STATEMENTS (${flagged.length} below, each with a FLAGGED: line). The script
    found something it could not settle and needs your judgment. Re-read the cited
    spans and give a verdict: 'confirmed' when the cited code supports the claim,
    'rejected' when it does not.
@@ -401,7 +484,12 @@ Two kinds, and they want different things from you:
 Your working directory is the repository checkout; the anchors below tell you
 where to look first, and you may read further when that is what it takes to know.
 Mint only what you can anchor to a path in the inventory you have actually read.`,
-    `\nRESIDUE (base ${snapshot.baseOid.slice(0, 12)}):\n${entries.map(renderResidue).join("\n")}`,
+    `\nSEAM GROUPS (base ${snapshot.baseOid.slice(0, 12)}):\n${
+      seamGroups.length === 0 ? "(none)" : seamGroups.map(renderResidue).join("\n")
+    }`,
+    `\nFLAGGED STATEMENTS:\n${
+      flagged.length === 0 ? "(none)" : flagged.map(renderResidue).join("\n")
+    }`,
     "\nEmit your verdicts and cross-cutting statements.",
   ].join("\n");
 }
@@ -412,12 +500,26 @@ function chunkDigest(
   result: VerifyChunkOk,
   index: number,
 ): string {
-  const confirmed = result.verdicts.filter((v) => v.verdict === "confirmed").length;
-  const subjects = [...new Set(entries.map((residue) => residue.entry.statement.subject))];
+  const flaggedIds = new Set(
+    entries.flatMap((entry) => (entry.kind === "flagged-statement" ? [entry.statement.id] : [])),
+  );
+  const verdicts = result.verdicts.filter((verdict) => flaggedIds.has(verdict.id));
+  const confirmed = verdicts.filter((verdict) => verdict.verdict === "confirmed").length;
+  const subjects = [
+    ...new Set(
+      entries.map((residue) =>
+        residue.kind === "seam-group"
+          ? residue.group.leadStatement.subject
+          : residue.statement.subject,
+      ),
+    ),
+  ];
   const shown = subjects.slice(0, CROSS_BOUNDARY_SUBJECTS_PER_CHUNK);
   const more = subjects.length - shown.length;
-  return `- chunk ${index + 1}: ${entries.length} residue entries, ${confirmed} confirmed, ${
-    result.verdicts.length - confirmed
+  return `- chunk ${index + 1}: ${entries.length} residue work item${
+    entries.length === 1 ? "" : "s"
+  }, ${confirmed} confirmed, ${
+    verdicts.length - confirmed
   } rejected; subjects: ${shown.join(", ")}${more > 0 ? ` (+${more} more)` : ""}`;
 }
 
@@ -463,16 +565,15 @@ empty 'verdicts' array — this seat mints, it does not re-adjudicate.`,
  * shard. What survives keeps the WORKER's provenance, untouched — the merge does not
  * mint, so nothing in it can claim to have been model-verified when it was not.
  *
- * The seat then receives only the RESIDUE: the cross-batch seams (a claim on one end
- * of a cut import edge whose other end another batch also claimed) and the flagged
- * contradictions. It does not re-adjudicate settled statements. That is the whole
- * structural change: the old seat's input was every hypothesis the swarm minted, and
- * on a real repository that prompt did not fit in any context window.
+ * The seat then receives only the RESIDUE: one synthesis group per source slice
+ * carrying every active cut endpoint, plus statement-level flagged contradictions.
+ * It does not re-adjudicate settled statements. The old seat's input was every
+ * hypothesis the swarm minted, and on a real repository that prompt did not fit.
  *
- * An EMPTY residue runs no turn at all. With no seam and no contradiction there is
- * nothing for the seat to synthesize from, and a turn over an empty prompt is a seat
- * inventing claims with no material — the exact failure the anchor rules exist to
- * stop. `crossCutting: 0` is then the honest answer, not a skipped step.
+ * An EMPTY residue runs no turn at all. With no seam group and no contradiction
+ * there is nothing for the seat to synthesize from, and a turn over an empty prompt
+ * is a seat inventing claims with no material — the exact failure the anchor rules
+ * exist to stop. `crossCutting: 0` is then the honest answer, not a skipped step.
  *
  * Verdicts flip a statement to `confirmed` / `rejected`; an id without a verdict
  * stays an honest `hypothesis`. Cross-cutting mints carry the VERIFY seat's
@@ -501,22 +602,18 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
   const byId = new Map(merge.statements.map((statement) => [statement.id, statement]));
   const tally: MintTally = { droppedAnchors: 0, droppedStatements: 0 };
 
-  // The residue, deduped by id: a statement can be BOTH a seam and flagged, and
-  // sending it twice would let two chunks return conflicting verdicts on one id —
-  // whichever landed later silently overwriting the other.
-  const residueById = new Map<string, ResidueEntry>();
-  for (const entry of merge.seams) residueById.set(entry.statement.id, { entry });
-  for (const flag of merge.flagged) {
-    residueById.set(flag.statement.id, {
-      entry: {
+  // Seam groups and flags are different work even when the group's lead is also
+  // flagged: synthesis needs the boundary, while adjudication needs the statement.
+  const residue: ResidueEntry[] = [
+    ...merge.seamGroups.map((group): ResidueEntry => ({ kind: "seam-group", group })),
+    ...merge.flagged.map(
+      (flag): ResidueEntry => ({
+        kind: "flagged-statement",
         statement: flag.statement,
-        ...(flag.hint === undefined ? {} : { hint: flag.hint }),
-      },
-      flagReason: flag.reason,
-    });
-  }
-  const residue = [...residueById.values()];
-
+        reason: flag.reason,
+      }),
+    ),
+  ];
   const counts = {
     merged: merge.statements.length,
     residue: residue.length,
@@ -534,6 +631,7 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
         baseOid: snapshot.baseOid,
         snapshotFingerprint: snapshot.snapshotFingerprint,
         generator,
+        coverage: null,
         statements: dedupById(merge.statements),
       },
       confirmed: 0,
@@ -596,8 +694,14 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
 
   let confirmed = 0;
   let rejected = 0;
-  for (const result of okChunks) {
+  for (const [index, result] of okChunks.entries()) {
+    const shownFlaggedIds = new Set(
+      (chunks[index] ?? []).flatMap((entry) =>
+        entry.kind === "flagged-statement" ? [entry.statement.id] : [],
+      ),
+    );
     for (const { id, verdict } of result.verdicts) {
+      if (!shownFlaggedIds.has(id)) continue;
       const statement = byId.get(id);
       if (statement === undefined) continue; // A verdict on an id the swarm never minted is noise.
       byId.set(id, { ...statement, status: verdict });
@@ -614,10 +718,23 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
   // statements, which is exactly the unbounded prompt that killed whole runs.
   // Its input is the chunks' OUTPUTS: O(chunks) digest lines plus the handful of
   // cross-cutting claims each turn minted, never the ~1900 statements. The
-  // `chunkSize` slice is a hard ceiling on top of that, so this prompt cannot
-  // grow past a single verify chunk's proven-safe size no matter how large the
-  // repository is.
-  const candidates = chunkCrossCutting.slice(0, Math.max(1, chunkSize));
+  // `chunkSize` is a hard ceiling on top of that, so this prompt cannot grow past
+  // a single verify chunk's proven-safe size no matter how large the repository
+  // is. Select round-robin by source chunk: one prolific early chunk must not hide
+  // every later chunk from the only pass that can connect their outputs.
+  const candidateLimit = Math.max(1, chunkSize);
+  const candidates: KnowledgeStatement[] = [];
+  for (let rank = 0; candidates.length < candidateLimit; rank += 1) {
+    let foundAtRank = false;
+    for (const result of okChunks) {
+      const candidate = result.crossCutting[rank];
+      if (candidate === undefined) continue;
+      foundAtRank = true;
+      candidates.push(candidate);
+      if (candidates.length === candidateLimit) break;
+    }
+    if (!foundAtRank) break;
+  }
   const crossBoundary =
     okChunks.length > 1 && candidates.length > 0
       ? await runVerifyChunk({
@@ -641,12 +758,13 @@ export async function runMapVerify(input: MapVerifyInput): Promise<MapVerifyResu
     crossBoundary?.status === "ok"
       ? [...chunkCrossCutting, ...crossBoundary.crossCutting]
       : chunkCrossCutting;
-  const set: KnowledgeSet = {
+  const set: KnowledgeSetDraft = {
     schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
     repoKey: snapshot.repoKey,
     baseOid: snapshot.baseOid,
     snapshotFingerprint: snapshot.snapshotFingerprint,
     generator,
+    coverage: null,
     statements: dedupById([...byId.values(), ...crossCutting]),
   };
   return {

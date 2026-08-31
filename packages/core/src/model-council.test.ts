@@ -302,6 +302,30 @@ describe("resolveAssignment — the context-map swarm jobs (#460)", () => {
     expect(degraded.trace.source).toBe("degraded");
   });
 
+  it("resolves map-scope as the medium whole-slice selector (Sonnet / Sonnet / Terra)", () => {
+    expect(JOB_CATALOGUE["map-scope"]).toMatchObject({
+      tier: "heavy",
+      batching: "per-call",
+      sessionRider: false,
+    });
+    expect(resolveAssignment("map-scope", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("map-scope", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "medium",
+    });
+    expect(resolveAssignment("map-scope", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+  });
+
   it("partition-worker is cross-harness under both (light on Codex, review on Claude)", () => {
     const worker = resolveAssignment("partition-worker", ctx(BOTH));
     if (worker.kind !== "model") throw new Error("expected a model resolution");

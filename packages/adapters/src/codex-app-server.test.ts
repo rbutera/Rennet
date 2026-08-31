@@ -16,6 +16,7 @@ import {
   mapTokenUsageBreakdown,
   probeAppServerHandshake,
   readAppServerMessages,
+  readCodexMcpServerInventory,
   runCodexTurn,
   serverRequestResponse,
 } from "./codex-app-server";
@@ -672,11 +673,19 @@ describe("ownership end to end (transport → adapter)", () => {
 });
 
 describe("buildAppServerArgs", () => {
-  it("pins a FULL-TABLE mcp_servers override (only canvasOps, replacing user config)", () => {
-    expect(buildAppServerArgs({ canvasops: { url: "http://127.0.0.1:5000/mcp" } })).toEqual([
+  it("enables requested servers and disables every configured ambient server", () => {
+    expect(
+      buildAppServerArgs({ canvasops: { url: "http://127.0.0.1:5000/mcp" } }, [
+        { name: "Playwright", transport: "stdio" },
+        { name: "computer-history", transport: "stdio" },
+        { name: "team.github tools", transport: "streamable_http" },
+      ]),
+    ).toEqual([
       "app-server",
+      "--disable",
+      "plugins",
       "-c",
-      'mcp_servers={canvasops={url="http://127.0.0.1:5000/mcp"}}',
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"canvasops"={url="http://127.0.0.1:5000/mcp",enabled=true},"computer-history"={command="false",args=[],enabled=false},"team.github tools"={url="http://127.0.0.1",enabled=false}}',
     ]);
   });
 
@@ -684,8 +693,84 @@ describe("buildAppServerArgs", () => {
     expect(buildAppServerArgs()).toEqual(["app-server"]);
   });
 
-  it("pins an explicitly empty full-table override", () => {
-    expect(buildAppServerArgs({})).toEqual(["app-server", "-c", "mcp_servers={}"]);
+  it("turns every configured ambient server off for an explicitly empty table", () => {
+    expect(
+      buildAppServerArgs({}, [
+        { name: "Playwright", transport: "stdio" },
+        { name: "computer-history", transport: "stdio" },
+        { name: "team.github tools", transport: "streamable_http" },
+      ]),
+    ).toEqual([
+      "app-server",
+      "--disable",
+      "plugins",
+      "-c",
+      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"team.github tools"={url="http://127.0.0.1",enabled=false}}',
+    ]);
+  });
+
+  it("quotes arbitrary TOML keys and URL values", () => {
+    expect(
+      buildAppServerArgs(
+        { 'quote"\\dot. space': { url: 'http://127.0.0.1:5000/mcp?key="\\value' } },
+        [],
+      ),
+    ).toEqual([
+      "app-server",
+      "--disable",
+      "plugins",
+      "-c",
+      'mcp_servers={"quote\\"\\\\dot. space"={url="http://127.0.0.1:5000/mcp?key=\\"\\\\value",enabled=true}}',
+    ]);
+  });
+
+  it.each(["stdio", "streamable_http"] as const)(
+    "refuses a requested server that collides with an ambient %s entry",
+    (transport) => {
+      expect(() =>
+        buildAppServerArgs({ canvasops: { url: "http://127.0.0.1:5000/mcp" } }, [
+          { name: "canvasops", transport },
+        ]),
+      ).toThrow(/canvasops.*already configured/i);
+    },
+  );
+});
+
+describe("readCodexMcpServerInventory", () => {
+  it("parses the two supported transports into a minimal typed inventory", async () => {
+    const inventory = await readCodexMcpServerInventory(
+      async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify([
+          {
+            name: "computer-history",
+            enabled: true,
+            transport: { type: "stdio", command: "/private/tool", env: { TOKEN: "secret" } },
+          },
+          {
+            name: "context7",
+            enabled: true,
+            transport: { type: "streamable_http", url: "https://example.invalid/mcp" },
+          },
+        ]),
+        stderr: "",
+      }),
+      { bin: "codex", args: ["mcp", "list", "--json"], cwd: "/repo" },
+    );
+
+    expect(inventory).toEqual([
+      { name: "computer-history", transport: "stdio" },
+      { name: "context7", transport: "streamable_http" },
+    ]);
+  });
+
+  it("rejects malformed output at the command boundary", async () => {
+    await expect(
+      readCodexMcpServerInventory(
+        async () => ({ exitCode: 0, stdout: '[{"name":"broken"}]', stderr: "" }),
+        { bin: "codex", args: ["mcp", "list", "--json"], cwd: "/repo" },
+      ),
+    ).rejects.toThrow(/unsupported transport/);
   });
 });
 

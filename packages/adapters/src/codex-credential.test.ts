@@ -19,6 +19,7 @@ function isCredentialPath(path: string): boolean {
 function recordingEffects(): { effects: CodexTransportEffects; accessed: string[] } {
   const accessed: string[] = [];
   const effects: CodexTransportEffects = {
+    runMcpList: async () => ({ exitCode: 0, stdout: "[]", stderr: "" }),
     // Fake spawn: no process, no file, no credential — a scripted app-server turn.
     spawn: ({ bin, args }) => {
       accessed.push(bin, ...args);

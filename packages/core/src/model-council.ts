@@ -210,6 +210,9 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
         job("self-consistency", "heavy", "per-call", false, "Self-consistency (divergence)", 26),
         // Issue #460: the single verify/synthesis seat over the swarm's output.
         job("map-verify", "heavy", "per-call", false, "Context-map verify/synthesis (#460)", 30),
+        // Issue #584: one medium-effort selector when a repository produces more
+        // than the deterministic worker cap. It chooses whole slices only.
+        job("map-scope", "heavy", "per-call", false, "Context-map scope selection (#584)", 37),
         // Issue #461: fills only what the deterministic detection pass could not,
         // at project add (re-runnable). "Medium" in #461 is the model class,
         // not a tier (B06 reconciliation-2 reading).
@@ -382,6 +385,7 @@ const TABLE_BOTH: AssignmentTable = {
   adjudication: pick("opus-4.8", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("opus-4.8", "xhigh"), // generator's model at xhigh; divergence-triggered
   "map-verify": pick("sonnet-5", "medium"), // #460 point 4 verbatim (Claude sonnet-5); packet fixes medium
+  "map-scope": pick("sonnet-5", "medium"),
   "project-scout": pick("sonnet-5", "medium"), // #461 names medium (the model class); effort [extrapolated]
   // ── Board-rebuild seats (#489 B08). Heavy drafting stays on Claude (R39);
   // the two light seats (noise draft, post-process editor) cross to Codex.
@@ -431,6 +435,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "self-consistency": pick("opus-4.8", "xhigh"),
   "partition-worker": pick("haiku", "low"), // [extrapolated] #460 silent on claude-only; house light model
   "map-verify": pick("sonnet-5", "medium"),
+  "map-scope": pick("sonnet-5", "medium"),
   "related-context-retrieval": pick("haiku", "low"), // [extrapolated] #461 silent on claude-only; house light model
   "project-scout": pick("sonnet-5", "medium"), // #461 names medium (the model class); effort [extrapolated]
   // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──
@@ -478,6 +483,7 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "self-consistency": pick("gpt-5.6-sol", "xhigh"),
   "partition-worker": pick("gpt-5.6-luna", "low"), // #460 names cheap Codex; effort [extrapolated]
   "map-verify": pick("gpt-5.6-terra", "medium"), // [extrapolated] #460 silent on codex-only; house mid model
+  "map-scope": pick("gpt-5.6-terra", "medium"),
   "related-context-retrieval": pick("gpt-5.6-luna", "low"), // #461 light tier; model+effort [extrapolated]
   "project-scout": pick("gpt-5.6-terra", "medium"), // [extrapolated] #461 silent on codex-only; house mid model
   // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──

@@ -1,10 +1,13 @@
 import type {
   BaseRefResolution,
+  KnowledgeCoverage,
   KnowledgeSet,
   KnowledgeStatement,
   WorkspaceScope,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { partitionsFromSnapshot } from "../knowledge/partition";
+import { MAP_SCOPE_GENERATOR_ID, materializeKnowledgeCoverage } from "../knowledge/scope";
 import { type LoadedSnapshot, materializeSnapshot } from "../project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "../project-snapshot";
 import { selectPacketKnowledge } from "./knowledge-scope";
@@ -22,6 +25,7 @@ const IMPORTS: Record<string, string[]> = {
   "packages/a/src/importer.ts": ["./changed"],
   "packages/a/src/distant.ts": ["./neighbour"],
   "packages/b/src/other.ts": [],
+  "pnpm-lock.yaml": [],
 };
 
 const SCOPES: WorkspaceScope[] = [
@@ -68,6 +72,92 @@ function snapshotOf(
   const materialized = materializeSnapshot(built.manifest, (digest) => built.shards.get(digest));
   if (!materialized.ok) throw new Error(`materialize failed: ${materialized.slots.join(",")}`);
   return materialized.snapshot;
+}
+
+function fixtureCoverage(snapshot: LoadedSnapshot): KnowledgeCoverage {
+  const candidates = partitionsFromSnapshot(snapshot);
+  return materializeKnowledgeCoverage({
+    snapshot,
+    candidates,
+    selection: {
+      status: "ok",
+      includedSliceIds: candidates.map((candidate) => candidate.id),
+      excludedSlices: [],
+      provenance: {
+        generator: MAP_SCOPE_GENERATOR_ID,
+        model: null,
+        apiKeySource: null,
+      },
+      attempts: 0,
+    },
+    selector: { kind: "below-cap" },
+  });
+}
+
+function wideSnapshotOf(): LoadedSnapshot {
+  const scopes = Array.from({ length: 65 }, (_, index) => {
+    const suffix = index.toString().padStart(2, "0");
+    return {
+      name: `@wide/p${suffix}`,
+      root: `packages/p${suffix}`,
+      sourceRoot: `packages/p${suffix}/src`,
+      private: true,
+      tags: [],
+    } satisfies WorkspaceScope;
+  });
+  const inputs: SnapshotStructuralInputs = {
+    repoKey: "/wide/.git",
+    baseRef: "main",
+    baseRefResolution: "symbolic-head",
+    baseOid: "oid-wide",
+    files: scopes.map((scope) => ({
+      path: `${scope.sourceRoot}/index.ts`,
+      blobOid: blob(`${scope.sourceRoot}/index.ts`),
+      size: 1,
+      mode: "100644",
+    })),
+    scopes,
+    edges: [],
+    entryPoints: [],
+    tests: [],
+    ownership: [],
+    conventions: [],
+  };
+  const built = buildSnapshot(inputs, []);
+  const materialized = materializeSnapshot(built.manifest, (digest) => built.shards.get(digest));
+  if (!materialized.ok) throw new Error(`materialize failed: ${materialized.slots.join(",")}`);
+  return materialized.snapshot;
+}
+
+function wideCoverage(snapshot: LoadedSnapshot): KnowledgeCoverage {
+  const candidates = partitionsFromSnapshot(snapshot);
+  if (candidates.length <= 64) throw new Error("wide fixture did not exceed the selector cap");
+  return materializeKnowledgeCoverage({
+    snapshot,
+    candidates,
+    selection: {
+      status: "ok",
+      includedSliceIds: candidates.slice(0, 64).map((candidate) => candidate.id),
+      excludedSlices: candidates.slice(64).map((candidate) => ({
+        sliceId: candidate.id,
+        reason: "Outside the selected mapping slices",
+      })),
+      provenance: {
+        generator: MAP_SCOPE_GENERATOR_ID,
+        model: "gpt-5.6-terra",
+        apiKeySource: null,
+      },
+      attempts: 1,
+    },
+    selector: {
+      kind: "council",
+      harness: "codex",
+      assignedModel: "gpt-5.6-terra",
+      model: "gpt-5.6-terra",
+      effort: "medium",
+      apiKeySource: null,
+    },
+  });
 }
 
 function statement(
@@ -133,8 +223,9 @@ const SET: KnowledgeSet = {
   schemaVersion: 1,
   repoKey: "-repo",
   baseOid: "oid-fixture",
-  snapshotFingerprint: "fp",
+  snapshotFingerprint: snapshotOf().manifest.fingerprint,
   generator: "g@1",
+  coverage: fixtureCoverage(snapshotOf()),
   statements: ALL,
 };
 
@@ -185,6 +276,39 @@ describe("selectPacketKnowledge — projection (the defect this fixes)", () => {
     expect(selection.counts.inStore).toBe(ALL.length);
     expect(selection.statements.length).toBeLessThan(selection.counts.inStore);
     expect(selection.note).toContain("context.ask");
+  });
+
+  it("discloses the map-generation coverage that frames the selected statements", () => {
+    expect(selection.coverage).toEqual({
+      kind: "current",
+      mappedFiles: 5,
+      mappedSlices: 2,
+      scopeExcludedFiles: 0,
+      scopeExcludedSlices: 0,
+      mechanicallyExcludedFiles: 1,
+    });
+    expect(selection.note).toContain("0 scope-excluded");
+    expect(selection.note).toContain("1 mechanically excluded");
+  });
+
+  it("discloses exact scope exclusions from a valid above-cap selector", () => {
+    const snapshot = wideSnapshotOf();
+    const coverage = wideCoverage(snapshot);
+    const selection = selectPacketKnowledge({
+      set: {
+        ...SET,
+        baseOid: snapshot.manifest.baseOid,
+        snapshotFingerprint: snapshot.manifest.fingerprint,
+        coverage,
+        statements: [],
+      },
+      snapshot,
+      changedPaths: [snapshot.files[0]?.path ?? ""],
+    });
+    expect(selection.coverage.kind).toBe("current");
+    if (selection.coverage.kind !== "current") throw new Error("unreachable");
+    expect(selection.coverage.scopeExcludedFiles).toBeGreaterThan(0);
+    expect(selection.note).toContain(`${selection.coverage.scopeExcludedFiles} scope-excluded`);
   });
 });
 
@@ -487,6 +611,11 @@ describe("selectPacketKnowledge — degradation is toward MORE, and it is disclo
     // sits in `statements` under a mode that says the check did not happen.
     expect(degraded.invalidatedPending).toEqual([]);
     expect(ids(degraded.statements)).toContain(S_INVALID.id);
+    expect(degraded.coverage).toMatchObject({
+      kind: "recorded-unchecked",
+      scopeExcludedFiles: 0,
+      mechanicallyExcludedFiles: 1,
+    });
   });
 
   it("no set at all ⇒ an honest empty selection, not a crash", () => {
@@ -498,5 +627,16 @@ describe("selectPacketKnowledge — degradation is toward MORE, and it is disclo
     expect(empty.statements).toEqual([]);
     expect(empty.counts.inStore).toBe(0);
     expect(empty.generator).toBeNull();
+    expect(empty.coverage).toEqual({ kind: "absent" });
+  });
+
+  it("distinguishes a legacy unrecorded set from an absent set", () => {
+    const legacy = selectPacketKnowledge({
+      set: { ...SET, coverage: undefined },
+      snapshot: snapshotOf(),
+      changedPaths: CHANGED,
+    });
+    expect(legacy.coverage).toEqual({ kind: "unrecorded" });
+    expect(legacy.note).toContain("coverage was not recorded");
   });
 });

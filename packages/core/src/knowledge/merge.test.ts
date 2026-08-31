@@ -4,7 +4,7 @@ import { mergeWorkerResults } from "./merge";
 import type { KnowledgeSnapshotContext } from "./mint";
 import { NEIGHBOR_CAP, type PartitionSlice } from "./partition";
 import { knowledgeStatementId } from "./read";
-import type { PartitionWorkerResult, WorkerStatement } from "./swarm";
+import type { PartitionWorkerResult, WorkerCrossSliceHint, WorkerStatement } from "./swarm";
 
 const SNAPSHOT: KnowledgeSnapshotContext = {
   repoKey: "repo",
@@ -101,7 +101,7 @@ function worker(sliceId: string, entries: readonly WorkerStatement[]): Partition
   };
 }
 
-const wrap = (s: KnowledgeStatement, hint?: string): WorkerStatement =>
+const wrap = (s: KnowledgeStatement, hint?: WorkerCrossSliceHint): WorkerStatement =>
   hint === undefined ? { statement: s } : { statement: s, hint };
 
 describe("mergeWorkerResults — the deterministic half", () => {
@@ -339,6 +339,44 @@ describe("mergeWorkerResults — the deterministic half", () => {
 
   // ── Seams ─────────────────────────────────────────────────────────────────
 
+  it("groups every active cut endpoint per source slice around its highest-ranked statement", () => {
+    const highestRanked = statement({ claim: "b is the local entry", evidence: ["src/b.ts"] });
+    const twoClaimsOnOneEdge = [
+      statement({ claim: "a owns retries", evidence: ["src/a.ts"] }),
+      statement({ claim: "a owns dispatch", evidence: ["src/a.ts"] }),
+    ];
+    const farClaims = [
+      statement({ subject: "lib", claim: "c receives dispatch", evidence: ["lib/c.ts"] }),
+      statement({ subject: "lib", claim: "d records dispatch", evidence: ["lib/d.ts"] }),
+    ];
+    const merged = mergeWorkerResults({
+      workerResults: [
+        worker(SLICE_A.id, [
+          wrap(highestRanked),
+          ...twoClaimsOnOneEdge.map((entry) => wrap(entry)),
+        ]),
+        worker(
+          SLICE_B.id,
+          farClaims.map((entry) => wrap(entry)),
+        ),
+      ],
+      slices: SLICES,
+      snapshot: SNAPSHOT,
+      importEdges: [
+        { from: "src/a.ts", to: "lib/c.ts" },
+        { from: "src/a.ts", to: "lib/d.ts" },
+      ],
+    });
+
+    const source = merged.seamGroups.find((group) => group.sourceSliceId === SLICE_A.id);
+    expect(source?.leadStatement).toBe(highestRanked);
+    expect(source?.cutEdges).toEqual([
+      { localPath: "src/a.ts", offSlicePath: "lib/c.ts" },
+      { localPath: "src/a.ts", offSlicePath: "lib/d.ts" },
+    ]);
+    expect(merged.seamGroups).toHaveLength(2);
+  });
+
   it("makes a claim a seam only when the cut edge's OTHER END is also claimed", () => {
     const onSeam = statement({ claim: "a is the entry", evidence: ["src/a.ts"] });
     const offSeam = statement({ claim: "b is the wiring", evidence: ["src/b.ts"] });
@@ -352,12 +390,16 @@ describe("mergeWorkerResults — the deterministic half", () => {
       slices: SLICES,
       snapshot: SNAPSHOT,
     });
-    expect(withFarSide.seams.map((s) => s.statement.claim).sort()).toEqual([
-      "a is the entry",
-      "c helps",
-    ]);
+    expect(withFarSide.seamGroups.map((group) => group.sourceSliceId).sort()).toEqual(
+      [SLICE_A.id, SLICE_B.id].sort(),
+    );
+    expect(
+      withFarSide.seamGroups.find((group) => group.sourceSliceId === SLICE_A.id)?.leadStatement,
+    ).toBe(onSeam);
     // `src/b.ts` sits on no cut edge, so nothing about it can span two batches.
-    expect(withFarSide.seams.map((s) => s.statement.claim)).not.toContain("b is the wiring");
+    expect(withFarSide.seamGroups.map((group) => group.leadStatement.claim)).not.toContain(
+      "b is the wiring",
+    );
 
     // The control: remove the far-side claim and the seam disappears. A cut edge
     // alone is not a seam — the other end has to have been written about.
@@ -366,7 +408,7 @@ describe("mergeWorkerResults — the deterministic half", () => {
       slices: SLICES,
       snapshot: SNAPSHOT,
     });
-    expect(withoutFarSide.seams).toEqual([]);
+    expect(withoutFarSide.seamGroups).toEqual([]);
   });
 
   it("keeps the seam when BOTH ends of a cut edge minted the same claim", () => {
@@ -390,10 +432,13 @@ describe("mergeWorkerResults — the deterministic half", () => {
       slices: SLICES,
       snapshot: SNAPSHOT,
     });
-    // One claim, one survivor — and that survivor reaches the seat.
+    // One claim survives in storage, but both pre-dedupe source slices still reach
+    // synthesis with their own local orientation.
     expect(merged.duplicateClaims).toBe(1);
     expect(merged.statements).toHaveLength(1);
-    expect(merged.seams.map((s) => s.statement.id)).toEqual([merged.statements[0]?.id]);
+    expect(merged.seamGroups.map((group) => group.leadStatement.id).sort()).toEqual(
+      [fromHere.id, fromThere.id].sort(),
+    );
   });
 
   it("finds a seam on a cut edge BEYOND the neighbour-map cap", () => {
@@ -441,11 +486,13 @@ describe("mergeWorkerResults — the deterministic half", () => {
       ...input,
       importEdges: far.map((to) => ({ from: "src/hub.ts", to })),
     });
-    expect(merged.seams.map((s) => s.statement.id).sort()).toEqual([onHub.id, onFar.id].sort());
+    expect(merged.seamGroups.map((group) => group.leadStatement.id).sort()).toEqual(
+      [onHub.id, onFar.id].sort(),
+    );
 
     // The control, in-test: withhold the authoritative edges and the same fixture
     // falls back to the capped neighbour map, which cannot see this pair at all.
-    expect(mergeWorkerResults(input).seams).toEqual([]);
+    expect(mergeWorkerResults(input).seamGroups).toEqual([]);
   });
 
   it("never treats two claims from ONE slice as a seam", () => {
@@ -461,19 +508,37 @@ describe("mergeWorkerResults — the deterministic half", () => {
       slices: [oneSlice],
       snapshot: SNAPSHOT,
     });
-    expect(merged.seams).toEqual([]);
+    expect(merged.seamGroups).toEqual([]);
   });
 
-  it("always carries a HINTED statement to the seat — nothing else reads a hint", () => {
-    const hinted = statement({ claim: "b is the wiring", evidence: ["src/b.ts"] });
+  it("keeps the chosen hint's local source when it differs from the ranked lead", () => {
+    const lead = statement({ claim: "b is the wiring", evidence: ["src/b.ts"] });
+    const hintSource = statement({
+      claim: "b has an off-slice counterpart",
+      evidence: ["src/b.ts"],
+    });
+    const hint = { path: "lib/d.ts", coupling: "the adapter shares this wire contract" };
+    const later = statement({ claim: "b has another lead", evidence: ["src/b.ts"] });
     const merged = mergeWorkerResults({
-      workerResults: [worker(SLICE_A.id, [wrap(hinted, "this pattern continues in lib/")])],
+      workerResults: [
+        worker(SLICE_A.id, [
+          wrap(lead),
+          wrap(hintSource, hint),
+          wrap(later, { path: "lib/c.ts", coupling: "a lower-ranked possible coupling" }),
+        ]),
+      ],
       slices: SLICES,
       snapshot: SNAPSHOT,
     });
-    // `src/b.ts` is off every seam, so only the hint puts it here.
-    expect(merged.seams.map((s) => s.statement.id)).toEqual([hinted.id]);
-    expect(merged.seams[0]?.hint).toBe("this pattern continues in lib/");
+    expect(merged.seamGroups).toEqual([
+      {
+        kind: "hint",
+        sourceSliceId: SLICE_A.id,
+        leadStatement: lead,
+        cutEdges: [],
+        hint: { ...hint, sourceStatement: hintSource },
+      },
+    ]);
   });
 
   it("is a pure function: shuffled worker order yields an identical result", () => {
@@ -497,7 +562,7 @@ describe("mergeWorkerResults — the deterministic half", () => {
       workerResults: [...entries].reverse(),
       slices: [...SLICES].reverse(),
       snapshot: SNAPSHOT,
-      importEdges,
+      importEdges: [...importEdges].reverse(),
     });
     expect(backwards).toEqual(forwards);
   });
@@ -521,6 +586,6 @@ describe("mergeWorkerResults — the deterministic half", () => {
       snapshot: SNAPSHOT,
     });
     expect(merged.statements).toHaveLength(1);
-    expect(merged.seams).toEqual([]);
+    expect(merged.seamGroups).toEqual([]);
   });
 });

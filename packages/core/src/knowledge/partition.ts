@@ -20,10 +20,12 @@ import type { KnowledgeSnapshotContext } from "./mint";
  * by preference:
  *
  *  1. **Module batches** ({@link buildModuleBatches}) — Louvain communities over
- *     the repo-wide import graph, targeting ~25–35 files. A batch is a module in
- *     the sense that matters to a reader: the files that talk to each other. Each
- *     batch also carries a {@link MemberNeighbors} map so the edges the batching
- *     cut are still visible to the worker that reads it.
+ *     the repo-wide import graph, first split into ~25–35-file atoms. Adjacent atoms
+ *     with one most-specific workspace root — including the shared unscoped root —
+ *     then coalesce up to 120 files. A batch is a module in the sense that matters
+ *     to a reader: the files that talk to each other. Each batch also carries a
+ *     {@link MemberNeighbors} map so the edges the final batching cut are still
+ *     visible to the worker that reads it.
  *  2. **The directory fallback** ({@link buildPartitions}) — the original
  *     scope/subtree hierarchy, for files with NO import edges (documentation,
  *     config, assets, an unreferenced leaf) and for the whole tree when the import
@@ -58,20 +60,23 @@ export const MIN_BATCH_SIZE = 3;
 /** The cap on a pooled misc batch. Lower than {@link MAX_BATCH_SIZE}: pooled files are less coherent. */
 export const POOLED_BATCH_CAP = 25;
 
+/** The cap for adjacent pure-root Louvain atoms combined into one worker turn. */
+export const MODULE_COALESCE_CAP = 120;
+
 /**
  * The cap a COALESCED fallback slice aims for ({@link coalesceFallbackSlices}).
  *
- * The measurement that put it here: on Rennet, the directory fallback held 1,089
- * edge-less files in 149 slices — a mean of 7.3 — and every one of those slices
- * costs a worker turn. Two thirds of the run's turns were spent on slices the size
- * of a small directory. Coalescing to ~25 buys back most of that.
+ * On the #584 proof snapshot, pooling the graph-readable fallback tail within each
+ * workspace root, plus one bucket for every unscoped family, reduces that tail to
+ * 20 slices. The largest contains 159 files. The no-graph degradation path still
+ * uses {@link DEFAULT_PARTITION_CAP} directly and never passes through this policy.
  *
- * Same number as {@link POOLED_BATCH_CAP} and for the same reason (a batch of
- * loosely related files reads worse than a module, so it is held below
- * {@link MAX_BATCH_SIZE}), but a separate constant: these are different populations
- * and either may move without the other.
+ * This stays distinct from both {@link POOLED_BATCH_CAP} and
+ * {@link DEFAULT_PARTITION_CAP}. A fallback batch is less coherent than a module
+ * batch, while the 120-file degradation path covers a different population
+ * when no import graph can be read.
  */
-export const FALLBACK_COALESCE_CAP = 25;
+export const FALLBACK_COALESCE_CAP = 160;
 
 /** The most cross-batch neighbours recorded for one file. */
 export const NEIGHBOR_CAP = 50;
@@ -153,9 +158,10 @@ export interface PartitionSlice {
   readonly id: string;
   /**
    * EVERY routing family this slice answers to, when that is more than the one its
-   * {@link id} carries. Present only on a slice {@link coalesceFallbackSlices}
-   * MERGED; absent everywhere else, where {@link partitionIdFamily} of the id is
-   * the whole answer. Read it through {@link sliceFamilies}, never directly.
+   * {@link id} carries. Present on a slice that merged several module atoms or
+   * directory-fallback slices; absent everywhere else, where {@link
+   * partitionIdFamily} of the id is the whole answer. Read it through {@link
+   * sliceFamilies}, never directly.
    *
    * A merge takes several constituents and keeps ONE of their ids, so the other
    * constituents' families would otherwise vanish — and with them the only route a
@@ -360,8 +366,7 @@ export function buildPartitions(
 
 /**
  * The bucket a fallback slice coalesces WITHIN: its workspace scope root where a
- * scope owns it, otherwise its top-level directory (`top:` with an empty tail for a
- * file that lives at the repo root).
+ * scope owns it, otherwise the one repo-wide unscoped bucket.
  *
  * Root, not name — the same identity prefix {@link buildPartitions} and
  * {@link poolTiny} key on, so two packages sharing a `name` never merge. Deriving
@@ -375,8 +380,15 @@ function coalesceGroupKey(
 ): string {
   const root = scopeRootOf(scopes, path);
   if (root !== "") return `scope:${root}`;
-  const slash = path.indexOf("/");
-  return slash < 0 ? "top:" : `top:${path.slice(0, slash)}`;
+  return "unscoped";
+}
+
+function firstFilePath(slice: PartitionSlice): string {
+  let first = "";
+  for (const file of slice.files) {
+    if (first === "" || byString(file.path, first) < 0) first = file.path;
+  }
+  return first;
 }
 
 /** Merge one run of adjacent fallback slices into a single content-addressed slice. */
@@ -418,9 +430,15 @@ function mergeFallbackRun(run: readonly PartitionSlice[]): PartitionSlice {
  * as does a bucket that yields a single slice, which keeps its original id rather
  * than acquiring a hash for a merge that never happened.
  *
+ * All paths outside workspace scopes share one bucket. This can join several
+ * top-level directories, but never joins an unscoped file to a workspace scope.
+ * The bucket and its constituents are sorted before runs are formed, so input order
+ * cannot change membership, ids, or routing families.
+ *
  * NOT applied on {@link partitionsFromSnapshot}'s degradation path: there the
- * fallback holds the WHOLE eligible inventory at a 120-file cap, and coalescing to
- * 25 would multiply the slice count rather than cut it.
+ * fallback holds the WHOLE eligible inventory at a 120-file cap. The measured
+ * 160-file policy is for the isolated tail left after module batching, not for that
+ * different failure-mode population.
  */
 export function coalesceFallbackSlices(
   slices: readonly PartitionSlice[],
@@ -437,9 +455,14 @@ export function coalesceFallbackSlices(
 
   const out: PartitionSlice[] = [];
   for (const key of [...buckets.keys()].sort(byString)) {
+    const bucket = buckets.get(key);
+    if (bucket === undefined) continue;
+    const ordered = [...bucket].sort(
+      (a, b) => byString(firstFilePath(a), firstFilePath(b)) || byString(a.id, b.id),
+    );
     let run: PartitionSlice[] = [];
     let size = 0;
-    for (const slice of buckets.get(key) as PartitionSlice[]) {
+    for (const slice of ordered) {
       if (run.length > 0 && size + slice.files.length > cap) {
         out.push(mergeFallbackRun(run));
         run = [];
@@ -489,6 +512,13 @@ export interface ModuleBatchInput {
   readonly exportsOf: (path: string) => readonly string[];
 }
 
+interface ModuleBatchAtom {
+  /** One current Louvain community, split chunk, or tiny-community pool. */
+  readonly members: readonly FileEntry[];
+  /** One most-specific root, `""` when wholly unscoped, or `null` when mixed. */
+  readonly coalesceScopeRoot: string | null;
+}
+
 /** Chunk `n` items into near-equal pieces, each at most `max`. Deterministic. */
 function chunkSizes(n: number, max: number, target: number): number[] {
   if (n <= max) return [n];
@@ -534,7 +564,12 @@ function scopeRootOf(scopes: readonly { name: string; root: string }[], path: st
  *     Coherence beats compaction: a batch of unrelated two-file communities from
  *     one package is still a package, and a scope with too few leftovers to fill a
  *     batch keeps its own undersized one.
- *  5. Every batch gets its {@link MemberNeighbors} map (see {@link NEIGHBOR_CAP}).
+ *  5. Those communities, split chunks, and tiny pools become ATOMS. Adjacent atoms
+ *     wholly owned by the same most-specific workspace root greedily merge up to
+ *     {@link MODULE_COALESCE_CAP}; wholly unscoped atoms share one repo-wide root
+ *     bucket. An atom whose members span roots remains atomic.
+ *  6. Every final batch gets imports and a {@link MemberNeighbors} map recomputed
+ *     from the authoritative graph after final membership is known.
  *
  * Batches come back ordered by their lexically-first member, so the whole result
  * is a pure, stable function of the input.
@@ -581,9 +616,15 @@ export function buildModuleBatches(input: ModuleBatchInput): readonly PartitionS
 
   const slices: PartitionSlice[] = [];
   if (connected.length > 0) {
-    for (const members of communityBatches(connected, adjacency, input.scopes)) {
+    const atoms = communityBatchAtoms(connected, adjacency, input.scopes);
+    for (const run of coalesceModuleAtoms(atoms)) {
+      const members = run.flatMap((atom) => atom.members).sort((a, b) => byString(a.path, b.path));
+      const families = [...new Set(run.map((atom) => moduleBatchFamily(atom.members)))].sort(
+        byString,
+      );
       slices.push({
         id: moduleBatchId(members.map((f) => f.path)),
+        ...(run.length > 1 ? { families } : {}),
         files: members,
         neighbors: neighborMap(members, adjacency, outgoing, input.exportsOf),
         imports: withinBatchImports(members, outgoing),
@@ -618,12 +659,30 @@ function withinBatchImports(
   return out.sort((a, b) => byString(a.from, b.from) || byString(a.to, b.to));
 }
 
-/** Run Louvain, then split the oversized communities and pool the tiny ones. */
-function communityBatches(
+function moduleBatchFamily(members: readonly FileEntry[]): string {
+  const paths = members.map((file) => file.path).sort(byString);
+  return partitionIdFamily(moduleBatchId(paths));
+}
+
+function pureWorkspaceScopeRoot(
+  members: readonly FileEntry[],
+  scopes: readonly { readonly name: string; readonly root: string }[],
+): string | null {
+  let root: string | undefined;
+  for (const member of members) {
+    const memberRoot = scopeRootOf(scopes, member.path);
+    if (root === undefined) root = memberRoot;
+    else if (root !== memberRoot) return null;
+  }
+  return root ?? null;
+}
+
+/** Run Louvain, then preserve each split community or tiny pool as one atom. */
+function communityBatchAtoms(
   connected: readonly FileEntry[],
   adjacency: ReadonlyMap<string, ReadonlyMap<string, number>>,
   scopes: readonly { readonly name: string; readonly root: string }[],
-): FileEntry[][] {
+): readonly ModuleBatchAtom[] {
   const graph = new UndirectedGraph();
   // Insertion order is part of the algorithm's input, so it is fixed: nodes in
   // sorted path order, then each undirected edge once, in sorted pair order.
@@ -656,7 +715,7 @@ function communityBatches(
     byString(a[0]?.path ?? "", b[0]?.path ?? ""),
   );
 
-  const batches: FileEntry[][] = [];
+  const atoms: ModuleBatchAtom[] = [];
   const tiny: FileEntry[][] = [];
   for (const group of groups) {
     if (group.length < MIN_BATCH_SIZE) {
@@ -665,11 +724,56 @@ function communityBatches(
     }
     let cursor = 0;
     for (const size of chunkSizes(group.length, MAX_BATCH_SIZE, DEFAULT_BATCH_TARGET)) {
-      batches.push(group.slice(cursor, cursor + size));
+      const members = group.slice(cursor, cursor + size);
+      atoms.push({ members, coalesceScopeRoot: pureWorkspaceScopeRoot(members, scopes) });
       cursor += size;
     }
   }
-  return [...batches, ...poolTiny(tiny, scopes)];
+  for (const members of poolTiny(tiny, scopes)) {
+    atoms.push({ members, coalesceScopeRoot: pureWorkspaceScopeRoot(members, scopes) });
+  }
+  return atoms.sort((a, b) => byString(a.members[0]?.path ?? "", b.members[0]?.path ?? ""));
+}
+
+/** Greedily merge adjacent atoms within each pure-root bucket without splitting one. */
+function coalesceModuleAtoms(
+  atoms: readonly ModuleBatchAtom[],
+  cap: number = MODULE_COALESCE_CAP,
+): readonly (readonly ModuleBatchAtom[])[] {
+  const byScopeRoot = new Map<string, ModuleBatchAtom[]>();
+  const out: ModuleBatchAtom[][] = [];
+  for (const atom of atoms) {
+    const root = atom.coalesceScopeRoot;
+    if (root === null) {
+      out.push([atom]);
+      continue;
+    }
+    const bucket = byScopeRoot.get(root);
+    if (bucket === undefined) byScopeRoot.set(root, [atom]);
+    else bucket.push(atom);
+  }
+
+  for (const root of [...byScopeRoot.keys()].sort(byString)) {
+    const bucket = byScopeRoot.get(root);
+    if (bucket === undefined) continue;
+    const ordered = [...bucket].sort((a, b) =>
+      byString(a.members[0]?.path ?? "", b.members[0]?.path ?? ""),
+    );
+    let run: ModuleBatchAtom[] = [];
+    let runSize = 0;
+    for (const atom of ordered) {
+      if (run.length > 0 && runSize + atom.members.length > cap) {
+        out.push(run);
+        run = [];
+        runSize = 0;
+      }
+      run.push(atom);
+      runSize += atom.members.length;
+    }
+    if (run.length > 0) out.push(run);
+  }
+
+  return out.sort((a, b) => byString(a[0]?.members[0]?.path ?? "", b[0]?.members[0]?.path ?? ""));
 }
 
 /**

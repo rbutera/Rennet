@@ -155,70 +155,133 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
    undirected weighted graph, and Louvain community detection groups them.
    Communities over 35 files split into near-equal chunks of their sorted paths;
    communities under 3 files pool with their scope's other leftovers, up to 25 per
-   pooled batch. Pooling stays inside a workspace scope where the scope has enough
-   leftovers to fill a batch — a small coherent batch reads better than a large
-   incoherent one. Pooling buckets each member individually by its own scope root,
-   so a tiny community that straddles two packages contributes to each package's
-   pool rather than landing wholly in the first member's.
+   pooled batch. These communities, chunks, and pools are atomic inputs to a second
+   deterministic pass. Within each most-specific workspace-root bucket, it
+   greedily joins adjacent atoms up to 120 files; pure unscoped atoms share one
+   sorted, repo-wide bucket. It never splits an atom or joins an atom whose members
+   span roots. After final membership is known, the batcher rebuilds imports and
+   cross-batch neighbors from the authoritative graph.
 2. **The directory fallback.** Files with no import edge — documentation, config,
    assets, an unreferenced leaf — keep the original scope-and-subtree partitioner,
-   and its slices are then *coalesced*: adjacent slices within one workspace scope
-   (or one top-level directory, for unscoped files) merge up to 25 files each. The
-   partitioner alone left a long tail of two- and three-file slices, and every one
-   of them cost a worker turn. Merging is adjacent-only, so a directory is never
-   split across two slices to fill a quota, and a slice already over the cap passes
-   through as it is.
+   and its slices are then coalesced. Adjacent slices within one workspace scope
+   merge up to 160 files. All families outside workspace scopes share one sorted,
+   repo-wide bucket; this can join top-level directories, but it never joins an
+   unscoped file to a workspace scope. The partitioner alone left a long tail of
+   small slices, and every one cost a worker turn. Merging never splits a source
+   slice to fill a quota, and a slice already over the cap passes through as it is.
    The whole eligible inventory takes this tier when the import or symbol shards
    cannot be read: worse partitions, never a refusal to map. That degraded path is
-   *not* coalesced — there the fallback already runs at a 120-file cap, and merging
-   to 25 would multiply the slice count rather than cut it.
+   *not* coalesced — there the fallback already covers the different, whole-tree
+   failure-mode population at a 120-file cap.
 
 ### Measured on Rennet itself
 
-2,428 files, 179 excluded by policy (166 binary, 5 lockfiles, 7 by banner, 1 by
-path), 2,249 eligible, 3,531 resolved import edges.
+The #584 policy at `b709f925`, replayed over the preserved `ac3533d6` Rennet
+snapshot, covers 2,396 eligible files exactly once and produces **48 candidate
+slices**:
 
-Those eligible files come out as **105 slices**:
+| Tier | Slices | Largest | Measured composition |
+|---|---:|---:|---|
+| Module batches | 28 | 118 files | Eleven combine several atoms; the largest combines eight; each is wholly within one most-specific workspace root or wholly unscoped |
+| Directory fallback | 20 | 159 files | Four unscoped packets mix top-level directories; the largest spans nine top-level directories and no workspace scope |
 
-| Tier | Slices | Files | Size |
-|---|---|---|---|
-| Module batches | 51 | 1,154 | median 27, mean 22.6, largest 34 |
-| Directory fallback (coalesced) | 54 | 1,095 | median 21, mean 20.3, largest 113 |
-
-That is the W3 reconstruction measurement. By the cap proof on 2026-08-31 the
-repository had grown to **110 slices** at commit `96bdbb51`.
+All 12 declared entry-point paths remain owned across 11 required slices. Final
+module membership cuts 2,179 of 4,175 directed resolved relations, 52.19%, down
+from 2,674, or 64.05%, before coalescing. This is snapshot evidence for the policy,
+not a claim that every repository has the same counts.
 
 Batching itself takes about 110 ms; the clean full snapshot build that feeds it
 takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
-#### The five-minute bar is not met yet
+#### The five-minute bar is not proved yet
 
-110 slices is 110 worker turns. At the last conservative 78 s per turn that is
-8,580 seconds of turn time; at the named concurrency of 12 it projects to **about
-11.9 minutes of worker wall clock**, or 12.4 minutes with the 30-second deterministic
-build in front of it.
-Dividing turn time by lanes gives wall clock — there is no separate, smaller
-"wall" figure to quote, and the target is five minutes.
+The first clean 16-lane run at `4954bdd7` still used 111 worker turns and
+disproved the earlier 34.7–37 second sample as a whole-run predictor. At 315.485
+seconds, 88 workers had started, 72 had completed, none had failed, and the verify
+seat had not begun. All 16 lanes started before the first terminal event and the
+scheduler kept them full. The guard stopped the process group when pageouts grew
+by 1,009; descendant RSS remained below the 4 GiB ceiling at 3,954,736 KiB,
+ambient MCP and plugin-refresh process counts stayed zero, and the reap left no
+survivors.
 
-Three things could close that gap, and none of them is done:
+Those 72 completed workers took 61.048 seconds median and 61.055 seconds mean.
+Their journals held 1,043 statements, 14.5 per worker on average. Statement count
+tracked duration more closely than file count did (Pearson 0.770 versus 0.634),
+with a fitted duration of roughly `8.36 + 3.638 × statements` seconds. That is a
+correlation over a censored run, not proof that requesting less output causes the
+whole saving.
 
-- **More lanes.** At 78 s/turn the bar needs 29 concurrent workers, or 32 once
-  the build is counted. The first real run at 16 proved that number unsafe on
-  this host: 16 live Codex worker process families held 2.59 GiB resident while
-  swap grew by 5.19 GiB and pageouts advanced by 5,965 in 87.084 seconds. The run
-  was aborted before the host exhausted swap, activating the recorded fallback
-  to 12. The machine is the ceiling.
-- **Shorter turns.** Workers are fed a symbol skeleton and their slice's own
-  import edges rather than a bare path list, which should cut the turn
-  substantially. It has not been timed against a live harness, so it buys an
-  unknown amount.
-- **Fewer turns.** The scoping seat (deciding that an edge-less file does not
-  deserve a turn at all) is unbuilt.
+The then-current statement-level merge over those preserved journals produced
+879 residue entries (878 seams, four flagged statements, six verify chunks).
+Keeping only each worker's first eight statements still left 439 entries and
+three chunks. The cause was adjacency expansion rather than 439 distinct synthesis
+questions: 267 of 283 cut-edge candidates in that prefix did not assert an import
+relationship or name the neighbour, and only three of 341 hints resolved to a
+concrete off-slice path.
 
-So the honest statement of this design's cost is **110 turns, a projected ~12.4
-minutes wall at concurrency 12**, on a per-turn figure measured against the old,
-bare-path-list prompt. It is arithmetic, not a stopwatch reading. The launched
-16-lane run proved the memory limit, not the five-minute bar; it did not finish.
+The current repair combines two measured worker-phase changes with the
+cut-endpoint-preserving verify reduction below. Each partition worker now ranks
+and emits at most eight high-signal anchored hypotheses. The partition pass merges
+pure-root module atoms up to 120 files and the graph-readable fallback tail up to
+160 files. The exact replay above reduces the catalogue to 48 candidates without
+omitting an eligible file or an atomic routing family.
+
+The merge now represents that synthesis work once per source slice: every active
+cut endpoint is retained, the worker's highest-ranked local statement starts the
+reading, and at most one structured hint may name a concrete off-slice path and
+explain the unresolved coupling. When that hint came from a lower-ranked statement,
+the prompt includes that local source as well as the lead. Contradictions and delta
+reverify items remain statement-level. Replaying that shape over the preserved
+eight-statement prefix produced 44 cut groups plus three flags: **47 work items in
+one 73,436-byte verify prompt**. It preserved all 241 canonical cut-edge pairs and
+170 endpoint paths exactly. This is endpoint preservation, not prose preservation:
+the verifier re-reads those paths instead of receiving every local worker claim.
+
+The 64-slice scope contract separates candidate count from worker turns.
+At 64 candidates or fewer, every slice runs and selection spends no model turn.
+Above 64, one medium `map-scope@1` Council seat selects at most 64 whole slices
+and accounts for every remaining candidate with a reason. The current guarded
+proof snapshot has 48 candidates, so it launches all 48 workers in three 16-lane
+waves and spends no selector turn. Selection still applies to a future catalogue
+over 64; it never pretends the excluded files were mapped.
+
+The shared stored knowledge schema and the verify seat's cross-cutting output
+remain uncapped. The scope, worker, and verify contract uses generator
+`knowledge-swarm@5`, so no `@4` or earlier stored set or journal answer can
+satisfy it. Regrouped slice membership also changes the journal key. The earlier
+worker fit projected about 37.5 seconds per turn. That projection now supplies a
+proof hypothesis for the selected run, not a five-minute claim.
+
+The launched evidence now says:
+
+- **More lanes.** The old bare-path prompt took 78 seconds and would have needed
+  29 concurrent workers, or 32 once the build was counted. The first real run at
+  16 inherited every ambient MCP server per lane; swap grew by 5.19 GiB and
+  pageouts advanced by 5,965 in 87.084 seconds. Codex workers now start with an
+  explicit empty MCP policy rendered as disabled placeholders for every
+  configured ambient entry, with plugin discovery disabled. A clean 24-lane
+  control still reached 4,822,304 KiB (4.60 GiB) descendant RSS after 22.074
+  seconds, with 24 workers active, zero ambient MCP or plugin-refresh processes,
+  and no completed worker. The guard reaped the process group with zero survivors.
+  That rejects 24 as the default. The complete 16-lane run stayed below the RSS
+  ceiling but crossed the independent pageout guard after five minutes. Claude
+  context-map seats likewise request the SDK's empty filesystem-setting sources
+  and strict MCP mode; normal boards, lenses, scouts, and asks still inherit the
+  user's Claude configuration.
+- **Shorter turns.** The scoped eight-hypothesis worker schema attacks the term
+  most correlated with measured duration. Its proof must report worker timing,
+  statement yield, merge residue, verify timing, and whole-pass wall clock; a
+  faster but materially empty map does not pass.
+- **Fewer turns.** Same-scope module atoms and the graph-readable fallback tail
+  coalesce without omitting a file or routing family. The current 48-slice
+  catalogue runs whole. `map-scope@1` still caps a future larger catalogue at 64
+  selected whole slices, and stored coverage records every exclusion.
+
+The current snapshot costs **48 worker turns and no scope-selection turn**. The
+general contract remains one scope selection, with at most two attempts, plus at
+most 64 worker turns when a catalogue exceeds 64. The release proof is a complete
+guarded `knowledge-swarm@5` run; candidate count alone does not establish the
+whole-pass latency or memory bar.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -227,18 +290,18 @@ always yields the same batches in the same order.
 A batch's id is `mod:<lexically-first member path>#<hash>`, where the hash covers
 the batch's sorted member paths. It is a pure function of the batch's content, not
 of Louvain's community numbering, which is an artifact of iteration order and
-means nothing across builds. So a rebuild with no changes reproduces every id, and
-a membership change moves only the affected batch's id while every untouched batch
-keeps its own. The path half is the routing family: it survives membership churn
-that leaves the first member alone, which is how a delta recognises a re-formed
-batch as the same neighbourhood.
+means nothing across builds. A module batch that combines several atoms retains
+every constituent atom's routing family. A deleted file owned by a non-head atom
+therefore reaches the combined successor even though only the first family appears
+in its id.
 
 A coalesced fallback slice follows the same rule with a different first half: the
 hierarchical id of its first constituent, plus `#<hash>` over the merged
 membership. Keeping the hierarchical half means the fallback tier's routing family
 is unchanged by coalescing — a delta reaches a merged slice by the same directory
 prefix it used before. A fallback slice that merged with nothing keeps its bare
-hierarchical id and no hash.
+hierarchical id and no hash. Every constituent family is retained explicitly, so
+a deletion under a non-head directory still routes the merged successor.
 
 ### The neighbor map
 
@@ -247,6 +310,9 @@ as if those edges did not exist. Each batch therefore carries, per member, its
 one-hop import neighbours *outside* the batch: the neighbour's path, whether the
 member imports it, is imported by it, or both, and the neighbour's exported symbol
 names joined from the symbol shards.
+
+The batcher computes this map after final coalescing. An edge between two atoms
+that merged becomes an internal `imports` entry, not a stale cross-batch neighbor.
 
 The list is capped at 50 neighbours per file, keeping the highest-degree ones, and
 records how many were dropped. A hub's neighbourhood is genuinely larger than what
@@ -284,14 +350,54 @@ of that tree.
 Beside the structural index, the Repo Map stores model-generated knowledge
 claims. `packages/core/src/knowledge/` generates them as a partitioned swarm:
 [module batching](#module-batching) slices the snapshot so every mapping-eligible
-file lands in exactly one slice, a light `partition-worker` council job emits
-anchored claims per slice, a deterministic merge pass combines them, and a
-`map-verify` seat handles what the merge could not settle. Both model jobs
-resolve through the [Model Council](./model-council.md) like every other model
-path. Claims that fail anchor resolution are dropped at mint time, so a stored
-claim always cites spans that resolve against the snapshot. On a baseline
-advance, only partitions containing changed paths re-run and untouched claims
-carry forward.
+file lands in exactly one candidate slice. A scope pass selects whole slices, a
+light `partition-worker` Council job emits anchored claims for each selected
+slice, a deterministic merge combines them, and a `map-verify` seat handles what
+the merge could not settle. All three model jobs resolve through the
+[Model Council](./model-council.md). Claims that fail anchor resolution are
+dropped at mint time, so a stored claim always cites spans that resolve against
+the snapshot.
+
+### Scope selection and exact coverage
+
+`map-scope@1` owns selection before workers start. Its cap is 64 slices.
+
+- With 64 or fewer candidates, the selector includes every slice
+  deterministically and runs no model turn.
+- With more than 64 candidates, one medium Council seat receives the classified
+  candidate catalogue. It must return an exact partition: every offered slice id
+  appears once in either `include` or `exclude`, between one and 64 slices are
+  included, and every exclusion has a nonblank reason. A slice that contains a
+  declared entry point must be included.
+- The selection catalogue carries every slice id and member path, routing
+  families, entry-point and test membership, structural counts, and a bounded
+  sample of cross-slice paths. Full symbol skeletons, import-edge pairs, and
+  neighbour export names belong to selected workers; duplicating those packets in
+  the selector can overflow the scope turn before the 64-slice cap applies.
+- Selection is whole-slice only. The seat chooses trusted slice ids and never
+  supplies or edits file membership. Invalid, partial, repeated, or unknown
+  selections retry once, then fail the run before any worker starts.
+
+The promoted `knowledge-swarm@5` set stores this decision as exact coverage.
+Flattening its coverage groups yields every `(path, blobOid)` in the structural
+snapshot exactly once. Each group is one of:
+
+- a mapped slice;
+- a slice excluded by `map-scope`, with its reason; or
+- files excluded mechanically as binary, lockfile, vendored, generated by path,
+  or generated by content.
+
+The coverage record carries the catalogue digest and distinguishes deterministic
+below-cap selection from a Council turn. A Council selector records the cap,
+generator, harness, assigned and observed model, effort, and credential source.
+The coverage record is stored atomically with the statements. An older set with
+no coverage remains readable as legacy data, but it cannot serve as carry input
+for an `@5` refresh because absence never means every file was mapped.
+
+On a baseline advance, selected slices whose structure changed run as usual.
+Slices that become newly selected also run, even when file routing would otherwise
+carry them. A claim whose evidence moves outside mapped coverage retires whole;
+claims from unchanged selected slices carry forward byte for byte.
 
 ### What a worker is given
 
@@ -317,6 +423,13 @@ anchor-or-drop rule is unchanged and is what keeps that freedom honest — a
 citation that does not resolve against the slice's own file index is dropped at
 mint.
 
+One worker emits at most eight statements, ranked highest-signal first. This is a
+ceiling on pre-merge hypotheses from one slice, not a cap on the stored knowledge
+set or on the verify seat's cross-cutting synthesis; both of those schemas remain
+uncapped. Rennet does not silently truncate a longer returned array. The provider
+receives the scoped schema, and the measured proof checks the resulting journals
+against the ceiling.
+
 ### The deterministic merge
 
 A script, not a seat, combines the workers' output. It collapses duplicate
@@ -338,46 +451,43 @@ byte for byte.
 
 The seat receives only the merge's residue:
 
-- **Seams.** A claim on one end of a cut import edge, where another batch also
-  made a claim about the other end. That pair is invisible to either worker. Cut
-  edges are read from the whole import graph, not from the packets' capped
-  neighbour lists, so a hub file's later neighbours are still visible to the
-  merge; and seam coverage is computed before duplicate claims collapse, because
-  two workers on opposite ends of one edge routinely word the same claim
-  identically and the collapse would otherwise erase the far end. A claim
-  carrying a worker *hint* joins them too, since nothing else reads a hint.
+- **Seam groups.** One synthesis item per source slice, not one item per local
+  statement. The group retains every cut import endpoint whose far side another
+  slice wrote about and starts from the source worker's highest-ranked statement.
+  Cut edges come from the whole import graph, not the packets' capped neighbour
+  lists, so a hub file's later neighbours remain visible. Groups are built from
+  pre-dedupe worker origins, so two workers wording the same claim cannot erase
+  either source slice's boundary.
 
-  The seam signal is import cut edges and nothing more. Two batches related by
-  something the import graph cannot see — a shared convention, a protocol both
-  ends implement, a runtime registration — produce no seam; the channel for those
-  is the worker's own hint. This is a precise signal over one relation plus a
-  model-supplied escape hatch, not a completeness claim about cross-batch
-  relationships.
+  Import edges cannot describe a shared convention, runtime registration, or
+  protocol implemented without a direct import. The escape hatch is one structured
+  `{ path, coupling }` hint per group. The worker boundary admits it only when the
+  path exists in the repository, lies outside that slice, and the coupling is
+  non-empty. A vague "elsewhere" hint does not become synthesis work.
 - **Flagged statements.** The edge-shard contradictions above, plus a delta's
   prior statements whose cited evidence changed — unsettleable by script, because
-  the bytes moved.
+  the bytes moved. These remain statement-level verdict requests. Seam-group leads
+  are synthesis-only, and an unsolicited verdict for one is ignored.
 
-Measured on Rennet's 105 slices, over the authoritative edge list the production
-path uses, with a stand-in worker minting a claim for every eligible file (2,250
-claims, denser than a real worker): the residue is 877, 39% of the set. At a more
-realistic density (789 claims) it is 192, 24%. Either is
-two to six chunks where the old shape sent 100% by construction. An empty residue
-runs no turn at all — with no seam and no contradiction there is nothing to
-synthesize from, and a turn over an empty prompt is a seat inventing claims with
-no material.
+The earlier statement-level benchmark on Rennet's 105 slices produced 877 entries
+from a dense stand-in and 192 from a lower-density one. The later launched journals
+showed that density was not the governing quantity: the eight-statement prefix
+still produced 439 statement entries, while the equivalent source-slice grouping
+produced 47 work items and one 73,436-byte chunk. An empty residue still runs no
+turn at all — with no seam group and no contradiction there is nothing to synthesize from.
 
-The residue is still chunked (150 per turn, several in flight) as a ceiling
-rather than an expectation, and the pass is still all-or-nothing: one failed
-chunk fails the run and leaves the stored set untouched, rather than publishing
-an unadjudicated slice of the repository as if the seat had read it.
+The residue is still chunked (150 work items per turn, several in flight) as a
+ceiling rather than an expectation, and the pass is still all-or-nothing: one
+failed chunk fails the run and leaves the stored set untouched, rather than
+publishing an unadjudicated slice of the repository as if the seat had read it.
 
-Chunking bounds what one turn can synthesize, so a final cross-boundary pass
-runs over the chunks' own output: every chunk's cross-cutting claims, plus a
-one-line summary of what each chunk covered, feed a single closing turn that
-mints the claims spanning two chunks. That input is proportional to the number
-of chunks, not the number of statements. The pass is best-effort — if the closing
-turn fails, the run keeps its chunk-local synthesis rather than discarding a good
-map over a bonus turn.
+Chunking bounds what one turn can synthesize, so a final cross-boundary pass runs
+over the chunks' own output. It selects candidates round-robin by source chunk up
+to one verify-chunk ceiling, preventing one prolific early chunk from hiding every
+later chunk, and carries a one-line summary of every chunk into the closing turn.
+That input is bounded independently of the number of stored statements. The pass
+is best-effort — if the closing turn fails, the run keeps its chunk-local synthesis
+rather than discarding a good map over a bonus turn.
 
 One residual: the closing turn reads the chunks' claims, not their raw
 hypotheses, so a pattern that only becomes visible in two individual hypotheses
@@ -386,11 +496,18 @@ therefore near-repository-wide rather than exhaustive.
 
 ### Persistence: the journal
 
-Each completed batch writes its result to a **journal** — a directory beside
-`knowledge/` in the project's reserved store, never inside it, that no reader
-consults. A re-run at the same target reuses those results instead of re-running
-their turns, so a retry pays only for what actually failed. Narration says
-`reused from the journal` rather than `done`, because no turn was spent.
+Each completed selected batch writes its result to a **journal**, a directory
+beside `knowledge/` in the project's reserved store, never inside it, that no
+reader consults. A re-run at the same target reuses those results instead of
+re-running their turns, so a retry pays only for what actually failed. Narration
+says `reused from the journal` rather than `done`, because no turn was spent.
+
+For a catalogue above 64 slices, the same target also stores `scope-plan.json`
+before any workers start. The plan binds the full candidate catalogue and its
+digest, the 64-slice cap, `map-scope@1`, the selected and excluded slice ids, and
+the Council's harness, model, and effort to a checksum. A retry reuses that exact
+plan. It does not spend another selection turn or let a changed model answer send
+the retry to a different set of workers.
 
 A *target* is the base OID, the snapshot fingerprint, the generator id, the slice
 id, and the slice's exact membership. All five: a re-extraction or a prompt
@@ -402,12 +519,12 @@ slice's membership at its current blob. Anything that does not survive those
 checks reads as "not journaled", which costs one re-run turn — the cheap side of
 the trade against a damaged statement entering a set.
 
-Every batch runs; failures are retried once after the rest have finished; and if
-a batch still fails the run reports **which** slices failed and how many of this
-run's batches are waiting for the next attempt. The store rule is the point of
-keeping the two places apart: the live `knowledge.json` is written once, when the
-set is whole. A partial set never presents as complete, however much of it is
-journaled.
+Every selected batch runs; failures are retried once after the rest have
+finished. If a batch still fails, the run reports **which** slices failed and how
+many selected batches are waiting for the next attempt. The store rule is the
+point of keeping the two places apart: the live `knowledge.json` is written once,
+when the selected plan is whole and its exact coverage can be stored beside it. A
+partial set never presents as complete, however much of it is journaled.
 
 The journal is one directory **per target** — named for a hash of the base OID,
 the snapshot fingerprint and the generator id together, not for the OID alone,
@@ -422,15 +539,16 @@ store write re-reads the store's identity first: a run whose prior moved
 underneath it refuses to save, reports **superseded**, and keeps its journal so
 the retry costs no turns.
 
-Worker fan-out runs at a named default concurrency of 12, the measured fallback
-after 16 lanes drove the development host into swap, not an unrevisited literal,
-and overridable per run. It is deliberately not adaptive: a number that changes
-with ambient load makes a run's cost unreproducible.
+Worker fan-out uses a named, harness-specific default after council resolution:
+16 for Codex partition workers, whose job-scoped empty policy expands into
+disabled placeholders for the configured ambient entries, and 12 for Claude
+partition workers. A caller's explicit per-run limit wins. The policy is
+deliberately not adaptive: ambient load does not change the recorded run policy.
 
 Verify concurrency stays at 4 by a separate policy. W3 changed that pass from a
 second fan-out over every worker statement to a residue-only pass, normally one
 or two chunks with larger prompts and cited-span reads. Raising its bound would
-not raise worker throughput or alter the 12-lane worker policy.
+not raise worker throughput or alter the partition-worker policy.
 
 The first pass is part of the awaited add-project run: readiness, the sidebar
 spinner, and the verified statement counts all wait for its typed outcome. Later

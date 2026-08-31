@@ -44,7 +44,7 @@ import type {
 } from "@rennet/protocol";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
-import { queryKnowledge } from "./knowledge";
+import { type KnowledgeCoverageView, knowledgeCoverageTotals, queryKnowledge } from "./knowledge";
 import { resolveAssignment } from "./model-council";
 import { type LoadedSnapshot, queryProjectMap } from "./project-context";
 
@@ -261,6 +261,7 @@ function renderAnchor(anchor: KnowledgeAnchor): string {
 function renderConsultedContext(
   evidence: readonly OfferedEvidence[],
   paths: readonly string[],
+  coverage: string,
 ): string {
   const knowledgeBlock =
     evidence.length > 0
@@ -275,7 +276,48 @@ function renderConsultedContext(
     paths.length > 0
       ? `PROJECT FILE NAMES (navigation only; NOT evidence) (${paths.length}):\n${paths.map((p) => `- ${p}`).join("\n")}`
       : "PROJECT FILE NAMES: (none)";
-  return `${knowledgeBlock}\n\n${filesBlock}`;
+  return `${knowledgeBlock}\n\n${coverage}\n\n${filesBlock}`;
+}
+
+interface CoverageDisclosure {
+  readonly prompt: string;
+  readonly consulted: string;
+}
+
+function coverageDisclosure(view: KnowledgeCoverageView): CoverageDisclosure {
+  if (view.kind === "absent") {
+    return {
+      prompt: "MODEL KNOWLEDGE COVERAGE: absent because no knowledge set exists.",
+      consulted: "context.knowledge coverage (absent)",
+    };
+  }
+  if (view.kind === "unrecorded") {
+    return {
+      prompt:
+        "MODEL KNOWLEDGE COVERAGE: unrecorded for this legacy knowledge set. Do not treat missing statements as proof that the map covered a file.",
+      consulted: "context.knowledge coverage (unrecorded)",
+    };
+  }
+  if (view.kind === "invalid") {
+    return {
+      prompt:
+        "MODEL KNOWLEDGE COVERAGE: invalid because the record does not match the current snapshot inventory. Do not treat missing statements as proof that a file was mapped.",
+      consulted: "context.knowledge coverage (invalid inventory)",
+    };
+  }
+
+  const totals = knowledgeCoverageTotals(view.exact);
+  const counts = `${totals.mappedFiles} file(s) mapped; ${totals.scopeExcludedFiles} scope-excluded; ${totals.mechanicallyExcludedFiles} mechanically excluded`;
+  const consulted = `context.knowledge coverage (${totals.mappedFiles} mapped; ${totals.scopeExcludedFiles} scope-excluded; ${totals.mechanicallyExcludedFiles} mechanically excluded)`;
+  return view.kind === "current"
+    ? {
+        prompt: `MODEL KNOWLEDGE COVERAGE: ${counts}. Excluded files had no mapping worker. Do not infer their behavior from missing statements.`,
+        consulted,
+      }
+    : {
+        prompt: `MODEL KNOWLEDGE COVERAGE (STALE RECORD): ${counts}. This record belongs to an earlier snapshot. Do not present it as complete coverage of the current map.`,
+        consulted: `${consulted} [stale]`,
+      };
 }
 
 /** Bound the file/knowledge listing fed into the prompt (context-window economy). */
@@ -360,15 +402,17 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
   const offeredEvidence = offeredEvidenceFor(offerable.slice(0, maxStatements));
   const offeredById = new Map(offeredEvidence.map((evidence) => [evidence.id, evidence]));
   const paths = map.files.map((f) => f.path).slice(0, maxFiles);
+  const coverage = coverageDisclosure(knowledgeView.coverage);
   const consulted = [
     `context.knowledge (${knowledgeView.statements.length} statements)`,
+    coverage.consulted,
     `context.map (${map.files.length} files)`,
   ];
 
   const prompt = [
     ASK_CONTRACT,
     `\nQUESTION:\n${query.question}`,
-    `\nCONTEXT (at base ${snapshot.manifest.baseOid.slice(0, 12)}):\n${renderConsultedContext(offeredEvidence, paths)}`,
+    `\nCONTEXT (at base ${snapshot.manifest.baseOid.slice(0, 12)}):\n${renderConsultedContext(offeredEvidence, paths, coverage.prompt)}`,
     '\nAnswer the question from this evidence, or return an honest "unanswered".',
   ].join("\n");
 

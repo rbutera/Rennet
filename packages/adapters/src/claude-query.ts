@@ -186,9 +186,14 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   }
   if (options.abortController) sdkOptions.abortController = options.abortController;
   if (options.model !== undefined) sdkOptions.model = mapCouncilModel(options.model);
+  if (options.effort !== undefined) sdkOptions.effort = options.effort;
   if (options.allowedTools !== undefined) sdkOptions.allowedTools = [...options.allowedTools];
   if (options.disallowedTools !== undefined) {
     sdkOptions.disallowedTools = [...options.disallowedTools];
+  }
+  if (options.ambientConfig === "isolated") {
+    sdkOptions.settingSources = [];
+    sdkOptions.strictMcpConfig = true;
   }
   if (options.appendSystemPrompt !== undefined) {
     // Second translation: the adapter's contract carries an "append" system
@@ -202,9 +207,9 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
     };
   }
   // W5: the adapter's `name → { url }` contract (shared with the Codex and OMP
-  // adapters) becomes the SDK's HTTP server config. `strictMcpConfig` is
-  // deliberately NOT set — Rennet adds canvasOps to whatever the user already
-  // configured, it never replaces their table.
+  // adapters) becomes the SDK's HTTP server config. Ordinary sessions add it to
+  // the user's configuration. An isolated internal session sets strict MCP above,
+  // so only this explicit table (and explicitly mounted SDK tools) remains.
   if (options.mcpServers !== undefined) {
     sdkOptions.mcpServers = Object.fromEntries(
       Object.entries(options.mcpServers).map(([name, server]) => [

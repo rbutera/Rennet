@@ -58,6 +58,21 @@ export function knowledgeStageLine(
   repo: string,
   event: KnowledgeSwarmProgress,
 ): ProjectProcessEvent {
+  if (event.kind === "scope") {
+    const note =
+      event.status === "running"
+        ? "Choosing context-map coverage"
+        : event.status === "reused"
+          ? "Context-map coverage reused"
+          : event.status === "done"
+            ? "Context-map coverage selected"
+            : "Context-map coverage selection failed";
+    const detail =
+      event.selected === undefined
+        ? `${event.candidates} candidate slices; ${event.mechanicallyExcludedFiles} files mechanically excluded`
+        : `${event.selected} of ${event.candidates} slices selected; ${event.scopeExcludedFiles ?? 0} files excluded by scope; ${event.mechanicallyExcludedFiles} mechanically excluded${event.attempts === undefined ? "" : `; ${event.attempts} selector model ${event.attempts === 1 ? "turn" : "turns"}`}`;
+    return { kind: "stage", repo, stage: "knowledge", note, detail };
+  }
   if (event.kind === "verify") {
     const note =
       event.status === "running"
@@ -129,6 +144,30 @@ function projectRunKnowledgeLine(
   repo: string,
   event: KnowledgeSwarmProgress,
 ): ProjectProcessEvent {
+  if (event.kind === "scope") {
+    const status = event.status === "reused" ? "done" : event.status;
+    const detail =
+      event.selected === undefined
+        ? `${event.candidates} candidate slices; ${event.mechanicallyExcludedFiles} files mechanically excluded`
+        : `${event.selected} of ${event.candidates} slices selected; ${event.scopeExcludedFiles ?? 0} files excluded by scope; ${event.mechanicallyExcludedFiles} mechanically excluded${event.attempts === undefined ? "" : `; ${event.attempts} selector model ${event.attempts === 1 ? "turn" : "turns"}`}`;
+    return {
+      kind: "step",
+      runId,
+      repo,
+      phase: "knowledge",
+      step: "scope",
+      status,
+      note:
+        event.status === "running"
+          ? "Choosing context-map coverage"
+          : event.status === "reused"
+            ? "Reused context-map coverage"
+            : event.status === "done"
+              ? "Selected context-map coverage"
+              : "Context-map coverage selection failed",
+      detail,
+    };
+  }
   if (event.kind === "verify") {
     return {
       kind: "step",

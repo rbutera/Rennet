@@ -86,16 +86,30 @@ evidence.
 
 Generation runs as a partitioned swarm. Rennet slices the repository into
 modules — groups of files that import each other, found from the import graph
-rather than from the folder tree — and hands each worker its slice's declared
-symbols, its resolved imports, and the imports that cross into other slices. A
-worker starts from that and reads whatever else it needs. A deterministic pass
-then merges the workers' claims, collapsing duplicates and checking every
-import-shaped claim against the repository's own import index; the verification
-seat sees only what that pass could not settle, and adds the cross-cutting claims
-that span slices. The slices are invisible plumbing: the map shows scopes and
-claims, not worker slices. The Model Council picks the models for both seats. On
-a baseline advance, only workers whose slice contains changed paths re-run;
-untouched claims carry forward.
+rather than from the folder tree. If the repository has 64 or fewer eligible
+slices, Rennet maps all of them without spending a model turn on selection. For a
+larger catalogue, the Model Council routes one medium `map-scope` seat. It selects
+at most 64 whole slices, must account for every candidate as mapped or excluded,
+and must keep every slice that contains a declared entry point. Each excluded
+slice carries the seat's reason.
+
+Rennet then hands each selected slice's declared symbols, resolved imports, and
+cross-slice imports to a worker. A worker starts from that packet and reads
+whatever else it needs. A deterministic pass merges the workers' claims,
+collapsing duplicates and checking every import-shaped claim against the
+repository's own import index. The verification seat sees only what that pass
+could not settle and adds cross-cutting claims that span selected slices. The
+slices are invisible plumbing: the map shows scopes and claims, not worker
+slices. The Model Council picks the models for selection, mapping, and
+verification.
+
+The stored knowledge set includes exact coverage alongside its claims. Every
+snapshot file and blob identity appears once as mapped, excluded by the scoping
+seat, or mechanically excluded. This means "complete" describes a finished,
+verified run of the recorded plan. It does not claim that a model read every
+tracked file. On a baseline advance, newly selected slices run, claims that move
+outside mapped coverage retire, and claims from unchanged selected slices carry
+forward.
 
 A run that is interrupted does not start over. The project-run journal checkpoints
 the scout and structural snapshot, while the knowledge journal saves each batch as
@@ -114,11 +128,12 @@ finishes, Rennet queues a fresh draft for the same patchset; it never keeps the
 earlier degraded boards as the settled result. Reopening the app resumes the same
 project run and preserves this relationship between the map and its boards.
 
-There is no file cap, but there is a policy exclusion. Lockfiles, vendored trees,
-build output, generated files, and binaries are not sent to a worker: reading them
-costs a turn and teaches nothing. Excluded files stay in the map's file inventory
-with the reason they were excluded, so the map never quietly pretends a file does
-not exist.
+The structural map has no file cap. Lockfiles, vendored trees, build output,
+generated files, and binaries are not sent to a worker. They stay in the file
+inventory with their mechanical exclusion reason. Eligible slices omitted from a
+large repository's 64-slice worker plan stay in the inventory too, with the
+scoping seat's reason. Neither kind of exclusion silently disappears from the
+map's coverage record.
 
 Build either layer from the CLI without starting the daemon:
 

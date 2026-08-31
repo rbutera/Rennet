@@ -344,7 +344,7 @@ export {
   councilSeatTurn,
   createClaudeSwarmTurn,
   createCodexSwarmTurn,
-  DEFAULT_SWARM_CONCURRENCY,
+  DEFAULT_SWARM_CONCURRENCY_BY_HARNESS,
   FAILED_BATCH_RETRIES,
   type KnowledgeSwarmDeps,
   type KnowledgeSwarmOutcome,

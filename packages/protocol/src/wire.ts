@@ -1073,12 +1073,71 @@ export const knowledgeStatementSchema = z.object({
 });
 export type KnowledgeStatementPayload = z.infer<typeof knowledgeStatementSchema>;
 
+export const knowledgeCoverageFileSchema = z.object({
+  path: z.string().min(1),
+  blobOid: z.string().min(1),
+});
+
+const knowledgeMechanicalExclusionReasonSchema = z.enum([
+  "binary",
+  "lockfile",
+  "vendored",
+  "generated-path",
+  "generated-content",
+]);
+
+export const knowledgeCoverageGroupSchema = z.union([
+  z.object({
+    kind: z.literal("mapped"),
+    sliceId: z.string().min(1),
+    files: z.array(knowledgeCoverageFileSchema),
+  }),
+  z.object({
+    kind: z.literal("excluded"),
+    source: z.literal("scope"),
+    sliceId: z.string().min(1),
+    reason: z.string().min(1),
+    files: z.array(knowledgeCoverageFileSchema),
+  }),
+  z.object({
+    kind: z.literal("excluded"),
+    source: z.literal("mechanical"),
+    reason: knowledgeMechanicalExclusionReasonSchema,
+    files: z.array(knowledgeCoverageFileSchema),
+  }),
+]);
+
+export const knowledgeCoverageSchema = z.object({
+  schemaVersion: z.literal(1),
+  catalogueDigest: z.string().min(1),
+  selector: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("below-cap"),
+      cap: z.number().int().positive(),
+      generator: z.string().min(1),
+    }),
+    z.object({
+      kind: z.literal("council"),
+      cap: z.number().int().positive(),
+      generator: z.string().min(1),
+      harness: z.enum(["claude-code", "codex"]),
+      assignedModel: z.string().min(1),
+      model: z.string().min(1),
+      effort: z.enum(["low", "medium", "high", "xhigh"]),
+      apiKeySource: z.string().nullable(),
+    }),
+  ]),
+  groups: z.array(knowledgeCoverageGroupSchema),
+});
+export type KnowledgeCoveragePayload = z.infer<typeof knowledgeCoverageSchema>;
+
 export const knowledgeSetSchema = z.object({
   schemaVersion: z.number(),
   repoKey: z.string(),
   baseOid: z.string(),
   snapshotFingerprint: z.string(),
   generator: z.string(),
+  coverage: knowledgeCoverageSchema.optional(),
   statements: z.array(knowledgeStatementSchema),
 });
 export type KnowledgeSetPayload = z.infer<typeof knowledgeSetSchema>;

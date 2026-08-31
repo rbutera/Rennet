@@ -6,13 +6,22 @@ import {
   dedupById,
   describeSnapshotGateFailure,
   dispositionCarrier,
+  type HarnessAmbientConfig,
   type HarnessPort,
+  type HarnessSession,
   type HarnessTurnResult,
   KNOWLEDGE_SWARM_GENERATOR_ID,
   type KnowledgeSnapshotContext,
+  knowledgeCoverageMatchesSnapshot,
   type LoadedSnapshot,
+  MAP_SCOPE_GENERATOR_ID,
+  MAP_SCOPE_OUTPUT_SCHEMA,
+  MAP_SCOPE_SLICE_CAP,
   MAP_VERIFY_OUTPUT_SCHEMA,
+  type MapScopeSuccess,
   type MapVerifyResult,
+  mapScopeCatalogueDigest,
+  materializeKnowledgeCoverage,
   PARTITION_WORKER_OUTPUT_SCHEMA,
   type PartitionSlice,
   type PartitionWorkerResult,
@@ -21,20 +30,29 @@ import {
   queryImportGraph,
   resolveAssignment,
   routeDelta,
+  runMapScope,
   runMapVerify,
   runPartitionWorker,
   structuralChanges,
 } from "@rennet/core";
 import type {
+  CouncilEffort,
   CouncilHarnessId,
   CouncilJobId,
+  CouncilModel,
   CouncilResolveContext,
+  KnowledgeCoverage,
   KnowledgeSet,
   KnowledgeStatement,
 } from "@rennet/protocol";
 import { canonicalize, KNOWLEDGE_SCHEMA_VERSION, sha256Hex } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
-import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
+import {
+  type JournalTarget,
+  KnowledgeJournal,
+  type ScopePlanJournalInput,
+  type ScopePlanJournalResult,
+} from "./knowledge-journal";
 import type { KnowledgeStore } from "./knowledge-store";
 import type { ProjectContextReader } from "./project-context-reader";
 import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
@@ -104,6 +122,43 @@ async function pathsAtOid(git: GitExec, root: string, oid: string): Promise<stri
   return out.split("\0").filter((path) => path.length > 0);
 }
 
+function scopeSuccessFromPlan(plan: ScopePlanJournalResult): MapScopeSuccess {
+  return {
+    status: "ok",
+    includedSliceIds: plan.includedSliceIds,
+    excludedSlices: plan.excludedSlices,
+    provenance: {
+      generator: MAP_SCOPE_GENERATOR_ID,
+      model: plan.provenance.model,
+      apiKeySource: plan.provenance.apiKeySource,
+    },
+    attempts: 0,
+  };
+}
+
+function coverageCounts(coverage: KnowledgeCoverage): {
+  readonly scopeExcludedFiles: number;
+  readonly mechanicallyExcludedFiles: number;
+} {
+  let scopeExcludedFiles = 0;
+  let mechanicallyExcludedFiles = 0;
+  for (const group of coverage.groups) {
+    if (group.kind !== "excluded") continue;
+    if (group.source === "scope") scopeExcludedFiles += group.files.length;
+    else mechanicallyExcludedFiles += group.files.length;
+  }
+  return { scopeExcludedFiles, mechanicallyExcludedFiles };
+}
+
+function mappedOwners(coverage: KnowledgeCoverage): ReadonlyMap<string, string> {
+  const owners = new Map<string, string>();
+  for (const group of coverage.groups) {
+    if (group.kind !== "mapped") continue;
+    for (const file of group.files) owners.set(file.path, group.sliceId);
+  }
+  return owners;
+}
+
 /** Options shared by both concrete turn builders. */
 export interface SwarmTurnOptions {
   /** The session's working directory (the repo root). Claude seats only. */
@@ -113,6 +168,8 @@ export interface SwarmTurnOptions {
   readonly collector?: MetricsCollector;
   /** The metrics label, e.g. "knowledge.worker". */
   readonly label?: string;
+  /** Internal harness extensions policy. Omitted for ordinary council work. */
+  readonly ambientConfig?: HarnessAmbientConfig;
 }
 
 /**
@@ -123,23 +180,17 @@ export interface SwarmTurnOptions {
 export function createClaudeSwarmTurn(
   port: HarnessPort,
   model: string,
+  effort: CouncilEffort,
   outputSchema: unknown,
   options: SwarmTurnOptions,
   now: () => number = Date.now,
 ): RunTurn {
   const label = options.label ?? "knowledge.swarm";
   return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
-    const session = await port.createSession({
-      cwd: options.cwd,
-      outputSchema,
-      model,
-      // #585: Rennet's internal one-shot turn — never the user's session history.
-      ephemeral: true,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
     const started = now();
     let observedModel: string | null = null;
     let apiKeySource: string | null = null;
+    let session: HarnessSession | undefined;
     const record = (
       status: "emitted" | "failed",
       usage: ReturnType<typeof extractClaudeUsage>,
@@ -158,6 +209,16 @@ export function createClaudeSwarmTurn(
       });
     };
     try {
+      session = await port.createSession({
+        cwd: options.cwd,
+        outputSchema,
+        model,
+        effort,
+        ...(options.ambientConfig === undefined ? {} : { ambientConfig: options.ambientConfig }),
+        // #585: Rennet's internal one-shot turn — never the user's session history.
+        ephemeral: true,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
       await session.send({ prompt });
       for await (const event of session.events) {
         if (event.kind === "session.started") {
@@ -193,8 +254,19 @@ export function createClaudeSwarmTurn(
       const message = "the harness stream ended without a terminal frame";
       record("failed", null, message);
       return { status: "failed", message };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      record("failed", null, message);
+      return { status: "failed", message };
     } finally {
-      await session.close();
+      if (session !== undefined) {
+        try {
+          await session.close();
+        } catch {
+          // Closing a one-shot session is cleanup. It must not replace the emitted
+          // result or the lifecycle failure already returned above.
+        }
+      }
     }
   };
 }
@@ -239,6 +311,16 @@ export function createCodexSwarmTurn(
 /** One progress line from the swarm: per-partition states plus the verify stage. */
 export type KnowledgeSwarmProgress =
   | {
+      readonly kind: "scope";
+      readonly status: "running" | "reused" | "done" | "failed";
+      readonly candidates: number;
+      readonly selected?: number;
+      readonly scopeExcludedFiles?: number;
+      readonly mechanicallyExcludedFiles: number;
+      /** Selector model turns spent by this logical stage; zero for below-cap or reused plans. */
+      readonly attempts?: number;
+    }
+  | {
       readonly kind: "partition";
       readonly sliceId: string;
       /** 1-based position among the slices this run executes. */
@@ -267,17 +349,22 @@ export type KnowledgeSwarmProgress =
     };
 
 /**
- * Concurrent partition workers, by NAMED policy rather than an unrevisited literal.
+ * Concurrent partition workers, keyed by the harness that will own the process
+ * family rather than by a global cap.
  *
  * The old default was a bare `?? 4`, which is where "200 partitions × 78 s ÷ 4 ≈ 67
- * minutes" came from. The first real run at the ruled cap of 16 hit the development
- * host's memory ceiling: the 16 Codex worker process families held 2.59 GiB resident
- * while swap grew by 5.19 GiB. Rai's recorded fallback is therefore 12. It stays
- * overridable per run (`KnowledgeSwarmDeps.concurrency`), and it is deliberately NOT
- * adaptive: a number that changes with ambient load makes a run's cost
- * unreproducible, which is a worse problem than a number that is conservative.
+ * minutes" came from. A Codex partition worker now starts without ambient MCP
+ * processes, so its measured process family no longer has the same footprint as a
+ * Claude worker. The clean Codex family still crossed the guarded 4 GiB ceiling at
+ * 24 lanes, so Codex uses the ruled 16-lane cap while Claude stays at 12. Both remain
+ * overridable per run (`KnowledgeSwarmDeps.concurrency`). The policy is deliberately
+ * not adaptive: ambient load must not change the recorded run policy.
  */
-export const DEFAULT_SWARM_CONCURRENCY = 12;
+export const DEFAULT_SWARM_CONCURRENCY_BY_HARNESS: Readonly<Record<CouncilHarnessId, number>> =
+  Object.freeze({
+    "claude-code": 12,
+    codex: 16,
+  });
 
 /**
  * How many times a FAILED batch is retried before the run gives up on it. One: a
@@ -304,7 +391,10 @@ export interface KnowledgeSwarmDeps {
   readonly baseOid: string;
   /** Council context override; default availability is computed from the two ports. */
   readonly council?: CouncilResolveContext;
-  /** Concurrent partition workers. Default {@link DEFAULT_SWARM_CONCURRENCY}. */
+  /**
+   * Concurrent partition workers. Absent uses the selected worker harness's entry
+   * in {@link DEFAULT_SWARM_CONCURRENCY_BY_HARNESS}.
+   */
   readonly concurrency?: number;
   readonly signal?: AbortSignal;
   readonly git?: GitExec;
@@ -317,9 +407,15 @@ export type KnowledgeSwarmOutcome =
   | {
       readonly status: "ok";
       readonly set: KnowledgeSet;
-      /** Slices this run executed (== total on a full run). */
+      /** Selected slices this run executed (== selectedPartitions on a full run). */
       readonly ranPartitions: number;
+      /** Candidate slices the persisted scope plan selected for model mapping. */
+      readonly selectedPartitions: number;
       readonly totalPartitions: number;
+      readonly scopeExcludedFiles: number;
+      readonly mechanicallyExcludedFiles: number;
+      readonly removedByCoverage: number;
+      readonly reusedScopePlan: boolean;
       readonly failedPartitions: number;
       /** Batches answered from the journal instead of a model turn (#581). */
       readonly reusedPartitions: number;
@@ -362,6 +458,10 @@ export interface CouncilSeatDeps {
   readonly label?: string;
 }
 
+function isContextMapJob(jobId: CouncilJobId): boolean {
+  return jobId === "partition-worker" || jobId === "map-scope" || jobId === "map-verify";
+}
+
 /**
  * Resolve one council job to a concrete `runTurn` on the resolved harness, or
  * an honest failure reason. Shared by the knowledge swarm and the project
@@ -372,7 +472,9 @@ export function councilSeatTurn(
   schema: unknown,
   deps: CouncilSeatDeps,
   council: CouncilResolveContext,
-): { runTurn: RunTurn; model: string } | { failure: string } {
+):
+  | { runTurn: RunTurn; model: CouncilModel; harness: CouncilHarnessId; effort: CouncilEffort }
+  | { failure: string } {
   const resolution = resolveAssignment(jobId, council);
   if (resolution.kind !== "model") {
     return { failure: `${jobId} resolved to no model (${resolution.trace.summary})` };
@@ -380,7 +482,9 @@ export function councilSeatTurn(
   if (resolution.harness === "codex") {
     if (!deps.codexExecutor) return { failure: `${jobId} resolved to codex, which is unavailable` };
     return {
+      harness: resolution.harness,
       model: resolution.model,
+      effort: resolution.effort,
       // Rooted at the checkout: a Codex seat reads its evidence like a Claude
       // seat does — never reasons from filenames in a temp dir (review P0).
       runTurn: createCodexSwarmTurn(
@@ -394,7 +498,7 @@ export function councilSeatTurn(
           // server eagerly, even though these workers read the repository through
           // native tools. Keep the empty table job-scoped: every other Codex council
           // job inherits the executor's table as before.
-          ...(jobId === "partition-worker" ? { mcpServers: {} } : {}),
+          ...(isContextMapJob(jobId) ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         },
       ),
@@ -404,9 +508,12 @@ export function councilSeatTurn(
     return { failure: `${jobId} resolved to claude-code, which is unavailable` };
   }
   return {
+    harness: resolution.harness,
     model: resolution.model,
-    runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, schema, {
+    effort: resolution.effort,
+    runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
+      ...(isContextMapJob(jobId) ? { ambientConfig: "isolated" } : {}),
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
@@ -416,11 +523,13 @@ export function councilSeatTurn(
 
 /** The swarm's seat resolution: `councilSeatTurn` with the swarm's labels. */
 function turnFor(
-  jobId: "partition-worker" | "map-verify",
+  jobId: "map-scope" | "partition-worker" | "map-verify",
   schema: unknown,
   deps: KnowledgeSwarmDeps,
   council: CouncilResolveContext,
-): { runTurn: RunTurn; model: string } | { failure: string } {
+):
+  | { runTurn: RunTurn; model: CouncilModel; harness: CouncilHarnessId; effort: CouncilEffort }
+  | { failure: string } {
   return councilSeatTurn(
     jobId,
     schema,
@@ -428,7 +537,12 @@ function turnFor(
       claudePort: deps.claudePort,
       codexExecutor: deps.codexExecutor,
       repoRoot: deps.repoRoot,
-      label: jobId === "map-verify" ? "knowledge.verify" : "knowledge.worker",
+      label:
+        jobId === "map-scope"
+          ? "knowledge.scope"
+          : jobId === "map-verify"
+            ? "knowledge.verify"
+            : "knowledge.worker",
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
     },
@@ -473,40 +587,213 @@ export async function runKnowledgeSwarmForRepo(
   // Module batches over the import graph, with the directory tier as the honest
   // fallback for edge-less files and for a snapshot whose shards cannot be read.
   const partitions = partitionsFromSnapshot(gated.snapshot);
+  const catalogueDigest = mapScopeCatalogueDigest(gated.snapshot, partitions);
   const loaded = deps.knowledgeStore.loadLocal(deps.repoKey);
   // What the store held when this run decided what to do. Re-read at save time: a
   // run's whole plan — full or incremental, which slices, what carries — is derived
   // from this, so a store that moved underneath it makes every one of those
   // decisions stale. See the refusal at the save below.
   const priorIdentity = storeIdentity(loaded);
-  const priorEligible =
+  const priorShapeEligible =
     loaded !== null &&
     loaded.generator === KNOWLEDGE_SWARM_GENERATOR_ID &&
-    loaded.schemaVersion === KNOWLEDGE_SCHEMA_VERSION;
+    loaded.schemaVersion === KNOWLEDGE_SCHEMA_VERSION &&
+    loaded.coverage !== undefined;
+  let priorCoverageSnapshot: LoadedSnapshot | null = null;
+  if (priorShapeEligible) {
+    const candidate =
+      loaded.baseOid === snapshot.baseOid &&
+      loaded.snapshotFingerprint === snapshot.snapshotFingerprint
+        ? gated
+        : deps.reader.loadFresh(deps.repoKey, loaded.baseOid);
+    if (candidate.ok && candidate.snapshot.manifest.fingerprint === loaded.snapshotFingerprint) {
+      if (knowledgeCoverageMatchesSnapshot(loaded.coverage, candidate.snapshot)) {
+        priorCoverageSnapshot = candidate.snapshot;
+      }
+    }
+  }
+  const priorEligible = priorShapeEligible && priorCoverageSnapshot !== null;
   const prior = priorEligible ? loaded : null;
-  if (prior && prior.baseOid === snapshot.baseOid) {
+  if (
+    prior &&
+    prior.baseOid === snapshot.baseOid &&
+    prior.snapshotFingerprint === snapshot.snapshotFingerprint
+  ) {
     return { status: "skipped", reason: "the knowledge set is already current at this baseline" };
   }
+  // A re-extraction can replace the materialized snapshot at the SAME commit. Git
+  // has no interval to route in that case, so the only honest answer is a full
+  // selected refresh; treating the matching OID as an incremental base would turn
+  // `changedPathsBetween` into [] and preserve answers to the old extraction.
+  const priorForDelta = prior?.baseOid === snapshot.baseOid ? null : prior;
 
-  let slicesToRun: readonly PartitionSlice[] = partitions;
+  const journal = new KnowledgeJournal(deps.knowledgeStore.journalDir(deps.repoKey));
+  const target: JournalTarget = {
+    baseOid: snapshot.baseOid,
+    snapshotFingerprint: snapshot.snapshotFingerprint,
+    generator: KNOWLEDGE_SWARM_GENERATOR_ID,
+  };
+  const mechanicallyExcludedFiles = Math.max(
+    0,
+    snapshot.files.length - partitions.reduce((count, slice) => count + slice.files.length, 0),
+  );
+
+  let scopeSelection: MapScopeSuccess;
+  let scopeSelector: Parameters<typeof materializeKnowledgeCoverage>[0]["selector"];
+  let reusedScopePlan = false;
+  let scopePlanToWrite: {
+    readonly input: ScopePlanJournalInput;
+    readonly result: ScopePlanJournalResult;
+  } | null = null;
+  if (partitions.length <= MAP_SCOPE_SLICE_CAP) {
+    deps.onProgress?.({
+      kind: "scope",
+      status: "running",
+      candidates: partitions.length,
+      mechanicallyExcludedFiles,
+    });
+    const result = await runMapScope({
+      snapshot: gated.snapshot,
+      candidates: partitions,
+      provenance: { model: null, apiKeySource: null },
+      runTurn: async () => ({
+        status: "failed",
+        message: "the below-cap selector unexpectedly requested a model turn",
+      }),
+    });
+    if (result.status === "failed") {
+      deps.onProgress?.({
+        kind: "scope",
+        status: "failed",
+        candidates: partitions.length,
+        mechanicallyExcludedFiles,
+        attempts: result.attempts,
+      });
+      return { status: "failed", reason: result.failureReason };
+    }
+    scopeSelection = result;
+    scopeSelector = { kind: "below-cap" };
+  } else {
+    const scope = turnFor("map-scope", MAP_SCOPE_OUTPUT_SCHEMA, deps, council);
+    if ("failure" in scope) return { status: "failed", reason: scope.failure };
+    const journalInput: ScopePlanJournalInput = {
+      selectorGenerator: MAP_SCOPE_GENERATOR_ID,
+      catalogueDigest,
+      sliceCap: MAP_SCOPE_SLICE_CAP,
+      candidateSliceIds: partitions.map((slice) => slice.id),
+      assignment: { harness: scope.harness, model: scope.model, effort: scope.effort },
+    };
+    const reusable = journal.readScopePlan(target, journalInput);
+    if (reusable !== null) {
+      scopeSelection = scopeSuccessFromPlan(reusable);
+      reusedScopePlan = true;
+    } else {
+      deps.onProgress?.({
+        kind: "scope",
+        status: "running",
+        candidates: partitions.length,
+        mechanicallyExcludedFiles,
+      });
+      const result = await runMapScope({
+        snapshot: gated.snapshot,
+        candidates: partitions,
+        provenance: { model: scope.model, apiKeySource: null },
+        runTurn: scope.runTurn,
+      });
+      if (result.status === "failed") {
+        deps.onProgress?.({
+          kind: "scope",
+          status: "failed",
+          candidates: partitions.length,
+          mechanicallyExcludedFiles,
+          attempts: result.attempts,
+        });
+        return { status: "failed", reason: `context-map coverage failed: ${result.failureReason}` };
+      }
+      scopeSelection = result;
+    }
+    const observedModel = scopeSelection.provenance.model;
+    if (observedModel === null) {
+      return { status: "failed", reason: "context-map coverage did not report its model" };
+    }
+    scopeSelector = {
+      kind: "council",
+      harness: scope.harness,
+      assignedModel: scope.model,
+      model: observedModel,
+      effort: scope.effort,
+      apiKeySource: scopeSelection.provenance.apiKeySource,
+    };
+    if (!reusedScopePlan) {
+      scopePlanToWrite = {
+        input: journalInput,
+        result: {
+          includedSliceIds: scopeSelection.includedSliceIds,
+          excludedSlices: scopeSelection.excludedSlices,
+          provenance: scopeSelection.provenance,
+        },
+      };
+    }
+  }
+
+  let coverage: KnowledgeCoverage;
+  try {
+    coverage = materializeKnowledgeCoverage({
+      snapshot: gated.snapshot,
+      candidates: partitions,
+      selection: scopeSelection,
+      selector: scopeSelector,
+    });
+  } catch (error) {
+    deps.onProgress?.({
+      kind: "scope",
+      status: "failed",
+      candidates: partitions.length,
+      mechanicallyExcludedFiles,
+      attempts: scopeSelection.attempts,
+    });
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: "failed", reason: `context-map coverage materialization failed: ${message}` };
+  }
+  if (scopePlanToWrite !== null) {
+    journal.writeScopePlan(target, scopePlanToWrite.input, scopePlanToWrite.result);
+  }
+  const coverageSummary = coverageCounts(coverage);
+  deps.onProgress?.({
+    kind: "scope",
+    status: reusedScopePlan ? "reused" : "done",
+    candidates: partitions.length,
+    selected: scopeSelection.includedSliceIds.length,
+    scopeExcludedFiles: coverageSummary.scopeExcludedFiles,
+    mechanicallyExcludedFiles: coverageSummary.mechanicallyExcludedFiles,
+    attempts: scopeSelection.attempts,
+  });
+  const selectedIds = new Set(scopeSelection.includedSliceIds);
+  const selectedPartitions = partitions.filter((slice) => selectedIds.has(slice.id));
+
+  let slicesToRun: readonly PartitionSlice[] = selectedPartitions;
   let carried: readonly KnowledgeStatement[] = [];
   let reverify: readonly KnowledgeStatement[] = [];
   let skippedCosmetic = 0;
-  if (prior) {
+  let removedByCoverage = 0;
+  const currentOwners = mappedOwners(coverage);
+  if (priorForDelta) {
     const git = deps.git ?? execaGit;
     let changed: string[];
     let priorPaths: string[];
     try {
-      changed = await changedPathsBetween(git, deps.repoRoot, prior.baseOid, snapshot.baseOid);
-      priorPaths = await pathsAtOid(git, deps.repoRoot, prior.baseOid);
+      changed = await changedPathsBetween(
+        git,
+        deps.repoRoot,
+        priorForDelta.baseOid,
+        snapshot.baseOid,
+      );
+      priorPaths = await pathsAtOid(git, deps.repoRoot, priorForDelta.baseOid);
     } catch (error) {
       // An unreadable interval is a FAILED pass the scheduler retries — reading
       // it as "nothing changed" would silently drop the whole delta (review P1).
       const message = error instanceof Error ? error.message : String(error);
       return { status: "failed", reason: `changed-path resolution failed: ${message}` };
-    }
-    if (changed.length === 0) {
-      return { status: "skipped", reason: "no changed paths between the baselines" };
     }
     // Prior ownership for orphaned (deleted / re-scoped) paths: the prior
     // inventory partitioned under the current scope graph (blobOids are not
@@ -521,7 +808,7 @@ export async function runKnowledgeSwarmForRepo(
     // evicted, corrupt — there is nothing to compare against and `structuralChanges`
     // is handed `null`, which returns the changed set whole. Fewer turns is a saving
     // only when it is provably the same map; unprovable means run it.
-    const priorSnapshot = deps.reader.loadFresh(deps.repoKey, prior.baseOid);
+    const priorSnapshot = priorCoverageSnapshot;
     // ⚠️ The OID is NOT enough to identify the prior snapshot. A manifest is stored
     // per baseline and OVERWRITTEN in place, so a re-extraction at that same OID — a
     // new symbol or import extractor, a changed inventory — replaces the view the
@@ -536,24 +823,51 @@ export async function runKnowledgeSwarmForRepo(
     // every touched slice re-runs. Fail-safe, and the same direction every other
     // unanswerable case in this pass takes.
     const priorComparable =
-      priorSnapshot.ok && priorSnapshot.snapshot.manifest.fingerprint === prior.snapshotFingerprint
-        ? priorSnapshot.snapshot
+      priorSnapshot?.manifest.fingerprint === priorForDelta.snapshotFingerprint
+        ? priorSnapshot
         : null;
     const structural = structuralChanges(changed, gated.snapshot, priorComparable);
-    slicesToRun = routeDelta(partitions, structural, priorPartitions);
+    const structurallyRouted = new Set(
+      routeDelta(partitions, structural, priorPartitions)
+        .filter((slice) => selectedIds.has(slice.id))
+        .map((slice) => slice.id),
+    );
+    const priorOwners = mappedOwners(priorForDelta.coverage as KnowledgeCoverage);
+    const forcedByCoverage = new Set<string>();
+    for (const [path, sliceId] of currentOwners) {
+      if (priorOwners.get(path) !== sliceId) forcedByCoverage.add(sliceId);
+    }
+    slicesToRun = partitions.filter(
+      (slice) =>
+        selectedIds.has(slice.id) &&
+        (structurallyRouted.has(slice.id) || forcedByCoverage.has(slice.id)),
+    );
     // What the partition-level rule would have run, minus what the file-level rule
     // does — computed, not inferred, because "3 slices ran" and "3 slices ran and 9
     // were structurally unchanged" are different reports of the same run.
     skippedCosmetic =
       structural.length === changed.length
         ? 0
-        : routeDelta(partitions, changed, priorPartitions).length - slicesToRun.length;
+        : routeDelta(partitions, changed, priorPartitions).filter((slice) =>
+            selectedIds.has(slice.id),
+          ).length - structurallyRouted.size;
     // `changed`, NOT `structural`: re-anchoring is driven by blobOids moving, and a
     // cosmetic edit moves them. A statement citing a body-only edit still gets its
     // anchors re-stamped and still reaches the verify seat flagged; what it does not
     // do is re-run its slice's worker. Narrowing this to `structural` would leave
     // statements anchored to bytes that no longer exist.
-    const plan = planReverify(prior, changed, snapshot.files);
+    const currentInventory = new Set(snapshot.files.map((file) => file.path));
+    const coverageEligibleStatements = priorForDelta.statements.filter((statement) =>
+      statement.evidence.every(
+        (anchor) => !currentInventory.has(anchor.path) || currentOwners.has(anchor.path),
+      ),
+    );
+    removedByCoverage = priorForDelta.statements.length - coverageEligibleStatements.length;
+    const plan = planReverify(
+      { ...priorForDelta, statements: coverageEligibleStatements },
+      changed,
+      snapshot.files,
+    );
     carried = plan.carried;
     // `plan.invalidated` (evidence entirely gone) is deliberately NOT carried and
     // NOT re-verified: those statements die with their evidence. The rest reach the
@@ -575,18 +889,6 @@ export async function runKnowledgeSwarmForRepo(
       status: "queued",
     });
   }
-  // The JOURNAL (#581). A completed batch is written here as it finishes, so a
-  // failed worker no longer discards its 199 siblings' turns and a crash no longer
-  // starts the next run from zero. Nothing reads it but this fan-out, and it is
-  // deleted the moment the whole set reaches the store.
-  const journal = new KnowledgeJournal(deps.knowledgeStore.journalDir(deps.repoKey));
-  // The full target, not just the base OID: a re-extraction or a prompt rework at an
-  // unchanged baseline must not answer from the old pipeline's results.
-  const target: JournalTarget = {
-    baseOid: snapshot.baseOid,
-    snapshotFingerprint: snapshot.snapshotFingerprint,
-    generator: KNOWLEDGE_SWARM_GENERATOR_ID,
-  };
   let reusedPartitions = 0;
 
   /** Run one batch, or answer it from the journal. Journals a fresh success. */
@@ -622,7 +924,7 @@ export async function runKnowledgeSwarmForRepo(
   // was all-or-keep-prior and their work was going to be thrown away anyway; with
   // the journal it is kept, so finishing the run makes the retry cheap instead of
   // making this one expensive.
-  const concurrency = deps.concurrency ?? DEFAULT_SWARM_CONCURRENCY;
+  const concurrency = deps.concurrency ?? DEFAULT_SWARM_CONCURRENCY_BY_HARNESS[worker.harness];
   let outcomes = await boundedAll(
     slicesToRun.map((slice, index) => () => runBatch(slice, index, true)),
     concurrency,
@@ -712,10 +1014,15 @@ export async function runKnowledgeSwarmForRepo(
 
   // Fresh verdicts win an id collision (dedup keeps first); carried statements
   // follow; prior human/seat dispositions stay durable by id (shipped rule).
-  const carrier = prior ? dispositionCarrier(prior) : null;
-  const statements = dedupById([...verifyResult.set.statements, ...carried]);
+  const carrier = priorForDelta ? dispositionCarrier(priorForDelta) : null;
+  const candidates = dedupById([...verifyResult.set.statements, ...carried]);
+  const statements = candidates.filter((statement) =>
+    statement.evidence.every((anchor) => currentOwners.has(anchor.path)),
+  );
+  removedByCoverage += candidates.length - statements.length;
   const set: KnowledgeSet = {
     ...verifyResult.set,
+    coverage,
     statements: carrier === null ? statements : statements.map(carrier),
   };
   // SUPERSEDED CHECK. Everything above was decided from the prior set read at the
@@ -761,7 +1068,12 @@ export async function runKnowledgeSwarmForRepo(
     status: "ok",
     set,
     ranPartitions: slicesToRun.length,
+    selectedPartitions: selectedPartitions.length,
     totalPartitions: partitions.length,
+    scopeExcludedFiles: coverageSummary.scopeExcludedFiles,
+    mechanicallyExcludedFiles: coverageSummary.mechanicallyExcludedFiles,
+    removedByCoverage,
+    reusedScopePlan,
     failedPartitions: 0,
     reusedPartitions,
     skippedCosmetic,

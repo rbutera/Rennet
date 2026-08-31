@@ -8,6 +8,7 @@ import {
   type ErrorClass,
   type ErrorOrigin,
   envelope,
+  type HarnessAmbientConfig,
   type HarnessDescriptor,
   type HarnessError,
   type HarnessEvent,
@@ -20,7 +21,7 @@ import {
   type ToolKind,
   type TurnInput,
 } from "@rennet/core";
-import type { RspTokenUsage } from "@rennet/protocol";
+import type { CouncilEffort, RspTokenUsage } from "@rennet/protocol";
 import { compareVersions } from "./harness-discovery";
 import { readTestedRange } from "./harness-tested-range";
 
@@ -81,6 +82,9 @@ export interface ClaudeQueryOptions {
   /** Arguments prepended by the SDK before its own Claude argv (WSL transport). */
   readonly executableArgs?: readonly string[];
   readonly model?: string;
+  readonly effort?: CouncilEffort;
+  /** Atomic SDK policy for user/project/local settings and ambient MCP. */
+  readonly ambientConfig?: HarnessAmbientConfig;
   readonly allowedTools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   /**
@@ -107,8 +111,9 @@ export interface ClaudeQueryOptions {
    *
    * W5 — a Claude seat has NO way to reach canvasOps at all while the Codex and OMP
    * adapters carry the surface. This closes that asymmetry in the ADAPTER, and it is
-   * additive: the SDK's `strictMcpConfig` is deliberately never set, so the user's
-   * own configured servers stay reachable alongside Rennet's.
+   * additive for ordinary sessions: the user's configured servers stay reachable
+   * alongside Rennet's. An explicitly isolated internal session instead asks the
+   * SDK to ignore every ambient MCP source while preserving Rennet's explicit one.
    *
    * INERT UNTIL A SERVER EXISTS. Nothing in `packages/server` stands a loopback
    * canvasOps@2 server up, so no composition root supplies this yet and no live seat
@@ -728,6 +733,8 @@ export class ClaudeAdapter implements HarnessPort {
       env,
       abortController: abort,
       ...(spec.model === undefined ? {} : { model: spec.model }),
+      ...(spec.effort === undefined ? {} : { effort: spec.effort }),
+      ...(spec.ambientConfig === undefined ? {} : { ambientConfig: spec.ambientConfig }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
       // The MCP surface (W5), configured on the adapter exactly as the Codex adapter

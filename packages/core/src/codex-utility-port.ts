@@ -53,9 +53,9 @@ export interface CodexExecRequest {
    */
   readonly cwd?: string;
   /**
-   * Optional full-table MCP override for this turn. Absent keeps the executor's
-   * composition-level table; an empty table explicitly starts no MCP sidecars.
-   * Codex's native repository and shell tools are independent of this table.
+   * Optional explicit MCP policy for this turn. Absent keeps the executor's
+   * composition-level policy; an empty table starts no MCP sidecars. Codex's
+   * native repository and shell tools are independent of this table.
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly signal?: AbortSignal;

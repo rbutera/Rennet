@@ -775,6 +775,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "project.contextMap.output.map.tests.path",
     "project.contextMap.output.map.conventions.path",
     "project.contextMap.output.knowledge.statements.evidence.path",
+    "project.contextMap.output.knowledge.coverage.groups.files.path",
     "project.contextAsk.output.answer.evidence.path",
     "project.knowledgeDisposition.output.statement.evidence.path",
     // Durable asks (B11): per-line comments and canonical CodeRefs point into the
