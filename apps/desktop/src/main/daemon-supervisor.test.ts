@@ -725,3 +725,206 @@ describe("createWslRunner (real short-lived process → {stdout, code}, never th
     expect(stdout).toBe("");
   });
 });
+
+describe("start/stop serialization per dataDir (installer handoff safety)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "rennet-daemon-ops-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function info(pid: number, wsPort: number): DaemonInfo {
+    return {
+      pid,
+      wsPort,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "1.2.3",
+      startedAt: "2026-08-18T00:00:00.000Z",
+    };
+  }
+
+  /** A gate a test opens by hand, so an op can be held mid-flight. */
+  function gate(): { wait: Promise<void>; open: () => void } {
+    let open: () => void = () => undefined;
+    const wait = new Promise<void>((r) => {
+      open = r;
+    });
+    return { wait, open };
+  }
+
+  it("holds a stop until an in-flight ensure has finished spawning", async () => {
+    // The reviewer finding this exists for: `prepareOwnedDaemonForUpdate` probed `absent` while
+    // an ensure was mid-spawn, reported "stopped", and the installer got a LIVE bundle-backed
+    // daemon it had been told was gone.
+    const dataDir = makeDir();
+    const spawned: DaemonInfo = info(777, 46_000);
+    const ops = new Map<string, Promise<unknown>>();
+    const order: string[] = [];
+    const probeGate = gate();
+
+    const ensuring = ensureDaemon(dataDir, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      probe: async () => {
+        await probeGate.wait;
+        return { kind: "absent" };
+      },
+      spawn: () => {
+        order.push("spawn");
+      },
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    // The stop arrives WHILE the ensure is parked in its probe.
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    // Give the stop every chance to run early — it must not have probed yet.
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]);
+
+    probeGate.open();
+    expect(await ensuring).toBe(spawned.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    // Sequence, not membership: the spawn completed BEFORE the stop looked at the daemon.
+    expect(order).toEqual(["spawn", "stop-probe"]);
+  });
+
+  it("holds an ensure until an in-flight stop has finished, so no daemon spawns behind it", async () => {
+    // The reverse race: the installer handoff is underway and a project open (or the tray's
+    // ensure) arrives. It must not spawn a daemon into the middle of the stop.
+    const dataDir = makeDir();
+    const spawned: DaemonInfo = info(778, 46_100);
+    const ops = new Map<string, Promise<unknown>>();
+    const order: string[] = [];
+    const stopGate = gate();
+
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        await stopGate.wait;
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+
+    const ensuring = ensureDaemon(dataDir, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      probe: async () => ({ kind: "absent" }),
+      spawn: () => {
+        order.push("spawn");
+      },
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]);
+
+    stopGate.open();
+    expect(await stopping).toEqual({ kind: "stopped" });
+    expect(await ensuring).toBe(spawned.wsPort);
+    expect(order).toEqual(["stop-probe", "spawn"]);
+  });
+
+  it("a REJECTED ensure does not wedge the chain for every later stop", async () => {
+    // The chain's tail must settle either way. `ensureDaemon` is the op that genuinely rejects
+    // (the skew cap, a probe that throws) — if its rejection stayed on the tail, the tray's
+    // "Quit completely" and the installer handoff would both hang forever afterwards.
+    const dataDir = makeDir();
+    const ops = new Map<string, Promise<unknown>>();
+
+    await expect(
+      ensureDaemon(dataDir, {
+        ops,
+        inFlight: new Map<string, Promise<number>>(),
+        probe: async () => {
+          throw new Error("probe exploded");
+        },
+        spawn: vi.fn(),
+        waitForHealthy: async () => healthyVerdict(info(781, 46_400)),
+        kill: vi.fn(),
+        readClaim: () => null,
+        entryPath: "/bundle/server.cjs",
+        execPath: "/electron",
+        serverVersion: "1.2.3",
+        env: {},
+        warn: vi.fn(),
+      }),
+    ).rejects.toThrow("probe exploded");
+
+    const stopped = await stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => ({ kind: "absent" }),
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    expect(stopped).toEqual({ kind: "stopped" });
+  });
+
+  it("serializes per dataDir, not globally: an unrelated data dir is never held", async () => {
+    const held = makeDir();
+    const other = makeDir();
+    const spawned: DaemonInfo = info(780, 46_300);
+    const ops = new Map<string, Promise<unknown>>();
+    const stopGate = gate();
+
+    const stopping = stopOwnedDaemon(held, {
+      ops,
+      probe: async () => {
+        await stopGate.wait;
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+
+    // `other` resolves while `held` is still parked — a global lock would deadlock this await.
+    const port = await ensureDaemon(other, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      probe: async () => ({ kind: "absent" }),
+      spawn: vi.fn(),
+      waitForHealthy: async () => healthyVerdict(spawned),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+    expect(port).toBe(spawned.wsPort);
+
+    stopGate.open();
+    expect(await stopping).toEqual({ kind: "stopped" });
+  });
+});

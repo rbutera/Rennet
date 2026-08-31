@@ -56,6 +56,42 @@ export async function isOwnedDaemonRunning(
   return verdict.kind === "healthy" || verdict.kind === "incompatible";
 }
 
+/**
+ * dataDir → the TAIL of that data dir's daemon-lifecycle chain, so a START and a STOP for one
+ * dataDir never interleave. Without it `stopOwnedDaemon` could probe `absent` while an
+ * `ensureDaemon` was mid-spawn and report "stopped" — and the spawn it never saw would then
+ * hand a LIVE bundle-backed daemon to the platform installer, which is the one thing
+ * `prepareOwnedDaemonForUpdate` exists to prevent. Concurrent ensures still FOLD (one probe,
+ * one spawn) via `hostInFlight`; this chain only orders starts against stops.
+ */
+const hostOps = new Map<string, Promise<unknown>>();
+
+/**
+ * Run `op` after whatever is already queued for `dataDir`, and leave it as the new tail. The
+ * predecessor is awaited SETTLED-EITHER-WAY: `ensureDaemon` genuinely rejects (the skew cap, a
+ * probe that throws), and that rejection must not wedge every later stop — a data dir whose
+ * daemon refuses to start still has to be quittable and still has to release the installer.
+ */
+function chainDaemonOp<T>(
+  ops: Map<string, Promise<unknown>>,
+  dataDir: string,
+  op: () => Promise<T>,
+): Promise<T> {
+  const prior = (ops.get(dataDir) ?? Promise.resolve()).then(
+    () => undefined,
+    () => undefined,
+  );
+  // `next` is returned to the caller, so its rejection is always someone's to handle.
+  const next = prior.then(op);
+  ops.set(dataDir, next);
+  return next;
+}
+
+/** The per-dataDir op chain, injectable so a test gets a fresh one. */
+export interface DaemonOpQueueOverride {
+  readonly ops?: Map<string, Promise<unknown>>;
+}
+
 export interface StopOwnedDaemonDeps {
   readonly probe: (dataDir: string) => Promise<DaemonVerdict>;
   readonly removeClaim: (dataDir: string, expectedPid: number) => boolean;
@@ -84,7 +120,18 @@ export type StopOwnedDaemonOutcome =
  * it warns truthfully and returns a typed failure. Complete quit still exits regardless, while
  * update application refuses to hand a bundle-backed live process to the platform installer.
  */
-export async function stopOwnedDaemon(
+export function stopOwnedDaemon(
+  dataDir: string,
+  overrides: Partial<StopOwnedDaemonDeps> & DaemonOpQueueOverride = {},
+): Promise<StopOwnedDaemonOutcome> {
+  // Queued behind any in-flight ensure for this dataDir (and ahead of any that arrives while
+  // this runs), so the probe below can never miss a spawn that is already underway.
+  return chainDaemonOp(overrides.ops ?? hostOps, dataDir, () =>
+    stopOwnedDaemonOnce(dataDir, overrides),
+  );
+}
+
+async function stopOwnedDaemonOnce(
   dataDir: string,
   overrides: Partial<StopOwnedDaemonDeps> = {},
 ): Promise<StopOwnedDaemonOutcome> {
@@ -151,6 +198,8 @@ export async function stopOwnedDaemon(
   return { kind: "failed", message };
 }
 
+/** Stop the owned daemon before the installer replaces the bundle it runs from; throws on a
+ *  stop that could not be verified. Serialized against `ensureDaemon` through `stopOwnedDaemon`. */
 export async function prepareOwnedDaemonForUpdate(
   dataDir: string,
   stop: (dataDir: string) => Promise<StopOwnedDaemonOutcome> = stopOwnedDaemon,
@@ -185,7 +234,9 @@ export interface DaemonSupervisorDeps {
   readonly warn: (message: string) => void;
 }
 
-export interface EnsureDaemonOverrides extends Partial<DaemonSupervisorDeps> {
+export interface EnsureDaemonOverrides
+  extends Partial<DaemonSupervisorDeps>,
+    DaemonOpQueueOverride {
   /** dataDir → the IN-FLIGHT ensure for it (injectable so tests get a fresh one). */
   readonly inFlight?: Map<string, Promise<number>>;
   /** dataDir → skew restarts already spent this process (injectable so tests get a fresh one). */
@@ -223,7 +274,7 @@ export const SKEW_RESTART_LIMIT = 3;
  * logging to `<dataDir>/daemon.log`) so the packaged app needs no system Node.
  *
  * Single-flighted per dataDir: concurrent callers join the running ensure rather than racing
- * two spawns.
+ * two spawns, and serialized against `stopOwnedDaemon` for the same dataDir (see `hostOps`).
  */
 export async function ensureDaemon(
   dataDir: string,
@@ -232,7 +283,11 @@ export async function ensureDaemon(
   const inFlight = overrides.inFlight ?? hostInFlight;
   const pending = inFlight.get(dataDir);
   if (pending) return pending;
-  const started = ensureDaemonOnce(dataDir, overrides);
+  // Queued behind any in-flight stop/prepare for this dataDir, so an ensure can never spawn a
+  // daemon into the middle of an installer handoff.
+  const started = chainDaemonOp(overrides.ops ?? hostOps, dataDir, () =>
+    ensureDaemonOnce(dataDir, overrides),
+  );
   inFlight.set(dataDir, started);
   try {
     return await started;

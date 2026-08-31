@@ -77,6 +77,11 @@ pre-connection state. A daemon that never starts names its cause and
 `daemon.log`, then the app quits. Update-apply recovery replaces the published
 ensure, so the window it recreates dials the daemon that replaced the old one.
 
+Starts and stops for one data directory are serialized. Concurrent ensures fold
+into a single probe and spawn, and a stop — the tray's complete quit, or the
+update handoff below — never runs while an ensure is mid-spawn, so the installer
+is never handed a daemon that started behind its back.
+
 Closing every desktop window leaves the tray process and daemon available. The
 desktop's complete-quit action stops a daemon that the desktop owns.
 
