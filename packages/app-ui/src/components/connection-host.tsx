@@ -24,7 +24,8 @@ export interface ConnectionTarget {
   readonly label: string;
   /** Host (`127.0.0.1`, a Tailscale IP, a hostname); the shell builds the ws(s) URL. */
   readonly host: string;
-  /** Optional explicit port; absent ⇒ the shell's default (serving origin / preload port). */
+  /** Optional explicit port; absent ⇒ the shell's default (the serving origin in a browser tab,
+   *  or the daemon port the desktop shell resolves from MAIN). */
   readonly port?: number;
   /** The device token for a remote (projected) daemon, obtained via the pairing exchange. */
   readonly deviceToken?: string;

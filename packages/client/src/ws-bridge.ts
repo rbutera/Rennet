@@ -310,7 +310,9 @@ export class WsRennetBridge implements RennetBridge {
       });
     }
     // A late endpoint is still resolving: no socket yet, but not disconnected either. Waiting
-    // terminates — `#urlPending` is cleared before the open (or the offline) it resolves into.
+    // terminates once the THUNK settles, in either direction — `#urlPending` is cleared on both
+    // branches, before the open (or the offline) it resolves into, so this re-enters `#whenReady`
+    // against a real socket or a real rejection. A thunk that never settles waits forever.
     const urlPending = this.#urlPending;
     if (urlPending) return urlPending.then(() => this.#whenReady());
     return Promise.reject(new Error("WsRennetBridge is not connected"));

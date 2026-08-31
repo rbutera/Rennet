@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // SEQUENCE (window created while the ensure is still pending), not as a set of calls made.
 //
 // Everything Electron and every module with real side effects is mocked: the subject here is
-// `main/index.ts`'s own ordering, nothing else.
+// `main/index.ts`'s own ordering, nothing else. The fake window models CREATION and LOAD only —
+// there is no `show`, no paint, no visibility — so nothing in this file may claim the user saw
+// anything. What it can pin is that the ws-port handler is registered, and the window created
+// and loaded, before the daemon ensure resolves.
 
 const harness = vi.hoisted(() => ({
   /** Boot events in the order they happened — the whole point of this file. */
@@ -23,6 +26,10 @@ const harness = vi.hoisted(() => ({
   errorBoxes: [] as Array<{ title: string; content: string }>,
   quits: 0,
   ensureCalls: [] as string[],
+  /** dataDir → in-flight ensure, so the fake folds concurrent asks like the real supervisor. */
+  ensureInFlight: new Map<string, Promise<number>>(),
+  autoUpdateEligible: false,
+  autoUpdateOptions: null as { recoverAfterApplyFailure: () => Promise<void> } | null,
 }));
 
 vi.mock("electron-squirrel-startup", () => ({ default: false }));
@@ -77,6 +84,10 @@ vi.mock("electron", () => {
     },
     ipcMain: {
       handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+        // Registration is part of the sequence: a renderer that loads before the handler exists
+        // gets "no handler registered for rennet:ws-port", not a wait. Today only the order of
+        // two synchronous statements guarantees it — so the order array pins it.
+        if (channel === "rennet:ws-port") harness.order.push("ws-port-handler");
         harness.ipcHandlers.set(channel, handler);
       },
       on: () => undefined,
@@ -98,10 +109,16 @@ vi.mock("@rennet/core", () => ({
 vi.mock("@rennet/server", () => ({ defaultDataDir: () => "/tmp/rennet-boot-order" }));
 
 vi.mock("./daemon-supervisor", () => ({
+  // Single-flighted per dataDir, exactly like the real one: concurrent callers (boot and an
+  // early `rennet:ws-port` ask) fold onto ONE pending ensure, and the entry clears once it
+  // settles so the next ask starts a fresh one. Modelling the fold is load-bearing now that the
+  // IPC handler ensures per invoke instead of replaying a stored promise.
   ensureDaemon: (dataDir: string) => {
     harness.ensureCalls.push(dataDir);
+    const pending = harness.ensureInFlight.get(dataDir);
+    if (pending) return pending;
     harness.order.push("ensure-started");
-    return new Promise<number>((resolve, reject) => {
+    const started = new Promise<number>((resolve, reject) => {
       harness.ensure.resolve = (port) => {
         harness.order.push("ensure-resolved");
         resolve(port);
@@ -111,6 +128,12 @@ vi.mock("./daemon-supervisor", () => ({
         reject(error);
       };
     });
+    harness.ensureInFlight.set(dataDir, started);
+    const clear = (): void => {
+      harness.ensureInFlight.delete(dataDir);
+    };
+    started.then(clear, clear);
+    return started;
   },
   ensureDaemonForProject: async () => 1,
   isOwnedDaemonRunning: async () => false,
@@ -119,8 +142,12 @@ vi.mock("./daemon-supervisor", () => ({
 }));
 
 vi.mock("./auto-update", () => ({
-  isAutoUpdateEligible: async () => false,
-  startAutoUpdateOnce: () => ({ readiness: { ready: false, subscribe: () => undefined } }),
+  isAutoUpdateEligible: async () => harness.autoUpdateEligible,
+  startAutoUpdateOnce: (_trust: unknown, _log: unknown, options: unknown) => {
+    // Captured so a test can drive the apply-failure recovery, which re-ensures the daemon.
+    harness.autoUpdateOptions = options as { recoverAfterApplyFailure: () => Promise<void> };
+    return { readiness: { ready: false, subscribe: () => undefined } };
+  },
   armMacUpdateRelaunch: () => undefined,
 }));
 
@@ -137,6 +164,7 @@ vi.mock("./tray", () => ({
 }));
 
 const WS_PORT_CHANNEL = "rennet:ws-port";
+const DATA_DIR = "/tmp/rennet-boot-order";
 
 /** Let every already-queued microtask AND timer callback run. */
 function settle(): Promise<void> {
@@ -162,6 +190,9 @@ beforeEach(() => {
   harness.ipcHandlers.clear();
   harness.errorBoxes.length = 0;
   harness.ensureCalls.length = 0;
+  harness.ensureInFlight.clear();
+  harness.autoUpdateEligible = false;
+  harness.autoUpdateOptions = null;
   harness.quits = 0;
   savedUserData = process.env.RENNET_USER_DATA;
   delete process.env.RENNET_USER_DATA;
@@ -178,17 +209,23 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
 
     // The assertion is the SEQUENCE. The ensure has not resolved at this point in the file —
     // nothing has resolved it — so a window in `order` here can only mean boot did not wait.
-    expect(harness.order).toEqual(["ensure-started", "window-created", "window-loaded"]);
+    expect(harness.order).toEqual([
+      "ensure-started",
+      "ws-port-handler",
+      "window-created",
+      "window-loaded",
+    ]);
 
     harness.ensure.resolve(51_000);
     await settle();
     expect(harness.order).toEqual([
       "ensure-started",
+      "ws-port-handler",
       "window-created",
       "window-loaded",
       "ensure-resolved",
     ]);
-    expect(harness.ensureCalls).toEqual(["/tmp/rennet-boot-order"]);
+    expect(harness.ensureCalls).toEqual([DATA_DIR]);
   });
 
   it("no longer injects the port into the renderer argv, and still injects the version", async () => {
@@ -216,7 +253,7 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
     expect(answered).toBe(51_001);
   });
 
-  it("surfaces a failed ensure on the already-visible window, then quits", async () => {
+  it("surfaces a failed ensure after the window is created and loaded, then quits", async () => {
     await boot();
     const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
     const asked = handler?.();
@@ -224,10 +261,11 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
     harness.ensure.reject(new Error("spawn ENOENT\n  at boot"));
     await settle();
 
-    // The window came first, the failure lands on it — the old code's dialog-over-black-screen
-    // is now dialog-over-app, with the same content.
+    // The window was created and loaded before the failure, with the dialog's content unchanged.
+    // (Whether it had PAINTED by then is not something this fake can say — see the file header.)
     expect(harness.order).toEqual([
       "ensure-started",
+      "ws-port-handler",
       "window-created",
       "window-loaded",
       "ensure-rejected",
@@ -239,5 +277,32 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
     expect(harness.quits).toBe(1);
     // …and the renderer's pending ask rejects rather than hanging or resolving a bogus port.
     await expect(asked).rejects.toThrow("spawn ENOENT");
+  });
+
+  it("re-ensures on a later port ask after an update-recovery ensure rejected", async () => {
+    // MAIN used to publish the ensure PROMISE on `rennet:ws-port`. An update-apply recovery whose
+    // ensure rejected replaced it with a REJECTED promise, and every later ask inherited that
+    // rejection for the life of the process — the renderer could never redial. The handler calls
+    // `ensureDaemon` per invoke now, so the ask after a failure re-probes.
+    harness.autoUpdateEligible = true;
+    await boot();
+    harness.ensure.resolve(51_000); // boot's daemon came up; that ensure has settled.
+    await settle();
+
+    // The recovery's own re-ensure fails (the daemon the installer left behind will not start).
+    const recovery = harness.autoUpdateOptions?.recoverAfterApplyFailure();
+    await settle();
+    harness.ensure.reject(new Error("recovery spawn ENOENT"));
+    await expect(recovery).rejects.toThrow("recovery spawn ENOENT");
+    await settle();
+
+    const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
+    const asked = Promise.resolve(handler?.());
+    await settle();
+    harness.ensure.resolve(51_002);
+    // A FRESH port from a FRESH ensure — not the recovery's rejection replayed.
+    expect(await asked).toBe(51_002);
+    // Boot, the recovery, and the ask: three ensures, and the ask started the third.
+    expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR, DATA_DIR]);
   });
 });

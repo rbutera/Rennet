@@ -757,15 +757,19 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
     return { wait, open };
   }
 
-  it("holds a stop until an in-flight ensure has finished spawning", async () => {
+  it("holds a stop until an in-flight ensure has spawned AND health-verified the daemon", async () => {
     // The reviewer finding this exists for: `prepareOwnedDaemonForUpdate` probed `absent` while
     // an ensure was mid-spawn, reported "stopped", and the installer got a LIVE bundle-backed
     // daemon it had been told was gone.
+    // BOTH phases are gated by hand. A lock released after the spawn but before the health poll
+    // would still hand the installer a live daemon (the spawned process is up; only the ensure's
+    // proof of it is missing), so this test fails unless the stop waits for `waitForHealthy`.
     const dataDir = makeDir();
     const spawned: DaemonInfo = info(777, 46_000);
     const ops = new Map<string, Promise<unknown>>();
     const order: string[] = [];
     const probeGate = gate();
+    const healthGate = gate();
 
     const ensuring = ensureDaemon(dataDir, {
       ops,
@@ -777,7 +781,11 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
       spawn: () => {
         order.push("spawn");
       },
-      waitForHealthy: async () => healthyVerdict(spawned),
+      waitForHealthy: async () => {
+        await healthGate.wait;
+        order.push("healthy");
+        return healthyVerdict(spawned);
+      },
       kill: vi.fn(),
       readClaim: () => null,
       entryPath: "/bundle/server.cjs",
@@ -803,29 +811,50 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
     expect(order).toEqual([]);
 
     probeGate.open();
+    // The daemon is SPAWNED and the ensure is parked in its health poll: still held.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual(["spawn"]);
+
+    healthGate.open();
     expect(await ensuring).toBe(spawned.wsPort);
     expect(await stopping).toEqual({ kind: "stopped" });
-    // Sequence, not membership: the spawn completed BEFORE the stop looked at the daemon.
-    expect(order).toEqual(["spawn", "stop-probe"]);
+    // Sequence, not membership: the whole ensure finished before the stop looked at the daemon.
+    expect(order).toEqual(["spawn", "healthy", "stop-probe"]);
   });
 
-  it("holds an ensure until an in-flight stop has finished, so no daemon spawns behind it", async () => {
+  it("holds an ensure until an in-flight stop has SIGTERMed and watched the claim clear", async () => {
     // The reverse race: the installer handoff is underway and a project open (or the tray's
-    // ensure) arrives. It must not spawn a daemon into the middle of the stop.
+    // ensure) arrives. It must not spawn a daemon into the middle of the stop — and "the middle"
+    // is mostly the window AFTER the SIGTERM, while the stop is still polling for the dying
+    // daemon to drop its claim. A spawn there writes a fresh daemon.json over the one being
+    // waited on, so the stop times out reporting failure while a live daemon runs.
+    // This stop therefore has real work to finish (a healthy claim, a kill, a poll held open by
+    // the test); an `absent` stop would return before the ensure could possibly interleave and
+    // would pass no matter when the lock was released.
     const dataDir = makeDir();
+    const dying: DaemonInfo = info(779, 46_200);
     const spawned: DaemonInfo = info(778, 46_100);
     const ops = new Map<string, Promise<unknown>>();
     const order: string[] = [];
-    const stopGate = gate();
+    const claimGate = gate();
+    let claimCleared = false;
 
     const stopping = stopOwnedDaemon(dataDir, {
       ops,
       probe: async () => {
-        await stopGate.wait;
         order.push("stop-probe");
-        return { kind: "absent" };
+        return healthyVerdict(dying);
       },
-      sleep: immediateSleep,
+      kill: () => {
+        order.push("stop-kill");
+      },
+      readClaim: () => (claimCleared ? null : dying),
+      isAlive: () => !claimCleared,
+      // The claim only clears when the TEST releases it, so the stop parks inside its poll.
+      sleep: async () => {
+        order.push("stop-poll");
+        await claimGate.wait;
+      },
       warn: vi.fn(),
     });
 
@@ -847,12 +876,14 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
     });
     await Promise.resolve();
     await new Promise((r) => setTimeout(r, 10));
-    expect(order).toEqual([]);
+    // Signalled and parked mid-poll: the ensure must not have spawned into that window.
+    expect(order).toEqual(["stop-probe", "stop-kill", "stop-poll"]);
 
-    stopGate.open();
+    claimCleared = true;
+    claimGate.open();
     expect(await stopping).toEqual({ kind: "stopped" });
     expect(await ensuring).toBe(spawned.wsPort);
-    expect(order).toEqual(["stop-probe", "spawn"]);
+    expect(order).toEqual(["stop-probe", "stop-kill", "stop-poll", "spawn"]);
   });
 
   it("a REJECTED ensure does not wedge the chain for every later stop", async () => {
@@ -926,5 +957,121 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
 
     stopGate.open();
     expect(await stopping).toEqual({ kind: "stopped" });
+  });
+  it("does NOT fold a later ensure onto an in-flight one once a stop has been queued between them", async () => {
+    // Ensure A is in flight, a stop lands behind it, then ensure B arrives. Single-flighting on
+    // its own folds B onto A — A is still the in-flight entry — and B resolves with the port the
+    // stop is about to kill. B must instead queue behind the stop and probe afresh.
+    const dataDir = makeDir();
+    const first: DaemonInfo = info(790, 46_500);
+    const second: DaemonInfo = info(791, 46_600);
+    const ops = new Map<string, Promise<unknown>>();
+    const inFlight = new Map<string, Promise<number>>();
+    const order: string[] = [];
+    const probeGate = gate();
+    let probes = 0;
+    let spawns = 0;
+    const ensureDeps = {
+      ops,
+      inFlight,
+      probe: async (): Promise<DaemonVerdict> => {
+        probes += 1;
+        // A parks here so the stop and B both arrive while it is in flight.
+        if (probes === 1) await probeGate.wait;
+        order.push(`ensure-probe-${probes}`);
+        return { kind: "absent" };
+      },
+      spawn: () => {
+        spawns += 1;
+        order.push(`spawn-${spawns}`);
+      },
+      waitForHealthy: async () => healthyVerdict(spawns === 1 ? first : second),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    };
+
+    const ensuringA = ensureDaemon(dataDir, ensureDeps);
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    const ensuringB = ensureDaemon(dataDir, ensureDeps);
+
+    probeGate.open();
+    expect(await ensuringA).toBe(first.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    // The load-bearing assertion: B answers with ITS daemon's port, not the one the stop killed.
+    expect(await ensuringB).toBe(second.wsPort);
+    expect(order).toEqual(["ensure-probe-1", "spawn-1", "stop-probe", "ensure-probe-2", "spawn-2"]);
+  });
+
+  it("keeps a queued stop out of a skew restart's kill→respawn window", async () => {
+    // A skew restart is a kill, a bounded wait for the dead daemon's claim to clear, then a
+    // spawn — the one ensure path that signals a process itself. A stop probing inside that
+    // window reads `absent` (old daemon gone, new one not spawned yet) and reports "stopped"
+    // while a respawn is already coming: the installer-handoff lie the chain exists to prevent.
+    // It spends the LAST restart the cap allows, so the capped path is the one interleaved.
+    const dataDir = makeDir();
+    const skewed: DaemonInfo = { ...info(792, 46_700), version: "0.0.1" };
+    const fresh: DaemonInfo = info(793, 46_800);
+    const ops = new Map<string, Promise<unknown>>();
+    const skewRestarts = new Map<string, number>([[dataDir, SKEW_RESTART_LIMIT - 1]]);
+    const order: string[] = [];
+    let claimCleared = false;
+
+    const ensuring = ensureDaemon(dataDir, {
+      ops,
+      inFlight: new Map<string, Promise<number>>(),
+      skewRestarts,
+      probe: async () => {
+        order.push("ensure-probe");
+        return healthyVerdict(skewed);
+      },
+      spawn: () => {
+        order.push("spawn");
+      },
+      waitForHealthy: async () => healthyVerdict(fresh),
+      kill: () => {
+        order.push("kill");
+      },
+      // Held by the test: the ensure sits in `waitForClaimGone` until the claim goes.
+      readClaim: () => (claimCleared ? null : skewed),
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => {
+        order.push("stop-probe");
+        return { kind: "absent" };
+      },
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+
+    // Signalled, and parked waiting for the claim: nothing respawned, nothing stopped.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(order).toEqual(["ensure-probe", "kill"]);
+
+    claimCleared = true;
+    expect(await ensuring).toBe(fresh.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    expect(order).toEqual(["ensure-probe", "kill", "spawn", "stop-probe"]);
+    // Spent, then forgiven: the cap counts CONSECUTIVE restarts and this ensure ended healthy.
+    expect(skewRestarts.get(dataDir)).toBeUndefined();
   });
 });

@@ -269,19 +269,26 @@ async function createWindow(): Promise<void> {
   await window.loadURL(`${APP_ORIGIN}/`);
 }
 
-// The daemon ensure for THIS run, as a PROMISE (perf audit §2/§6 H1). Boot no longer waits on
-// it before creating the window, so the port is a pending answer rather than a known number:
-// the renderer awaits it over `rennet:ws-port`, and tray "Open Rennet" / macOS `activate`
-// recreate a window that re-dials the same ensure (tray-presence residency). Update-apply
-// recovery REPLACES it with a fresh ensure, so a recreated window dials the new daemon.
-let daemonPort: Promise<number> | undefined;
+// The data dir this run supervises, set the moment boot starts its daemon ensure (perf audit
+// §2/§6 H1). Boot no longer waits on that ensure before creating the window, so the port is an
+// answer the renderer asks for over `rennet:ws-port` rather than a number the window is built
+// with, and tray "Open Rennet" / macOS `activate` recreate a window once boot has got this far.
+//
+// A dataDir, NOT the ensure's promise: publishing the promise meant one failed generation (an
+// update-apply recovery whose ensure rejected, a probe that threw) stayed on the channel
+// forever — every later invoke inherited that rejection until the process restarted. Calling
+// `ensureDaemon` per invoke costs nothing extra: it single-flights per dataDir, so concurrent
+// asks still fold onto one probe-and-spawn, a healthy daemon short-circuits on the probe, and a
+// failed generation self-heals because the next ask re-probes instead of replaying the failure.
+let daemonDataDir: string | undefined;
 
 /** Hand the renderer the ensured daemon port. No sender check: this returns the same loopback
  *  integer the renderer's own argv used to carry verbatim, so narrowing it protects nothing. */
 function registerWsPortHandler(): void {
-  ipcMain.handle(
-    WS_PORT_CHANNEL,
-    () => daemonPort ?? Promise.reject(new Error("rennet: the daemon has not been started")),
+  ipcMain.handle(WS_PORT_CHANNEL, () =>
+    daemonDataDir
+      ? ensureDaemon(daemonDataDir)
+      : Promise.reject(new Error("rennet: the daemon has not been started")),
   );
 }
 // Retained at module scope so the tray is never garbage-collected — Electron drops a Tray whose
@@ -314,7 +321,7 @@ async function ensureWindowShared(): Promise<void> {
     },
     showDock: () => dock.show(),
     recreate: async () => {
-      if (daemonPort) await createWindow();
+      if (daemonDataDir) await createWindow();
     },
   });
   // A window lifecycle event is a cue that owned-daemon state may have moved — re-probe so the
@@ -372,16 +379,17 @@ app.whenReady().then(async () => {
   // window creation below, so a rejection in that gap is an unhandled rejection at boot. A
   // probe that cannot answer is not a Developer-ID signature, which is "not eligible".
   const autoUpdateEligible = isAutoUpdateEligible(app.isPackaged).catch(() => false);
+  // From here on `rennet:ws-port` can answer, by ensuring this data dir's daemon on demand.
+  daemonDataDir = dataDir;
   // STARTED, not awaited (perf audit §2/§6 H1). This used to gate `new BrowserWindow`: a cold
   // start paid a 500ms probe, a spawn and a 10s health poll — with a version-skew SIGTERM and
   // its 5s claim-wait ahead of that — before a single pixel. The window needs the port only to
   // build a ws:// URL, and the renderer now asks for that over IPC, so the shell paints and the
   // connection supervisor sits in its ordinary `connecting` state while the daemon comes up.
-  daemonPort = ensureDaemon(dataDir);
   // The failure surface is unchanged (name the cause, name daemon.log, quit) — it just lands on
   // a visible window now instead of a black screen. Attached HERE so a rejection nobody asked
   // for is still handled: the renderer may never invoke `rennet:ws-port`.
-  daemonPort.catch((error) => {
+  ensureDaemon(dataDir).catch((error) => {
     const cause = (error instanceof Error ? error.message : String(error))
       .replace(/\s+/g, " ")
       .trim();
@@ -431,8 +439,7 @@ app.whenReady().then(async () => {
             ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
             : undefined,
         recoverAfterApplyFailure: async () => {
-          daemonPort = ensureDaemon(dataDir);
-          await daemonPort;
+          await ensureDaemon(dataDir);
           for (const window of BrowserWindow.getAllWindows()) {
             if (!window.isDestroyed()) window.destroy();
           }

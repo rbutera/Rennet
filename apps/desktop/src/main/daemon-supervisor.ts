@@ -249,6 +249,10 @@ export interface EnsureDaemonOverrides
  * `ensureDaemon` directly) fold into ONE probe-and-spawn instead of both reading `absent` and
  * both spawning a daemon that then races over daemon.json. The entry clears once settled, so a
  * later call re-probes — no cached port to go stale. Mirrors `wslInFlight` below.
+ *
+ * Folding is conditional on the `hostOps` tail: an ensure that arrives after a stop was queued
+ * must NOT join the ensure that stop is waiting for, or it would resolve with a port the stop
+ * then kills.
  */
 const hostInFlight = new Map<string, Promise<number>>();
 
@@ -281,18 +285,22 @@ export async function ensureDaemon(
   overrides: EnsureDaemonOverrides = {},
 ): Promise<number> {
   const inFlight = overrides.inFlight ?? hostInFlight;
+  const ops = overrides.ops ?? hostOps;
   const pending = inFlight.get(dataDir);
-  if (pending) return pending;
+  // Fold onto the in-flight ensure only while it is STILL the chain tail. Once a stop has been
+  // queued behind it the tail has moved, and folding would hand this caller a port the stop is
+  // about to kill — so it queues a fresh ensure behind that stop instead, and probes after it.
+  if (pending && ops.get(dataDir) === pending) return pending;
   // Queued behind any in-flight stop/prepare for this dataDir, so an ensure can never spawn a
   // daemon into the middle of an installer handoff.
-  const started = chainDaemonOp(overrides.ops ?? hostOps, dataDir, () =>
-    ensureDaemonOnce(dataDir, overrides),
-  );
+  const started = chainDaemonOp(ops, dataDir, () => ensureDaemonOnce(dataDir, overrides));
   inFlight.set(dataDir, started);
   try {
     return await started;
   } finally {
-    inFlight.delete(dataDir);
+    // Only if it is still ours: a later ensure that refused to fold owns the entry now, and
+    // clearing that one would stop a third caller from folding onto the ensure actually running.
+    if (inFlight.get(dataDir) === started) inFlight.delete(dataDir);
   }
 }
 

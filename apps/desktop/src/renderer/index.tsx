@@ -24,7 +24,8 @@ if (preload.platform) {
 
 // The connections surface (#381, design D4): the renderer now mounts `ConnectionHost`
 // rather than `RennetApp` directly. The DEFAULT target is this machine's own daemon (the
-// loopback port the preload injected). A SAVED remote target is a `WsRennetBridge` at its
+// loopback port the preload ASKS MAIN for — the window is created before the daemon is healthy,
+// so the port arrives as a late endpoint rather than in argv). A SAVED remote target is a `WsRennetBridge` at its
 // host with its device token. The in-app directory browser (source-aware project selection)
 // retired the native directory picker AND the remote path prompt — `repository.choose` now
 // always arrives with a `{ path }` the browser supplied, on whichever source's daemon is

@@ -540,19 +540,34 @@ describe("WsRennetBridge with a LATE endpoint (thunk url)", () => {
     expect(lifecycle).toEqual(["online"]);
   });
 
-  it("reports an endpoint that cannot be resolved as an OUTAGE, not a terminal error", async () => {
-    // A daemon that never comes up must ride the supervisor's ordinary offline/reconnect path
+  it("rides an endpoint that cannot be resolved as an OUTAGE, and reconnects when it can", async () => {
+    // A daemon that is not up yet must ride the supervisor's ordinary offline/reconnect path
     // (which repaints and retries), never `error` — `error` is terminal and stops retrying.
+    // The RECONNECT half is the point: classifying the failure as `offline` is worth nothing if
+    // the bridge then sits there, so the thunk rejects once and answers with a live endpoint the
+    // second time. (The neighbouring re-ask test only ever resolves the thunk, so it cannot say
+    // whether a REJECTED one is retried.)
+    const stub = await startStub();
+    stubs.push(stub);
     const lifecycle: string[] = [];
+    let asks = 0;
     trackBridge(
       new WsRennetBridge({
-        url: () => Promise.reject(new Error("daemon failed to start")),
-        autoReconnect: false,
+        url: () => {
+          asks += 1;
+          return asks === 1
+            ? Promise.reject(new Error("daemon failed to start"))
+            : Promise.resolve(stub.url);
+        },
+        initialBackoffMs: 10,
         onLifecycle: (event) => lifecycle.push(event.kind),
       }),
     );
-    await new Promise((r) => setTimeout(r, 20));
-    expect(lifecycle).toEqual(["offline"]);
+    await waitUntil(() => lifecycle.includes("online"));
+    expect(lifecycle[0]).toBe("offline"); // the rejection, classified — before any reconnect
+    expect(lifecycle).not.toContain("error"); // never terminal: retrying stayed possible
+    expect(asks).toBe(2); // the thunk was asked again, not cached as failed
+    expect(stub.helloCount).toBe(1);
   });
 
   it("re-asks for the endpoint on each reconnect attempt, so a moved daemon is redialled", async () => {
