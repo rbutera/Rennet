@@ -122,8 +122,20 @@ the target inputs.
 
 Do not run concurrent Nx processes in one worktree. Nx can race its task-history
 database and report `FOREIGN KEY constraint failed` or `disk I/O error` after a
-target succeeds. For that exact failure, run `pnpm nx reset` once and rerun the
-command. Long-running, interactive, and end-to-end targets are not cacheable.
+target succeeds. Nx 23.1 shares the default artifact cache through the main
+worktree, so an active worktree uses its own cache for a gate:
+
+```sh
+CI=true NX_DAEMON=false NX_CACHE_DIRECTORY="$PWD/.nx-isolated/cache" pnpm check
+```
+
+For that exact failure, wait for every Nx process in the worktree to exit, then
+run `pnpm nx reset --onlyDaemon` without `NX_DAEMON=false` and remove
+`.nx-isolated/`. The daemon-only reset stops the daemon without a full reset;
+a bare `pnpm nx reset` from a worktree can clear the main checkout's cache and
+workspace data. Lane-local caches isolate cleanup, so the gate does not need
+`--parallel=false`. Long-running, interactive, and end-to-end targets are not
+cacheable.
 
 ## Place new work
 
