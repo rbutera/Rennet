@@ -25,7 +25,6 @@ export const MAP_SCOPE_OUTPUT_SCHEMA = {
       type: "array",
       minItems: 1,
       maxItems: MAP_SCOPE_SLICE_CAP,
-      uniqueItems: true,
       items: { type: "string" },
     },
     exclude: {
@@ -431,7 +430,7 @@ Exclusion means only that the slice gets no worker turn in this generation, not 
 You may inspect the repository checkout when the manifest is insufficient to make a grounded whole-slice decision.
 
 CLASSIFIED CANDIDATE MANIFEST:
-${canonicalize(selectorCatalogue(catalogue))}`;
+${JSON.stringify(selectorCatalogue(catalogue))}`;
 }
 
 function validateSelection(

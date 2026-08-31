@@ -149,11 +149,15 @@ function emitted(body: unknown): HarnessTurnResult {
   return { status: "emitted", body };
 }
 
-function manifestFrom(prompt: string): unknown {
+function manifestTextFrom(prompt: string): string {
   const marker = "CLASSIFIED CANDIDATE MANIFEST:\n";
   const start = prompt.indexOf(marker);
   if (start < 0) throw new Error("candidate manifest marker missing");
-  return JSON.parse(prompt.slice(start + marker.length));
+  return prompt.slice(start + marker.length);
+}
+
+function manifestFrom(prompt: string): unknown {
+  return JSON.parse(manifestTextFrom(prompt));
 }
 
 describe("runMapScope", () => {
@@ -252,6 +256,7 @@ describe("runMapScope", () => {
     expect(JSON.stringify(SELECTOR_SCALE_CANDIDATES).length).toBeGreaterThan(512 * 1024);
     expect(prompt.length).toBeLessThanOrEqual(512 * 1024);
     expect(prompt).not.toContain(SELECTOR_SCALE_SIGNAL);
+    expect(manifestTextFrom(prompt)).toBe(JSON.stringify(manifestFrom(prompt)));
     const manifest = manifestFrom(prompt) as {
       readonly entryPoints: readonly unknown[];
       readonly candidates: readonly {
@@ -791,7 +796,7 @@ describe("materializeKnowledgeCoverage", () => {
 });
 
 describe("MAP_SCOPE_OUTPUT_SCHEMA", () => {
-  it("expresses the strict exhaustive-partition envelope", () => {
+  it("expresses the strict Codex-compatible exhaustive-partition envelope", () => {
     expect(MAP_SCOPE_OUTPUT_SCHEMA).toEqual({
       type: "object",
       additionalProperties: false,
@@ -801,7 +806,6 @@ describe("MAP_SCOPE_OUTPUT_SCHEMA", () => {
           type: "array",
           minItems: 1,
           maxItems: 64,
-          uniqueItems: true,
           items: { type: "string" },
         },
         exclude: {
