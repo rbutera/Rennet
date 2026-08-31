@@ -754,7 +754,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
         </div>
         <div className="relative mt-5 grid min-h-[70px] w-[min(860px,90vw)] place-items-center">
           <p
-            className="absolute inset-0 m-0 grid place-items-center text-lg leading-[1.35] tracking-[-0.015em] text-ink-soft"
+            className="absolute inset-0 m-0 grid place-items-center text-lg leading-[1.35] tracking-[-0.015em] text-ink-soft xl:text-2xl"
             data-opening-tagline
             style={{ opacity: 0, transform: "translateY(10px)" }}
           >
@@ -766,7 +766,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
            *  wrapped row is a clipped row. Narrow screens overflow horizontally instead,
            *  which the full-bleed `w-screen` row absorbs. */}
           <p
-            className="absolute inset-y-0 left-[calc(50%-50vw)] grid w-screen place-items-center whitespace-nowrap text-lg leading-[1.35] tracking-[-0.015em] text-ink"
+            className="absolute inset-y-0 left-[calc(50%-50vw)] grid w-screen place-items-center whitespace-nowrap text-lg leading-[1.35] tracking-[-0.015em] text-ink xl:text-2xl"
             data-review-tagline
             style={{ opacity: 0, transform: "translateY(10px)" }}
           >
