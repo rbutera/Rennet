@@ -214,6 +214,48 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
   });
 
+  it("hydrates a durable publication receipt without posting again", async () => {
+    const marker = "a".repeat(64);
+    const calls: string[] = [];
+    const r = mountHandoff(review({ postTarget }), {
+      "publish.compose": () => {
+        calls.push("compose");
+        return {
+          status: "review",
+          artifact: ARTIFACT,
+          post: POST,
+          ledger: LEDGER,
+          payload: PAYLOAD,
+          destination: "acme/orbital#7",
+          title: "acme/orbital#7",
+          compositionId: "comp-1",
+          marker,
+        };
+      },
+      "publish.receipt": (input) => {
+        calls.push(`receipt:${input.marker}`);
+        return {
+          status: "posted",
+          receipt: {
+            marker,
+            verdict: "REQUEST_CHANGES",
+            lineCommentCount: 1,
+            reviewRef: "R_1",
+            url: "https://github.com/acme/orbital/pull/7#r1",
+          },
+        };
+      },
+      "publish.review": () => {
+        throw new Error("hydration must not post");
+      },
+    });
+
+    expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
+    expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
+    expect(calls).toEqual(["compose", `receipt:${marker}`]);
+    expect(r.queryByRole("button", { name: /Post Review/ })).toBeNull();
+  });
+
   it("posts an approval with zero asks using the exact descriptor", async () => {
     const artifact: ReviewCompose["artifact"] = {
       opener: "Exact approval body from the daemon.",

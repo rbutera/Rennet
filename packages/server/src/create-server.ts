@@ -94,6 +94,7 @@ import {
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   PublishCompositionStore,
+  PublishReceiptStore,
   parseGitHubPrRef,
   prepareRoundWorkspace,
   prWorktreePath,
@@ -943,6 +944,9 @@ export interface RennetServerOptions {
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
+  /** Hermetic opener-drafting seam for compose/post transport proofs. Production uses the
+   * live council-routed drafter; tests can supply authored bytes without launching a harness. */
+  readonly draftReviewOpener?: DispatchDeps["draftReviewOpener"];
   /** Test override for round landing. Production composes rooted native landing on POSIX daemons. */
   readonly roundSourceLanding?: RoundSourceLandingInjection;
   /** Test observation at the crash commit point, before any PR-draft ripening await. */
@@ -2396,6 +2400,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const publishCompositionStore = new PublishCompositionStore(
     join(dataDir, "publish-compositions"),
   );
+  const publishReceiptStore = new PublishReceiptStore(join(dataDir, "publish-receipts"));
   // The own-branch PR destination is resolved once for the preview and again immediately
   // before sign-click mutation. Both reads execute inside the repository's locus and use the
   // effective push URL; no forge credential is touched while composing the preview.
@@ -3792,6 +3797,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         : repository.forge === "github"
           ? githubReviewPublisher
           : undefined,
+    publishReceipts: publishReceiptStore,
     resolvePullRequestDestination,
     submitPullRequest,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
@@ -4466,12 +4472,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // active persisted boards plus the durable ask projection. The content-addressed store keeps
     // unchanged evidence byte-stable across remounts and restarts, preserving the post marker's
     // outcome-unknown retry identity. A changed verdict, ask, or board legitimately redrafts.
-    draftReviewOpener: createLiveReviewOpenerPort({
-      claudePort: claudeAdapterForRepo,
-      codexExecutor: codexExecutorForRepo,
-      readPrompt,
-      store: publishCompositionStore,
-    }),
+    draftReviewOpener:
+      options.draftReviewOpener ??
+      createLiveReviewOpenerPort({
+        claudePort: claudeAdapterForRepo,
+        codexExecutor: codexExecutorForRepo,
+        readPrompt,
+        store: publishCompositionStore,
+      }),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
     // Rephrases the successor review's DETERMINISTIC successor account into a one-glance
     // TL;DR shown ON TOP of the facts, on WHICHEVER seat the council resolves for

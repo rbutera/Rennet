@@ -268,14 +268,14 @@ export type KnowledgeSwarmProgress =
  * Concurrent partition workers, by NAMED policy rather than an unrevisited literal.
  *
  * The old default was a bare `?? 4`, which is where "200 partitions × 78 s ÷ 4 ≈ 67
- * minutes" came from. Eight is what the 16 GB development host has headroom for
- * alongside the harness processes each lane spawns; the ceiling here is the machine,
- * not the provider. It stays overridable per run (`KnowledgeSwarmDeps.concurrency`),
- * and it is deliberately NOT adaptive: a number that changes with ambient load makes
- * a run's cost unreproducible, which is a worse problem than a number that is
- * sometimes conservative.
+ * minutes" came from. The first real run at the ruled cap of 16 hit the development
+ * host's memory ceiling: the 16 Codex worker process families held 2.59 GiB resident
+ * while swap grew by 5.19 GiB. Rai's recorded fallback is therefore 12. It stays
+ * overridable per run (`KnowledgeSwarmDeps.concurrency`), and it is deliberately NOT
+ * adaptive: a number that changes with ambient load makes a run's cost
+ * unreproducible, which is a worse problem than a number that is conservative.
  */
-export const DEFAULT_SWARM_CONCURRENCY = 8;
+export const DEFAULT_SWARM_CONCURRENCY = 12;
 
 /**
  * How many times a FAILED batch is retried before the run gives up on it. One: a

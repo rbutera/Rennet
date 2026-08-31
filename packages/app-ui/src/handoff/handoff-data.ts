@@ -128,6 +128,8 @@ export type ReviewThread = ReviewComposition["post"]["threads"][number];
  * control can explain an override; flipping it writes the durable override and recomposes.
  */
 export interface ReviewDraft {
+  /** The daemon-owned identity of these exact outbound bytes. */
+  readonly marker?: ReviewComposition["marker"];
   readonly artifact: ReviewComposition["artifact"];
   readonly post: ReviewComposition["post"];
   readonly ledger: ReviewComposition["ledger"];
@@ -158,6 +160,7 @@ export function composeReviewDraft(composed: ReviewComposition): ReviewDraft {
           ? "APPROVE"
           : "COMMENT";
   return {
+    marker: composed.marker,
     artifact: composed.artifact,
     post: composed.post,
     ledger: composed.ledger,

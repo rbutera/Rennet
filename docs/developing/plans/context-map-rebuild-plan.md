@@ -217,7 +217,7 @@ exploration half — canvasOps on every seat — is W5a's.
 The deterministic half is seconds (Understand-Anything's equivalent runs a
 459-file repo in ~12 s; ours is incremental besides). At ~50 batches, even
 today's measured 78 s/turn clears the bar at concurrency ~13; skeleton-first
-inputs shrink turns, and the 16 GB host has headroom for 8–16 lanes it never
+inputs shrink turns, and the 16 GB host has headroom for 8–12 lanes it never
 had for 52. Any ramp test measures RSS per lane and swap pressure alongside
 throughput — the machine, not the provider, is the ceiling. The concurrency
 default becomes a named, tested policy rather than an unrevisited 4.
@@ -238,15 +238,19 @@ tail went 149 → **54** slices and the whole run went 201 → **105** slices (5
 module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
 113 ms; the clean build is ~30 s.
 
-105 turns × 78 s is 8,190 s of turn time. At the named concurrency of 8 that is
-**~17 minutes of wall clock** — 17.6 with the build — against a five-minute bar.
+The W3 snapshot produced 105 turns; the launched cap proof at commit `96bdbb51`
+queued 110 after the repository grew. 110 turns × 78 s is 8,580 s of turn time.
+At the named concurrency of 12 that projects to **~11.9 minutes of worker wall
+clock**, or 12.4 minutes with the build, against a five-minute bar.
 Turn time ÷ lanes *is* the wall clock; there is no smaller figure to quote. To
-clear the bar at 78 s/turn takes ≥28 lanes (≥31 with the build), and the 16 GB
-host has headroom for 8. The two other routes are unfinished: skeleton-fed packets
-should shorten the turn but have never been timed against a live harness, and the
-scoping seat that would decide an edge-less file does not deserve a turn at all is
-still unbuilt (Stage 1 point 4). So the design's honest cost is 105 turns and
-~17 minutes, and closing the gap is outstanding work rather than a solved problem.
+clear the bar at 78 s/turn takes ≥29 lanes (≥32 with the build). The 16-lane proof
+was aborted after 87.084 seconds: its 16 Codex worker process families held 2.59
+GiB resident, swap grew by 5.19 GiB, and pageouts advanced by 5,965. That activated
+the recorded fallback to 12. The two other routes are unfinished: skeleton-fed
+packets should shorten the turn but have never completed a live timing run, and
+the scoping seat that would decide an edge-less file does not deserve a turn at
+all is still unbuilt (Stage 1 point 4). So the design's honest cost is 110 turns
+and a projected ~12.4 minutes; a launched run has not proved the five-minute bar.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

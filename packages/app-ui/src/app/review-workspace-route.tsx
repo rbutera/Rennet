@@ -494,6 +494,7 @@ function HandoffMount({
     <HandoffView
       review={review}
       onPost={exits.onPost}
+      receipt={exits.receipt}
       reviewDraft={exits.reviewDraft}
       onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}

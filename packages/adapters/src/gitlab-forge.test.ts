@@ -170,7 +170,7 @@ describe("GitLabForgeAdapter", () => {
     });
     await expect(adapter.publishReview(post)).resolves.toEqual({
       reviewRef: "77",
-      url: null,
+      url: "https://gitlab.com/acme/platform/widget/-/merge_requests/42#note_77",
       reused: true,
     });
     expect(calls).toHaveLength(1);
@@ -197,6 +197,7 @@ describe("GitLabForgeAdapter", () => {
 
     const { adapter, calls } = scripted([
       ok(""),
+      ok(mr()),
       ok({ id: 88, body: post.body, web_url: null }),
       ok({ approved: true }),
     ]);
@@ -215,15 +216,16 @@ describe("GitLabForgeAdapter", () => {
 
     await expect(adapter.publishReview(post)).resolves.toEqual({
       reviewRef: "88",
-      url: null,
+      url: "https://gitlab.com/acme/platform/widget/-/merge_requests/42#note_88",
       reused: false,
     });
     expect(calls.map((call) => call.args[1])).toEqual([
       expect.stringContaining("/notes?"),
+      expect.stringContaining("/merge_requests/42"),
       expect.stringContaining("/notes"),
       expect.stringContaining("/approve"),
     ]);
-    expect(calls[2]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
+    expect(calls[3]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
 
     const existing = {
       id: 88,
@@ -240,6 +242,97 @@ describe("GitLabForgeAdapter", () => {
       "projects/acme%2Fplatform%2Fwidget/merge_requests/42/approve",
     );
     expect(retry.calls[1]?.stdin).toBe(JSON.stringify({ sha: "head42" }));
+  });
+
+  it("checks the live head before creating a note", async () => {
+    const artifact = { opener: "The reviewed head is ready.", comments: [], bodyNotes: [] };
+    const adapterForCapabilities = new GitLabForgeAdapter({
+      detectionDeps: detection(),
+      locus: { kind: "host" },
+      repositoryRoot: "/code/widget",
+      run: vi.fn(),
+    });
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      capabilities: adapterForCapabilities.capabilities,
+    });
+    const { adapter, calls } = scripted([ok(""), ok(mr({ sha: "new-head" }))]);
+
+    await expect(adapter.publishReview(post)).rejects.toThrow(/head moved/i);
+    expect(calls).toHaveLength(2);
+    expect(calls.some((call) => call.args.includes("--method"))).toBe(false);
+  });
+
+  it("returns the canonical note URL when GitLab omits web_url", async () => {
+    const artifact = { opener: "This is ready for review.", comments: [], bodyNotes: [] };
+    const adapterForCapabilities = new GitLabForgeAdapter({
+      detectionDeps: detection(),
+      locus: { kind: "host" },
+      repositoryRoot: "/code/widget",
+      run: vi.fn(),
+    });
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      capabilities: adapterForCapabilities.capabilities,
+    });
+    const { adapter } = scripted([ok(""), ok(mr()), ok({ id: 91, body: post.body })]);
+
+    await expect(adapter.publishReview(post)).resolves.toMatchObject({
+      url: "https://gitlab.com/acme/platform/widget/-/merge_requests/42#note_91",
+    });
+  });
+
+  it("reconciles a note whose response was lost without creating a duplicate", async () => {
+    const artifact = { opener: "This is ready for review.", comments: [], bodyNotes: [] };
+    const notes: { id: number; body: string }[] = [];
+    let noteMutations = 0;
+    const run: GitLabForgeCommandRunner = async (command) => {
+      const endpoint = command.args[1] ?? "";
+      if (endpoint.includes("/notes?")) {
+        return ok(notes.map((note) => JSON.stringify(note)).join("\n"));
+      }
+      if (endpoint.endsWith("/merge_requests/42")) return ok(mr());
+      if (endpoint.endsWith("/merge_requests/42/notes")) {
+        noteMutations += 1;
+        const body = JSON.parse(command.stdin ?? "{}") as { body: string };
+        notes.push({ id: 101, body: body.body });
+        throw new Error("socket closed after GitLab created the note");
+      }
+      throw new Error(`unexpected command: ${command.args.join(" ")}`);
+    };
+    const adapter = new GitLabForgeAdapter({
+      detectionDeps: detection(),
+      locus: { kind: "host" },
+      repositoryRoot: "/code/widget",
+      run,
+    });
+    const post = buildForgeReviewPost(artifact, {
+      reviewId: "review-42",
+      target: TARGET,
+      payload: canonicalReviewPayload(artifact),
+      capabilities: adapter.capabilities,
+    });
+
+    await expect(adapter.publishReview(post)).rejects.toThrow(/unreachable/i);
+    await expect(adapter.publishReview(post)).resolves.toEqual({
+      reviewRef: "101",
+      url: "https://gitlab.com/acme/platform/widget/-/merge_requests/42#note_101",
+      reused: true,
+    });
+    expect(noteMutations).toBe(1);
+  });
+
+  it("does not classify an arbitrary glab failure as authentication", async () => {
+    const { adapter } = scripted([{ exitCode: 1, stdout: "500 Internal Server Error" }]);
+
+    const error = await adapter.fetchDiff(REF).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toMatchObject({ reason: "authentication" });
+    expect((error as Error).message).toContain("500 Internal Server Error");
   });
 
   it("fails honestly before execution when glab is absent", async () => {

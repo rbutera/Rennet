@@ -538,6 +538,11 @@ export {
   type StoredReviewOpenerRead,
 } from "./publish-composition-store";
 export {
+  PublishReceiptStore,
+  type StoredPublishReceipt,
+  type StoredPublishReceiptRead,
+} from "./publish-receipt-store";
+export {
   DOSSIER_TOTAL_MAX_CHARS,
   type EnrichmentReport,
   type ExtractedRef,
