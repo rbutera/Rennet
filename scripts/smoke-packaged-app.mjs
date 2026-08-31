@@ -33,7 +33,8 @@ const updateLifecycleFragments = {
     'autoUpdater.on("error", (error) => void handleUpdaterError(error))',
   ],
   main: [
-    "prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir)",
+    "prepareToApply: () => {",
+    "return prepareOwnedDaemonForUpdate(dataDir);",
     "armRelaunchAfterApply:",
     "armMacUpdateRelaunch(",
     "recoverAfterApplyFailure: async () => {",
