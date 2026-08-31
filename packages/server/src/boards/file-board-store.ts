@@ -25,13 +25,30 @@ import type { AppendEntry, BoardStore } from "@wboard/server";
  * batch whose terminal seq never landed — the observable log is always
  * whole batches. Torn-tail recovery applies to the FINAL line only;
  * corruption anywhere else in the file throws.
+ *
+ * IN-MEMORY LOG (perf audit §3 H1 / §4 H4). The committed events and the board's
+ * schema text are held in memory after the first read, so `getEvents(afterSeq)`
+ * costs only the slice it returns rather than a full re-read and re-parse of the
+ * whole log, and `append` stops re-reading `schema.json` per batch. This is the
+ * same single-writer assumption the seq tail already ran on, now covering the
+ * whole log: one runtime per project root owns the directory for the process's
+ * life (`create-server` memoizes it), and a FRESH store re-reads from disk, which
+ * is what restart recovery uses.
  * ponytail: single-writer O_APPEND assumed (the embedded BoardService is the
- * only writer); move to a lockfile if a second writing process ever appears.
+ * only writer); move to a lockfile if a second writing process ever appears —
+ * the in-memory log would need invalidating too.
  */
 export class FileBoardStore implements BoardStore {
   readonly #root: string;
-  /** Per-board tail: last assigned seq, loaded lazily from the log. */
-  readonly #tail = new Map<string, number>();
+  /**
+   * Per-board committed log, loaded lazily and then extended in place by `append`.
+   * `recovered` stays true until a write path heals the file — a read must never
+   * heal, so the flag rides the cache instead of being lost by the first reader.
+   */
+  readonly #log = new Map<string, { events: Event[]; recovered: boolean }>();
+  /** Per-board `schema.json` TEXT, cached once written or first read. Kept as text so
+   *  every `getSchema` still parses its own copy — nothing a caller holds aliases ours. */
+  readonly #schema = new Map<string, string>();
   /** Per-board write serialization so async create/append never interleave. */
   readonly #chain = new Map<string, Promise<unknown>>();
 
@@ -96,24 +113,35 @@ export class FileBoardStore implements BoardStore {
     return { events: parsed.map((line) => line.event), recovered };
   }
 
-  async #lastSeq(boardId: string): Promise<number> {
-    const known = this.#tail.get(boardId);
-    if (known !== undefined) return known;
-    const { events, recovered } = await this.#readLog(boardId);
-    if (recovered) {
-      // Heal before anything appends after the garbage tail. Serialized-write
-      // context only (append); reads never rewrite. Temp-then-rename so the
+  /** The board's committed events, read from disk at most once per store instance.
+   *  Reads NEVER heal — see {@link #healed}. */
+  async #load(boardId: string): Promise<{ events: Event[]; recovered: boolean }> {
+    let entry = this.#log.get(boardId);
+    if (entry === undefined) {
+      // A throw (mid-file corruption) is not cached: the next call re-reads and
+      // throws again, rather than a fault being remembered as a value.
+      entry = await this.#readLog(boardId);
+      this.#log.set(boardId, entry);
+    }
+    return entry;
+  }
+
+  /** The board's committed events with the file healed if a crash left a garbage tail.
+   *  Serialized-write context ONLY (append) — reads never rewrite. */
+  async #healed(boardId: string): Promise<{ events: Event[]; recovered: boolean }> {
+    const entry = await this.#load(boardId);
+    if (entry.recovered) {
+      // Heal before anything appends after the garbage tail. Temp-then-rename so the
       // heal itself is crash-safe: an in-place writeFile truncates first, and
       // a crash in that window would lose the whole log. A crash before the
       // rename leaves log.jsonl untouched (recovery just re-runs); rename is
       // atomic on the same filesystem.
       const dir = this.#dir(boardId);
-      await writeFile(join(dir, "log.jsonl.heal"), logLines(events));
+      await writeFile(join(dir, "log.jsonl.heal"), logLines(entry.events));
       await rename(join(dir, "log.jsonl.heal"), join(dir, "log.jsonl"));
+      entry.recovered = false;
     }
-    const last = events.at(-1)?.seq ?? 0;
-    this.#tail.set(boardId, last);
-    return last;
+    return entry;
   }
 
   createBoard(boardId: string, schema: WireSchema): Promise<void> {
@@ -131,18 +159,25 @@ export class FileBoardStore implements BoardStore {
         }
         throw error;
       }
-      this.#tail.set(boardId, 0);
+      this.#schema.set(boardId, copy);
+      this.#log.set(boardId, { events: [], recovered: false });
     });
   }
 
   async getSchema(boardId: string): Promise<WireSchema | undefined> {
-    let raw: string;
-    try {
-      raw = await readFile(join(this.#dir(boardId), "schema.json"), "utf8");
-    } catch (error) {
-      // undefined is the contract's "unknown board" — nothing else may hide in it.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
+    // schema.json is write-once ("wx"), so its TEXT can be held for the store's life.
+    // Only a successful read is cached: "unknown board" must stay re-checkable, since a
+    // board can be created after someone asked for it.
+    let raw = this.#schema.get(boardId);
+    if (raw === undefined) {
+      try {
+        raw = await readFile(join(this.#dir(boardId), "schema.json"), "utf8");
+      } catch (error) {
+        // undefined is the contract's "unknown board" — nothing else may hide in it.
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      }
+      this.#schema.set(boardId, raw);
     }
     return JSON.parse(raw) as WireSchema;
   }
@@ -157,7 +192,8 @@ export class FileBoardStore implements BoardStore {
       if ((await this.getSchema(boardId)) === undefined) {
         throw new Error(`unknown board: ${boardId}`);
       }
-      const base = await this.#lastSeq(boardId);
+      const log = await this.#healed(boardId);
+      const base = log.events.at(-1)?.seq ?? 0;
       const appended: Event[] = snapshot.map((entry, i) => ({
         seq: base + i + 1,
         actor: entry.actor,
@@ -167,20 +203,23 @@ export class FileBoardStore implements BoardStore {
         try {
           await appendFile(join(this.#dir(boardId), "log.jsonl"), logLines(appended));
         } catch (error) {
-          // The file may now hold a partial batch: forget the tail so the next
+          // The file may now hold a partial batch: forget the log so the next
           // append re-reads and heals before writing anything after it.
-          this.#tail.delete(boardId);
+          this.#log.delete(boardId);
           throw error;
         }
-        this.#tail.set(boardId, base + appended.length);
+        log.events.push(...appended);
       }
       return structuredClone(appended);
     });
   }
 
   async getEvents(boardId: string, afterSeq: number): Promise<Event[]> {
-    const { events } = await this.#readLog(boardId);
-    return events.filter((event) => event.seq > afterSeq);
+    const { events } = await this.#load(boardId);
+    // Clone the SLICE, not the log: the caller owns what it gets back (nothing it
+    // mutates may reach stored state), and after the first read that cost is the new
+    // events only — which is what `afterSeq` was always meant to buy.
+    return structuredClone(events.filter((event) => event.seq > afterSeq));
   }
 }
 

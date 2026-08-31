@@ -18,6 +18,7 @@ import {
   type SessionPreparation,
   type SessionThread,
 } from "@rennet/protocol";
+import { ParsedFileCache } from "./parsed-file-cache";
 
 /**
  * The durable-session store (#466 res. 1–2, B09 cluster 1) — durability for the
@@ -38,6 +39,14 @@ import {
  * (load) or is skipped (list), never a throw — a corrupt session file must
  * degrade to "not reattachable", not crash the front door. A malformed file is
  * LEFT UNTOUCHED so a human can recover it.
+ *
+ * IN-MEMORY SESSIONS (perf audit §4 H5). `list()` is a readdir plus a `load` per session,
+ * and the sidebar renders it twice per pass — 2N reads and 2N zod walks over records that
+ * only ever grow (archive is a soft delete). Each session's parse is memoized per path
+ * through {@link ParsedFileCache}, so a warm `list()` is one readdir plus one `stat` per
+ * session, and every write memoizes what it just landed. `list()` semantics are unchanged:
+ * the same readdir each call (a session another writer added is still picked up), the same
+ * skip-the-malformed, the same newest-first order.
  */
 
 /** The default session-store directory: `~/.rennet/sessions`. Tests pass a temp dir. */
@@ -53,6 +62,7 @@ export interface SessionStoreDeps {
 export class SessionStore {
   private tmpSeq = 0;
   private readonly now: () => number;
+  private readonly cache = new ParsedFileCache<SessionModel>();
 
   constructor(
     private readonly dir: string = defaultSessionStoreDir(),
@@ -69,9 +79,12 @@ export class SessionStore {
 
   /** Load one session, WITH schema validation. Missing/malformed ⇒ `undefined` (fail-safe). */
   load(sessionId: string): SessionModel | undefined {
+    const path = this.pathFor(sessionId);
+    const hit = this.cache.get(path);
+    if (hit !== undefined) return hit;
     let raw: string;
     try {
-      raw = readFileSync(this.pathFor(sessionId), "utf8");
+      raw = readFileSync(path, "utf8");
     } catch {
       return undefined;
     }
@@ -82,7 +95,11 @@ export class SessionStore {
       return undefined;
     }
     const result = SessionModelSchema.safeParse(parsed);
-    return result.success ? result.data : undefined;
+    // A malformed file is not memoized — it is left on disk for a human, and the next read
+    // is honest about it rather than serving a decision cached from a file we rejected.
+    if (!result.success) return undefined;
+    this.cache.set(path, result.data);
+    return result.data;
   }
 
   /** Persist a session atomically (temp + rename). Overwrites the record for its id. */
@@ -101,6 +118,9 @@ export class SessionStore {
       closeSync(fd);
     }
     renameSync(tmp, path);
+    // Write through: the file we just landed IS `validated`, so the next `load` (and the
+    // `list()` the sidebar runs right after) serves it without re-parsing our own bytes.
+    this.cache.set(path, validated);
   }
 
   /** Every persisted session, newest first. Malformed entries are skipped, not thrown. */
