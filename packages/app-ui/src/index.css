@@ -270,8 +270,12 @@
     color: var(--rn-ink-faint);
     font: 9px / 1.62 var(--font-mono);
     white-space: pre;
+    /* The base depth. Every fragment overrides it with its own value from
+       FRAGMENT_OPACITY in first-run-welcome.tsx, spread over 0.48–0.82 around this. */
     opacity: 0.58;
-    will-change: transform, opacity;
+    /* Transform only. The drift loop no longer animates opacity (that repainted every
+       frame); promoting an opacity layer here would just cost memory for nothing. */
+    will-change: transform;
   }
   .rn-code-fragment > span {
     display: block;

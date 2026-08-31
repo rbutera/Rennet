@@ -45,8 +45,8 @@ interface Daemon {
 /** A bridge onto the app's OWN daemon — the same socket the renderer talks to. Used to
  *  ASK what the click produced, never to produce it. */
 async function daemonOf(page: Page): Promise<Daemon> {
-  const port = await page.evaluate(
-    () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
   );
   const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
   return {

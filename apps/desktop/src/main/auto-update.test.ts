@@ -41,6 +41,7 @@ import {
   APPLY_HANDOFF_TIMEOUT_MS,
   armMacUpdateRelaunch,
   createAutoUpdateStarter,
+  createSignatureVerifier,
   createUpdateReadiness,
   isAutoUpdateEligible,
   startAutoUpdate,
@@ -375,25 +376,96 @@ describe("armMacUpdateRelaunch", () => {
 });
 
 describe("auto-update eligibility", () => {
-  it("never starts in an unpackaged application", () => {
-    expect(
-      isAutoUpdateEligible(false, "darwin", "/Rennet.app/Contents/MacOS/Rennet", vi.fn()),
-    ).toBe(false);
+  const macExec = "/Rennet.app/Contents/MacOS/Rennet";
+
+  it("never starts in an unpackaged application", async () => {
+    expect(await isAutoUpdateEligible(false, "darwin", macExec, vi.fn())).toBe(false);
   });
 
-  it("requires a Developer ID signature on macOS packages", () => {
-    const verify = vi.fn(() => false);
-    expect(isAutoUpdateEligible(true, "darwin", "/Rennet.app/Contents/MacOS/Rennet", verify)).toBe(
-      false,
-    );
+  it("requires a Developer ID signature on macOS packages", async () => {
+    const verify = vi.fn(async () => false);
+    expect(await isAutoUpdateEligible(true, "darwin", macExec, verify)).toBe(false);
     expect(verify).toHaveBeenCalledWith("/Rennet.app");
   });
 
-  it("allows a verified Developer ID package and preserves the Windows updater", () => {
-    expect(
-      isAutoUpdateEligible(true, "darwin", "/Rennet.app/Contents/MacOS/Rennet", () => true),
-    ).toBe(true);
-    expect(isAutoUpdateEligible(true, "win32", "C:\\Rennet.exe", () => false)).toBe(true);
+  it("allows a verified Developer ID package and preserves the Windows updater", async () => {
+    expect(await isAutoUpdateEligible(true, "darwin", macExec, async () => true)).toBe(true);
+    expect(await isAutoUpdateEligible(true, "win32", "C:\\Rennet.exe", async () => false)).toBe(
+      true,
+    );
+  });
+
+  it("returns to its caller before the signature verdict arrives", async () => {
+    // `codesign --deep --strict` hashes every binary in the bundle: seconds of work. Boot must
+    // proceed past the eligibility call while that runs, which is what the ORDER below proves —
+    // the synchronous shape put "verdict" before "boot continued" (perf audit §2 H2).
+    const order: string[] = [];
+    const verify = () =>
+      new Promise<boolean>((resolve) => {
+        order.push("probe started");
+        setTimeout(() => {
+          order.push("verdict");
+          resolve(true);
+        }, 0);
+      });
+    const pending = isAutoUpdateEligible(true, "darwin", macExec, verify);
+    order.push("boot continued");
+    expect(await pending).toBe(true);
+    expect(order).toEqual(["probe started", "boot continued", "verdict"]);
+  });
+
+  it("runs the codesign probe once across two eligibility checks", async () => {
+    const probe = vi.fn(async () => true);
+    const verify = createSignatureVerifier(probe);
+    expect(await isAutoUpdateEligible(true, "darwin", macExec, verify)).toBe(true);
+    expect(await isAutoUpdateEligible(true, "darwin", macExec, verify)).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledWith("/Rennet.app");
+  });
+
+  it("joins a probe still in flight rather than walking the bundle twice", async () => {
+    let finish: (verdict: boolean) => void = () => undefined;
+    const probe = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const verify = createSignatureVerifier(probe);
+    const first = isAutoUpdateEligible(true, "darwin", macExec, verify);
+    const second = isAutoUpdateEligible(true, "darwin", macExec, verify);
+    finish(true);
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers per app path rather than once, for whichever bundle asked first", async () => {
+    const probe = vi.fn(async (appPath: string) => appPath === "/Signed.app");
+    const verify = createSignatureVerifier(probe);
+
+    expect(await verify("/Signed.app")).toBe(true);
+    // A single-slot memo returns the FIRST bundle's verdict here, calling the probe once.
+    expect(await verify("/Unsigned.app")).toBe(false);
+    expect(probe).toHaveBeenCalledTimes(2);
+    // …and each path is still memoised on its own.
+    expect(await verify("/Signed.app")).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-probes after a probe REJECTS — a failure is not a cached verdict", async () => {
+    // The real probe answers false rather than throwing, so only an injected one reaches this.
+    // Caching the rejected promise made one failed probe the permanent answer for the process.
+    let attempt = 0;
+    const probe = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("codesign unavailable");
+      return true;
+    });
+    const verify = createSignatureVerifier(probe);
+
+    await expect(verify("/Rennet.app")).rejects.toThrow("codesign unavailable");
+    expect(await verify("/Rennet.app")).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 });
 

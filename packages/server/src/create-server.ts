@@ -4720,7 +4720,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   // The loopback WS transport (#378). Started here — after dispatch exists — and
   // awaited so `createRennetServer` resolves only once the socket is `listening`,
-  // giving the desktop shell a real `wsPort` before it loads the window.
+  // so no `wsPort` is ever published before it accepts connections. (The desktop shell
+  // no longer waits on any of this to show its window: it creates the window first and
+  // asks MAIN for the port over IPC — perf audit §2/§6 H1.)
   wsListener = await startWsListener({
     dispatch,
     serverVersion,

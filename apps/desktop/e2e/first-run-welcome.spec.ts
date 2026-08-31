@@ -115,8 +115,8 @@ test("the first-run welcome is what a first run gets, and completing it is what 
 
     // Persisted, not merely in this window's memory — the daemon carries the completion and
     // the appearance the wizard wrote, so a relaunch does not start over.
-    const port = await page.evaluate(
-      () => (window as unknown as { rennet: { wsPort: number } }).rennet.wsPort,
+    const port = await page.evaluate(() =>
+      (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
     );
     const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
     try {

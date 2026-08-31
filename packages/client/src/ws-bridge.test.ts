@@ -495,3 +495,117 @@ describe("WsRennetBridge remote surface (#380)", () => {
     expect(answers).toEqual([]); // the late answer was dropped
   });
 });
+
+describe("WsRennetBridge with a LATE endpoint (thunk url)", () => {
+  it("dials only once the url resolves, and serves normally after", async () => {
+    // The desktop shell's cold start: MAIN creates the window before the daemon is healthy
+    // (perf audit §2/§6 H1), so the port arrives after the bridge does.
+    const stub = await startStub();
+    stubs.push(stub);
+    let publishPort: (url: string) => void = () => undefined;
+    const late = new Promise<string>((resolve) => {
+      publishPort = resolve;
+    });
+    const lifecycle: string[] = [];
+    stub.onRequest = (socket, frame) => {
+      socket.send(
+        JSON.stringify({ type: "response", requestId: frame.requestId, output: { ok: true } }),
+      );
+    };
+
+    const bridge = trackBridge(
+      new WsRennetBridge({
+        url: () => late,
+        onLifecycle: (event) => lifecycle.push(event.kind),
+      }),
+    );
+    // Nothing has been dialled: no hello reached the server while the endpoint was unknown.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(stub.helloCount).toBe(0);
+    expect(lifecycle).toEqual([]);
+
+    // Issued BEFORE the endpoint arrives: it must WAIT, exactly as an invoke against a string
+    // url waits on the socket the constructor already opened — not fail "not connected".
+    let settled = false;
+    const early = invoke(bridge, "cmd.a", {}).then((output) => {
+      settled = true;
+      return output;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+
+    publishPort(stub.url);
+    expect(await early).toEqual({ ok: true });
+    expect(stub.helloCount).toBe(1);
+    expect(lifecycle).toEqual(["online"]);
+  });
+
+  it("rides an endpoint that cannot be resolved as an OUTAGE, and reconnects when it can", async () => {
+    // A daemon that is not up yet must ride the supervisor's ordinary offline/reconnect path
+    // (which repaints and retries), never `error` — `error` is terminal and stops retrying.
+    // The RECONNECT half is the point: classifying the failure as `offline` is worth nothing if
+    // the bridge then sits there, so the thunk rejects once and answers with a live endpoint the
+    // second time. (The neighbouring re-ask test only ever resolves the thunk, so it cannot say
+    // whether a REJECTED one is retried.)
+    const stub = await startStub();
+    stubs.push(stub);
+    const lifecycle: string[] = [];
+    let asks = 0;
+    trackBridge(
+      new WsRennetBridge({
+        url: () => {
+          asks += 1;
+          return asks === 1
+            ? Promise.reject(new Error("daemon failed to start"))
+            : Promise.resolve(stub.url);
+        },
+        initialBackoffMs: 10,
+        onLifecycle: (event) => lifecycle.push(event.kind),
+      }),
+    );
+    await waitUntil(() => lifecycle.includes("online"));
+    expect(lifecycle[0]).toBe("offline"); // the rejection, classified — before any reconnect
+    expect(lifecycle).not.toContain("error"); // never terminal: retrying stayed possible
+    expect(asks).toBe(2); // the thunk was asked again, not cached as failed
+    expect(stub.helloCount).toBe(1);
+  });
+
+  it("re-asks for the endpoint on each reconnect attempt, so a moved daemon is redialled", async () => {
+    // Update-apply recovery re-ensures the daemon and it comes back on a NEW port; a bridge
+    // that cached the first answer would reconnect forever to a port nobody is listening on.
+    const asked: number[] = [];
+    let nth = 0;
+    const first = await startStub();
+    stubs.push(first);
+    const second = await startStub();
+    stubs.push(second);
+    const lifecycle: string[] = [];
+
+    trackBridge(
+      new WsRennetBridge({
+        url: () => {
+          nth += 1;
+          asked.push(nth);
+          return Promise.resolve(nth === 1 ? first.url : second.url);
+        },
+        initialBackoffMs: 10,
+        onLifecycle: (event) => lifecycle.push(event.kind),
+      }),
+    );
+    await waitUntil(() => lifecycle.includes("online"));
+    expect(first.helloCount).toBe(1);
+
+    first.dropConnections();
+    await waitUntil(() => second.helloCount === 1);
+    expect(asked).toEqual([1, 2]);
+  });
+});
+
+/** Poll until `predicate` holds, or fail loudly at the timeout. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitUntil timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
