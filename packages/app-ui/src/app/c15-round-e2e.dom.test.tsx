@@ -28,12 +28,7 @@
 //     report projection is the production `session.rounds` shape, so the live source supplies
 //     the greeting without a fixture-only provider override.
 // ─────────────────────────────────────────────────────────────────────────────
-import type {
-  ComposedHandoffBundle,
-  Review,
-  RoundEvent,
-  RoundLedgerRecord,
-} from "@rennet/protocol";
+import type { CommandOutput, Review, RoundEvent, RoundLedgerRecord } from "@rennet/protocol";
 import { RoundEventSchema, RoundLedgerRecordSchema } from "@rennet/protocol";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -174,14 +169,8 @@ const DURABLE_RECORD: RoundLedgerRecord = RoundLedgerRecordSchema.parse({
   reworkCount: 2,
 } satisfies RoundLedgerRecord);
 
-/** A minimal-but-schema-real `round.dispatch` answer — the command's output shape. The
- *  UI ignores it (dispatch returns void); it exists so the write is a real command
- *  round-trip rather than a swallowed rejection. */
-const dispatchAnswer = (
-  reviewId: string,
-): { workOrder: ComposedHandoffBundle } & {
-  dispatched: boolean;
-} => ({
+/** A minimal-but-schema-real accepted `round.dispatch` answer. */
+const dispatchAnswer = (reviewId: string): CommandOutput<"round.dispatch"> => ({
   workOrder: {
     reviewId,
     patchsetId: "ps-1",
@@ -192,6 +181,16 @@ const dispatchAnswer = (
     traceMap: {},
   },
   dispatched: true,
+  acceptedOperation: {
+    operationId: "operation-c15",
+    revision: 0,
+    createdAt: Date.UTC(2026, 7, 29, 9, 30),
+    roundNumber: 1,
+    sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
+    askCount: 2,
+    gatePlan: { kind: "configured", command: "pnpm check" },
+    state: { phase: "claimed" },
+  },
 });
 
 function LiveScope({ children }: { readonly children: ReactNode }) {
