@@ -141,6 +141,11 @@ account, pinned to the reviewed head commit. The posted state names the pull
 request, the verdict, and the line-comment count, and links to the review on
 GitHub.
 
+If the pull request head changes before the post reaches GitHub, Rennet refuses
+the stale post before sending any review mutation. Choose **Review latest
+revision** to open a new review of the same pull request at its current head. The
+earlier review and its preview remain pinned to the commit you originally read.
+
 ## When the author pushes again
 
 A push, rebase, or force-push produces a successor patchset. It does not touch

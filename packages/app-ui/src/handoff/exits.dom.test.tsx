@@ -24,6 +24,7 @@ import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
+import { isMovedHeadRefusal } from "./exits";
 
 beforeEach(() => useRennetStore.getState().reviewActions.resetReview());
 afterEach(cleanup);
@@ -142,6 +143,18 @@ function mountHandoff(r: Review, handlers: MemoryBridgeHandlers, calls: string[]
 }
 
 describe("hand-off exits (C08 cluster 6)", () => {
+  it.each(["pull-request", "merge-request"])(
+    "recognizes the provider's %s moved-head refusal and no generic failure",
+    (providerNoun) => {
+      expect(
+        isMovedHeadRefusal(
+          new Error(`Publish refused: the ${providerNoun} head moved from old to fresh.`),
+        ),
+      ).toBe(true);
+      expect(isMovedHeadRefusal(new Error("The provider is temporarily unavailable."))).toBe(false);
+    },
+  );
+
   it("Post Review renders and posts the exact aggregate, then receipts", async () => {
     const calls: string[] = [];
     let posted: CommandInput<"publish.review"> | undefined;

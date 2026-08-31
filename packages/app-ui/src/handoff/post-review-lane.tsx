@@ -118,6 +118,8 @@ export interface PostReviewLaneProps {
    * is present but disabled (no egress wired / review not composed yet).
    */
   readonly onPost?: () => Promise<PostReceipt>;
+  /** Capture a fresh immutable review after a moved-head publication refusal. */
+  readonly onRecapture?: () => Promise<void>;
   /** The daemon-owned receipt for this composition, hydrated after remount or restart. */
   readonly receipt?: PostReceipt;
   /**
@@ -144,6 +146,7 @@ export interface PostReviewLaneProps {
 export function PostReviewLane({
   review,
   onPost,
+  onRecapture,
   receipt,
   draft,
   onSetVerdict,
@@ -158,6 +161,7 @@ export function PostReviewLane({
         review={review}
         draft={draft}
         onPost={onPost}
+        onRecapture={onRecapture}
         receipt={receipt}
         onSetVerdict={onSetVerdict}
       />
@@ -511,12 +515,14 @@ function ComposedReviewPreview({
   review,
   draft,
   onPost,
+  onRecapture,
   receipt: hydratedReceipt,
   onSetVerdict,
 }: {
   review: Review;
   draft: ReviewDraft;
   onPost?: () => Promise<PostReceipt>;
+  onRecapture?: () => Promise<void>;
   receipt?: PostReceipt;
   onSetVerdict?: (verdict: ProposedVerdict | null) => void;
 }) {
@@ -686,6 +692,14 @@ function ComposedReviewPreview({
                 : undefined
             }
           />
+          {onRecapture !== undefined && (
+            <HandoffAction
+              label="Review latest revision"
+              pendingLabel="Capturing latest revision…"
+              icon={RotateCcw}
+              onSubmit={onRecapture}
+            />
+          )}
         </div>
       </div>
     </div>
