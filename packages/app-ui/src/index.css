@@ -122,6 +122,14 @@
       animation-duration: 0.01ms !important;
       /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat every inline/animation style */
       animation-iteration-count: 1 !important;
+      /* The DELAY has to go too, and it is the one a duration collapse cannot reach. A
+       * staggered reveal sets its delay INLINE per element (the streamed word, the welcome
+       * tool row, the skeleton row): collapse only the duration and every element still
+       * waits out its full stagger — and the streamed word, which takes its settled opacity
+       * from a `forwards` fill, waits it out at `opacity-0`. Zeroing the delay is what makes
+       * "reduced motion" mean "already settled" instead of "invisible, briefly". */
+      /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat every inline/animation style */
+      animation-delay: 0ms !important;
       /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat every inline/animation style */
       transition-duration: 0.01ms !important;
     }
@@ -168,8 +176,11 @@
    *
    * That same `opacity-0` is why the call site must NOT carry `motion-reduce:animate-none`:
    * with no animation the `forwards` fill never lands and every streamed word stays
-   * invisible. Reduced motion is served by the base rule instead (duration → 0.01ms, the
-   * `forwards` fill retains the `to` frame → opacity 1), which snaps to the settled state. */
+   * invisible. Reduced motion is served by the base rule instead (duration → 0.01ms AND
+   * delay → 0ms, the `forwards` fill retains the `to` frame → opacity 1), which snaps to the
+   * settled state. The delay half is not optional: the stagger is set inline per word, so
+   * without it a collapsed duration still leaves later words at `opacity-0` until their
+   * stagger expires. */
   --animate-word-in: word-in 260ms ease-out forwards;
   /* Deixis focus pulse: when conversation points at code, the row flashes a gold inset
    * once (700ms) and settles. The settled state is "no shadow", so dropping the animation
@@ -360,8 +371,14 @@
 /* Processing orb: the one ambient authored moment while a project digests — a gold light
  * ring spins until done/failed stills it. The ring is a `::before` drawn from a conic
  * gradient behind a radial mask, which no utility expresses and no class can reach, so
- * the pseudo and its state branches stay hand-written here. Its keyframe is theme
- * vocabulary all the same: `--animate-processing-spin` below, referenced by name.
+ * the pseudo and its state branches stay hand-written here. Its keyframe still lives with
+ * the rest of the motion vocabulary in the `@theme` block above — `processing-spin`, named
+ * directly by the `animation:` shorthand below. It has NO `--animate-*` partner on purpose:
+ * a pseudo-element cannot carry a class, so the utility that variable would mint is one
+ * nothing could ever use, and Tailwind would tree-shake the variable away. A keyframe
+ * declared in `@theme` is emitted whether or not a utility references it, so the
+ * hand-written rule below still finds it. (Same reasoning, stated from the other side, at
+ * `--animate-processing-pulse` in the `@theme` block.)
  *
  * The orb's CHILD pulse is a plain animation on a real element, so it is a utility at the
  * call site (`animate-processing-pulse` in project-processing.tsx, applied only while the

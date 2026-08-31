@@ -228,10 +228,12 @@ composes them into Rennet's screens; the hand-rolled component layer they replac
 is retired (2026-08-20 port). Base UI is the one primitive family — Radix is
 allowed only where a shadcn component brings it (`cmdk`). The kit's lucide icons
 render at the same **1.6px identity stroke** as the app-ui `Icon` wrapper, so the
-whole app reads at one line weight. That is enforced, not merely intended: a lint test
-in `packages/app-ui` fails on any lucide icon rendered as JSX instead of passed to
-`Icon`, because mixed 2px and 1.6px glyphs in one row is exactly the drift no
-screenshot review catches.
+whole app reads at one line weight, because mixed 2px and 1.6px glyphs in one row is
+exactly the drift no screenshot review catches. That is enforced in `packages/app-ui`
+only: a lint test there fails on any lucide icon rendered as JSX instead of passed to
+`Icon`. In `packages/ui` the same 1.6px is convention, not enforcement — twenty-odd
+hand-typed `strokeWidth={1.6}` sites across the vendored components, with no test
+watching them, so a re-vendored component arrives at lucide's 2px until someone looks.
 
 The kit is authored in shadcn's semantic Tailwind vocabulary, and
 `packages/theme` aliases that vocabulary onto the `--rn-*` palette above — the alias

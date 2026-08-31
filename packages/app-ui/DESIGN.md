@@ -95,16 +95,25 @@ Every authored animation is a theme value. A keyframe is declared in
 [`src/index.css`](src/index.css)'s `@theme` block next to an `--animate-*` variable,
 which makes it a real `animate-…` utility — so a call site composes it with variants
 (`motion-reduce:animate-none`) and `twMerge` can override it, neither of which works
-against a bare class the stylesheet defines by hand. Reduced motion is honoured twice:
-by the base rule that collapses every animation's duration, and by the variant where a
-call site can safely drop the animation outright. Those are not interchangeable — an
-animation whose settled state comes from a `forwards` fill (the streaming word reveal)
-breaks under `animate-none` and relies on the base rule instead.
+against a bare class the stylesheet defines by hand.
+
+The one exception is a keyframe a **pseudo-element** animates. A pseudo cannot carry a
+class, so the utility an `--animate-*` partner would mint is one nothing could ever use
+and Tailwind tree-shakes the variable away. Such a keyframe still belongs in `@theme` —
+keyframes declared there are emitted whether or not a utility references them — and the
+hand-written rule names it directly. Today that is `processing-spin`, the orb's ring.
+
+Reduced motion is honoured twice: by the base rule that collapses every animation's
+duration **and zeroes its delay**, and by the variant where a call site can safely drop
+the animation outright. Those are not interchangeable — an animation whose settled state
+comes from a `forwards` fill (the streaming word reveal) breaks under `animate-none` and
+relies on the base rule instead. The delay half of that base rule is what makes an
+inline-staggered reveal settle at once rather than fading in on schedule with no motion.
 
 Beyond that the entry stylesheet holds only what utilities cannot express: the base
-document material, browser-owned surfaces (scrollbars, selection, caret, focus), two
+document material, browser-owned surfaces (scrollbars, selection, caret, focus), three
 `@utility` definitions for properties Tailwind has none for
-(`app-region-drag` / `app-region-no-drag`, `chrome-scroll-clearance`), the welcome's
+(`app-region-drag`, `app-region-no-drag`, `chrome-scroll-clearance`), the welcome's
 sub-ramp decorative type, the processing orb's masked conic ring, and the `.rtok-*`
 syntax vocabulary the code markup is generated against.
 

@@ -18,6 +18,7 @@ import { RunRoute } from "../rounds/run-route";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { AppLayout } from "../routes/layout";
+import { DEFAULT_VIEW, VIEW_KINDS } from "../routes/url";
 import { useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
@@ -233,8 +234,10 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
   // session branch losing its claim: the stylesheet inferred the scroller from the
   // `min-h-0 flex-1 overflow-y-auto` trio, so a branch that restyled its layout dropped
   // the clearance silently and read under the chips. Every session view the workspace can
-  // land on is checked here, by view, so a new branch cannot be added without one.
-  for (const view of ["", "?view=diff", "?view=handoff", "?view=rounds"]) {
+  // land on is checked here, by view. The list is DERIVED from `VIEW_KINDS` rather than
+  // hand-typed, so a new branch cannot be added without one: the hand-typed version claimed
+  // "every session view" while omitting `?view=map` — the branch that wave actually added.
+  for (const view of VIEW_KINDS.map((kind) => (kind === DEFAULT_VIEW ? "" : `?view=${kind}`))) {
     it(`marks exactly one primary scroller on the ${view || "board"} view`, async () => {
       const review = {
         id: "cs-1",

@@ -849,7 +849,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
                 )}
                 onClick={() => void chooseScheme(id)}
               >
-                <SchemeIcon />
+                <Icon icon={SchemeIcon} />
                 {label}
               </button>
             ))}
@@ -1472,7 +1472,7 @@ function ReadyStage({
               index < 2 && "border-r border-line max-md:border-r-0 max-md:border-b",
             )}
           >
-            <RowIcon className="size-[22px] shrink-0 text-accent" />
+            <Icon icon={RowIcon} className="size-[22px] shrink-0 text-accent" />
             <span className="grid gap-1 text-left">
               <small className="text-2xs tracking-[0.08em] text-ink-faint uppercase">{label}</small>
               <strong>{value}</strong>

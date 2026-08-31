@@ -28,6 +28,25 @@ describe("the app stylesheet scans the vendored @rennet/ui kit", () => {
   it("scans the whole app-ui source tree, not a single named file", () => {
     expect(css).toMatch(/@source\s+"\.\/"/);
   });
+
+  // The reduced-motion base rule must zero the DELAY, not only the duration. Three surfaces
+  // stagger a reveal with an inline `animationDelay` (the streamed word, the welcome tool
+  // row, the skeleton row); collapsing only the duration leaves each element waiting out its
+  // full stagger, and the streamed word waits it out at `opacity-0` because its settled
+  // opacity comes from a `forwards` fill.
+  //
+  // WHAT THIS CANNOT CATCH, stated rather than implied: it reads the source text, so it
+  // proves the declaration is present and inside the `prefers-reduced-motion` block — not
+  // that a browser reduces anything. happy-dom runs no animations and applies no cascade, so
+  // the behaviour itself is unproven by any automated test in this repo. Deleting the
+  // declaration reddens this; weakening it to a selector that never matches would not.
+  it("zeroes animation-delay inside the reduced-motion block, not merely somewhere", () => {
+    const block = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n {2}\}/.exec(css);
+    if (block?.[1] === undefined) throw new Error("no prefers-reduced-motion block in index.css");
+    expect(block[1]).toMatch(/animation-delay:\s*0m?s\s*!important/);
+    // …and the duration collapse it sits beside is still there — the pair is the rule.
+    expect(block[1]).toMatch(/animation-duration:\s*0\.01ms\s*!important/);
+  });
 });
 
 // Two component-source contracts used to live here and no longer do, because the

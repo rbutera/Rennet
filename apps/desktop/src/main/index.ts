@@ -210,7 +210,7 @@ async function createWindow(wsPort: number): Promise<void> {
     // "darwin"` (the preload's `process.platform`). That reserve is the corner slot's
     // own geometry now — `packages/app-ui/src/shell/corner-slot.tsx`, which moves
     // between the sidebar header, the chat header and a floating pill as panes
-    // collapse, and carries the `navigation-titlebar` drag rule wherever it lands.
+    // collapse, and carries the `app-region-drag` utility wherever it lands.
     // No `trafficLightPosition` override: the default inset is what the corner slot's
     // 76px reserve and 40px strip were sized against (#557). NOT verified against a real
     // window — C20's E2E geometry check has never run (#569), so the clearance is

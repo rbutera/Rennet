@@ -72,10 +72,12 @@ test("the corner slot owns the window's top-left in every state, clear of the li
     // ── State 1: sidebar expanded. The sidebar header IS the corner slot. ──
     expect(await slotOwners(page)).toEqual(["sidebar"]);
     const sidebarSlot = '[data-slot="corner-slot"][data-owner="sidebar"]';
-    // The strip is the drag region: `navigation-titlebar` sets -webkit-app-region:
-    // drag on it, and its buttons opt back out. That pair IS what makes the corner
-    // draggable while the toggle stays clickable.
-    await expect(page.locator(sidebarSlot)).toHaveClass(/navigation-titlebar/);
+    // The strip is the drag region: the slot carries `app-region-drag`
+    // (`-webkit-app-region: drag`) and every interactive thing inside it carries
+    // `app-region-no-drag` by name — an opt-out stated per element, not inferred from
+    // a tag list. That pair IS what makes the corner draggable while the toggle stays
+    // clickable, and the computed-style reads below are what prove it took effect.
+    await expect(page.locator(sidebarSlot)).toHaveClass(/app-region-drag/);
     // `-webkit-app-region` is not in lib.dom's CSSStyleDeclaration, so read it by name.
     const appRegion = (selector: string) =>
       page.$eval(selector, (n) =>
@@ -97,7 +99,7 @@ test("the corner slot owns the window's top-left in every state, clear of the li
       const chatSlot = '[data-slot="corner-slot"][data-owner="chat"]';
       await expect(page.locator(chatSlot)).toBeVisible();
       expect(await slotOwners(page)).toEqual(["chat"]);
-      await expect(page.locator(chatSlot)).toHaveClass(/navigation-titlebar/);
+      await expect(page.locator(chatSlot)).toHaveClass(/app-region-drag/);
       await expectClearsLights(page, chatSlot);
       await page.screenshot({ path: "test-results/c20-state-2-chat.png" });
       // Back to state 1 so the state-3 walk below starts from a known place.
@@ -110,7 +112,7 @@ test("the corner slot owns the window's top-left in every state, clear of the li
     await expect(page.locator('[data-slot="corner-slot"][data-owner="floating"]')).toBeVisible();
     expect(await slotOwners(page)).toEqual(["floating"]);
     const floatingSlot = '[data-slot="corner-slot"][data-owner="floating"]';
-    await expect(page.locator(floatingSlot)).toHaveClass(/navigation-titlebar/);
+    await expect(page.locator(floatingSlot)).toHaveClass(/app-region-drag/);
     await expectClearsLights(page, floatingSlot);
     // Whatever chips the state-3 layer renders beside the pill must clear the lights
     // too — the pill is not allowed to be the only thing that dodges them.
