@@ -280,6 +280,13 @@ async function createWindow(): Promise<void> {
 // `ensureDaemon` per invoke costs nothing extra: it single-flights per dataDir, so concurrent
 // asks still fold onto one probe-and-spawn, a healthy daemon short-circuits on the probe, and a
 // failed generation self-heals because the next ask re-probes instead of replaying the failure.
+//
+// Cleared while a teardown is in flight (tray Quit completely, update apply), and that is the
+// whole point of it being a mutable dataDir: the renderer's bridge reconnects every 500ms and
+// asks per attempt, so a handler that kept ensuring would spawn a FRESH detached daemon out of
+// the reconnect the SIGTERM itself provoked — holding the bundle open exactly when
+// `quitAndInstall()` needs it released. Undefined, the handler answers its existing rejection,
+// the bridge classifies offline and keeps retrying, which is right for an app on its way out.
 let daemonDataDir: string | undefined;
 
 /** Hand the renderer the ensured daemon port. No sender check: this returns the same loopback
@@ -340,6 +347,8 @@ const isPrimaryInstance = acquireSingleInstance({
 
 /** Tray "Quit completely": stop the OWNED daemon (graceful), then exit. No prompt (spec). */
 async function quitCompletely(dataDir: string): Promise<void> {
+  // Before the stop, not after: the renderer reconnects while the SIGTERM lands.
+  daemonDataDir = undefined;
   await stopOwnedDaemon(dataDir);
   app.quit();
 }
@@ -433,12 +442,20 @@ app.whenReady().then(async () => {
     .then((eligible) => {
       if (!eligible) return;
       update = startAutoUpdateOnce(isTrustedAppUrl, console, {
-        prepareToApply: () => prepareOwnedDaemonForUpdate(dataDir),
+        prepareToApply: () => {
+          // Same reason as quitCompletely, and here it is the requirement auto-update.ts states
+          // outright: the installer cannot replace a bundle a daemon is still running from.
+          daemonDataDir = undefined;
+          return prepareOwnedDaemonForUpdate(dataDir);
+        },
         armRelaunchAfterApply:
           process.platform === "darwin"
             ? () => armMacUpdateRelaunch(resolve(process.execPath, "../../.."), app.getVersion())
             : undefined,
         recoverAfterApplyFailure: async () => {
+          // The apply did not happen, so the app is staying: put the data dir back BEFORE the
+          // ensure, so `rennet:ws-port` answers again and `ensureWindowShared` may recreate.
+          daemonDataDir = dataDir;
           await ensureDaemon(dataDir);
           for (const window of BrowserWindow.getAllWindows()) {
             if (!window.isDestroyed()) window.destroy();

@@ -29,7 +29,11 @@ const harness = vi.hoisted(() => ({
   /** dataDir → in-flight ensure, so the fake folds concurrent asks like the real supervisor. */
   ensureInFlight: new Map<string, Promise<number>>(),
   autoUpdateEligible: false,
-  autoUpdateOptions: null as { recoverAfterApplyFailure: () => Promise<void> } | null,
+  autoUpdateOptions: null as {
+    prepareToApply: () => Promise<void>;
+    recoverAfterApplyFailure: () => Promise<void>;
+  } | null,
+  trayOptions: null as { quitCompletely: () => void } | null,
 }));
 
 vi.mock("electron-squirrel-startup", () => ({ default: false }));
@@ -144,8 +148,9 @@ vi.mock("./daemon-supervisor", () => ({
 vi.mock("./auto-update", () => ({
   isAutoUpdateEligible: async () => harness.autoUpdateEligible,
   startAutoUpdateOnce: (_trust: unknown, _log: unknown, options: unknown) => {
-    // Captured so a test can drive the apply-failure recovery, which re-ensures the daemon.
-    harness.autoUpdateOptions = options as { recoverAfterApplyFailure: () => Promise<void> };
+    // Captured so a test can drive the update apply and its failure recovery, both of which
+    // move `daemonDataDir` under the ws-port handler.
+    harness.autoUpdateOptions = options as NonNullable<typeof harness.autoUpdateOptions>;
     return { readiness: { ready: false, subscribe: () => undefined } };
   },
   armMacUpdateRelaunch: () => undefined,
@@ -154,11 +159,15 @@ vi.mock("./auto-update", () => ({
 vi.mock("./tray", () => ({
   acquireSingleInstance: () => true,
   createDockCoordinator: () => ({ show: () => undefined, requestHide: () => undefined }),
-  createTray: () => ({
-    setUpdateReady: () => undefined,
-    refreshOwnership: () => undefined,
-    destroy: () => undefined,
-  }),
+  createTray: (options: unknown) => {
+    // Captured so a test can drive tray "Quit completely", which stops the owned daemon.
+    harness.trayOptions = options as NonNullable<typeof harness.trayOptions>;
+    return {
+      setUpdateReady: () => undefined,
+      refreshOwnership: () => undefined,
+      destroy: () => undefined,
+    };
+  },
   ensureWindow: async () => undefined,
   residencyOnAllWindowsClosed: () => undefined,
 }));
@@ -193,6 +202,7 @@ beforeEach(() => {
   harness.ensureInFlight.clear();
   harness.autoUpdateEligible = false;
   harness.autoUpdateOptions = null;
+  harness.trayOptions = null;
   harness.quits = 0;
   savedUserData = process.env.RENNET_USER_DATA;
   delete process.env.RENNET_USER_DATA;
@@ -304,5 +314,70 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
     expect(await asked).toBe(51_002);
     // Boot, the recovery, and the ask: three ensures, and the ask started the third.
     expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR, DATA_DIR]);
+
+    // Per INVOKE, not memoised on the first SUCCESS either. A handler that cached 51_002 would
+    // pass everything above; it would still hand the renderer a dead port after a skew restart
+    // respawned the daemon on a new one. So the fake answers differently now, and the next ask
+    // must reflect that — a fourth ensure, not a fourth replay of the third's port.
+    const later = Promise.resolve(handler?.());
+    await settle();
+    harness.ensure.resolve(51_003);
+    expect(await later).toBe(51_003);
+    expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR, DATA_DIR, DATA_DIR]);
+  });
+
+  it("does not respawn the daemon when a reconnecting renderer asks mid-update-apply", async () => {
+    // The renderer's bridge reconnects every ~500ms and asks `rennet:ws-port` per attempt. The
+    // update apply SIGTERMs the owned daemon precisely so the installer can replace the bundle
+    // it runs from (auto-update.ts states the requirement) — and the ask arriving out of that
+    // very disconnect used to ensure again, spawning a fresh DETACHED daemon back onto the
+    // bundle. The ask must be refused for as long as the teardown is in flight.
+    harness.autoUpdateEligible = true;
+    await boot();
+    harness.ensure.resolve(51_000);
+    await settle();
+    expect(harness.ensureCalls).toEqual([DATA_DIR]);
+
+    await harness.autoUpdateOptions?.prepareToApply();
+    const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
+    // Asserted BEFORE the ask is awaited, and it is the load-bearing one: a handler that
+    // ensured here would leave the ask PENDING (the fake resolves nothing), so awaiting first
+    // would fail this test on a timeout instead of on the spawn that is the actual defect.
+    const refused = Promise.resolve(handler?.()).catch((error: Error) => error.message);
+    await settle();
+    expect(harness.ensureCalls).toEqual([DATA_DIR]);
+    expect(await refused).toContain("the daemon has not been started");
+
+    // …and the refusal lasts only as long as the teardown. The apply failed, so the app stays:
+    // recovery puts the data dir back and the renderer's next ask ensures again.
+    const recovery = harness.autoUpdateOptions?.recoverAfterApplyFailure();
+    await settle();
+    harness.ensure.resolve(51_004);
+    await recovery;
+    expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR]);
+
+    const asked = Promise.resolve(handler?.());
+    await settle();
+    harness.ensure.resolve(51_005);
+    expect(await asked).toBe(51_005);
+    expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR, DATA_DIR]);
+  });
+
+  it("does not respawn the daemon when a reconnecting renderer asks mid-quit", async () => {
+    // Same shape as the update apply, different exit: tray "Quit completely" stops the owned
+    // daemon and then exits, and the renderer reconnects across that stop.
+    await boot();
+    harness.ensure.resolve(51_000);
+    await settle();
+
+    harness.trayOptions?.quitCompletely();
+    await settle();
+
+    const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
+    const refused = Promise.resolve(handler?.()).catch((error: Error) => error.message);
+    await settle();
+    expect(harness.ensureCalls).toEqual([DATA_DIR]);
+    expect(await refused).toContain("the daemon has not been started");
+    expect(harness.quits).toBe(1);
   });
 });

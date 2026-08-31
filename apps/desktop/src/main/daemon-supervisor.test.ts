@@ -1015,6 +1015,70 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
     expect(order).toEqual(["ensure-probe-1", "spawn-1", "stop-probe", "ensure-probe-2", "spawn-2"]);
   });
 
+  it("leaves the in-flight entry to the ensure that refused to fold, so a third caller still folds", async () => {
+    // The other half of the no-fold-across-a-stop rule: once B refuses to fold, B OWNS the
+    // in-flight entry. A's `finally` must clear the map only while the entry is still A's.
+    // Clearing it unconditionally strands B — a third caller arriving while B is mid-probe
+    // reads an empty map and queues a THIRD probe-and-spawn behind it, which is the very
+    // double-spawn single-flighting exists to stop.
+    const dataDir = makeDir();
+    const first: DaemonInfo = info(794, 46_900);
+    const second: DaemonInfo = info(795, 47_100);
+    const ops = new Map<string, Promise<unknown>>();
+    const inFlight = new Map<string, Promise<number>>();
+    const probeGateA = gate();
+    const probeGateB = gate();
+    let probes = 0;
+    let spawns = 0;
+    const ensureDeps = {
+      ops,
+      inFlight,
+      probe: async (): Promise<DaemonVerdict> => {
+        probes += 1;
+        // A parks so the stop and B both arrive behind it; B parks so it is still IN FLIGHT
+        // when the third caller asks — the only window in which folding is even possible.
+        if (probes === 1) await probeGateA.wait;
+        if (probes === 2) await probeGateB.wait;
+        return { kind: "absent" };
+      },
+      spawn: () => {
+        spawns += 1;
+      },
+      waitForHealthy: async () => healthyVerdict(spawns === 1 ? first : second),
+      kill: vi.fn(),
+      readClaim: () => null,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    };
+
+    const ensuringA = ensureDaemon(dataDir, ensureDeps);
+    const stopping = stopOwnedDaemon(dataDir, {
+      ops,
+      probe: async () => ({ kind: "absent" }),
+      sleep: immediateSleep,
+      warn: vi.fn(),
+    });
+    const ensuringB = ensureDaemon(dataDir, ensureDeps);
+
+    probeGateA.open();
+    // Awaiting A's returned promise runs its `finally` — the statement under test — before the
+    // third caller below ever asks.
+    expect(await ensuringA).toBe(first.wsPort);
+    expect(await stopping).toEqual({ kind: "stopped" });
+
+    const ensuringC = ensureDaemon(dataDir, ensureDeps);
+    probeGateB.open();
+    expect(await ensuringB).toBe(second.wsPort);
+    expect(await ensuringC).toBe(second.wsPort);
+    // The load-bearing pair: C joined B rather than starting a generation of its own.
+    expect(probes).toBe(2);
+    expect(spawns).toBe(2);
+    expect(inFlight.has(dataDir)).toBe(false); // …and B cleared its own entry on the way out.
+  });
+
   it("keeps a queued stop out of a skew restart's kill→respawn window", async () => {
     // A skew restart is a kill, a bounded wait for the dead daemon's claim to clear, then a
     // spawn — the one ensure path that signals a process itself. A stop probing inside that

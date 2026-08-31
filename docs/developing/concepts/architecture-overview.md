@@ -77,7 +77,11 @@ the app shows its ordinary pre-connection state. A daemon that never starts name
 its cause and `daemon.log`, then the app quits. Every ask ensures afresh, so an
 ask that follows a failed start re-probes instead of replaying that failure, and
 the window recreated after update-apply recovery dials whichever daemon is
-current.
+current. One exception: while a teardown is in flight — the tray's complete quit,
+or the update handoff — the channel refuses the ask instead of ensuring, so the
+renderer's reconnect cannot put a fresh daemon back on the bundle the installer
+is about to replace. A failed apply restores the data directory, and the next ask
+ensures again.
 
 Starts and stops for one data directory are serialized. Concurrent ensures fold
 into a single probe and spawn, and a stop — the tray's complete quit, or the
