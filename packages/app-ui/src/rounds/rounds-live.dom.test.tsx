@@ -859,6 +859,7 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
       await Promise.resolve();
     });
     await waitFor(() => expect(settled).toBe(1));
+    act(() => history.navigate(`/s/${OTHER_SESSION}?view=handoff`));
     expect(r.getByText("second:absent")).toBeTruthy();
 
     act(() => history.navigate(`/s/${SESSION}/run`));
