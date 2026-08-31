@@ -202,6 +202,23 @@ describe("KnowledgeJournal", () => {
     expect(journal.read(TARGET, SLICE)).not.toBeNull();
   });
 
+  it("does not reuse a bare fallback id after its exact membership grows", () => {
+    const journal = new KnowledgeJournal(scratchDir());
+    const original: PartitionSlice = {
+      id: "dir:docs",
+      files: [{ path: "src/a.ts", blobOid: "blob-a" }],
+      neighbors: [],
+    };
+    const enlarged: PartitionSlice = {
+      ...original,
+      files: [...original.files, { path: "src/b.ts", blobOid: "blob-b" }],
+    };
+    journal.write(TARGET, original, result([statement()]));
+
+    expect(journal.read(TARGET, enlarged)).toBeNull();
+    expect(journal.read(TARGET, original)).not.toBeNull();
+  });
+
   // ── Concurrency: one directory per target ─────────────────────────────────
 
   it("clears only its OWN target, leaving a concurrent run's journal intact", () => {

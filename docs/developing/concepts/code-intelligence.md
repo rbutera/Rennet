@@ -163,15 +163,15 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
 2. **The directory fallback.** Files with no import edge — documentation, config,
    assets, an unreferenced leaf — keep the original scope-and-subtree partitioner,
    and its slices are then *coalesced*: adjacent slices within one workspace scope
-   (or one top-level directory, for unscoped files) merge up to 25 files each. The
+   (or one top-level directory, for unscoped files) merge up to 75 files each. The
    partitioner alone left a long tail of two- and three-file slices, and every one
    of them cost a worker turn. Merging is adjacent-only, so a directory is never
    split across two slices to fill a quota, and a slice already over the cap passes
    through as it is.
    The whole eligible inventory takes this tier when the import or symbol shards
    cannot be read: worse partitions, never a refusal to map. That degraded path is
-   *not* coalesced — there the fallback already runs at a 120-file cap, and merging
-   to 25 would multiply the slice count rather than cut it.
+   *not* coalesced — there the fallback already covers the different, whole-tree
+   failure-mode population at a 120-file cap.
 
 ### Measured on Rennet itself
 
@@ -193,7 +193,7 @@ takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
 #### The five-minute bar is not proved yet
 
-111 slices is 111 worker turns. The first clean 16-lane run at `4954bdd7`
+The first clean 16-lane run at `4954bdd7` still used 111 worker turns and
 disproved the earlier 34.7–37 second sample as a whole-run predictor. At 315.485
 seconds, 88 workers had started, 72 had completed, none had failed, and the verify
 seat had not begun. All 16 lanes started before the first terminal event and the
@@ -215,13 +215,20 @@ each worker's first eight statements would still leave 439 residue entries and
 three verify chunks in this partial run. Hints are common and deliberately join
 the residue, so the older 24% stand-in density is not a safe timing assumption.
 
-The next exact-head proof tests a narrower worker contract: each partition worker
-ranks and emits at most eight high-signal anchored hypotheses. The shared stored
-knowledge schema and the verify seat's cross-cutting output remain uncapped. The
-prompt/schema change uses generator `knowledge-swarm@3`, so no `@2` stored set or
-journal answer can satisfy it. The fit projects about 37.5 seconds per completed
-worker and roughly 278 seconds through the deterministic front half and worker
-phase; verification still has to fit after that, so this is deliberately a proof
+The next exact-head proof combines two measured changes. Each partition worker
+ranks and emits at most eight high-signal anchored hypotheses. Separately, the
+normal edge-less tail now coalesces up to 75 files within one scope or top-level
+directory. Replaying the exact snapshot preserves all 2,394 eligible files once
+and changes 54 fallback slices to 39, for **96 total turns**: six full 16-lane
+waves instead of seven. A cap of 120 produced the same six waves while joining
+more unrelated routing families, so it was rejected.
+
+The shared stored knowledge schema and the verify seat's cross-cutting output
+remain uncapped. The prompt/schema change uses generator `knowledge-swarm@3`, so
+no `@2` stored set or journal answer can satisfy it; regrouped slice membership
+also changes the journal key. The worker fit projects about 37.5 seconds per turn
+and roughly 244 seconds through the observed deterministic front half and worker
+phase, leaving about 56 seconds for verification. That is deliberately a proof
 hypothesis rather than a five-minute claim.
 
 The launched evidence now says:
@@ -241,10 +248,11 @@ The launched evidence now says:
   most correlated with measured duration. Its proof must report worker timing,
   statement yield, merge residue, verify timing, and whole-pass wall clock; a
   faster but materially empty map does not pass.
-- **Fewer turns.** The scoping seat (deciding that an edge-less file does not
-  deserve a turn at all) is unbuilt.
+- **Fewer turns.** The 75-file fallback coalesce removes one measured worker wave
+  without omitting a file. The scoping seat (deciding that an edge-less file does
+  not deserve a turn at all) remains unbuilt.
 
-So the honest statement of this design's cost is **111 turns, with no successful
+So the honest statement of this design's cost is **96 turns, with no successful
 five-minute whole-pass measurement yet**. The 24-lane control proved the memory
 ceiling and the uncapped 16-lane run proved the earlier timing sample optimistic.
 Only a complete guarded run can close the bar.
@@ -267,7 +275,8 @@ hierarchical id of its first constituent, plus `#<hash>` over the merged
 membership. Keeping the hierarchical half means the fallback tier's routing family
 is unchanged by coalescing — a delta reaches a merged slice by the same directory
 prefix it used before. A fallback slice that merged with nothing keeps its bare
-hierarchical id and no hash.
+hierarchical id and no hash. Every constituent family is retained explicitly, so
+a deletion under a non-head directory still routes the merged successor.
 
 ### The neighbor map
 

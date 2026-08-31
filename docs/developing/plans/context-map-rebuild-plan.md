@@ -237,16 +237,15 @@ above lands near twenty minutes, roughly four times the bar. Batching itself is
 turns. W3 owns the reduction: coalescing the fallback tail, and letting the
 scoping seat decide which of those 1,089 files deserve a turn at all.
 
-**W3 measured the coalesce, and the bar is still not met.** Adjacent fallback
-slices now merge within one scope (or one top-level directory) up to 25 files: the
-tail went 149 → **54** slices and the whole run went 201 → **105** slices (51
-module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
-113 ms; the clean build is ~30 s.
+**W3 measured the first coalesce, and the bar was still not met.** That version
+merged adjacent fallback slices within one scope (or one top-level directory) up
+to 25 files: the tail went 149 → **54** slices and the whole run went 201 →
+**105** slices (51 module batches over 1,154 files, 54 fallback slices over
+1,095). Batching was 113 ms; the clean build was ~30 s.
 
 The W3 snapshot produced 105 turns; the launched cap proof at commit `4954bdd7`
 queued 111 after the repository grew. The scoping seat that would decide an
-edge-less file does not deserve a turn is still unbuilt (Stage 1 point 4), so the
-run still owns all 111 turns.
+edge-less file does not deserve a turn is still unbuilt (Stage 1 point 4).
 
 The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
 inherited and eagerly started the user's full ambient MCP table, including
@@ -278,15 +277,20 @@ Taking only the first eight statements from each preserved worker still yielded
 and join the residue by contract, so the old 24% stand-in density materially
 understates the live verify workload.
 
-The next proof therefore scopes only the partition-worker envelope to at most
-eight high-signal statements. The stored knowledge contract and verify seat stay
-uncapped, and `knowledge-swarm@3` invalidates every earlier journal answer. The
-measured fit projects roughly 278 seconds through the deterministic front half
-and worker phase, leaving verification too little credible time on its own. This
-is not a claim that the bar is met: a separate turn-count reduction is still
-needed. The guarded run must then complete in five minutes and report statement
-yield and merge residue as well as time, RSS, swap, and pageouts. A faster but
-materially empty map does not count.
+The next proof combines the worker envelope's eight-high-signal-statement ceiling
+with a 75-file normal-fallback coalesce. On the exact snapshot, the latter keeps
+all 2,394 eligible files exactly once and changes 54 fallback slices to 39, for
+96 total turns and six 16-lane waves. Caps 90 and 120 stay at six waves while
+joining more unrelated routing families; 75 keeps more hypothesis capacity for
+the same wave count. The stored knowledge contract and verify seat stay uncapped,
+and `knowledge-swarm@3` invalidates every earlier prompt/schema answer. Regrouped
+slice membership changes its own journal keys without another generator bump.
+
+The measured fit projects roughly 244 seconds through the observed deterministic
+front half and worker phase, leaving about 56 seconds for verification. This is
+not a claim that the bar is met. The guarded run must complete in five minutes and
+report statement yield and merge residue as well as time, RSS, swap, and pageouts.
+A faster but materially empty map does not count.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

@@ -409,7 +409,7 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
       out,
       input.flatMap((slice) => slice.files),
     );
-    // `packages/a`'s two slices merged (4 ≤ 25); `packages/b` and the unscoped
+    // `packages/a`'s two slices merged (4 ≤ the cap); `packages/b` and the unscoped
     // `docs/` tree each stayed on their own, because a bucket is never crossed.
     expect(out).toHaveLength(3);
     const merged = out.find((slice) => slice.files.length === 4);
@@ -446,7 +446,7 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
     // The shape the measurement found on Rennet: a long tail of ~2-file slices.
     const input = fallbackOf(
       Array.from(
-        { length: 30 },
+        { length: 76 },
         (_, i) =>
           [
             `@x/a/d${String(i).padStart(2, "0")}`,
@@ -455,8 +455,9 @@ describe("coalesceFallbackSlices — the edge-less tail costs fewer turns", () =
       ),
     );
     const out = coalesceFallbackSlices(input, scopes);
-    expect(input).toHaveLength(30);
-    expect(out).toHaveLength(2); // ceil(30 / 25)
+    expect(FALLBACK_COALESCE_CAP).toBe(75);
+    expect(input).toHaveLength(76);
+    expect(out.map((slice) => slice.files.length)).toEqual([75, 1]);
     assertTotalCoverage(
       out,
       input.flatMap((slice) => slice.files),

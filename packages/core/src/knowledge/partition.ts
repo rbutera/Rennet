@@ -61,17 +61,18 @@ export const POOLED_BATCH_CAP = 25;
 /**
  * The cap a COALESCED fallback slice aims for ({@link coalesceFallbackSlices}).
  *
- * The measurement that put it here: on Rennet, the directory fallback held 1,089
- * edge-less files in 149 slices — a mean of 7.3 — and every one of those slices
- * costs a worker turn. Two thirds of the run's turns were spent on slices the size
- * of a small directory. Coalescing to ~25 buys back most of that.
+ * The first measured coalesce used 25. On Rennet's later 111-slice proof snapshot,
+ * 75 is the smallest legible cap that removes a whole 16-lane wave: 54 fallback
+ * slices become 39 and 111 total turns become 96, with exact file coverage. Caps
+ * 90 and 120 remain six waves while joining more unrelated routing families and
+ * reducing the aggregate worker-hypothesis ceiling, so they buy no useful latency.
  *
- * Same number as {@link POOLED_BATCH_CAP} and for the same reason (a batch of
- * loosely related files reads worse than a module, so it is held below
- * {@link MAX_BATCH_SIZE}), but a separate constant: these are different populations
- * and either may move without the other.
+ * This stays distinct from both {@link POOLED_BATCH_CAP} and
+ * {@link DEFAULT_PARTITION_CAP}. A fallback batch is less coherent than an import
+ * community, while the 120-file degradation path covers a different population
+ * when no import graph can be read.
  */
-export const FALLBACK_COALESCE_CAP = 25;
+export const FALLBACK_COALESCE_CAP = 75;
 
 /** The most cross-batch neighbours recorded for one file. */
 export const NEIGHBOR_CAP = 50;
@@ -419,8 +420,9 @@ function mergeFallbackRun(run: readonly PartitionSlice[]): PartitionSlice {
  * than acquiring a hash for a merge that never happened.
  *
  * NOT applied on {@link partitionsFromSnapshot}'s degradation path: there the
- * fallback holds the WHOLE eligible inventory at a 120-file cap, and coalescing to
- * 25 would multiply the slice count rather than cut it.
+ * fallback holds the WHOLE eligible inventory at a 120-file cap. The measured
+ * 75-file policy is for the isolated tail left after module batching, not for that
+ * different failure-mode population.
  */
 export function coalesceFallbackSlices(
   slices: readonly PartitionSlice[],
