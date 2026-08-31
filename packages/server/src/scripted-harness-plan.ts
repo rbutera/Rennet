@@ -13,6 +13,10 @@ import {
 } from "@rennet/core";
 import { z } from "zod";
 
+const PATCHSET_PLAN_VALUE = `\${patchsetId}`;
+const CANDIDATE_PLAN_VALUE = `\${candidateId}`;
+const ASK_PLAN_VALUE = `\${askId}`;
+
 const relativeRepoPath = z
   .string()
   .min(1)
@@ -23,7 +27,7 @@ const relativeRepoPath = z
 
 const match = {
   id: z.string().min(1),
-  promptIncludes: z.string().min(1),
+  promptIncludes: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
   promptExcludes: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
 };
 
@@ -192,14 +196,39 @@ function findCandidateId(value: unknown): string | undefined {
   return undefined;
 }
 
+function findDispatchedAskId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if ("dispatchedAsks" in value && Array.isArray(value.dispatchedAsks)) {
+    const first = value.dispatchedAsks[0];
+    if (
+      typeof first === "object" &&
+      first !== null &&
+      "id" in first &&
+      typeof first.id === "string"
+    ) {
+      return first.id;
+    }
+  }
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findDispatchedAskId(nested);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function substitutePlanValues(
   value: unknown,
-  values: { readonly patchsetId: string; readonly candidateId?: string },
+  values: {
+    readonly patchsetId: string;
+    readonly candidateId?: string;
+    readonly askId?: string;
+  },
 ): unknown {
   if (typeof value === "string") {
     return value
-      .replaceAll("${patchsetId}", values.patchsetId)
-      .replaceAll("${candidateId}", values.candidateId ?? "${candidateId}");
+      .replaceAll(PATCHSET_PLAN_VALUE, values.patchsetId)
+      .replaceAll(CANDIDATE_PLAN_VALUE, values.candidateId ?? CANDIDATE_PLAN_VALUE)
+      .replaceAll(ASK_PLAN_VALUE, values.askId ?? ASK_PLAN_VALUE);
   }
   if (Array.isArray(value)) return value.map((item) => substitutePlanValues(item, values));
   if (typeof value !== "object" || value === null) return value;
@@ -346,9 +375,11 @@ function completedOutcome(
       recovered: false,
     };
   }
-  const needsPatchset = containsPlanValue(step.output, "${patchsetId}");
-  const needsCandidate = containsPlanValue(step.output, "${candidateId}");
-  const context = needsPatchset || needsCandidate ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
+  const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
+  const needsCandidate = containsPlanValue(step.output, CANDIDATE_PLAN_VALUE);
+  const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
+  const context =
+    needsPatchset || needsCandidate || needsAsk ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
   const patchsetId = context === undefined ? "" : findPatchsetId(context);
   if (needsPatchset && patchsetId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current patchset id`);
@@ -357,6 +388,10 @@ function completedOutcome(
   if (needsCandidate && candidateId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current candidate id`);
   }
+  const askId = context === undefined ? undefined : findDispatchedAskId(context);
+  if (needsAsk && askId === undefined) {
+    throw new Error(`scripted harness step ${step.id} could not resolve the dispatched ask id`);
+  }
   return {
     outcome: {
       status: "completed",
@@ -364,6 +399,7 @@ function completedOutcome(
       structuredOutput: substitutePlanValues(step.output, {
         patchsetId: patchsetId ?? "",
         ...(candidateId === undefined ? {} : { candidateId }),
+        ...(askId === undefined ? {} : { askId }),
       }),
     },
     recovered: false,
@@ -410,12 +446,8 @@ class ScriptedHarnessSession implements HarnessSession {
   async send(input: TurnInput): Promise<TurnId> {
     if (this.#sent) throw new Error("scripted harness sessions accept exactly one turn");
     this.#sent = true;
-    try {
-      this.#resolveOutcome(this.run(input.prompt));
-      return this.#turnId;
-    } catch (error) {
-      throw error;
-    }
+    this.#resolveOutcome(this.run(input.prompt));
+    return this.#turnId;
   }
 
   interrupt(): Promise<void> {
@@ -451,6 +483,8 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
     createSession: async (spec) =>
       new ScriptedHarnessSession((prompt) => {
         const matching = plan.steps.filter((step) => {
+          const inclusions =
+            typeof step.promptIncludes === "string" ? [step.promptIncludes] : step.promptIncludes;
           const exclusions =
             step.promptExcludes === undefined
               ? []
@@ -458,7 +492,7 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
                 ? [step.promptExcludes]
                 : step.promptExcludes;
           return (
-            prompt.includes(step.promptIncludes) &&
+            inclusions.every((included) => prompt.includes(included)) &&
             exclusions.every((excluded) => !prompt.includes(excluded)) &&
             (spec.outputSchema === undefined ? step.kind === "edit" : step.kind !== "edit")
           );
@@ -493,7 +527,10 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
         return {
           ...completed.outcome,
           ...(completed.outcome.status === "completed"
-            ? { harnessSessionId: `${plan.lane}:${step.id}` }
+            ? {
+                harnessSessionId: `${plan.lane}:${step.id}`,
+                lastAssistantMessageAnchor: step.id,
+              }
             : {}),
         };
       }),

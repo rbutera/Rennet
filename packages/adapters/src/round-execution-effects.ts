@@ -9,6 +9,8 @@ import {
   toDistroPath,
 } from "@rennet/core";
 import type {
+  BranchRefRoundSourceLandingAttempt,
+  BranchRefRoundSourceLandingReceipt,
   RoundTermination,
   RoundWorkspaceAttempt,
   RoundWorkspaceReceipt,
@@ -112,6 +114,14 @@ export class RoundLandingConflictError extends Error {
 
   constructor(readonly detail: string) {
     super(`Round changes do not apply cleanly to the source checkout: ${detail}`);
+  }
+}
+
+export class RoundBranchLandingConflictError extends Error {
+  override readonly name = "RoundBranchLandingConflictError";
+
+  constructor(readonly detail: string) {
+    super(`Round selected-branch landing conflicts: ${detail}`);
   }
 }
 
@@ -415,6 +425,11 @@ export async function createOrAdoptRoundSourceCommit(input: {
     }
   }
 
+  const parentTree = await resolveTree(input.git, input.repoRoot, `${parentHead}^{tree}`);
+  if (existingObject === null && parentTree === treeOid) {
+    return { ref, commit: parentHead, treeOid, parentHead, created: false };
+  }
+
   const commit = (
     await input.git(input.repoRoot, [
       "commit-tree",
@@ -427,6 +442,134 @@ export async function createOrAdoptRoundSourceCommit(input: {
   ).trim();
   await input.git(input.repoRoot, ["update-ref", ref, commit, existingObject ?? ZERO_OID]);
   return { ref, commit, treeOid, parentHead, created: true };
+}
+
+function selectedBranchRef(branch: string): string {
+  return `refs/heads/${branch}`;
+}
+
+async function checkedOutWorktreeForBranch(
+  git: GitExec,
+  repoRoot: string,
+  ref: string,
+): Promise<string | null> {
+  const output = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"]);
+  let worktree: string | undefined;
+  for (const token of output.split("\0")) {
+    if (token.startsWith("worktree ")) {
+      worktree = token.slice("worktree ".length);
+      continue;
+    }
+    if (token === `branch ${ref}`) return worktree ?? null;
+    if (token.length === 0) worktree = undefined;
+  }
+  return null;
+}
+
+export async function planRoundBranchLanding(input: {
+  readonly git: GitExec;
+  readonly repoRoot: string;
+  readonly executionId: string;
+  readonly branch: string;
+  readonly expectedHead: string;
+  readonly baselineCommit: string;
+  readonly workerHead: string;
+  readonly startedAt: number;
+}): Promise<BranchRefRoundSourceLandingAttempt> {
+  await input.git(input.repoRoot, ["check-ref-format", "--branch", input.branch]);
+  const ref = selectedBranchRef(input.branch);
+  const [expectedHead, baselineCommit, workerHead, selectedHead] = await Promise.all([
+    resolveCommit(input.git, input.repoRoot, input.expectedHead),
+    resolveCommit(input.git, input.repoRoot, input.baselineCommit),
+    resolveCommit(input.git, input.repoRoot, input.workerHead),
+    resolveCommit(input.git, input.repoRoot, ref),
+  ]);
+  if (baselineCommit !== expectedHead) {
+    throw new RoundBranchLandingConflictError(
+      `round baseline ${baselineCommit} is not selected branch ${input.branch} at ${expectedHead}`,
+    );
+  }
+  if (selectedHead !== expectedHead) {
+    throw new RoundBranchLandingConflictError(
+      `branch ${input.branch} moved from ${expectedHead} to ${selectedHead}`,
+    );
+  }
+  await assertAncestor(input.git, input.repoRoot, expectedHead, workerHead);
+  return {
+    effect: "source-landing",
+    strategy: "branch-ref-v1",
+    executionId: input.executionId,
+    branch: input.branch,
+    expectedHead,
+    baselineCommit,
+    workerHead,
+    startedAt: input.startedAt,
+  };
+}
+
+export async function landRoundBranch(input: {
+  readonly git: GitExec;
+  readonly repoRoot: string;
+  readonly attempt: BranchRefRoundSourceLandingAttempt;
+  readonly now?: () => number;
+}): Promise<BranchRefRoundSourceLandingReceipt> {
+  const ref = selectedBranchRef(input.attempt.branch);
+  const selectedHead = await resolveCommit(input.git, input.repoRoot, ref);
+  const checkedOutAt = await checkedOutWorktreeForBranch(input.git, input.repoRoot, ref);
+  if (selectedHead === input.attempt.workerHead) {
+    if (checkedOutAt !== null) {
+      const checkoutHead = await resolveCommit(input.git, checkedOutAt, "HEAD");
+      if (checkoutHead !== input.attempt.workerHead) {
+        throw new RoundBranchLandingConflictError(
+          `branch ${input.attempt.branch} advanced but its checkout at ${checkedOutAt} stayed on ${checkoutHead}`,
+        );
+      }
+    }
+    return {
+      ...input.attempt,
+      outcome:
+        input.attempt.workerHead === input.attempt.expectedHead ? "unchanged" : "already-applied",
+      landedAt: (input.now ?? Date.now)(),
+    };
+  }
+  if (selectedHead !== input.attempt.expectedHead) {
+    throw new RoundBranchLandingConflictError(
+      `branch ${input.attempt.branch} moved from ${input.attempt.expectedHead} to ${selectedHead}`,
+    );
+  }
+  if (checkedOutAt !== null) {
+    const checkoutHead = await resolveCommit(input.git, checkedOutAt, "HEAD");
+    if (checkoutHead !== input.attempt.expectedHead) {
+      throw new RoundBranchLandingConflictError(
+        `branch ${input.attempt.branch} checkout at ${checkedOutAt} moved to ${checkoutHead}`,
+      );
+    }
+    try {
+      await input.git(checkedOutAt, ["merge", "--ff-only", input.attempt.workerHead]);
+    } catch (error) {
+      throw new RoundBranchLandingConflictError(
+        `branch ${input.attempt.branch} could not fast-forward its checkout at ${checkedOutAt}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  } else {
+    try {
+      await input.git(input.repoRoot, [
+        "update-ref",
+        ref,
+        input.attempt.workerHead,
+        input.attempt.expectedHead,
+      ]);
+    } catch (error) {
+      throw new RoundBranchLandingConflictError(
+        `branch ${input.attempt.branch} could not advance from ${input.attempt.expectedHead}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  return { ...input.attempt, outcome: "applied", landedAt: (input.now ?? Date.now)() };
 }
 
 export async function releaseRoundSourceCommit(input: {

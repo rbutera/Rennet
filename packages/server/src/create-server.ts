@@ -83,6 +83,7 @@ import {
   gitForRepoFactory,
   isGitHubNetworkError,
   KnowledgeStore,
+  landRoundBranch,
   landRoundChanges,
   listDir,
   loadConventionCatalogue,
@@ -96,6 +97,7 @@ import {
   PublishCompositionStore,
   PublishReceiptStore,
   parseGitHubPrRef,
+  planRoundBranchLanding,
   prepareRoundWorkspace,
   prWorktreePath,
   RepoWatcher,
@@ -582,6 +584,36 @@ export async function captureBranchPatchset(input: {
     headOid,
     baseRef: input.base,
     headRef: input.head,
+    source: "local-branch",
+    projectSnapshotId: await input.resolveProjectSnapshotId(root, baseOid),
+  });
+}
+
+export async function captureLandedBranchPatchset(input: {
+  readonly git: GitExec;
+  readonly locus: Locus;
+  readonly repoPath: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+  readonly headOid: string;
+  readonly baseOid: string;
+  readonly resolveProjectSnapshotId: (repositoryRoot: string, baseOid: string) => Promise<string>;
+}): Promise<Patchset> {
+  const gitRoot = (await input.git(input.repoPath, ["rev-parse", "--show-toplevel"])).trim();
+  const root = input.locus.kind === "wsl" ? toWindowsView(gitRoot, input.locus.distro) : gitRoot;
+  const headOid = (
+    await input.git(root, ["rev-parse", "--verify", `${input.headOid}^{commit}`])
+  ).trim();
+  const baseOid = (
+    await input.git(root, ["rev-parse", "--verify", `${input.baseOid}^{commit}`])
+  ).trim();
+  return captureRangePatchset(input.git, {
+    root,
+    locus: input.locus,
+    baseOid,
+    headOid,
+    baseRef: input.baseRef,
+    headRef: input.headRef,
     source: "local-branch",
     projectSnapshotId: await input.resolveProjectSnapshotId(root, baseOid),
   });
@@ -2944,7 +2976,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
       : { ...common, outcome: "failed" as const, termination: result.termination };
   };
-  const roundSourceLandingPorts = createRoundSourceLandingPorts({
+  const checkoutSourceLandingPorts = createRoundSourceLandingPorts({
     planLegacy: (operation) => {
       if (operation.state.phase !== "commits-settled") {
         throw new Error("Round source landing planned before commits settled.");
@@ -2979,6 +3011,39 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     ...(roundSourceLanding === undefined ? {} : { injection: roundSourceLanding }),
   });
+  const roundSourceLandingPorts: ReturnType<typeof createRoundSourceLandingPorts> = {
+    ...checkoutSourceLandingPorts,
+    planSourceLanding: (operation) => {
+      if (
+        options.roundSourceLanding !== undefined ||
+        operation.sourceTarget.kind !== "branch" ||
+        sourcePatchsetFor(operation).source !== "local-branch"
+      ) {
+        return checkoutSourceLandingPorts.planSourceLanding(operation);
+      }
+      if (operation.state.phase !== "commits-settled") {
+        throw new Error("Selected-branch landing planned before commits settled.");
+      }
+      return planRoundBranchLanding({
+        git: gitForRepo(operation.repoRoot),
+        repoRoot: operation.repoRoot,
+        executionId: randomUUID(),
+        branch: operation.sourceTarget.branch,
+        expectedHead: operation.state.workspace.sourceParentHead,
+        baselineCommit: operation.state.commits.from,
+        workerHead: operation.state.commits.to,
+        startedAt: Date.now(),
+      });
+    },
+    landSourceChanges: ({ operation, attempt }) =>
+      attempt.strategy === "branch-ref-v1"
+        ? landRoundBranch({
+            git: gitForRepo(operation.repoRoot),
+            repoRoot: operation.repoRoot,
+            attempt,
+          })
+        : checkoutSourceLandingPorts.landSourceChanges({ operation, attempt }),
+  };
 
   const storedRoundReportVerification = {
     reviewById: (reviewId: string) => service.reviewById(reviewId),
@@ -3116,11 +3181,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (operation.state.phase !== "report-drafting") {
           throw new Error("Round report started outside its durable drafting phase.");
         }
-        await dispatch("review.regenerate", {
-          commandId: randomUUID(),
-          reviewId: operation.reviewId,
-          repoPath: operation.repoRoot,
-        });
+        const sourcePatchset = sourcePatchsetFor(operation);
+        if (operation.sourceTarget.kind === "branch" && sourcePatchset.source === "local-branch") {
+          const base = sourcePatchset.repository.baseRef;
+          if (base === undefined) {
+            throw new Error("Selected-branch round lost its base branch.");
+          }
+          const git = gitForRepo(operation.repoRoot);
+          const patchset = await captureLandedBranchPatchset({
+            git,
+            locus: locusForRepo(operation.repoRoot),
+            repoPath: operation.repoRoot,
+            headRef: operation.sourceTarget.branch,
+            baseRef: base,
+            headOid: operation.state.landing.workerHead,
+            baseOid: sourcePatchset.repository.baseOid,
+            resolveProjectSnapshotId: (root, baseOid) =>
+              ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
+          });
+          await service.activatePatchset(attempt.executionId, operation.reviewId, patchset);
+        } else {
+          await dispatch("review.regenerate", {
+            commandId: attempt.executionId,
+            reviewId: operation.reviewId,
+            repoPath: operation.repoRoot,
+          });
+        }
         const review = service.reviewById(operation.reviewId);
         if (review === null) throw new Error("Round recapture did not return its review.");
         const session = sessionForOperation(operation);

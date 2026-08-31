@@ -159,6 +159,18 @@ captures the resulting repository state as a successor and presents a
 deterministic successor account. The handoff does not grant model output permission
 to rewrite the identity of the review it started from.
 
+For a branch review, that identity includes the exact selected branch. The coding
+worker runs from its captured head in a detached worktree, then Rennet advances
+that branch. The successor range is pinned to the source patchset's base OID and
+the durable landing receipt's worker OID; the branch names remain provenance, but
+a concurrent ref move cannot enter the round result. The repository's
+ambient checkout is not a substitute for the selected branch and remains untouched
+when it names another branch. If the selected branch is checked out in this or a
+sibling worktree, Rennet fast-forwards that checkout so its ref, index, and files
+stay coherent; unrelated local edits remain in place, while Git reports an overlap
+instead of partially landing it. An unmounted branch advances by compare-and-swap.
+The durable landing receipt makes an interrupted or repeated landing idempotent.
+
 The first work-order round resolves one enabled installed Claude Code or Codex
 harness in the repository's execution locus and pins that provider to the durable
 session. Later rounds resolve the same provider or fail explicitly; they do not

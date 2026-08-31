@@ -13,6 +13,9 @@ export const OWNER_LOOP_ROUND_TWO_BODY = "Set `ownerValue` to `round-two`.";
 export const OWNER_LOOP_SEQUENCE_QUOTE = "Read `src/owner.ts` first.";
 
 const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
+const patchsetPlanValue = `\${patchsetId}`;
+const candidatePlanValue = `\${candidateId}`;
+const askPlanValue = `\${askId}`;
 
 function codeRef(id: string): DraftBoard["elements"][number] {
   return {
@@ -20,7 +23,7 @@ function codeRef(id: string): DraftBoard["elements"][number] {
     kind: "code_ref",
     data: {
       author,
-      patchset_id: "${patchsetId}",
+      patchset_id: patchsetPlanValue,
       path: OWNER_LOOP_SOURCE,
       side: "head",
       start_line: 1,
@@ -35,7 +38,7 @@ function designBoard(): DraftBoard {
       title: "owner-loop",
       introMarkdown: "The owner-loop value remains visible across review rounds.",
       measure: "structured",
-      sources: [{ path: OWNER_LOOP_SPEC, candidate: "${candidateId}", line: 1 }],
+      sources: [{ path: OWNER_LOOP_SPEC, candidate: candidatePlanValue, line: 1 }],
       stats: [
         { label: "Format", value: "OpenSpec" },
         { label: "Requirements", value: "1" },
@@ -62,7 +65,7 @@ function designBoard(): DraftBoard {
           shall: "The system SHALL keep the owner-loop value source-backed.",
           scenarios: ["design-scenario"],
           related_files: [OWNER_LOOP_SOURCE],
-          source: { path: OWNER_LOOP_SPEC, candidate: "${candidateId}", line: 3 },
+          source: { path: OWNER_LOOP_SPEC, candidate: candidatePlanValue, line: 3 },
           spec_delta: "added",
         },
       },
@@ -94,7 +97,7 @@ function designBoard(): DraftBoard {
           author,
           title: "Owner specification",
           children: ["design-capability", "design-code"],
-          sources: [{ path: OWNER_LOOP_SPEC, candidate: "${candidateId}", line: 1 }],
+          sources: [{ path: OWNER_LOOP_SPEC, candidate: candidatePlanValue, line: 1 }],
         },
       },
     ],
@@ -225,7 +228,9 @@ function noiseBoard(): DraftBoard {
   };
 }
 
-function reportBoard(askId: string, askText: string, value: string): DraftBoard {
+function reportBoard(askText: string, value: string): DraftBoard {
+  const codeRefId = `report-code-${value}`;
+  const outcomeId = `report-outcome-${value}`;
   return {
     document: {
       title: `Owner value changed to ${value}`,
@@ -233,16 +238,25 @@ function reportBoard(askId: string, askText: string, value: string): DraftBoard 
       measure: "reading",
     },
     elements: [
-      codeRef(`report-code-${value}`),
+      codeRef(codeRefId),
       {
-        id: `report-outcome-${value}`,
+        id: outcomeId,
         kind: "round_outcome",
         data: {
           author,
           status: "addressed",
-          ask: { ref: askId, text: askText },
+          ask: { ref: askPlanValue, text: askText },
           note: `\`${OWNER_LOOP_SOURCE}\` now exports \`${value}\`.`,
-          code_ref: `report-code-${value}`,
+          code_ref: codeRefId,
+        },
+      },
+      {
+        id: `report-section-${value}`,
+        kind: "section",
+        data: {
+          author,
+          title: "Addressed ask",
+          children: [outcomeId, codeRefId],
         },
       },
     ],
@@ -318,16 +332,16 @@ export function ownerLoopScriptedHarnessPlan(invocationLog: string): ScriptedHar
       {
         id: "report-round-one",
         kind: "structured",
-        promptIncludes: OWNER_LOOP_ROUND_ONE_BODY,
+        promptIncludes: ["# Round report — drafting instructions", OWNER_LOOP_ROUND_ONE_BODY],
         promptExcludes: [OWNER_LOOP_ROUND_TWO_BODY, "# Post-process pass — board prose editor"],
-        output: reportBoard(OWNER_LOOP_ROUND_ONE_ASK, OWNER_LOOP_ROUND_ONE_BODY, "round-one"),
+        output: reportBoard(OWNER_LOOP_ROUND_ONE_BODY, "round-one"),
       },
       {
         id: "report-round-two",
         kind: "structured",
-        promptIncludes: OWNER_LOOP_ROUND_TWO_BODY,
+        promptIncludes: ["# Round report — drafting instructions", OWNER_LOOP_ROUND_TWO_BODY],
         promptExcludes: "# Post-process pass — board prose editor",
-        output: reportBoard(OWNER_LOOP_ROUND_TWO_ASK, OWNER_LOOP_ROUND_TWO_BODY, "round-two"),
+        output: reportBoard(OWNER_LOOP_ROUND_TWO_BODY, "round-two"),
       },
       {
         id: "round-one-edit",

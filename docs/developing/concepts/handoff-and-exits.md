@@ -317,14 +317,24 @@ The exits themselves:
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
-  identical re-dispatch retries. Board **regeneration** is the tail of the same
-  dispatch. Once the worker result is written to the durable dispatch record,
-  the round assembles its collation from the active patchset and runs the
-  drafting pipeline for real, minting a new generation and freezing the prior
-  one. A failure after that commit point — no active patchset to regenerate
-  over, or a regeneration that throws — closes the round's progress channel
-  with a terminal failure and leaves the checkpoint evidence intact for a
-  regeneration-only retry. Recovery also owns the earlier execution phases. If
+  identical re-dispatch retries. A branch round lands on the branch selected by
+  the New-chat row, never whichever branch happens to be checked out at the
+  repository path. An unmounted selected branch advances atomically from its
+  captured head; a selected branch checked out in this or a sibling worktree is
+  fast-forwarded there so its ref, index, and files remain coherent. Unrelated
+  local edits survive, while an overlapping edit leaves both the branch and
+  checkout unchanged. A restart adopts the durable landing receipt instead of
+  landing twice, and a no-op round does not invent a commit. Board
+  **regeneration** is the tail of the same dispatch. Once the worker result is
+  written to the durable dispatch record, the successor is captured from the
+  persisted source base OID through the landed worker OID. The selected base and
+  head branch names remain provenance, but later ref moves cannot change that
+  round result. The round then assembles its collation from the active patchset
+  and runs the drafting pipeline for real, minting a new generation and freezing
+  the prior one. A failure after that commit point — no active patchset
+  to regenerate over, or a regeneration that throws — closes the round's
+  progress channel with a terminal failure and leaves the checkpoint evidence
+  intact for a regeneration-only retry. Recovery also owns the earlier execution phases. If
   the daemon restarts while the coding worker is running, it reconstructs the
   worker's partial diff and changed-path evidence from the preserved detached
   worktree, records an actionable failed receipt, and never invokes that worker

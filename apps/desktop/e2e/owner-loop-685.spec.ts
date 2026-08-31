@@ -3,12 +3,11 @@ import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
-import { LENS_KINDS } from "@rennet/protocol";
+import { generationIdForPatchset, LENS_KINDS } from "@rennet/protocol";
 import {
-  OWNER_LOOP_ROUND_ONE_ASK,
   OWNER_LOOP_ROUND_ONE_BODY,
-  OWNER_LOOP_ROUND_TWO_ASK,
   OWNER_LOOP_ROUND_TWO_BODY,
+  OWNER_LOOP_SEQUENCE_QUOTE,
   OWNER_LOOP_SOURCE,
   writeOwnerLoopScriptedHarnessPlan,
 } from "../../../packages/server/src/owner-loop-proof-fixture";
@@ -25,12 +24,24 @@ import {
 function seedRepo(root: string, name: "target" | "decoy"): void {
   mkdirSync(root, { recursive: true });
   initRepo(root);
+  writeRepoFile(root, ".gitignore", ".rennet/\n");
   writeRepoFile(
     root,
     OWNER_LOOP_SOURCE,
     `export const ownerValue = '${name === "target" ? "base" : "decoy-base"}';\n`,
   );
   if (name === "target") {
+    writeRepoFile(
+      root,
+      "package.json",
+      `${JSON.stringify({
+        private: true,
+        scripts: {
+          check:
+            "node --eval \"const text = require('node:fs').readFileSync('src/owner.ts', 'utf8'); if (!text.includes('round-')) process.exit(1)\"",
+        },
+      })}\n`,
+    );
     writeRepoFile(
       root,
       "openspec/changes/owner-loop/specs/owner/spec.md",
@@ -139,34 +150,95 @@ async function bridgeFor(page: Page): Promise<WsRennetBridge> {
   return new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
 }
 
-async function stageAsk(
-  bridge: WsRennetBridge,
-  sessionId: string,
-  ask: { id: string; body: string },
-): Promise<void> {
-  await bridge.invoke("ask.stage", {
-    sessionId,
-    ask: {
-      id: ask.id,
-      anchor: `${OWNER_LOOP_SOURCE}:1`,
-      type: "request-change",
-      body: ask.body,
-    },
-  });
+function assertProductionBundleBoundary(): void {
+  const markers = [
+    "scripted-harness",
+    "owner-loop-685",
+    "RENNET_OWNER_LOOP_PLAN",
+    "685-scripted-v1",
+  ];
+  for (const path of [
+    resolve("packages/server/dist/rennet.cjs"),
+    resolve("apps/desktop/dist/server/index.cjs"),
+  ]) {
+    const productionBundle = readFileSync(path, "utf8");
+    for (const marker of markers) expect(productionBundle).not.toContain(marker);
+  }
 }
 
-async function dispatchVisibleRound(page: Page): Promise<void> {
+async function expectFiveSourceBackedBoards(page: Page): Promise<void> {
+  for (const lens of LENS_KINDS) {
+    const tab = page.locator(`[data-kind="lens-switcher"] [data-lens="${lens}"]`);
+    await expect(tab).toBeVisible();
+    await tab.click();
+    const board = page.locator(`article[data-lens="${lens}"]`);
+    await expect(board).toBeVisible({ timeout: 30_000 });
+    await expect(board.locator('[data-kind="code_ref"]').first()).toBeVisible();
+    await expect(board).toContainText(OWNER_LOOP_SOURCE);
+  }
+}
+
+async function stageAskFromSequenceBoard(
+  page: Page,
+  bridge: WsRennetBridge,
+  sessionId: string,
+  body: string,
+): Promise<string> {
+  const before = await bridge.invoke("ask.read", { sessionId });
+  const stagedBefore = new Set(Object.keys(before.projection.stagedAsks));
+  await page.locator('[data-kind="lens-switcher"] [data-lens="sequence"]').click();
+  const quote = page.getByText(OWNER_LOOP_SEQUENCE_QUOTE, { exact: true }).first();
+  await expect(quote).toBeVisible();
+  await quote.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "Request Changes", exact: true }).click();
+  await page.getByPlaceholder("What change are you requesting?").fill(body);
+  await page.getByRole("button", { name: "Stage", exact: true }).click();
+  const after = await bridge.invoke("ask.read", { sessionId });
+  const stagedIds = Object.keys(after.projection.stagedAsks).filter((id) => !stagedBefore.has(id));
+  expect(stagedIds).toHaveLength(1);
+  const id = stagedIds[0];
+  if (id === undefined) throw new Error("board request-change did not mint an ask");
+  expect(after.projection.stagedAsks[id]).toMatchObject({
+    id,
+    anchor: OWNER_LOOP_SEQUENCE_QUOTE,
+    type: "request-change",
+    body,
+    threadId: id,
+  });
+  expect(after.projection.quoteThreads[id]).toMatchObject({
+    anchor: OWNER_LOOP_SEQUENCE_QUOTE,
+    target: "sequence-step",
+    lifecycle: "attached",
+  });
+  return id;
+}
+
+async function dispatchVisibleRound(page: Page, askBody: string): Promise<void> {
   await page.getByRole("button", { name: "Continue, 1 staged" }).click();
   await page.getByRole("button", { name: "Dispatch Round" }).click();
   await expect(page.locator('[data-screen="session-run"]')).toBeVisible({ timeout: 30_000 });
   const greeting = page.locator('[data-screen="round-greeting"]');
   await expect(greeting).toBeVisible({ timeout: 180_000 });
+  await expect(greeting.getByTestId("round-run-receipt")).toContainText("Passed npm run check");
+  await expect(greeting.locator('[data-kind="round-report"]')).toBeVisible();
+  const outcome = greeting.locator('[data-kind="round_outcome"]');
+  await expect(outcome).toHaveCount(1);
+  await expect(outcome).toContainText(askBody);
+  await expect(outcome).toHaveAttribute("data-status", "addressed");
   await greeting.getByRole("button", { name: "View the New Boards" }).click();
   await expect(page.locator("article[data-lens]")).toBeVisible({ timeout: 30_000 });
 }
 
 test("#685: launched owner loop survives two rounds and a daemon-preserving app restart", async () => {
   test.setTimeout(600_000);
+  assertProductionBundleBoundary();
   const { workspace, target, decoy } = seedWorkspace();
   const userData = makeTempDir("rennet-e2e-685-state-");
   const home = makeTempDir("rennet-e2e-685-home-");
@@ -210,6 +282,7 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
         .locator('[data-kind="lens-switcher"] [data-lens]')
         .evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-lens"))),
     ).toEqual([...LENS_KINDS]);
+    await expectFiveSourceBackedBoards(page);
 
     bridge = await bridgeFor(page);
     const sessions = await bridge.invoke("session.list", {});
@@ -228,25 +301,63 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       .click();
     await expect(page.getByRole("heading", { name: "Context Map" })).toBeVisible();
     const projects = await bridge.invoke("projects.list", {});
-    const map = await bridge.invoke("project.contextMap", {
-      projectId: projects.projects[0]?.id ?? "",
+    const projectId = projects.projects[0]?.id ?? "";
+    const targetMap = await bridge.invoke("project.contextMap", {
+      projectId,
       repository: "owner/target",
       forgeRepository: { forge: "github", owner: "owner", name: "target" },
     });
-    expect(map.status).toBe("ok");
-    if (map.status !== "ok") throw new Error(`target Context Map returned ${map.status}`);
-    expect(map.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
+    const decoyMap = await bridge.invoke("project.contextMap", {
+      projectId,
+      repository: "owner/decoy",
+      forgeRepository: { forge: "github", owner: "owner", name: "decoy" },
+    });
+    expect(targetMap.status).toBe("ok");
+    expect(decoyMap.status).toBe("ok");
+    if (targetMap.status !== "ok") {
+      throw new Error(`target Context Map returned ${targetMap.status}`);
+    }
+    if (decoyMap.status !== "ok") {
+      throw new Error(`decoy Context Map returned ${decoyMap.status}`);
+    }
+    const targetMainOid = execFileSync("git", ["rev-parse", "main"], { cwd: target })
+      .toString()
+      .trim();
+    const decoyMainOid = execFileSync("git", ["rev-parse", "main"], { cwd: decoy })
+      .toString()
+      .trim();
+    expect(targetMap.map.baseOid).toBe(targetMainOid);
+    expect(decoyMap.map.baseOid).toBe(decoyMainOid);
+    expect(targetMap.map.baseOid).not.toBe(decoyMap.map.baseOid);
+    expect(targetMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
+    expect(decoyMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
     await page.getByRole("button", { name: "Back to board" }).click();
 
-    await stageAsk(bridge, reviewId, {
-      id: OWNER_LOOP_ROUND_ONE_ASK,
-      body: OWNER_LOOP_ROUND_ONE_BODY,
-    });
-    await dispatchVisibleRound(page);
+    const initialGeneration = generationIdForPatchset(initialReview.review.activePatchsetId);
+    const roundOneThreadId = await stageAskFromSequenceBoard(
+      page,
+      bridge,
+      reviewId,
+      OWNER_LOOP_ROUND_ONE_BODY,
+    );
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY);
+    await expectFiveSourceBackedBoards(page);
     const afterRoundOne = await bridge.invoke("session.rounds", { reviewId });
     expect(afterRoundOne.records).toHaveLength(1);
-    const initialGeneration = `gen:${initialReview.review.activePatchsetId}`;
+    const roundOneGeneration = afterRoundOne.records[0]?.boardGeneration ?? "";
+    expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne.records[0]?.frozenPredecessor).toBe(initialGeneration);
+    const afterRoundOneAsks = await bridge.invoke("ask.read", { sessionId: reviewId });
+    expect(afterRoundOneAsks.projection.quoteThreads[roundOneThreadId]).toMatchObject({
+      anchor: OWNER_LOOP_SEQUENCE_QUOTE,
+      target: "sequence-step",
+      generation: roundOneGeneration,
+      lifecycle: "attached",
+    });
+    await page.locator('[data-kind="lens-switcher"] [data-lens="sequence"]').click();
+    await expect(
+      page.locator('[data-quote-target="sequence-step"] [data-quote-highlight]'),
+    ).toHaveAttribute("data-thread-count", "1");
 
     bridge.close();
     bridge = undefined;
@@ -260,17 +371,86 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       env: modelFreeEnv(home),
     });
     page = await launched.application.firstWindow();
+    await page.evaluate((id) => {
+      location.hash = `#/s/${id}`;
+    }, reviewId);
+    await expect(page.locator("article[data-lens]")).toBeVisible({ timeout: 60_000 });
     bridge = await bridgeFor(page);
     expect((await bridge.invoke("session.rounds", { reviewId })).records).toHaveLength(1);
-
-    await stageAsk(bridge, reviewId, {
-      id: OWNER_LOOP_ROUND_TWO_ASK,
-      body: OWNER_LOOP_ROUND_TWO_BODY,
+    const afterRestartAsks = await bridge.invoke("ask.read", { sessionId: reviewId });
+    expect(afterRestartAsks.projection.quoteThreads[roundOneThreadId]).toMatchObject({
+      anchor: OWNER_LOOP_SEQUENCE_QUOTE,
+      target: "sequence-step",
+      generation: roundOneGeneration,
+      lifecycle: "attached",
     });
-    await dispatchVisibleRound(page);
+    await page.locator('[data-kind="lens-switcher"] [data-lens="sequence"]').click();
+    await expect(
+      page.locator('[data-quote-target="sequence-step"] [data-quote-highlight]'),
+    ).toHaveAttribute("data-thread-count", "1");
+
+    const roundTwoThreadId = await stageAskFromSequenceBoard(
+      page,
+      bridge,
+      reviewId,
+      OWNER_LOOP_ROUND_TWO_BODY,
+    );
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY);
+    await expectFiveSourceBackedBoards(page);
     const finalRounds = await bridge.invoke("session.rounds", { reviewId });
     expect(finalRounds.records).toHaveLength(2);
     expect(finalRounds.records[1]?.frozenPredecessor).toBe(finalRounds.records[0]?.boardGeneration);
+    const finalGeneration = finalRounds.records[1]?.boardGeneration ?? "";
+    const finalAsks = await bridge.invoke("ask.read", { sessionId: reviewId });
+    for (const threadId of [roundOneThreadId, roundTwoThreadId]) {
+      expect(finalAsks.projection.quoteThreads[threadId]).toMatchObject({
+        anchor: OWNER_LOOP_SEQUENCE_QUOTE,
+        target: "sequence-step",
+        generation: finalGeneration,
+        lifecycle: "attached",
+      });
+    }
+    await page.locator('[data-kind="lens-switcher"] [data-lens="sequence"]').click();
+    const sequenceBoard = page.locator('article[data-lens="sequence"]');
+    const sequenceHighlight = page.locator(
+      '[data-quote-target="sequence-step"] [data-quote-highlight]',
+    );
+    await expect(sequenceBoard).toHaveAttribute("data-generation", finalGeneration);
+    await expect(sequenceHighlight).toHaveAttribute("data-thread-count", "2");
+    const generations = page.locator('[data-kind="generation-switcher"] [role="tab"]');
+    await expect(generations).toHaveCount(3);
+    const initialTab = page.locator(
+      `[data-kind="generation-switcher"] [data-generation="${initialGeneration}"]`,
+    );
+    const roundOneTab = page.locator(
+      `[data-kind="generation-switcher"] [data-generation="${roundOneGeneration}"]`,
+    );
+    const finalTab = page.locator(
+      `[data-kind="generation-switcher"] [data-generation="${finalGeneration}"]`,
+    );
+    await expect(initialTab).toHaveAttribute("data-frozen", "true");
+    await expect(roundOneTab).toHaveAttribute("data-frozen", "true");
+    await expect(finalTab).not.toHaveAttribute("data-frozen", "true");
+    await initialTab.click();
+    await expect(sequenceBoard).toHaveAttribute("data-generation", initialGeneration);
+    await expect(sequenceBoard).toContainText(OWNER_LOOP_SOURCE);
+    await expect(sequenceHighlight).toHaveCount(0);
+    await roundOneTab.click();
+    await expect(sequenceBoard).toHaveAttribute("data-generation", roundOneGeneration);
+    await expect(sequenceBoard).toContainText(OWNER_LOOP_SOURCE);
+    await expect(sequenceHighlight).toHaveCount(0);
+    await finalTab.click();
+    await expect(sequenceBoard).toHaveAttribute("data-generation", finalGeneration);
+    await expect(sequenceHighlight).toHaveAttribute("data-thread-count", "2");
+    expect(execFileSync("git", ["branch", "--show-current"], { cwd: target }).toString()).toBe(
+      "main\n",
+    );
+    expect(readFileSync(join(target, OWNER_LOOP_SOURCE), "utf8")).toBe(
+      "export const ownerValue = 'base';\n",
+    );
+    expect(
+      execFileSync("git", ["show", `main:${OWNER_LOOP_SOURCE}`], { cwd: target }).toString(),
+    ).toBe("export const ownerValue = 'base';\n");
     expect(
       execFileSync("git", ["show", `feature/shared:${OWNER_LOOP_SOURCE}`], {
         cwd: target,
@@ -281,6 +461,8 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
         cwd: decoy,
       }).toString(),
     ).toBe("export const ownerValue = 'decoy-reviewed';\n");
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: target }).toString()).toBe("");
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: decoy }).toString()).toBe("");
     expect(
       readFileSync(invocationLog, "utf8")
         .trim()

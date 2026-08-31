@@ -218,3 +218,40 @@ describe("Review.postTarget — survives a patchset swap ONLY as the forge PR's 
     expect(after.postTarget).toBeUndefined();
   });
 });
+
+describe("ReviewService.activatePatchset", () => {
+  it("activates one prebuilt successor idempotently without invoking working-tree capture", async () => {
+    const initial = foldReview(null, {
+      type: "ReviewCreated",
+      version: 1,
+      reviewId: "review-branch",
+      patchset: patchsetSourced("ps-before", "local-branch", "head-before"),
+    } satisfies ReviewEvent);
+    let current = initial;
+    let commits = 0;
+    const receipts = new Map<string, Review>();
+    const store: ReviewStorePort = {
+      latestReview: () => current,
+      reviewById: (id) => (id === current.id ? current : null),
+      patchsetById: (id) => current.patchsets.find((patchset) => patchset.id === id) ?? null,
+      receipt: (commandId, digest) => receipts.get(`${commandId} ${digest}`) ?? null,
+      commit: (commandId, digest, _events, result) => {
+        commits += 1;
+        current = result;
+        receipts.set(`${commandId} ${digest}`, result);
+        return result;
+      },
+    };
+    const service = new ReviewService(noCapture, store);
+    const successor = patchsetSourced("ps-after", "local-branch", "head-after");
+
+    const activated = await service.activatePatchset("round-report-attempt", initial.id, successor);
+    const replay = await service.activatePatchset("round-report-attempt", initial.id, successor);
+
+    expect(activated.id).toBe(initial.id);
+    expect(activated.activePatchsetId).toBe(successor.id);
+    expect(activated.patchsets.map((patchset) => patchset.id)).toEqual(["ps-before", "ps-after"]);
+    expect(replay).toEqual(activated);
+    expect(commits).toBe(1);
+  });
+});

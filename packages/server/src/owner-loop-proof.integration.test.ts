@@ -40,7 +40,19 @@ function seedTargetRepo(root: string): void {
   git(root, "config", "user.email", "rennet@example.test");
   git(root, "config", "user.name", "Rennet Test");
   git(root, "config", "core.excludesFile", "/dev/null");
+  writeRepoFile(root, ".gitignore", ".rennet/\n");
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'base';\n");
+  writeRepoFile(
+    root,
+    "package.json",
+    `${JSON.stringify({
+      private: true,
+      scripts: {
+        check:
+          "node --eval \"const text = require('node:fs').readFileSync('src/owner.ts', 'utf8'); if (!text.includes('round-')) process.exit(1)\"",
+      },
+    })}\n`,
+  );
   writeRepoFile(
     root,
     OWNER_LOOP_SPEC,
@@ -58,13 +70,14 @@ function seedTargetRepo(root: string): void {
       "",
     ].join("\n"),
   );
-  git(root, "add", OWNER_LOOP_SOURCE, OWNER_LOOP_SPEC);
+  git(root, "add", ".gitignore", OWNER_LOOP_SOURCE, OWNER_LOOP_SPEC, "package.json");
   git(root, "commit", "-qm", "base");
   git(root, "remote", "add", "origin", "git@github.com:owner/target.git");
   git(root, "checkout", "-qb", "feature/shared");
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "reviewed owner value");
+  git(root, "checkout", "-q", "main");
 }
 
 function seedDecoyRepo(root: string): void {
@@ -72,14 +85,16 @@ function seedDecoyRepo(root: string): void {
   git(root, "config", "user.email", "rennet@example.test");
   git(root, "config", "user.name", "Rennet Test");
   git(root, "config", "core.excludesFile", "/dev/null");
+  writeRepoFile(root, ".gitignore", ".rennet/\n");
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'decoy-base';\n");
-  git(root, "add", OWNER_LOOP_SOURCE);
+  git(root, "add", ".gitignore", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "decoy base");
   git(root, "remote", "add", "origin", "git@github.com:owner/decoy.git");
   git(root, "checkout", "-qb", "feature/shared");
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'decoy-reviewed';\n");
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "decoy reviewed value");
+  git(root, "checkout", "-q", "main");
 }
 
 function invocationRecords(path: string): Array<Record<string, unknown>> {
@@ -128,9 +143,10 @@ async function waitForFiveBoards(
         }
         const refs = read.board?.elements.filter((element) => element.kind === "code_ref") ?? [];
         expect(refs.every((element) => element.data.path === OWNER_LOOP_SOURCE)).toBe(true);
-        if (!refs.every((element) => element.data.patchset_id === patchsetId)) {
+        const currentLensRef = refs.find((element) => element.id === `${lens}-code`);
+        if (currentLensRef?.data.patchset_id !== patchsetId) {
           throw new Error(
-            `${lens} board cited the wrong patchset: ${JSON.stringify({ patchsetId, refs })}`,
+            `${lens} board lost its current-patchset citation: ${JSON.stringify({ patchsetId, refs })}`,
           );
         }
       }
@@ -186,6 +202,14 @@ async function waitForRoundReturn(
       }
       expect(rounds.records).toHaveLength(expectedRounds);
       expect(asks.projection.stagedAsks[consumedAsk]).toBeUndefined();
+      expect(operation?.state.phase).toBe("completed");
+      if (operation?.state.phase === "completed") {
+        expect(operation.state.returnedAt).toBeDefined();
+        expect(operation.state.landing.strategy).toBe("branch-ref-v1");
+        if (operation.state.landing.strategy === "branch-ref-v1") {
+          expect(operation.state.landing.branch).toBe("feature/shared");
+        }
+      }
       records = rounds.records;
     },
     { timeout: 45_000, interval: 50 },
@@ -262,6 +286,32 @@ describe("#685 owner loop through a real server", () => {
       [target, true],
       [decoy, true],
     ]);
+    const targetMap = parseCommandOutput(
+      "project.contextMap",
+      await first.dispatch("project.contextMap", {
+        projectId: added.project.id,
+        repository: "owner/target",
+        forgeRepository: { forge: "github", owner: "owner", name: "target" },
+      }),
+    );
+    const decoyMap = parseCommandOutput(
+      "project.contextMap",
+      await first.dispatch("project.contextMap", {
+        projectId: added.project.id,
+        repository: "owner/decoy",
+        forgeRepository: { forge: "github", owner: "owner", name: "decoy" },
+      }),
+    );
+    expect(targetMap.status).toBe("ok");
+    expect(decoyMap.status).toBe("ok");
+    if (targetMap.status !== "ok" || decoyMap.status !== "ok") {
+      throw new Error("owner-loop Context Maps were not both readable");
+    }
+    expect(targetMap.map.baseOid).toBe(git(target, "rev-parse", "main"));
+    expect(decoyMap.map.baseOid).toBe(git(decoy, "rev-parse", "main"));
+    expect(targetMap.map.baseOid).not.toBe(decoyMap.map.baseOid);
+    expect(targetMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
+    expect(decoyMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
 
     const minted = parseCommandOutput(
       "session.mint",
@@ -281,7 +331,7 @@ describe("#685 owner loop through a real server", () => {
     ).review;
     expect(initial.repositoryRoot).toBe(target);
     expect(initial.patchsets.at(-1)?.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
-    expect(readFileSync(join(decoy, OWNER_LOOP_SOURCE), "utf8")).toContain("decoy-reviewed");
+    expect(git(decoy, "show", `feature/shared:${OWNER_LOOP_SOURCE}`)).toContain("decoy-reviewed");
 
     const initialGeneration = generationIdForPatchset(initial.activePatchsetId);
     const initialBoardIds = await waitForFiveBoards(
@@ -335,6 +385,10 @@ describe("#685 owner loop through a real server", () => {
       invocationLog,
     );
     const roundOneGeneration = afterRoundOne[0]?.boardGeneration ?? "";
+    expect(afterRoundOne[0]?.run?.gate).toMatchObject({
+      outcome: "passed",
+      command: "npm run check",
+    });
     expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne[0]?.frozenPredecessor).toBe(initialGeneration);
     const roundOneBoardIds = await waitForFiveBoards(
@@ -400,6 +454,10 @@ describe("#685 owner loop through a real server", () => {
       invocationLog,
     );
     const roundTwoGeneration = afterRoundTwo[1]?.boardGeneration ?? "";
+    expect(afterRoundTwo[1]?.run?.gate).toMatchObject({
+      outcome: "passed",
+      command: "npm run check",
+    });
     expect(roundTwoGeneration).not.toBe(roundOneGeneration);
     expect(afterRoundTwo[1]?.frozenPredecessor).toBe(roundOneGeneration);
     await waitForFiveBoards(
@@ -434,12 +492,25 @@ describe("#685 owner loop through a real server", () => {
       await restarted.dispatch("review.load", { commandId: randomUUID(), reviewId }),
     ).review;
     expect(finalReview.activePatchsetId).toBe(generations.load(roundTwoGeneration)?.patchsetId);
+    expect(git(target, "branch", "--show-current")).toBe("main");
     expect(readFileSync(join(target, OWNER_LOOP_SOURCE), "utf8")).toBe(
-      "export const ownerValue = 'round-two';\n",
+      "export const ownerValue = 'base';\n",
     );
+    expect(git(target, "show", `main:${OWNER_LOOP_SOURCE}`)).toBe(
+      "export const ownerValue = 'base';",
+    );
+    expect(git(target, "show", `feature/shared:${OWNER_LOOP_SOURCE}`)).toBe(
+      "export const ownerValue = 'round-two';",
+    );
+    expect(git(target, "status", "--porcelain")).toBe("");
+    expect(git(decoy, "branch", "--show-current")).toBe("main");
     expect(readFileSync(join(decoy, OWNER_LOOP_SOURCE), "utf8")).toBe(
-      "export const ownerValue = 'decoy-reviewed';\n",
+      "export const ownerValue = 'decoy-base';\n",
     );
+    expect(git(decoy, "show", `feature/shared:${OWNER_LOOP_SOURCE}`)).toBe(
+      "export const ownerValue = 'decoy-reviewed';",
+    );
+    expect(git(decoy, "status", "--porcelain")).toBe("");
 
     const editRecords = invocationRecords(invocationLog).filter((record) => record.kind === "edit");
     expect(editRecords.map((record) => record.stepId)).toEqual([
@@ -450,11 +521,28 @@ describe("#685 owner loop through a real server", () => {
     expect(
       editRecords.every(
         (record) =>
-          typeof record.cwd === "string" && record.cwd.startsWith(join(dataDir, "round-worktrees")),
+          typeof record.cwd === "string" &&
+          record.cwd.startsWith(realpathSync(join(dataDir, "round-worktrees"))),
       ),
     ).toBe(true);
     expect(editRecords[1]?.resumed).toBe(true);
     const records = invocationRecords(invocationLog);
+    const targetBoardSteps = new Set([
+      "design",
+      "design-coverage",
+      "sequence",
+      "decisions",
+      "flagged",
+      "noise",
+      "report-round-one",
+      "report-round-two",
+      "post-process",
+    ]);
+    expect(
+      records
+        .filter((record) => targetBoardSteps.has(String(record.stepId)))
+        .every((record) => record.cwd === target),
+    ).toBe(true);
     for (const stepId of ["design", "sequence", "decisions", "flagged", "noise"]) {
       expect(records.filter((record) => record.stepId === stepId)).toHaveLength(3);
     }
