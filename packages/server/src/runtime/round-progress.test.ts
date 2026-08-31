@@ -330,6 +330,53 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     expect(first.lanes.some((lane) => lane.status === "drafted")).toBe(false);
   });
 
+  it("starts the lanes when the report was EXPECTED and failed", async () => {
+    // The sibling gap to the test above, and the harder one to see: this IS a round, so a
+    // report is expected — but the report drafter fails, so no arrival is ever announced.
+    // The arrival was the only thing that promoted the first lane, and the post-pipeline
+    // failure sweep deliberately skips `report`, so nothing settled it either: Design ran
+    // its whole draft while the block said "queued". The lenses do not depend on the
+    // report (it gates the REVEAL, not the drafting), so the lanes must start regardless.
+    const events: RoundEvent[] = [];
+    await runtimeWith((lens) =>
+      lens === "report"
+        ? ({ elements: [{ id: "x", kind: "not-a-kind", data: {} }] } as unknown as DraftBoard)
+        : sectioned("fine"),
+    ).runRound({
+      session: { ...session, id: "report-failed-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+      asksDispatched: ["t-1"],
+      runWorkers: async () => ({
+        commitRange: { from: "c0", to: "c1" },
+        patchsetId: "ps-noreport",
+      }),
+      onProgress: (event) => events.push(event),
+      ...collationFor(),
+    });
+
+    // The premise, asserted rather than assumed: a report WAS expected (this is a round with
+    // a successor account) and none arrived.
+    expect(events.some((e) => e.type === "report")).toBe(false);
+
+    // The FIRST lens frame is the kickoff one. Asserting the first frame, not "some frame
+    // ever", is what makes this fail on the bug: `drafted()` promotes lanes as boards land,
+    // so a later frame reads Design running-or-past however late the run started saying so.
+    const first = events.find((e) => e.type === "lens");
+    if (first?.type !== "lens") throw new Error("no lens lanes were emitted");
+    expect(first.lanes.map((lane) => [lane.id, lane.status])).toEqual([
+      ["design", "running"],
+      ["sequence", "queued"],
+      ["decisions", "queued"],
+      ["flagged", "queued"],
+      ["noise", "queued"],
+    ]);
+    expect(first.lanes.some((lane) => lane.status === "drafted")).toBe(false);
+    // The lenses did their work and the round composed — a failed report costs the greeting,
+    // not the regeneration.
+    expect(events.at(-1)?.type).toBe("composed");
+  });
+
   it("emits a TERMINAL failed event when the regeneration throws — never silence", async () => {
     const events: RoundEvent[] = [];
     await expect(

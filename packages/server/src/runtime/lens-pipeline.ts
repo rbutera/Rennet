@@ -713,6 +713,16 @@ export interface LensPipelineDeps {
   /** A successful lens absence, emitted as soon as discovery settles it. */
   readonly onLensAbsence?: (lens: LensKind, reason: LensAbsenceReason) => void | Promise<void>;
   /**
+   * The lens drafters are about to start. Fires exactly once per pipeline, immediately
+   * before the first lens drafts — so AFTER the round report has settled, whichever way it
+   * settled. This is the honest kickoff signal: the caller's lane block reads "queued" until
+   * something says otherwise, and the report's ARRIVAL cannot be that something on a run
+   * where the report was expected and then FAILED (no arrival is announced, and the failure
+   * sweep only runs once the whole pipeline is over). The lenses run regardless — the report
+   * gates the reveal, not the drafting — so the lanes must start regardless too.
+   */
+  readonly onLensDraftingStart?: () => void;
+  /**
    * The durable home for a board's coverage/validation metadata (finding 3): the
    * `skippedHunks` and validation blemishes the whiteboard event log cannot carry.
    * Called after the board's ops are accepted and BEFORE its arrival is announced,
@@ -1151,11 +1161,19 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const postProcess = buildPostProcess(deps, council, postProcessText);
 
   // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
-  // predicate); it announces first and gates the lens lanes' start.
+  // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.
   const report = draftsRoundReport(deps)
     ? await runRoundReport(deps, council, postProcess)
     : undefined;
   const reportBoard = report?.board;
+
+  // The report has settled — arrived, failed, or was never expected — and the lens drafters
+  // start now in all three cases. Saying so here, from the run itself, is what keeps the
+  // caller's lane block honest on the path where the report was expected and FAILED: nothing
+  // announces an arrival, so a caller that starts its lanes off the arrival alone shows
+  // "queued" for the whole run while Design is the one lens working. This fires after the
+  // report's arrival, never before, so the report's announce-first contract still holds.
+  deps.onLensDraftingStart?.();
 
   const outcomes: LensBoardOutcome[] = [];
   for (const lens of LENS_KINDS) {
