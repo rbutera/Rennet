@@ -6,6 +6,7 @@ import type {
   RoundOperationProgressSnapshot,
   SidebarSession,
 } from "@rennet/protocol";
+import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider, useCommand } from "../data";
@@ -180,11 +181,21 @@ function CrossSessionProbe({ onSettled }: { readonly onSettled: () => void }) {
   const dispatch = useRoundDispatch();
   const first = useRoundState(SESSION);
   const second = useRoundState(OTHER_SESSION);
+  const [settlements, setSettlements] = useState(0);
   return (
     <>
       <span>first:{first.phase}</span>
       <span>second:{second.phase}</span>
-      <button type="button" onClick={() => void dispatch?.(SESSION).then(onSettled)}>
+      <span>settlements:{settlements}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void dispatch?.(SESSION).then(() => {
+            setSettlements((count) => count + 1);
+            onSettled();
+          })
+        }
+      >
         dispatch first
       </button>
     </>
