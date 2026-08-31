@@ -1,4 +1,6 @@
-import { rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import {
@@ -8,6 +10,7 @@ import {
   type LensBoard,
   type LensKind,
 } from "@rennet/protocol";
+import { findHealthyDaemon, readDaemonFile } from "@rennet/server";
 import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,14 +31,19 @@ import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./ha
 //
 // This drives both at once against the real installed harness. It captures over the app's
 // daemon socket, waits for every lens to reach one durable terminal result, opens each result
-// in the real window, then restarts the app and daemon over the same data directory. A green
-// run proves populated, absent, and failed results survive as distinct `board.read` answers.
+// in the real window, then restarts the app and daemon over the same data directory. After the
+// restart it dispatches one real request-change round and requires a changed successor patchset
+// plus a new populated board generation. A green run closes the owner's read -> ask -> round ->
+// reread loop without substituting a mock for the daemon, coding worker, or lens pipeline.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Deterministic, zero-spend specs use `modelFreeEnv`; this runs a REAL `claude` turn on the
 // reviewer's own subscription, drafting five lenses. Opt-in, a cost switch not a gate:
 // `RENNET_LIVE_E2E=1 pnpm exec playwright test -c apps/desktop/playwright.config.ts board-drafting-live`.
-test.skip(process.env.RENNET_LIVE_E2E !== "1", "live harness spec — set RENNET_LIVE_E2E=1");
+const liveTest = process.env.RENNET_LIVE_E2E === "1" ? test : test.skip;
+
+const REVIEWED_PATH = "src/widget.ts";
+const ROUND_ASK_ID = "live-successor-widget-three";
 
 interface BoardReadResult {
   readonly board: LensBoard | null;
@@ -50,6 +58,10 @@ type TerminalLensEvidence =
     }
   | { readonly kind: "absence"; readonly reason: LensAbsenceReason }
   | { readonly kind: "failure"; readonly reason: string };
+
+interface TerminalKindEvidence {
+  readonly kind: TerminalLensEvidence["kind"];
+}
 
 const ABSENCE_BY_LENS: ReadonlyMap<LensKind, LensAbsenceReason> = new Map([
   ["design", "no-material"],
@@ -187,6 +199,88 @@ function expectOptionalEmptyLensesHonest(
   }
 }
 
+function expectPopulatedBoard(terminal: ReadonlyMap<LensKind, TerminalKindEvidence>): void {
+  const populated = [...terminal.values()].filter((evidence) => evidence.kind === "board");
+  expect(
+    populated.length,
+    "the terminal lens set must contain at least one populated board",
+  ).toBeGreaterThan(0);
+}
+
+test("terminal lens oracle rejects an all-empty or failed result", () => {
+  const noBoards: ReadonlyMap<LensKind, TerminalKindEvidence> = new Map([
+    ["design", { kind: "absence" }],
+    ["sequence", { kind: "failure" }],
+    ["decisions", { kind: "absence" }],
+    ["flagged", { kind: "absence" }],
+    ["noise", { kind: "absence" }],
+  ]);
+  expect(() => expectPopulatedBoard(noBoards)).toThrow("at least one populated board");
+
+  const oneBoard = new Map(noBoards);
+  oneBoard.set("sequence", { kind: "board" });
+  expect(() => expectPopulatedBoard(oneBoard)).not.toThrow();
+});
+
+async function healthyDaemonPid(userData: string): Promise<number> {
+  await expect
+    .poll(async () => (await findHealthyDaemon(userData)).kind, {
+      timeout: 30_000,
+      intervals: [50, 100, 250],
+    })
+    .toBe("healthy");
+  const healthy = await findHealthyDaemon(userData);
+  if (healthy.kind !== "healthy") {
+    throw new Error(`daemon lost health after the successful probe: ${healthy.kind}`);
+  }
+  expect(readDaemonFile(userData)).toEqual(healthy.claim);
+  return healthy.claim.pid;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error !== null && typeof error === "object" && "code" in error && error.code === "ESRCH") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function gitOutput(repository: string, ...args: readonly string[]): string {
+  return execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
+}
+
+async function waitForReturnedRound(
+  bridge: WsRennetBridge,
+  reviewId: string,
+  operationId: string,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const { events } = await bridge.invoke("session.roundEvents", { reviewId });
+        const current = events.findLast(
+          (event) => event.type === "operation" && event.snapshot.operationId === operationId,
+        );
+        if (current?.type !== "operation") return "missing";
+        if (current.snapshot.state.phase === "failed") {
+          throw new Error(
+            `successor round failed: ${JSON.stringify(current.snapshot.state.failure)}`,
+          );
+        }
+        if (current.snapshot.state.phase !== "completed") {
+          return current.snapshot.state.phase;
+        }
+        return current.snapshot.draining === false ? "returned" : "draining";
+      },
+      { timeout: 900_000, intervals: [500, 1_000, 2_000, 5_000] },
+    )
+    .toBe("returned");
+}
+
 /** Capture `repository` into a review through the app's own daemon, and open its route.
  *  `review.capture` fires `onReviewOpened`, which is what kicks the drafting under test. */
 async function openCapturedReview(page: Page, repository: string): Promise<string> {
@@ -209,8 +303,8 @@ async function openCapturedReview(page: Page, repository: string): Promise<strin
   }
 }
 
-test("LIVE: all five lens outcomes render and survive an app and daemon restart", async () => {
-  test.setTimeout(900_000);
+liveTest("LIVE: boards survive restart and a real round produces successor boards", async () => {
+  test.setTimeout(1_800_000);
   const repository = seedReviewRepo("board-live-repo-");
   const userData = makeTempDir("board-live-state-");
   const home = makeTempDir("board-live-home-");
@@ -232,9 +326,16 @@ test("LIVE: all five lens outcomes render and survive an app and daemon restart"
       commandId: crypto.randomUUID(),
       reviewId,
     });
+    const initialPatchset = loaded.review.patchsets.find(
+      (patchset) => patchset.id === loaded.review.activePatchsetId,
+    );
+    if (initialPatchset === undefined) throw new Error("captured review lost its active patchset");
+    expect(initialPatchset.intent?.surface).toBe("working-tree");
+    expect(initialPatchset.source ?? "local").toBe("local");
     const generation = generationIdForPatchset(loaded.review.activePatchsetId);
     const terminal = await waitForTerminalLenses(bridge, reviewId, generation);
     console.log("LENS TERMINALS:", JSON.stringify([...terminal.entries()], null, 2));
+    expectPopulatedBoard(terminal);
     expectOptionalEmptyLensesHonest(terminal);
     await expectTerminalLensesRendered(page, terminal);
 
@@ -249,11 +350,24 @@ test("LIVE: all five lens outcomes render and survive an app and daemon restart"
       }),
     ).toEqual({ board: null });
 
+    const firstDaemonPid = await healthyDaemonPid(userData);
     bridge.close();
     bridge = undefined;
     await launched.application.close();
+    await expect
+      .poll(() => readDaemonFile(userData), { timeout: 30_000, intervals: [50, 100, 250] })
+      .toBeNull();
+    await expect
+      .poll(() => processIsAlive(firstDaemonPid), {
+        timeout: 30_000,
+        intervals: [50, 100, 250],
+      })
+      .toBe(false);
+
     launched = await launchRennet({ repository, userData, home, env: liveEnv(false) });
     page = await launched.application.firstWindow();
+    const replacementDaemonPid = await healthyDaemonPid(userData);
+    expect(replacementDaemonPid).not.toBe(firstDaemonPid);
     await page.evaluate((id) => {
       location.hash = `#/s/${id}`;
     }, reviewId);
@@ -262,8 +376,69 @@ test("LIVE: all five lens outcomes render and survive an app and daemon restart"
     const reconstructed = await waitForTerminalLenses(bridge, reviewId, generation);
 
     expect([...reconstructed.entries()]).toEqual([...terminal.entries()]);
+    expectPopulatedBoard(reconstructed);
     expectOptionalEmptyLensesHonest(reconstructed);
     await expectTerminalLensesRendered(page, reconstructed);
+
+    const beforeRoundDiff = gitOutput(repository, "diff", "--", REVIEWED_PATH);
+    expect(beforeRoundDiff).toContain("+export const widget = 2;");
+    await bridge.invoke("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: ROUND_ASK_ID,
+        anchor: `${REVIEWED_PATH}:1`,
+        type: "request-change",
+        body: `Replace the entire contents of ${REVIEWED_PATH} with exactly \`export const widget = 3;\` followed by one newline. Do not change any other file.`,
+      },
+    });
+    const dispatched = await bridge.invoke("round.dispatch", { reviewId });
+    expect(dispatched.dispatched).toBe(true);
+    expect(dispatched.acceptedOperation).toBeDefined();
+    const operationId = dispatched.acceptedOperation?.operationId;
+    if (operationId === undefined) throw new Error("round dispatch returned no operation identity");
+    await waitForReturnedRound(bridge, reviewId, operationId);
+
+    const asks = await bridge.invoke("ask.read", { sessionId: reviewId });
+    expect(asks.projection.stagedAsks[ROUND_ASK_ID]).toBeUndefined();
+    const rounds = await bridge.invoke("session.rounds", { reviewId });
+    const successor = rounds.records.findLast((record) =>
+      record.asksDispatched.includes(ROUND_ASK_ID),
+    );
+    if (successor === undefined) throw new Error("returned round has no durable ledger record");
+    expect(successor.outcome).toBe("completed");
+    expect(successor.changedPaths).toEqual([REVIEWED_PATH]);
+    expect(successor.diff).toContain("-export const widget = 2;");
+    expect(successor.diff).toContain("+export const widget = 3;");
+    expect(successor.workerCommitRange.to).not.toBe(successor.workerCommitRange.from);
+    expect(successor.resultPatchsetId).toBeDefined();
+    expect(successor.resultPatchsetId).not.toBe(loaded.review.activePatchsetId);
+    expect(successor.boardGeneration).not.toBe(generation);
+    expect(successor.mintedPatchsetGeneration).toBe(successor.boardGeneration);
+
+    expect(readFileSync(join(repository, REVIEWED_PATH), "utf8")).toBe(
+      "export const widget = 3;\n",
+    );
+    const afterRoundDiff = gitOutput(repository, "diff", "--", REVIEWED_PATH);
+    expect(afterRoundDiff).toContain("+export const widget = 3;");
+
+    const reloaded = await bridge.invoke("review.load", {
+      commandId: crypto.randomUUID(),
+      reviewId,
+    });
+    expect(reloaded.review.activePatchsetId).toBe(successor.resultPatchsetId);
+    expect(
+      reloaded.review.patchsets.some((patchset) => patchset.id === successor.resultPatchsetId),
+    ).toBe(true);
+    const successorTerminal = await waitForTerminalLenses(
+      bridge,
+      reviewId,
+      successor.boardGeneration,
+    );
+    expectPopulatedBoard(successorTerminal);
+
+    await page.reload();
+    await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 60_000 });
+    await expectTerminalLensesRendered(page, successorTerminal);
   } finally {
     bridge?.close();
     await launched.application.close().catch(() => undefined);

@@ -144,6 +144,20 @@ type TerminalLaneEvidence =
   | { readonly kind: "absence"; readonly reason: LensAbsenceReason }
   | { readonly kind: "failure"; readonly reason: string };
 
+type CodexCallEvidence =
+  | {
+      readonly status: "completed";
+      readonly requestedModel: string;
+      readonly effort: string;
+      readonly reportedModel?: string;
+    }
+  | {
+      readonly status: "failed";
+      readonly requestedModel: string;
+      readonly effort: string;
+      readonly reason: string;
+    };
+
 const ABSENCE_BY_LENS: ReadonlyMap<LintTarget, LensAbsenceReason> = new Map([
   ["design", "no-material"],
   ["decisions", "no-decisions"],
@@ -181,6 +195,32 @@ function terminalLaneEvidence(outcome: TerminalLaneInput): TerminalLaneEvidence 
   return { kind: "failure", reason: outcome.failure };
 }
 
+function observeCodexExecutor(
+  executor: CodexExecutor,
+  evidence: CodexCallEvidence[],
+): CodexExecutor {
+  return async (request) => {
+    try {
+      const result = await executor(request);
+      evidence.push({
+        status: "completed",
+        requestedModel: request.model,
+        effort: request.effort,
+        ...(result.model === undefined ? {} : { reportedModel: result.model }),
+      });
+      return result;
+    } catch (error) {
+      evidence.push({
+        status: "failed",
+        requestedModel: request.model,
+        effort: request.effort,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
+}
+
 describe("rounds live-smoke terminal oracle", () => {
   it("accepts each honest terminal variant", () => {
     expect(
@@ -212,6 +252,38 @@ describe("rounds live-smoke terminal oracle", () => {
       "expected typed absence no-findings",
     );
   });
+
+  it("records completed and failed Codex calls without turning failures into success", async () => {
+    const evidence: CodexCallEvidence[] = [];
+    const completed = observeCodexExecutor(
+      async () => ({ output: { findings: [] }, model: "gpt-observed" }),
+      evidence,
+    );
+    await expect(
+      completed({ model: "gpt-requested", effort: "medium", prompt: "review" }),
+    ).resolves.toMatchObject({ model: "gpt-observed" });
+    expect(evidence).toEqual([
+      {
+        status: "completed",
+        requestedModel: "gpt-requested",
+        effort: "medium",
+        reportedModel: "gpt-observed",
+      },
+    ]);
+
+    const failed = observeCodexExecutor(async () => {
+      throw new Error("codex stopped");
+    }, evidence);
+    await expect(
+      failed({ model: "gpt-requested", effort: "low", prompt: "review" }),
+    ).rejects.toThrow("codex stopped");
+    expect(evidence.at(-1)).toEqual({
+      status: "failed",
+      requestedModel: "gpt-requested",
+      effort: "low",
+      reason: "codex stopped",
+    });
+  });
 });
 
 describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENNET_SMOKE=1)", () => {
@@ -230,20 +302,20 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       });
       console.log("[smoke] claude discovery:", JSON.stringify(discovery.health));
       const codexProbe = await discoverCodex(defaultCodexDiscoveryDeps(), {});
-      const codexExecutor: CodexExecutor | null = codexProbe.chosen
-        ? createCodexExecutor(defaultCodexExecEffects, {
-            bin: codexProbe.chosen.path,
-            harnessVersion: codexProbe.chosen.version,
-            ...(codexProbe.chosen.runtimePath === undefined
-              ? {}
-              : { runtimePath: codexProbe.chosen.runtimePath }),
-            repoRoot,
-          })
-        : null;
-      console.log(
-        "[smoke] ports:",
-        JSON.stringify({ claude: claudePort !== null, codex: codexExecutor !== null }),
-      );
+      if (codexProbe.chosen === null) {
+        throw new Error(`no Codex harness resolved: ${JSON.stringify(codexProbe.health)}`);
+      }
+      const rawCodexExecutor = createCodexExecutor(defaultCodexExecEffects, {
+        bin: codexProbe.chosen.path,
+        harnessVersion: codexProbe.chosen.version,
+        ...(codexProbe.chosen.runtimePath === undefined
+          ? {}
+          : { runtimePath: codexProbe.chosen.runtimePath }),
+        repoRoot,
+      });
+      const codexCalls: CodexCallEvidence[] = [];
+      const codexExecutor = observeCodexExecutor(rawCodexExecutor, codexCalls);
+      console.log("[smoke] ports:", JSON.stringify({ claude: claudePort !== null, codex: true }));
       expect(claudePort, "no claude harness resolved — cannot smoke the drafters").not.toBeNull();
 
       // REAL prompt files (packages/prompts/src) and a REAL file-backed boards runtime.
@@ -336,6 +408,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
                 }
               : null,
             lenses: lensRows,
+            codexCalls,
             coverageViolations: outcome.pipeline.coverage?.length ?? "unknown",
           },
           null,
@@ -359,6 +432,10 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       expect(outcome.boardGeneration.id).toBe("gen:ps-c15-smoke");
       expect(outcome.frozenPrevious?.id).toBe(PREV_GEN.id);
       expect(allOutcomes.length, "report seat did not run").toBe(6);
+      expect(
+        codexCalls.filter((call) => call.status === "completed").length,
+        `Codex resolved but completed no council call: ${JSON.stringify(codexCalls)}`,
+      ).toBeGreaterThan(0);
 
       // No swallowed empties: every seat has exactly one populated, absent, or failed
       // terminal result. The cheap oracle tests above are the positive controls for this

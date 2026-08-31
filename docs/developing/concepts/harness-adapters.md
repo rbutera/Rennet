@@ -52,18 +52,26 @@ journey but is not part of the browser-free local gate.
 
 ### Live board and round proofs
 
-Two opt-in proofs exercise installed harnesses. The server proof runs the real
-round-report and five-lens pipeline, and requires each lane to finish as exactly
-one populated board, typed absence, or explicit failure:
+Two opt-in proofs exercise installed harnesses. The server proof requires both
+Claude Code and Codex, records every completed or failed Codex council call, and
+runs the real round-report and five-lens pipeline. Each lane must finish as
+exactly one populated board, typed absence, or explicit failure, and at least one
+lens must produce a populated board:
 
 ```sh
 pnpm nx run rennet-server:real-rounds
 ```
 
 `real-rounds` is uncached because its verdict depends on installed harnesses and
-provider responses. The launched desktop proof captures a review, renders all five
-terminal lens results, restarts both app and daemon, and requires `board.read` to
-reconstruct the same result for every lens:
+provider responses. The launched desktop proof captures a review and requires at
+least one populated board among its five terminal lens results. It records the
+first healthy daemon PID, closes the app-owned daemon, proves that process and its
+claim are gone, and requires the relaunched app to use a different healthy PID.
+After `board.read` reconstructs the same results, the proof stages an exact source
+edit, dispatches a real coding round, and waits for durable Return. The final
+assertions read the changed fixture, round diff and commit range, successor
+patchset, new generation, and populated successor boards through the relaunched
+desktop client:
 
 ```sh
 RENNET_LIVE_E2E=1 pnpm nx run rennet-desktop:e2e --args="board-drafting-live"
