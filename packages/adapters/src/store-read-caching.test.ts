@@ -6,11 +6,16 @@ import type { AskEventBody, ConversationAnchorWire, SessionTranscriptRow } from 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The JSON-store family's read cost (perf audit §3 H1, §4 H4/H5): every store used to
- * re-read and re-validate its whole file per operation, which is O(n) per write and O(n²)
- * over a session. These tests COUNT the disk reads rather than asserting a shape, because
- * "serves the same value" is exactly what the slow version already did — only the count
- * distinguishes a memo from a re-read.
+ * The JSON-store family's READ cost (perf audit §3 H1, §4 H4/H5): every store used to
+ * re-read and re-validate its whole file per operation. These tests COUNT the disk reads
+ * rather than asserting a shape, because "serves the same value" is exactly what the slow
+ * version already did — only the count distinguishes a memo from a re-read.
+ *
+ * What is NOT covered here, and is the other half of the audit item: the WRITE side. Every
+ * mutation still serializes and rewrites the file whole, so a write is still O(n) bytes and
+ * a session's writes are still O(n²) — deliberate scope, since an append-only on-disk format
+ * is a persistence-format change rather than a caching one. A green run means reads stopped
+ * re-parsing; it does NOT mean the quadratic is gone.
  *
  * `node:fs`'s namespace is not spy-able (ESM, non-configurable), so the module is mocked
  * with pass-through counters. The stores are imported AFTER the mock so they bind to it.

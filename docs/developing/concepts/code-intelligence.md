@@ -49,6 +49,12 @@ The symbol inspector combines:
 The index uses content-addressed shards, so unchanged repository content can be
 reused without changing its identity.
 
+A snapshot that has been read and verified once is memoized for the life of the
+daemon process, keyed on its manifest fingerprint — which covers every shard
+digest — so a repeat lookup reads no shards at all. The accepted consequence: a
+shard corrupted on disk *after* it verified is still served from that memo, and
+the corruption surfaces at the next daemon start rather than at the next read.
+
 ## The import graph
 
 Import shards record the raw specifiers a file names — `from '…'`, bare

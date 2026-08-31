@@ -14,7 +14,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * `node:fs/promises`'s namespace is not spy-able (ESM, non-configurable), so the module
  * is mocked with pass-through counters and the store imported after it.
  */
-const counts = vi.hoisted(() => ({ log: 0, schema: 0 }));
+const counts = vi.hoisted(() => ({
+  log: 0,
+  schema: 0,
+  /**
+   * Arm to stall the NEXT `log.jsonl` read: it reads the bytes as it always would, then parks
+   * on this promise before resolving — the shape of a cold read that STARTED before a
+   * concurrent append and finishes after it. Claimed synchronously by the first log read
+   * invoked after arming, so which read stalls is deterministic rather than a timing race.
+   */
+  holdNextLogRead: undefined as Promise<void> | undefined,
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -22,14 +32,27 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     default: actual,
     readFile: ((path: Parameters<typeof actual.readFile>[0], ...rest: unknown[]) => {
-      if (String(path).endsWith("log.jsonl")) counts.log += 1;
+      const isLog = String(path).endsWith("log.jsonl");
+      if (isLog) counts.log += 1;
       if (String(path).endsWith("schema.json")) counts.schema += 1;
-      return (actual.readFile as (...args: unknown[]) => unknown)(path, ...rest);
-    }) as typeof actual.readFile,
+      let hold: Promise<void> | undefined;
+      if (isLog) {
+        hold = counts.holdNextLogRead;
+        counts.holdNextLogRead = undefined;
+      }
+      const read = (actual.readFile as (...args: unknown[]) => Promise<unknown>)(path, ...rest);
+      if (hold === undefined) return read;
+      const parked = hold;
+      return (async () => {
+        const bytes = await read;
+        await parked;
+        return bytes;
+      })();
+    }) as unknown as typeof actual.readFile,
   };
 });
 
-const { FileBoardStore } = await import("./file-board-store");
+const { BOARD_LOG_MEMO_LIMIT, FileBoardStore } = await import("./file-board-store");
 
 const SCHEMA = BOARD_WIRE_SCHEMA;
 
@@ -44,6 +67,7 @@ describe("FileBoardStore read caching", () => {
     root = await mkdtemp(join(tmpdir(), "file-board-store-cache-"));
     counts.log = 0;
     counts.schema = 0;
+    counts.holdNextLogRead = undefined;
   });
 
   afterEach(async () => {
@@ -105,6 +129,57 @@ describe("FileBoardStore read caching", () => {
     const second = (await store.getEvents("b1", 0))[0]?.op;
     if (second?.op !== "create") throw new Error("stored op is a create op");
     expect(second.element.data.text).toBe("original");
+  });
+
+  it("does not let a cold read that lands after an append resurrect the old tail", async () => {
+    // The race the cache opened: `getEvents` on a cold store starts a read that is serialized
+    // against nothing, and an `append` running in that window installs AND extends the cached
+    // log. If the late read then installs its own pre-append events, the next append recomputes
+    // its tail from them and mints a seq the file already carries — a duplicate the log keeps
+    // forever, and one no existing test could see, because every value returned is still a
+    // plausible list of events.
+    const seed = new FileBoardStore(root);
+    await seed.createBoard("b1", SCHEMA);
+    await seed.append("b1", [{ actor: "a", op: createOp("e1") }]);
+
+    const cold = new FileBoardStore(root);
+    let release: () => void = () => undefined;
+    counts.holdNextLogRead = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stalled = cold.getEvents("b1", 0); // reads [1] off disk, then parks
+
+    await cold.append("b1", [{ actor: "a", op: createOp("e2") }]); // caches [1, 2]
+    release();
+    await stalled;
+
+    // The next seq is 3. Before the fix it was 2 again, because the stale read won.
+    const next = await cold.append("b1", [{ actor: "a", op: createOp("e3") }]);
+    expect(next.map((event) => event.seq)).toEqual([3]);
+
+    // …and the FILE is what actually has to be right: a fresh store replays 1,2,3 contiguously.
+    const reopened = new FileBoardStore(root);
+    expect((await reopened.getEvents("b1", 0)).map((event) => event.seq)).toEqual([1, 2, 3]);
+  });
+
+  it("re-reads an evicted board's log from disk rather than serving an empty one", async () => {
+    // The cache is bounded, so a long-lived daemon is not holding every board it ever opened.
+    // Eviction has to be invisible: the file is the authority, and an evicted board revalidates.
+    const store = new FileBoardStore(root);
+    await store.createBoard("b0", SCHEMA);
+    await store.append("b0", [{ actor: "a", op: createOp("e1") }]);
+    for (let i = 1; i <= BOARD_LOG_MEMO_LIMIT; i++) await store.createBoard(`b${i}`, SCHEMA);
+    counts.log = 0; // nothing above read a log: createBoard seeds the entry, append extends it
+
+    // b0 is the coldest of BOARD_LOG_MEMO_LIMIT + 1 boards, so it is the one evicted.
+    expect((await store.getEvents("b0", 0)).map((event) => event.seq)).toEqual([1]);
+    expect(counts.log).toBe(1);
+    expect((await store.getEvents("b0", 0)).map((event) => event.seq)).toEqual([1]);
+    expect(counts.log).toBe(1); // …and it is cached again on the way back in
+
+    // The bound evicts one board, it does not clear the cache: the newest is still warm.
+    expect(await store.getEvents(`b${BOARD_LOG_MEMO_LIMIT}`, 0)).toEqual([]);
+    expect(counts.log).toBe(1);
   });
 
   it("heals the FILE after a torn tail, not just the log it holds in memory", async () => {

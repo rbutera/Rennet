@@ -1,5 +1,11 @@
 import { statSync } from "node:fs";
 
+/** How many files one cache keeps parsed. Entries are per-FILE parsed states — one ask log,
+ *  one thread, one transcript, one session record each — so a working session has dozens
+ *  live, not thousands; 256 keeps every one of them warm and bounds the pathological case
+ *  (a `list()` walking a directory of hundreds of stale sessions). */
+export const PARSED_FILE_CACHE_LIMIT = 256;
+
 /**
  * A per-path memo of a JSON file's PARSED state, so a read-modify-write store stops
  * re-reading and re-validating its whole file on every call (perf audit §3 H1 / §4 H4–H5:
@@ -26,18 +32,30 @@ export class ParsedFileCache<T> {
       this.#entries.delete(path);
       return undefined;
     }
+    // delete-then-set: Map is insertion-ordered, so re-inserting makes this the newest use
+    // and eviction in `set` takes the coldest.
+    this.#entries.delete(path);
+    this.#entries.set(path, entry);
     return entry.value;
   }
 
   /** Memoize `value` as the parse of the file at `path` AS IT IS NOW. A caller that just
-   *  wrote the file passes what it wrote; the stamp is taken from the file it landed. */
+   *  wrote the file passes what it wrote; the stamp is taken from the file it landed.
+   *
+   *  The stamp is read AFTER that write, so a foreign writer landing in between would have
+   *  ITS file memoized under OUR value. Accepted, under the same single-writer assumption the
+   *  rest of this cache runs on: the daemon is the only writer of these paths and the second
+   *  instances only read. A known ceiling, named rather than guarded. */
   set(path: string, value: T): void {
     const stamp = stampOf(path);
-    if (stamp === undefined) {
-      this.#entries.delete(path);
-      return;
-    }
+    this.#entries.delete(path);
+    if (stamp === undefined) return;
     this.#entries.set(path, { stamp, value });
+    while (this.#entries.size > PARSED_FILE_CACHE_LIMIT) {
+      const coldest = this.#entries.keys().next();
+      if (coldest.done) break;
+      this.#entries.delete(coldest.value);
+    }
   }
 }
 

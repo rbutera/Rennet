@@ -170,10 +170,13 @@ interface EmittedRow {
  * `harness-transcript-fold.test.ts` pins it snapshot-by-snapshot.
  *
  * ponytail: a snapshot's `thought`/`action` blocks are the SAME objects the fold keeps
- * mutating (a later `tool.output` completes an action already handed out). Every caller today
- * either serializes the snapshot immediately (the live WS frame) or takes it after the turn's
- * terminal event (persistence), so nothing observes the mutation. Copy blocks on snapshot if a
- * caller ever retains a mid-turn one.
+ * mutating (a later `tool.output` completes an action already handed out). Callers either
+ * serialize the snapshot immediately (the live WS frame) or take it after the turn's terminal
+ * event (persistence) — except `dispatch/review.ts`, which also parks the latest snapshot in
+ * the live-turns registry, mid-turn and unserialized. That one is safe for a narrower reason:
+ * the mutations only ever COMPLETE a block that was already emitted, and each throttle window
+ * replaces the registry's array outright, so a late reader sees a more finished turn, never a
+ * torn one. Copy blocks on snapshot if a caller ever needs a snapshot to stay frozen.
  */
 export interface HarnessTranscriptFold {
   /** Fold one event in, in arrival order. */

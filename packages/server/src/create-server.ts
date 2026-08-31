@@ -1681,6 +1681,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
   };
 
+  // APPEND-ONLY, and load-bearing: `createCachedProjectionContext` uses this set's SIZE as
+  // its version, so a root may be added but never removed or swapped in place.
   const allowedRoots = new Set<string>();
   // Proactive Repo Map rehydration (#143/#243): keeps each built project's structural
   // snapshot and model-backed knowledge warm as its reference branch advances.

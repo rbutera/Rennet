@@ -3,6 +3,17 @@ import { join } from "node:path";
 import type { Event, WireSchema } from "@wboard/core";
 import type { AppendEntry, BoardStore } from "@wboard/server";
 
+/** One board's cached committed log. `recovered` rides the cache — see {@link FileBoardStore}. */
+interface BoardLog {
+  events: Event[];
+  recovered: boolean;
+}
+
+/** How many boards' logs a store keeps in memory. A project's `.rennet/boards/` holds one
+ *  board per lens run, and only the open review's boards are touched in a session — 32 keeps
+ *  every live board warm while capping a long-lived daemon's retained events. */
+export const BOARD_LOG_MEMO_LIMIT = 32;
+
 /**
  * Durable {@link BoardStore} over a directory: per board, `schema.json`
  * (written once by {@link createBoard}) and `log.jsonl` (one line per event,
@@ -33,7 +44,8 @@ import type { AppendEntry, BoardStore } from "@wboard/server";
  * same single-writer assumption the seq tail already ran on, now covering the
  * whole log: one runtime per project root owns the directory for the process's
  * life (`create-server` memoizes it), and a FRESH store re-reads from disk, which
- * is what restart recovery uses.
+ * is what restart recovery uses. The cache is bounded ({@link BOARD_LOG_MEMO_LIMIT})
+ * and least-recently-used — an evicted board simply re-reads its log on next touch.
  * ponytail: single-writer O_APPEND assumed (the embedded BoardService is the
  * only writer); move to a lockfile if a second writing process ever appears —
  * the in-memory log would need invalidating too.
@@ -45,7 +57,7 @@ export class FileBoardStore implements BoardStore {
    * `recovered` stays true until a write path heals the file — a read must never
    * heal, so the flag rides the cache instead of being lost by the first reader.
    */
-  readonly #log = new Map<string, { events: Event[]; recovered: boolean }>();
+  readonly #log = new Map<string, BoardLog>();
   /** Per-board `schema.json` TEXT, cached once written or first read. Kept as text so
    *  every `getSchema` still parses its own copy — nothing a caller holds aliases ours. */
   readonly #schema = new Map<string, string>();
@@ -79,7 +91,7 @@ export class FileBoardStore implements BoardStore {
    * heal the file before appending). Mid-file corruption throws — that is
    * damage, not a crash tail. Only ENOENT reads as "no log yet".
    */
-  async #readLog(boardId: string): Promise<{ events: Event[]; recovered: boolean }> {
+  async #readLog(boardId: string): Promise<BoardLog> {
     const path = join(this.#dir(boardId), "log.jsonl");
     let raw: string;
     try {
@@ -113,22 +125,40 @@ export class FileBoardStore implements BoardStore {
     return { events: parsed.map((line) => line.event), recovered };
   }
 
-  /** The board's committed events, read from disk at most once per store instance.
-   *  Reads NEVER heal — see {@link #healed}. */
-  async #load(boardId: string): Promise<{ events: Event[]; recovered: boolean }> {
-    let entry = this.#log.get(boardId);
-    if (entry === undefined) {
-      // A throw (mid-file corruption) is not cached: the next call re-reads and
-      // throws again, rather than a fault being remembered as a value.
-      entry = await this.#readLog(boardId);
-      this.#log.set(boardId, entry);
+  /** Install `entry` as the board's cached log and mark it the newest use, evicting the
+   *  coldest board past {@link BOARD_LOG_MEMO_LIMIT}. An evicted board is not lost — the
+   *  file is the authority and the next touch re-reads it. Evicting a board whose `append`
+   *  is mid-flight is likewise safe: that append pushes into an object nobody reads again,
+   *  and the re-read sees the same events on disk. */
+  #remember(boardId: string, entry: BoardLog): BoardLog {
+    this.#log.delete(boardId); // delete-then-set: Map is insertion-ordered, so this is the LRU touch
+    this.#log.set(boardId, entry);
+    while (this.#log.size > BOARD_LOG_MEMO_LIMIT) {
+      const coldest = this.#log.keys().next();
+      if (coldest.done) break;
+      this.#log.delete(coldest.value);
     }
     return entry;
   }
 
+  /** The board's committed events, read from disk at most once per store instance.
+   *  Reads NEVER heal — see {@link #healed}. */
+  async #load(boardId: string): Promise<BoardLog> {
+    const cached = this.#log.get(boardId);
+    if (cached !== undefined) return this.#remember(boardId, cached);
+    // A throw (mid-file corruption) is not cached: the next call re-reads and
+    // throws again, rather than a fault being remembered as a value.
+    const read = await this.#readLog(boardId);
+    // A concurrent `append` can install AND extend the entry while this read is in
+    // flight (a cold `getEvents` and an `append` are not serialized against each
+    // other). That entry is the newer one, so it wins: installing this now-stale read
+    // would make the next append recompute an old tail and mint a duplicate seq.
+    return this.#remember(boardId, this.#log.get(boardId) ?? read);
+  }
+
   /** The board's committed events with the file healed if a crash left a garbage tail.
    *  Serialized-write context ONLY (append) — reads never rewrite. */
-  async #healed(boardId: string): Promise<{ events: Event[]; recovered: boolean }> {
+  async #healed(boardId: string): Promise<BoardLog> {
     const entry = await this.#load(boardId);
     if (entry.recovered) {
       // Heal before anything appends after the garbage tail. Temp-then-rename so the
@@ -160,7 +190,7 @@ export class FileBoardStore implements BoardStore {
         throw error;
       }
       this.#schema.set(boardId, copy);
-      this.#log.set(boardId, { events: [], recovered: false });
+      this.#remember(boardId, { events: [], recovered: false });
     });
   }
 
@@ -216,10 +246,23 @@ export class FileBoardStore implements BoardStore {
 
   async getEvents(boardId: string, afterSeq: number): Promise<Event[]> {
     const { events } = await this.#load(boardId);
+    const first = events[0]?.seq;
+    const last = events.at(-1)?.seq;
+    // Seqs are contiguous from the first — `append` derives each from the last, and
+    // recovery only ever drops a TAIL — so the cut point is arithmetic instead of a scan
+    // of the whole log per call. The O(1) span check is what makes that safe: a log whose
+    // span does not match its length is not contiguous, and falls back to the filter
+    // rather than being sliced at the wrong place.
+    const contiguous =
+      first !== undefined && last !== undefined && last - first + 1 === events.length;
     // Clone the SLICE, not the log: the caller owns what it gets back (nothing it
     // mutates may reach stored state), and after the first read that cost is the new
     // events only — which is what `afterSeq` was always meant to buy.
-    return structuredClone(events.filter((event) => event.seq > afterSeq));
+    return structuredClone(
+      contiguous
+        ? events.slice(Math.min(Math.max(afterSeq - first + 1, 0), events.length))
+        : events.filter((event) => event.seq > afterSeq),
+    );
   }
 }
 

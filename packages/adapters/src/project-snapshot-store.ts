@@ -691,13 +691,16 @@ export class ProjectSnapshotStore {
     return intact;
   }
 
-  /** Record a shard path as known-good on disk, evicting the coldest over the bound. */
+  /** Record a shard path as known-good on disk, evicting the OLDEST-recorded over the bound.
+   *  Insertion order, not recency: a hit in `shardIsIntact` returns without re-recording, so
+   *  there is nothing to touch and nothing to promote. That is fine for this memo — a build
+   *  re-offers the same shard set, so age tracks relevance closely enough. */
   private rememberShardOnDisk(path: string): void {
     this.verifiedShardPaths.add(path);
     while (this.verifiedShardPaths.size > SHARD_PATH_MEMO_LIMIT) {
-      const coldest = this.verifiedShardPaths.values().next();
-      if (coldest.done) break;
-      this.verifiedShardPaths.delete(coldest.value);
+      const oldest = this.verifiedShardPaths.values().next();
+      if (oldest.done) break;
+      this.verifiedShardPaths.delete(oldest.value);
     }
   }
 
