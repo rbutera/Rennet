@@ -6,7 +6,7 @@ import {
 } from "@rennet/protocol";
 import { Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import { SourceChips, SpecDeltaBadge } from "./design-meta";
@@ -24,8 +24,13 @@ import { selectDeltaViewed } from "./viewed-delta";
 // fold component for the projection's section entries — distinct from the inline
 // `kinds/section.tsx` renderer that keeps the element registry total.
 //
-// Disclosure pattern (the spike's): the heading IS the toggle; the children stay
-// mounted (Collapse animates grid-rows, never a conditional render).
+// Disclosure pattern (the spike's): the heading IS the toggle, and `Collapse` animates
+// grid-rows rather than switching a conditional render. It mounts only the side it is
+// showing, so exactly one of the two Collapses below holds nodes at rest (perf audit
+// §5 H2 — this pair used to render the fold line AND the whole body at once, which is
+// why folding a 700-claim board freed nothing). The trade is that folding a section
+// discards its children's own fold state: reopening a section reopens its findings at
+// their defaults. That is the fix, not a regression to route around.
 //
 // Delta marks (#486): a section carrying `delta: "new" | "reworked"` opens EXPANDED
 // and wears a transient gold dot (`bg-primary`) while unviewed; interacting (toggling
@@ -102,8 +107,12 @@ function FoldLine({
  * section element (`entry.ref`) is resolved through the board pool for its title and
  * children. `defaultOpen` lets board-view drive `foldAll` (R44); a delta section
  * defaults to open regardless.
+ *
+ * `memo`'d: on a big board the sections are the render units, and their props (`entry`
+ * comes straight out of the resolved board) are stable for as long as the board is, so a
+ * store write that re-renders the document stops at the section boundary.
  */
-export function Section({
+export const Section = memo(function Section({
   entry,
   lens,
   defaultOpen,
@@ -199,4 +208,4 @@ export function Section({
       </Collapse>
     </section>
   );
-}
+});

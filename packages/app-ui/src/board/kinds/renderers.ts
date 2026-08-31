@@ -1,5 +1,5 @@
 import type { HostElement } from "@rennet/protocol";
-import { createElement } from "react";
+import { createElement, memo } from "react";
 import { assertExcludedKind, Element, type ElementRegistry } from "../registry";
 import { AnnotationElement } from "./annotation";
 import { CalloutElement } from "./callout";
@@ -40,13 +40,21 @@ export const RENDERERS: ElementRegistry = {
 /** Dispatch one board element through {@link RENDERERS}. The one entry point a
  *  composition (board-view, a section, an order step) renders an element with. The
  *  board-data boundary rejects excluded kinds, so this narrow is total at runtime —
- *  `assertExcludedKind` throws loudly rather than dropping an element silently. */
-export function BoardElement({ element }: { readonly element: HostElement }) {
+ *  `assertExcludedKind` throws loudly rather than dropping an element silently.
+ *
+ *  `memo`'d: `element` is resolved out of the board pool, so it holds identity for the
+ *  life of the board. That makes this the cut line for the whole per-element subtree —
+ *  a board-level re-render reaches an element only when that element changed. */
+export const BoardElement = memo(function BoardElement({
+  element,
+}: {
+  readonly element: HostElement;
+}) {
   if (element.kind === "round_outcome" || element.kind === "review_comment") {
     return assertExcludedKind(element.kind);
   }
   return createElement(Element, { registry: RENDERERS, element });
-}
+});
 
 /** Resolve child element ids through the board pool and render each in order. Shared by
  *  the `section` and `order_step` renderers (and cluster 4's fold-grammar section). */

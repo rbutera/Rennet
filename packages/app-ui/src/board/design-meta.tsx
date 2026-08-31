@@ -36,14 +36,26 @@ type SourceChipKind = "artifact" | "source" | "related-file";
 const SOURCE_CHIP =
   "inline-flex max-w-full items-center gap-1 rounded-chip border border-line bg-surface px-1.5 py-0.5 font-mono text-2xs text-ink-soft";
 
-export function followBoardAnchor(event: MouseEvent<HTMLAnchorElement>, targetId: string): void {
+/**
+ * Jump to a board element, unfolding the section that holds it first.
+ *
+ * `foldId` names the TOP-LEVEL section the target lives in, and defaults to the target
+ * itself (which is what a section-level chip links to). It has to be given separately for
+ * a nested target, because a folded section mounts no body — the target is not in the
+ * document to be found through, only the always-mounted top-level section is. The scroll
+ * therefore re-resolves the target a frame later, once the newly opened fold has committed.
+ */
+export function followBoardAnchor(
+  event: MouseEvent<HTMLAnchorElement>,
+  targetId: string,
+  foldId: string = targetId,
+): void {
   event.preventDefault();
-  const target = document.getElementById(targetId);
-  if (target === null) return;
-  const scroll = () => target.scrollIntoView({ behavior: "smooth", block: "start" });
-  const foldedSection = target.closest<HTMLElement>(
-    '[data-kind="board-section"][data-open="false"]',
-  );
+  const scroll = () =>
+    document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const foldedSection = document
+    .getElementById(foldId)
+    ?.closest<HTMLElement>('[data-kind="board-section"][data-open="false"]');
   const toggle = foldedSection?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
   if (toggle === undefined || toggle === null) {
     scroll();

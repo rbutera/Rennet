@@ -6,7 +6,7 @@ import type {
   SourceRef,
 } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
@@ -270,8 +270,11 @@ function absenceCopy(reason: LensAbsenceReason): {
   }
 }
 
-function sourceTarget(board: LensBoard, source: SourceRef): string | undefined {
-  const byId = new Map(board.elements.map((element) => [element.id, element]));
+function sourceTarget(
+  board: LensBoard,
+  byId: ReadonlyMap<string, LensBoard["elements"][number]>,
+  source: SourceRef,
+): string | undefined {
   return board.sections.find(({ ref }) => {
     const section = byId.get(ref);
     if (section?.kind !== "section") return false;
@@ -283,6 +286,11 @@ function sourceTarget(board: LensBoard, source: SourceRef): string | undefined {
 
 function BoardHeader({ board }: { readonly board: LensBoard }) {
   const document: BoardDocument = board.document;
+  // One index for every source chip, instead of one rebuilt per chip per render.
+  const byId = useMemo(
+    () => new Map(board.elements.map((element) => [element.id, element])),
+    [board.elements],
+  );
   return (
     <header className="mb-8 flex flex-col gap-4">
       <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
@@ -323,7 +331,7 @@ function BoardHeader({ board }: { readonly board: LensBoard }) {
         sources={document.sources ?? []}
         kind="artifact"
         {...(board.lens === "design"
-          ? { targetForSource: (source: SourceRef) => sourceTarget(board, source) }
+          ? { targetForSource: (source: SourceRef) => sourceTarget(board, byId, source) }
           : {})}
       />
     </header>
