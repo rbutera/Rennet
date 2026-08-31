@@ -109,16 +109,22 @@ JSON-RPC method error. No approval request is queued for a person.
 
 ## MCP configuration
 
-The child receives a full-table Codex configuration override:
+Rennet can give a child a full-table Codex configuration override:
 
 ```text
 codex app-server -c mcp_servers=<inline TOML>
 ```
 
-The override replaces the user's complete `mcp_servers` table for that child. It
-contains Rennet's loopback MCP server when the turn needs it, or an empty table.
-Other user Codex configuration remains available. The app-server command does not
-accept `--ignore-user-config`.
+The override replaces the user's complete `mcp_servers` table for that child.
+When Rennet supplies no table, the child inherits the user's configured MCP
+servers. When Rennet supplies its loopback server, that exact table wins.
+
+Context Map `partition-worker` turns are the narrow exception: they receive an
+explicit empty table because they read and inspect the repository through Codex's
+native tools and do not call MCP tools. This keeps their repository and shell
+capability while avoiding eagerly starting every ambient MCP server once per
+parallel worker. Other Codex utility jobs keep inheriting the user table. The
+app-server command does not accept `--ignore-user-config`.
 
 ## Discovery
 

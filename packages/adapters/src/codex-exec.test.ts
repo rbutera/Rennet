@@ -9,6 +9,7 @@ import {
   sanitizeSchemaForCodex,
   stripNullDeep,
 } from "./codex-exec";
+import { councilSeatTurn } from "./knowledge-swarm";
 
 // ── A fake SpawnAppServer scripting one utility turn (no process) ──────────────
 
@@ -304,13 +305,51 @@ describe("createCodexExecutor (app-server)", () => {
     expect(turnStarts[0]?.cwd).toBe("/elsewhere");
   });
 
-  // ── W5: the MCP table is no longer wiped with nothing put back ──────────────
+  // ── W5: MCP inheritance and per-turn full-table overrides ──────────────────
 
   it("sends no mcp_servers override when Rennet has none to pin (user MCP survives)", async () => {
     const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
     const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     await executor({ model: "m", effort: "low", prompt: "p" });
     expect((spawns[0] as SpawnCall).args).toEqual(["app-server"]);
+  });
+
+  it("lets a turn replace the configured MCP table with an explicitly empty table", async () => {
+    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const executor = createCodexExecutor(effects, {
+      repoRoot: "/repo",
+      mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
+    });
+    await executor({ model: "m", effort: "low", prompt: "p", mcpServers: {} });
+    expect((spawns[0] as SpawnCall).args).toEqual(["app-server", "-c", "mcp_servers={}"]);
+  });
+
+  it("starts only Context Map partition workers with an empty MCP table", async () => {
+    const { effects, spawns } = fakeExecEffects({ finalText: "{}" });
+    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
+    const council = { availability: { installed: ["codex" as const] } };
+    const worker = councilSeatTurn(
+      "partition-worker",
+      { type: "object" },
+      { codexExecutor: executor, repoRoot: "/repo" },
+      council,
+    );
+    const verify = councilSeatTurn(
+      "map-verify",
+      { type: "object" },
+      { codexExecutor: executor, repoRoot: "/repo" },
+      council,
+    );
+
+    expect("failure" in worker ? worker.failure : null).toBeNull();
+    expect("failure" in verify ? verify.failure : null).toBeNull();
+    if ("failure" in worker || "failure" in verify) return;
+
+    await worker.runTurn("worker", 1);
+    await verify.runTurn("verify", 1);
+
+    expect((spawns[0] as SpawnCall).args).toEqual(["app-server", "-c", "mcp_servers={}"]);
+    expect((spawns[1] as SpawnCall).args).toEqual(["app-server"]);
   });
 
   it("pins Rennet's loopback servers when it has them", async () => {
@@ -320,9 +359,11 @@ describe("createCodexExecutor (app-server)", () => {
       mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
     });
     await executor({ model: "m", effort: "low", prompt: "p" });
-    expect((spawns[0] as SpawnCall).args).toContain(
+    expect((spawns[0] as SpawnCall).args).toEqual([
+      "app-server",
+      "-c",
       'mcp_servers={canvasops={url="http://127.0.0.1:5000/mcp"}}',
-    );
+    ]);
   });
 });
 
