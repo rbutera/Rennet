@@ -176,7 +176,7 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
   );
 }
 
-function CrossSessionProbe() {
+function CrossSessionProbe({ onSettled }: { readonly onSettled: () => void }) {
   const dispatch = useRoundDispatch();
   const first = useRoundState(SESSION);
   const second = useRoundState(OTHER_SESSION);
@@ -184,7 +184,7 @@ function CrossSessionProbe() {
     <>
       <span>first:{first.phase}</span>
       <span>second:{second.phase}</span>
-      <button type="button" onClick={() => void dispatch?.(SESSION)}>
+      <button type="button" onClick={() => void dispatch?.(SESSION).then(onSettled)}>
         dispatch first
       </button>
     </>
@@ -795,6 +795,7 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
 
   it("keeps a late accepted dispatch keyed to its original review after the route changes", async () => {
     let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+    let settled = 0;
     const otherReview: Review = { ...RESOLVED_REVIEW, id: OTHER_REVIEW };
     const otherSession: SidebarSession = {
       ...SESSION_ROW,
@@ -820,7 +821,11 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
       <BridgeProvider bridge={bridge}>
         <Router hook={history.hook} searchHook={history.searchHook}>
           <LiveScope>
-            <CrossSessionProbe />
+            <CrossSessionProbe
+              onSettled={() => {
+                settled += 1;
+              }}
+            />
           </LiveScope>
         </Router>
       </BridgeProvider>,
@@ -842,6 +847,7 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
       );
       await Promise.resolve();
     });
+    await waitFor(() => expect(settled).toBe(1));
     expect(r.getByText("second:absent")).toBeTruthy();
 
     act(() => history.navigate(`/s/${SESSION}/run`));
