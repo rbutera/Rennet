@@ -19,7 +19,7 @@ import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
-import { DEFAULT_SWARM_CONCURRENCY, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,13 +129,17 @@ interface ClaudeCapture {
 }
 
 /** A fake Claude port capturing createSession options and emitting canned output. */
-function fakeClaudePort(captures: ClaudeCapture[], body: () => unknown): HarnessPort {
+function fakeClaudePort(
+  captures: ClaudeCapture[],
+  body: (capture: ClaudeCapture) => unknown | Promise<unknown>,
+): HarnessPort {
   return {
     createSession: async (options: {
       model?: string;
       outputSchema?: unknown;
     }): Promise<HarnessSession> => {
-      captures.push({ model: options.model, outputSchema: options.outputSchema });
+      const capture = { model: options.model, outputSchema: options.outputSchema };
+      captures.push(capture);
       const session = {
         send: async () => {
           /* the fake accepts the prompt and answers via events */
@@ -147,7 +151,7 @@ function fakeClaudePort(captures: ClaudeCapture[], body: () => unknown): Harness
           yield {
             kind: "session.ended",
             native: {},
-            outcome: { status: "completed", structuredOutput: body() },
+            outcome: { status: "completed", structuredOutput: await body(capture) },
           };
         })(),
       };
@@ -210,7 +214,11 @@ function wideSnapshot(partitions: number): LoadedSnapshot {
   } as unknown as LoadedSnapshot;
 }
 
-async function measureWorkerConcurrency(concurrency?: number): Promise<{
+async function measureWorkerConcurrency(
+  workerHarness: "claude-code" | "codex",
+  expectedWave: number,
+  concurrency?: number,
+): Promise<{
   readonly startedBeforeRelease: number;
   readonly peak: number;
   readonly outcome: Awaited<ReturnType<typeof runKnowledgeSwarmForRepo>>;
@@ -221,28 +229,56 @@ async function measureWorkerConcurrency(concurrency?: number): Promise<{
   const workerGate = new Promise<void>((resolve) => {
     releaseWorkers = resolve;
   });
+  let resolveExpectedWave: () => void = () => {
+    throw new Error("worker-wave gate was not initialised");
+  };
+  const expectedWaveStarted = new Promise<void>((resolve) => {
+    resolveExpectedWave = resolve;
+  });
   let active = 0;
   let peak = 0;
   let started = 0;
+  const runWorker = async (): Promise<void> => {
+    started += 1;
+    if (started >= expectedWave) resolveExpectedWave();
+    active += 1;
+    peak = Math.max(peak, active);
+    await workerGate;
+    active -= 1;
+  };
   const { store } = makeStore();
+  const claudePort = fakeClaudePort([], async (capture) => {
+    if (capture.outputSchema === PARTITION_WORKER_OUTPUT_SCHEMA) {
+      await runWorker();
+      return { statements: [] };
+    }
+    return verifyBody();
+  });
   const outcomePromise = runKnowledgeSwarmForRepo({
-    reader: { loadFresh: () => ({ ok: true as const, snapshot: wideSnapshot(17) }) },
+    reader: { loadFresh: () => ({ ok: true as const, snapshot: wideSnapshot(29) }) },
     knowledgeStore: store,
-    claudePort: fakeClaudePort([], verifyBody),
-    codexExecutor: async () => {
-      started += 1;
-      active += 1;
-      peak = Math.max(peak, active);
-      await workerGate;
-      active -= 1;
-      return { output: { statements: [] } };
-    },
+    claudePort,
+    codexExecutor:
+      workerHarness === "codex"
+        ? async () => {
+            await runWorker();
+            return { output: { statements: [] } };
+          }
+        : null,
     repoKey: "repo",
     repoRoot: "/repo",
     baseOid: "oid-wide",
     ...(concurrency === undefined ? {} : { concurrency }),
   });
 
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    expectedWaveStarted,
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, 250);
+    }),
+  ]);
+  if (timeout !== undefined) clearTimeout(timeout);
   const startedBeforeRelease = started;
   releaseWorkers();
   const outcome = await outcomePromise;
@@ -250,22 +286,28 @@ async function measureWorkerConcurrency(concurrency?: number): Promise<{
 }
 
 describe("knowledge swarm — council-routed contract (no live model)", () => {
-  it("starts twelve worker turns by default and never exceeds that bound", async () => {
-    expect(DEFAULT_SWARM_CONCURRENCY).toBe(12);
+  it("defaults Codex partition workers to twenty-four lanes", async () => {
+    const measured = await measureWorkerConcurrency("codex", 24);
 
-    const measured = await measureWorkerConcurrency();
-
-    expect(measured.startedBeforeRelease).toBe(12);
-    expect(measured.peak).toBe(12);
+    expect(measured.startedBeforeRelease).toBe(24);
+    expect(measured.peak).toBe(24);
     expect(measured.outcome).toMatchObject({
       status: "ok",
-      ranPartitions: 17,
-      totalPartitions: 17,
+      ranPartitions: 29,
+      totalPartitions: 29,
     });
   });
 
-  it("keeps the per-run worker limit load-bearing", async () => {
-    const measured = await measureWorkerConcurrency(3);
+  it("keeps Claude partition workers at twelve lanes by default", async () => {
+    const measured = await measureWorkerConcurrency("claude-code", 12);
+
+    expect(measured.startedBeforeRelease).toBe(12);
+    expect(measured.peak).toBe(12);
+    expect(measured.outcome.status).toBe("ok");
+  });
+
+  it("keeps the explicit per-run worker limit load-bearing", async () => {
+    const measured = await measureWorkerConcurrency("codex", 3, 3);
 
     expect(measured.startedBeforeRelease).toBe(3);
     expect(measured.peak).toBe(3);

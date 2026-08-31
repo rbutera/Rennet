@@ -297,10 +297,10 @@ export interface MapVerifyInput {
 export const MAP_VERIFY_CHUNK_SIZE = 150;
 
 /**
- * Concurrent verify turns. Lower than the worker fan-out
- * (`DEFAULT_SWARM_CONCURRENCY`) on purpose: a verify turn re-reads cited spans and
- * carries a larger prompt, and there are only ever a handful of them now that the
- * seat sees the residue rather than the whole set.
+ * Concurrent verify turns. Lower than either harness's partition-worker fan-out
+ * policy on purpose: a verify turn re-reads cited spans and carries a larger prompt,
+ * and there are only ever a handful of them now that the seat sees the residue
+ * rather than the whole set.
  */
 export const MAP_VERIFY_CONCURRENCY = 4;
 

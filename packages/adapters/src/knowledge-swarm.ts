@@ -267,17 +267,21 @@ export type KnowledgeSwarmProgress =
     };
 
 /**
- * Concurrent partition workers, by NAMED policy rather than an unrevisited literal.
+ * Concurrent partition workers, keyed by the harness that will own the process
+ * family rather than by a global cap.
  *
  * The old default was a bare `?? 4`, which is where "200 partitions × 78 s ÷ 4 ≈ 67
- * minutes" came from. The first real run at the ruled cap of 16 hit the development
- * host's memory ceiling: the 16 Codex worker process families held 2.59 GiB resident
- * while swap grew by 5.19 GiB. Rai's recorded fallback is therefore 12. It stays
- * overridable per run (`KnowledgeSwarmDeps.concurrency`), and it is deliberately NOT
- * adaptive: a number that changes with ambient load makes a run's cost
- * unreproducible, which is a worse problem than a number that is conservative.
+ * minutes" came from. A Codex partition worker now starts without ambient MCP
+ * processes, so its measured process family no longer has the same footprint as a
+ * Claude worker. Codex therefore gets 24 lanes while Claude stays at the ruled 12.
+ * Both remain overridable per run (`KnowledgeSwarmDeps.concurrency`). The policy is
+ * deliberately not adaptive: ambient load must not change the recorded run policy.
  */
-export const DEFAULT_SWARM_CONCURRENCY = 12;
+export const DEFAULT_SWARM_CONCURRENCY_BY_HARNESS: Readonly<Record<CouncilHarnessId, number>> =
+  Object.freeze({
+    "claude-code": 12,
+    codex: 24,
+  });
 
 /**
  * How many times a FAILED batch is retried before the run gives up on it. One: a
@@ -304,7 +308,10 @@ export interface KnowledgeSwarmDeps {
   readonly baseOid: string;
   /** Council context override; default availability is computed from the two ports. */
   readonly council?: CouncilResolveContext;
-  /** Concurrent partition workers. Default {@link DEFAULT_SWARM_CONCURRENCY}. */
+  /**
+   * Concurrent partition workers. Absent uses the selected worker harness's entry
+   * in {@link DEFAULT_SWARM_CONCURRENCY_BY_HARNESS}.
+   */
   readonly concurrency?: number;
   readonly signal?: AbortSignal;
   readonly git?: GitExec;
@@ -372,7 +379,7 @@ export function councilSeatTurn(
   schema: unknown,
   deps: CouncilSeatDeps,
   council: CouncilResolveContext,
-): { runTurn: RunTurn; model: string } | { failure: string } {
+): { runTurn: RunTurn; model: string; harness: CouncilHarnessId } | { failure: string } {
   const resolution = resolveAssignment(jobId, council);
   if (resolution.kind !== "model") {
     return { failure: `${jobId} resolved to no model (${resolution.trace.summary})` };
@@ -380,6 +387,7 @@ export function councilSeatTurn(
   if (resolution.harness === "codex") {
     if (!deps.codexExecutor) return { failure: `${jobId} resolved to codex, which is unavailable` };
     return {
+      harness: resolution.harness,
       model: resolution.model,
       // Rooted at the checkout: a Codex seat reads its evidence like a Claude
       // seat does — never reasons from filenames in a temp dir (review P0).
@@ -404,6 +412,7 @@ export function councilSeatTurn(
     return { failure: `${jobId} resolved to claude-code, which is unavailable` };
   }
   return {
+    harness: resolution.harness,
     model: resolution.model,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, schema, {
       cwd: deps.repoRoot,
@@ -420,7 +429,7 @@ function turnFor(
   schema: unknown,
   deps: KnowledgeSwarmDeps,
   council: CouncilResolveContext,
-): { runTurn: RunTurn; model: string } | { failure: string } {
+): { runTurn: RunTurn; model: string; harness: CouncilHarnessId } | { failure: string } {
   return councilSeatTurn(
     jobId,
     schema,
@@ -622,7 +631,7 @@ export async function runKnowledgeSwarmForRepo(
   // was all-or-keep-prior and their work was going to be thrown away anyway; with
   // the journal it is kept, so finishing the run makes the retry cheap instead of
   // making this one expensive.
-  const concurrency = deps.concurrency ?? DEFAULT_SWARM_CONCURRENCY;
+  const concurrency = deps.concurrency ?? DEFAULT_SWARM_CONCURRENCY_BY_HARNESS[worker.harness];
   let outcomes = await boundedAll(
     slicesToRun.map((slice, index) => () => runBatch(slice, index, true)),
     concurrency,

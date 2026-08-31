@@ -185,34 +185,36 @@ repository had grown to **110 slices** at commit `96bdbb51`.
 Batching itself takes about 110 ms; the clean full snapshot build that feeds it
 takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
-#### The five-minute bar is not met yet
+#### The five-minute bar is not proved yet
 
-110 slices is 110 worker turns. At the last conservative 78 s per turn that is
-8,580 seconds of turn time; at the named concurrency of 12 it projects to **about
-11.9 minutes of worker wall clock**, or 12.4 minutes with the 30-second deterministic
-build in front of it.
+110 slices is 110 worker turns. Completed workers with the current input measure
+34.7 seconds median and 37 seconds mean. At the Codex worker default of 24, those
+figures project to **159–170 seconds of worker wall clock**, or 189–200 seconds
+with the 30-second deterministic build in front of it, about 3.15–3.33 minutes.
+A Claude worker keeps the 12-lane default because its process family has a
+different footprint.
 Dividing turn time by lanes gives wall clock — there is no separate, smaller
 "wall" figure to quote, and the target is five minutes.
 
-Three things could close that gap, and none of them is done:
+The arithmetic is now inside the bar, but its launched proof is still pending:
 
-- **More lanes.** At 78 s/turn the bar needs 29 concurrent workers, or 32 once
-  the build is counted. The first real run at 16 proved that number unsafe on
-  this host: 16 live Codex worker process families held 2.59 GiB resident while
-  swap grew by 5.19 GiB and pageouts advanced by 5,965 in 87.084 seconds. The run
-  was aborted before the host exhausted swap, activating the recorded fallback
-  to 12. The machine is the ceiling.
-- **Shorter turns.** Workers are fed a symbol skeleton and their slice's own
-  import edges rather than a bare path list, which should cut the turn
-  substantially. It has not been timed against a live harness, so it buys an
-  unknown amount.
+- **More lanes.** The old bare-path prompt took 78 seconds and would have needed
+  29 concurrent workers, or 32 once the build was counted. The first real run at
+  16 inherited every ambient MCP server per lane; swap grew by 5.19 GiB and
+  pageouts advanced by 5,965 in 87.084 seconds. Codex workers now start with an
+  empty MCP table and default to 24 lanes. A clean launched run must still prove
+  that process family safe.
+- **Shorter turns.** Symbol skeletons and slice-local import edges reduced the
+  completed-worker timing to 34.7 seconds median and 37 seconds mean. The
+  remaining proof is the complete run, not another extrapolation.
 - **Fewer turns.** The scoping seat (deciding that an edge-less file does not
   deserve a turn at all) is unbuilt.
 
-So the honest statement of this design's cost is **110 turns, a projected ~12.4
-minutes wall at concurrency 12**, on a per-turn figure measured against the old,
-bare-path-list prompt. It is arithmetic, not a stopwatch reading. The launched
-16-lane run proved the memory limit, not the five-minute bar; it did not finish.
+So the honest statement of this design's cost is **110 turns and a projected
+3.15–3.33 minutes on the default Codex path**. It is arithmetic from completed
+workers, not a stopwatch reading for the full run. The launched 16-lane run
+proved the ambient-MCP memory limit, not the current job-scoped process family
+or the five-minute bar; it did not finish.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -416,15 +418,16 @@ store write re-reads the store's identity first: a run whose prior moved
 underneath it refuses to save, reports **superseded**, and keeps its journal so
 the retry costs no turns.
 
-Worker fan-out runs at a named default concurrency of 12, the measured fallback
-after 16 lanes drove the development host into swap, not an unrevisited literal,
-and overridable per run. It is deliberately not adaptive: a number that changes
-with ambient load makes a run's cost unreproducible.
+Worker fan-out uses a named, harness-specific default after council resolution:
+24 for Codex partition workers, whose job-scoped empty MCP table removes the
+ambient server tree, and 12 for Claude partition workers. A caller's explicit
+per-run limit wins. The policy is deliberately not adaptive: ambient load does
+not change the recorded run policy.
 
 Verify concurrency stays at 4 by a separate policy. W3 changed that pass from a
 second fan-out over every worker statement to a residue-only pass, normally one
 or two chunks with larger prompts and cited-span reads. Raising its bound would
-not raise worker throughput or alter the 12-lane worker policy.
+not raise worker throughput or alter the partition-worker policy.
 
 The first pass is part of the awaited add-project run: readiness, the sidebar
 spinner, and the verified statement counts all wait for its typed outcome. Later

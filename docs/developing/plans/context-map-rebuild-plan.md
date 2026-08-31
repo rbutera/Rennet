@@ -218,12 +218,11 @@ repository and shell tools; other composed seats can use canvasOps.
 ## Speed accounting against the 5-minute bar
 
 The deterministic half is seconds (Understand-Anything's equivalent runs a
-459-file repo in ~12 s; ours is incremental besides). At ~50 batches, even
-today's measured 78 s/turn clears the bar at concurrency ~13; skeleton-first
-inputs shrink turns, and the 16 GB host has headroom for 8–12 lanes it never
-had for 52. Any ramp test measures RSS per lane and swap pressure alongside
-throughput — the machine, not the provider, is the ceiling. The concurrency
-default becomes a named, tested policy rather than an unrevisited 4.
+459-file repo in ~12 s; ours is incremental besides). The original planning
+arithmetic used the now-obsolete bare-path measurement of 78 seconds per turn:
+at ~50 batches it cleared the bar around concurrency 13. Any ramp test measures
+RSS per lane and swap pressure alongside throughput. The concurrency default
+becomes a named, tested policy rather than an unrevisited 4.
 
 **W2 measured it, and the "~50 batches" premise is wrong.** On Rennet at the
 end of W2: 2,420 files, 179 excluded by policy, 2,241 eligible, 3,506 resolved
@@ -242,18 +241,13 @@ module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
 113 ms; the clean build is ~30 s.
 
 The W3 snapshot produced 105 turns; the launched cap proof at commit `96bdbb51`
-queued 110 after the repository grew. 110 turns × 78 s is 8,580 s of turn time.
-At the named concurrency of 12 that projects to **~11.9 minutes of worker wall
-clock**, or 12.4 minutes with the build, against a five-minute bar.
-Turn time ÷ lanes *is* the wall clock; there is no smaller figure to quote. To
-clear the bar at 78 s/turn takes ≥29 lanes (≥32 with the build). The 16-lane proof
-was aborted after 87.084 seconds: its 16 Codex worker process families held 2.59
-GiB resident, swap grew by 5.19 GiB, and pageouts advanced by 5,965. That activated
-the recorded fallback to 12. The two other routes are unfinished: skeleton-fed
-packets should shorten the turn but have never completed a live timing run, and
-the scoping seat that would decide an edge-less file does not deserve a turn at
-all is still unbuilt (Stage 1 point 4). So the design's honest cost is 110 turns
-and a projected ~12.4 minutes; a launched run has not proved the five-minute bar.
+queued 110 after the repository grew. The old bare-path worker measurement was
+78 seconds. At the earlier concurrency of 12 that projected to **~11.9 minutes
+of worker wall clock**, or 12.4 minutes with the build, against a five-minute
+bar. That figure is obsolete for the current worker input: completed workers now
+measure 34.7 seconds median and 37 seconds mean. The scoping seat that would
+decide an edge-less file does not deserve a turn is still unbuilt (Stage 1 point
+4), so the run still owns all 110 turns.
 
 The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
 inherited and eagerly started the user's full ambient MCP table, including
@@ -261,8 +255,14 @@ Playwright, Serena, Nx, and Context7 processes the partition workers never call.
 The app-server wrapper and native process used roughly 100–170 MiB per lane, but
 the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
 in 45.6 seconds. Partition workers now send `-c mcp_servers={}` for that job only;
-other Codex utility jobs keep the global inherit-or-pin behavior. The concurrency
-cap remains 12, and the five-minute claim still needs a clean launched rerun.
+other Codex utility jobs keep the global inherit-or-pin behavior. Worker
+concurrency now follows the council-selected harness: Codex gets 24 lanes, while
+Claude stays at the measured fallback of 12. An explicit per-run override still
+wins. At the current 34.7-second median and 37-second mean, 110 turns over 24
+lanes plus the 30-second build project to **189–200 seconds total**, about
+3.15–3.33 minutes. That is arithmetic from completed workers, not a completed
+24-lane run, so the five-minute claim still needs a clean launched rerun with the
+current process footprint.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

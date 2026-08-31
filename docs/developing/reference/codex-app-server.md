@@ -126,6 +126,11 @@ capability while avoiding eagerly starting every ambient MCP server once per
 parallel worker. Other Codex utility jobs keep inheriting the user table. The
 app-server command does not accept `--ignore-user-config`.
 
+The worker fan-out policy follows the harness selected by the Model Council.
+Codex partition workers default to 24 lanes with that empty table; Claude
+partition workers keep their separate 12-lane default. A run that supplies an
+explicit concurrency overrides either default.
+
 ## Discovery
 
 Rennet combines the login-shell `PATH`, the process `PATH`, and known install
