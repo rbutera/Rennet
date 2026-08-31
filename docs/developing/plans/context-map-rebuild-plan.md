@@ -257,7 +257,7 @@ the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
 in 45.6 seconds. Partition workers now send `-c mcp_servers={}` for that job only;
 other Codex utility jobs keep the global inherit-or-pin behavior. Worker
 concurrency now follows the council-selected harness: Codex gets 24 lanes, while
-Claude stays at the measured fallback of 12. An explicit per-run override still
+Claude keeps its existing 12-lane default. An explicit per-run override still
 wins. At the current 34.7-second median and 37-second mean, 110 turns over 24
 lanes plus the 30-second build project to **189–200 seconds total**, about
 3.15–3.33 minutes. That is arithmetic from completed workers, not a completed
