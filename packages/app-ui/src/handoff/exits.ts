@@ -44,6 +44,8 @@ import type { ProposedVerdict } from "./selectors";
 export interface HandoffExits {
   /** Post Review egress (teammate-PR mode). Absent until the review is composed (or off-mode). */
   readonly onPost?: () => Promise<PostReceipt>;
+  /** A daemon-owned completed publication for the current composed marker. */
+  readonly receipt?: PostReceipt;
   /**
    * Flip the review verdict. A WRITE against the durable ask log (`ask.setVerdictOverride`), so
    * the daemon recomposes and the composed verdict becomes the flipped one — the single channel.
@@ -87,7 +89,9 @@ export function useHandoffExits(review: Review): HandoffExits {
 
   // The egress writes (C01 §2.5): each a registered, bound publish command over the bridge. The
   // standing law routes every write through `useMutation` — no surface calls `bridge.invoke`.
-  const { mutate: postReview } = useMutation("publish.review");
+  const { mutate: postReview } = useMutation("publish.review", {
+    invalidates: ["publish.receipt"],
+  });
   const { mutate: submitPr } = useMutation("publish.submitPr");
   const refreshCompose = useRefreshCommand("publish.compose");
   // The verdict flip (#435): a WRITE against the durable ask log, so it stales the composed
@@ -120,6 +124,22 @@ export function useHandoffExits(review: Review): HandoffExits {
     reviewCompose.error === undefined &&
     reviewCompose.data?.status === "review"
       ? reviewCompose.data
+      : undefined;
+  const publicationReceipt = useCommand(
+    "publish.receipt",
+    {
+      reviewId,
+      marker: reviewComposed?.marker ?? "0".repeat(64),
+    },
+    { enabled: mode === "teammate-pr" && reviewComposed?.marker !== undefined },
+  );
+  const receipt =
+    publicationReceipt.data?.status === "posted"
+      ? {
+          verdict: publicationReceipt.data.receipt.verdict,
+          lineCommentCount: publicationReceipt.data.receipt.lineCommentCount,
+          url: publicationReceipt.data.receipt.url,
+        }
       : undefined;
 
   // Own-branch PR preview: `publish.compose(mode:"pr")` composes the daemon's byte-exact submission
@@ -192,7 +212,7 @@ export function useHandoffExits(review: Review): HandoffExits {
     });
     if (!result.outcome) throw new Error("The review did not post — nothing left the machine.");
     const lineCommentCount = reviewComposed.post.threads.length;
-    return { verdict, lineCommentCount, url: result.outcome.url ?? reviewComposed.destination };
+    return { verdict, lineCommentCount, url: result.outcome.url };
   }, [postReview, reviewId, reviewComposed]);
 
   const onSetVerdict = useCallback(
@@ -230,6 +250,7 @@ export function useHandoffExits(review: Review): HandoffExits {
     // Post is armed only once the review is composed — so the previewed bytes and the posted bytes
     // are one composition (the CTA renders disabled until then, honest).
     onPost: mode === "teammate-pr" && reviewComposed ? onPost : undefined,
+    receipt,
     onSetVerdict,
     reviewDraft: reviewComposed ? composeReviewDraft(reviewComposed) : undefined,
     onOpenPr: prComposed ? onOpenPr : undefined,

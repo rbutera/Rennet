@@ -35,6 +35,7 @@ import {
   createClientSettingsStore,
   createCodexCiRefinementTurn,
   createCodexExecutor,
+  createCodexHarness,
   createCoverageTurn,
   createDaemonSettingsStore,
   createGitHubOctokit,
@@ -93,6 +94,7 @@ import {
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   PublishCompositionStore,
+  PublishReceiptStore,
   parseGitHubPrRef,
   prepareRoundWorkspace,
   prWorktreePath,
@@ -174,6 +176,8 @@ import {
   verifyFlaggedReview,
 } from "@rennet/core";
 import type {
+  CodingHarnessSelection,
+  CommandInput,
   ConventionCatalogue,
   CouncilHarnessId,
   DetectedForge,
@@ -190,6 +194,7 @@ import type {
   NoiseReview,
   OpenSpecCoverage,
   Patchset,
+  Project,
   ProjectContextAskResult,
   ProjectContextMapResult,
   ProjectProcessEvent,
@@ -202,9 +207,9 @@ import type {
   SessionPreparation,
 } from "@rennet/protocol";
 import {
+  canonicalize,
   currentGenerationId,
   forgeRepositorySlug,
-  isRoundOperationTerminal,
   LENS_KINDS,
   roundOperationProgressSnapshot,
   sha256Hex,
@@ -255,9 +260,13 @@ import {
   fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
+  resolveProjectContextRepository,
   resolveProjectRepositoryRoot,
 } from "./project-forge-registry";
-import { createProjectProcessJournal } from "./project-process-journal";
+import {
+  createProjectProcessJournal,
+  type ProjectProcessJournalRecord,
+} from "./project-process-journal";
 import { buildProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
@@ -289,6 +298,7 @@ import {
 import {
   createRoundExecutionCoordinator,
   type RoundExecutionPorts,
+  roundRetryMode,
 } from "./runtime/round-execution";
 import { RoundProgressHub } from "./runtime/round-progress";
 import {
@@ -402,6 +412,153 @@ export interface HandoffTurnInput {
    */
   readonly sessionId?: string;
   readonly execution?: HandoffTurnExecution;
+}
+
+export type CodingHarnessResolution =
+  | {
+      readonly status: "ready";
+      readonly selection: CodingHarnessSelection;
+      readonly port: HarnessPort;
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+/**
+ * Resolve the coding harness for an own-branch turn. A session selection is sticky: once a
+ * round records Claude or Codex, later rounds resolve that exact provider and fail plainly if
+ * it was disabled or disappeared. A new session chooses from the enabled live ports in stable
+ * order and records the result before execution, so choosing Codex is never a hidden fallback.
+ */
+export async function resolveCodingHarness(input: {
+  readonly pinned?: CodingHarnessSelection;
+  readonly disabledHarnesses?: readonly string[];
+  readonly resolveClaude: () => Promise<HarnessPort | null>;
+  readonly resolveCodex: () => Promise<HarnessPort | null>;
+}): Promise<CodingHarnessResolution> {
+  const disabled = new Set(input.disabledHarnesses ?? []);
+  const isDisabled = (id: CodingHarnessSelection["id"]): boolean =>
+    disabled.has(id === "claude-code" ? "claude" : "codex") || disabled.has(id);
+  const displayName = (id: CodingHarnessSelection["id"]): string =>
+    id === "claude-code" ? "Claude Code" : "Codex";
+  const tryResolve = async (
+    id: CodingHarnessSelection["id"],
+  ): Promise<{ readonly port: HarnessPort | null; readonly error?: string }> => {
+    try {
+      return {
+        port: await (id === "claude-code" ? input.resolveClaude() : input.resolveCodex()),
+      };
+    } catch (error) {
+      return {
+        port: null,
+        error: `${displayName(id)} discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  };
+  const resolveExact = async (
+    id: CodingHarnessSelection["id"],
+  ): Promise<CodingHarnessResolution> => {
+    if (isDisabled(id)) {
+      return {
+        status: "unavailable",
+        reason: `${displayName(id)} is selected for this session but disabled on its execution host.`,
+      };
+    }
+    const attempt = await tryResolve(id);
+    const port = attempt.port;
+    if (port === null) {
+      return {
+        status: "unavailable",
+        reason:
+          attempt.error ??
+          `${displayName(id)} is selected for this session but is not available on its execution host.`,
+      };
+    }
+    if (port.descriptor.id !== id) {
+      return {
+        status: "unavailable",
+        reason: `The ${id} resolver returned ${port.descriptor.id}; refusing to run a different harness than the selected one.`,
+      };
+    }
+    return {
+      status: "ready",
+      selection: { id, version: port.descriptor.version },
+      port,
+    };
+  };
+
+  if (input.pinned !== undefined) return resolveExact(input.pinned.id);
+
+  const [claudeAttempt, codexAttempt] = await Promise.all([
+    isDisabled("claude-code") ? { port: null } : tryResolve("claude-code"),
+    isDisabled("codex") ? { port: null } : tryResolve("codex"),
+  ]);
+  const claude = claudeAttempt.port;
+  const codex = codexAttempt.port;
+  if (claude !== null && claude.descriptor.id === "claude-code") {
+    return {
+      status: "ready",
+      selection: { id: "claude-code", version: claude.descriptor.version },
+      port: claude,
+    };
+  }
+  if (codex !== null && codex.descriptor.id === "codex") {
+    return {
+      status: "ready",
+      selection: { id: "codex", version: codex.descriptor.version },
+      port: codex,
+    };
+  }
+  return {
+    status: "unavailable",
+    reason:
+      [
+        "error" in claudeAttempt ? claudeAttempt.error : undefined,
+        "error" in codexAttempt ? codexAttempt.error : undefined,
+      ]
+        .filter((reason) => reason !== undefined)
+        .join("; ") ||
+      "No enabled coding harness (Claude Code or Codex) is available on the execution host.",
+  };
+}
+
+/**
+ * Resolve, durably pin, run, and stamp one coding-harness turn. Keeping this bridge together
+ * makes the provider choice part of the session contract rather than an incidental adapter
+ * lookup: the pin lands before any mutation, and the exact live version rides the outcome.
+ */
+export async function runResolvedCodingHarnessTurn(input: {
+  readonly sessionId?: string;
+  readonly sessionStore: Pick<SessionStore, "load" | "setCodingHarness">;
+  readonly disabledHarnesses?: readonly string[];
+  readonly resolveClaude: () => Promise<HarnessPort | null>;
+  readonly resolveCodex: () => Promise<HarnessPort | null>;
+  readonly run: (
+    port: HarnessPort,
+    persistedSessionId: string | undefined,
+  ) => Promise<HandoffTurnOutcome>;
+}): Promise<HandoffTurnOutcome> {
+  const storedSession =
+    input.sessionId === undefined ? undefined : input.sessionStore.load(input.sessionId);
+  const resolution = await resolveCodingHarness({
+    ...(storedSession?.codingHarness === undefined ? {} : { pinned: storedSession.codingHarness }),
+    disabledHarnesses: input.disabledHarnesses ?? [],
+    resolveClaude: input.resolveClaude,
+    resolveCodex: input.resolveCodex,
+  });
+  if (resolution.status === "unavailable") {
+    return {
+      status: "failed",
+      reason: resolution.reason,
+      turnDiff: "",
+      filesTouched: [],
+    };
+  }
+  const persistedSessionId =
+    input.sessionId !== undefined && storedSession !== undefined ? input.sessionId : undefined;
+  if (persistedSessionId !== undefined) {
+    input.sessionStore.setCodingHarness(persistedSessionId, resolution.selection);
+  }
+  const outcome = await input.run(resolution.port, persistedSessionId);
+  return { ...outcome, harness: resolution.selection };
 }
 
 export async function captureBranchPatchset(input: {
@@ -535,6 +692,7 @@ export function createRoundWorkerPort(input: {
       completedAt: (input.now ?? Date.now)(),
       diff: outcome.turnDiff,
       changedPaths: [...outcome.filesTouched],
+      ...(outcome.harness === undefined ? {} : { harness: outcome.harness }),
     };
     return outcome.status === "failed"
       ? {
@@ -543,6 +701,42 @@ export function createRoundWorkerPort(input: {
           termination: { kind: "error" as const, reason: outcome.reason },
         }
       : { ...evidence, outcome: "completed" as const };
+  };
+}
+
+function createRoundWorkerRecoveryPort(): NonNullable<RoundExecutionPorts["observeWorker"]> {
+  return async ({ operation, attempt }) => {
+    if (operation.state.phase !== "worker-running") {
+      throw new Error("Round worker recovery started outside its durable running phase.");
+    }
+    const checkpoint = new GitCheckpointStore(
+      operation.state.workspace.worktreePath,
+      detectedLocusForRepo(operation.repoRoot),
+    );
+    const current = await checkpoint.capture();
+    const source = {
+      ref: operation.state.workspace.sourceHead,
+      commit: operation.state.workspace.sourceHead,
+    };
+    try {
+      const [diff, changedPaths] = await Promise.all([
+        checkpoint.diff(source, current),
+        checkpoint.changedPaths(source, current),
+      ]);
+      return {
+        ...attempt,
+        completedAt: Date.now(),
+        outcome: "failed",
+        termination: {
+          kind: "error",
+          reason: `Rennet restarted while this worker was running. Its partial edits remain in ${operation.state.workspace.worktreePath}; inspect them there before retrying the asks.`,
+        },
+        diff,
+        changedPaths: [...changedPaths],
+      };
+    } finally {
+      await checkpoint.discard(current).catch(() => undefined);
+    }
   };
 }
 
@@ -575,16 +769,21 @@ export function createBoardDraftCoordinator(
     emit?: (event: RoundEvent) => void,
     signal?: AbortSignal,
   ) => Promise<boolean>,
+  revisionFor: (review: Review) => string = () => "legacy",
 ): (review: Review, emit?: (event: RoundEvent) => void, signal?: AbortSignal) => Promise<void> {
   type DraftAttempt = {
     readonly promise: Promise<void>;
     readonly signal?: AbortSignal;
+    readonly revision: string;
   };
   const inFlight = new Map<string, DraftAttempt>();
   return (review, emit, signal) => {
     const key = `${review.id}:${review.activePatchsetId}`;
+    const revision = revisionFor(review);
     const existing = inFlight.get(key);
-    if (existing && !existing.signal?.aborted) return existing.promise;
+    if (existing && !existing.signal?.aborted && existing.revision === revision) {
+      return existing.promise;
+    }
     const attempt =
       existing === undefined
         ? draft(review, emit, signal)
@@ -596,9 +795,53 @@ export function createBoardDraftCoordinator(
       .finally(() => {
         if (inFlight.get(key)?.promise === tracked) inFlight.delete(key);
       });
-    inFlight.set(key, { promise: tracked, ...(signal === undefined ? {} : { signal }) });
+    inFlight.set(key, {
+      promise: tracked,
+      revision,
+      ...(signal === undefined ? {} : { signal }),
+    });
     return tracked;
   };
+}
+
+export function projectContextUnavailableForProcess(
+  record: ProjectProcessJournalRecord | null,
+): ProjectContextMapResult | null {
+  if (record === null || record.status === "done") return null;
+  const run = projectProcessRunFromRecord(record);
+  return {
+    status: "absent",
+    reason:
+      run.status === "failed"
+        ? `Context Map ${run.phase} failed: ${run.reason}`
+        : `Context Map ${run.phase} is still running`,
+    run,
+  };
+}
+
+export function startProjectContextMaintenance(input: {
+  readonly projects: readonly Project[];
+  readonly loadRun: (project: Project) => ProjectProcessJournalRecord | null;
+  readonly resume: (
+    project: Project,
+    runId: string,
+  ) => Promise<{ readonly run: { readonly status: string } }>;
+  readonly rehydrate: (project: Project) => Promise<void>;
+  readonly onError: (error: unknown) => void;
+}): void {
+  for (const project of input.projects) {
+    const initialRun = input.loadRun(project);
+    if (initialRun?.status === "queued" || initialRun?.status === "running") {
+      void input
+        .resume(project, initialRun.runId)
+        .then(async (result) => {
+          if (result.run.status === "done") await input.rehydrate(project);
+        })
+        .catch(input.onError);
+    } else if (initialRun === null || initialRun.status === "done") {
+      void input.rehydrate(project).catch(input.onError);
+    }
+  }
 }
 
 type CompositionBoardsForReview = NonNullable<DispatchDeps["compositionBoardsForReview"]>;
@@ -699,6 +942,9 @@ export interface RennetServerOptions {
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
+  /** Hermetic opener-drafting seam for compose/post transport proofs. Production uses the
+   * live council-routed drafter; tests can supply authored bytes without launching a harness. */
+  readonly draftReviewOpener?: DispatchDeps["draftReviewOpener"];
   /** Test override for round landing. Production composes rooted native landing on POSIX daemons. */
   readonly roundSourceLanding?: RoundSourceLandingInjection;
   /** Test observation at the crash commit point, before any PR-draft ripening await. */
@@ -895,14 +1141,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readonly binPath: string | null;
     /** The resolved codex version, stamped as harness provenance, or null. */
     readonly version: string | null;
+    /** The full agentic port for write-enabled coding rounds, or null when unavailable. */
+    readonly adapter: HarnessPort | null;
   }
   // Memoized PER LOCUS (add-windows-support / #334), like the Claude harness: the host
   // resolution is shared as before; a WSL-locus project discovers and runs the DISTRO's
   // own `codex` (distro discovery deps, locus-wrapped executor, distro-side scratch).
   // The utility executor carries the locus so every spawn enters the distro through
   // `locusCommand` — a WSL review is dual-harness rather than degrading to
-  // single-Claude. (The agentic transport this once also built went with the dead
-  // `agenticPort`, F1: the orchestrator is Claude.)
+  // single-Claude. The same resolution now owns the agentic adapter used by Codex-backed
+  // coding rounds, so discovery, version provenance, and executable choice cannot drift.
   const codexResolutions = new Map<string, Promise<CodexResolution>>();
   function getCodexResolution(locus: Locus): Promise<CodexResolution> {
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
@@ -916,24 +1164,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             makeExecutor: null,
             binPath: null,
             version: null,
+            adapter: null,
           };
         }
         const explicitBin = env.RENNET_CODEX_BIN;
         const discoveryDeps =
           locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultCodexDiscoveryDeps();
-        const result = await discoverCodex(discoveryDeps, {
+        const result = await createCodexHarness({
+          discoveryDeps,
+          locus,
           // The RENNET_CODEX_BIN override is a host path; it never applies to a distro.
           ...(locus.kind === "host" && explicitBin && explicitBin.length > 0
             ? { explicitBin }
             : {}),
         });
-        const chosen = result.chosen;
+        const chosen = result.discovery.chosen;
         if (!chosen) {
           return {
             availability: { available: false, version: null },
             makeExecutor: null,
             binPath: null,
             version: null,
+            adapter: null,
           };
         }
         const makeExecutor = (repoRoot: string): CodexExecutor =>
@@ -949,6 +1201,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           makeExecutor,
           binPath: chosen.path,
           version: chosen.version,
+          adapter: result.adapter,
         };
       })();
       codexResolutions.set(key, resolution);
@@ -969,6 +1222,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     const { makeExecutor } = await getCodexResolution(locus);
     return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
+  }
+
+  async function codexAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+    const { locus } = locusContextForRepo(repoRoot);
+    return (await getCodexResolution(locus)).adapter;
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -2020,6 +2278,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
   };
+  // Bound after board drafting is composed below. Context production starts earlier in
+  // the composition root, so its completion callbacks need a late-bound, synchronous kick.
+  let refreshBoardsForProjectContext: (repoRoot: string) => void = () => undefined;
   const knowledgeSwarmRuntime = createKnowledgeSwarmRuntime({
     store: snapshotStore,
     resolveClaudePort: claudeAdapterForRepo,
@@ -2050,19 +2311,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // identity, and its per-partition + verify lines ride the SAME rehydration
     // progress push as the narrate above. The typed outcome reaches the caller
     // INTACT — collapsing it to a boolean dropped every failure reason.
-    runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) =>
-      knowledgeSwarmRuntime.runForRepo({ projectId, repoKey, repoRoot, toOid }),
+    runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) => {
+      const outcome = await knowledgeSwarmRuntime.runForRepo({
+        projectId,
+        repoKey,
+        repoRoot,
+        toOid,
+      });
+      if (
+        outcome.status === "ok" ||
+        (outcome.status === "skipped" && new KnowledgeStore(snapshotStore).loadLocal(repoKey))
+      ) {
+        refreshBoardsForProjectContext(repoRoot);
+      }
+      return outcome;
+    },
   });
-  // At launch, resume warming established projects. An interrupted initial run owns
-  // its own first knowledge pass; the stable `project.process` command reattaches and
-  // resumes that journal instead of racing the background rehydrator.
-  for (const project of projectStore.list()) {
-    const primaryPath = project.openPath || project.path;
-    const initialRun = projectProcessJournal.load(repoKeyForRoot(primaryPath));
-    if (!initialRun || initialRun.status === "done") {
-      void rehydration.ensureForProject(project);
-    }
-  }
   // One durable add-project run owns scout → structural map → knowledge. Its journal
   // lives beside the map so a daemon restart replays completed steps and resumes the
   // first incomplete phase under the same stable command identity.
@@ -2083,15 +2347,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
       return result ? scoutQuestionnaire(basename(input.repoRoot), result) : null;
     },
-    runKnowledge: (input) =>
-      knowledgeSwarmRuntime.runForRepo({
+    runKnowledge: async (input) => {
+      const outcome = await knowledgeSwarmRuntime.runForRepo({
         projectId: input.projectId,
         repoKey: input.repoKey,
         repoRoot: input.repoRoot,
         toOid: input.toOid,
         runId: input.runId,
         narrate: input.narrate,
-      }),
+      });
+      if (
+        outcome.status === "ok" ||
+        (outcome.status === "skipped" && projectProcessKnowledge.loadLocal(input.repoKey))
+      ) {
+        refreshBoardsForProjectContext(input.repoRoot);
+      }
+      return outcome;
+    },
     loadKnowledge: (repoKey) => projectProcessKnowledge.loadLocal(repoKey),
   });
   // The app-side settings stores (B10 #476): viewer preferences (appearance,
@@ -2122,6 +2394,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const publishCompositionStore = new PublishCompositionStore(
     join(dataDir, "publish-compositions"),
   );
+  const publishReceiptStore = new PublishReceiptStore(join(dataDir, "publish-receipts"));
   // The own-branch PR destination is resolved once for the preview and again immediately
   // before sign-click mutation. Both reads execute inside the repository's locus and use the
   // effective push URL; no forge credential is touched while composing the preview.
@@ -2206,13 +2479,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // since loop-only would leave the brackets unserialized and round 2's `turnDiff` would then
   // include round 1's changes.
   //
-  // ONE loop per repo root, and the repo root is the SINGLE source of the turn's cwd: the loop
-  // key IS what `buildSpec` returns, so there is no second copy of that fact to drift. The port
-  // is that repo's own resolved `claude` adapter (host or distro), so a WSL project's turns run
-  // its claude.
+  // ONE loop per repo root + selected harness, and the repo root is the SINGLE source of the
+  // turn's cwd: the loop key IS what `buildSpec` returns, so there is no second copy of that
+  // fact to drift. The harness is part of the key because two sessions over one repository may
+  // have pinned different providers; returning a cached Claude loop for a Codex session would
+  // silently execute the wrong provider.
   const sessionTurnLoops = new Map<string, SessionTurnLoop>();
   function turnLoopForRepo(repoRoot: string, port: HarnessPort): SessionTurnLoop {
-    const existing = sessionTurnLoops.get(repoRoot);
+    const key = `${repoRoot}\0${port.descriptor.id}`;
+    const existing = sessionTurnLoops.get(key);
     if (existing) return existing;
     const loop = new SessionTurnLoop({
       port,
@@ -2231,10 +2506,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         console.error("Session transcript capture failed", error),
       ),
     });
-    sessionTurnLoops.set(repoRoot, loop);
+    sessionTurnLoops.set(key, loop);
     return loop;
   }
-  // The write-enabled coding-agent turn (issue #18): brackets a live `claude` write turn
+  // The write-enabled coding-agent turn (issue #18): brackets the selected live harness turn
   // with git checkpoints and returns the turn diff. Extracted to a local so BOTH the
   // `review.handoff.run` command and the B11 round dispatch (below) run the same turn.
   const runHandoffTurnDefault = async ({
@@ -2246,8 +2521,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const execution = requestedExecution ?? handoffTurnExecution(locusForRepo(repoRoot), repoRoot);
     const locus: Locus =
       execution.kind === "host" ? HOST_LOCUS : { kind: "wsl", distro: execution.distro };
-    // The SDK prepends this distro cwd to its direct wsl.exe spawn.
-    const distroCwd = execution.kind === "wsl" ? execution.cwd : undefined;
     if (await repoHasSubmodules(repoRoot, locus)) {
       return {
         status: "failed",
@@ -2257,27 +2530,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         filesTouched: [],
       };
     }
-    const { adapter } = await getClaudeHarness(locus, distroCwd);
-    if (!adapter) {
-      return {
-        status: "failed",
-        reason: "no coding harness (claude) is installed to run the handoff",
-        turnDiff: "",
-        filesTouched: [],
-      };
-    }
-    // Only a session that is ACTUALLY persisted rides the loop — the loop resumes from and
-    // writes back a stored record, so an unpersisted id would throw rather than run.
-    const loopSession =
-      sessionId !== undefined && sessionStore.load(sessionId) !== undefined ? sessionId : undefined;
-    return runHandoffTurnCore({
-      repoRoot,
-      prompt,
-      runPort:
-        loopSession === undefined
-          ? claudeHandoffRunPort(adapter)
-          : turnLoopRunPort(turnLoopForRepo(repoRoot, adapter), loopSession),
-      checkpoint: new GitCheckpointStore(repoRoot, locus),
+    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
+    return runResolvedCodingHarnessTurn({
+      ...(sessionId === undefined ? {} : { sessionId }),
+      sessionStore,
+      disabledHarnesses: daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [],
+      resolveClaude: () => claudeAdapterForRepo(repoRoot),
+      resolveCodex: () => codexAdapterForRepo(repoRoot),
+      run: (port, persistedSessionId) =>
+        runHandoffTurnCore({
+          repoRoot,
+          prompt,
+          runPort:
+            persistedSessionId === undefined
+              ? claudeHandoffRunPort(port)
+              : turnLoopRunPort(turnLoopForRepo(repoRoot, port), persistedSessionId),
+          checkpoint: new GitCheckpointStore(repoRoot, locus),
+        }),
     });
   };
   const runHandoffTurn = options.runHandoffTurn ?? runHandoffTurnDefault;
@@ -2426,6 +2695,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * lint resolves against, the prior generation carry is decided by, and the rounds runtime
    * itself are identical either way, and were identical when they were written twice.
    */
+  const projectContextForBoards = (review: Review, patchset: Patchset) => {
+    const repoKey = repoKeyForRoot(review.repositoryRoot);
+    const overlayReader = new SnapshotOverlayReader({
+      store: liveSnapshotStore,
+      overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
+    });
+    const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
+      repoKey,
+      patchset.repository.baseOid,
+    );
+    const set = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null;
+    const snapshot = gated.ok ? gated.snapshot : null;
+    return {
+      set,
+      snapshot,
+      revision: sha256Hex(
+        canonicalize({
+          snapshot: snapshot?.manifest.fingerprint ?? null,
+          knowledge: set,
+        }),
+      ),
+    };
+  };
+
   const boardDraftingDeps = (
     review: Review,
     session: SessionModel,
@@ -2449,21 +2742,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // would refuse it as stale. Without this the packet could degrade to
     // `unprojected` on a review whose context tools were answering fine —
     // two readers disagreeing about the same review's snapshot.
-    knowledgeFor: (patchset: Patchset) => {
-      const repoKey = repoKeyForRoot(review.repositoryRoot);
-      const overlayReader = new SnapshotOverlayReader({
-        store: liveSnapshotStore,
-        overlayStore: new SnapshotOverlayStore(liveSnapshotStore),
-      });
-      const gated = new ProjectContextReader(liveSnapshotStore, overlayReader).loadFresh(
-        repoKey,
-        patchset.repository.baseOid,
-      );
-      return {
-        set: new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null,
-        snapshot: gated.ok ? gated.snapshot : null,
-      };
-    },
+    knowledgeFor: (patchset: Patchset) => projectContextForBoards(review, patchset),
     // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
     // lint resolves citations against every text file at the reviewed head and
     // base, not only the changed ones. Two `git grep -c` passes over the repo's
@@ -2637,6 +2916,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     sourceRepositoryFor: (operation) => sourcePatchsetFor(operation).repository,
   });
   const runRoundWorker = createRoundWorkerPort({ runHandoffTurn });
+  const recoverRoundWorker = createRoundWorkerRecoveryPort();
+  const runRoundGate: RoundExecutionPorts["runGate"] = async ({ operation, attempt }) => {
+    if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
+      throw new Error("Configured round gate started without a durable gate plan.");
+    }
+    const result = await runConfiguredRoundGate({
+      locus: locusForRepo(operation.repoRoot),
+      cwd: operation.state.workspace.worktreePath,
+      command: operation.gatePlan.command,
+      executionId: attempt.executionId,
+      startedAt: attempt.startedAt,
+    });
+    const common = {
+      executionId: result.executionId,
+      startedAt: result.startedAt,
+      completedAt: result.completedAt,
+      ...(result.projectCount === undefined ? {} : { projectCount: result.projectCount }),
+    };
+    return result.outcome === "passed"
+      ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
+      : { ...common, outcome: "failed" as const, termination: result.termination };
+  };
   const roundSourceLandingPorts = createRoundSourceLandingPorts({
     planLegacy: (operation) => {
       if (operation.state.phase !== "commits-settled") {
@@ -2696,28 +2997,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         }),
       planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       runWorker: runRoundWorker,
+      observeWorker: recoverRoundWorker,
       planGate: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
-      runGate: async ({ operation, attempt }) => {
-        if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
-          throw new Error("Configured round gate started without a durable gate plan.");
-        }
-        const result = await runConfiguredRoundGate({
-          locus: locusForRepo(operation.repoRoot),
-          cwd: operation.state.workspace.worktreePath,
-          command: operation.gatePlan.command,
-          executionId: attempt.executionId,
-          startedAt: attempt.startedAt,
-        });
-        const common = {
-          executionId: result.executionId,
-          startedAt: result.startedAt,
-          completedAt: result.completedAt,
-          ...(result.projectCount === undefined ? {} : { projectCount: result.projectCount }),
-        };
-        return result.outcome === "passed"
-          ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
-          : { ...common, outcome: "failed" as const, termination: result.termination };
-      },
+      runGate: runRoundGate,
+      observeGate: runRoundGate,
       planCommit: (operation) => {
         if (operation.state.phase !== "gate-settled") {
           throw new Error("Round commit planned before its gate settled.");
@@ -2785,6 +3068,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           run: {
             startedAt: operation.createdAt,
             sourceTarget: operation.sourceTarget,
+            ...(worker.harness === undefined ? {} : { harness: worker.harness }),
             gate,
           },
           runWorkers: async (): Promise<DispatchRoundResult> => ({
@@ -2922,6 +3206,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       publish: publishRoundOperation,
       drainTerminal: async ({ operation }) => {
         if (operation.state.phase === "completed") {
+          if (operation.state.returnedAt !== undefined) return { kind: "retain" };
           const session = sessionForOperation(operation);
           const returnRow = roundReturnTranscriptRow(operation);
           if (operation.state.result.kind === "unchanged") {
@@ -2941,9 +3226,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             });
           }
           if (returnRow !== undefined) appendRoundTranscript(session.id, [returnRow]);
-          // This is the transcript commit receipt. `completed` was published before terminal
-          // drain, so it cannot invalidate Return; composed/unchanged is emitted only after
-          // Return is durable (and, for unchanged, after its ledger row is finalized too).
+          consumeCurrentAskOccurrences(
+            {
+              askLog: askLogStore,
+              broadcastAskProjection: (reviewId, projection) =>
+                wsListener?.broadcastAskProjection(reviewId, projection),
+            },
+            operation.reviewId,
+            operation.askOccurrences,
+          );
+          // This legacy receipt follows both durable Return and exact ask consumption.
+          // New clients wait for `returnedAt`; older clients still see the same event order.
           if (returnRow !== undefined) {
             roundProgress.emit(
               operation.reviewId,
@@ -2955,15 +3248,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 : { type: "unchanged" },
             );
           }
-          consumeCurrentAskOccurrences(
-            {
-              askLog: askLogStore,
-              broadcastAskProjection: (reviewId, projection) =>
-                wsListener?.broadcastAskProjection(reviewId, projection),
-            },
-            operation.reviewId,
-            operation.askOccurrences,
-          );
           await removeRoundWorktree({
             git: gitForRepo(operation.repoRoot),
             locus: locusForRepo(operation.repoRoot),
@@ -2978,7 +3262,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             commit: operation.state.workspace.sourceHead,
           });
         }
-        if (!operation.rerunRequested) return { kind: "retain" };
+        if (!operation.rerunRequested) {
+          if (operation.state.phase !== "completed") return { kind: "retain" };
+          return {
+            kind: "return",
+            returnedAt: Math.max(Date.now(), operation.state.completedAt),
+          };
+        }
         const review = service.reviewById(operation.reviewId);
         if (review === null) throw new Error("Queued round lost its review.");
         const draft = activeRoundDraft(
@@ -3073,6 +3363,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,
+        // A completed round can make a non-content-addressed generation current for this
+        // patchset. Context refresh must redraft the generation the board route actually reads.
+        priorGenerationId: currentGenerationId(
+          roundRecordStore.read(session.id),
+          review.activePatchsetId,
+        ),
         asksDispatched: [],
         worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
         ...(signal === undefined ? {} : { signal }),
@@ -3081,7 +3377,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return settled && service.reviewById(review.id)?.activePatchsetId === review.activePatchsetId;
   }
 
-  const ensureBoardDrafting = createBoardDraftCoordinator(draftBoardsForReview);
+  const ensureBoardDrafting = createBoardDraftCoordinator(draftBoardsForReview, (review) => {
+    const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
+    return patchset === undefined
+      ? `missing:${review.activePatchsetId}`
+      : projectContextForBoards(review, patchset).revision;
+  });
 
   /** Kick board drafting behind a review version becoming current. The command has already
    *  persisted the version; drafting is single-flight and never turns capture/regenerate into a
@@ -3089,6 +3390,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const kickBoardDrafting = (review: Review): void => {
     void ensureBoardDrafting(review).catch(() => undefined);
   };
+
+  refreshBoardsForProjectContext = (repoRoot) => {
+    for (const session of sessionStore.list()) {
+      if (session.reviewId === undefined) continue;
+      const review = service.reviewById(session.reviewId);
+      if (review?.repositoryRoot === repoRoot) kickBoardDrafting(review);
+    }
+  };
+
+  // Start background maintenance only after the board refresh callback is live. A queued or
+  // running initial journal resumes under its durable command id; completed/legacy projects
+  // enter the normal baseline watcher. Failed runs stay visible for the in-place Retry action.
+  startProjectContextMaintenance({
+    projects: projectStore.list(),
+    loadRun: (project) => {
+      const primaryPath = project.openPath || project.path;
+      return projectProcessJournal.load(repoKeyForRoot(primaryPath));
+    },
+    resume: (project, runId) =>
+      processProjectCore({ projectId: project.id, commandId: runId }, (event) => {
+        options.broadcastProgress?.(runId, event);
+        wsListener?.broadcastProgress(runId, event);
+      }),
+    rehydrate: (project) => rehydration.ensureForProject(project),
+    onError: (error) => console.error("Project processing resume failed", error),
+  });
 
   type PreparationTarget = {
     readonly branch: string;
@@ -3377,6 +3704,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   };
 
+  type ProjectContextAddressInput = Pick<
+    CommandInput<"project.contextMap">,
+    "projectId" | "repository" | "forgeRepository"
+  >;
+  const resolveProjectContext = async (input: ProjectContextAddressInput) => {
+    const project = projectStore.list().find((entry) => entry.id === input.projectId);
+    const selection = await resolveProjectContextRepository({
+      project,
+      target: {
+        ...(input.repository === undefined ? {} : { repository: input.repository }),
+        ...(input.forgeRepository === undefined ? {} : { forgeRepository: input.forgeRepository }),
+      },
+      identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+    });
+    return { project, selection };
+  };
+
   dispatch = createDispatch({
     service,
     allowedRoots,
@@ -3447,6 +3791,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         : repository.forge === "github"
           ? githubReviewPublisher
           : undefined,
+    publishReceipts: publishReceiptStore,
     resolvePullRequestDestination,
     submitPullRequest,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
@@ -3617,6 +3962,25 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       return stored.failedLenses?.[lens];
     },
+    retryRound: async ({ review }) => {
+      const sessionId = sessionIdForReview(review);
+      const failed = roundOperationStore.read(sessionId);
+      if (failed?.state.phase !== "failed") return undefined;
+
+      const retry = roundRetryMode(failed.state.failure);
+      const settled = coordinator.retry(sessionId);
+      const accepted = roundOperationStore.read(sessionId);
+      if (accepted === undefined || accepted.operationId !== failed.operationId) {
+        throw new Error("Round retry was not durably accepted.");
+      }
+      void settled.catch((error) => {
+        console.error("Durable round retry failed", error);
+      });
+      return {
+        retry,
+        acceptedOperation: roundOperationProgressSnapshot(accepted),
+      };
+    },
     queueRoundIfActive: async ({ review, dispatchId }) => {
       const session = (
         await enterRoundSession(
@@ -3628,17 +3992,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ).session;
       for (;;) {
         const active = roundOperationStore.read(session.id);
-        if (active === undefined || isRoundOperationTerminal(active)) return false;
-        if (active.dispatchId === dispatchId || active.rerunRequested) return true;
+        if (
+          active === undefined ||
+          active.state.phase === "failed" ||
+          (active.state.phase === "completed" && active.state.returnedAt !== undefined)
+        ) {
+          return undefined;
+        }
+        if (active.dispatchId === dispatchId || active.rerunRequested) {
+          void coordinator.resume(session.id).catch((error) => {
+            console.error("Durable round resume failed", error);
+          });
+          return roundOperationProgressSnapshot(active);
+        }
         try {
-          publishRoundOperation(
-            roundOperationStore.requestRerun({
-              sessionId: active.sessionId,
-              operationId: active.operationId,
-              revision: active.revision,
-            }),
-          );
-          return true;
+          const queued = roundOperationStore.requestRerun({
+            sessionId: active.sessionId,
+            operationId: active.operationId,
+            revision: active.revision,
+          });
+          publishRoundOperation(queued);
+          void coordinator.resume(session.id).catch((error) => {
+            console.error("Queued durable round recovery failed", error);
+          });
+          return roundOperationProgressSnapshot(queued);
         } catch (error) {
           if (!(error instanceof RoundOperationConflictError)) throw error;
         }
@@ -3662,8 +4039,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         askOccurrences,
       });
       appendRoundTranscript(session.id, [roundDispatchTranscriptRow(operation)]);
-      await coordinator.submit(operation);
-      return { askDrain: "coordinator" };
+      const settled = coordinator.submit(operation);
+      const accepted = roundOperationStore.read(session.id);
+      if (accepted === undefined) {
+        throw new Error("Round dispatch was not durably accepted.");
+      }
+      return {
+        askDrain: "coordinator",
+        acceptedOperation: roundOperationProgressSnapshot(accepted),
+        settled: settled.then(() => undefined),
+      };
     },
     // The living-draft span-rework producer (B11 cluster 5): a one-shot model turn that
     // reworks one staged ask's body per the reviewer's instruction, on WHICHEVER seat the
@@ -3815,17 +4200,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // Pure read of the persisted Repo Map: resolve the project's repoKey exactly as
     // the store writes it, gate the stored tip fresh, then serve queryProjectMap +
     // the local knowledge set verbatim. No rebuild, no model spend.
-    projectContextMap: async (projectId) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      const projectRoot = project ? project.openPath || project.path : null;
-      if (!projectRoot) return { status: "absent", reason: "unknown project" };
+    projectContextMap: async (input) => {
+      const { project, selection } = await resolveProjectContext(input);
+      if (selection.kind === "members") {
+        return { status: "members", members: [...selection.members] };
+      }
+      if (selection.kind === "missing") {
+        return {
+          status: "absent",
+          reason:
+            project === undefined
+              ? "unknown project"
+              : "the selected repository is not part of this project",
+        };
+      }
+      const projectRoot = selection.repositoryRoot;
       const repoKey = repoKeyForRoot(projectRoot);
-      const processRecord = projectProcessJournal.load(repoKey);
+      const primaryRoot = project ? project.openPath || project.path : projectRoot;
+      const processRecord = projectProcessJournal.load(repoKeyForRoot(primaryRoot));
       const absent = (reason: string): ProjectContextMapResult => ({
         status: "absent",
         reason,
         ...(processRecord ? { run: projectProcessRunFromRecord(processRecord) } : {}),
       });
+      const processing = projectContextUnavailableForProcess(processRecord);
+      if (processing) return processing;
       const manifest = liveSnapshotStore.loadManifest(repoKey);
       if (!manifest) {
         return absent(
@@ -3857,13 +4256,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // keyed at the persisted tip. The backend owns every honest failure state
     // (absent harness, snapshot refusal) — this wiring only supplies the project's
     // resolve closure and the user's own harness port.
-    projectContextAsk: async ({ projectId, question, scope }) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      const projectRoot = project ? project.openPath || project.path : null;
-      if (!projectRoot) {
+    projectContextAsk: async (input) => {
+      const { project, selection } = await resolveProjectContext(input);
+      if (selection.kind !== "resolved") {
         return {
           status: "failed",
-          failureReason: "unknown project",
+          failureReason:
+            project === undefined
+              ? "unknown project"
+              : selection.kind === "members"
+                ? "select a repository before asking about this workspace"
+                : "the selected repository is not part of this project",
           cost: {
             turns: 0,
             model: null,
@@ -3874,6 +4277,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           },
         };
       }
+      const projectRoot = selection.repositoryRoot;
       const repoKey = repoKeyForRoot(projectRoot);
       const backend = contextAskBackend({
         reader: new ProjectContextReader(liveSnapshotStore),
@@ -3889,26 +4293,30 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         repoRoot: projectRoot,
       });
       return backend.ask({
-        question,
-        ...(scope === undefined ? {} : { scope }),
+        question: input.question,
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
       }) as Promise<ProjectContextAskResult>;
     },
     // The human-confirm surface (R54): flip one statement's status by id and persist
     // the whole set atomically. Map preserves the deterministic id order; the claim
     // is never edited, so the content-hash id stays stable.
-    knowledgeDisposition: async ({ projectId, statementId, disposition }) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      const projectRoot = project ? project.openPath || project.path : null;
-      if (!projectRoot) return { status: "not-found", statementId };
+    knowledgeDisposition: async (input) => {
+      const { selection } = await resolveProjectContext(input);
+      if (selection.kind !== "resolved") {
+        return { status: "not-found", statementId: input.statementId };
+      }
+      const projectRoot = selection.repositoryRoot;
       const repoKey = repoKeyForRoot(projectRoot);
       const knowledgeStore = new KnowledgeStore(liveSnapshotStore);
       const set = knowledgeStore.loadLocal(repoKey);
-      const statement = set?.statements.find((entry) => entry.id === statementId);
-      if (!set || !statement) return { status: "not-found", statementId };
-      const updated = { ...statement, status: disposition };
+      const statement = set?.statements.find((entry) => entry.id === input.statementId);
+      if (!set || !statement) return { status: "not-found", statementId: input.statementId };
+      const updated = { ...statement, status: input.disposition };
       knowledgeStore.save(repoKey, {
         ...set,
-        statements: set.statements.map((entry) => (entry.id === statementId ? updated : entry)),
+        statements: set.statements.map((entry) =>
+          entry.id === input.statementId ? updated : entry,
+        ),
       });
       return { status: "ok", statement: updated } as KnowledgeDispositionResult;
     },
@@ -4058,12 +4466,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // active persisted boards plus the durable ask projection. The content-addressed store keeps
     // unchanged evidence byte-stable across remounts and restarts, preserving the post marker's
     // outcome-unknown retry identity. A changed verdict, ask, or board legitimately redrafts.
-    draftReviewOpener: createLiveReviewOpenerPort({
-      claudePort: claudeAdapterForRepo,
-      codexExecutor: codexExecutorForRepo,
-      readPrompt,
-      store: publishCompositionStore,
-    }),
+    draftReviewOpener:
+      options.draftReviewOpener ??
+      createLiveReviewOpenerPort({
+        claudePort: claudeAdapterForRepo,
+        codexExecutor: codexExecutorForRepo,
+        readPrompt,
+        store: publishCompositionStore,
+      }),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
     // Rephrases the successor review's DETERMINISTIC successor account into a one-glance
     // TL;DR shown ON TOP of the facts, on WHICHEVER seat the council resolves for

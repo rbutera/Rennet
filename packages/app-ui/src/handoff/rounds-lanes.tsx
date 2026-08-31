@@ -1,5 +1,5 @@
 import type { Review } from "@rennet/protocol";
-import { Check, GitBranch, GitPullRequest } from "lucide-react";
+import { Check, GitBranch, GitPullRequest, Pencil } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
@@ -37,8 +37,8 @@ import { parseLineAnchor } from "./selectors";
 // store's `stagedAsks` (not a god-store), steering is C4's `ProseSelectionLayer` (Drop retires +
 // unstages, Explain answers with provenance over the slice, Revise reaches the `handoff-data.ts`
 // rework seam, now bound to B11's live `review.reviseSpan`). The spike's `applyRevision`
-// string-surgery and `StreamingProse` are dropped (Reconciliation 4/5). The reviewer never
-// types into the draft (R32).
+// string-surgery and `StreamingProse` are dropped (Reconciliation 4/5). Save Edit replaces the
+// same durable ask body the work order carries.
 //
 // The PR draft + egress arrive as props (cluster 6 wires `publish.submitPr`; B11 the durable
 // draft): absent them the lane is fully live over the store — every card, Drop, and the Dispatch
@@ -125,7 +125,7 @@ export function RoundsLanes({
   // derived list — a store selector minting a fresh array each render would trip zustand's
   // snapshot cache into an update loop (the C08 pattern, shared with ask-basket / post-review-lane).
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
-  const { retire, unstageAsk, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const { retire, unstageAsk, stageAsk, editAsk } = useRennetStore((s) => s.reviewActions);
   const asks = useMemo(() => Object.values(stagedAsks), [stagedAsks]);
   const gathering = asks.length > 0;
 
@@ -133,6 +133,20 @@ export function RoundsLanes({
   const dispatchRef = useCoachAnchor("dispatch");
 
   const [receipt, setReceipt] = useState<PrReceipt | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
+  const startEdit = (ask: StagedAsk): void => {
+    setEditingId(ask.id);
+    setEditDraft(ask.body);
+  };
+  const saveEdit = (): void => {
+    if (editingId === null) return;
+    const body = editDraft.trim();
+    if (body.length > 0) editAsk(editingId, body);
+    setEditingId(null);
+    setEditDraft("");
+  };
 
   // Selection steering matches a quoted span back to its ask (the spike's fuzzy join over the ask
   // text, tolerant of the browser trimming/extending the selection). Same seam as the review draft.
@@ -226,7 +240,17 @@ export function RoundsLanes({
           <ProseSelectionLayer draftHandlers={draftHandlers}>
             <div className="flex flex-col gap-3">
               {asks.map((ask) => (
-                <AskCard key={ask.id} ask={ask} patchsetId={patchsetId} />
+                <AskCard
+                  key={ask.id}
+                  ask={ask}
+                  patchsetId={patchsetId}
+                  editing={editingId === ask.id}
+                  editDraft={editDraft}
+                  onEditDraft={setEditDraft}
+                  onStartEdit={() => startEdit(ask)}
+                  onSaveEdit={saveEdit}
+                  onCancelEdit={() => setEditingId(null)}
+                />
               ))}
             </div>
           </ProseSelectionLayer>
@@ -268,7 +292,25 @@ export function RoundsLanes({
 }
 
 /** One ask card: intent pill, provenance, the ask text, and — for a code anchor — its reveal. */
-function AskCard({ ask, patchsetId }: { ask: StagedAsk; patchsetId: string }) {
+function AskCard({
+  ask,
+  patchsetId,
+  editing,
+  editDraft,
+  onEditDraft,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+}: {
+  ask: StagedAsk;
+  patchsetId: string;
+  editing: boolean;
+  editDraft: string;
+  onEditDraft: (value: string) => void;
+  onStartEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+}) {
   const lineAnchor = parseLineAnchor(ask.anchor);
   const codeRef: CodeRef | null =
     ask.codeRef ??
@@ -282,16 +324,62 @@ function AskCard({ ask, patchsetId }: { ask: StagedAsk; patchsetId: string }) {
         }
       : null);
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-border px-4 py-3">
+    <div className="group flex flex-col gap-1.5 rounded-md border border-border px-4 py-3">
       <span className="flex items-center gap-1.5">
         <IntentPill type={ask.type} />
         <span className="truncate text-2xs text-muted-foreground/80">{ask.anchor}</span>
+        {!editing && (
+          <button
+            type="button"
+            onClick={onStartEdit}
+            className="ml-auto flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+          >
+            <Icon icon={Pencil} className="size-3" />
+            Edit
+          </button>
+        )}
       </span>
-      <RichText
-        text={ask.body}
-        patchsetId={patchsetId}
-        paragraphClassName="text-sm leading-relaxed text-foreground/90"
-      />
+      {editing ? (
+        <>
+          <textarea
+            // biome-ignore lint/a11y/noAutofocus: the editor opens on an explicit Edit click.
+            autoFocus
+            value={editDraft}
+            onChange={(event) => onEditDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                onSaveEdit();
+              }
+              if (event.key === "Escape") onCancelEdit();
+            }}
+            rows={2}
+            className="w-full resize-none rounded-md border border-border bg-card px-2.5 py-1.5 text-sm leading-relaxed text-foreground focus-visible:border-ring focus-visible:outline-none"
+          />
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onSaveEdit}
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Save
+            </button>
+          </div>
+        </>
+      ) : (
+        <RichText
+          text={ask.body}
+          patchsetId={patchsetId}
+          paragraphClassName="text-sm leading-relaxed text-foreground/90"
+        />
+      )}
       {codeRef && <AnchorReveal citations={[codeRef]} />}
     </div>
   );

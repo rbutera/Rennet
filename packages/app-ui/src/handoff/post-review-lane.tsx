@@ -43,7 +43,7 @@ import {
 //   • steering is by SELECTION (R32): the body mounts inside C4's `ProseSelectionLayer` with
 //     Drop (retire + unstage, real) / Explain (provenance over the slice, raises no exit) /
 //     Revise (reaches the `handoff-data.ts` rework seam, now bound to B11's live
-//     `review.reviseSpan`). The reviewer never types into the draft.
+//     `review.reviseSpan`). Save Edit writes the same durable ask body every exit composes.
 //   • RECEIPT-IS-UNDO: every drop/retire/delete/edit/verdict change reads back reversible from
 //     the store; only the final sign-click (`onSubmit`) is irreversible. The draft above IS the
 //     preview — no separate preview stage (R31).
@@ -105,6 +105,8 @@ export interface PostReviewLaneProps {
    * is present but disabled (no egress wired / review not composed yet).
    */
   readonly onPost?: () => Promise<PostReceipt>;
+  /** The daemon-owned receipt for this composition, hydrated after remount or restart. */
+  readonly receipt?: PostReceipt;
   /**
    * The composed outbound review (the daemon's `publish.compose` bytes). When present, the lane
    * PREVIEWS exactly these bytes and posts the same composition (the exact-preview contract,
@@ -129,6 +131,7 @@ export interface PostReviewLaneProps {
 export function PostReviewLane({
   review,
   onPost,
+  receipt,
   draft,
   onSetVerdict,
   onRevise,
@@ -142,6 +145,7 @@ export function PostReviewLane({
         review={review}
         draft={draft}
         onPost={onPost}
+        receipt={receipt}
         onSetVerdict={onSetVerdict}
       />
     );
@@ -173,12 +177,11 @@ function WorkingReviewDraft({
   // shapes over them — a store selector returning a fresh `{ body, lineGroups }` / `{ proposed }`
   // object each render would trip zustand's snapshot cache into an update loop (the C08 pattern).
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
-  const draftEdits = useRennetStore((s) => s.review.draftEdits);
   const retired = useRennetStore((s) => s.review.retired);
   const verdictOverride = useRennetStore((s) => s.review.verdictOverride);
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
   const codeComments = useRennetStore((s) => s.review.codeComments);
-  const { stageAsk, unstageAsk, retire, restoreRetired, setVerdictOverride, setDraftEdit } =
+  const { stageAsk, unstageAsk, editAsk, retire, restoreRetired, setVerdictOverride } =
     useRennetStore((s) => s.reviewActions);
 
   const draft = useMemo(() => composeLivingDraft(stagedAsks), [stagedAsks]);
@@ -206,9 +209,7 @@ function WorkingReviewDraft({
   const verdictRef = useCoachAnchor("verdict");
   const draftRef = useCoachAnchor("draft");
 
-  // Inline edits are keyed by ask IDENTITY (id), not anchor — so an edit follows its ask and a
-  // deleted ask's edit is dropped rather than haunting a later ask that shares the anchor.
-  const blockText = (ask: StagedAsk): string => draftEdits[ask.id] ?? ask.body;
+  const blockText = (ask: StagedAsk): string => ask.body;
 
   // Selection steering matches a quoted span back to its body ask (the spike's fuzzy join over
   // the block text, tolerant of the browser trimming/extending the selection).
@@ -218,14 +219,9 @@ function WorkingReviewDraft({
       return text.includes(quote) || quote.includes(text.slice(0, 40));
     });
 
-  // Land a reworked ask so the lane actually SHOWS it. This lane renders `blockText` — an inline
-  // `draftEdits` shadow WINS over the ask body — so re-staging alone would leave the reviewer's
-  // stale shadow on screen while the panel closed as success. Overwrite the shadow when one
-  // exists (the rework supersedes the edit it was run against); never mint one where there is
-  // none, or the composed preview would count a phantom "inline edit pending".
+  // Land a reworked ask so the lane shows the durable body the command returned.
   const landRework = (reworked: StagedAsk) => {
     stageAsk(reworked);
-    if (draftEdits[reworked.id] !== undefined) setDraftEdit(reworked.id, reworked.body);
   };
 
   const draftHandlers: DraftHandlers = {
@@ -258,7 +254,7 @@ function WorkingReviewDraft({
   function saveEdit() {
     if (editingId === null) return;
     const text = editDraft.trim();
-    if (text.length > 0) setDraftEdit(editingId, text);
+    if (text.length > 0) editAsk(editingId, text);
     setEditingId(null);
     setEditDraft("");
   }
@@ -501,21 +497,20 @@ function VerdictControl({
  * that SAME composition — so what the reviewer signs here IS what leaves the machine, byte for
  * byte, never a body recomposed after preview. The composed bytes render read-only: they are the
  * outbound payload, not the working set. Refinement (drop/edit/verdict-by-ask) happens over the
- * store in the diff and working-draft surfaces BEFORE compose; reopening the lane recomposes.
- *
- * Because `publish.compose` takes no inline-edit input, any local `draftEdits` (inline edits the
- * reviewer typed) cannot reach this composition — so they are marked pending-not-applied, never
- * silently dropped (the finding's "never silently divergent").
+ * store in the diff and working-draft surfaces BEFORE compose; saving an edit writes the durable
+ * ask log and invalidates this composition before a replacement preview can post.
  */
 function ComposedReviewPreview({
   review,
   draft,
   onPost,
+  receipt: hydratedReceipt,
   onSetVerdict,
 }: {
   review: Review;
   draft: ReviewDraft;
   onPost?: () => Promise<PostReceipt>;
+  receipt?: PostReceipt;
   onSetVerdict?: (verdict: ProposedVerdict | null) => void;
 }) {
   const patchsetId = review.activePatchsetId;
@@ -524,16 +519,21 @@ function ComposedReviewPreview({
     ? `${postTarget.repo.owner}/${postTarget.repo.name}#${postTarget.number}`
     : draft.destination;
 
-  const draftEdits = useRennetStore((s) => s.review.draftEdits);
   const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
   const codeComments = useRennetStore((s) => s.review.codeComments);
-  const pendingEditCount = Object.keys(draftEdits).length;
   const localResidue = useMemo(
     () => localResidueLine(quoteThreads, codeComments),
     [quoteThreads, codeComments],
   );
 
-  const [receipt, setReceipt] = useState<PostReceipt | null>(null);
+  const compositionKey = draft.marker ?? JSON.stringify(draft.post);
+  const [localPublication, setLocalPublication] = useState<{
+    readonly compositionKey: string;
+    readonly receipt: PostReceipt;
+  } | null>(null);
+  const receipt =
+    hydratedReceipt ??
+    (localPublication?.compositionKey === compositionKey ? localPublication.receipt : null);
 
   // The verdict shown is the COMPOSED one — the daemon binds it into the composition, so it is
   // exactly what posts (#435). Flipping it writes the durable override and recomposes; there is
@@ -584,14 +584,6 @@ function ComposedReviewPreview({
           verdictOverride={verdictOverride}
           setVerdictOverride={onSetVerdict ?? (() => undefined)}
         />
-
-        {/* Any inline edit that cannot reach the composition, named — not silently dropped. */}
-        {pendingEditCount > 0 && (
-          <p className="rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-            {pendingEditCount} inline edit{pendingEditCount === 1 ? "" : "s"} pending — not in this
-            composed review. Revise the underlying ask, then recompose.
-          </p>
-        )}
 
         {draft.artifact.bodyNotes.length > 0 && (
           <div className="flex flex-col gap-4">
@@ -682,7 +674,7 @@ function ComposedReviewPreview({
             onSubmit={
               onPost
                 ? async () => {
-                    setReceipt(await onPost());
+                    setLocalPublication({ compositionKey, receipt: await onPost() });
                   }
                 : undefined
             }

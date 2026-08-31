@@ -19,6 +19,13 @@ import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
 
+/** The coding harness one own-branch session is pinned to for its work-order rounds. */
+export const CodingHarnessSelectionSchema = z.object({
+  id: z.enum(["claude-code", "codex"]),
+  version: id,
+});
+export type CodingHarnessSelection = z.infer<typeof CodingHarnessSelectionSchema>;
+
 /**
  * The harness cursor (#466 res. 3, the T3 cursor-resume shape): interactive
  * turns run fresh-process-per-turn + `resume`, so the durable session persists
@@ -125,6 +132,9 @@ export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
 export const GenerationSchema = z.object({
   id,
   patchsetId: id,
+  /** Exact structural-map + knowledge revision consumed by this draft. Optional only for
+   * generations written before Context Map completion became a drafting dependency. */
+  projectContextRevision: id.optional(),
   /** Per-lens draft boards (L2), keyed by lens; present once drafted. */
   lensBoards: z.partialRecord(z.enum(LENS_KINDS), id),
   /** Pre-minted ids for the one drafting attempt currently allowed to write BoardMeta. */
@@ -188,6 +198,8 @@ const completedWorkerBase = {
   completedAt: z.number().int().nonnegative(),
   diff: z.string(),
   changedPaths: z.array(z.string()),
+  /** Exact harness/version that executed this worker. Optional only for legacy operations. */
+  harness: CodingHarnessSelectionSchema.optional(),
 };
 
 export const RoundTerminationSchema = z.discriminatedUnion("kind", [
@@ -758,6 +770,8 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
       z.object({ kind: z.literal("unchanged") }),
     ]),
     completedAt: z.number().int().nonnegative(),
+    /** Durable proof that Return, exact ask consumption, and terminal cleanup finished. */
+    returnedAt: z.number().int().nonnegative().optional(),
   }),
   z.object({
     phase: z.literal("failed"),
@@ -788,6 +802,8 @@ export type RoundRunGateReceipt = z.infer<typeof RoundRunGateReceiptSchema>;
 export const RoundRunReceiptSchema = z.object({
   startedAt: z.number().int().nonnegative(),
   sourceTarget: RoundSourceTargetSchema,
+  /** Exact coding harness selected before the worker started. Absent only on legacy rows. */
+  harness: CodingHarnessSelectionSchema.optional(),
   gate: RoundRunGateReceiptSchema,
 });
 export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;
@@ -957,6 +973,17 @@ export const RoundOperationSchema = z
         code: "custom",
         path: ["state", "result"],
         message: "unchanged result contradicts worker or commit evidence",
+      });
+    }
+    if (
+      operation.state.phase === "completed" &&
+      operation.state.returnedAt !== undefined &&
+      operation.state.returnedAt < operation.state.completedAt
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "returnedAt"],
+        message: "precedes completedAt",
       });
     }
     if (commits !== undefined && commits.baseHead !== commits.from) {
@@ -1182,6 +1209,10 @@ export type RoundOperationProgressState = z.infer<typeof RoundOperationProgressS
 export const RoundOperationProgressSnapshotSchema = z.object({
   operationId: id,
   revision: z.number().int().nonnegative(),
+  /** Optional for progress snapshots emitted by older daemons. */
+  rerunRequested: z.boolean().optional(),
+  /** True while terminal Return and exact ask consumption are still resumable. */
+  draining: z.boolean().optional(),
   createdAt: z.number().int().nonnegative(),
   roundNumber: z.number().int().positive(),
   sourceTarget: RoundSourceTargetSchema,
@@ -1407,6 +1438,8 @@ export function roundOperationProgressSnapshot(
   return {
     operationId: operation.operationId,
     revision: operation.revision,
+    rerunRequested: operation.rerunRequested,
+    draining: operation.state.phase === "completed" && operation.state.returnedAt === undefined,
     createdAt: operation.createdAt,
     roundNumber: operation.roundNumber,
     sourceTarget: operation.sourceTarget,
@@ -1819,6 +1852,11 @@ export const SessionModelSchema = z
     /** Present while New Chat capture/board preparation is running or when it stopped before
      * completion. Cleared only after the attached review's first generation settles. */
     preparation: SessionPreparationSchema.optional(),
+    /**
+     * The harness selected for this session's coding rounds. The first dispatch resolves one
+     * enabled installed harness and persists it; later rounds resolve this exact id or fail.
+     */
+    codingHarness: CodingHarnessSelectionSchema.optional(),
     harnessCursor: HarnessCursorSchema.optional(),
     threads: z.array(SessionThreadSchema),
     createdAt: z.number(),

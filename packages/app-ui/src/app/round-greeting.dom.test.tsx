@@ -87,7 +87,9 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
       />,
     );
     const summary = r.getByTestId("round-run-receipt");
-    expect(summary.textContent).toContain("Round 1 ran 2 asks on fix/token-refresh-observability.");
+    expect(summary.textContent).toContain(
+      "Round 1 ran 2 asks on fix/token-refresh-observability using Codex 0.146.0.",
+    );
     expect(summary.textContent).toContain("Passed pnpm check in 12 s across 7 projects.");
   });
 

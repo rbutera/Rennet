@@ -214,6 +214,48 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
   });
 
+  it("hydrates a durable publication receipt without posting again", async () => {
+    const marker = "a".repeat(64);
+    const calls: string[] = [];
+    const r = mountHandoff(review({ postTarget }), {
+      "publish.compose": () => {
+        calls.push("compose");
+        return {
+          status: "review",
+          artifact: ARTIFACT,
+          post: POST,
+          ledger: LEDGER,
+          payload: PAYLOAD,
+          destination: "acme/orbital#7",
+          title: "acme/orbital#7",
+          compositionId: "comp-1",
+          marker,
+        };
+      },
+      "publish.receipt": (input) => {
+        calls.push(`receipt:${input.marker}`);
+        return {
+          status: "posted",
+          receipt: {
+            marker,
+            verdict: "REQUEST_CHANGES",
+            lineCommentCount: 1,
+            reviewRef: "R_1",
+            url: "https://github.com/acme/orbital/pull/7#r1",
+          },
+        };
+      },
+      "publish.review": () => {
+        throw new Error("hydration must not post");
+      },
+    });
+
+    expect(await r.findByText(/Review posted to acme\/orbital#7/)).toBeTruthy();
+    expect(r.getByText("github.com/acme/orbital/pull/7#r1")).toBeTruthy();
+    expect(calls).toEqual(["compose", `receipt:${marker}`]);
+    expect(r.queryByRole("button", { name: /Post Review/ })).toBeNull();
+  });
+
   it("posts an approval with zero asks using the exact descriptor", async () => {
     const artifact: ReviewCompose["artifact"] = {
       opener: "Exact approval body from the daemon.",
@@ -399,49 +441,6 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(await r.findByText("After the remote edit.", {}, { timeout: 2_000 })).toBeTruthy();
     expect(r.queryByText("Before the remote edit.")).toBeNull();
     expect(composedRevisions).toEqual([0, 1, 1]);
-  });
-
-  it("an inline edit that can't reach the composition is marked pending — never silently divergent", async () => {
-    // The reviewer stages an ask AND types an inline edit into the store. `publish.compose` takes
-    // no edit input, so that edit cannot reach the outbound bytes. The lane must (a) still post the
-    // composed bytes byte-for-byte, and (b) visibly mark the unreachable edit — not drop it silently.
-    let posted: CommandInput<"publish.review"> | undefined;
-    const handlers: MemoryBridgeHandlers = {
-      "publish.compose": () => ({
-        status: "review",
-        artifact: ARTIFACT,
-        post: POST,
-        ledger: LEDGER,
-        payload: PAYLOAD,
-        destination: "acme/orbital#7",
-        title: "acme/orbital#7",
-        compositionId: "comp-1",
-      }),
-      "publish.review": (input: CommandInput<"publish.review">) => {
-        posted = input;
-        return {
-          dryRun: false,
-          request: { requests: [{ endpoint: "graphql", method: "POST", body: {} }] },
-          marker: "m1",
-          ledger: [],
-          outcome: { reviewRef: "R_1", url: "https://x/1", reused: false },
-        };
-      },
-    };
-    stage("src/a.ts:5", "request-change");
-    act(() => useRennetStore.getState().reviewActions.setDraftEdit("src/a.ts:5", "MY LOCAL EDIT"));
-
-    const r = mountHandoff(review({ postTarget }), handlers);
-    // The pending-mark shows: the inline edit is named as not-in-this-review, not silently applied.
-    expect(await r.findByText(/1 inline edit pending — not in this composed review/)).toBeTruthy();
-    // …and the reviewer's local edit text is nowhere in the previewed (outbound) bytes.
-    expect(r.queryByText(/MY LOCAL EDIT/)).toBeNull();
-
-    await r.user.click(r.getByRole("button", { name: /Post Review/ }));
-    // What posts is the composed bytes, byte-for-byte — the local edit reached neither preview nor post.
-    expect(posted?.payload).toBe(PAYLOAD);
-    expect(posted?.artifact).toEqual(ARTIFACT);
-    expect(posted?.post).toEqual(POST);
   });
 
   it("a daemon that lands no outcome fails honest — never a faked post", async () => {

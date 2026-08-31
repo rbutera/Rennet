@@ -177,8 +177,13 @@ comment, dismissal, or thread conclusion queues a rework. A rework runs as a
 **one-shot worker outside the interactive session**, and reworks are
 **serialized per document** — two edits to one board queue behind each other so
 their writes never race, while edits to different documents run in parallel. The
-reviewer never types into a draft; steering happens by talking or by
-highlighting a span.
+orchestrator owns the initial structure and model reworks. The reviewer may also
+save a direct block edit. Save appends one durable `ask.edit`, replaces that
+block in the canonical ask projection, and invalidates the composed preview.
+Reload, work-order dispatch, review preview, and review post all read that same
+body. Editing and saving never posts; Post or Dispatch remains a separate act.
+Conversation and highlighted spans remain the normal steering paths for broader
+rewrites.
 
 - Folding a staged ask into a draft is near-instant assembly; its only
   visibility is the affected block streaming in place. The **drafting
@@ -202,15 +207,17 @@ different reviews overlap.
 
 ## The review's two strata
 
-A GitHub review is one **review body** plus **line comments** pinned to diff
+A GitHub review is one **review body** plus **line or range comments** pinned to diff
 positions, and the draft mirrors that shape rather than flattening it. An ask
 whose provenance carries a diff position — a finding's anchor, a code-line
-comment — becomes a line comment, grouped by file with its citation. An ask
+comment — becomes a line or full-range comment, grouped by file with its citation. An ask
 without one (a quote of board prose has no diff line to pin to) travels in
 the review body. A path-only ask has
 no diff position either, so it folds into the body the same way; the conversion
 is recorded in a ledger returned to the client rather than happening silently.
-The preview renders the exact forge body and threads that post. Provenance and
+When a provider cannot anchor a range, the complete `start–end` range folds into
+the review body and the degradation ledger records that conversion; it never
+narrows silently to one endpoint. The preview renders the exact forge body and threads that post. Provenance and
 the degradation ledger remain visible beside that descriptor rather than being
 inserted into it.
 
@@ -259,9 +266,25 @@ daemon restarts; changed boards, asks, patchset, or verdict draft a new opener.
 That stability keeps the canonical payload and retry marker stable when a post
 may have landed but its response was lost.
 
-The post carries a deterministic idempotency marker. The GitHub adapter checks
-for that marker before creating anything, so a retry returns the review that
-already landed instead of posting a second one.
+The post carries a deterministic idempotency marker. GitHub and GitLab check
+for that marker before creating anything, so a retry after a lost response
+returns the review that already landed instead of posting a second one. When no
+matching review exists, the provider adapter reads the pull or merge request's
+live head and refuses a moved head before its first mutation. A matching marker
+proves a one-step provider operation already landed; a durable local receipt proves
+the complete operation. Either wins over that freshness check. GitLab sends the
+descriptor's reviewed body without adding provider-only prose after preview; when
+GitLab needs the textual verdict, the core composer puts that label in the signed
+descriptor first. On an approving retry, the marker proves only that the note
+landed. The adapter also reads whether the current user approved. It returns the
+reused receipt when approval already landed, or rechecks the immutable head and
+performs the missing approval once.
+
+After the provider returns a result, the daemon persists the publication receipt
+by review and marker before it answers the client. `publish.receipt` reads that
+record, including the canonical provider review URL, verdict, and line-comment
+count. The Hand off lane hydrates it on mount, so a daemon or app restart returns
+to the posted state rather than offering a second Post action.
 
 The outbound payload holds only what the reviewer sent. Internal conversation,
 model traces, and draft history never enter it unless their text became
@@ -288,12 +311,14 @@ reviewer's work because the daemon holds it.
 The exits themselves:
 
 - **The GitHub review** — `publish.compose(mode:"review")` folds the projection
-  into the two strata: staged line asks and bare line comments become line
-  comments in deterministic `(path, line)` order (an ask on a line wins over a
+  into the two strata: staged line or range asks and bare line comments become
+  anchored comments in deterministic `(path, start line, end line)` order (an exact
+  single-line ask wins over a
   bare comment there); pathless asks become body notes and retired asks stay local. The verdict follows
   the outbound set, and a set **verdict override wins** over the derived event.
   The composed artifact and forge descriptor pass unchanged to `publish.review`,
-  which independently rebuilds them before posting.
+  which independently rebuilds them before posting. A completed publication is
+  recorded durably before the command returns and reloaded by marker on remount.
 - **The round work-order** — `round.dispatch` folds the addressed asks into
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces
@@ -305,8 +330,13 @@ The exits themselves:
   one. A failure after that commit point — no active patchset to regenerate
   over, or a regeneration that throws — closes the round's progress channel
   with a terminal failure and leaves the checkpoint evidence intact for a
-  regeneration-only retry. The worker-to-record interval and durable replay of
-  execution-phase receipts remain outside this restart boundary.
+  regeneration-only retry. Recovery also owns the earlier execution phases. If
+  the daemon restarts while the coding worker is running, it reconstructs the
+  worker's partial diff and changed-path evidence from the preserved detached
+  worktree, records an actionable failed receipt, and never invokes that worker
+  again. If the restart interrupts the configured gate, it runs the same gate
+  command over that preserved worktree under the durable gate execution identity
+  and continues only from the resulting receipt.
 - **The pull or merge request** — `publish.compose(mode:"pr")` resolves the effective
   push URL before drafting and shows its provider-qualified repository on the
   preview. That target joins the canonical submission in a **stable derived
@@ -357,11 +387,21 @@ that host's repair.
    step coarsens separate detached-commit, source-landing, and round-recording
    receipts; each remains its own restart boundary. The view is
    deep-linkable and cold: opening it mid-round reattaches to the newest durable
-   receipt and never re-dispatches. It stays on the run through report drafting
-   and verification, and hands back to the board surface only after the durable
-   operation records verified terminal completion (including a verified
-   unchanged round). A terminal failure stays on the run with its failure
-   receipt. Once a round has returned, the session row carries the durable
+   receipt and never re-dispatches. The first round pins one enabled installed
+   Claude Code or Codex harness to the session; later rounds use that exact harness,
+   and the run receipt names its version. It stays on the run through report drafting
+   and verification. Terminal completion first enters a resumable handback:
+   Rennet records the stable Return turn, consumes the exact dispatched ask
+   occurrences, and cleans up the round source before the durable operation
+   records that the round has returned. Only that return receipt hands the UI
+   back to the board surface. A second Dispatch received during handback is
+   durably queued and replaces the prior operation without exposing round one's
+   completion as the new run. A terminal failure stays on the run with its failure
+   receipt and offers both **Return to Review** and **Retry**. Retry resumes the same
+   operation from the exact failed checkpoint, preserving its worktree, asks, logs,
+   and completed effect receipts. A failure after source landing retries only the
+   recording or board-regeneration tail; it does not repeat worker edits, gates,
+   commits, or board identities. Once a round has returned, the session row carries the durable
    ledger ordinal as *Round N is back*. The display transcript keeps every
    pre-round row and appends two stable lifecycle turns: the reviewer's
    *Dispatch it.* when the operation is claimed, then a receipt-derived
@@ -459,7 +499,8 @@ that host's repair.
    rows also pin one immutable run receipt: when the durable operation started,
    its exact branch or detached HEAD target, and the configured gate's command,
    duration, and project count (or the fact that no gate was configured). The
-   first dispatch placeholder owns that receipt; retry and regeneration
+   first dispatch placeholder owns that receipt, including the exact coding harness
+   and version that ran the worker; retry and regeneration
    reconciliation cannot rewrite it. Because
    #457 appends the new generation and freezes the old rather than overwriting, that frozen
    generation stays reachable through the generation switcher, so earlier

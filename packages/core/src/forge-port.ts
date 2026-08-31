@@ -130,6 +130,8 @@ export interface ForgeCapabilities {
   supportsBatchedReview: boolean;
   supportsMultiLineAnchors: boolean;
   supportsFileLevelThreads: boolean;
+  /** The provider has no native three-way review event, so the signed body must name it. */
+  requiresReviewVerdictInBody: boolean;
 }
 
 /**

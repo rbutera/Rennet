@@ -1,16 +1,22 @@
 // @vitest-environment happy-dom
 import type { ReactElement } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, mount, waitFor } from "../test/dom";
+import { act, fireEvent, mount, waitFor } from "../test/dom";
 import {
   createTimelineRoundsSource,
   FIXTURE_ROUND_COMPLETE_TICK,
   type TimelineRoundsSource,
 } from "../test/fixtures/rounds";
-import { advance, initialRoundState, type RoundEvent, type RoundState } from "./round-machine";
+import {
+  advance,
+  initialRoundState,
+  type LaneRow,
+  type RoundEvent,
+  type RoundState,
+} from "./round-machine";
 import { type RoundsSource, RoundsSourceProvider } from "./rounds-data";
 import { RunRoute } from "./run-route";
 
@@ -61,11 +67,13 @@ function pump(handle: ReturnType<typeof renderRun>, tick: number): void {
 
 function renderFixedState(
   state: RoundState,
+  overrides: Partial<RoundsSource> = {},
 ): ReturnType<typeof mount> & { readonly history: ReturnType<typeof memoryHistory> } {
   const source: RoundsSource = {
     roundState: () => state,
     roundRecords: () => [],
     reportBoard: () => undefined,
+    ...overrides,
   };
   const history = memoryHistory("/s/s-1/run");
   const handle = mount(
@@ -76,6 +84,36 @@ function renderFixedState(
     </Router>,
   );
   return { ...handle, history };
+}
+
+function failedRoundState(input: {
+  readonly reason: string;
+  readonly workerStatus: "failed" | "done";
+  readonly tail: readonly LaneRow[];
+}): RoundState {
+  return {
+    phase: "failed",
+    reason: input.reason,
+    operation: {
+      operationId: "operation-1",
+      revision: 8,
+      createdAt: 1_000,
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "feat/recovery" },
+      askCount: 2,
+      gatePlan: { kind: "configured", command: "pnpm check" },
+    },
+    prep: [
+      { id: "worktree", label: "Created detached worktree", status: "done" },
+      { id: "asks", label: "Applied the round's asks", status: "done" },
+    ],
+    worker: [
+      input.workerStatus === "failed"
+        ? { id: "worker", label: "Round worker", status: "failed", reason: input.reason }
+        : { id: "worker", label: "Ran the round worker", status: "done", detail: "1 file" },
+    ],
+    tail: input.tail,
+  };
 }
 
 describe("RunRoute — the live round takeover", () => {
@@ -168,5 +206,67 @@ describe("RunRoute — the live round takeover", () => {
       "Verifying the round report",
     );
     expect(useRennetStore.getState().run.greetingArmed).toBe(false);
+  });
+
+  it.each([
+    {
+      stage: "worker",
+      state: failedRoundState({
+        reason: "worker stopped",
+        workerStatus: "failed",
+        tail: [],
+      }),
+    },
+    {
+      stage: "gate",
+      state: failedRoundState({
+        reason: "gate failed",
+        workerStatus: "done",
+        tail: [{ id: "gate", label: "Ran the gate", status: "failed", reason: "gate failed" }],
+      }),
+    },
+    {
+      stage: "source landing",
+      state: failedRoundState({
+        reason: "source landing failed",
+        workerStatus: "done",
+        tail: [
+          { id: "gate", label: "Ran the gate", status: "done" },
+          {
+            id: "commit",
+            label: "Recording round commits",
+            status: "failed",
+            reason: "source landing failed",
+          },
+        ],
+      }),
+    },
+    {
+      stage: "board regeneration",
+      state: failedRoundState({
+        reason: "board regeneration failed",
+        workerStatus: "done",
+        tail: [
+          { id: "gate", label: "Ran the gate", status: "done" },
+          { id: "commit", label: "Recorded round commits", status: "done" },
+          {
+            id: "report",
+            label: "Drafting the round report",
+            status: "failed",
+            reason: "board regeneration failed",
+          },
+        ],
+      }),
+    },
+  ])("offers Retry and Return to Review after a $stage failure", ({ state }) => {
+    const retry = vi.fn();
+    const handle = renderFixedState(state, { retry });
+
+    fireEvent.click(handle.getByText("Retry"));
+    expect(retry).toHaveBeenCalledWith("s-1");
+    expect(handle.history.history.at(-1)).toBe("/s/s-1/run");
+
+    fireEvent.click(handle.getByText("Return to Review"));
+    expect(handle.history.history.at(-1)).toBe("/s/s-1");
   });
 });

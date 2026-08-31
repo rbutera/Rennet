@@ -1,6 +1,7 @@
 import type {
   AnchorSide,
   AnchorSpan,
+  CodingHarnessSelection,
   DispositionType,
   HandoffBundle,
   HandoffDisclosure,
@@ -384,6 +385,7 @@ export type HandoffTurnOutcome =
       readonly finalText: string;
       readonly turnDiff: string;
       readonly filesTouched: readonly string[];
+      readonly harness?: CodingHarnessSelection;
       readonly usage?: RspTokenUsage;
     }
   | {
@@ -391,6 +393,7 @@ export type HandoffTurnOutcome =
       readonly reason: string;
       readonly turnDiff: string;
       readonly filesTouched: readonly string[];
+      readonly harness?: CodingHarnessSelection;
     };
 
 export interface RunHandoffTurnInput {

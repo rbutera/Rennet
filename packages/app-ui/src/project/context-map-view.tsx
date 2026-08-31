@@ -1,3 +1,4 @@
+import type { ProjectRepositoryAddress } from "@rennet/protocol";
 import { useLocation } from "wouter";
 import { ContextMapView, discussPrompt } from "../components/context-map-view";
 import { newChatPath } from "../routes/url";
@@ -13,10 +14,12 @@ import { newChatPath } from "../routes/url";
 
 export function ProjectContextMapView({
   projectId,
+  repositoryAddress,
   onBack,
   takeover = true,
 }: {
   readonly projectId: string;
+  readonly repositoryAddress?: ProjectRepositoryAddress;
   /** Where Back goes. Omitted ⇒ the project's New Chat, this flow's standing exit. The
    *  session top-bar's `?view=map` overrides it to the board, because there Back leaving
    *  for New Chat would drop the reviewer out of the session they were reading. */
@@ -30,6 +33,7 @@ export function ProjectContextMapView({
   return (
     <ContextMapView
       projectId={projectId}
+      repositoryAddress={repositoryAddress}
       showAskRail={false}
       takeover={takeover}
       onBack={onBack ?? (() => navigate(newChatPath(projectId)))}

@@ -108,9 +108,11 @@ flowchart TD
 ```
 
 Conversation panels render in a sibling margin column and align through anchor
-keys. The code view owns scrolling and virtualized rows. Focus requests scroll
-to a resolved anchor; malformed or orphaned requests leave the current scroll
-position unchanged.
+keys. Code surfaces own scrolling and virtualized rows. The raw Diff surface
+windows both file cards and rows, keeps the full file index mounted, and resolves
+file jumps through its virtual layout rather than DOM presence. Focus requests
+scroll to a resolved anchor; malformed or orphaned requests leave the current
+scroll position unchanged.
 
 ## Keep marks at their evidence
 

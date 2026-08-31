@@ -1,8 +1,9 @@
-import { cn, Spinner } from "@rennet/ui";
+import { Button, cn, Spinner } from "@rennet/ui";
 import { Check, Minus } from "lucide-react";
 import { useEffect } from "react";
-import { Redirect } from "wouter";
+import { Redirect, useLocation } from "wouter";
 import { Icon } from "../components/icon";
+import { sessionPath } from "../routes/url";
 import { useRennetStore } from "../store";
 import {
   type LaneRow,
@@ -11,7 +12,13 @@ import {
   roundTargetLabel,
   runNavigation,
 } from "./round-machine";
-import { useRoundPending, useRoundState } from "./rounds-data";
+import {
+  useRoundPending,
+  useRoundRetry,
+  useRoundRetryError,
+  useRoundRetryPending,
+  useRoundState,
+} from "./rounds-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The run route (C09 §3) — the live work-order round watched at `/s/:slug/run`. The
@@ -126,10 +133,35 @@ function LaneList({ title, rows }: { readonly title: string; readonly rows: read
   );
 }
 
+function FailureActions({ slug }: { readonly slug: string }) {
+  const [, navigate] = useLocation();
+  const retry = useRoundRetry();
+  const pending = useRoundRetryPending(slug);
+  const error = useRoundRetryError(slug);
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="flex items-center gap-2">
+        <Button variant="outline" onClick={() => navigate(sessionPath(slug))}>
+          Return to Review
+        </Button>
+        <Button disabled={retry === undefined || pending} onClick={() => retry?.(slug)}>
+          {pending ? "Retrying" : "Retry"}
+        </Button>
+      </div>
+      {error !== undefined && (
+        <p role="alert" className="max-w-[520px] text-sm text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The live in-flight run body — prep lines, the worker lane list, and the gate/commit
  *  tail, all from durable receipts. Legacy events can still render their prep and worker
  *  rows, but never gain client-authored gate, commit, or report success claims. */
-function LiveRun({ state }: { readonly state: RoundState }) {
+function LiveRun({ state, slug }: { readonly state: RoundState; readonly slug: string }) {
   if (state.phase === "failed" && !("operation" in state)) {
     return (
       <section
@@ -140,6 +172,7 @@ function LiveRun({ state }: { readonly state: RoundState }) {
       >
         <h1 className="font-display text-xl font-medium text-ink">The round failed</h1>
         <p className="max-w-[520px] text-ink-soft">{state.reason}</p>
+        <FailureActions slug={slug} />
       </section>
     );
   }
@@ -181,9 +214,12 @@ function LiveRun({ state }: { readonly state: RoundState }) {
         )}
 
         {state.phase === "failed" && (
-          <p role="alert" className="text-sm text-destructive">
-            {state.reason}
-          </p>
+          <div className="flex flex-col items-center gap-3">
+            <p role="alert" className="text-sm text-destructive">
+              {state.reason}
+            </p>
+            <FailureActions slug={slug} />
+          </div>
         )}
       </div>
     </section>
@@ -214,5 +250,5 @@ export function RunRoute({ slug }: { readonly slug: string }) {
   // Hold the route (render nothing, claim nothing) until the source answers.
   if (pending) return null;
   if (nav) return <Redirect to={nav.path} replace={nav.replace} />;
-  return <LiveRun state={state} />;
+  return <LiveRun state={state} slug={slug} />;
 }

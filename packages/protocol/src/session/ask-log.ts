@@ -11,8 +11,8 @@
 // and the receipt each write returns. The pure fold + `receiptFor` live in
 // `@rennet/core` (`exits/ask-projection`); the file-backed log lives in
 // `@rennet/adapters` (`ask-log-store`); the command handlers (the sole writers)
-// land in `@rennet/server` (B11 cluster 2). `focusedThreadId` and the PR-body
-// `draftEdits` block map stay CLIENT-transient (task 1.1) — they are not here.
+// land in `@rennet/server` (B11 cluster 2). `focusedThreadId` stays client-transient;
+// saved draft bodies are durable `edit` events over staged asks.
 //
 // The projection mirrors the client's authoritative shapes (`StagedAsk`,
 // `RetiredEntry`, `QuoteThread`, `verdictOverride`) so C9 can swap the store
@@ -49,8 +49,8 @@ export const StagedAskSchema = z.object({
    * so it posts on the pre-image line rather than the wrong side. Pre-B11 the disposition
    * compose (`reviewCommentsFromDispositions`) carried `side` (`deletions` → LEFT); the
    * durable staged-ask model must not flatten that away — so it round-trips here. The client
-   * (C9) populates it when staging a deletion-side finding; a multi-line RANGE (`startLine <
-   * line`) is a ledgered follow-up (`ReviewCommentInput` models a single line today).
+   * (C9) populates it when staging a deletion-side finding. The canonical `codeRef` below
+   * carries the complete line range through preview and publication.
    */
   side: z.enum(["LEFT", "RIGHT"]).optional(),
   /** The canonical captured position. `anchor` + `side` remain the legacy fallback. */

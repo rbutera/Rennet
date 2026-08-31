@@ -17,8 +17,12 @@ it for that project's New Chat.
 **Map** in a session's top bar opens the same map for that session's project,
 without leaving the session: it renders inside the session's own chrome, so the
 map's structure and claims appear under the top bar you were already using rather
-than under a second header of their own. Leaving it with the top bar's back arrow
-returns to the board rather than to New Chat. A review opened by a direct link rather than through one of its
+than under a second header of their own. In a workspace with several repositories,
+the session opens the map for the exact repository under review. The standalone
+project map first lists the member repositories so you can choose one; it never
+silently substitutes the workspace's first repository. Leaving a session map with
+the top bar's back arrow returns to the board rather than to New Chat. A review
+opened by a direct link rather than through one of its
 sessions has no project to map, and the view says so instead of showing the
 board again.
 
@@ -96,9 +100,19 @@ untouched claims carry forward.
 A run that is interrupted does not start over. The project-run journal checkpoints
 the scout and structural snapshot, while the knowledge journal saves each batch as
 it completes. Reattaching or restarting resumes the first incomplete checkpoint.
+If a scout, map, or knowledge worker exits with an error, the journal records that
+phase as failed and **Map** offers **Retry** under the same run identity. Completed
+checkpoints remain complete; the retry starts at the failed phase.
 The stored knowledge layer is only replaced when a run finishes whole, and the
 processing view reports ready only after that verified set is readable. A
 half-finished run never presents itself as a complete map.
+
+Review boards record the exact structural snapshot and knowledge set they consumed.
+If a review starts while project processing is still running, its first draft can
+appear immediately with the context available at that moment. When processing
+finishes, Rennet queues a fresh draft for the same patchset; it never keeps the
+earlier degraded boards as the settled result. Reopening the app resumes the same
+project run and preserves this relationship between the map and its boards.
 
 There is no file cap, but there is a policy exclusion. Lockfiles, vendored trees,
 build output, generated files, and binaries are not sent to a worker: reading them

@@ -62,6 +62,9 @@ const noteSchema = z.object({
   body: z.string(),
   web_url: z.url().nullable().optional(),
 });
+const approvalStateSchema = z.object({
+  approved_by: z.array(z.object({ user: userSchema })),
+});
 
 type MergeRequest = z.infer<typeof mergeRequestSchema>;
 type CommitStatus = z.infer<typeof statusSchema>;
@@ -78,6 +81,7 @@ export interface GitLabForgeCommand {
 export interface GitLabForgeCommandResult {
   readonly exitCode: number;
   readonly stdout: string;
+  readonly stderr?: string;
 }
 
 export type GitLabForgeCommandRunner = (
@@ -95,17 +99,21 @@ async function defaultRunner(command: GitLabForgeCommand): Promise<GitLabForgeCo
   const result = await execa(command.file, [...command.args], {
     reject: false,
     shell: false,
-    stderr: "ignore",
     timeout: 30_000,
     ...(command.cwd === undefined ? {} : { cwd: command.cwd }),
     ...(command.stdin === undefined ? { stdin: "ignore" as const } : { input: command.stdin }),
     ...(command.signal === undefined ? {} : { cancelSignal: command.signal }),
   });
-  return { exitCode: result.exitCode ?? 1, stdout: result.stdout };
+  return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
 function projectPath(repository: ForgeRepoIdentity): string {
   return encodeURIComponent(`${repository.owner}/${repository.name}`);
+}
+
+function noteUrl(target: ForgeReviewTarget, noteId: number): string {
+  const repositoryPath = `${target.ref.repo.owner}/${target.ref.repo.name}`;
+  return `https://gitlab.com/${repositoryPath}/-/merge_requests/${target.ref.number}#note_${noteId}`;
 }
 
 function decodeJson<T>(stdout: string, schema: z.ZodType<T>, context: string): T {
@@ -160,22 +168,13 @@ function statusOutcome(status: CommitStatus): "passing" | "failing" | "pending" 
   return "pending";
 }
 
-function reviewBody(post: ForgeReviewPost): string {
-  const verdict =
-    post.event === "APPROVE"
-      ? "Approved"
-      : post.event === "REQUEST_CHANGES"
-        ? "Changes requested"
-        : "Commented";
-  return `**Rennet review verdict: ${verdict}**\n\n${post.body}`;
-}
-
 export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePublishPort {
   readonly capabilities: ForgeCapabilities = {
     supportsThreadResolution: false,
     supportsBatchedReview: false,
     supportsMultiLineAnchors: false,
     supportsFileLevelThreads: false,
+    requiresReviewVerdictInBody: true,
   };
 
   private readonly run: GitLabForgeCommandRunner;
@@ -215,10 +214,34 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
       );
     }
     if (result.exitCode !== 0) {
-      throw new ProjectPrSourceUnavailable(
-        "gitlab",
-        "authentication",
-        "GitLab authentication failed. Run `glab auth status --hostname gitlab.com`.",
+      const detail = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
+      const normalized = detail.toLowerCase();
+      if (
+        /\b(401|403|auth(?:entication|orization)?|forbidden|login|token|unauthorized)\b/.test(
+          normalized,
+        )
+      ) {
+        throw new ProjectPrSourceUnavailable(
+          "gitlab",
+          "authentication",
+          "GitLab authentication failed. Run `glab auth status --hostname gitlab.com`.",
+        );
+      }
+      if (
+        /connection|could not resolve|dns|network|timed? out|timeout|tls|unreachable/.test(
+          normalized,
+        )
+      ) {
+        throw new ProjectPrSourceUnavailable(
+          "gitlab",
+          "network",
+          "GitLab is unreachable right now. Check the selected host and try again.",
+        );
+      }
+      throw new Error(
+        detail === ""
+          ? `GitLab command failed with exit code ${result.exitCode}.`
+          : `GitLab command failed: ${detail}`,
       );
     }
     return result.stdout;
@@ -406,7 +429,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     const note = {
       endpoint: `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}/notes`,
       method: "POST",
-      body: { body: reviewBody(post) },
+      body: { body: post.body },
     };
     return {
       requests:
@@ -442,7 +465,42 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     );
     return note === undefined
       ? null
-      : { reviewRef: String(note.id), url: note.web_url ?? null, reused: true };
+      : { reviewRef: String(note.id), url: noteUrl(target, note.id), reused: true };
+  }
+
+  private async viewerHasApproved(target: ForgeReviewTarget): Promise<boolean> {
+    const viewer = await this.resolveViewer();
+    if (viewer === null) return false;
+    const stdout = await this.execute([
+      "api",
+      `projects/${projectPath(target.ref.repo)}/merge_requests/${target.ref.number}/approvals`,
+      "--hostname",
+      "gitlab.com",
+      "--output",
+      "json",
+    ]);
+    const state = decodeJson(stdout, approvalStateSchema, "GitLab approval state");
+    return state.approved_by.some(({ user }) => user.username === viewer);
+  }
+
+  private async assertCurrentHead(post: ForgeReviewPost): Promise<void> {
+    const current = decodeJson(
+      await this.execute([
+        "api",
+        `projects/${projectPath(post.target.ref.repo)}/merge_requests/${post.target.ref.number}`,
+        "--hostname",
+        "gitlab.com",
+        "--output",
+        "json",
+      ]),
+      mergeRequestSchema,
+      "GitLab merge request",
+    );
+    if (current.sha !== post.target.headOid) {
+      throw new Error(
+        `Publish refused: the merge-request head moved from ${post.target.headOid} to ${current.sha}.`,
+      );
+    }
   }
 
   async publishReview(post: ForgeReviewPost): Promise<ForgePublishOutcome> {
@@ -451,8 +509,9 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     const noteRequest = requests[0];
     if (noteRequest === undefined) throw new Error("GitLab review note request is missing.");
 
-    let outcome = existing;
-    if (outcome === null) {
+    let outcome: ForgePublishOutcome;
+    if (existing === null) {
+      await this.assertCurrentHead(post);
       const stdout = await this.execute(
         [
           "api",
@@ -469,7 +528,17 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
         { stdin: JSON.stringify(noteRequest.body) },
       );
       const note: Note = decodeJson(stdout, noteSchema, "GitLab review note");
-      outcome = { reviewRef: String(note.id), url: note.web_url ?? null, reused: false };
+      outcome = {
+        reviewRef: String(note.id),
+        url: noteUrl(post.target, note.id),
+        reused: false,
+      };
+    } else {
+      outcome = existing;
+      const approvalRequest = requests[1];
+      if (approvalRequest === undefined) return outcome;
+      if (await this.viewerHasApproved(post.target)) return outcome;
+      await this.assertCurrentHead(post);
     }
 
     const approvalRequest = requests[1];

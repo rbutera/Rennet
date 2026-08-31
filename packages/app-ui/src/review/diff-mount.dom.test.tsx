@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import type { PatchFile, Review } from "@rennet/protocol";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { BridgeProvider } from "../data";
@@ -85,58 +85,38 @@ describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
 });
 
 describe("diff deep-link ?file= (C6 task 4.1)", () => {
-  let scrollSpy: ReturnType<typeof vi.fn>;
-  let original: typeof Element.prototype.scrollIntoView;
-
-  beforeEach(() => {
-    original = Element.prototype.scrollIntoView;
-    // vi.fn records each call's `this` in `mock.contexts`, so the test can prove the scroll
-    // fired on the named card element itself, not merely on some element on the page.
-    scrollSpy = vi.fn();
-    Element.prototype.scrollIntoView =
-      scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
-  });
-  afterEach(() => {
-    Element.prototype.scrollIntoView = original;
-  });
-
-  it("a cold ?view=diff&file=<path> renders the surface and scrolls the named card", () => {
+  it("a cold ?view=diff&file=<path> renders the surface and positions the virtual window", () => {
     const target = FILE_B.path;
     const { container } = mountWorkspace(`/s/x?view=diff&file=${encodeURIComponent(target)}`, [
       FILE_A,
       FILE_B,
     ]);
-    // The named card is in the DOM…
-    const section = container.querySelector(`[id="diff-${target}"]`);
-    expect(section).toBeTruthy();
-    // …and the mount-only effect scrolled THAT section into view (not merely some element).
-    expect(scrollSpy).toHaveBeenCalled();
-    expect(scrollSpy.mock.contexts[0]).toBe(section);
+    expect(container.querySelector(`[id="diff-${target}"]`)).toBeTruthy();
+    expect(
+      (container.querySelector("[data-diff-scroll]") as HTMLElement).scrollTop,
+    ).toBeGreaterThan(0);
   });
 
   it("does not scroll when no ?file is present", () => {
-    mountWorkspace("/s/x?view=diff", [FILE_A, FILE_B]);
-    expect(scrollSpy).not.toHaveBeenCalled();
+    const { container } = mountWorkspace("/s/x?view=diff", [FILE_A, FILE_B]);
+    expect((container.querySelector("[data-diff-scroll]") as HTMLElement).scrollTop).toBe(0);
   });
 
-  it("scrolls again when an already-mounted Diff receives a different ?file", () => {
+  it("positions again when an already-mounted Diff receives a different ?file", () => {
     const { container, history } = mountWorkspace(
       `/s/x?view=diff&file=${encodeURIComponent(FILE_A.path)}`,
       [FILE_A, FILE_B],
     );
-    const firstCard = container.querySelector(`[id="diff-${FILE_A.path}"]`);
-    const nextCard = container.querySelector(`[id="diff-${FILE_B.path}"]`);
-    expect(scrollSpy.mock.contexts.at(-1)).toBe(firstCard);
-
-    scrollSpy.mockClear();
+    const scroll = container.querySelector("[data-diff-scroll]") as HTMLElement;
+    expect(scroll.scrollTop).toBeGreaterThan(0);
+    const firstTop = scroll.scrollTop;
     act(() =>
       history.navigate(`/s/x?view=diff&file=${encodeURIComponent(FILE_B.path)}`, {
         replace: true,
       }),
     );
 
-    expect(container.querySelector(`[id="diff-${FILE_A.path}"]`)).toBe(firstCard);
-    expect(scrollSpy).toHaveBeenCalledOnce();
-    expect(scrollSpy.mock.contexts[0]).toBe(nextCard);
+    expect(scroll.scrollTop).toBeGreaterThan(firstTop);
+    expect(container.querySelector(`[id="diff-${FILE_B.path}"]`)).toBeTruthy();
   });
 });

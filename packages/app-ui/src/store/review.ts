@@ -28,9 +28,8 @@ import type { RennetState } from "./index";
 // an empty work order, and every ask was "no longer staged". It is also what makes a reload keep
 // the reviewer's work: the projection outlives the renderer.
 //
-// `focusedThreadId` and `draftEdits` stay CLIENT-TRANSIENT by contract (the durable-asks
-// shapes in `protocol/src/session/ask-log.ts` name them as the two exceptions) — they are
-// not in the projection, so they are not written through and not hydrated.
+// `focusedThreadId` stays client-transient. Saved draft edits are ordinary durable `ask.edit`
+// events, so every exit composes the same body the reviewer sees and a reload rehydrates it.
 //
 // DERIVE, DON'T STORE: counts, tallies, and highlights are selectors over this slice +
 // the projection cache — never fields.
@@ -40,6 +39,7 @@ import type { RennetState } from "./index";
 export type AskWriteCommand =
   | "ask.stage"
   | "ask.unstage"
+  | "ask.edit"
   | "ask.dismissFinding"
   | "ask.restoreFinding"
   | "ask.retire"
@@ -181,8 +181,6 @@ export interface ReviewState {
   readonly retired: readonly RetiredEntry[];
   /** An explicit verdict override, or null (derive from dispositions). */
   readonly verdictOverride: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" | null;
-  /** Draft-block edits keyed by block id (the PR body / handoff draft blocks). */
-  readonly draftEdits: Readonly<Record<string, string>>;
 }
 
 export interface ReviewSlice {
@@ -201,9 +199,10 @@ export interface ReviewSlice {
      */
     hydrateAsks(projection: AskProjection): void;
     stageAsk(ask: StagedAsk): void;
-    /** Remove a staged ask by its `id`, and drop any inline edit keyed to that id (so a later
-     *  ask staged at the same anchor never inherits it). */
+    /** Remove a staged ask by its `id`. */
     unstageAsk(id: string): void;
+    /** Replace one staged ask's canonical body through the durable ask log. */
+    editAsk(id: string, body: string): void;
     dismissFinding(finding: FindingRef): void;
     restoreFinding(finding: FindingRef): void;
     setCodeComment(path: string, line: number, body: string): void;
@@ -227,7 +226,6 @@ export interface ReviewSlice {
     /** Restore a retired ask by its `id` — removes it from the ledger (the caller re-stages). */
     restoreRetired(id: string): void;
     setVerdictOverride(verdict: ReviewState["verdictOverride"]): void;
-    setDraftEdit(blockId: string, body: string): void;
     resetReview(): void;
   };
 }
@@ -240,7 +238,6 @@ const initialReview: ReviewState = {
   focusedThreadId: null,
   retired: [],
   verdictOverride: null,
-  draftEdits: {},
 };
 
 export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> = (set, get) => {
@@ -290,12 +287,19 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
         set((s) => {
           const rest = { ...s.review.stagedAsks };
           delete rest[id];
-          // Drop the inline edit keyed to this id too, so a later ask at the same anchor (a fresh id,
-          // or this id reused by a stable-id site) never inherits a withdrawn ask's edit.
-          const draftEdits = { ...s.review.draftEdits };
-          delete draftEdits[id];
-          return { review: { ...s.review, stagedAsks: rest, draftEdits } };
+          return { review: { ...s.review, stagedAsks: rest } };
         });
+      },
+      editAsk: (id, body) => {
+        const ask = get().review.stagedAsks[id];
+        if (ask === undefined) return;
+        durable("ask.edit", { id, body });
+        set((s) => ({
+          review: {
+            ...s.review,
+            stagedAsks: { ...s.review.stagedAsks, [id]: { ...ask, body } },
+          },
+        }));
       },
       dismissFinding: (finding) => {
         durable("ask.dismissFinding", { finding });
@@ -413,11 +417,6 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
         durable("ask.setVerdictOverride", { verdict });
         set((s) => ({ review: { ...s.review, verdictOverride: verdict } }));
       },
-      // Client-transient by contract — the PR-body draft blocks are not in the projection.
-      setDraftEdit: (blockId, body) =>
-        set((s) => ({
-          review: { ...s.review, draftEdits: { ...s.review.draftEdits, [blockId]: body } },
-        })),
       resetReview: () => set(() => ({ review: initialReview })),
     },
   };

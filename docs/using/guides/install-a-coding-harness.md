@@ -58,6 +58,13 @@ Rennet launches the harness you installed and uses that harness's existing
 authentication. It does not ask for a model API key or copy the harness's
 credentials.
 
+Work-order rounds use the harnesses enabled for that machine or WSL distro in
+**Settings → Environments**. A session's first round selects an available enabled
+harness (Claude Code when both are enabled) and keeps that provider for later
+rounds. To start a Codex-backed session on a machine with both installed, disable
+Claude Code before dispatching its first round. Each round's history row names the
+exact harness and version that ran it.
+
 If `claude --version` or `codex --version` works in a terminal but Rennet still
 cannot detect it, fully quit and reopen Rennet so the desktop process receives
 your current executable paths.

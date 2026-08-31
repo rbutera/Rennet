@@ -314,6 +314,8 @@ export function assembleRoundCollation(input: {
 export interface PacketKnowledgeSource {
   readonly set: KnowledgeSet | null;
   readonly snapshot: LoadedSnapshot | null;
+  /** Content identity of the exact snapshot + knowledge pair above. */
+  readonly revision?: string;
 }
 
 /** A prior generation and the boards it really drafted — the delta stamps' comparison set. */
@@ -423,6 +425,10 @@ export interface BoardRegenerationInput {
   readonly recaptured?: boolean;
   /** The patchset the boards described BEFORE this round — the generation it succeeds. */
   readonly priorPatchsetId: string;
+  /** The durable generation currently visible for that patchset. Passive regeneration after
+   * a real round must follow the ledger-selected generation instead of the initial
+   * content-derived address. */
+  readonly priorGenerationId?: string;
   readonly asksDispatched: readonly string[];
   /** Stable dispatch identity; absent only for askless first-generation drafting. */
   readonly dispatchId?: string;
@@ -542,7 +548,9 @@ export async function runBoardRegeneration(
     // minted and persisted; otherwise this is a first generation and says so — no
     // synthesized predecessor for the ledger to drill into, and no phantom comparison set.
     const prior = await deps.priorGeneration(
-      input.round?.previousGeneration ?? generationIdForPatchset(input.priorPatchsetId),
+      input.round?.previousGeneration ??
+        input.priorGenerationId ??
+        generationIdForPatchset(input.priorPatchsetId),
     );
     try {
       await deps.runRound({
@@ -563,6 +571,9 @@ export async function runBoardRegeneration(
         ...(input.verifyDraftedReport === undefined
           ? {}
           : { verifyDraftedReport: input.verifyDraftedReport }),
+        ...(knowledgeSource.revision === undefined
+          ? {}
+          : { projectContextRevision: knowledgeSource.revision }),
         ...(input.round === undefined
           ? {}
           : {

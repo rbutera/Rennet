@@ -562,16 +562,14 @@ function renderMcpServersToml(servers: Readonly<Record<string, { readonly url: s
  * child dials is the one Rennet is actually serving (design D6). No prompt/schema/
  * `-o` flags — the turn rides stdio.
  *
- * W5 — with NO servers to pin, the override is OMITTED rather than sent empty. An
- * empty full-table override wiped the user's `~/.codex` MCP table and substituted
- * nothing, which is the hamstring the plan names: it took a capable seat's tools
- * away and gave it none back. Rennet makes a harness more efficient additively; it
- * never denies one the ability to explore.
+ * An absent table inherits the user's MCP configuration. An explicit empty table
+ * starts no MCP sidecars for a job that does not use them. That does not affect
+ * Codex's native repository or shell tools.
  */
 export function buildAppServerArgs(
   mcpServers?: Readonly<Record<string, { readonly url: string }>>,
 ): string[] {
-  if (mcpServers === undefined || Object.keys(mcpServers).length === 0) return ["app-server"];
+  if (mcpServers === undefined) return ["app-server"];
   return ["app-server", "-c", `mcp_servers=${renderMcpServersToml(mcpServers)}`];
 }
 

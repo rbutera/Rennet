@@ -12,6 +12,7 @@ import {
   QuoteThreadSchema,
   RoundEventSchema,
   RoundLedgerRecordSchema,
+  RoundOperationProgressSnapshotSchema,
   SessionTranscriptSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
@@ -284,6 +285,25 @@ const definitions = {
       outcome: publishOutcomeSchema.nullable(),
     }),
   },
+  "publish.receipt": {
+    input: z.object({
+      reviewId: z.string().min(1),
+      marker: z.string().regex(/^[0-9a-f]{64}$/),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("missing") }),
+      z.object({
+        status: z.literal("posted"),
+        receipt: z.object({
+          marker: z.string().regex(/^[0-9a-f]{64}$/),
+          verdict: z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]),
+          lineCommentCount: z.number().int().nonnegative(),
+          reviewRef: z.string().min(1),
+          url: z.url(),
+        }),
+      }),
+    ]),
+  },
   // ── Submit an own-branch PR (issue #257 / #107) — push + open the PR ─────────
   // The action the product is named for: on a single human sign-click, push the
   // review's OWN branch and open a real pull request with the drafted title/body.
@@ -377,6 +397,11 @@ const definitions = {
          * bytes and the current persisted evidence before posting.
          */
         compositionId: z.string().min(1),
+        /** Current daemons expose the operation marker so clients can hydrate its durable receipt. */
+        marker: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
       }),
       z.object({
         status: z.literal("pr"),
@@ -714,30 +739,53 @@ const definitions = {
   // Pure read of the persisted Repo Map: no rebuild, no model spend. An absent
   // or gate-failing snapshot is a typed absent, never a fabricated map.
   "project.contextMap": {
-    input: z.object({ projectId: z.string().min(1) }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: projectContextMapResultSchema,
   },
   // Project-scoped orchestrator ask over the persisted snapshot + knowledge set.
   // Model spend through the user's own harness; unanswered and failed are
   // first-class honest results, never a clean answer without evidence.
   "project.contextAsk": {
-    input: z.object({
-      projectId: z.string().min(1),
-      question: z.string().min(1),
-      /** Restrict consulted context to a scope name or repo-relative subtree. */
-      scope: z.string().optional(),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+        question: z.string().min(1),
+        /** Restrict consulted context to a scope name or repo-relative subtree. */
+        scope: z.string().optional(),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: projectContextAskResultSchema,
   },
   // Human disposition of a knowledge statement (the R54 "a human confirms it"
   // surface): flips status by id and persists the set. Disposition never edits
   // the claim, so the content-hash id stays stable.
   "project.knowledgeDisposition": {
-    input: z.object({
-      projectId: z.string().min(1),
-      statementId: z.string().min(1),
-      disposition: z.enum(["confirmed", "rejected"]),
-    }),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        repository: z.string().min(1).optional(),
+        forgeRepository: forgeRepoIdentitySchema.optional(),
+        statementId: z.string().min(1),
+        disposition: z.enum(["confirmed", "rejected"]),
+      })
+      .refine((input) => forgeRepositoryMatchesLegacy(input.repository, input.forgeRepository), {
+        path: ["forgeRepository"],
+        message: "forgeRepository must name the same owner/name as repository",
+      }),
     output: knowledgeDispositionResultSchema,
   },
   // ── The Flagged lens (issue #138) ──────────────────────────────────────────
@@ -1445,7 +1493,22 @@ const definitions = {
   // no addressed asks — an honest "nothing to dispatch", never a fabricated run.
   "round.dispatch": {
     input: z.object({ reviewId: z.string().min(1) }),
-    output: z.object({ workOrder: composedHandoffBundleSchema, dispatched: z.boolean() }),
+    output: z.object({
+      workOrder: composedHandoffBundleSchema,
+      dispatched: z.boolean(),
+      acceptedOperation: RoundOperationProgressSnapshotSchema.optional(),
+    }),
+  },
+  // Retry a retained failed round from the checkpoint named by its durable failure
+  // receipt. The operation identity and every completed effect receipt stay unchanged;
+  // `retry` tells the client whether the resumed work is still the coding round or only
+  // the post-landing board regeneration tail.
+  "round.retry": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: z.object({
+      retry: z.enum(["round", "regeneration"]),
+      acceptedOperation: RoundOperationProgressSnapshotSchema,
+    }),
   },
   // ── Session reads (the client seam B9 and B11 opened) ───────────────────────
   // Both are SERVED. `session.transcript` is the chat dock's read (C07): the header
@@ -1624,7 +1687,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 105 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 107 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *

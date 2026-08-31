@@ -35,7 +35,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskLogStore, buildGitHubReviewRequest } from "@rennet/adapters";
-import { BridgeProvider, CodeBlock, useAskLog, useRennetStore } from "@rennet/app-ui";
+import { BridgeProvider, CodeBlock, HandoffView, useAskLog, useRennetStore } from "@rennet/app-ui";
 import type { ForgePublishPort, ForgeReviewPost } from "@rennet/core";
 import type { CommandName, CommandOutput, RennetBridge, Review } from "@rennet/protocol";
 import { createDispatch, type DispatchDeps } from "@rennet/server";
@@ -100,6 +100,7 @@ function recordingPublishPort(): ForgePublishPort & { posts: ForgeReviewPost[] }
       supportsBatchedReview: true,
       supportsMultiLineAnchors: true,
       supportsFileLevelThreads: true,
+      requiresReviewVerdictInBody: false,
     },
     buildReviewRequest: (post) => buildGitHubReviewRequest(post),
     findExistingReview: () => Promise.resolve(null),
@@ -159,6 +160,11 @@ function ReviewSurface({ reviewId }: { readonly reviewId: string }) {
   return <CodeBlock code={CODE} path={PATH} startLine={1} />;
 }
 
+function EditableReviewSurface({ review }: { readonly review: Review }) {
+  useAskLog(review.id);
+  return <HandoffView review={review} />;
+}
+
 function mountSurface(reviewId: string) {
   const view = render(
     <BridgeProvider bridge={bridge()}>
@@ -166,6 +172,46 @@ function mountSurface(reviewId: string) {
     </BridgeProvider>,
   );
   return { ...view, user: userEvent.setup() };
+}
+
+function mountEditableSurface(review: Review) {
+  const view = render(
+    <BridgeProvider bridge={bridge()}>
+      <EditableReviewSurface review={review} />
+    </BridgeProvider>,
+  );
+  return { ...view, user: userEvent.setup() };
+}
+
+async function stageEditableAsk(review: Review, body: string) {
+  await dispatch("ask.stage", {
+    sessionId: review.id,
+    ask: {
+      id: ASK_ID,
+      anchor: `${PATH}:2`,
+      type: "request-change",
+      body,
+      side: "RIGHT",
+    },
+  });
+}
+
+async function saveEditedAsk(review: Review, original: string, edited: string) {
+  const view = mountEditableSurface(review);
+  expect(await view.findByText(original)).toBeTruthy();
+  await view.user.click(view.getByRole("button", { name: /Edit/ }));
+  const editor = view.getByRole("textbox");
+  await view.user.clear(editor);
+  await view.user.type(editor, edited);
+  await view.user.click(view.getByRole("button", { name: "Save" }));
+
+  await vi.waitFor(async () => {
+    const read = (await dispatch("ask.read", { sessionId: review.id })) as {
+      projection: { stagedAsks: Record<string, { body: string }> };
+    };
+    expect(read.projection.stagedAsks[ASK_ID]?.body).toBe(edited);
+  });
+  return view;
 }
 
 /** Drive the real affordance: comment on line 2 and request changes there. */
@@ -267,6 +313,78 @@ describe("harm 2 — a dispatched round carries the reviewer's asks", () => {
     expect(JSON.stringify(after.workOrder)).toContain(ASK_BODY);
     expect(dispatchRound).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(dispatchRound.mock.calls[0])).toContain(ASK_BODY);
+  });
+});
+
+describe("harm 4 — Save Edit changes the canonical outbound draft", () => {
+  const original = "rename the export";
+  const edited = "rename the export and preserve the public alias";
+
+  it("persists the edit and feeds the exact bytes into teammate preview and post", async () => {
+    await stageEditableAsk(PR_REVIEW, original);
+    const before = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: PR_REVIEW.id,
+      mode: "review",
+    })) as Composed;
+    expect(before.artifact.comments[0]?.body).toBe(original);
+    expect(before.artifact.comments[0]?.body).not.toBe(edited);
+
+    const view = await saveEditedAsk(PR_REVIEW, original, edited);
+    expect(view.getByText(edited)).toBeTruthy();
+    expect(view.queryByText(original)).toBeNull();
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: PR_REVIEW.id,
+      mode: "review",
+    })) as Composed;
+    expect(composed.artifact.comments[0]?.body).toBe(edited);
+    expect(composed.artifact.comments[0]?.body).not.toBe(original);
+    const expectedThread = `**Requested change** — ${edited}`;
+    expect(composed.post.threads[0]?.body).toBe(expectedThread);
+    expect(composed.post.threads[0]?.body).not.toBe(original);
+
+    const preview = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: PR_REVIEW.id,
+      artifact: composed.artifact,
+      post: composed.post,
+      payload: composed.payload,
+      compositionId: composed.compositionId,
+    })) as { dryRun: boolean; request: unknown };
+    expect(preview.dryRun).toBe(true);
+    expect(JSON.stringify(preview.request)).toContain(expectedThread);
+    expect(publishPort.posts).toHaveLength(0);
+
+    view.unmount();
+    useRennetStore.getState().reviewActions.resetReview();
+    expect(useRennetStore.getState().review.stagedAsks).toEqual({});
+    const reloaded = mountEditableSurface(PR_REVIEW);
+    expect(await reloaded.findByText(edited)).toBeTruthy();
+    expect(reloaded.queryByText(original)).toBeNull();
+  });
+
+  it("feeds the exact edited bytes into the local-agent work order", async () => {
+    await stageEditableAsk(OWN_REVIEW, original);
+    await saveEditedAsk(OWN_REVIEW, original, edited);
+
+    const result = (await dispatch("round.dispatch", { reviewId: OWN_REVIEW.id })) as {
+      dispatched: boolean;
+      workOrder: { tasks: readonly { asks: readonly { instruction: string }[] }[] };
+    };
+    expect(result.dispatched).toBe(true);
+    const instructions = result.workOrder.tasks.flatMap((task) =>
+      task.asks.map((ask) => ask.instruction),
+    );
+    expect(instructions).toEqual([edited]);
+    expect(instructions).not.toContain(original);
+    const dispatched = dispatchRound.mock.calls[0]?.[0] as {
+      workOrder: { tasks: readonly { asks: readonly { instruction: string }[] }[] };
+    };
+    expect(
+      dispatched.workOrder.tasks.flatMap((task) => task.asks.map((ask) => ask.instruction)),
+    ).toEqual([edited]);
   });
 });
 

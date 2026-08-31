@@ -10,6 +10,7 @@ import {
   type RoundGateAttempt,
   type RoundGateReceipt,
   type RoundOperation,
+  type RoundOperationFailure,
   RoundOperationSchema,
   type RoundOperationState,
   type RoundRecordingAttempt,
@@ -54,6 +55,7 @@ export interface RoundSourceLandingCleanupInput {
 
 export type RoundTerminalDrainDecision =
   | { readonly kind: "retain" }
+  | { readonly kind: "return"; readonly returnedAt: number }
   | { readonly kind: "clear" }
   | { readonly kind: "clear-queued" }
   | { readonly kind: "replace"; readonly operation: RoundOperation };
@@ -115,6 +117,10 @@ export interface RoundExecutionCoordinator {
   /** Claim and drive an operation. Same-dispatch calls share the exact promise; a distinct
    * dispatch only sets the durable rerun bit until the current terminal operation drains. */
   submit(operation: RoundOperation): Promise<RoundOperation>;
+  /** Resume one already-claimed durable operation, including a terminal waiting to drain. */
+  resume(sessionId: string): Promise<RoundOperation | undefined>;
+  /** Retry a failed operation from its last durable checkpoint. */
+  retry(sessionId: string): Promise<RoundOperation | undefined>;
   /** Resume every durable operation from its first unsettled phase. */
   recover(): Promise<readonly RoundOperation[]>;
 }
@@ -171,6 +177,97 @@ function gateFailureReason(receipt: Extract<RoundGateReceipt, { outcome: "failed
   }
 }
 
+export type RoundRetryMode = "round" | "regeneration";
+
+export function roundRetryMode(failure: RoundOperationFailure): RoundRetryMode {
+  switch (failure.at) {
+    case "round-recording":
+    case "report-drafting":
+    case "report-verifying":
+      return "regeneration";
+    case "preparing":
+    case "worker":
+    case "gate":
+    case "committing":
+    case "source-landing-planning":
+    case "source-landing":
+      return "round";
+  }
+}
+
+function retryState(failure: RoundOperationFailure): RoundOperationState {
+  switch (failure.at) {
+    case "preparing":
+      return { phase: "workspace-preparing", workspace: failure.workspace };
+    case "worker":
+      return { phase: "prepared", workspace: failure.workspace };
+    case "gate":
+      return {
+        phase: "worker-settled",
+        workspace: failure.workspace,
+        worker: failure.worker,
+      };
+    case "committing":
+      return {
+        phase: "committing",
+        workspace: failure.workspace,
+        worker: failure.worker,
+        gate: failure.gate,
+        commit: failure.commit,
+      };
+    case "source-landing-planning":
+      return {
+        phase: "commits-settled",
+        workspace: failure.workspace,
+        worker: failure.worker,
+        gate: failure.gate,
+        commits: failure.commits,
+      };
+    case "source-landing":
+      return {
+        phase: "source-landing",
+        workspace: failure.workspace,
+        worker: failure.worker,
+        gate: failure.gate,
+        commits: failure.commits,
+        landing: failure.landing,
+      };
+    case "round-recording":
+      return {
+        phase: "round-recording",
+        workspace: failure.workspace,
+        worker: failure.worker,
+        gate: failure.gate,
+        commits: failure.commits,
+        landing: failure.landing,
+        recording: failure.recording,
+      };
+    case "report-drafting":
+      return {
+        phase: "report-drafting",
+        workspace: failure.workspace,
+        worker: failure.worker,
+        gate: failure.gate,
+        commits: failure.commits,
+        landing: failure.landing,
+        recording: failure.recording,
+        report: failure.report,
+      };
+    case "report-verifying":
+      return {
+        phase: "report-verifying",
+        workspace: failure.workspace,
+        worker: failure.worker,
+        gate: failure.gate,
+        commits: failure.commits,
+        landing: failure.landing,
+        recording: failure.recording,
+        report: failure.report,
+        verification: failure.verification,
+      };
+  }
+}
+
 function hasWorkerChanges(worker: Extract<RoundWorkerReceipt, { outcome: "completed" }>): boolean {
   return worker.diff.trim().length > 0 && worker.changedPaths.length > 0;
 }
@@ -212,7 +309,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
 
   submit(initial: RoundOperation): Promise<RoundOperation> {
     const validated = RoundOperationSchema.parse(initial);
-    let active = this.options.store.claimIfIdle(validated);
+    let active = this.options.store.claimOrReplaceReturned(validated);
     const running = this.inFlight.get(active.sessionId);
 
     if (isRoundOperationTerminal(active)) {
@@ -236,6 +333,39 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
       this.options.ports.publish(active);
     }
     return this.start(active);
+  }
+
+  resume(sessionId: string): Promise<RoundOperation | undefined> {
+    const active = this.options.store.read(sessionId);
+    if (active === undefined) return Promise.resolve(undefined);
+    return this.start(active);
+  }
+
+  retry(sessionId: string): Promise<RoundOperation | undefined> {
+    const active = this.options.store.read(sessionId);
+    if (active === undefined) return Promise.resolve(undefined);
+    if (active.state.phase !== "failed") return this.start(active);
+
+    const retrying = this.persist(
+      active,
+      retryState(active.state.failure),
+      Math.max(this.now(), active.updatedAt),
+    ).operation;
+    const running = this.inFlight.get(sessionId);
+    if (running === undefined) return this.start(retrying);
+
+    const continueAfterRunning = (): Promise<RoundOperation | undefined> => {
+      const latest = this.options.store.read(sessionId);
+      if (
+        latest === undefined ||
+        latest.operationId !== retrying.operationId ||
+        isRoundOperationTerminal(latest)
+      ) {
+        return Promise.resolve(latest);
+      }
+      return this.start(latest);
+    };
+    return running.then(continueAfterRunning, continueAfterRunning);
   }
 
   /** A retained terminal may be waiting only because its last drain failed. Re-run the
@@ -449,6 +579,27 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
         );
         this.options.ports.publish(replacement);
         return replacement;
+      }
+      if (decision.kind === "return") {
+        if (latest.state.phase !== "completed") {
+          throw new Error("only a completed round can record its Return handback");
+        }
+        let returned: RoundOperation;
+        try {
+          returned = this.options.store.compareAndSwap(expectation(latest), {
+            state: { ...latest.state, returnedAt: decision.returnedAt },
+            updatedAt: Math.max(latest.updatedAt, decision.returnedAt),
+          });
+        } catch (error) {
+          if (!(error instanceof RoundOperationConflictError)) throw error;
+          const conflicted = this.options.store.read(latest.sessionId);
+          if (conflicted === undefined) return undefined;
+          if (conflicted.operationId !== latest.operationId) return conflicted;
+          terminal = conflicted;
+          continue;
+        }
+        this.options.ports.publish(returned);
+        return undefined;
       }
       if (decision.kind === "retain") return undefined;
       if (decision.kind === "clear-queued") {

@@ -89,7 +89,9 @@ export function resolveComposedReviewEvent(
  */
 export interface ReviewCommentInput {
   readonly path: string;
-  /** The file line the comment anchors to; absent ⇒ a file-level note (no line). */
+  /** First line of a genuine multi-line range; absent for a single-line comment. */
+  readonly startLine?: number;
+  /** The final file line the comment anchors to; absent ⇒ a file-level note (no line). */
   readonly line?: number;
   readonly side: "LEFT" | "RIGHT";
   readonly type: DispositionType;
@@ -138,6 +140,7 @@ export function canonicalReviewPayload(artifact: ReviewArtifact): string {
     opener: artifact.opener,
     comments: artifact.comments.map((comment) => ({
       path: comment.path,
+      ...(comment.startLine === undefined ? {} : { startLine: comment.startLine }),
       line: comment.line ?? null,
       side: comment.side,
       type: comment.type,
@@ -164,7 +167,7 @@ export function canonicalReviewPayload(artifact: ReviewArtifact): string {
  * re-verifies these very bytes via {@link canonicalReviewPayload}.
  *
  * Anchor mapping mirrors the ui `reviewComments`: a span-grained disposition
- * (`anchor.span`/`anchor.side` present, #78) posts at `span.startLine` on the side
+ * (`anchor.span`/`anchor.side` present, #78) posts its complete span on the side
  * its `AnchorSide` selects (`deletions` → the pre-image `LEFT`, `additions`/`context`
  * → the post-image `RIGHT`); a path-grained disposition has no line and posts
  * file-level. The comment `type` and `body` are the disposition's own.
@@ -180,10 +183,14 @@ export function reviewCommentsFromDispositions(
       return (left.anchor.span?.startLine ?? 0) - (right.anchor.span?.startLine ?? 0);
     })
     .map((disposition) => {
-      const line = disposition.anchor.span?.startLine;
+      const span = disposition.anchor.span;
+      const line = span?.endLine ?? span?.startLine;
       const side: "LEFT" | "RIGHT" = disposition.anchor.side === "deletions" ? "LEFT" : "RIGHT";
       return {
         path: disposition.anchor.path,
+        ...(span?.endLine !== undefined && span.endLine > span.startLine
+          ? { startLine: span.startLine }
+          : {}),
         ...(line === undefined ? {} : { line }),
         side,
         type: disposition.type,
@@ -207,6 +214,7 @@ function parsePathLine(anchor: string): { path: string; line: number } | null {
 
 interface AskCodePosition {
   readonly path: string;
+  readonly startLine?: number;
   readonly line: number;
   readonly side: "LEFT" | "RIGHT";
 }
@@ -229,7 +237,8 @@ function askCodePosition(ask: StagedAsk, activePatchset?: Patchset): AskCodePosi
     if (activePatchset !== undefined && file === undefined) return null;
     return {
       path: file?.path ?? ask.codeRef.path,
-      line: ask.codeRef.startLine,
+      ...(ask.codeRef.endLine > ask.codeRef.startLine ? { startLine: ask.codeRef.startLine } : {}),
+      line: ask.codeRef.endLine,
       side: ask.codeRef.side === "base" ? "LEFT" : "RIGHT",
     };
   }
@@ -238,7 +247,7 @@ function askCodePosition(ask: StagedAsk, activePatchset?: Patchset): AskCodePosi
 }
 
 function askPositionKey(position: AskCodePosition): string {
-  return `${position.path}:${position.line}:${position.side}`;
+  return `${position.path}:${position.startLine ?? position.line}:${position.line}:${position.side}`;
 }
 
 /**
@@ -275,6 +284,7 @@ export function reviewCommentsFromProjection(
     claimed.add(askPositionKey(at));
     comments.push({
       path: at.path,
+      ...(at.startLine === undefined ? {} : { startLine: at.startLine }),
       line: at.line,
       side: at.side,
       type: ask.type,
@@ -293,7 +303,8 @@ export function reviewCommentsFromProjection(
       ? left.path < right.path
         ? -1
         : 1
-      : (left.line ?? 0) - (right.line ?? 0) ||
+      : (left.startLine ?? left.line ?? 0) - (right.startLine ?? right.line ?? 0) ||
+        (left.line ?? 0) - (right.line ?? 0) ||
         (left.side === right.side ? 0 : left.side === "LEFT" ? -1 : 1),
   );
 }
@@ -454,6 +465,12 @@ const TYPE_LABEL: Record<DispositionType, string> = {
   approve: "Approval",
 };
 
+const REVIEW_EVENT_LABEL: Record<ForgeReviewEvent, string> = {
+  APPROVE: "Approved",
+  REQUEST_CHANGES: "Changes requested",
+  COMMENT: "Commented",
+};
+
 /**
  * Render a comment body with its disposition type as a legible prefix, so each thread keeps
  * its own classification within the review-level event. An empty body renders as the bare label.
@@ -538,7 +555,10 @@ export function buildForgeReviewPost(
   assertNonblankReviewOpener(artifact.opener);
   const threads: ForgeReviewThread[] = [];
   const fileLevel: ReviewCommentInput[] = [];
-  const unbatched: ReviewCommentInput[] = [];
+  const foldedThreads: {
+    readonly comment: ReviewCommentInput;
+    readonly detail: string;
+  }[] = [];
   const ledger: PublishDegradation[] = [];
 
   for (const comment of artifact.comments) {
@@ -546,15 +566,27 @@ export function buildForgeReviewPost(
       fileLevel.push(comment);
       continue;
     }
+    const isRange = comment.startLine !== undefined && comment.startLine < comment.line;
+    if (isRange && !options.capabilities.supportsMultiLineAnchors) {
+      foldedThreads.push({
+        comment,
+        detail: `The forge cannot anchor lines ${comment.startLine}–${comment.line} — folded into the review body.`,
+      });
+      continue;
+    }
     if (options.capabilities.supportsBatchedReview) {
       threads.push({
         path: comment.path,
+        ...(isRange ? { startLine: comment.startLine } : {}),
         line: comment.line,
         side: comment.side,
         body: formatCommentBody(comment.type, comment.body),
       });
     } else {
-      unbatched.push(comment);
+      foldedThreads.push({
+        comment,
+        detail: "The forge cannot submit one batched review — folded into the review body.",
+      });
     }
   }
 
@@ -563,7 +595,9 @@ export function buildForgeReviewPost(
   // body bytes happen to match.
   const event = resolveReviewEvent([...artifact.comments, ...artifact.bodyNotes], options.verdict);
   const marker = buildReviewMarker(options.reviewId, options.target, options.payload, event);
-  const sections: string[] = [artifact.opener];
+  const sections: string[] = options.capabilities.requiresReviewVerdictInBody
+    ? [`**Rennet review verdict: ${REVIEW_EVENT_LABEL[event]}**`, artifact.opener]
+    : [artifact.opener];
 
   // The BODY stratum (B11 finding 2): a pathless/prose ask has no diff line, so it is woven
   // into the review body under a "Review notes" heading rather than dropped — and each is
@@ -599,14 +633,18 @@ export function buildForgeReviewPost(
     sections.push(`## File-level notes\n${notes.join("\n")}`);
   }
 
-  if (unbatched.length > 0) {
-    const notes = unbatched.map((comment) => {
+  if (foldedThreads.length > 0) {
+    const notes = foldedThreads.map(({ comment, detail }) => {
       ledger.push({
         kind: "thread-fold",
         path: comment.path,
-        detail: "The forge cannot submit one batched review — folded into the review body.",
+        detail,
       });
-      return `- \`${comment.path}:${comment.line}\` — ${formatCommentBody(comment.type, comment.body)}`;
+      const anchor =
+        comment.startLine === undefined
+          ? `${comment.line}`
+          : `${comment.startLine}–${comment.line}`;
+      return `- \`${comment.path}:${anchor}\` — ${formatCommentBody(comment.type, comment.body)}`;
     });
     sections.push(`## Line comments\n${notes.join("\n")}`);
   }
@@ -642,7 +680,7 @@ export interface ForgeRequestDescriptor {
 export interface ForgePublishOutcome {
   /** The forge's opaque id for the review. */
   readonly reviewRef: string;
-  readonly url: string | null;
+  readonly url: string;
   /** True when an existing review carrying the marker was reused (idempotent no-op). */
   readonly reused: boolean;
 }
@@ -687,8 +725,9 @@ export interface ForgePublishPort {
   ): Promise<ForgePublishOutcome | null>;
   /**
    * Post the provider-specific review operation. Idempotent: queries for the marker
-   * first and reuses its review note rather than double-posting. Providers with a
-   * separate approval mutation reconcile that mutation against the reused note.
+   * first and reuses its review rather than double-posting. A provider with a separate
+   * approval mutation verifies whether the current user already approved before it
+   * decides whether the marker proves the complete operation or only its review note.
    * Throws {@link ForgeRateLimited} on a secondary rate limit — never retries into a
    * storm.
    */

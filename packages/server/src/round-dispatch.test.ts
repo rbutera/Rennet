@@ -9,6 +9,7 @@ import type {
   DraftBoard,
   Review,
   RoundEvent,
+  RoundOperationProgressSnapshot,
   RoundRecord,
   RoundRunReceipt,
   SessionModel,
@@ -58,6 +59,7 @@ function harness(
     readonly roundRecordsForReview?: DispatchDeps["roundRecordsForReview"];
     readonly broadcastAskProjection?: DispatchDeps["broadcastAskProjection"];
     readonly queueRoundIfActive?: DispatchDeps["queueRoundIfActive"];
+    readonly retryRound?: DispatchDeps["retryRound"];
     readonly composeBundle?: DispatchDeps["composeBundle"];
   } = {},
 ) {
@@ -76,9 +78,11 @@ function harness(
     ...(options.queueRoundIfActive === undefined
       ? {}
       : { queueRoundIfActive: options.queueRoundIfActive }),
+    ...(options.retryRound === undefined ? {} : { retryRound: options.retryRound }),
     ...(options.composeBundle === undefined ? {} : { composeBundle: options.composeBundle }),
   } as unknown as DispatchDeps);
-  return { store, dispatch: roundHandlers(rt)["round.dispatch"] };
+  const handlers = roundHandlers(rt);
+  return { store, dispatch: handlers["round.dispatch"], retry: handlers["round.retry"] };
 }
 
 type DispatchKickInput = Parameters<NonNullable<DispatchDeps["dispatchRound"]>>[0];
@@ -107,13 +111,69 @@ function completedRecord(
   };
 }
 
-type DispatchResult = { workOrder: ComposedHandoffBundle; dispatched: boolean };
+type DispatchResult = {
+  workOrder: ComposedHandoffBundle;
+  dispatched: boolean;
+  acceptedOperation?: RoundOperationProgressSnapshot;
+};
+
+const QUEUED_OPERATION = {
+  operationId: "operation-active",
+  revision: 2,
+  rerunRequested: true,
+  draining: false,
+  createdAt: 1,
+  roundNumber: 1,
+  sourceTarget: { kind: "branch", branch: "feat/test" },
+  askCount: 1,
+  gatePlan: { kind: "absent" },
+  state: { phase: "claimed" },
+} satisfies RoundOperationProgressSnapshot;
+
+const ACCEPTED_OPERATION = {
+  ...QUEUED_OPERATION,
+  operationId: "operation-accepted",
+  revision: 0,
+  rerunRequested: false,
+} satisfies RoundOperationProgressSnapshot;
+
+function acceptedOutcome(settled: Promise<void> = Promise.resolve()) {
+  return {
+    askDrain: "coordinator" as const,
+    acceptedOperation: ACCEPTED_OPERATION,
+    settled,
+  };
+}
+
+describe("round.retry — retained failure → durable checkpoint", () => {
+  it("forwards the exact review and returns the coordinator's accepted snapshot", async () => {
+    const retryRound = vi.fn<NonNullable<DispatchDeps["retryRound"]>>(async () => ({
+      retry: "regeneration",
+      acceptedOperation: ACCEPTED_OPERATION,
+    }));
+    const { retry } = harness(undefined, { retryRound });
+
+    await expect(retry({ reviewId: REVIEW_ID })).resolves.toEqual({
+      retry: "regeneration",
+      acceptedOperation: ACCEPTED_OPERATION,
+    });
+    expect(retryRound).toHaveBeenCalledWith({ review: REVIEW });
+  });
+
+  it("rejects when no retained failed operation exists", async () => {
+    const { retry } = harness(undefined, { retryRound: async () => undefined });
+
+    await expect(retry({ reviewId: REVIEW_ID })).rejects.toThrow(
+      "Review review-1 has no failed round to retry.",
+    );
+  });
+});
 
 describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () => {
   it("queues behind a durable active round before invoking the model composer", async () => {
     const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>();
     const dispatchRound = vi.fn<NonNullable<DispatchDeps["dispatchRound"]>>();
-    const queueRoundIfActive = vi.fn(async () => true);
+    const queueRoundIfActive = vi.fn(async () => QUEUED_OPERATION);
     const { store, dispatch } = harness(dispatchRound, {
       composeBundle,
       queueRoundIfActive,
@@ -126,6 +186,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     const result = (await dispatch({ reviewId: REVIEW_ID })) as DispatchResult;
 
     expect(result.dispatched).toBe(true);
+    expect(result.acceptedOperation).toEqual(QUEUED_OPERATION);
     expect(result.workOrder.composed).toBe(false);
     expect(queueRoundIfActive).toHaveBeenCalledTimes(1);
     expect(composeBundle).not.toHaveBeenCalled();
@@ -181,9 +242,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const dispatchRound = vi.fn(async () => {
-      await gate;
-    });
+    const dispatchRound = vi.fn(async () => acceptedOutcome(gate));
     const { store, dispatch } = harness(dispatchRound);
     store.append(REVIEW_ID, {
       kind: "stage",
@@ -200,6 +259,8 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     expect(dispatchRound).toHaveBeenCalledTimes(1);
     expect((r1 as DispatchResult).dispatched).toBe(true);
     expect((r2 as DispatchResult).dispatched).toBe(true);
+    expect((r1 as DispatchResult).acceptedOperation).toEqual(ACCEPTED_OPERATION);
+    expect((r2 as DispatchResult).acceptedOperation).toEqual(ACCEPTED_OPERATION);
   });
 
   it("finding 8: refuses the round exit on a TEAMMATE PR (the lane is own-branch only)", async () => {
@@ -263,9 +324,9 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
   });
 
   it("a FAILED kick is evicted so an identical re-dispatch runs again (retryable)", async () => {
-    const dispatchRound = vi.fn(async () => {
-      throw new Error("no harness");
-    });
+    const dispatchRound = vi.fn(async () =>
+      acceptedOutcome(Promise.reject(new Error("no harness"))),
+    );
     const { store, dispatch } = harness(dispatchRound);
     store.append(REVIEW_ID, {
       kind: "stage",
@@ -292,7 +353,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     const first = harness(
       async (input) => {
         rounds.record("s1", completedRecord(input.askOccurrences));
-        throw new Error("crash after the completed placeholder");
+        return acceptedOutcome(Promise.reject(new Error("crash after the completed placeholder")));
       },
       { store: firstStore, roundRecordsForReview: () => rounds.read("s1") },
     );
@@ -358,9 +419,9 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
       ask: { id: "a1", anchor: "src/x.ts:1", type: "request-change", body: "retry me" },
     });
     const failed = completedRecord([{ id: "a1", revision: staged.seq }], { outcome: "failed" });
-    const dispatchRound = vi.fn(async () => {
-      throw new Error("still failed");
-    });
+    const dispatchRound = vi.fn(async () =>
+      acceptedOutcome(Promise.reject(new Error("still failed"))),
+    );
     const { dispatch } = harness(dispatchRound, {
       store,
       roundRecordsForReview: () => [failed],
@@ -386,7 +447,9 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
     let dispatchedInput: DispatchKickInput | undefined;
     const dispatchRound = vi.fn(async (input: DispatchKickInput) => {
       dispatchedInput = input;
-      throw new Error("stop after proving the new occurrence ran");
+      return acceptedOutcome(
+        Promise.reject(new Error("stop after proving the new occurrence ran")),
+      );
     });
     const { dispatch } = harness(dispatchRound, {
       store,
@@ -411,10 +474,13 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
       finish = resolve;
     });
     let finished = false;
-    const dispatchRound = vi.fn(async () => {
-      await running;
-      finished = true;
-    });
+    const dispatchRound = vi.fn(async () =>
+      acceptedOutcome(
+        running.then(() => {
+          finished = true;
+        }),
+      ),
+    );
     const { dispatch } = harness(dispatchRound, { store });
 
     await dispatch({ reviewId: REVIEW_ID });
@@ -551,43 +617,46 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
       recordRound: (sessionId, record) => roundRecords.record(sessionId, record),
       readRounds: (sessionId) => roundRecords.read(sessionId),
     });
-    const dispatchRound = async (input: DispatchKickInput): Promise<void> => {
-      const runtimeSession = session("s1");
-      await rounds.dispatchRound({
-        session: runtimeSession,
-        workOrder: input.workOrder,
-        dispatchId: input.dispatchId,
-        sourcePatchsetId: input.sourcePatchsetId,
-        askOccurrences: input.askOccurrences,
-        run: RUN_RECEIPT,
-        runWorkers: async () => ({
-          outcome: "completed",
-          diff: "+changed",
-          changedPaths: ["a.ts"],
-          workerCommitRange: { from: "c0", to: "c0" },
-        }),
-      });
-      await rounds.runRound({
-        session: runtimeSession,
-        repoRoot: "/repo",
-        asksDispatched: input.askOccurrences.map((occurrence) => occurrence.id),
-        dispatchId: input.dispatchId,
-        sourcePatchsetId: input.sourcePatchsetId,
-        askOccurrences: input.askOccurrences,
-        runWorkers: async () => ({
-          commitRange: { from: "c0", to: "c0" },
-          patchsetId: "ps-2",
-        }),
-        deltaPacket: {
-          patchset: { id: "ps-2", createdAt: "", truncated: false, files: [] },
-          successorAccount: { asks: [] },
-        } as never,
-        hunks: [],
-        lintContextFor: (lens: LintTarget) => ({ lens, hunks: [], files: new Map() }),
-        reviewDraftLintCtx: { files: new Map() },
-        onProgress: (event) => progress.push(event),
-      });
-    };
+    const dispatchRound = async (input: DispatchKickInput) =>
+      acceptedOutcome(
+        (async () => {
+          const runtimeSession = session("s1");
+          await rounds.dispatchRound({
+            session: runtimeSession,
+            workOrder: input.workOrder,
+            dispatchId: input.dispatchId,
+            sourcePatchsetId: input.sourcePatchsetId,
+            askOccurrences: input.askOccurrences,
+            run: RUN_RECEIPT,
+            runWorkers: async () => ({
+              outcome: "completed",
+              diff: "+changed",
+              changedPaths: ["a.ts"],
+              workerCommitRange: { from: "c0", to: "c0" },
+            }),
+          });
+          await rounds.runRound({
+            session: runtimeSession,
+            repoRoot: "/repo",
+            asksDispatched: input.askOccurrences.map((occurrence) => occurrence.id),
+            dispatchId: input.dispatchId,
+            sourcePatchsetId: input.sourcePatchsetId,
+            askOccurrences: input.askOccurrences,
+            runWorkers: async () => ({
+              commitRange: { from: "c0", to: "c0" },
+              patchsetId: "ps-2",
+            }),
+            deltaPacket: {
+              patchset: { id: "ps-2", createdAt: "", truncated: false, files: [] },
+              successorAccount: { asks: [] },
+            } as never,
+            hunks: [],
+            lintContextFor: (lens: LintTarget) => ({ lens, hunks: [], files: new Map() }),
+            reviewDraftLintCtx: { files: new Map() },
+            onProgress: (event) => progress.push(event),
+          });
+        })(),
+      );
     const { dispatch } = harness(dispatchRound, {
       store,
       roundRecordsForReview: () => roundRecords.read("s1"),

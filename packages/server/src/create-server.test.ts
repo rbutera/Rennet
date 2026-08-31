@@ -18,12 +18,15 @@ import {
   type GitLabPrSubmissionCommand,
   RoundOperationStore,
   RoundRecordStore,
+  SessionStore,
   SqliteReviewStore,
   TranscriptStore,
 } from "@rennet/adapters";
+import { type HarnessPort, mintSession } from "@rennet/core";
 import type {
   Generation,
   LensBoard,
+  Project,
   Review,
   RoundOperation,
   SidebarSession,
@@ -45,9 +48,14 @@ import {
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
   type HandoffTurnExecution,
+  projectContextUnavailableForProcess,
   type RoundSourceLandingInjection,
+  resolveCodingHarness,
+  runResolvedCodingHarnessTurn,
+  startProjectContextMaintenance,
 } from "./create-server";
 import { createGitHubTokenStore } from "./github-token-store";
+import type { ProjectProcessJournalRecord } from "./project-process-journal";
 import type { RoundExecutionPorts } from "./runtime/round-execution";
 
 type TestServer = Awaited<ReturnType<typeof createRennetServer>>;
@@ -56,6 +64,154 @@ type PreparationSession = {
   reviewId?: string;
   preparation?: SidebarSession["preparation"];
 };
+
+function codingPort(id: "claude-code" | "codex", version: string): HarnessPort {
+  return {
+    descriptor: { id, version },
+  } as unknown as HarnessPort;
+}
+
+describe("coding-harness resolution", () => {
+  it("selects Claude Code for a Claude-only host and reports the exact version", async () => {
+    const claude = codingPort("claude-code", "2.1.220");
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => claude,
+      resolveCodex: async () => null,
+    });
+
+    expect(resolution).toEqual({
+      status: "ready",
+      selection: { id: "claude-code", version: "2.1.220" },
+      port: claude,
+    });
+  });
+
+  it("pins the first provider before running and refuses to substitute it on the next turn", async () => {
+    const store = new SessionStore(mkdtempSync(join(tmpdir(), "rennet-harness-pin-")));
+    store.save({
+      ...mintSession("project-1", { id: () => "session-1", now: () => 1 }),
+      harnessCursor: {
+        harnessSessionId: "legacy-claude-session",
+        lastAssistantMessageAnchor: "message-1",
+        turnCount: 2,
+      },
+    });
+    const codex = codingPort("codex", "0.146.0");
+    const firstRun = vi.fn(async () => {
+      expect(store.load("session-1")?.codingHarness).toEqual({
+        id: "codex",
+        version: "0.146.0",
+      });
+      expect(store.load("session-1")?.harnessCursor).toBeUndefined();
+      return {
+        status: "completed" as const,
+        finalText: "done",
+        turnDiff: "diff",
+        filesTouched: ["a.ts"],
+      };
+    });
+
+    const first = await runResolvedCodingHarnessTurn({
+      sessionId: "session-1",
+      sessionStore: store,
+      resolveClaude: async () => null,
+      resolveCodex: async () => codex,
+      run: firstRun,
+    });
+
+    expect(firstRun).toHaveBeenCalledWith(codex, "session-1");
+    expect(first.harness).toEqual({ id: "codex", version: "0.146.0" });
+    expect(store.load("session-1")?.codingHarness).toEqual({
+      id: "codex",
+      version: "0.146.0",
+    });
+    expect(store.load("session-1")?.harnessCursor).toBeUndefined();
+
+    const resolveClaude = vi.fn(async () => codingPort("claude-code", "2.1.220"));
+    const secondRun = vi.fn(async () => ({
+      status: "completed" as const,
+      finalText: "wrong provider",
+      turnDiff: "",
+      filesTouched: [],
+    }));
+    const second = await runResolvedCodingHarnessTurn({
+      sessionId: "session-1",
+      sessionStore: store,
+      resolveClaude,
+      resolveCodex: async () => null,
+      run: secondRun,
+    });
+
+    expect(second).toEqual({
+      status: "failed",
+      reason: "Codex is selected for this session but is not available on its execution host.",
+      turnDiff: "",
+      filesTouched: [],
+    });
+    expect(resolveClaude).not.toHaveBeenCalled();
+    expect(secondRun).not.toHaveBeenCalled();
+  });
+
+  it("selects Codex for a Codex-only host and reports the exact version", async () => {
+    const codex = codingPort("codex", "0.146.0");
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => null,
+      resolveCodex: async () => codex,
+    });
+
+    expect(resolution).toEqual({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+      port: codex,
+    });
+  });
+
+  it("keeps a session's pinned provider and never falls back when it disappears", async () => {
+    const resolveCodex = vi.fn(async () => codingPort("codex", "0.146.0"));
+    const resolution = await resolveCodingHarness({
+      pinned: { id: "claude-code", version: "2.1.220" },
+      resolveClaude: async () => null,
+      resolveCodex,
+    });
+
+    expect(resolution).toEqual({
+      status: "unavailable",
+      reason:
+        "Claude Code is selected for this session but is not available on its execution host.",
+    });
+    expect(resolveCodex).not.toHaveBeenCalled();
+  });
+
+  it("honors the host's enabled-harness configuration before choosing", async () => {
+    const codex = codingPort("codex", "0.146.0");
+    const resolution = await resolveCodingHarness({
+      disabledHarnesses: ["claude"],
+      resolveClaude: async () => codingPort("claude-code", "2.1.220"),
+      resolveCodex: async () => codex,
+    });
+
+    expect(resolution).toMatchObject({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+    });
+  });
+
+  it("uses the available provider when the other provider's discovery throws", async () => {
+    const codex = codingPort("codex", "0.146.0");
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => {
+        throw new Error("broken claude executable");
+      },
+      resolveCodex: async () => codex,
+    });
+
+    expect(resolution).toEqual({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+      port: codex,
+    });
+  });
+});
 
 async function waitForReviewSession(
   server: TestServer,
@@ -74,6 +230,83 @@ async function waitForReviewSession(
   );
   return prepared as PreparationSession;
 }
+
+describe("project context maintenance", () => {
+  const project = {
+    id: "project-1",
+    name: "Rennet",
+    path: "/repo",
+    openPath: "/repo",
+  } as Project;
+
+  const journal = (
+    status: ProjectProcessJournalRecord["status"],
+    phase: ProjectProcessJournalRecord["phase"],
+  ): ProjectProcessJournalRecord => ({
+    version: 1,
+    runId: randomUUID(),
+    projectId: project.id,
+    status,
+    phase,
+    repos: [],
+    failures:
+      status === "failed"
+        ? [{ repo: "rennet", path: "/repo", phase: "knowledge", reason: "worker exited" }]
+        : [],
+    events: [],
+  });
+
+  it("resumes an interrupted run under its durable identity before starting rehydration", async () => {
+    const interrupted = journal("running", "map");
+    const resume = vi.fn(async () => ({ run: { status: "done" } }));
+    const rehydrate = vi.fn(async () => undefined);
+    const onError = vi.fn();
+
+    startProjectContextMaintenance({
+      projects: [project],
+      loadRun: () => interrupted,
+      resume,
+      rehydrate,
+      onError,
+    });
+
+    await vi.waitFor(() => expect(rehydrate).toHaveBeenCalledWith(project));
+    expect(resume).toHaveBeenCalledWith(project, interrupted.runId);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed work retryable and reports its failed phase instead of serving a current map", () => {
+    const failed = journal("failed", "knowledge");
+    const resume = vi.fn(async () => ({ run: { status: "done" } }));
+    const rehydrate = vi.fn(async () => undefined);
+
+    startProjectContextMaintenance({
+      projects: [project],
+      loadRun: () => failed,
+      resume,
+      rehydrate,
+      onError: vi.fn(),
+    });
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(rehydrate).not.toHaveBeenCalled();
+    expect(projectContextUnavailableForProcess(failed)).toMatchObject({
+      status: "absent",
+      reason: "Context Map knowledge failed: rennet: worker exited",
+      run: { id: failed.runId, status: "failed", phase: "knowledge" },
+    });
+  });
+
+  it("reports active processing and allows only a completed journal through to map reads", () => {
+    const running = journal("running", "map");
+    expect(projectContextUnavailableForProcess(running)).toMatchObject({
+      status: "absent",
+      reason: "Context Map map is still running",
+      run: { id: running.runId, status: "running", phase: "map" },
+    });
+    expect(projectContextUnavailableForProcess(journal("done", "complete"))).toBeNull();
+  });
+});
 
 describe("publish board-drafting coordination", () => {
   const review = {
@@ -135,6 +368,36 @@ describe("publish board-drafting coordination", () => {
     await expect(first).rejects.toThrow("did not settle");
     await expect(retry).resolves.toBeUndefined();
     expect(calls).toBe(2);
+  });
+
+  it("queues a fresh draft behind in-flight work when project context advances", async () => {
+    let revision = "context-a";
+    let releaseFirst!: () => void;
+    const seen: string[] = [];
+    const ensure = createBoardDraftCoordinator(
+      async () => {
+        seen.push(revision);
+        if (seen.length === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return true;
+      },
+      () => revision,
+    );
+
+    const first = ensure(review);
+    await vi.waitFor(() => expect(seen).toEqual(["context-a"]));
+    revision = "context-b";
+    const refreshed = ensure(review);
+
+    expect(refreshed).not.toBe(first);
+    expect(seen).toEqual(["context-a"]);
+    releaseFirst();
+    await expect(first).resolves.toBeUndefined();
+    await expect(refreshed).resolves.toBeUndefined();
+    expect(seen).toEqual(["context-a", "context-b"]);
   });
 
   it("returns retryable drafting after failure, then exposes the exact settled named boards", async () => {
@@ -275,8 +538,9 @@ describe("round worker execution context", () => {
       finalText: "done",
       turnDiff: "",
       filesTouched: [],
+      harness: { id: "codex" as const, version: "0.146.0" },
     }));
-    await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
+    const receipt = await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
       operation: workerRunning,
       attempt: workerAttempt,
     });
@@ -291,6 +555,7 @@ describe("round worker execution context", () => {
         cwd: `/home/rai/repo/.git/rennet-round-worktrees/${key}`,
       },
     });
+    expect(receipt.harness).toEqual({ id: "codex", version: "0.146.0" });
   });
 });
 
@@ -977,6 +1242,150 @@ describe("createRennetServer — GitLab submission composition", () => {
   }, 30_000);
 });
 
+describe("durable round execution recovery", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("recovers a worker-running operation into preserved partial evidence without a second turn", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-recovery-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-recovery-repo-")));
+    const worktreeParent = mkdtempSync(join(tmpdir(), "rennet-round-recovery-worktree-"));
+    const worktree = join(worktreeParent, "worker");
+    dirs.push(dataDir, repo, worktreeParent);
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, { cwd }).toString().trim();
+    git(repo, "init", "-b", "main");
+    git(repo, "config", "user.email", "t@t");
+    git(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "a.ts"), "export const value = 1;\n");
+    git(repo, "add", "a.ts");
+    git(repo, "commit", "-m", "base");
+    const sourceHead = git(repo, "rev-parse", "HEAD");
+    const sourceTreeOid = git(repo, "rev-parse", `${sourceHead}^{tree}`);
+    git(repo, "worktree", "add", "--detach", worktree, sourceHead);
+    writeFileSync(join(worktree, "a.ts"), "export const value = 2;\n");
+    const prompt = "apply the round";
+    const attempt = { executionId: "worker-recovery", startedAt: 4 };
+    const operation: RoundOperation = {
+      operationId: "operation-recovery",
+      sessionId: "session-recovery",
+      reviewId: "review-recovery",
+      dispatchId: "dispatch-recovery",
+      sourcePatchsetId: "patchset-recovery",
+      askOccurrences: [{ id: "ask-recovery", revision: 1 }],
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "main" },
+      repoRoot: repo,
+      workOrderPrompt: prompt,
+      workOrderDigest: sha256Hex(prompt),
+      gatePlan: { kind: "absent" },
+      revision: 0,
+      rerunRequested: false,
+      createdAt: 1,
+      updatedAt: 4,
+      state: {
+        phase: "worker-running",
+        workspace: {
+          kind: "detached-worktree",
+          worktreePath: worktree,
+          sourceTreeOid,
+          sourceParentHead: sourceHead,
+          sourceHead,
+          startedAt: 2,
+          preparedAt: 3,
+        },
+        worker: attempt,
+      },
+    };
+    const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+    const claimed = operationStore.claimIfIdle({
+      ...operation,
+      updatedAt: 1,
+      state: { phase: "claimed" },
+    });
+    const workspaceAttempt = {
+      kind: "detached-worktree" as const,
+      worktreePath: worktree,
+      sourceTreeOid,
+      sourceParentHead: sourceHead,
+      startedAt: 2,
+    };
+    const preparing = operationStore.compareAndSwap(
+      {
+        sessionId: claimed.sessionId,
+        operationId: claimed.operationId,
+        revision: claimed.revision,
+      },
+      {
+        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
+        updatedAt: 2,
+      },
+    );
+    const workspace = { ...workspaceAttempt, sourceHead, preparedAt: 3 };
+    const prepared = operationStore.compareAndSwap(
+      {
+        sessionId: preparing.sessionId,
+        operationId: preparing.operationId,
+        revision: preparing.revision,
+      },
+      { state: { phase: "prepared", workspace }, updatedAt: 3 },
+    );
+    operationStore.compareAndSwap(
+      {
+        sessionId: prepared.sessionId,
+        operationId: prepared.operationId,
+        revision: prepared.revision,
+      },
+      { state: { phase: "worker-running", workspace, worker: attempt }, updatedAt: 4 },
+    );
+    operationStore.close();
+    const runHandoffTurn = vi.fn(async () => {
+      throw new Error("duplicate worker execution");
+    });
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn,
+    });
+    shutdowns.push(server.shutdown);
+
+    await vi.waitFor(
+      () => {
+        const store = new RoundOperationStore(join(dataDir, "round-operations"));
+        const recovered = store.read(operation.sessionId);
+        store.close();
+        expect(recovered?.state.phase).toBe("failed");
+      },
+      { timeout: 10_000, interval: 50 },
+    );
+
+    const recoveredStore = new RoundOperationStore(join(dataDir, "round-operations"));
+    const recovered = recoveredStore.read(operation.sessionId);
+    recoveredStore.close();
+    expect(runHandoffTurn).not.toHaveBeenCalled();
+    expect(recovered?.state.phase).toBe("failed");
+    if (recovered?.state.phase !== "failed" || recovered.state.failure.at !== "worker") {
+      throw new Error("expected interrupted worker recovery");
+    }
+    expect(recovered.state.failure.worker).toMatchObject({
+      executionId: attempt.executionId,
+      outcome: "failed",
+      changedPaths: ["a.ts"],
+    });
+    if (!("outcome" in recovered.state.failure.worker)) {
+      throw new Error("expected reconstructed worker receipt");
+    }
+    expect(recovered.state.failure.worker.diff).toContain("+export const value = 2;");
+    expect(recovered.state.failure.reason).toContain(worktree);
+    expect(readFileSync(join(worktree, "a.ts"), "utf8")).toBe("export const value = 2;\n");
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The round dispatch's session, executed through the REAL server.
 //
@@ -1056,8 +1465,11 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     });
     const dispatched = (await server.dispatch("round.dispatch", { reviewId })) as {
       dispatched: boolean;
+      acceptedOperation?: { operationId: string };
     };
     expect(dispatched.dispatched).toBe(true);
+    expect(dispatched.acceptedOperation?.operationId).toBeTypeOf("string");
+    const acceptedOperationId = dispatched.acceptedOperation?.operationId;
 
     // The kick runs BEHIND the command, so wait on a point that is downstream of the
     // session derivation: `dispatchRound` emits its first progress event only after
@@ -1065,9 +1477,14 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     await vi.waitFor(
       async () => {
         const events = (await server.dispatch("session.roundEvents", { reviewId })) as {
-          events: unknown[];
+          events: { type?: string; snapshot?: { operationId?: string } }[];
         };
-        expect(events.events.length).toBeGreaterThan(0);
+        expect(
+          events.events.some(
+            (event) =>
+              event.type === "operation" && event.snapshot?.operationId === acceptedOperationId,
+          ),
+        ).toBe(true);
       },
       { timeout: 15_000, interval: 50 },
     );
@@ -1119,6 +1536,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           finalText: "done",
           turnDiff: "diff --git a/a.txt b/a.txt\n+worker change",
           filesTouched: ["a.txt"],
+          harness: { id: "codex", version: "0.146.0" },
         };
       },
       onRoundPlaceholderCommitted: ({ sessionId, dispatchId }) => {
@@ -1166,6 +1584,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         expect(record?.run).toEqual({
           startedAt: operation.createdAt,
           sourceTarget: operation.sourceTarget,
+          harness: { id: "codex", version: "0.146.0" },
           gate: { outcome: "skipped", reason: "not-configured" },
         });
         // This hook runs before create-server enters PR-draft ripening. If placeholder
@@ -1252,7 +1671,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     expect(git("rev-parse", "HEAD")).toBe(head);
   }, 30_000);
 
-  it("restarts a completed no-code dispatch without invoking the coding worker twice", async () => {
+  it("restarts a completed no-code dispatch and runs a distinct queued second ask", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-restart-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-restart-repo-")));
     dirs.push(dataDir, repo);
@@ -1267,11 +1686,21 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
 
     let workerCalls = 0;
     let crashedSessionId: string | undefined;
+    let releaseFirstWorker = (): void => undefined;
+    const firstWorkerGate = new Promise<void>((resolve) => {
+      releaseFirstWorker = resolve;
+    });
+    let markFirstWorkerStarted = (): void => undefined;
+    const firstWorkerStarted = new Promise<void>((resolve) => {
+      markFirstWorkerStarted = resolve;
+    });
     const first = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
       runHandoffTurn: async () => {
         workerCalls += 1;
+        markFirstWorkerStarted();
+        await firstWorkerGate;
         return { status: "completed", finalText: "done", turnDiff: "", filesTouched: [] };
       },
       onRoundPlaceholderCommitted: ({ sessionId }) => {
@@ -1329,6 +1758,21 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
     });
     await first.dispatch("round.dispatch", { reviewId });
+    await firstWorkerStarted;
+    await first.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: "restart-ask-2",
+        anchor: "a.txt:2",
+        type: "request-change",
+        body: "run this after restart",
+      },
+    });
+    const queued = (await first.dispatch("round.dispatch", { reviewId })) as {
+      acceptedOperation?: { rerunRequested?: boolean };
+    };
+    expect(queued.acceptedOperation?.rerunRequested).toBe(true);
+    releaseFirstWorker();
 
     await vi.waitFor(
       async () => {
@@ -1378,7 +1822,6 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       },
     });
     shutdowns.push(restarted.shutdown);
-    await restarted.dispatch("round.dispatch", { reviewId });
 
     await vi.waitFor(
       async () => {
@@ -1386,16 +1829,20 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           projection: { stagedAsks: Record<string, unknown> };
         };
         expect(asks.projection.stagedAsks["restart-ask"]).toBeUndefined();
+        expect(asks.projection.stagedAsks["restart-ask-2"]).toBeUndefined();
         const records = new RoundRecordStore(join(dataDir, "rounds")).read(crashedSessionId ?? "");
-        expect(records).toHaveLength(1);
-        expect(records[0]?.boardGeneration).toBe(ROUND_NO_REGEN);
-        expect(records[0]?.regeneration).toBe("not-needed");
+        expect(records).toHaveLength(2);
+        expect(records.map((record) => record.boardGeneration)).toEqual([
+          ROUND_NO_REGEN,
+          ROUND_NO_REGEN,
+        ]);
+        expect(records.map((record) => record.regeneration)).toEqual(["not-needed", "not-needed"]);
       },
       { timeout: 15_000, interval: 50 },
     );
-    // Production control: deleting create-server's completed-record lookup calls the
-    // injected coding worker again here, changing this from one to two.
-    expect(workerCalls).toBe(1);
+    // Production controls: deleting completed-record recovery reruns round one (three calls),
+    // while dropping the durable rerun prevents round two (one call).
+    expect(workerCalls).toBe(2);
     const transcript = (await restarted.dispatch("session.transcript", { reviewId })) as {
       rows: { id: string; paragraphs?: string[] }[];
     };
@@ -1403,8 +1850,10 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       "pre-round-history",
       expect.stringMatching(/^round:.+:dispatch$/),
       expect.stringMatching(/^round:.+:return$/),
+      expect.stringMatching(/^round:.+:dispatch$/),
+      expect.stringMatching(/^round:.+:return$/),
     ]);
-    expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain("Round 1 is back");
+    expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain("Round 2 is back");
     expect(transcript.rows.at(-1)?.paragraphs?.[0]).toContain(
       "no code changes, so no successor report was drafted",
     );

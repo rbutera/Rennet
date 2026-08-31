@@ -159,6 +159,12 @@ captures the resulting repository state as a successor and presents a
 deterministic successor account. The handoff does not grant model output permission
 to rewrite the identity of the review it started from.
 
+The first work-order round resolves one enabled installed Claude Code or Codex
+harness in the repository's execution locus and pins that provider to the durable
+session. Later rounds resolve the same provider or fail explicitly; they do not
+silently switch harnesses. Every modern round receipt records the exact harness and
+version that executed its worker.
+
 ## Client projection
 
 Loopback connections receive the private session protocol. Remote and mobile
@@ -185,8 +191,12 @@ external mutation.
 For someone else's pull or merge request, Rennet submits the previewed review.
 A deterministic marker and forge read-back make retries idempotent. GitHub posts
 one batched review. GitLab.com folds anchored comments into one review note and
-uses the native approval endpoint for an approval. The renderer does not
-construct a different review body after preview.
+uses the native approval endpoint for an approval. A forge capability tells the
+core composer when the signed body must name the verdict. Each adapter then sends
+that exact reviewed body without adding provider-only prose after preview. An
+approving GitLab retry checks the current user's approval state: an existing
+approval returns the reused marker receipt, while a note-only retry rechecks the
+immutable head and performs the missing approval once.
 
 For the user's own branch, posting pushes the named branch to the effective push
 remote and opens a GitHub pull request or GitLab.com merge request from the

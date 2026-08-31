@@ -29,6 +29,21 @@ const FILE_B: PatchFile = {
   patch: ["@@ -0,0 +1,2 @@", "+export const b = 1", "+export const c = 2"].join("\n"),
 };
 
+function largeFile(index: number, lineCount = 500): PatchFile {
+  const path = `packages/large/src/file-${index}.ts`;
+  return {
+    path,
+    status: "modified",
+    additions: lineCount,
+    deletions: 0,
+    binary: false,
+    patch: [
+      `@@ -0,0 +1,${lineCount} @@`,
+      ...Array.from({ length: lineCount }, (_, line) => `+export const value${line} = ${line};`),
+    ].join("\n"),
+  };
+}
+
 function mountDiff(files: readonly PatchFile[], path = "/s/x?view=diff") {
   const history = memoryHistory(path);
   return mount(
@@ -94,6 +109,42 @@ describe("DiffView — the raw-diff surface", () => {
       (s) => s.textContent === "−",
     );
     expect(minus[0]?.className).toContain("text-del-ink");
+  });
+
+  it("keeps file cards and diff rows bounded while the file tree remains complete", () => {
+    const files = Array.from({ length: 12 }, (_, index) => largeFile(index));
+    const { getByLabelText, container } = mountDiff(files);
+
+    expect(getByLabelText("Changed files").querySelectorAll("button")).toHaveLength(12);
+    expect(container.querySelectorAll("[data-line]").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("[data-line]").length).toBeLessThan(160);
+    expect(container.querySelectorAll('[id^="diff-"]').length).toBeLessThan(6);
+  });
+
+  it("jumps the virtual window to an unmounted file from the complete file tree", () => {
+    const files = Array.from({ length: 12 }, (_, index) => largeFile(index));
+    const { getByLabelText, container } = mountDiff(files);
+    const treeButtons = getByLabelText("Changed files").querySelectorAll("button");
+    const last = treeButtons.item(treeButtons.length - 1);
+
+    expect(container.querySelector(`[id="diff-${files[11]?.path}"]`)).toBeNull();
+    fireEvent.click(last);
+    expect(
+      (container.querySelector("[data-diff-scroll]") as HTMLElement).scrollTop,
+    ).toBeGreaterThan(100_000);
+    expect(container.querySelector(`[id="diff-${files[11]?.path}"]`)).toBeTruthy();
+  });
+
+  it("recycles a large file onto the exact line identity", () => {
+    const { container } = mountDiff([largeFile(0)]);
+    const scroll = container.querySelector("[data-diff-scroll]") as HTMLElement;
+
+    scroll.scrollTop = 7_200;
+    fireEvent.scroll(scroll);
+
+    expect(container.querySelector('[data-line="300"][data-side="RIGHT"]')).toBeTruthy();
+    expect(container.querySelector('[data-line="1"][data-side="RIGHT"]')).toBeNull();
+    expect(container.querySelectorAll("[data-line]").length).toBeLessThan(160);
   });
 
   it("the filter narrows both the cards and the tree", async () => {

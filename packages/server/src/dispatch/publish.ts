@@ -204,12 +204,45 @@ export function publishHandlers(rt: DispatchRuntime) {
         // near-simultaneous signs cannot both pass the adapter's query-before-post
         // check and double-post. A sequential retry (first already resolved) is not
         // in the set and relies on the adapter's marker idempotency instead.
+        const durableReceipt = deps.publishReceipts.read(input.reviewId, post.marker);
+        if (durableReceipt.status === "malformed") {
+          throw new Error(`Publish receipt could not be read: ${durableReceipt.reason}`);
+        }
+        if (durableReceipt.status === "stored") {
+          clearPublishReady(input.reviewId);
+          return parseCommandOutput(name, {
+            dryRun: false,
+            request: publishPort.buildReviewRequest(post),
+            marker: post.marker,
+            ledger: post.ledger,
+            outcome: {
+              reviewRef: durableReceipt.value.reviewRef,
+              url: durableReceipt.value.url,
+              reused: true,
+            },
+          });
+        }
         if (realPostInFlight.has(post.marker)) {
           throw new Error("Publish refused: a publish for this review is already in progress.");
         }
         realPostInFlight.add(post.marker);
         try {
           const outcome = await publishPort.publishReview(post);
+          const persisted = deps.publishReceipts.save({
+            reviewId: input.reviewId,
+            marker: post.marker,
+            verdict: post.event,
+            lineCommentCount: post.threads.length,
+            reviewRef: outcome.reviewRef,
+            url: outcome.url,
+          });
+          if (persisted.status !== "stored") {
+            throw new Error(
+              persisted.status === "malformed"
+                ? `Publish receipt could not be saved: ${persisted.reason}`
+                : "Publish receipt could not be saved.",
+            );
+          }
           // The post landed — clear any publish-ready attention on this review everywhere
           // (#382 M2). The taxonomy clears publish-ready on the post happening, from any client.
           clearPublishReady(input.reviewId);
@@ -233,6 +266,30 @@ export function publishHandlers(rt: DispatchRuntime) {
         ledger: post.ledger,
         outcome: null,
       });
+    },
+    "publish.receipt": async (rawInput) => {
+      const name = "publish.receipt" as const;
+      const input = parseCommandInput(name, rawInput);
+      requireReviewById(input.reviewId);
+      const stored = deps.publishReceipts.read(input.reviewId, input.marker);
+      if (stored.status === "malformed") {
+        throw new Error(`Publish receipt could not be read: ${stored.reason}`);
+      }
+      return parseCommandOutput(
+        name,
+        stored.status === "missing"
+          ? { status: "missing" }
+          : {
+              status: "posted",
+              receipt: {
+                marker: stored.value.marker,
+                verdict: stored.value.verdict,
+                lineCommentCount: stored.value.lineCommentCount,
+                reviewRef: stored.value.reviewRef,
+                url: stored.value.url,
+              },
+            },
+      );
     },
     "publish.submitPr": async (rawInput) => {
       const name = "publish.submitPr" as const;
@@ -504,6 +561,7 @@ export function publishHandlers(rt: DispatchRuntime) {
           destination,
           title: destination,
           compositionId,
+          marker: builtPost.marker,
         });
       }
 

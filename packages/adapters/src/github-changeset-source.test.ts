@@ -58,6 +58,7 @@ function forgeReturning(pr: ForgePullRequest, diff = "diff --git a/x.ts b/x.ts\n
       supportsBatchedReview: true,
       supportsMultiLineAnchors: true,
       supportsFileLevelThreads: true,
+      requiresReviewVerdictInBody: false,
     },
     listOpenPullRequests: () =>
       Promise.resolve({
