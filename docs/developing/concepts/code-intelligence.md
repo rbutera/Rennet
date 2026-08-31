@@ -176,8 +176,9 @@ tree. `partitionsFromSnapshot` runs two tiers over the mapping-eligible files:
 
 ### Measured on Rennet itself
 
-The #584 policy replay at `4d482fd8` covers 2,396 eligible files exactly once and
-produces **48 candidate slices**:
+The #584 policy at `b709f925`, replayed over the preserved `ac3533d6` Rennet
+snapshot, covers 2,396 eligible files exactly once and produces **48 candidate
+slices**:
 
 | Tier | Slices | Largest | Measured composition |
 |---|---:|---:|---|
