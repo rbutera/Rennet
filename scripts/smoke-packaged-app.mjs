@@ -37,11 +37,11 @@ const updateLifecycleFragments = {
     "armRelaunchAfterApply:",
     "armMacUpdateRelaunch(",
     "recoverAfterApplyFailure: async () => {",
-    // The recovery re-ensures the daemon and PUBLISHES that ensure, so the window it recreates
-    // dials the new daemon. It is a promise now, not a resolved port: boot creates the window
-    // before the daemon is healthy (perf audit §2/§6 H1) and the renderer asks for the port.
-    "daemonPort = ensureDaemon(dataDir);",
-    "await daemonPort;",
+    // The recovery re-ensures the daemon before recreating windows. There is no published
+    // promise to go stale: boot creates the window before the daemon is healthy (perf audit
+    // §2/§6 H1) and the renderer's every `rennet:ws-port` ask runs `ensureDaemon` per invoke,
+    // which single-flights per dataDir and self-heals after a failed generation.
+    "await ensureDaemon(dataDir);",
     "await ensureWindowShared();",
     "applyUpdate: () => void update?.applyUpdate()",
   ],
