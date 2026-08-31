@@ -189,7 +189,7 @@ Ranking rule: measured user-facing cost first, then structural O(n²)s that grow
 3. Coachmark rAF loop → 250ms key compare (`coachmark.tsx:44`); board 5s forever-poll → bounded/push (`board-view.tsx:85`).
 4. Async-ify/cache the `codesign --deep` check (`auto-update.ts:138`); single-flight + cap host `ensureDaemon` (`daemon-supervisor.ts:325`).
 
-**Wave 2 — the quadratics (the "long session melts" class):**
+**Wave 2 — the quadratics (the "long session melts" class): LANDED on `perf/audit-waves-2-4` (2026-08-31), all four items (5: stat-validated parsed-file cache across the store family; 6: incremental fold + unified 50ms throttle + delta batching, `harnessEvents` deleted; 7: per-thread WeakMap memo; 8: see below).**
 5. Ask-log store: in-memory projection + append-only writes (§3 H1 / §4 H4) — same pattern then applied to thread, transcript, board stores.
 6. Incremental activity snapshot instead of full re-fold + full rebroadcast per tool event (§3 H3a / §4 H2); batch `ask-delta` frames (~50ms window).
 7. Transcript derivation memoized per-thread instead of per-token full rebuild (`chat-data.ts:816`).
