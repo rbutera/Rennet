@@ -209,27 +209,42 @@ with a fitted duration of roughly `8.36 + 3.638 × statements` seconds. That is 
 correlation over a censored run, not proof that requesting less output causes the
 whole saving.
 
-The deterministic merge over those preserved journals produced 879 residue
-entries (878 seams, four flagged statements, six verify chunks). Keeping only
-each worker's first eight statements would still leave 439 residue entries and
-three verify chunks in this partial run. Hints are common and deliberately join
-the residue, so the older 24% stand-in density is not a safe timing assumption.
+The then-current statement-level merge over those preserved journals produced
+879 residue entries (878 seams, four flagged statements, six verify chunks).
+Keeping only each worker's first eight statements still left 439 entries and
+three chunks. The cause was adjacency expansion rather than 439 distinct synthesis
+questions: 267 of 283 cut-edge candidates in that prefix did not assert an import
+relationship or name the neighbour, and only three of 341 hints resolved to a
+concrete off-slice path.
 
-The next exact-head proof combines two measured changes. Each partition worker
-ranks and emits at most eight high-signal anchored hypotheses. Separately, the
-normal edge-less tail now coalesces up to 75 files within one scope or top-level
-directory. Replaying the exact snapshot preserves all 2,394 eligible files once
-and changes 54 fallback slices to 39, for **96 total turns**: six full 16-lane
-waves instead of seven. A cap of 120 produced the same six waves while joining
-more unrelated routing families, so it was rejected.
+The next exact-head proof combines two measured worker-phase changes with the
+cut-endpoint-preserving verify reduction below. Each partition worker ranks and
+emits at most eight high-signal anchored hypotheses. Separately, the normal edge-less tail now
+coalesces up to 75 files within one scope or top-level directory. Replaying the
+exact snapshot preserves all 2,394 eligible files once and changes 54 fallback
+slices to 39, for **96 total turns**: six full 16-lane waves instead of seven. A
+cap of 120 produced the same six waves while joining more unrelated routing
+families, so it was rejected.
+
+The merge now represents that synthesis work once per source slice: every active
+cut endpoint is retained, the worker's highest-ranked local statement starts the
+reading, and at most one structured hint may name a concrete off-slice path and
+explain the unresolved coupling. When that hint came from a lower-ranked statement,
+the prompt includes that local source as well as the lead. Contradictions and delta
+reverify items remain statement-level. Replaying that shape over the preserved
+eight-statement prefix produced 44 cut groups plus three flags: **47 work items in
+one 73,436-byte verify prompt**. It preserved all 241 canonical cut-edge pairs and
+170 endpoint paths exactly. This is endpoint preservation, not prose preservation:
+the verifier re-reads those paths instead of receiving every local worker claim.
 
 The shared stored knowledge schema and the verify seat's cross-cutting output
-remain uncapped. The prompt/schema change uses generator `knowledge-swarm@3`, so
-no `@2` stored set or journal answer can satisfy it; regrouped slice membership
-also changes the journal key. The worker fit projects about 37.5 seconds per turn
-and roughly 244 seconds through the observed deterministic front half and worker
-phase, leaving about 56 seconds for verification. That is deliberately a proof
-hypothesis rather than a five-minute claim.
+remain uncapped. The worker and verify contract uses generator
+`knowledge-swarm@4`, so no `@3` or earlier stored set or journal answer can
+satisfy it; regrouped slice membership also changes the journal key. The worker
+fit projects about 37.5 seconds per turn and roughly 244 seconds through the
+observed deterministic front half and worker phase, leaving about 56 seconds for
+verification. That is deliberately a proof hypothesis rather than a five-minute
+claim.
 
 The launched evidence now says:
 
@@ -383,46 +398,43 @@ byte for byte.
 
 The seat receives only the merge's residue:
 
-- **Seams.** A claim on one end of a cut import edge, where another batch also
-  made a claim about the other end. That pair is invisible to either worker. Cut
-  edges are read from the whole import graph, not from the packets' capped
-  neighbour lists, so a hub file's later neighbours are still visible to the
-  merge; and seam coverage is computed before duplicate claims collapse, because
-  two workers on opposite ends of one edge routinely word the same claim
-  identically and the collapse would otherwise erase the far end. A claim
-  carrying a worker *hint* joins them too, since nothing else reads a hint.
+- **Seam groups.** One synthesis item per source slice, not one item per local
+  statement. The group retains every cut import endpoint whose far side another
+  slice wrote about and starts from the source worker's highest-ranked statement.
+  Cut edges come from the whole import graph, not the packets' capped neighbour
+  lists, so a hub file's later neighbours remain visible. Groups are built from
+  pre-dedupe worker origins, so two workers wording the same claim cannot erase
+  either source slice's boundary.
 
-  The seam signal is import cut edges and nothing more. Two batches related by
-  something the import graph cannot see — a shared convention, a protocol both
-  ends implement, a runtime registration — produce no seam; the channel for those
-  is the worker's own hint. This is a precise signal over one relation plus a
-  model-supplied escape hatch, not a completeness claim about cross-batch
-  relationships.
+  Import edges cannot describe a shared convention, runtime registration, or
+  protocol implemented without a direct import. The escape hatch is one structured
+  `{ path, coupling }` hint per group. The worker boundary admits it only when the
+  path exists in the repository, lies outside that slice, and the coupling is
+  non-empty. A vague "elsewhere" hint does not become synthesis work.
 - **Flagged statements.** The edge-shard contradictions above, plus a delta's
   prior statements whose cited evidence changed — unsettleable by script, because
-  the bytes moved.
+  the bytes moved. These remain statement-level verdict requests. Seam-group leads
+  are synthesis-only, and an unsolicited verdict for one is ignored.
 
-Measured on Rennet's 105 slices, over the authoritative edge list the production
-path uses, with a stand-in worker minting a claim for every eligible file (2,250
-claims, denser than a real worker): the residue is 877, 39% of the set. At a more
-realistic density (789 claims) it is 192, 24%. Either is
-two to six chunks where the old shape sent 100% by construction. An empty residue
-runs no turn at all — with no seam and no contradiction there is nothing to
-synthesize from, and a turn over an empty prompt is a seat inventing claims with
-no material.
+The earlier statement-level benchmark on Rennet's 105 slices produced 877 entries
+from a dense stand-in and 192 from a lower-density one. The later launched journals
+showed that density was not the governing quantity: the eight-statement prefix
+still produced 439 statement entries, while the equivalent source-slice grouping
+produced 47 work items and one 73,436-byte chunk. An empty residue still runs no
+turn at all — with no seam group and no contradiction there is nothing to synthesize from.
 
-The residue is still chunked (150 per turn, several in flight) as a ceiling
-rather than an expectation, and the pass is still all-or-nothing: one failed
-chunk fails the run and leaves the stored set untouched, rather than publishing
-an unadjudicated slice of the repository as if the seat had read it.
+The residue is still chunked (150 work items per turn, several in flight) as a
+ceiling rather than an expectation, and the pass is still all-or-nothing: one
+failed chunk fails the run and leaves the stored set untouched, rather than
+publishing an unadjudicated slice of the repository as if the seat had read it.
 
-Chunking bounds what one turn can synthesize, so a final cross-boundary pass
-runs over the chunks' own output: every chunk's cross-cutting claims, plus a
-one-line summary of what each chunk covered, feed a single closing turn that
-mints the claims spanning two chunks. That input is proportional to the number
-of chunks, not the number of statements. The pass is best-effort — if the closing
-turn fails, the run keeps its chunk-local synthesis rather than discarding a good
-map over a bonus turn.
+Chunking bounds what one turn can synthesize, so a final cross-boundary pass runs
+over the chunks' own output. It selects candidates round-robin by source chunk up
+to one verify-chunk ceiling, preventing one prolific early chunk from hiding every
+later chunk, and carries a one-line summary of every chunk into the closing turn.
+That input is bounded independently of the number of stored statements. The pass
+is best-effort — if the closing turn fails, the run keeps its chunk-local synthesis
+rather than discarding a good map over a bonus turn.
 
 One residual: the closing turn reads the chunks' claims, not their raw
 hypotheses, so a pattern that only becomes visible in two individual hypotheses

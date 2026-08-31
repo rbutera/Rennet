@@ -190,7 +190,10 @@ const workerBody = (req?: { prompt?: string }): Record<string, unknown> => ({
           claim: "module a does a-things",
           confidence: "high",
           evidence: [{ path: "a/one.ts" }],
-          hint: "pairs with b",
+          hint: {
+            path: "b/two.ts",
+            coupling: "module a pairs its dispatch contract with module b",
+          },
         },
   ],
 });
@@ -352,7 +355,7 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]?.statements.map((s) => s.subject)).toEqual(["a"]);
     expect(JSON.stringify(saved[0])).not.toContain("another worker's slice");
-    expect(JSON.stringify(saved[0])).not.toContain("pairs with b");
+    expect(JSON.stringify(saved[0])).not.toContain("pairs its dispatch contract");
     // Provenance names the WORKER seat's resolved model, not null (review P2).
     expect(saved[0]?.statements[0]?.provenance.model).toBe("gpt-5.6-luna");
   });

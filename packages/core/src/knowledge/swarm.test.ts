@@ -51,29 +51,79 @@ describe("runPartitionWorker", () => {
     expect(PARTITION_WORKER_OUTPUT_SCHEMA.properties.statements).toHaveProperty("maxItems", 8);
     expect(KNOWLEDGE_OUTPUT_SCHEMA.properties.statements).not.toHaveProperty("maxItems");
     expect(MAP_VERIFY_OUTPUT_SCHEMA.properties.crossCutting).not.toHaveProperty("maxItems");
-    expect(KNOWLEDGE_SWARM_GENERATOR_ID).toBe("knowledge-swarm@3");
+    expect(KNOWLEDGE_SWARM_GENERATOR_ID).toBe("knowledge-swarm@4");
+    expect(
+      PARTITION_WORKER_OUTPUT_SCHEMA.properties.statements.items.properties.hint,
+    ).toMatchObject({
+      type: "object",
+      required: ["path", "coupling"],
+      additionalProperties: false,
+    });
 
     const packet = await packetFor(SLICE);
     expect(packet).toContain("Emit at most 8");
     expect(packet).toContain("highest-signal");
+    expect(packet).toContain("repo-relative path outside your slice");
+    expect(packet).toContain("unresolved coupling");
   });
 
-  it("mints anchored hypotheses and keeps the hint in the envelope only", async () => {
+  it("keeps one actionable off-slice hint in the envelope only", async () => {
     const result = await runPartitionWorker({
       slice: SLICE,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
       runTurn: async () =>
-        emitted({ statements: [rawStatement({ hint: "pattern may continue in lib/" })] }),
+        emitted({
+          statements: [
+            rawStatement({
+              hint: {
+                path: "lib/c.ts",
+                coupling: "the source adapter may share this dispatch contract",
+              },
+            }),
+          ],
+        }),
     });
     expect(result.status).toBe("ok");
     expect(result.statements).toHaveLength(1);
     const entry = result.statements[0];
-    expect(entry?.hint).toBe("pattern may continue in lib/");
+    expect(entry?.hint).toEqual({
+      path: "lib/c.ts",
+      coupling: "the source adapter may share this dispatch contract",
+    });
     // The statement itself is hypothesis-labelled, blobOid-anchored, and hint-free.
     expect(entry?.statement.status).toBe("hypothesis");
     expect(entry?.statement.evidence[0]?.blobOid).toBe("blob-a");
     expect(JSON.stringify(entry?.statement)).not.toContain("hint");
+  });
+
+  it("drops hints without an off-slice inventory path or an explained coupling", async () => {
+    const result = await runPartitionWorker({
+      slice: SLICE,
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: [
+            rawStatement({ hint: { path: "src/b.ts", coupling: "local, not cross-slice" } }),
+            rawStatement({
+              claim: "another anchored claim",
+              hint: { path: "ghost.ts", coupling: "not in the inventory" },
+            }),
+            rawStatement({
+              claim: "a third anchored claim",
+              hint: { path: "lib/c.ts", coupling: "   " },
+            }),
+            rawStatement({
+              claim: "a fourth anchored claim",
+              hint: { path: "lib/c.ts", coupling: "real words", speculation: true },
+            }),
+          ],
+        }),
+    });
+
+    expect(result.statements).toHaveLength(4);
+    expect(result.statements.every((entry) => entry.hint === undefined)).toBe(true);
   });
 
   it("drops unresolvable anchors and unanchored statements (honesty contract)", async () => {
@@ -289,24 +339,33 @@ function farSide() {
 describe("runMapVerify", () => {
   async function workerResults() {
     const near = await mintOver(SLICE_A, [
-      rawStatement({ hint: "check lib/ too" }),
+      rawStatement({
+        hint: {
+          path: "lib/c.ts",
+          coupling: "the helper may share the source dispatch contract",
+        },
+      }),
       rawStatement({ claim: "b wires the adapters", evidence: [{ path: "src/b.ts" }] }),
     ]);
     return [near, await farSide()];
   }
 
-  it("flips hypotheses per the seat's verdicts; unverdicted ids stay hypothesis", async () => {
+  it("accepts verdicts only for flagged statements, never seam-group leads", async () => {
     const results = await workerResults();
     const [first, second] = results[0]?.statements ?? [];
+    const prior = (await mintOver(SLICE_A, [rawStatement({ claim: "an older claim" })]))
+      .statements[0]?.statement;
     const verify = await runMapVerify({
       workerResults: results,
       slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
+      reverify: prior === undefined ? [] : [prior],
       runTurn: async () =>
         emitted({
           verdicts: [
-            { id: first?.statement.id, verdict: "confirmed" },
+            { id: first?.statement.id, verdict: "rejected" },
+            { id: prior?.id, verdict: "confirmed" },
             { id: "no-such-id", verdict: "rejected" }, // unknown id ⇒ ignored
           ],
           crossCutting: [],
@@ -316,8 +375,72 @@ describe("runMapVerify", () => {
     expect(verify.confirmed).toBe(1);
     expect(verify.rejected).toBe(0);
     const byId = new Map(verify.set?.statements.map((s) => [s.id, s.status]));
-    expect(byId.get(first?.statement.id ?? "")).toBe("confirmed");
+    expect(byId.get(first?.statement.id ?? "")).toBe("hypothesis");
     expect(byId.get(second?.statement.id ?? "")).toBe("hypothesis");
+    expect(byId.get(prior?.id ?? "")).toBe("confirmed");
+  });
+
+  it("renders a non-lead hint source while adjudicating a seam lead only in its flag chunk", async () => {
+    const near = await mintOver(SLICE_A, [
+      rawStatement({
+        claim: "src/a.ts imports src/b.ts",
+        evidence: [{ path: "src/a.ts" }],
+      }),
+      rawStatement({
+        claim: "b carries the shared dispatch key",
+        evidence: [{ path: "src/b.ts" }],
+        hint: {
+          path: "lib/c.ts",
+          coupling: "the helper may consume the same dispatch key",
+        },
+      }),
+    ]);
+    const target = near.statements[0]?.statement;
+    expect(target).toBeDefined();
+
+    const prompts: string[] = [];
+    const verify = await runMapVerify({
+      workerResults: [near, await farSide()],
+      slices: SEAM_SLICES,
+      importEdges: [{ from: "src/a.ts", to: "lib/c.ts" }],
+      snapshot: SNAPSHOT,
+      provenance: PROVENANCE,
+      chunkSize: 1,
+      concurrency: 1,
+      runTurn: async (prompt) => {
+        prompts.push(prompt);
+        const flagChunk = !prompt.includes("FLAGGED STATEMENTS:\n(none)");
+        return emitted({
+          verdicts: [
+            {
+              id: target?.id,
+              verdict: flagChunk ? "confirmed" : "rejected",
+            },
+          ],
+          crossCutting: [],
+        });
+      },
+    });
+
+    expect(verify.status).toBe("ok");
+    expect(verify.confirmed).toBe(1);
+    expect(verify.rejected).toBe(0);
+    expect(verify.set?.statements.find((statement) => statement.id === target?.id)?.status).toBe(
+      "confirmed",
+    );
+    expect(prompts.filter((prompt) => prompt.includes(target?.id ?? ""))).toHaveLength(2);
+
+    const sourceGroupPrompt = prompts.find((prompt) =>
+      prompt.includes(`source slice=${SLICE_A.id}`),
+    );
+    expect(sourceGroupPrompt).toContain("src/a.ts imports src/b.ts");
+    expect(sourceGroupPrompt).toContain("b carries the shared dispatch key");
+    expect(sourceGroupPrompt).toContain("evidence: src/b.ts");
+    expect(sourceGroupPrompt).toContain("off-slice hint: lib/c.ts");
+    expect(sourceGroupPrompt).toContain("the helper may consume the same dispatch key");
+    expect(JSON.stringify(verify.set)).not.toContain(
+      "the helper may consume the same dispatch key",
+    );
   });
 
   it("sends the seat the SEAMS only — a settled statement never reaches it", async () => {
@@ -397,32 +520,59 @@ describe("runMapVerify", () => {
     expect(cross?.status).toBe("hypothesis");
     expect(cross?.evidence.map((a) => a.blobOid)).toEqual(["blob-a", "blob-c"]);
     // No hint text anywhere in the synthesized set (envelope-only, dies at synthesis).
-    expect(JSON.stringify(verify.set)).not.toContain("check lib/ too");
+    expect(JSON.stringify(verify.set)).not.toContain("the helper may share");
     expect(verify.droppedStatements).toBe(1);
   });
 
-  it("chunks the seat's prompt so a large residue never builds one unbounded turn", async () => {
-    // The shipped bug: every partition's statements went into ONE prompt. On a
-    // real repository (199 partitions, ~1900 statements) that turn died with
-    // "Prompt is too long" and the entire run's knowledge was discarded. The
-    // residue is now a fraction of that, and the chunk ceiling still holds.
-    const near = await mintOver(
-      SLICE_A,
-      Array.from({ length: 7 }, (_, index) => rawStatement({ claim: `claim number ${index}` })),
+  it("chunks by seam groups while keeping every source slice in exactly one prompt", async () => {
+    const files = [
+      ...Array.from({ length: 7 }, (_, index) => ({
+        path: `src/s${index}.ts`,
+        blobOid: `blob-s${index}`,
+      })),
+      { path: "lib/target.ts", blobOid: "blob-target" },
+    ];
+    const snapshot: KnowledgeSnapshotContext = { ...SNAPSHOT, files };
+    const slices: PartitionSlice[] = files.slice(0, 7).map((file, index) => ({
+      id: `slice-${index}`,
+      files: [file],
+      neighbors: [],
+    }));
+    const workers = await Promise.all(
+      slices.map((slice, index) =>
+        runPartitionWorker({
+          slice,
+          snapshot,
+          provenance: PROVENANCE,
+          runTurn: async () =>
+            emitted({
+              statements: [
+                rawStatement({
+                  subject: slice.id,
+                  claim: `claim number ${index}`,
+                  evidence: [{ path: slice.files[0]?.path }],
+                  hint: {
+                    path: "lib/target.ts",
+                    coupling: `target may share contract ${index}`,
+                  },
+                }),
+              ],
+            }),
+        }),
+      ),
     );
-    const ids = near.statements.map((entry) => entry.statement.id);
+    const ids = workers.flatMap((worker) => worker.statements.map((entry) => entry.statement.id));
     expect(new Set(ids).size).toBe(7);
 
     const prompts: string[] = [];
     const verify = await runMapVerify({
-      workerResults: [near, await farSide()],
-      slices: SEAM_SLICES,
-      snapshot: SNAPSHOT,
+      workerResults: workers,
+      slices,
+      snapshot,
       provenance: PROVENANCE,
       chunkSize: 3,
       runTurn: async (prompt) => {
         prompts.push(prompt);
-        // The seat can only adjudicate what its OWN prompt carried.
         return emitted({
           verdicts: ids
             .filter((id) => prompt.includes(id))
@@ -432,17 +582,21 @@ describe("runMapVerify", () => {
       },
     });
 
-    expect(verify.residue).toBe(8); // seven near-side seams + the far-side one
-    expect(prompts).toHaveLength(3); // ceil(8 / 3)
+    expect(verify.residue).toBe(7);
+    expect(prompts).toHaveLength(3);
     for (const prompt of prompts) {
       expect(ids.filter((id) => prompt.includes(id)).length).toBeLessThanOrEqual(3);
     }
-    // Every id appears in exactly one prompt, and every verdict merges back.
+    // Every group lead appears in exactly one prompt. Its unsolicited verdict is
+    // ignored because seam groups are synthesis-only.
     expect(prompts.flatMap((prompt) => ids.filter((id) => prompt.includes(id))).sort()).toEqual(
       [...ids].sort(),
     );
     expect(verify.status).toBe("ok");
-    expect(verify.confirmed).toBe(7);
+    expect(verify.confirmed).toBe(0);
+    expect(verify.set?.statements.every((statement) => statement.status === "hypothesis")).toBe(
+      true,
+    );
   });
 
   it("a single failed chunk fails the whole pass (never a partial verify)", async () => {
@@ -473,10 +627,7 @@ describe("runMapVerify", () => {
     expect(turn).toBe(2);
   });
 
-  it("dedups a statement id BEFORE chunking, so it cannot straddle a boundary", async () => {
-    // Two workers can mint the same content-addressed id. When the raw entries
-    // were chunked, one id landed in TWO chunks, could come back with conflicting
-    // verdicts, and the later chunk silently overwrote the earlier one.
+  it("dedups stored statements while repeated results for one slice still make one group", async () => {
     const duplicate = rawStatement();
     const first = await mintOver(SLICE_A, [
       duplicate,
@@ -503,8 +654,6 @@ describe("runMapVerify", () => {
       runTurn: async (prompt) => {
         prompts.push(prompt);
         turn += 1;
-        // The first turn confirms what it sees, the second rejects — so an id in
-        // both chunks would come back with two opposed verdicts.
         const verdict = turn === 1 ? "confirmed" : "rejected";
         const ids = [...prompt.matchAll(/^- id=(\S+)$/gm)].map(([, id]) => id);
         return emitted({ verdicts: ids.map((id) => ({ id, verdict })), crossCutting: [] });
@@ -512,12 +661,16 @@ describe("runMapVerify", () => {
     });
 
     expect(verify.duplicateIds).toBe(1);
-    expect(prompts.filter((prompt) => prompt.includes(`id=${duplicateId}`))).toHaveLength(1);
+    expect(
+      prompts.reduce(
+        (count, prompt) => count + prompt.split(`source slice=${SLICE_A.id}`).length - 1,
+        0,
+      ),
+    ).toBe(1);
     expect(verify.status).toBe("ok");
     expect(verify.set?.statements).toHaveLength(6); // 5 distinct near-side + 1 far-side
-    expect(verify.set?.statements.find((s) => s.id === duplicateId)?.status).toBe("confirmed");
-    // No id is adjudicated twice.
-    expect(verify.confirmed + verify.rejected).toBe(6);
+    expect(verify.set?.statements.find((s) => s.id === duplicateId)?.status).toBe("hypothesis");
+    expect(verify.confirmed + verify.rejected).toBe(0);
   });
 
   it("runs a bounded cross-boundary pass over the chunks' own cross-cutting output", async () => {
@@ -528,42 +681,79 @@ describe("runMapVerify", () => {
       SLICE_A,
       Array.from({ length: 3 }, (_, index) => rawStatement({ claim: `claim number ${index}` })),
     );
+    const hintSlice: PartitionSlice = {
+      id: "hint:docs/e.md",
+      files: [{ path: "docs/e.md", blobOid: "blob-e" }],
+      neighbors: [],
+    };
+    const snapshot: KnowledgeSnapshotContext = {
+      ...SNAPSHOT,
+      files: [...SNAPSHOT.files, ...hintSlice.files],
+    };
+    const hinted = await runPartitionWorker({
+      slice: hintSlice,
+      snapshot,
+      provenance: PROVENANCE,
+      runTurn: async () =>
+        emitted({
+          statements: [
+            rawStatement({
+              subject: "docs",
+              claim: "e documents the shared contract",
+              evidence: [{ path: "docs/e.md" }],
+              hint: { path: "lib/c.ts", coupling: "the helper implements the documented contract" },
+            }),
+          ],
+        }),
+    });
     const prompts: string[] = [];
     let turn = 0;
     const verify = await runMapVerify({
-      workerResults: [near, await farSide()],
-      slices: SEAM_SLICES,
-      snapshot: SNAPSHOT,
+      workerResults: [near, await farSide(), hinted],
+      slices: [...SEAM_SLICES, hintSlice],
+      snapshot,
       provenance: PROVENANCE,
       chunkSize: 2,
       concurrency: 1,
       runTurn: async (prompt) => {
         prompts.push(prompt);
         turn += 1;
+        const crossCutting =
+          turn === 1
+            ? [
+                rawStatement({ claim: "chunk-local primary 1" }),
+                rawStatement({ claim: "chunk-local secondary 1" }),
+              ]
+            : turn === 2
+              ? [rawStatement({ claim: "chunk-local primary 2" })]
+              : [rawStatement({ claim: "cross-boundary pattern" })];
         return emitted({
           verdicts: [],
-          crossCutting: [rawStatement({ claim: `chunk-local pattern ${turn}` })],
+          crossCutting,
         });
       },
     });
 
-    // Two residue chunks (4 entries at 2 per turn), then exactly one synthesis turn.
-    expect(verify.residue).toBe(4);
+    // Three source-slice groups across two turns, then one synthesis turn.
+    expect(verify.residue).toBe(3);
     expect(prompts).toHaveLength(3);
     const boundary = prompts[2] ?? "";
     expect(boundary).toContain("CROSS-BOUNDARY");
-    expect(boundary).toContain("chunk-local pattern 1");
-    expect(boundary).toContain("chunk-local pattern 2");
+    expect(boundary).toContain("chunk-local primary 1");
+    expect(boundary).toContain("chunk-local primary 2");
+    expect(boundary).not.toContain("chunk-local secondary 1");
     // Bounded: it carries a digest LINE per chunk, not the chunks' hypotheses.
-    expect(boundary).toContain("chunk 1: 2 residue entries");
+    expect(boundary).toContain("chunk 1: 2 residue work items");
+    expect(boundary).toContain("chunk 2: 1 residue work item");
     for (const entry of near.statements) {
       expect(boundary).not.toContain(entry.statement.claim);
     }
     // Its mint lands in the set beside the chunk-local ones.
     expect(verify.status).toBe("ok");
-    expect(verify.crossCutting).toBe(3);
+    expect(verify.crossCutting).toBe(4);
     const claims = verify.set?.statements.map((s) => s.claim) ?? [];
-    expect(claims).toContain("chunk-local pattern 3");
+    expect(claims).toContain("chunk-local secondary 1");
+    expect(claims).toContain("cross-boundary pattern");
   });
 
   it("skips the cross-boundary pass when one chunk already saw everything", async () => {
@@ -594,7 +784,7 @@ describe("runMapVerify", () => {
       slices: SEAM_SLICES,
       snapshot: SNAPSHOT,
       provenance: PROVENANCE,
-      chunkSize: 2,
+      chunkSize: 1,
       concurrency: 1,
       maxRetries: 0,
       runTurn: async () => {

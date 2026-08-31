@@ -270,21 +270,31 @@ started. The completed workers measured 61.048 seconds median and 61.055 seconds
 mean and emitted 1,043 statements, 14.5 per worker. Statement count correlated
 with duration more strongly than file count did (0.770 versus 0.634).
 
-Running the deterministic merge over those 72 journals yielded 879 residue
+The then-current statement-level merge over those 72 journals yielded 879 residue
 entries, including 878 seams, four flagged statements, and six verify chunks.
 Taking only the first eight statements from each preserved worker still yielded
-439 residue entries and three chunks. Hints appear on 622 of the 1,043 statements
-and join the residue by contract, so the old 24% stand-in density materially
-understates the live verify workload.
+439 entries and three chunks. This was mostly adjacency expansion: 267 of 283 cut
+candidates in that prefix neither asserted an import relationship nor named the
+neighbour, and only three of 341 hints resolved to a concrete off-slice path.
 
 The next proof combines the worker envelope's eight-high-signal-statement ceiling
-with a 75-file normal-fallback coalesce. On the exact snapshot, the latter keeps
-all 2,394 eligible files exactly once and changes 54 fallback slices to 39, for
-96 total turns and six 16-lane waves. Caps 90 and 120 stay at six waves while
-joining more unrelated routing families; 75 keeps more hypothesis capacity for
-the same wave count. The stored knowledge contract and verify seat stay uncapped,
-and `knowledge-swarm@3` invalidates every earlier prompt/schema answer. Regrouped
-slice membership changes its own journal keys without another generator bump.
+with a 75-file normal-fallback coalesce and the cut-endpoint-preserving verify
+reduction below. On the exact snapshot, the coalesce keeps all 2,394 eligible files exactly once
+and changes 54 fallback slices to 39, for 96 total turns and six 16-lane waves.
+Caps 90 and 120 stay at six waves while joining more unrelated routing families;
+75 keeps more hypothesis capacity for the same wave count. The deterministic
+merge now presents one synthesis group per source slice, retaining every active
+cut endpoint and its highest-ranked local lead. One structured hint may name a
+concrete off-slice path and the unresolved coupling; when a lower-ranked statement
+made it, that anchored local source is shown too. Flagged contradictions remain
+statement-level. Replaying that shape over the preserved eight-statement prefix
+yields 44 cut groups and three flags: 47 work items in one 73,436-byte prompt. All
+241 canonical cut-edge pairs and 170 endpoint paths survive exactly; the verifier
+re-reads those paths instead of receiving every local statement's prose.
+
+The stored knowledge contract and verify seat's cross-cutting output stay
+uncapped. `knowledge-swarm@4` invalidates every earlier prompt/schema answer;
+regrouped slice membership also changes its own journal keys.
 
 The measured fit projects roughly 244 seconds through the observed deterministic
 front half and worker phase, leaving about 56 seconds for verification. This is

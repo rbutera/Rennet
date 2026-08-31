@@ -1,6 +1,11 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { PartitionSlice, PartitionWorkerResult, WorkerStatement } from "@rennet/core";
+import type {
+  PartitionSlice,
+  PartitionWorkerResult,
+  WorkerCrossSliceHint,
+  WorkerStatement,
+} from "@rennet/core";
 import { knowledgeStatementId, validateKnowledgeStatement } from "@rennet/core";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
 import { writeAtomic } from "./knowledge-store";
@@ -97,6 +102,7 @@ interface JournalRecord {
   readonly snapshotFingerprint: string;
   readonly generator: string;
   readonly sliceId: string;
+  /** Worker signal ranking; array order is part of the verify contract. */
   readonly statements: readonly WorkerStatement[];
   readonly droppedAnchors: number;
   readonly droppedStatements: number;
@@ -244,14 +250,36 @@ export class KnowledgeJournal {
       if (knowledgeStatementId(valid) !== valid.id) return null;
       if (
         valid.learnedAgainst.baseOid !== target.baseOid ||
-        valid.learnedAgainst.snapshotFingerprint !== target.snapshotFingerprint
+        valid.learnedAgainst.snapshotFingerprint !== target.snapshotFingerprint ||
+        valid.provenance.generator !== target.generator
       ) {
         return null;
       }
       for (const anchor of valid.evidence) {
         if (members.get(anchor.path) !== anchor.blobOid) return null;
       }
-      statements.push({ statement: valid, ...(typeof hint === "string" ? { hint } : {}) });
+      let parsedHint: WorkerCrossSliceHint | undefined;
+      if (hint !== undefined) {
+        if (typeof hint !== "object" || hint === null || Array.isArray(hint)) return null;
+        const candidate = hint as Record<string, unknown>;
+        if (
+          Object.keys(candidate).sort().join(",") !== "coupling,path" ||
+          typeof candidate.path !== "string" ||
+          typeof candidate.coupling !== "string" ||
+          candidate.path !== candidate.path.trim() ||
+          candidate.coupling !== candidate.coupling.trim() ||
+          candidate.path.length === 0 ||
+          candidate.coupling.length === 0 ||
+          members.has(candidate.path)
+        ) {
+          return null;
+        }
+        parsedHint = { path: candidate.path, coupling: candidate.coupling };
+      }
+      statements.push({
+        statement: valid,
+        ...(parsedHint === undefined ? {} : { hint: parsedHint }),
+      });
     }
     return {
       sliceId: slice.id,

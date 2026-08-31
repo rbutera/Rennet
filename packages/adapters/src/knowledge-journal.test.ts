@@ -104,6 +104,42 @@ describe("KnowledgeJournal", () => {
     expect(journal.size(TARGET)).toBe(0);
   });
 
+  it("round-trips the structured off-slice hint without storing it in the statement", () => {
+    const journal = new KnowledgeJournal(scratchDir());
+    const completed: PartitionWorkerResult = {
+      ...result([]),
+      statements: [
+        {
+          statement: statement(),
+          hint: { path: "lib/c.ts", coupling: "the library may share the dispatch contract" },
+        },
+      ],
+    };
+
+    journal.write(TARGET, SLICE, completed);
+
+    const entry = journal.read(TARGET, SLICE)?.statements[0];
+    expect(entry?.hint).toEqual({
+      path: "lib/c.ts",
+      coupling: "the library may share the dispatch contract",
+    });
+    expect(JSON.stringify(entry?.statement)).not.toContain("dispatch contract");
+  });
+
+  it("preserves worker signal ranking because the first statement leads its seam group", () => {
+    const journal = new KnowledgeJournal(scratchDir());
+    journal.write(
+      TARGET,
+      SLICE,
+      result([statement({ claim: "highest signal" }), statement({ claim: "lower signal" })]),
+    );
+
+    expect(journal.read(TARGET, SLICE)?.statements.map((entry) => entry.statement.claim)).toEqual([
+      "highest signal",
+      "lower signal",
+    ]);
+  });
+
   it("reuses a legitimately EMPTY result rather than paying a turn to rediscover it", () => {
     // The decision, recorded: an empty statement list is a real worker answer — a
     // slice of assets, a batch the model found nothing worth claiming about — and it
@@ -165,6 +201,28 @@ describe("KnowledgeJournal", () => {
     expect(journal.read(TARGET, SLICE)).not.toBeNull();
   });
 
+  it("refuses a checksummed statement attributed to another generator", () => {
+    const journal = new KnowledgeJournal(scratchDir());
+    const healthy = statement();
+    const foreignGenerator = {
+      ...healthy,
+      provenance: {
+        ...healthy.provenance,
+        generator: `${TARGET.generator}-foreign`,
+      },
+    };
+
+    // write() computes the current target's checksum over this exact statement.
+    // The refusal therefore exercises embedded provenance, not checksum damage.
+    journal.write(TARGET, SLICE, result([foreignGenerator]));
+    expect(journal.read(TARGET, SLICE)).toBeNull();
+
+    journal.write(TARGET, SLICE, result([healthy]));
+    const recovered = journal.read(TARGET, SLICE);
+    expect(recovered?.statements).toHaveLength(1);
+    expect(recovered?.statements[0]?.statement.provenance.generator).toBe(TARGET.generator);
+  });
+
   it("refuses a statement whose anchor is not in THIS slice at THIS content", () => {
     const journal = new KnowledgeJournal(scratchDir());
     // A path the slice does not hold at all.
@@ -197,7 +255,7 @@ describe("KnowledgeJournal", () => {
     journal.write(TARGET, SLICE, result([statement()]));
     // Same git OID, same slice, same membership — a prompt rework or a re-extraction
     // is still a different question, and the old answer is not an answer to it.
-    expect(journal.read({ ...TARGET, generator: "knowledge-swarm@2" }, SLICE)).toBeNull();
+    expect(journal.read({ ...TARGET, generator: "knowledge-swarm@3" }, SLICE)).toBeNull();
     expect(journal.read({ ...TARGET, snapshotFingerprint: "fp-2" }, SLICE)).toBeNull();
     expect(journal.read(TARGET, SLICE)).not.toBeNull();
   });
@@ -250,7 +308,7 @@ describe("KnowledgeJournal", () => {
     const dir = scratchDir();
     const journal = new KnowledgeJournal(dir);
     const reExtracted: JournalTarget = { ...TARGET, snapshotFingerprint: "fp-2" };
-    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@4" };
+    const reworked: JournalTarget = { ...TARGET, generator: "knowledge-swarm@5" };
     for (const target of [TARGET, reExtracted, reworked]) {
       journal.write(target, SLICE, result([statement()]));
       expect(journal.size(target)).toBe(1);

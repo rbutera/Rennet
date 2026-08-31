@@ -24,12 +24,10 @@
  *    rewritten. The edge shard is textual and misses computed imports, so a
  *    contradiction is a reason for judgment, not a proof of error, and silently
  *    editing a model's claim would be the worst of both.
- *  - **Seams** are identified: the statements sitting on an IMPORT edge the batching
- *    cut, whose other end another batch also made claims about. That is the
- *    cross-batch synthesis job for the one relation the repository can prove;
- *    everything else cross-batch travels on the worker's own `hint`. See
- *    {@link seamCandidates}, which states the boundary rather than implying
- *    completeness.
+ *  - **Seams** are grouped once per source slice. Each group carries every active
+ *    IMPORT cut endpoint, the worker's highest-ranked local statement, and at most
+ *    one path-resolved non-import hint. The verifier sees the complete boundary
+ *    without re-reading one residue item per local statement.
  *
  * Nothing here mints, and nothing here is provenance-bearing: every surviving
  * statement keeps the worker's own provenance, byte for byte.
@@ -38,16 +36,46 @@
 import type { KnowledgeStatement } from "@rennet/protocol";
 import type { KnowledgeSnapshotContext } from "./mint";
 import type { PartitionSlice, SliceImport } from "./partition";
-import type { PartitionWorkerResult, WorkerStatement } from "./swarm";
+import type { PartitionWorkerResult, WorkerCrossSliceHint, WorkerStatement } from "./swarm";
 
 /** A statement the deterministic pass cannot settle, with the reason a seat must weigh. */
 export interface FlaggedStatement {
   readonly statement: KnowledgeStatement;
   /** Model-facing: what the script found, in the words the verify prompt will use. */
   readonly reason: string;
-  /** The worker's discardable synthesis hint, when it left one. */
-  readonly hint?: string;
 }
+
+/** One authoritative import edge crossing from this group's slice to another. */
+export interface SeamCutEdge {
+  readonly localPath: string;
+  readonly offSlicePath: string;
+}
+
+/** One path-resolved hint with the local statement that made it actionable. */
+export interface SeamGroupHint extends WorkerCrossSliceHint {
+  readonly sourceStatement: KnowledgeStatement;
+}
+
+interface SeamGroupBase {
+  readonly sourceSliceId: string;
+  /** The worker ranked this local statement highest; it starts the seat's reading. */
+  readonly leadStatement: KnowledgeStatement;
+}
+
+/** The bounded synthesis unit: one source slice, with every active far endpoint. */
+export type SeamGroup =
+  | (SeamGroupBase & {
+      readonly kind: "cut";
+      /** Every cut edge whose far endpoint another slice wrote about. */
+      readonly cutEdges: readonly [SeamCutEdge, ...SeamCutEdge[]];
+      /** At most one concrete non-import lead outside the slice. */
+      readonly hint?: SeamGroupHint;
+    })
+  | (SeamGroupBase & {
+      readonly kind: "hint";
+      readonly cutEdges: readonly [];
+      readonly hint: SeamGroupHint;
+    });
 
 export interface DeterministicMergeInput {
   /** The `ok` worker results. A failed worker contributes nothing and is not represented. */
@@ -73,8 +101,8 @@ export interface DeterministicMergeResult {
   readonly statements: readonly KnowledgeStatement[];
   /** What the seat must judge: contradictions, plus a delta's changed-evidence statements. */
   readonly flagged: readonly FlaggedStatement[];
-  /** The cross-batch synthesis candidates — a statement plus its worker hint. */
-  readonly seams: readonly WorkerStatement[];
+  /** Cross-batch synthesis work grouped once per source slice. */
+  readonly seamGroups: readonly SeamGroup[];
   /** How many entries collapsed because two workers produced the SAME statement id. */
   readonly duplicateIds: number;
   /** How many collapsed because two workers made the same claim over different evidence. */
@@ -89,6 +117,7 @@ function byString(a: string, b: string): number {
 interface MergeRow {
   readonly sliceId: string;
   readonly entry: WorkerStatement;
+  readonly rank: number;
 }
 
 /**
@@ -174,10 +203,13 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
   const entries: MergeRow[] = [];
   for (const result of [...input.workerResults].sort((a, b) => byString(a.sliceId, b.sliceId))) {
     if (result.status !== "ok") continue;
-    for (const entry of [...result.statements].sort((a, b) =>
-      byString(a.statement.id, b.statement.id),
-    )) {
-      entries.push({ sliceId: result.sliceId, entry });
+    const ranked = result.statements.map((entry, rank) => ({
+      sliceId: result.sliceId,
+      entry,
+      rank,
+    }));
+    for (const row of ranked.sort((a, b) => byString(a.entry.statement.id, b.entry.statement.id))) {
+      entries.push(row);
     }
   }
 
@@ -228,7 +260,6 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
       flagged.push({
         statement,
         reason: `no resolved import edge joins the files this claim names or cites (${endpoints.join(", ")}); the import index is textual, so a computed or dynamic import would look exactly like this`,
-        ...(row.entry.hint === undefined ? {} : { hint: row.entry.hint }),
       });
     }
   }
@@ -258,12 +289,13 @@ export function mergeWorkerResults(input: DeterministicMergeInput): Deterministi
     });
   }
 
+  const seamGroups = groupSeams(entries, input.slices, input.snapshot, input.importEdges);
   return {
     statements: [...kept.map((row) => row.entry.statement), ...reverify].sort((a, b) =>
       byString(a.id, b.id),
     ),
     flagged,
-    seams: seamCandidates(kept, entries, input.slices, input.importEdges),
+    seamGroups,
     duplicateIds,
     duplicateClaims,
   };
@@ -319,81 +351,123 @@ function cutEdgeMap(
 }
 
 /**
- * The cross-batch synthesis candidates: statements sitting on a CUT edge whose other
- * end another batch also made a claim about.
+ * Cross-batch synthesis work grouped once per source slice.
  *
  * A worker can only cite files in its own slice (anchor-or-drop enforces that at
  * mint), so no worker statement's evidence ever spans two batches — the synthesis
- * job is not "find the statements that already span", it is "find the pairs that
- * would span if someone read them together". A cut edge whose two ends BOTH carry
- * claims is where a cross-batch pattern can exist. Everything else is a claim the
- * verify seat could only restate.
+ * job is not "find the statements that already span", it is "preserve every cut
+ * endpoint whose two sides were written about, then read those endpoints together".
  *
  * WHAT THIS SIGNAL IS, exactly, because the name promises more than it delivers:
  * the seam signal is IMPORT CUT EDGES and nothing else ({@link cutEdgeMap}). Two
  * batches related by something the import graph cannot see — a shared convention, a
- * protocol both ends implement, a runtime registration — produce no seam here and
- * are NOT claimed to be covered. The channel for those is the worker's own `hint`,
- * which joins the residue unconditionally below. So this is a high-precision signal
- * over one relation, plus a model-supplied escape hatch for the rest; it is not a
- * completeness claim about cross-batch relationships.
+ * protocol both ends implement, a runtime registration — produce no cut seam here.
+ * The escape hatch is one structured worker hint naming a concrete off-slice path
+ * and the unresolved coupling. It is not a completeness claim about relationships
+ * the workers did not identify.
  *
  * PRE-DEDUPE ORIGINS decide it. Two workers on opposite ends of one cut edge often
- * mint the SAME claim, and step 2 collapses them to one representative — which used
- * to erase the other end from `citedBy` and leave the survivor neither seam nor
- * flag. The exact case this pass exists to catch was the case dedupe deleted. So
- * both the citation map and the span test read every origin, and the verdict is
- * attached to the representative that survived.
- *
- * A statement carrying a worker HINT joins them regardless: the hint field exists for
- * this seat and nothing else reads it, so dropping a hinted statement here would
- * throw the hint away unread.
+ * mint the SAME claim, and step 2 may collapse one. Groups therefore read pre-dedupe
+ * origins. The lead statement also comes from that original ranked order, so claim
+ * dedupe cannot erase a slice's orientation.
  */
-function seamCandidates(
-  kept: readonly MergeRow[],
+function groupSeams(
   origins: readonly MergeRow[],
   slices: readonly PartitionSlice[],
+  snapshot: KnowledgeSnapshotContext,
   importEdges: readonly SliceImport[] | undefined,
-): readonly WorkerStatement[] {
-  // path → the slices whose statements cite it, and claim → every row that minted
-  // it. BOTH from the pre-dedupe origins: a collapsed twin still proves its slice
-  // wrote about its end of the edge.
+): readonly SeamGroup[] {
+  // path → the slices whose statements cite it, from the pre-dedupe origins: a
+  // collapsed twin still proves its slice wrote about its end of the edge.
   const citedBy = new Map<string, Set<string>>();
-  const originsByClaim = new Map<string, MergeRow[]>();
   for (const row of origins) {
     for (const anchor of row.entry.statement.evidence) {
       const owners = citedBy.get(anchor.path);
       if (owners === undefined) citedBy.set(anchor.path, new Set([row.sliceId]));
       else owners.add(row.sliceId);
     }
-    const key = claimKey(row.entry.statement);
-    const group = originsByClaim.get(key);
-    if (group === undefined) originsByClaim.set(key, [row]);
-    else group.push(row);
   }
 
   const cutNeighbors = cutEdgeMap(slices, importEdges);
-  const spansFrom = (origin: MergeRow): boolean =>
-    origin.entry.statement.evidence.some((anchor) =>
-      (cutNeighbors.get(anchor.path) ?? []).some((neighbor) => {
-        const owners = citedBy.get(neighbor);
-        if (owners === undefined) return false;
-        // The other end must be claimed by a DIFFERENT slice: two claims inside one
-        // batch are already something a single worker saw whole.
-        for (const owner of owners) if (owner !== origin.sliceId) return true;
-        return false;
-      }),
-    );
-
-  const out: WorkerStatement[] = [];
-  for (const row of kept) {
-    if (row.entry.hint !== undefined) {
-      out.push(row.entry);
-      continue;
+  const sliceById = new Map(slices.map((slice) => [slice.id, slice]));
+  const inventory = new Set(snapshot.files.map((file) => file.path));
+  const actionableHint = (row: MergeRow): WorkerCrossSliceHint | undefined => {
+    const hint = row.entry.hint;
+    const slice = sliceById.get(row.sliceId);
+    if (
+      hint === undefined ||
+      slice === undefined ||
+      !inventory.has(hint.path) ||
+      slice.files.some((file) => file.path === hint.path) ||
+      hint.coupling.trim().length === 0
+    ) {
+      return;
     }
-    if ((originsByClaim.get(claimKey(row.entry.statement)) ?? [row]).some(spansFrom)) {
-      out.push(row.entry);
+    return hint;
+  };
+
+  const rankedOrigins = [...origins].sort(
+    (a, b) =>
+      byString(a.sliceId, b.sliceId) ||
+      a.rank - b.rank ||
+      byString(a.entry.statement.id, b.entry.statement.id) ||
+      byString(a.entry.hint?.path ?? "", b.entry.hint?.path ?? "") ||
+      byString(a.entry.hint?.coupling ?? "", b.entry.hint?.coupling ?? ""),
+  );
+  const anchorBySlice = new Map<string, KnowledgeStatement>();
+  const hintBySlice = new Map<string, SeamGroupHint>();
+  const edgesBySlice = new Map<string, Map<string, SeamCutEdge>>();
+  for (const row of rankedOrigins) {
+    if (!anchorBySlice.has(row.sliceId)) anchorBySlice.set(row.sliceId, row.entry.statement);
+    const hint = actionableHint(row);
+    if (hint !== undefined && !hintBySlice.has(row.sliceId)) {
+      hintBySlice.set(row.sliceId, { ...hint, sourceStatement: row.entry.statement });
+    }
+    for (const anchor of row.entry.statement.evidence) {
+      for (const offSlicePath of cutNeighbors.get(anchor.path) ?? []) {
+        const owners = citedBy.get(offSlicePath);
+        if (owners === undefined) continue;
+        let hasOtherOwner = false;
+        for (const owner of owners) {
+          if (owner === row.sliceId) continue;
+          hasOtherOwner = true;
+          break;
+        }
+        if (!hasOtherOwner) continue;
+        const edge: SeamCutEdge = { localPath: anchor.path, offSlicePath };
+        const key = `${edge.localPath}${KEY_SEPARATOR}${edge.offSlicePath}`;
+        const held = edgesBySlice.get(row.sliceId);
+        if (held === undefined) edgesBySlice.set(row.sliceId, new Map([[key, edge]]));
+        else held.set(key, edge);
+      }
     }
   }
-  return out.sort((a, b) => byString(a.statement.id, b.statement.id));
+
+  const groupIds = new Set([...edgesBySlice.keys(), ...hintBySlice.keys()]);
+  const groups = [...groupIds].sort(byString).flatMap((sliceId): SeamGroup[] => {
+    const leadStatement = anchorBySlice.get(sliceId);
+    if (leadStatement === undefined) return [];
+    const cutEdges = [...(edgesBySlice.get(sliceId)?.values() ?? [])].sort(
+      (a, b) => byString(a.localPath, b.localPath) || byString(a.offSlicePath, b.offSlicePath),
+    );
+    const hint = hintBySlice.get(sliceId);
+    if (cutEdges.length === 0) {
+      return hint === undefined
+        ? []
+        : [{ kind: "hint", sourceSliceId: sliceId, leadStatement, cutEdges: [], hint }];
+    }
+    const [first, ...rest] = cutEdges;
+    if (first === undefined) return [];
+    return [
+      {
+        kind: "cut",
+        sourceSliceId: sliceId,
+        leadStatement,
+        cutEdges: [first, ...rest],
+        ...(hint === undefined ? {} : { hint }),
+      },
+    ];
+  });
+
+  return groups;
 }
