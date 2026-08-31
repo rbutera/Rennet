@@ -183,7 +183,7 @@ _(pending: compat surface enumeration + verdict; A/B measured only after algorit
 
 Ranking rule: measured user-facing cost first, then structural O(n²)s that grow with real usage, then hygiene. Each wave is independently landable and measurable with the baseline harness above.
 
-**Wave 1 — the measured burns (days, not weeks):**
+**Wave 1 — the measured burns (days, not weeks): LANDED on `perf/electron-daemon` (2026-08-31), all four items, dual-reviewed with fix rounds.** Items 2-in-part: window/daemon unserialisation shipped including port-over-IPC handoff and per-data-dir start/stop serialization. Idle re-measure against the built branch still owed.
 1. Welcome-screen infinite animations: pause on hidden/blur, drop opacity channel (§1 attribution). Kills the 25% idle burn on fresh installs.
 2. Un-serialise window creation from daemon health (`main/index.ts:351`): show window, deliver port late. Kills the black-screen cold start.
 3. Coachmark rAF loop → 250ms key compare (`coachmark.tsx:44`); board 5s forever-poll → bounded/push (`board-view.tsx:85`).
