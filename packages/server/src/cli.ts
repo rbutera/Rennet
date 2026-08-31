@@ -457,23 +457,38 @@ async function buildMap(
   const root = resolve(repoPath);
   const store = opts.projectsDir ? snapshotStoreFor(opts.projectsDir) : snapshotStoreFor();
   const generator = new ProjectSnapshotGenerator({ store });
-  let result: GenerateResult;
+  let generated: {
+    readonly manifest: ProjectSnapshotManifest;
+    readonly fileCount: number;
+    readonly symbolCount: number;
+    readonly referenceCount: number;
+    readonly extractedSymbolShards: number;
+    readonly reusedSymbolShards: number;
+  };
   try {
-    result = await generator.generate(root, {
+    const result: GenerateResult = await generator.generate(root, {
       explicitBaseRef: opts.base,
       onProgress: (progress) =>
         io.out(`${progress.note}${progress.detail ? ` (${progress.detail})` : ""}`),
     });
+    generated = {
+      manifest: result.manifest,
+      fileCount: result.fileCount,
+      symbolCount: result.symbolCount,
+      referenceCount: result.referenceCount,
+      extractedSymbolShards: result.extractedSymbolShards,
+      reusedSymbolShards: result.reusedSymbolShards,
+    };
   } catch (error) {
     io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
-  const manifest = result.manifest;
+  const { manifest } = generated;
   io.out(
-    `map built: ${manifest.baseRef} @ ${manifest.baseOid.slice(0, 12)} — ${result.fileCount} files, ${result.symbolCount} symbols, ${result.referenceCount} references`,
+    `map built: ${manifest.baseRef} @ ${manifest.baseOid.slice(0, 12)} — ${generated.fileCount} files, ${generated.symbolCount} symbols, ${generated.referenceCount} references`,
   );
   io.out(
-    `  shards: ${result.extractedSymbolShards} extracted, ${result.reusedSymbolShards} reused`,
+    `  shards: ${generated.extractedSymbolShards} extracted, ${generated.reusedSymbolShards} reused`,
   );
   io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
   const knowledgeStore = new KnowledgeStore(store);
@@ -482,7 +497,9 @@ async function buildMap(
     if (enrichExit !== 0) return enrichExit;
   }
   if (opts.json) {
-    const materialized = materializeSnapshot(manifest, (digest) => result.built.shards.get(digest));
+    const materialized = materializeSnapshot(manifest, (digest) =>
+      store.loadShard(manifest.repoKey, digest),
+    );
     if (!materialized.ok) {
       io.err(`rennet map: could not materialize snapshot (${materialized.slots.join(", ")})`);
       return 1;
