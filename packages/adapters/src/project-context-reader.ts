@@ -65,6 +65,56 @@ export type LoadFreshResult =
   | { readonly ok: true; readonly snapshot: LoadedSnapshot }
   | { readonly ok: false; readonly failure: SnapshotGateFailure };
 
+/**
+ * How many verified snapshots {@link verifiedSnapshots} holds. A workspace has a
+ * handful of repos and each has at most a couple of live base OIDs at once (a review
+ * pinned to its capture, plus the advancing tip), so 8 covers the real working set.
+ * A big-repo entry is the decoded structural arrays plus the manifest — single-digit
+ * MB — so the ceiling is tens of MB, and eviction is by coldest use.
+ */
+export const SNAPSHOT_MEMO_LIMIT = 8;
+
+/**
+ * The verified-snapshot memo (perf audit §4 H1 — the daemon's largest CPU item).
+ *
+ * `loadFresh` used to re-read and re-sha256 EVERY shard on EVERY `context.*` request:
+ * `verifySnapshotIntegrity` walks all 3×N per-blob digests plus the 7 structural ones,
+ * then `materializeSnapshot` re-invokes the same unmemoized loader for the structural
+ * shards again — ≈2×N sync reads and hashes per call, per request, per slice.
+ *
+ * It is safe to skip that on a repeat because the snapshot is content-addressed and
+ * `manifest.fingerprint` is a digest over the WHOLE canonical manifest, every shard
+ * digest included (`computeFingerprint`). Two manifests carrying the same fingerprint
+ * therefore reference byte-identical shards, and a fingerprint that verified once
+ * cannot verify differently later — so the verified, materialized snapshot is cached
+ * under it, and only successful verdicts are ever cached.
+ *
+ * MODULE-level, not an instance field, because the reader is constructed PER REQUEST
+ * at several call sites (`create-server.ts`, `live-review-backend.ts`, the swarm) — an
+ * instance memo would never see a second hit. The key carries the store's own `map/`
+ * directory as well as the fingerprint, so two stores over different base dirs (the
+ * app's `~/.rennet/projects` and a test's temp dir) can never share an entry.
+ *
+ * ⚠️ Accepted ceiling, stated rather than hidden: a shard corrupted on disk AFTER a
+ * successful verification is served from the memo until its entry is evicted or the
+ * daemon restarts, instead of failing closed as `corrupt`. Rennet never rewrites a
+ * shard's bytes in place — `advance` is content-addressed and only writes a digest
+ * whose bytes do NOT already match — so reaching it takes an external mutation of the
+ * store. `project-context-reader.test.ts` pins this behaviour explicitly.
+ */
+const verifiedSnapshots = new Map<string, LoadedSnapshot>();
+
+/** Insert (or refresh) a verified snapshot, evicting the coldest over the bound. */
+function rememberVerified(key: string, snapshot: LoadedSnapshot): void {
+  verifiedSnapshots.delete(key);
+  verifiedSnapshots.set(key, snapshot);
+  while (verifiedSnapshots.size > SNAPSHOT_MEMO_LIMIT) {
+    const coldest = verifiedSnapshots.keys().next();
+    if (coldest.done) break;
+    verifiedSnapshots.delete(coldest.value);
+  }
+}
+
 export class ProjectContextReader {
   constructor(
     private readonly store: ProjectSnapshotStore,
@@ -110,6 +160,16 @@ export class ProjectContextReader {
       };
     }
 
+    // The memo (perf audit §4 H1). Keyed on the store's own map dir + the manifest
+    // fingerprint, which covers every shard digest, so a hit is the SAME verified
+    // snapshot this call would have rebuilt — for zero shard reads instead of ≈2×N.
+    const memoKey = `${this.store.paths(repoKey).mapDir} ${manifest.fingerprint}`;
+    const memoized = verifiedSnapshots.get(memoKey);
+    if (memoized) {
+      rememberVerified(memoKey, memoized); // touch: newest use is evicted last
+      return { ok: true, snapshot: memoized };
+    }
+
     const load = (digest: string): string | undefined => this.store.loadShard(repoKey, digest);
 
     // Defense in depth for the "never a throw" contract (Rule 75, vital circuit):
@@ -148,6 +208,7 @@ export class ProjectContextReader {
         };
       }
 
+      rememberVerified(memoKey, materialized.snapshot);
       return { ok: true, snapshot: materialized.snapshot };
     } catch {
       return { ok: false, failure: { reason: "corrupt", missing: [], mismatched: [] } };

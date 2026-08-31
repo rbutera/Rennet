@@ -193,7 +193,7 @@ Ranking rule: measured user-facing cost first, then structural O(n²)s that grow
 5. Ask-log store: in-memory projection + append-only writes (§3 H1 / §4 H4) — same pattern then applied to thread, transcript, board stores.
 6. Incremental activity snapshot instead of full re-fold + full rebroadcast per tool event (§3 H3a / §4 H2); batch `ask-delta` frames (~50ms window).
 7. Transcript derivation memoized per-thread instead of per-token full rebuild (`chat-data.ts:816`).
-8. Memoize snapshot `load` in `project-context-reader.ts:80`; cache `projectionContext()`.
+8. Memoize snapshot `load` in `project-context-reader.ts:80`; cache `projectionContext()`. **LANDED.** `loadFresh` now memoizes the verified, materialized snapshot on the manifest fingerprint (which covers every shard digest), so a repeat `context.*` call reads zero shards instead of ≈2×N; `advance` memoizes its per-shard intactness check by path. `projectionContext()` keeps a cached root table keyed on the granted-roots count plus `projects.json`'s own change stamp (ns mtime + size + inode), so any writer invalidates it and a projected frame costs one `stat`. The lens prompt reader (§4 M) memoizes per path. Accepted ceiling, pinned by a test: a shard corrupted on disk *after* it verified is served from the memo until the daemon restarts.
 
 **Wave 3 — renderer scale (700-claim boards):**
 9. `Collapse` unmounts when closed; `memo()` on Section/FindingElement/Turn/DiffFileCard; `useMemo` RichText/useRangedThreads.
