@@ -2,7 +2,7 @@
 title: Performance audit — desktop app + daemon (2026-08-31)
 description: CPU and memory audit of the Electron app and the daemon — six static sweeps, live baseline measurements, a Bun feasibility verdict, and a four-wave ranked fix plan.
 status: planned
-tracking: https://github.com/rbutera/rennet/tree/perf/electron-daemon
+tracking: https://github.com/rbutera/Rennet/issues/719
 ---
 
 Scope: `apps/desktop` (Electron 43, React 19) and the daemon (`packages/server`, entry `daemon-main.ts`, plus `adapters`/`core` it pulls in). CPU and memory, idle and under load. A Bun runtime switch for the daemon is in scope as a candidate remedy, evaluated last as an isolated A/B.
@@ -37,10 +37,10 @@ Per-process footprint, app freshly launched and left untouched, 6 samples over 6
 | pnpm/electron wrapper node | 34 MB | 0% |
 | **Total tree** | **~450 MB** | |
 
-- **Idle CPU verdict: not idle.** Renderer burns 11–19% and GPU 5–6% with zero interaction. **Attributed by CDP CPU profile (15 s, `app://rennet/#/new-chat`): JS is only 0.9% busy — the samples are all motion/react's frame loop (`tick`/`transform`/`updateAndNotify`). The cost is style/paint/composite driven by `first-run-welcome.tsx:274`: ten code fragments on `repeat: Infinity` 17–26 s animations of x/y/rotate/opacity (opacity ⇒ repaint every frame), mounted via `routes/app.tsx:346` whenever welcome is unclaimed. A fresh install idles at ~25% combined CPU until the user adds a project.** Fix: pause the loops on `document.hidden`/blur and after N cycles, or drop the opacity channel (transform-only composites cheaply).
+- **Idle CPU verdict: not idle.** Renderer burns 11–19% and GPU 5–6% with zero interaction. **Attributed by CDP CPU profile (15 s, `app://rennet/#/new-chat`): JS is only 0.9% busy — the samples are all motion/react's frame loop (`tick`/`transform`/`updateAndNotify`). The cost is style/paint/composite driven by `first-run-welcome.tsx:274`: ten code fragments on `repeat: Infinity` 17–26 s animations of x/y/rotate/opacity (opacity ⇒ repaint every frame), mounted via `routes/app.tsx:346` whenever welcome is unclaimed. A fresh install idles at ~25% combined CPU until the user adds a project.** Wave 1 pauses the loops while `document.hidden` and removes their opacity channels; #719 owns the required integrated re-measurement.
 - Daemon at idle is clean: 0% CPU, `/healthz` answers in ~0.4 ms.
 - `~/.rennet` on this machine: 78 MB, 13 744 files (nearly all under `projects/`). SQLite (`rennet.sqlite` + WAL) tiny.
-- Startup timing: not measured numerically this pass (cold-start structure is established statically in §2 H1/§6 H1 — window serialised behind daemon health, up to ~15 s worst case). Measure on the fix branch as the H1 before/after.
+- Startup timing: not measured numerically in the baseline pass. Wave 1 removed the structural serialization described in §2 H1/§6 H1; issue #719 owns integrated cold-start before/after measurement.
 
 ## Findings
 
@@ -48,7 +48,7 @@ Severity: **H** = measurable user-facing cost (battery, beachball, swap), **M** 
 
 ### 1. Idle CPU (timers, polling, watchers)
 
-Structural verdict: **no timer in the codebase pauses on `visibilitychange`, `powerMonitor`, or connection state.** Every stop condition is "the work finished", never "the user isn't here". Default `backgroundThrottling` (left on) mitigates hidden-window cases but nothing else.
+Structural verdict at the measured baseline: **no timer in the codebase paused on `visibilitychange`, `powerMonitor`, or connection state.** Every baseline stop condition was "the work finished", never "the user isn't here". Default `backgroundThrottling` (left on) mitigated hidden-window cases but nothing else.
 
 **H1.** `packages/app-ui/src/board/board-view.tsx:85` — `setInterval(refreshBoards, 5_000)` fires 5 loopback `board.read` WS reads every 5s until `lensReadsSettled`. The code's own comment (:76) admits a review whose Noise lens drafts nothing never settles → polls forever while the board is open. Fix: bounded attempts or the daemon push the comment already names.
 
@@ -173,20 +173,16 @@ Structural cost: the desktop daemon today runs as **the Electron binary with `EL
 
 Where Bun would actually pay: daemon cold-start (relevant because startup H1 serialises window on daemon boot — though fixing H1 removes most of that), spawn-heavy paths (git/gh/harness spawns), and baseline RSS. Where it wouldn't: the daemon idles at 0% CPU already; hot cost is in the renderer, which Bun never touches.
 
-Recommendation: **not first**. Fix H1 (unserialize window/daemon), ship renderer fixes, then A/B `bun run` on the CLI daemon form with the sqlite shim behind a flag — measured, reversible, no packaging commitment until numbers justify signing a second binary.
-
-## Bun migration assessment
-
-_(pending: compat surface enumeration + verdict; A/B measured only after algorithmic fixes land)_
+Recommendation: **not first**. Wave 1 is implemented; defer the Bun A/B until #719 remeasures it and Wave 2 lands. Then test `bun run` on the CLI daemon form with the sqlite shim behind a flag — measured, reversible, no packaging commitment until numbers justify signing a second binary.
 
 ## Fix plan (ranked)
 
 Ranking rule: measured user-facing cost first, then structural O(n²)s that grow with real usage, then hygiene. Each wave is independently landable and measurable with the baseline harness above.
 
-**Wave 1 — the measured burns (days, not weeks): LANDED on `perf/electron-daemon` (2026-08-31), all four items, dual-reviewed with fix rounds.** Items 2-in-part: window/daemon unserialisation shipped including port-over-IPC handoff and per-data-dir start/stop serialization. Idle re-measure against the built branch still owed.
-1. Welcome-screen infinite animations: pause on hidden/blur, drop opacity channel (§1 attribution). Kills the 25% idle burn on fresh installs.
-2. Un-serialise window creation from daemon health (`main/index.ts:351`): show window, deliver port late. Kills the black-screen cold start.
-3. Coachmark rAF loop → 250ms key compare (`coachmark.tsx:44`); board 5s forever-poll → bounded/push (`board-view.tsx:85`).
+**Wave 1 — the measured burns (days, not weeks): implemented on `perf/electron-daemon` (2026-08-31), all four items, dual-reviewed with fix rounds.** Window/daemon unserialisation includes port-over-IPC handoff and per-data-dir start/stop serialization. Idle and startup re-measurement against the integrated build is still owed.
+1. Welcome-screen infinite animations: pause while the document is hidden and drop their opacity channels (§1 attribution). Intended to remove the measured fresh-install repaint burn; post-change measurement is pending.
+2. Un-serialise window creation from daemon health (`main/index.ts:351`): create and load the window, then deliver the port late. Cold-start measurement is pending.
+3. Coachmark rAF loop → 250ms key compare (`coachmark.tsx:44`); board 5s forever-poll → pause while hidden and fall back to 60s after ten quiet minutes (`board-view.tsx:85`).
 4. Async-ify/cache the `codesign --deep` check (`auto-update.ts:138`); single-flight + cap host `ensureDaemon` (`daemon-supervisor.ts:325`).
 
 **Wave 2 — the quadratics (the "long session melts" class):**

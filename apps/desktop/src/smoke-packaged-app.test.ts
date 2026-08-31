@@ -316,6 +316,26 @@ describe("packaged updater lifecycle smoke", () => {
         main: updaterSources.main.replace("armRelaunchAfterApply:", "removedRelaunchAfterApply:"),
       }),
     ).toThrow("Packaged updater lifecycle is incomplete");
+
+    expect(() =>
+      smoke.verifyPackagedUpdateLifecycleSources({
+        ...updaterSources,
+        main: updaterSources.main.replace(
+          "daemonDataDir = dataDir;\n            throw error;",
+          "throw error;",
+        ),
+      }),
+    ).toThrow("Packaged updater lifecycle is incomplete");
+
+    expect(() =>
+      smoke.verifyPackagedUpdateLifecycleSources({
+        ...updaterSources,
+        main: updaterSources.main.replace(
+          "ensureDaemonForProject(path, activeDataDir)",
+          "ensureDaemonForProject(path, hostDataDir)",
+        ),
+      }),
+    ).toThrow("Packaged updater lifecycle is incomplete");
   });
 
   it("reads that lifecycle from the app.asar main source map", () => {

@@ -707,6 +707,10 @@ describe("ContextMapView — takeover chrome vs an in-session mount", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onBack).not.toHaveBeenCalled();
     // The gate is on the CHROME, not the surface: the map itself still renders.
-    expect(container.querySelector(".context-map-base-strip")).not.toBeNull();
+    const baseStrip = container.querySelector(".context-map-base-strip");
+    expect(baseStrip).not.toBeNull();
+    expect(baseStrip?.querySelector('[role="heading"][aria-level="1"]')?.textContent).toBe(
+      "Context Map",
+    );
   });
 });

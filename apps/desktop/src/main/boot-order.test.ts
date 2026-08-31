@@ -26,9 +26,14 @@ const harness = vi.hoisted(() => ({
   errorBoxes: [] as Array<{ title: string; content: string }>,
   quits: 0,
   ensureCalls: [] as string[],
+  ensureProjectCalls: [] as Array<{ path: string; dataDir: string }>,
   /** dataDir → in-flight ensure, so the fake folds concurrent asks like the real supervisor. */
   ensureInFlight: new Map<string, Promise<number>>(),
   autoUpdateEligible: false,
+  prepareForUpdate: (dataDir: string): Promise<void> => {
+    void dataDir;
+    return Promise.resolve();
+  },
   autoUpdateOptions: null as {
     prepareToApply: () => Promise<void>;
     recoverAfterApplyFailure: () => Promise<void>;
@@ -139,9 +144,12 @@ vi.mock("./daemon-supervisor", () => ({
     started.then(clear, clear);
     return started;
   },
-  ensureDaemonForProject: async () => 1,
+  ensureDaemonForProject: async (path: string, dataDir: string) => {
+    harness.ensureProjectCalls.push({ path, dataDir });
+    return 51_100;
+  },
   isOwnedDaemonRunning: async () => false,
-  prepareOwnedDaemonForUpdate: async () => undefined,
+  prepareOwnedDaemonForUpdate: (dataDir: string) => harness.prepareForUpdate(dataDir),
   stopOwnedDaemon: async () => ({ kind: "stopped" }),
 }));
 
@@ -173,7 +181,9 @@ vi.mock("./tray", () => ({
 }));
 
 const WS_PORT_CHANNEL = "rennet:ws-port";
+const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 const DATA_DIR = "/tmp/rennet-boot-order";
+const TRUSTED_RENDERER_EVENT = { senderFrame: { url: "app://rennet/" } };
 
 /** Let every already-queued microtask AND timer callback run. */
 function settle(): Promise<void> {
@@ -199,8 +209,13 @@ beforeEach(() => {
   harness.ipcHandlers.clear();
   harness.errorBoxes.length = 0;
   harness.ensureCalls.length = 0;
+  harness.ensureProjectCalls.length = 0;
   harness.ensureInFlight.clear();
   harness.autoUpdateEligible = false;
+  harness.prepareForUpdate = (dataDir: string) => {
+    void dataDir;
+    return Promise.resolve();
+  };
   harness.autoUpdateOptions = null;
   harness.trayOptions = null;
   harness.quits = 0;
@@ -340,13 +355,19 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
 
     await harness.autoUpdateOptions?.prepareToApply();
     const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
+    const pathHandler = harness.ipcHandlers.get(RESOLVE_DAEMON_FOR_PATH_CHANNEL);
     // Asserted BEFORE the ask is awaited, and it is the load-bearing one: a handler that
     // ensured here would leave the ask PENDING (the fake resolves nothing), so awaiting first
     // would fail this test on a timeout instead of on the spawn that is the actual defect.
     const refused = Promise.resolve(handler?.()).catch((error: Error) => error.message);
+    const pathRefused = Promise.resolve(
+      pathHandler?.(TRUSTED_RENDERER_EVENT, "/tmp/review-project"),
+    ).catch((error: Error) => error.message);
     await settle();
     expect(harness.ensureCalls).toEqual([DATA_DIR]);
+    expect(harness.ensureProjectCalls).toEqual([]);
     expect(await refused).toContain("the daemon has not been started");
+    expect(await pathRefused).toContain("the daemon has not been started");
 
     // …and the refusal lasts only as long as the teardown. The apply failed, so the app stays:
     // recovery puts the data dir back and the renderer's next ask ensures again.
@@ -361,6 +382,52 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
     harness.ensure.resolve(51_005);
     expect(await asked).toBe(51_005);
     expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR, DATA_DIR]);
+    expect(await pathHandler?.(TRUSTED_RENDERER_EVENT, "/tmp/review-project")).toBe(51_100);
+    expect(harness.ensureProjectCalls).toEqual([
+      { path: "/tmp/review-project", dataDir: DATA_DIR },
+    ]);
+  });
+
+  it("restores port asks when update preparation fails before applying", async () => {
+    harness.autoUpdateEligible = true;
+    let rejectPreparation: (error: Error) => void = () => undefined;
+    harness.prepareForUpdate = () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectPreparation = reject;
+      });
+
+    await boot();
+    harness.ensure.resolve(51_000);
+    await settle();
+    const options = harness.autoUpdateOptions;
+    if (!options) throw new Error("auto-update options were not registered");
+
+    const preparation = options.prepareToApply();
+    await settle();
+    const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
+    const pathHandler = harness.ipcHandlers.get(RESOLVE_DAEMON_FOR_PATH_CHANNEL);
+    const refused = Promise.resolve(handler?.()).catch((error: Error) => error.message);
+    const pathRefused = Promise.resolve(
+      pathHandler?.(TRUSTED_RENDERER_EVENT, "/tmp/review-project"),
+    ).catch((error: Error) => error.message);
+    await settle();
+    expect(harness.ensureCalls).toEqual([DATA_DIR]);
+    expect(harness.ensureProjectCalls).toEqual([]);
+    expect(await refused).toContain("the daemon has not been started");
+    expect(await pathRefused).toContain("the daemon has not been started");
+
+    rejectPreparation(new Error("claim wait failed"));
+    await expect(preparation).rejects.toThrow("claim wait failed");
+
+    const asked = Promise.resolve(handler?.());
+    await settle();
+    harness.ensure.resolve(51_006);
+    expect(await asked).toBe(51_006);
+    expect(harness.ensureCalls).toEqual([DATA_DIR, DATA_DIR]);
+    expect(await pathHandler?.(TRUSTED_RENDERER_EVENT, "/tmp/review-project")).toBe(51_100);
+    expect(harness.ensureProjectCalls).toEqual([
+      { path: "/tmp/review-project", dataDir: DATA_DIR },
+    ]);
   });
 
   it("does not respawn the daemon when a reconnecting renderer asks mid-quit", async () => {
@@ -374,10 +441,16 @@ describe("desktop boot order (perf audit §2/§6 H1)", () => {
     await settle();
 
     const handler = harness.ipcHandlers.get(WS_PORT_CHANNEL);
+    const pathHandler = harness.ipcHandlers.get(RESOLVE_DAEMON_FOR_PATH_CHANNEL);
     const refused = Promise.resolve(handler?.()).catch((error: Error) => error.message);
+    const pathRefused = Promise.resolve(
+      pathHandler?.(TRUSTED_RENDERER_EVENT, "/tmp/review-project"),
+    ).catch((error: Error) => error.message);
     await settle();
     expect(harness.ensureCalls).toEqual([DATA_DIR]);
+    expect(harness.ensureProjectCalls).toEqual([]);
     expect(await refused).toContain("the daemon has not been started");
+    expect(await pathRefused).toContain("the daemon has not been started");
     expect(harness.quits).toBe(1);
   });
 });
