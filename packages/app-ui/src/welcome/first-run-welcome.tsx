@@ -321,7 +321,7 @@ function errorText(reason: unknown): string {
  * there is no loop to park, so reduced motion registers nothing.
  */
 function parkWhileHidden(loops: readonly AnimationPlaybackControls[]): () => void {
-  if (loops.length === 0) return () => {};
+  if (loops.length === 0) return () => undefined;
   const sync = () => {
     for (const loop of loops) {
       if (document.hidden) loop.pause();
