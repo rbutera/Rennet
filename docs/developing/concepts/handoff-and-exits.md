@@ -158,7 +158,10 @@ lanes depend on the entry mode:
   ask, Dispatch Round) and the change request is a single muted destination
   line; when nothing is left to ask, the surface IS the change request — title,
   drafted description, and **Open Pull Request** or **Open Merge Request** for
-  the resolved provider. Primacy flips with the state; nothing explains the flip.
+  the resolved provider. **Dispatch Round** is live only when that set contains
+  a comment or request-change the coding worker can address. Questions and
+  approvals remain staged review notes; Rennet never turns them into code work.
+  Primacy flips with the state; nothing explains the flip.
 - **Retrospective** — no exits.
 
 When the daemon **refuses to compose** an exit — a comment carrying a path that
@@ -168,6 +171,11 @@ carries on. There is nothing to dismiss and nothing to retry past: a refusal is 
 fact about this review, not a step in a ceremony. What it replaces is worse than
 the refusal itself, which is a Post Review that renders dead with no account of
 why, or a Changes surface that simply never becomes the change request.
+
+Round dispatch follows the same rule. The client waits for the daemon's
+`dispatched` receipt before opening the run view. An honest `dispatched: false`
+stays on Changes, names that no coding round started, and leaves every staged
+review note intact.
 
 ## Living drafts
 

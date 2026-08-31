@@ -4,7 +4,7 @@ import {
   isWorkingTreeReview,
   type Review,
 } from "@rennet/protocol";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { useMutation } from "../data";
@@ -12,6 +12,7 @@ import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
+import type { RoundDispatchViewState } from "../handoff/rounds-lanes";
 import { ProjectContextMapView } from "../project/context-map-view";
 import { DiffViewContainer } from "../review";
 import { useAskLog } from "../review/ask-log";
@@ -444,8 +445,8 @@ function ReportUnavailable({ status }: { status: "missing" | "invalid" }) {
 // PR draft) through the `<HandoffView>` mount cluster 5 left taking no props.
 //
 // Dispatch wiring (C09 cluster 4): `onDispatch` closes C8's seam — reset the run slice at the
-// dispatch act (NOT on the run route's cold reattach), fire the rounds seam's `dispatch(slug)`,
-// then take over the live run route. The app tree supplies the LIVE source (`routes/app.tsx`'s
+// accepted dispatch act (NOT on the run route's cold reattach), then take over the live run route.
+// The app tree supplies the LIVE source (`routes/app.tsx`'s
 // `LiveRoundsScope`, C15 3.2), whose `dispatch` is unconditional — so on the shipping path
 // `onDispatch` IS wired and the button goes live the moment an ask stages. `dispatch` is absent
 // only under the honest-absent default (a tree with no rounds scope, i.e. unit mounts), and there
@@ -462,11 +463,28 @@ function HandoffMount({
   const exits = useHandoffExits(review);
   const dispatch = useRoundDispatch();
   const resetRun = useRennetStore((s) => s.runActions.resetRun);
+  const [dispatchState, setDispatchState] = useState<RoundDispatchViewState>({ status: "idle" });
   const onDispatch = dispatch
     ? () => {
-        resetRun();
-        dispatch(slug);
-        navigate(sessionRunPath(slug));
+        setDispatchState({ status: "sending" });
+        void dispatch(slug).then((outcome) => {
+          switch (outcome.status) {
+            case "accepted":
+              resetRun();
+              navigate(sessionRunPath(slug));
+              return;
+            case "not-dispatched":
+              setDispatchState({ status: "not-dispatched", reason: outcome.reason });
+              return;
+            case "rejected":
+              setDispatchState({ status: "failed", reason: outcome.reason });
+              return;
+            default: {
+              const exhaustive: never = outcome;
+              return exhaustive;
+            }
+          }
+        });
       }
     : undefined;
   return (
@@ -478,6 +496,7 @@ function HandoffMount({
       onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}
       onDispatch={onDispatch}
+      dispatchState={dispatchState}
       onOpenPr={exits.onOpenPr}
       onRevise={exits.onRevise}
       unavailable={exits.unavailable}

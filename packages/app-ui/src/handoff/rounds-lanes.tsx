@@ -1,4 +1,4 @@
-import type { Review } from "@rennet/protocol";
+import { isCodingRoundDisposition, type Review } from "@rennet/protocol";
 import { Check, GitBranch, GitPullRequest, Pencil } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -97,6 +97,8 @@ export interface RoundsLanesProps {
   readonly pr?: DraftedPr;
   /** Dispatch a work-order round (the C9 run it navigates to is out of scope). Absent ⇒ a no-op. */
   readonly onDispatch?: () => void;
+  /** The current dispatch request, kept separate from the daemon-owned round state. */
+  readonly dispatchState?: RoundDispatchViewState;
   /**
    * Open the own-branch PR — resolves `publish.submitPr` on the sign-click (cluster 6). Absent ⇒
    * the Open-PR CTA is present but disabled (honest); nothing another human sees leaves without it.
@@ -111,10 +113,19 @@ export interface RoundsLanesProps {
   readonly onRevise?: ReviseSpan;
 }
 
+export type RoundDispatchViewState =
+  | { readonly status: "idle" }
+  | { readonly status: "sending" }
+  | { readonly status: "not-dispatched"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
+const IDLE_DISPATCH_STATE: RoundDispatchViewState = { status: "idle" };
+
 export function RoundsLanes({
   review,
   pr,
   onDispatch,
+  dispatchState = IDLE_DISPATCH_STATE,
   onOpenPr,
   onRevise,
   unavailable,
@@ -128,6 +139,12 @@ export function RoundsLanes({
   const { retire, unstageAsk, stageAsk, editAsk } = useRennetStore((s) => s.reviewActions);
   const asks = useMemo(() => Object.values(stagedAsks), [stagedAsks]);
   const gathering = asks.length > 0;
+  const codingAskCount = useMemo(
+    () => asks.filter((ask) => isCodingRoundDisposition(ask.type)).length,
+    [asks],
+  );
+  const dispatching = dispatchState.status === "sending";
+  const canDispatch = codingAskCount > 0 && onDispatch !== undefined && !dispatching;
 
   // The `dispatch` coach mark anchors the Dispatch Round button.
   const dispatchRef = useCoachAnchor("dispatch");
@@ -258,19 +275,36 @@ export function RoundsLanes({
           <p className="text-sm text-muted-foreground">Nothing staged yet.</p>
         )}
 
-        {/* Dispatch Round: inert while nothing is staged (R37), and inert when no round run is
-            wired (`onDispatch`) — a live button with no handler would be a dead click that lies.
-            The shipping tree DOES wire it (`routes/app.tsx` → `LiveRoundsScope`), so absent
-            `onDispatch` means a mount with no rounds source, not a permanently dead exit. */}
+        {gathering && codingAskCount === 0 && (
+          <p className="text-xs text-muted-foreground">
+            Questions and approvals stay with the review. Stage a comment or request changes to
+            start a coding round.
+          </p>
+        )}
+
+        {/* Dispatch Round: inert without an addressed coding ask (R37), while a dispatch is in
+            flight, or when no live rounds source is wired. */}
         <button
           ref={dispatchRef}
           type="button"
-          disabled={!gathering || !onDispatch}
+          disabled={!canDispatch}
           onClick={onDispatch}
           className="w-fit rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
         >
-          Dispatch Round
+          {dispatching ? "Dispatching…" : "Dispatch Round"}
         </button>
+
+        {dispatchState.status === "not-dispatched" && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {dispatchState.reason}
+          </p>
+        )}
+
+        {dispatchState.status === "failed" && (
+          <p role="alert" className="text-xs text-destructive">
+            {dispatchState.reason}
+          </p>
+        )}
 
         {/* The daemon refused to compose the pull request (a detached HEAD, a review that should
             post as a review instead). Without this the lane just never became the PR and said

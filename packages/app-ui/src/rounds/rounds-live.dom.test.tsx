@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import type {
-  ComposedHandoffBundle,
+  CommandOutput,
   Review,
   RoundEvent,
   RoundOperationProgressSnapshot,
@@ -167,7 +167,7 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
         {state.phase === "failed" ? `/${state.reason}` : ""}
       </span>
       <span>rounds:{unavailable === undefined ? "readable" : `unavailable/${unavailable}`}</span>
-      <button type="button" onClick={() => dispatch?.(slug)}>
+      <button type="button" onClick={() => void dispatch?.(slug)}>
         dispatch
       </button>
     </>
@@ -184,11 +184,8 @@ function TranscriptProbe() {
 const dispatchAnswer = (
   reviewId: string,
   acceptedOperation?: RoundOperationProgressSnapshot,
-): {
-  workOrder: ComposedHandoffBundle;
-  dispatched: boolean;
-  acceptedOperation?: RoundOperationProgressSnapshot;
-} => ({
+  dispatched = true,
+): CommandOutput<"round.dispatch"> => ({
   workOrder: {
     reviewId,
     patchsetId: "ps-1",
@@ -198,7 +195,7 @@ const dispatchAnswer = (
     composed: true,
     traceMap: {},
   },
-  dispatched: true,
+  dispatched,
   ...(acceptedOperation === undefined ? {} : { acceptedOperation }),
 });
 
@@ -565,26 +562,31 @@ describe("the mounted transcript refresh receipts", () => {
 // round under way. The intent now says only what is true, and the receipt is what
 // settles it — confirmed by the daemon's own events, or refuted out loud.
 describe("dispatch is an intent until the daemon answers (C15 finding 7)", () => {
-  function bridgeWith(dispatchImpl: (reviewId: string) => Promise<unknown>): {
+  function bridgeWith(
+    dispatchImpl: (reviewId: string) => Promise<CommandOutput<"round.dispatch">>,
+  ): {
     readonly bridge: MemoryBridge;
     readonly readsStarted: () => boolean;
   } {
     let readsStarted = false;
-    const bridge = new MemoryBridge({
+    const handlers: MemoryBridgeHandlers = {
       ...resolutionHandlers,
       "session.roundEvents": () => {
         readsStarted = true;
         return { events: [] };
       },
       "session.rounds": () => ({ records: [] }),
-      "round.dispatch": ((input: { reviewId: string }) => dispatchImpl(input.reviewId)) as never,
-    });
+      "round.dispatch": ({ reviewId }) => dispatchImpl(reviewId),
+    };
+    const bridge = new MemoryBridge(handlers);
     return { bridge, readsStarted: () => readsStarted };
   }
 
   it("shows the reviewer's INTENT while the daemon has said nothing", async () => {
     // The receipt never settles — the window this covers.
-    const { bridge, readsStarted } = bridgeWith(() => new Promise(() => undefined));
+    const { bridge, readsStarted } = bridgeWith(
+      () => new Promise<CommandOutput<"round.dispatch">>(() => undefined),
+    );
     const { getByText } = mountLive(bridge);
     await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
     await waitFor(() => expect(readsStarted()).toBe(true));
@@ -602,6 +604,25 @@ describe("dispatch is an intent until the daemon answers (C15 finding 7)", () =>
     act(() => getByText("dispatch").click());
     // THE LIE THIS GUARDS: the round never started, so nothing may claim it did.
     await waitFor(() => expect(getByText("phase:failed/no work order to dispatch")).toBeTruthy());
+  });
+
+  it("an honest dispatched:false receipt clears the pending intent", async () => {
+    let answer: ((output: CommandOutput<"round.dispatch">) => void) | undefined;
+    const { bridge, readsStarted } = bridgeWith(
+      () =>
+        new Promise<CommandOutput<"round.dispatch">>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const { getByText } = mountLive(bridge);
+    await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
+    await waitFor(() => expect(readsStarted()).toBe(true));
+
+    act(() => getByText("dispatch").click());
+    await waitFor(() => expect(getByText("phase:dispatching")).toBeTruthy());
+    act(() => answer?.(dispatchAnswer(REVIEW, undefined, false)));
+
+    await waitFor(() => expect(getByText("phase:absent")).toBeTruthy());
   });
 
   it("the daemon's own events take over from the intent once they arrive", async () => {

@@ -52,7 +52,7 @@ export interface RoundsSource {
   /** Raw report-board data by id, or `undefined` when the id resolves nothing. */
   readonly reportBoard: (reportBoardId: string) => unknown;
   /** Dispatch a work-order round for `slug`; absent ⇒ no live runtime, button disabled. */
-  readonly dispatch?: (slug: string) => void;
+  readonly dispatch?: (slug: string) => Promise<RoundDispatchOutcome>;
   /** Retry this session's retained failed operation from its durable checkpoint. */
   readonly retry?: (slug: string) => void;
   /** True while a retry request for this session is awaiting its durable acceptance. */
@@ -90,6 +90,12 @@ export interface RoundsSource {
    */
   readonly roundsUnavailable?: (slug: string) => string | undefined;
 }
+
+/** The complete answer to one client dispatch request. Only `accepted` owns navigation. */
+export type RoundDispatchOutcome =
+  | { readonly status: "accepted" }
+  | { readonly status: "not-dispatched"; readonly reason: string }
+  | { readonly status: "rejected"; readonly reason: string };
 
 /** The honest-absent default: no live round, an empty ledger, no report, no dispatch. The
  *  CONTEXT default only — the app tree binds {@link useLiveRoundsSource} through
@@ -182,7 +188,9 @@ export function useReportBoard(reportBoardId: string): ReportBoardResolution {
 /** The dispatch capability for the current source — present under the app tree's
  *  `LiveRoundsScope`, `undefined` under the honest-absent default (⇒ the Dispatch button
  *  stays inert). `HandoffMount` reads this and threads it to the handoff lanes. */
-export function useRoundDispatch(): ((slug: string) => void) | undefined {
+export function useRoundDispatch():
+  | ((slug: string) => Promise<RoundDispatchOutcome>)
+  | undefined {
   return useContext(RoundsSourceContext).dispatch;
 }
 
@@ -392,8 +400,11 @@ export function useLiveRoundsSource(): RoundsSource {
       retryPending: (forSlug: string) => forSlug === slug && retryPending,
       retryError: (forSlug: string) =>
         forSlug === slug && retryError !== undefined ? failureText(retryError) : undefined,
-      dispatch: (forSlug: string) => {
-        if (reviewId === undefined) return;
+      dispatch: async (forSlug: string): Promise<RoundDispatchOutcome> => {
+        if (reviewId === undefined) {
+          return { status: "rejected", reason: "Rennet could not resolve this review." };
+        }
+        const previousEvents = merged;
         // A new round starts from nothing: drop the finished round's events rather than
         // fold this one onto its `composed` state. That is DISCARDING stale data, not
         // asserting a new fact — the log refills from the daemon's own `dispatched`.
@@ -404,25 +415,38 @@ export function useLiveRoundsSource(): RoundsSource {
           { supersedeInFlight: true },
         );
         setIntent({ slug: forSlug, status: "sending" });
-        void mutate({ reviewId })
-          .then((output) => {
-            if (output.acceptedOperation !== undefined) {
-              const accepted: RoundEvent = {
-                type: "operation",
-                snapshot: output.acceptedOperation,
-              };
-              streamed.current = mergeRoundEvents(streamed.current, [accepted]);
-              cache.setData(
-                commandKey("session.roundEvents", { reviewId }),
-                () => ({ events: [...streamed.current] }),
-                { supersedeInFlight: true },
-              );
-            }
-            cache.invalidate(commandKey("session.roundEvents", { reviewId }));
-          })
-          .catch((reason: unknown) => {
-            setIntent({ slug: forSlug, status: "rejected", reason: failureText(reason) });
-          });
+        try {
+          const output = await mutate({ reviewId });
+          if (!output.dispatched) {
+            const reason =
+              "Rennet did not start a coding round. Questions and approvals remain staged for the review.";
+            cache.setData(
+              commandKey("session.roundEvents", { reviewId }),
+              () => ({ events: [...previousEvents] }),
+              { supersedeInFlight: true },
+            );
+            setIntent(undefined);
+            return { status: "not-dispatched", reason };
+          }
+          if (output.acceptedOperation !== undefined) {
+            const accepted: RoundEvent = {
+              type: "operation",
+              snapshot: output.acceptedOperation,
+            };
+            streamed.current = mergeRoundEvents(streamed.current, [accepted]);
+            cache.setData(
+              commandKey("session.roundEvents", { reviewId }),
+              () => ({ events: [...streamed.current] }),
+              { supersedeInFlight: true },
+            );
+          }
+          cache.invalidate(commandKey("session.roundEvents", { reviewId }));
+          return { status: "accepted" };
+        } catch (reason: unknown) {
+          const message = failureText(reason);
+          setIntent({ slug: forSlug, status: "rejected", reason: message });
+          return { status: "rejected", reason: message };
+        }
       },
     };
   }, [

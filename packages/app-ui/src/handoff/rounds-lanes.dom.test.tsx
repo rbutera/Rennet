@@ -6,7 +6,7 @@
 // drain and the PR is ready the page IS the pull request (title heading, drafted body, Open Pull
 // Request → a receipt). Dispatch Round is inert while nothing is staged. Steering Drop retires +
 // unstages, over the real `review` slice.
-import type { Review } from "@rennet/protocol";
+import type { Review, StagedAsk } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
@@ -45,7 +45,7 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 function stage(
   anchor: string,
   body = `body for ${anchor}`,
-  type: "comment" | "request-change" = "comment",
+  type: StagedAsk["type"] = "comment",
 ) {
   act(() => store().reviewActions.stageAsk({ id: anchor, anchor, type, body }));
 }
@@ -119,13 +119,30 @@ describe("RoundsLanes", () => {
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
   });
 
-  it("Dispatch Round goes live only when BOTH an ask is staged and onDispatch is wired", () => {
+  it("Dispatch Round goes live only when BOTH a coding ask is staged and onDispatch is wired", () => {
     const onDispatch = vi.fn();
     const r = mount(<RoundsLanes review={review} onDispatch={onDispatch} />);
-    // onDispatch wired but nothing staged → still inert (R37).
+    // onDispatch wired but nothing staged -> still inert (R37).
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
     stage("src/a.ts:5", "guard the boundary", "request-change");
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps Dispatch Round inert for questions and approvals", async () => {
+    const onDispatch = vi.fn();
+    const r = mount(<RoundsLanes review={review} onDispatch={onDispatch} />);
+
+    stage("why this branch?", "why this branch?", "question");
+    stage("the rest reads clean", "leave this unchanged", "approve");
+
+    const button = r.getByRole("button", { name: "Dispatch Round" });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    await r.user.click(button);
+    expect(onDispatch).not.toHaveBeenCalled();
+
+    // Positive control: the same staged set becomes dispatchable when one coding ask joins it.
+    stage("src/a.ts:5", "guard the boundary", "comment");
+    expect(button.hasAttribute("disabled")).toBe(false);
   });
 
   it("dispatches a round through the callback when staged", () => {

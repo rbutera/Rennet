@@ -70,6 +70,29 @@ export interface DispositionAnchor {
 
 export type DispositionType = "approve" | "request-change" | "comment" | "question";
 
+/** Dispositions a coding round can address by changing the checkout. */
+export const CODING_ROUND_DISPOSITION_TYPES = ["request-change", "comment"] as const satisfies
+  readonly DispositionType[];
+export type CodingRoundDispositionType = (typeof CODING_ROUND_DISPOSITION_TYPES)[number];
+
+/** Questions are answered in conversation; approval asks the worker to leave the code alone. */
+export function isCodingRoundDisposition(
+  type: DispositionType,
+): type is CodingRoundDispositionType {
+  switch (type) {
+    case "request-change":
+    case "comment":
+      return true;
+    case "approve":
+    case "question":
+      return false;
+    default: {
+      const exhaustive: never = type;
+      return exhaustive;
+    }
+  }
+}
+
 /**
  * How a returned patchset acted on ONE staged ask's target (issue #73). Derived
  * deterministically from the shipped lineage carry + the successor's changed paths —
