@@ -22,6 +22,7 @@ import {
   type DossierItem,
   type DraftBoard,
   type Generation,
+  type LensAbsenceReason,
   type Patchset,
   parseDraft,
   type SessionModel,
@@ -60,12 +61,9 @@ import { createRoundsRuntime } from "./rounds";
 // model aliases (`opus-4.8`/`sonnet-5`) to the binary's full ids. Before them,
 // every seat failed identically; after, the drafters run.
 //
-// OBSERVED SEAT BEHAVIOR (current characterization, 2026-08-30): after schema-ref
-// repair and Codex schema normalization, one live run populated report(2), design(1),
-// sequence(5), and noise(2). Decisions and Flagged each persisted zero elements with
-// no failure, so the no-swallowed-empty assertion correctly kept the smoke red; #689
-// owns that shared empty-success defect. The assertion below is the honest bar:
-// generation + report + at least one valid lens board + no swallowed empties.
+// The terminal oracle follows the durable #689 contract. A lane settles as exactly one
+// populated board, typed absence, or explicit failure. A zero-element board and a lane
+// carrying no terminal evidence are both proof failures.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SMOKE = process.env.RENNET_SMOKE === "1";
@@ -133,6 +131,88 @@ const PREV_GEN: Generation = {
   lensBoards: {},
   status: "live",
 };
+
+interface TerminalLaneInput {
+  readonly lens: LintTarget;
+  readonly board?: { readonly elements: readonly unknown[] };
+  readonly absence?: LensAbsenceReason;
+  readonly failure?: string;
+}
+
+type TerminalLaneEvidence =
+  | { readonly kind: "board"; readonly elements: number }
+  | { readonly kind: "absence"; readonly reason: LensAbsenceReason }
+  | { readonly kind: "failure"; readonly reason: string };
+
+const ABSENCE_BY_LENS: ReadonlyMap<LintTarget, LensAbsenceReason> = new Map([
+  ["design", "no-material"],
+  ["decisions", "no-decisions"],
+  ["flagged", "no-findings"],
+  ["noise", "no-noise"],
+]);
+
+function terminalLaneEvidence(outcome: TerminalLaneInput): TerminalLaneEvidence {
+  const variants = [
+    outcome.board !== undefined,
+    outcome.absence !== undefined,
+    outcome.failure !== undefined,
+  ].filter(Boolean).length;
+  if (variants !== 1) {
+    throw new Error(`${outcome.lens}: expected exactly one terminal outcome, got ${variants}`);
+  }
+  if (outcome.board !== undefined) {
+    if (outcome.board.elements.length === 0) {
+      throw new Error(`${outcome.lens}: a zero-element board is not a successful arrival`);
+    }
+    return { kind: "board", elements: outcome.board.elements.length };
+  }
+  if (outcome.absence !== undefined) {
+    const expected = ABSENCE_BY_LENS.get(outcome.lens);
+    if (expected !== outcome.absence) {
+      throw new Error(
+        `${outcome.lens}: expected typed absence ${expected ?? "none"}, got ${outcome.absence}`,
+      );
+    }
+    return { kind: "absence", reason: outcome.absence };
+  }
+  if (outcome.failure === undefined || outcome.failure.length === 0) {
+    throw new Error(`${outcome.lens}: terminal failure has no reason`);
+  }
+  return { kind: "failure", reason: outcome.failure };
+}
+
+describe("rounds live-smoke terminal oracle", () => {
+  it("accepts each honest terminal variant", () => {
+    expect(
+      terminalLaneEvidence({ lens: "sequence", board: { elements: [{ id: "step" }] } }),
+    ).toEqual({ kind: "board", elements: 1 });
+    expect(terminalLaneEvidence({ lens: "decisions", absence: "no-decisions" })).toEqual({
+      kind: "absence",
+      reason: "no-decisions",
+    });
+    expect(terminalLaneEvidence({ lens: "flagged", failure: "provider unavailable" })).toEqual({
+      kind: "failure",
+      reason: "provider unavailable",
+    });
+  });
+
+  it("rejects swallowed, conflicting, zero-element, and cross-lens outcomes", () => {
+    expect(() => terminalLaneEvidence({ lens: "sequence" })).toThrow("exactly one");
+    expect(() =>
+      terminalLaneEvidence({
+        lens: "noise",
+        absence: "no-noise",
+        failure: "also failed",
+      }),
+    ).toThrow("exactly one");
+    expect(() => terminalLaneEvidence({ lens: "sequence", board: { elements: [] } })).toThrow(
+      "zero-element board",
+    );
+    expect(() => terminalLaneEvidence({ lens: "flagged", absence: "no-decisions" })).toThrow(
+      "expected typed absence no-findings",
+    );
+  });
+});
 
 describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENNET_SMOKE=1)", () => {
   it("runRound mints a generation and the six drafters emit real boards over live Claude/Codex", async () => {
@@ -235,6 +315,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
         lens: b.lens,
         boardId: b.boardId ?? null,
         elements: b.board?.elements.length ?? 0,
+        absence: b.absence ?? null,
         failure: b.failure ?? null,
       }));
       const realBoards: DraftBoard[] = outcome.pipeline.boards
@@ -279,14 +360,11 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       expect(outcome.frozenPrevious?.id).toBe(PREV_GEN.id);
       expect(allOutcomes.length, "report seat did not run").toBe(6);
 
-      // No swallowed empties: every seat is EITHER a valid non-empty board OR an honest
-      // failure string. A seat with no board and no failure would be a swallowed empty.
+      // No swallowed empties: every seat has exactly one populated, absent, or failed
+      // terminal result. The cheap oracle tests above are the positive controls for this
+      // assertion, including the old zero-element-success shape.
       for (const o of allOutcomes) {
-        const hasBoard = o.board !== undefined && o.board.elements.length > 0;
-        const hasFailure = typeof o.failure === "string" && o.failure.length > 0;
-        expect(hasBoard || hasFailure, `${o.lens}: swallowed empty — no board and no failure`).toBe(
-          true,
-        );
+        expect(() => terminalLaneEvidence(o)).not.toThrow();
         if (o.board !== undefined) {
           expect(parseDraft(o.board).ok, `${o.lens}: emitted board is not a valid DraftBoard`).toBe(
             true,

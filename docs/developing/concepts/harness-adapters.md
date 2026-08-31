@@ -50,6 +50,28 @@ uses the real WebSocket protocol, persistence stores, capture path, board runtim
 round coordinator, and restart behavior. The spec is committed as a launched
 journey but is not part of the browser-free local gate.
 
+### Live board and round proofs
+
+Two opt-in proofs exercise installed harnesses. The server proof runs the real
+round-report and five-lens pipeline, and requires each lane to finish as exactly
+one populated board, typed absence, or explicit failure:
+
+```sh
+pnpm nx run rennet-server:real-rounds
+```
+
+`real-rounds` is uncached because its verdict depends on installed harnesses and
+provider responses. The launched desktop proof captures a review, renders all five
+terminal lens results, restarts both app and daemon, and requires `board.read` to
+reconstruct the same result for every lens:
+
+```sh
+RENNET_LIVE_E2E=1 pnpm nx run rennet-desktop:e2e --args="board-drafting-live"
+```
+
+Both commands can send the reviewed material to the configured harness provider.
+They stay outside `pnpm check` and must run only against an authorised repository.
+
 ## The normalized session
 
 The current port exposes descriptor and health information plus one operation:
