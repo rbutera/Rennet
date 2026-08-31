@@ -173,7 +173,7 @@ describe("Codex transport locus composition", () => {
   });
 
   it("wsl locus wraps the spawn in wsl.exe -e with a distro-native turn cwd", async () => {
-    const { effects, spawns, turnStarts } = fakeEffects();
+    const { effects, spawns, mcpLists, turnStarts } = fakeEffects();
     const locus: Locus = { kind: "wsl", distro: "Ubuntu" };
     await drive(createCodexTurnTransport("codex", effects, locus), wslSpec);
 
@@ -181,10 +181,16 @@ describe("Codex transport locus composition", () => {
     const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("wsl.exe");
     expect(call.cwd).toBeUndefined();
-    expect(call.args.slice(0, 4)).toEqual(["-d", "Ubuntu", "--cd", "/home/rai/repo"]);
-    expect(call.args[4]).toBe("-e");
-    expect(call.args[5]).toBe("codex");
-    expect(call.args[6]).toBe("app-server");
+    expect(call.args).toEqual([
+      "-d",
+      "Ubuntu",
+      "--cd",
+      "/home/rai/repo",
+      "-e",
+      "codex",
+      "app-server",
+    ]);
+    expect(mcpLists).toHaveLength(0);
     // The turn runs against the distro-native repo path (never the UNC path).
     expect(turnStarts[0]?.cwd).toBe("/home/rai/repo");
   });
@@ -236,7 +242,7 @@ describe("Codex transport locus composition", () => {
     });
     const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("codex");
-    expect(call.args[0]).toBe("app-server");
+    expect(call.args).toEqual(["app-server"]);
     expect(mcpLists).toHaveLength(0);
   });
 

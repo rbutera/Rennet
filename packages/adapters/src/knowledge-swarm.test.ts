@@ -286,11 +286,11 @@ async function measureWorkerConcurrency(
 }
 
 describe("knowledge swarm — council-routed contract (no live model)", () => {
-  it("defaults Codex partition workers to twenty-four lanes", async () => {
-    const measured = await measureWorkerConcurrency("codex", 24);
+  it("defaults Codex partition workers to sixteen lanes", async () => {
+    const measured = await measureWorkerConcurrency("codex", 16);
 
-    expect(measured.startedBeforeRelease).toBe(24);
-    expect(measured.peak).toBe(24);
+    expect(measured.startedBeforeRelease).toBe(16);
+    expect(measured.peak).toBe(16);
     expect(measured.outcome).toMatchObject({
       status: "ok",
       ranPartitions: 29,

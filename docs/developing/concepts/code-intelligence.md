@@ -186,19 +186,19 @@ Those eligible files come out as **105 slices**:
 | Directory fallback (coalesced) | 54 | 1,095 | median 21, mean 20.3, largest 113 |
 
 That is the W3 reconstruction measurement. By the cap proof on 2026-08-31 the
-repository had grown to **110 slices** at commit `96bdbb51`.
+repository had grown to **111 slices** at commit `cf7c9ad3`.
 
 Batching itself takes about 110 ms; the clean full snapshot build that feeds it
 takes roughly 30 seconds, dominated by one blob read per path-eligible file.
 
 #### The five-minute bar is not proved yet
 
-110 slices is 110 worker turns. Completed workers with the current input measure
-34.7 seconds median and 37 seconds mean. At the Codex worker default of 24, those
-figures project to **159–170 seconds of worker wall clock**, or 189–200 seconds
-with the 30-second deterministic build in front of it, about 3.15–3.33 minutes.
-A Claude worker keeps the 12-lane default because its process family has a
-different footprint.
+111 slices is 111 worker turns. Completed workers with the current input measure
+34.7 seconds median and 37 seconds mean. At the Codex worker default of 16, those
+figures project to **241–257 seconds of worker wall clock**, or 271–287 seconds
+with the 30-second deterministic build in front of it, about 4.51–4.78 minutes.
+A Claude worker keeps the separate 12-lane default because its process family has
+a different footprint.
 Dividing turn time by lanes gives wall clock — there is no separate, smaller
 "wall" figure to quote, and the target is five minutes.
 
@@ -209,20 +209,22 @@ The arithmetic is now inside the bar, but its launched proof is still pending:
   16 inherited every ambient MCP server per lane; swap grew by 5.19 GiB and
   pageouts advanced by 5,965 in 87.084 seconds. Codex workers now start with an
   explicit empty MCP policy rendered as disabled placeholders for every
-  configured ambient entry, with plugin discovery disabled so each child cannot
-  start its own refresh process, and default to 24 lanes. A clean launched run
-  must still prove that process family safe.
+  configured ambient entry, with plugin discovery disabled. A clean 24-lane
+  control still reached 4,822,304 KiB (4.60 GiB) descendant RSS after 22.074
+  seconds, with 24 workers active, zero ambient MCP or plugin-refresh processes,
+  and no completed worker. The guard reaped the process group with zero survivors.
+  That rejects 24 as the default; the ruled 16-lane cap needs the complete run.
 - **Shorter turns.** Symbol skeletons and slice-local import edges reduced the
   completed-worker timing to 34.7 seconds median and 37 seconds mean. The
   remaining proof is the complete run, not another extrapolation.
 - **Fewer turns.** The scoping seat (deciding that an edge-less file does not
   deserve a turn at all) is unbuilt.
 
-So the honest statement of this design's cost is **110 turns and a projected
-3.15–3.33 minutes on the default Codex path**. It is arithmetic from completed
-workers, not a stopwatch reading for the full run. The launched 16-lane run
-proved the ambient-MCP memory limit, not the current job-scoped process family
-or the five-minute bar; it did not finish.
+So the honest statement of this design's cost is **111 turns and a projected
+4.51–4.78 minutes on the default Codex path**. It is arithmetic from completed
+workers, not a stopwatch reading for the full run. The clean 24-lane control
+proved the memory ceiling, not the five-minute bar; the launched 16-lane run is
+still required.
 
 Batching is deterministic end to end. Louvain runs with its randomisation
 disabled, over nodes and edges inserted in sorted order, so the same snapshot
@@ -427,7 +429,7 @@ underneath it refuses to save, reports **superseded**, and keeps its journal so
 the retry costs no turns.
 
 Worker fan-out uses a named, harness-specific default after council resolution:
-24 for Codex partition workers, whose job-scoped empty policy expands into
+16 for Codex partition workers, whose job-scoped empty policy expands into
 disabled placeholders for the configured ambient entries, and 12 for Claude
 partition workers. A caller's explicit per-run limit wins. The policy is
 deliberately not adaptive: ambient load does not change the recorded run policy.

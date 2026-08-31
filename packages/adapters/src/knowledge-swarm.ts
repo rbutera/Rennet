@@ -273,14 +273,15 @@ export type KnowledgeSwarmProgress =
  * The old default was a bare `?? 4`, which is where "200 partitions × 78 s ÷ 4 ≈ 67
  * minutes" came from. A Codex partition worker now starts without ambient MCP
  * processes, so its measured process family no longer has the same footprint as a
- * Claude worker. Codex therefore gets 24 lanes while Claude stays at the ruled 12.
- * Both remain overridable per run (`KnowledgeSwarmDeps.concurrency`). The policy is
- * deliberately not adaptive: ambient load must not change the recorded run policy.
+ * Claude worker. The clean Codex family still crossed the guarded 4 GiB ceiling at
+ * 24 lanes, so Codex uses the ruled 16-lane cap while Claude stays at 12. Both remain
+ * overridable per run (`KnowledgeSwarmDeps.concurrency`). The policy is deliberately
+ * not adaptive: ambient load must not change the recorded run policy.
  */
 export const DEFAULT_SWARM_CONCURRENCY_BY_HARNESS: Readonly<Record<CouncilHarnessId, number>> =
   Object.freeze({
     "claude-code": 12,
-    codex: 24,
+    codex: 16,
   });
 
 /**

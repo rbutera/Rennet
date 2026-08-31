@@ -243,14 +243,14 @@ tail went 149 → **54** slices and the whole run went 201 → **105** slices (5
 module batches over 1,154 files, 54 fallback slices over 1,095). Batching is
 113 ms; the clean build is ~30 s.
 
-The W3 snapshot produced 105 turns; the launched cap proof at commit `96bdbb51`
-queued 110 after the repository grew. The old bare-path worker measurement was
+The W3 snapshot produced 105 turns; the launched cap proof at commit `cf7c9ad3`
+queued 111 after the repository grew. The old bare-path worker measurement was
 78 seconds. At the earlier concurrency of 12 that projected to **~11.9 minutes
 of worker wall clock**, or 12.4 minutes with the build, against a five-minute
 bar. That figure is obsolete for the current worker input: completed workers now
 measure 34.7 seconds median and 37 seconds mean. The scoping seat that would
 decide an edge-less file does not deserve a turn is still unbuilt (Stage 1 point
-4), so the run still owns all 110 turns.
+4), so the run still owns all 111 turns.
 
 The first 12-lane proof exposed a separate multiplier. Every `codex app-server`
 inherited and eagerly started the user's full ambient MCP table, including
@@ -260,13 +260,16 @@ the full descendant family reached about 0.9 GiB per lane. Swap grew by 5.72 GiB
 in 45.6 seconds. Partition workers now inventory the configured MCP entries and
 send one policy table with each ambient entry disabled and plugin discovery
 disabled; other Codex utility jobs keep the global inherit-or-pin behavior. Worker
-concurrency now follows the council-selected harness: Codex gets 24 lanes, while
+concurrency now follows the council-selected harness: Codex gets 16 lanes, while
 Claude keeps its existing 12-lane default. An explicit per-run override still
-wins. At the current 34.7-second median and 37-second mean, 110 turns over 24
-lanes plus the 30-second build project to **189–200 seconds total**, about
-3.15–3.33 minutes. That is arithmetic from completed workers, not a completed
-24-lane run, so the five-minute claim still needs a clean launched rerun with the
-current process footprint.
+wins. The clean 24-lane control at `cf7c9ad3` reached 4,822,304 KiB (4.60 GiB)
+descendant RSS after 22.074 seconds with all 24 workers active, zero ambient MCP
+or plugin-refresh processes, and no completed worker. The guard stopped and
+reaped the run with zero survivors, so 24 is not a safe default on the measured
+host. At the current 34.7-second median and 37-second mean, 111 turns over 16
+lanes plus the 30-second build project to **271–287 seconds total**, about
+4.51–4.78 minutes. That is arithmetic from completed workers, not a completed
+16-lane run, so the five-minute claim still needs that clean launched proof.
 
 Worker-session hygiene is already solved on main
 ([#585](https://github.com/rbutera/rennet/issues/585), PR #590): utility and

@@ -143,7 +143,7 @@ RENNET_CODEX_BIN=/path/to/codex pnpm nx run rennet-adapters:real-mcp-isolation
 ```
 
 The worker fan-out policy follows the harness selected by the Model Council.
-Codex partition workers default to 24 lanes with that empty policy; Claude
+Codex partition workers default to 16 lanes with that empty policy; Claude
 partition workers keep their separate 12-lane default. A run that supplies an
 explicit concurrency overrides either default.
 
