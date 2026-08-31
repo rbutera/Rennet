@@ -72,6 +72,52 @@ function isImmutableRead(key: string): boolean {
   return IMMUTABLE_READS.has(key.slice(0, key.indexOf(SEP)));
 }
 
+/**
+ * RETENTION BOUNDS (perf audit §5 M — "CommandCache never evicts"). Entries only ever
+ * accumulated, and an entry holds whatever the daemon answered with: `review.load` ships
+ * every patchset ever captured WITH its full diff text, and a reattach carries a whole
+ * session transcript. A day of opening reviews pinned every diff and every transcript for
+ * the bridge's lifetime.
+ *
+ * What is released is the PAYLOAD, not the entry. The entry is a key, four numbers and an
+ * empty listener set; the megabytes are in `snapshot.data`, which is the only thing the
+ * audit measured. Deleting entries was tried and is WRONG: it resets `generation`, so an
+ * entry re-created under a live reader loses the supersede bookkeeping and reads a second
+ * time — `routes/app.dom.test.tsx` caught exactly that on an A → B → A navigation. The
+ * accepted ceiling is therefore a map of empty entries that grows with the number of
+ * distinct keys a session touches.
+ *
+ * The mutable window has to be GENEROUS, and that is a measurement, not a preference. An
+ * unobserved entry is already stale (see `subscribe`), so its reopen refetches whether or
+ * not the old data was still there — releasing costs no round trip on its own. What the
+ * retained data buys is that the reopen renders the previous rows behind that refetch
+ * instead of flashing empty, and the flash is not cosmetic: a surface that comes back
+ * `pending` mounts a different tree, which churns subscriptions, which abandons more keys.
+ * A window of 16 released `review.reattach` for the review the router was on its way back
+ * to and cost a second read of it (caught by `routes/app.dom.test.tsx`'s A → B → A). Since
+ * the sibling change making `Collapse` unmount its children, unsubscribe traffic is higher
+ * again — every fold and every route switch frees subscribers.
+ *
+ * So the window is sized off the measured peak: the whole app-ui suite, driven end to end,
+ * peaks at 37 simultaneously-abandoned keys. 256 is ~7× that — deep enough that no
+ * navigation inside a session releases anything it is about to want, while a long day of
+ * opening reviews still releases the diffs and transcripts behind it. The bound exists to
+ * stop unbounded growth, not to evict aggressively.
+ *
+ * Immutable spans are the other class: `patchset.readSpan` is exempt from staleness by the
+ * immutable-patchset contract, so nothing ever released it. Its window is generous, because
+ * the point of keeping a span is that reopening an evidence card costs nothing: content-
+ * addressed spans run a few hundred bytes to a few KB, and 1024 is more than a whole
+ * 700-claim board's evidence cites while capping the class at single-digit MB. A span
+ * pushed out is released AND marked stale — released means it must be re-read, and an
+ * immutable read that came back is fresh again forever.
+ *
+ * Neither window ever touches an OBSERVED entry: a mounted reader cannot have its data
+ * pulled out from under it.
+ */
+const ABANDONED_CAP = 256;
+const IMMUTABLE_CAP = 1024;
+
 /** The immutable snapshot a reader sees for one key. `fetching` is the in-flight flag; a
  *  hook derives `pending` (no data or error yet) from `data`/`error`. */
 export interface QueryState<T> {
@@ -103,6 +149,13 @@ interface Entry {
 export class CommandCache {
   readonly #entries = new Map<string, Entry>();
 
+  /** Keys with no reader left, least-recently-abandoned first (`Set` keeps insertion order,
+   *  and every push re-inserts). Bounded by `ABANDONED_CAP`. */
+  readonly #abandoned = new Set<string>();
+
+  /** Immutable-read keys, least-recently-used first. Bounded by `IMMUTABLE_CAP`. */
+  readonly #immutable = new Set<string>();
+
   #entry(key: string): Entry {
     let entry = this.#entries.get(key);
     if (!entry) {
@@ -124,9 +177,37 @@ export class CommandCache {
     return this.#entries.get(key)?.snapshot ?? IDLE;
   }
 
+  /** Move `key` to the most-recently-used end of `order`, then RELEASE the payload of the
+   *  oldest entries until the class is back inside `cap`. An observed entry is skipped and
+   *  keeps both its place and its data. */
+  #touch(order: Set<string>, key: string, cap: number): void {
+    order.delete(key);
+    order.add(key);
+    if (order.size <= cap) return;
+    for (const oldest of order) {
+      if (order.size <= cap) break;
+      const entry = this.#entries.get(oldest);
+      if (entry && entry.listeners.size > 0) continue; // observed — not ours to release
+      order.delete(oldest);
+      // The entry survives (its generation is what keeps a later read honest); what it HOLDS
+      // does not. `stale` is what makes the next reader re-read for it.
+      if (entry) {
+        entry.snapshot = {
+          data: undefined,
+          error: undefined,
+          fetching: entry.snapshot.fetching,
+          stale: true,
+        };
+      }
+    }
+  }
+
   subscribe(key: string, listener: () => void): () => void {
     const entry = this.#entry(key);
     entry.listeners.add(listener);
+    // Observed again: out of the abandoned window, and an immutable read counts as used.
+    if (isImmutableRead(key)) this.#touch(this.#immutable, key, IMMUTABLE_CAP);
+    else this.#abandoned.delete(key);
     return () => {
       entry.listeners.delete(listener);
       if (entry.listeners.size > 0 || isImmutableRead(key)) return;
@@ -142,6 +223,9 @@ export class CommandCache {
       // that is still in flight: its completion cannot clear a staleness it never saw.
       entry.generation += 1;
       entry.snapshot = { ...entry.snapshot, stale: true };
+      // …and the entry enters the bounded abandoned window, keeping its data only until
+      // newer closings push it out.
+      this.#touch(this.#abandoned, key, ABANDONED_CAP);
     };
   }
 
@@ -152,6 +236,7 @@ export class CommandCache {
   ensure(key: string, fetcher: () => Promise<unknown>): void {
     const entry = this.#entry(key);
     entry.fetcher = fetcher; // retain the latest fetcher for a self-refetch
+    if (isImmutableRead(key)) this.#touch(this.#immutable, key, IMMUTABLE_CAP);
     if (entry.promise) return; // in-flight: dedupe
     const snap = entry.snapshot;
     if (snap.data !== undefined && !snap.stale && snap.error === undefined) return; // fresh

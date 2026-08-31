@@ -230,6 +230,122 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
     expect(calls).toBe(1);
   });
 
+  // ── Retention: an unobserved entry is RELEASED (perf audit §5 M) ────────────────────
+  // `#entries` used to grow for the bridge's lifetime, holding whole diffs (`review.load`
+  // ships every patchset WITH its diff text) and whole transcripts. Both caps below release
+  // only entries nobody is watching; the invariant a renderer depends on — a MOUNTED reader
+  // never loses its data — is the last test in this group.
+
+  /** Subscribe, fetch, and walk away: the abandoned-window shape, one key. */
+  const openAndClose = async (cache: CommandCache, key: string, body: string) => {
+    const unsubscribe = cache.subscribe(key, () => undefined);
+    cache.ensure(key, () => Promise.resolve({ body }));
+    await tick();
+    unsubscribe();
+  };
+
+  const roundsKey = (n: number) => commandKey("session.roundEvents", { reviewId: `r${n}` });
+
+  it("releases an abandoned entry once newer closings push it out of the window", async () => {
+    const cache = new CommandCache();
+    // 257 surfaces opened and closed. The window is 256, so the FIRST one is out.
+    for (let n = 0; n < 257; n += 1) await openAndClose(cache, roundsKey(n), `body-${n}`);
+
+    // The oldest closing has been released: it holds nothing, and it is stale, so the next
+    // reader re-reads for it (which it would have done anyway — releasing costs no round trip).
+    expect(cache.getSnapshot(roundsKey(0)).data).toBeUndefined();
+    expect(cache.getSnapshot(roundsKey(0)).stale).toBe(true);
+    // CONTROL, in the same assertion set: the release is bounded, not indiscriminate. The
+    // closings still inside the window keep their data (stale, so a reopen re-reads behind
+    // the rows it already has) — which is also what stops "everything was dropped" passing.
+    expect(cache.getSnapshot(roundsKey(1)).data).toEqual({ body: "body-1" });
+    expect(cache.getSnapshot(roundsKey(256)).data).toEqual({ body: "body-256" });
+    expect(cache.getSnapshot(roundsKey(256)).stale).toBe(true);
+  });
+
+  it("a released key re-reads on the next subscribe, and the reader sees the CURRENT answer", async () => {
+    const cache = new CommandCache();
+    const key = roundsKey(9999);
+    let served = "before";
+    let calls = 0;
+    const fetcher = () => {
+      calls += 1;
+      return Promise.resolve({ body: served });
+    };
+
+    const unsubscribe = cache.subscribe(key, () => undefined);
+    cache.ensure(key, fetcher);
+    await tick();
+    unsubscribe();
+    // Push it out of the window.
+    for (let n = 0; n < 256; n += 1) await openAndClose(cache, roundsKey(n), `body-${n}`);
+    expect(cache.getSnapshot(key).data).toBeUndefined();
+
+    served = "after";
+    cache.subscribe(key, () => undefined);
+    cache.ensure(key, fetcher);
+    await tick();
+    expect(calls).toBe(2);
+    expect(cache.getSnapshot(key).data).toEqual({ body: "after" });
+  });
+
+  /** A content-addressed span: exempt from staleness, so nothing but the cap releases it. */
+  const spanKey = (n: number) =>
+    commandKey("patchset.readSpan", {
+      patchsetId: "ps-1",
+      path: `file-${n}.ts`,
+      side: "head",
+      startLine: 1,
+      endLine: 1,
+    });
+
+  it("caps the immutable spans at their LRU bound, oldest released first", async () => {
+    const cache = new CommandCache();
+    // The cap is 1024. Open 1025 spans, each closed straight away (an evidence card the
+    // reviewer scrolled past) — exactly the case that used to retain every one forever.
+    for (let n = 0; n < 1025; n += 1) await openAndClose(cache, spanKey(n), `span-${n}`);
+
+    expect(cache.getSnapshot(spanKey(0)).data).toBeUndefined();
+    // …and it is stale, so re-opening that card re-reads rather than showing nothing.
+    expect(cache.getSnapshot(spanKey(0)).stale).toBe(true);
+    // CONTROL: the cap is a bound, not a purge — the newest 1024 are all still served, which
+    // is the property that makes reopening an evidence card free.
+    expect(cache.getSnapshot(spanKey(1)).data).toEqual({ body: "span-1" });
+    expect(cache.getSnapshot(spanKey(1024)).data).toEqual({ body: "span-1024" });
+    // And an immutable read that survived is still FRESH — the cap did not turn the
+    // patchset contract into a re-read.
+    expect(cache.getSnapshot(spanKey(1024)).stale).toBe(false);
+    let refetched = false;
+    cache.subscribe(spanKey(1024), () => undefined);
+    cache.ensure(spanKey(1024), () => {
+      refetched = true;
+      return Promise.resolve({ body: "again" });
+    });
+    await tick();
+    expect(refetched).toBe(false);
+  });
+
+  it("a SUBSCRIBED entry is never released, however much churn passes over it", async () => {
+    const cache = new CommandCache();
+    // One evidence card stays open across the whole scroll…
+    const held = spanKey(999_000);
+    cache.subscribe(held, () => undefined);
+    cache.ensure(held, () => Promise.resolve({ body: "held" }));
+    await tick();
+
+    // …while 1025 others open and close over it — more than the whole immutable cap.
+    for (let n = 0; n < 1025; n += 1) await openAndClose(cache, spanKey(n), `span-${n}`);
+    expect(cache.getSnapshot(held).data).toEqual({ body: "held" });
+
+    // Same for the mutable window: re-opening a surface takes its key back out of the
+    // abandoned window, so later closings cannot release it under a live reader.
+    const mutable = roundsKey(500);
+    await openAndClose(cache, mutable, "reopened");
+    cache.subscribe(mutable, () => undefined); // the reviewer came back
+    for (let n = 0; n < 257; n += 1) await openAndClose(cache, roundsKey(n), `body-${n}`);
+    expect(cache.getSnapshot(mutable).data).toEqual({ body: "reopened" });
+  });
+
   // The whole point of `readCommandId`: the wire rejects anything that is not a UUID, so a
   // readable `load-${slug}` made every session route fail to load on the real app.
   //
