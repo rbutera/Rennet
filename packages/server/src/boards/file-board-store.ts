@@ -128,8 +128,12 @@ export class FileBoardStore implements BoardStore {
   /** Install `entry` as the board's cached log and mark it the newest use, evicting the
    *  coldest board past {@link BOARD_LOG_MEMO_LIMIT}. An evicted board is not lost — the
    *  file is the authority and the next touch re-reads it. Evicting a board whose `append`
-   *  is mid-flight is likewise safe: that append pushes into an object nobody reads again,
-   *  and the re-read sees the same events on disk. */
+   *  is mid-flight is safe for reads issued AFTER the append's `appendFile` lands (the
+   *  re-read sees the same events on disk). One window stays open: a cold read whose
+   *  `readFile` was issued BEFORE that append resolves after an eviction would install
+   *  pre-append events — reaching it takes {@link BOARD_LOG_MEMO_LIMIT}+1 distinct boards
+   *  touched inside a single append's flight, and nothing in the product enumerates boards
+   *  that way. Accepted; a per-board write generation would close it if that ever changes. */
   #remember(boardId: string, entry: BoardLog): BoardLog {
     this.#log.delete(boardId); // delete-then-set: Map is insertion-ordered, so this is the LRU touch
     this.#log.set(boardId, entry);
@@ -250,9 +254,11 @@ export class FileBoardStore implements BoardStore {
     const last = events.at(-1)?.seq;
     // Seqs are contiguous from the first — `append` derives each from the last, and
     // recovery only ever drops a TAIL — so the cut point is arithmetic instead of a scan
-    // of the whole log per call. The O(1) span check is what makes that safe: a log whose
-    // span does not match its length is not contiguous, and falls back to the filter
-    // rather than being sliced at the wrong place.
+    // of the whole log per call. The O(1) span check gates the fast path: a log whose
+    // span does not match its length is certainly not contiguous and falls back to the
+    // filter. The check is necessary, not sufficient — a duplicate seq paired with an
+    // equal-size gap (e.g. [1,2,2,4]) would pass it and slice wrong — but a torn log's
+    // realistic shape (a duplicated tail) shrinks the span and falls through honestly.
     const contiguous =
       first !== undefined && last !== undefined && last - first + 1 === events.length;
     // Clone the SLICE, not the log: the caller owns what it gets back (nothing it
