@@ -252,13 +252,20 @@ export function CodeView({
   // change: a sub-row scroll returns the current value and React bails out of the
   // re-render entirely. Windowing is unchanged by construction — the only updates
   // skipped are the ones that compute an identical range.
+  //
+  // That rule is UNCONDITIONAL, including under `renderAll`. It used to have a second
+  // arm that froze the state outright whenever `renderAll` was set, on the reasoning
+  // that the window is the whole file there so the value is unread. It is unread today;
+  // it was still a lie, and the next reader of `scroll` would have inherited it silently.
+  // Skipping a recompute is honest, pinning state that claims to be the scroll position
+  // at a value the viewport left is not.
   const [scroll, setScroll] = useState(scrollTop);
   const pendingScroll = useRef(scrollTop);
   const scrollFrame = useRef<number | null>(null);
   // The windowing inputs the coalesced update compares against. Refreshed on every
   // render (below, once `total` is known) and read only inside the frame callback,
   // never during render — so the comparison can never use a stale row count.
-  const windowInputs = useRef({ total: 0, rowHeight, viewportHeight, overscan, renderAll });
+  const windowInputs = useRef({ total: 0, rowHeight, viewportHeight, overscan });
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     pendingScroll.current = event.currentTarget.scrollTop;
     if (scrollFrame.current !== null) return;
@@ -268,7 +275,6 @@ export function CodeView({
       setScroll((current) => {
         if (current === next) return current;
         const inputs = windowInputs.current;
-        if (inputs.renderAll) return current;
         const before = windowRows({ ...inputs, scrollTop: current });
         const after = windowRows({ ...inputs, scrollTop: next });
         return before.start === after.start && before.end === after.end ? current : next;
@@ -374,7 +380,7 @@ export function CodeView({
   }, [firstFocusRow, focusNonce, renderAll, rowHeight, overscan]);
 
   const total = registry.rows.length;
-  windowInputs.current = { total, rowHeight, viewportHeight, overscan, renderAll };
+  windowInputs.current = { total, rowHeight, viewportHeight, overscan };
   const range: WindowRange = renderAll
     ? { start: 0, end: total }
     : windowRows({ total, rowHeight, viewportHeight, scrollTop: scroll, overscan });

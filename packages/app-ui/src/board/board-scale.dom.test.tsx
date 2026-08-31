@@ -11,15 +11,23 @@ import { Section } from "./section";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The board-at-scale proofs (perf audit 2026-08-31 §5 H1/H3). A ~700-claim board is
-// the shape these guard: one store write used to re-render and re-derive every element
-// on it. Two independent cuts hold that back, and each is measured through a real seam
-// rather than asserted structurally:
+// the shape these guard. Two independent cuts, each measured through a real seam rather
+// than asserted structurally:
 //
-//  1. The quote-thread derivation is memoized on the threads scoped to ONE element, so
-//     a write touching another element's thread re-locates nothing here. Counted by the
+//  1. The quote-thread DERIVATION is memoized on the threads scoped to ONE element, so
+//     a write touching another element's thread locates no anchors here. Counted by the
 //     `locate` callback `useRangedThreads` already takes.
 //  2. `Section` is `memo`'d, so a parent re-render whose props did not change never
 //     reaches it. Counted through `useElement`, which every Section render calls once.
+//
+// WHAT THIS DOES NOT CLAIM, because the design is deliberate: a quote-thread write still
+// reaches every mounted element. `useScopedThreads` re-runs its filter over the WHOLE
+// `quoteThreads` record for each one, then holds the previous array when the result is
+// element-wise identical. That scan is real per-element work — O(threads) each, so
+// O(elements × threads) for the board — and stable identity is what it buys. What the
+// identity then skips is everything downstream: the anchor location below, the disjoint
+// decoration build, and the re-render of the highlighted prose. Do not read a green bar
+// here as "the write touched one element"; it touched all of them and derived from one.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const { elementLookups } = vi.hoisted(() => ({ elementLookups: [] as string[] }));
@@ -67,8 +75,8 @@ beforeEach(() => {
   useRennetStore.setState({ viewedDelta: { viewedDeltaSections: {} } });
 });
 
-describe("board scale — one store write does not touch every element", () => {
-  it("re-derives only the element whose quote threads changed", () => {
+describe("board scale — one store write derives one element and re-renders one section", () => {
+  it("locates anchors only for the element whose quote threads changed", () => {
     const { getByTestId } = mountProbes();
     const { addQuoteComment, addQuoteReply } = useRennetStore.getState().reviewActions;
 

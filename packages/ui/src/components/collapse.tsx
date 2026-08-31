@@ -1,9 +1,12 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { cn } from "../lib/utils";
 
-/** The close animation's length — must match the `duration-200` class below, because it
- *  is what decides when the children may leave the DOM. */
-const CLOSE_MS = 200;
+/** The fold animation's length — must match the `duration-200` class below, because it
+ *  is what decides when the children may leave the DOM. Exported because a caller that
+ *  acts on the RESULT of a fold has to wait out the same window: `followBoardAnchor` in
+ *  app-ui scrolls to a target whose section it just opened, and the grid track is still
+ *  growing until this elapses. One constant, not two magic 200s. */
+export const COLLAPSE_MS = 200;
 
 /**
  * A collapse primitive: grid-rows 0fr→1fr animates open/close of unknown-height
@@ -14,12 +17,12 @@ const CLOSE_MS = 200;
  * board kept every element in the DOM regardless of fold, so folding saved nothing).
  * The mount straddles the animation in both directions: opening mounts during the same
  * render that flips the row track, so the first frame of the transition already measures
- * real content; closing keeps the children for `CLOSE_MS` so the collapse animates over
+ * real content; closing keeps the children for `COLLAPSE_MS` so the collapse animates over
  * them instead of snapping shut on an empty box. `inert` still takes the closing content
  * out of the tab order for that window.
  *
  * Under `prefers-reduced-motion` the track snaps (`transition-none`) while the unmount
- * still waits out `CLOSE_MS`; the content is already clipped to zero height by then, so
+ * still waits out `COLLAPSE_MS`; the content is already clipped to zero height by then, so
  * the delay is invisible — it costs a fold's worth of nodes for a fifth of a second.
  */
 export function Collapse({
@@ -37,10 +40,14 @@ export function Collapse({
   if (open && !mounted) setMounted(true);
 
   useEffect(() => {
-    if (open) return;
-    const timer = setTimeout(() => setMounted(false), CLOSE_MS);
+    // `!mounted` is the ALREADY-CLOSED mount, and it is the common case: a ~700-claim board
+    // mounts hundreds of folded sections at once, every one of which used to schedule a
+    // timer whose only act was to set `false` on state that is already `false`. Nothing to
+    // unmount means nothing to wait for.
+    if (open || !mounted) return;
+    const timer = setTimeout(() => setMounted(false), COLLAPSE_MS);
     return () => clearTimeout(timer);
-  }, [open]);
+  }, [open, mounted]);
 
   return (
     <div

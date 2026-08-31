@@ -132,13 +132,6 @@ describe("Design board document metadata", () => {
     if (designSource === null) throw new Error("Design source section did not render");
     const sourceScroll = vi.fn();
     Object.defineProperty(designSource, "scrollIntoView", { value: sourceScroll });
-    const frameCallbacks: FrameRequestCallback[] = [];
-    const animationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        frameCallbacks.push(callback);
-        return frameCallbacks.length;
-      });
     history.replaceState(null, "", "#/s/review-design?lens=design");
     const historyLength = history.length;
     expect(designSource.getAttribute("data-open")).toBe("false");
@@ -146,11 +139,12 @@ describe("Design board document metadata", () => {
     expect(location.hash).toBe("#/s/review-design?lens=design");
     expect(history.length).toBe(historyLength);
     expect(designSource.getAttribute("data-open")).toBe("true");
+    // The scroll is HELD for the fold's own animation (`COLLAPSE_MS`): a jump issued a
+    // frame after the toggle measures a section still growing from 0fr and lands short.
     expect(sourceScroll).not.toHaveBeenCalled();
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks[0]?.(0);
-    expect(sourceScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-    animationFrame.mockRestore();
+    await waitFor(() =>
+      expect(sourceScroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" }),
+    );
     await view.user.click(view.getByRole("button", { name: "Open design.md in editor" }));
     await waitFor(() =>
       expect(opened).toEqual([
@@ -951,26 +945,19 @@ describe("Design section metadata", () => {
     // all — the jump has to open the top-level fold and resolve its target afterwards.
     expect(view.container.querySelector("#non-functional")).toBeNull();
     const scrolls = recordScrolls();
-    const frameCallbacks: FrameRequestCallback[] = [];
-    const animationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        frameCallbacks.push(callback);
-        return frameCallbacks.length;
-      });
 
     expect(root.getAttribute("data-open")).toBe("false");
     await view.user.click(cards[1] as HTMLAnchorElement);
     expect(root.getAttribute("data-open")).toBe("true");
     expect(view.container.querySelector("#non-functional")).not.toBeNull();
+    // Held for the fold's animation, then landed against the settled geometry.
     expect(scrolls.calls).toEqual([]);
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks[0]?.(0);
-    expect(scrolls.calls).toEqual([
-      { id: "non-functional", options: { behavior: "smooth", block: "start" } },
-    ]);
+    await waitFor(() =>
+      expect(scrolls.calls).toEqual([
+        { id: "non-functional", options: { behavior: "smooth", block: "start" } },
+      ]),
+    );
     scrolls.restore();
-    animationFrame.mockRestore();
   });
 
   it("targets a BMAD story capability at its named source root", async () => {
@@ -1052,24 +1039,18 @@ describe("Design section metadata", () => {
     // lands on the NAMED source root, not on the nested section it contains.
     expect(view.container.querySelector("#story-requirements")).toBeNull();
     const scrolls = recordScrolls();
-    const frameCallbacks: FrameRequestCallback[] = [];
-    const animationFrame = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        frameCallbacks.push(callback);
-        return frameCallbacks.length;
-      });
 
     expect(root.getAttribute("data-open")).toBe("false");
     await view.user.click(card);
     expect(root.getAttribute("data-open")).toBe("true");
-    expect(frameCallbacks).toHaveLength(1);
-    frameCallbacks[0]?.(0);
-    expect(scrolls.calls).toEqual([
-      { id: "story-source", options: { behavior: "smooth", block: "start" } },
-    ]);
+    // Held for the fold's animation, then landed against the settled geometry.
+    expect(scrolls.calls).toEqual([]);
+    await waitFor(() =>
+      expect(scrolls.calls).toEqual([
+        { id: "story-source", options: { behavior: "smooth", block: "start" } },
+      ]),
+    );
     scrolls.restore();
-    animationFrame.mockRestore();
   });
 
   it("targets a single OpenSpec requirement at its capability root", () => {

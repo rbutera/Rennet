@@ -325,6 +325,64 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
     expect(refetched).toBe(false);
   });
 
+  it("bounds spans that were all open at once and then all closed", async () => {
+    const cache = new CommandCache();
+    // The shape the cap missed entirely: a board opens MORE than the whole immutable cap
+    // concurrently (every evidence card on screen at once), then the reviewer navigates
+    // away and they all close together. Every `subscribe` trimmed nothing — each one ran
+    // the eviction while every entry was still observed — and the closes ran no eviction
+    // at all, so the whole set was retained with nothing scheduled to ever release it.
+    const holds: (() => void)[] = [];
+    for (let n = 0; n < 1025; n += 1) {
+      holds.push(cache.subscribe(spanKey(n), () => undefined));
+      cache.ensure(spanKey(n), () => Promise.resolve({ body: `span-${n}` }));
+    }
+    await tick();
+    // All 1025 held while observed — an open card is never released out from under it.
+    expect(cache.getSnapshot(spanKey(0)).data).toEqual({ body: "span-0" });
+
+    for (const release of holds) release();
+
+    // CONTROL for "everything was dropped": the newest cap-worth are all still served, so
+    // reopening a card the reviewer just closed is still free.
+    expect(cache.getSnapshot(spanKey(1024)).data).toEqual({ body: "span-1024" });
+    expect(cache.getSnapshot(spanKey(1)).data).toEqual({ body: "span-1" });
+    // …and the oldest is out, without needing some unrelated later read to trigger it.
+    expect(cache.getSnapshot(spanKey(0)).data).toBeUndefined();
+    expect(cache.getSnapshot(spanKey(0)).stale).toBe(true);
+  });
+
+  it("a fetch that completes after its entry was released does not reinstall the payload", async () => {
+    const cache = new CommandCache();
+    const inFlight = spanKey(777_000);
+    const span = deferred<unknown>();
+
+    // A card opens, its span read starts, and the reviewer closes it before the daemon
+    // answers. An immutable close bumps no generation — nothing about a span goes stale —
+    // so the in-flight read is NOT superseded by the close itself.
+    const unsubscribe = cache.subscribe(inFlight, () => undefined);
+    cache.ensure(inFlight, () => span.promise);
+    unsubscribe();
+
+    // The board then opens a whole cap-worth of other spans, which pushes the abandoned
+    // in-flight key out of the window and releases it.
+    for (let n = 0; n < 1025; n += 1) await openAndClose(cache, spanKey(n), `span-${n}`);
+    expect(cache.getSnapshot(inFlight).data).toBeUndefined();
+
+    // …and NOW the read lands. It must not resurrect the payload onto an entry that is no
+    // longer in the LRU's accounting: nothing would ever release it a second time.
+    // CONTROL: drop `entry.generation += 1` from `#touch`'s release and `data` comes back
+    // as `{ body: "late" }`, retained forever and untracked.
+    span.resolve({ body: "late" });
+    await tick();
+    expect(cache.getSnapshot(inFlight).data).toBeUndefined();
+    // Stale, so the next reader of that card re-reads rather than being shown nothing.
+    expect(cache.getSnapshot(inFlight).stale).toBe(true);
+    // And it did not chase itself: an abandoned entry refetching would spend a round trip
+    // on nobody (the existing rule this piggybacks on).
+    expect(cache.getSnapshot(inFlight).fetching).toBe(false);
+  });
+
   it("a SUBSCRIBED entry is never released, however much churn passes over it", async () => {
     const cache = new CommandCache();
     // One evidence card stays open across the whole scroll…

@@ -7,13 +7,14 @@ import type {
   Project,
   SettingsView,
 } from "@rennet/protocol";
+import { lazy, Suspense } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
 import { act, mount, screen, waitFor } from "../test/dom";
 import { frontDoorBridge, frontDoorHandlers } from "../test/fixtures/front-door";
 import { sessionHandlers } from "../test/fixtures/sessions";
 import { MemoryBridge } from "../test/memory-bridge";
-import { RennetRouterApp } from "./app";
+import { RennetRouterApp, WelcomeChunkBoundary } from "./app";
 import { memoryHistory } from "./history";
 
 // The ui store is a module singleton, so a test that opens the chat dock would leak
@@ -832,5 +833,39 @@ describe("the chat dock resolves its review from the route (F1 cluster 4)", () =
     // No review read and no ask were ever addressed to the session id.
     expect(asks).toEqual([]);
     expect(loads).toEqual([]);
+  });
+});
+
+describe("the lazy welcome chunk", () => {
+  it("renders the same calm blank when its chunk fails to load, instead of blanking the app", async () => {
+    // `Suspense` catches the WAIT, not the rejection: without a boundary this rejection
+    // throws through `fallback={null}` and unmounts everything — the first screen an
+    // install ever renders becomes an empty window.
+    const errors: unknown[][] = [];
+    const console_ = vi.spyOn(console, "error").mockImplementation((...args) => {
+      errors.push(args);
+    });
+    const Broken = lazy(() => Promise.reject(new Error("chunk 404")));
+    try {
+      const view = mount(
+        <div data-testid="app-shell">
+          <WelcomeChunkBoundary>
+            <Suspense fallback={null}>
+              <Broken />
+            </Suspense>
+          </WelcomeChunkBoundary>
+        </div>,
+      );
+      // CONTROL: drop `<WelcomeChunkBoundary>` from `FirstRunWelcome` and the equivalent
+      // here, and this `waitFor` never settles — the rejection escapes and the surrounding
+      // tree comes down with it.
+      await waitFor(() => expect(errors.length).toBeGreaterThan(0));
+      // The app around the wizard survived, and the wizard's slot is simply empty — the
+      // same nothing the fallback and the pre-claimed state render. No dialog, no retry.
+      expect(view.getByTestId("app-shell").textContent).toBe("");
+      expect(errors.some((args) => String(args[0]).includes("welcome chunk failed"))).toBe(true);
+    } finally {
+      console_.mockRestore();
+    }
   });
 });

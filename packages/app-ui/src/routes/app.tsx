@@ -7,7 +7,7 @@ import {
 } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { FolderPlus } from "lucide-react";
-import { lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import { Component, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { Icon } from "../components/icon";
@@ -48,11 +48,44 @@ const FirstRunWelcomeChunk = lazy(async () => ({
   default: (await import("../welcome/first-run-welcome")).FirstRunWelcome,
 }));
 
+/**
+ * A chunk that fails to load must not take the window with it.
+ *
+ * `Suspense` catches the WAIT, never the rejection: a failed `import()` throws through the
+ * fallback and unmounts the whole tree, so a corrupt or missing chunk file turned the very
+ * first screen an install ever renders into a white void with nothing in it. That is the
+ * one case a lazy boundary buys, and it is why this exists.
+ *
+ * It renders the SAME calm blank as the fallback and the pre-claimed state, plus a console
+ * error for whoever is looking. No dialog, no retry button, no "something went wrong" —
+ * the wizard is elective and the app behind it is intact.
+ */
+export class WelcomeChunkBoundary extends Component<
+  { readonly children: ReactNode },
+  { readonly failed: boolean }
+> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  override componentDidCatch(error: unknown) {
+    console.error("[rennet] the welcome chunk failed to load", error);
+  }
+
+  override render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 function FirstRunWelcome({ settings }: { readonly settings: SettingsView }) {
   return (
-    <Suspense fallback={null}>
-      <FirstRunWelcomeChunk settings={settings} />
-    </Suspense>
+    <WelcomeChunkBoundary>
+      <Suspense fallback={null}>
+        <FirstRunWelcomeChunk settings={settings} />
+      </Suspense>
+    </WelcomeChunkBoundary>
   );
 }
 

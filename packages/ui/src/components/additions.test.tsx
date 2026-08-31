@@ -85,11 +85,14 @@ test("progress exposes aria-valuenow for a value", () => {
 // driver on a ~700-claim board: a folded board freed nothing.
 //
 // happy-dom runs no CSS transitions and fires no `transitionend`, so the unmount is
-// driven by a timeout matching the `duration-200` class rather than by the event. What
-// these tests prove is the TIMEOUT path — that the children survive the close window and
-// leave after it. What they cannot prove is that 200ms is still the CSS duration; that
-// pairing lives in the class string and is checked by eye. The transition classes are
-// asserted below so at least a change to the duration is visible in this file's diff.
+// driven by a timeout matching the `duration-200` class rather than by the event.
+//
+// DO NOT "SIMPLIFY" EITHER HALF AWAY — both are load-bearing and they guard each other.
+// The 199/1 timer split pins `COLLAPSE_MS`, and the `duration-200` className assertion
+// pins the CSS side, so changing ONE of them reddens this test: a bumped `COLLAPSE_MS`
+// fails at `advanceTimersByTime(199)`, a bumped `duration-200` fails at the className.
+// What no assertion here can reach is whether a browser's real transition matches at
+// all — happy-dom runs none — so this pins the pairing, not the animation.
 test("collapse mounts its children only while they are visible", () => {
   vi.useFakeTimers();
   try {
@@ -141,6 +144,50 @@ test("collapse mounts its children only while they are visible", () => {
     act(() => vi.advanceTimersByTime(1_000));
     expect(child()).toBeTruthy();
   } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("collapse mounting already-closed schedules no unmount timer", () => {
+  vi.useFakeTimers();
+  const scheduled = vi.spyOn(globalThis, "setTimeout");
+  try {
+    // The board case: hundreds of folded sections mount at once. A closed mount has
+    // nothing mounted to unmount, so it must schedule nothing — the guard's whole point.
+    // CONTROL: drop `!mounted` from the effect's bail in `collapse.tsx` and this goes to 3.
+    render(
+      <>
+        <Collapse open={false}>
+          <button type="button">One</button>
+        </Collapse>
+        <Collapse open={false}>
+          <button type="button">Two</button>
+        </Collapse>
+        <Collapse open={false}>
+          <button type="button">Three</button>
+        </Collapse>
+      </>,
+    );
+    expect(screen.queryByText("One")).toBeNull();
+    expect(scheduled).not.toHaveBeenCalled();
+
+    // …and the guard has not disarmed the real close: an OPEN collapse still schedules
+    // its unmount when it closes, which is the assertion that stops "fix" it by deleting
+    // the timer outright.
+    const { rerender } = render(
+      <Collapse open>
+        <button type="button">Four</button>
+      </Collapse>,
+    );
+    expect(scheduled).not.toHaveBeenCalled();
+    rerender(
+      <Collapse open={false}>
+        <button type="button">Four</button>
+      </Collapse>,
+    );
+    expect(scheduled).toHaveBeenCalledTimes(1);
+  } finally {
+    scheduled.mockRestore();
     vi.useRealTimers();
   }
 });

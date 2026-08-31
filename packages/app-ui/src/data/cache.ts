@@ -192,6 +192,15 @@ export class CommandCache {
       // The entry survives (its generation is what keeps a later read honest); what it HOLDS
       // does not. `stale` is what makes the next reader re-read for it.
       if (entry) {
+        // …and the generation bump is what stops a fetch STILL IN FLIGHT from putting the
+        // megabytes straight back. Without it a release that lands mid-flight is undone by
+        // the completion: `#fetch` sees an unchanged generation, installs the full payload
+        // on an entry we just dropped OUT of `order`, and nothing is ever accounted for it
+        // again. Superseding it makes the completion install the released (undefined) data
+        // and keep the staleness, which is exactly what "released" already means here.
+        // Immutable spans are the class where this actually bites, because their unsubscribe
+        // deliberately does not bump.
+        entry.generation += 1;
         entry.snapshot = {
           data: undefined,
           error: undefined,
@@ -210,7 +219,19 @@ export class CommandCache {
     else this.#abandoned.delete(key);
     return () => {
       entry.listeners.delete(listener);
-      if (entry.listeners.size > 0 || isImmutableRead(key)) return;
+      if (entry.listeners.size > 0) return;
+      if (isImmutableRead(key)) {
+        // An immutable read never goes stale, so the closing reader has nothing to say
+        // about freshness — but it HAS just freed the entry to be released, and this is the
+        // only moment the class is guaranteed to be trimmable. Skipping it entirely (what
+        // this did) meant a board that subscribed more than `IMMUTABLE_CAP` spans at once
+        // and then closed them all kept every one: each `subscribe` trimmed nothing, because
+        // every entry was observed at the time, and no later trim was ever scheduled. The
+        // retention then depended on some unrelated span being opened afterwards to run the
+        // eviction — and if none ever was, on nothing at all.
+        this.#touch(this.#immutable, key, IMMUTABLE_CAP);
+        return;
+      }
       // NOBODY IS WATCHING THIS KEY ANY MORE, and the server keeps moving without us. A
       // reader that comes back — a reviewer who leaves `/s/:slug` and returns — must be
       // shown what the daemon holds NOW, not the snapshot from when they left. Without
