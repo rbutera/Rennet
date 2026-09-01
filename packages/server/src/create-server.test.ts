@@ -214,6 +214,33 @@ describe("coding-harness resolution", () => {
     });
   });
 
+  // The third #681 scenario: nothing configured resolves. The turn must fail typed and
+  // spend nothing — a `run` that still fired would mean a provider was chosen anyway.
+  it("fails typed and runs nothing when no configured harness is available", async () => {
+    const run = vi.fn(async () => ({
+      status: "completed" as const,
+      finalText: "should never run",
+      turnDiff: "",
+      filesTouched: [],
+    }));
+
+    const outcome = await runResolvedCodingHarnessTurn({
+      sessionStore: new SessionStore(mkdtempSync(join(tmpdir(), "rennet-harness-none-"))),
+      resolveClaude: async () => null,
+      resolveCodex: async () => null,
+      run,
+    });
+
+    expect(outcome).toEqual({
+      status: "failed",
+      reason:
+        "No enabled coding harness (Claude Code or Codex) is available on the execution host.",
+      turnDiff: "",
+      filesTouched: [],
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
   // The MISRESOLUTION control (#681): a resolver that hands back the wrong provider is
   // the silent-substitution shape the issue forbids. Deleting the descriptor check in
   // `resolveExact` turns this green-to-red — it is the only assertion that reaches it.

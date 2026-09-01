@@ -22,11 +22,12 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getClaudeHarness call (no host-default)", () => {
     const calls = callArgs("getClaudeHarness");
-    // Exactly the direct read-pipeline sites and the shared claudeAdapterForRepo
-    // resolver used by handoff turns (the contextAsk/knowledge sites died with the
-    // context map). Exact, not `>=`: a new host-default site added later must fail
-    // this, not slip under a floor.
-    expect(calls).toHaveLength(4);
+    // ONE site: `claudeAdapterForRepo`. The direct read-pipeline sites (flagged, noise,
+    // coverage) were folded into that single resolver with the #681 residue, so there is
+    // now exactly one Claude harness construction and one place a host default could
+    // creep back in. Exact, not `>=`: a new host-default site added later must fail this,
+    // not slip under a floor.
+    expect(calls).toHaveLength(1);
     for (const arg of calls) {
       // Every call threads the repo-resolved `locus` variable — never `HOST_LOCUS`,
       // never a zero-arg host default.

@@ -23,9 +23,9 @@
 
 ## 5. Harness dispatch residue (#681 — resolution landed via #692)
 
-- [ ] 5.1 Verify the landed resolution against #681's acceptance (typed unavailable failure, no silent fallback, durable displayed provenance) and give the still-Claude-hardcoded coverage seat (`runLiveCoverage`) honest provenance or typed absence on non-Claude installs (D3)
-- [ ] 5.2 Launched-app second-round proof in both resolution cases (Claude-only, Codex-only) plus positive control for missing/misresolved harness
-- [ ] 5.3 Verify `docs/using/guides/install-a-coding-harness.md` claims against landed behavior; correct if needed
+- [x] 5.1 Verify the landed resolution against #681's acceptance (typed unavailable failure, no silent fallback, durable displayed provenance) and give the still-Claude-hardcoded coverage seat (`runLiveCoverage`) honest provenance or typed absence on non-Claude installs (D3)
+- [x] 5.2 Launched-app second-round proof in both resolution cases (Claude-only, Codex-only) plus positive control for missing/misresolved harness
+- [x] 5.3 Verify `docs/using/guides/install-a-coding-harness.md` claims against landed behavior; correct if needed
 
 ## 6. Classifier evidence contract (#727 + #726)
 
