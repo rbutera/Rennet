@@ -18,6 +18,7 @@ import {
   type Generation,
   generationIdForDispatch,
   LENS_KINDS,
+  lensAdmitsAbsence,
   ROUND_NO_REGEN,
   type RoundEvent,
   type RoundRunReceipt,
@@ -301,6 +302,58 @@ describe("generation lifecycle (append-then-freeze)", () => {
     });
     expect(gen.lensBoards).toEqual({});
     expect(gen.absentLenses).toEqual({ flagged: "no-findings" });
+  });
+
+  it("persists the typed failure ACCOUNT beside the drafter's words (#549)", () => {
+    const gen = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "noise",
+          failure: "noise lens: the drafting seat threw.",
+          failureAccount: { attempt: 2, classification: "retryable" },
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+        {
+          lens: "design",
+          failure: "design lens: no runnable seat.",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    expect(gen.failedLenses).toEqual({
+      noise: "noise lens: the drafting seat threw.",
+      design: "design lens: no runnable seat.",
+    });
+    // Only the lane that named an account carries one — an unaccounted failure stays
+    // unaccounted rather than being defaulted to a classification nobody determined.
+    expect(gen.failedLensAccounts).toEqual({
+      noise: { attempt: 2, classification: "retryable" },
+    });
+  });
+
+  it("refuses to persist an absence the lens does not admit, recording a failure (#549)", () => {
+    // `no-material` is Design's absence; Sequence admits none at all. A lens settling
+    // another lens's absence is a producer defect, and persisting it would make the wrong
+    // pairing indistinguishable from a real clean result forever after.
+    const gen = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "sequence",
+          absence: "no-material",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    expect(gen.absentLenses).toBeUndefined();
+    expect(gen.failedLenses?.sequence).toContain("does not admit");
+    expect(gen.failedLensAccounts?.sequence).toEqual({ attempt: 0, classification: "terminal" });
+    expect(lensAdmitsAbsence("sequence", "no-material")).toBe(false);
   });
 
   it("clears a durable lens absence when that lens later produces a board", () => {
@@ -1114,6 +1167,50 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards.design).toBeUndefined();
     expect(recovered.boardGeneration.lensBoards.decisions).toBeUndefined();
     expect(recovered.boardGeneration.lensBoards.flagged).toBeUndefined();
+  });
+
+  it("carries a failed lane's typed ACCOUNT across a restart, not just its words (#549)", async () => {
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-account-meta-")));
+    const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-account-gen-")));
+    const input = roundInput();
+    const first = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const lens = lensFromPrompt(prompt);
+            // The Noise seat completes every turn WITHOUT emitting — the production
+            // no-board shape, which spends the ladder and settles terminal.
+            return lens === "noise" ? undefined : cleanBody(lens);
+          }),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    const drafted = first.pipeline.boards.find((outcome) => outcome.lens === "noise");
+    expect(drafted?.failureAccount?.classification).toBe("terminal");
+    expect(first.boardGeneration.failedLenses?.noise).toBeDefined();
+    expect(first.boardGeneration.failedLensAccounts?.noise).toEqual(drafted?.failureAccount);
+
+    // A FRESH runtime over the same on-disk evidence: no model, nothing in memory.
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => {
+          throw new Error("complete evidence must reconstruct without a model");
+        },
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    const restored = recovered.pipeline.boards.find((outcome) => outcome.lens === "noise");
+    expect(restored?.failure).toBe(first.boardGeneration.failedLenses?.noise);
+    // The classification survives the restart. Before it was persisted, a reconstruction
+    // had only the message and every restored failure read as terminal by default.
+    expect(restored?.failureAccount).toEqual(drafted?.failureAccount);
   });
 
   it.each(["sequence", "decisions", "flagged"] as const)(

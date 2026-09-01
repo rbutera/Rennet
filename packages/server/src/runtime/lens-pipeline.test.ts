@@ -22,6 +22,8 @@ import {
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import {
+  admitBoardReferences,
+  aggregateFailureAccount,
   type BoardArrivalEvent,
   type BoardMeta,
   boardOutputSchema,
@@ -1303,6 +1305,143 @@ describe("draftToOps", () => {
   });
 });
 
+describe("admitBoardReferences — the write-boundary ref admission (#548 D1)", () => {
+  /**
+   * The production `bad-ref` shape, as the smoke run observed it: a Sequence step whose
+   * `span` names an element id the board does not contain. The step is real material the
+   * seat produced — the whole point of D1 is that it must NOT be dropped to get the rest
+   * of the board accepted.
+   */
+  const sequenceFixture = (span: string, codeRefId = "sequence-code"): DraftBoard =>
+    mkBoard([
+      {
+        id: "sequence-step",
+        kind: "order_step",
+        data: {
+          author: { kind: "lens-agent", id: "sequence-seat" },
+          title: "Read the entry point",
+          span,
+          children: [],
+        },
+      } as unknown as DraftBoard["elements"][number],
+      mkCodeRef(codeRefId, "src/auth.ts", 11, 12),
+      mkSection("sequence-root", "Reading order", ["sequence-step"], {
+        kind: "lens-agent",
+        id: "sequence-seat",
+      }),
+    ]);
+
+  it("repairs a reference whose unique intended target is provable, and records it", () => {
+    const admitted = admitBoardReferences(sequenceFixture("sequence_code"), "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    expect(admitted.repairs).toEqual([
+      { elementId: "sequence-step", field: "span", from: "sequence_code", to: "sequence-code" },
+    ]);
+    // The REWRITTEN board is what gets written — assert the exact field, not merely that
+    // some repair was reported.
+    const step = admitted.board.elements.find(({ id }) => id === "sequence-step");
+    expect((step?.data as { span?: string } | undefined)?.span).toBe("sequence-code");
+    // The rest of the board is untouched; nothing was dropped to make it acceptable.
+    expect(admitted.board.elements.map(({ id }) => id)).toEqual(
+      sequenceFixture("sequence_code").elements.map(({ id }) => id),
+    );
+  });
+
+  it("refuses a reference with no candidate rather than dropping the element", () => {
+    const board = sequenceFixture("missing-sequence-code");
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-step", field: "span", targetId: "missing-sequence-code" },
+    ]);
+    // Refusal leaves the board ALONE — the citing element is still there for the retry.
+    expect(admitted.board).toBe(board);
+  });
+
+  it("refuses an AMBIGUOUS reference: two candidates are not proof of either", () => {
+    const board = mkBoard([
+      ...sequenceFixture("sequence_code").elements,
+      mkCodeRef("sequenceCode", "src/other.ts", 3, 4),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable.map(({ targetId }) => targetId)).toEqual(["sequence_code"]);
+  });
+
+  it("refuses a code_ref candidate that cites a DIFFERENT patchset", () => {
+    // Same identity, but the only candidate points outside the captured patchset this
+    // generation is reading — so it is not a provable target for this board.
+    const admitted = admitBoardReferences(sequenceFixture("sequence_code"), "ps-other");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable.map(({ targetId }) => targetId)).toEqual(["sequence_code"]);
+  });
+
+  it("repairs an element reference inside a MANY field without disturbing its siblings", () => {
+    const board = mkBoard([
+      mkFinding("f1", "cites both", ["c1", "C_2"]),
+      mkCodeRef("c1", "src/a.ts", 1, 2),
+      mkCodeRef("c-2", "src/b.ts", 3, 4),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    const finding = admitted.board.elements.find(({ id }) => id === "f1");
+    // Order preserved, only the dangling entry rewritten.
+    expect((finding?.data as { code?: string[] } | undefined)?.code).toEqual(["c1", "c-2"]);
+  });
+
+  it("leaves an admissible board byte-identical (no repair, no copy)", () => {
+    const board = sequenceFixture("sequence-code");
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([]);
+    expect(admitted.board).toBe(board);
+  });
+
+  it("the REAL board service accepts the repaired write and rejects the bypassed one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lens-ref-admission-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const fixture = sequenceFixture("sequence_code");
+
+      // POSITIVE CONTROL — bypass the admission pass and write the fixture as the seat
+      // authored it. The board service is authoritative and still rejects: `bad-ref`.
+      const bypassed = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(fixture) as never,
+        "lens:sequence",
+      );
+      expect(bypassed.response).toMatchObject({ ok: false, code: "bad-ref" });
+
+      // The same fixture through the admission pass is admitted, with the step intact.
+      const repairedBoardId = await runtime.createRennetBoard();
+      const admitted = admitBoardReferences(fixture, "ps-1");
+      const accepted = await client.apply(
+        repairedBoardId,
+        draftToOps(admitted.board) as never,
+        "lens:sequence",
+      );
+      expect(accepted.response).toMatchObject({ ok: true });
+      const state = await runtime.service.getState(repairedBoardId);
+      expect(state.has("sequence-step")).toBe(true);
+      expect(state.has("sequence-code")).toBe(true);
+
+      // And the UNREPAIRABLE fixture is refused BEFORE the write — the refusal is not
+      // gratuitous: writing it raw is rejected by the service exactly as the bypass was.
+      const unrepairable = sequenceFixture("missing-sequence-code");
+      expect(admitBoardReferences(unrepairable, "ps-1").unrepairable).toHaveLength(1);
+      const rejected = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(unrepairable) as never,
+        "lens:sequence",
+      );
+      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("boardOutputSchema", () => {
   it("derives a JSON schema from the frozen DraftBoardSchema (never hand-authored)", () => {
     const schema = boardOutputSchema() as Record<string, unknown>;
@@ -1342,8 +1481,96 @@ describe("Codex board output-schema compatibility", () => {
   });
 });
 
+describe("aggregateFailureAccount — one lens account from many seats (#549)", () => {
+  const terminal = (attempt: number) => ({ attempt, classification: "terminal" as const });
+  const retryable = (attempt: number) => ({ attempt, classification: "retryable" as const });
+
+  it("is RETRYABLE when any seat is: the lens needs only one seat to draw a board", () => {
+    expect(
+      aggregateFailureAccount([
+        { failure: "seat A", failureAccount: terminal(3) },
+        { failure: "seat B", failureAccount: retryable(1) },
+      ]),
+    ).toEqual(retryable(1));
+  });
+
+  it("is TERMINAL only when every seat is, and reports the deepest spent attempt", () => {
+    expect(
+      aggregateFailureAccount([
+        { failure: "seat A", failureAccount: terminal(1) },
+        { failure: "seat B", failureAccount: terminal(3) },
+      ]),
+    ).toEqual(terminal(3));
+  });
+
+  it("names no account when no seat named one — unknown stays unknown", () => {
+    expect(
+      aggregateFailureAccount([{ failure: "no runnable seat" }, { failure: "no runnable seat" }]),
+    ).toBeUndefined();
+  });
+});
+
 describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () => {
   const labels = { a: "Claude", b: "Codex" };
+
+  it("repoints a COLLAPSED finding's citers at its kept partner, so the merge is writable", async () => {
+    // Both seats raise the same finding at the same location; seat B's wording is longer,
+    // so the reconciler keeps B's finding and drops A's. Seat A's section still cites the
+    // dropped id — the exact `bad-ref` the board service rejects a whole write for.
+    const seatA = mkBoard([
+      mkFinding("f1", "Short.", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+      mkSection("findings", "Findings", ["f1"]),
+    ]);
+    const seatB = mkBoard([
+      mkFinding("f1", "A materially longer statement of the very same concern.", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+      mkSection("findings", "Findings", ["f1"]),
+    ]);
+
+    const merged = reconcileFlaggedBoards(seatA, seatB, labels);
+    const findings = merged.elements.filter(({ kind }) => kind === "finding");
+    expect(findings).toHaveLength(1);
+    const keptId = findings[0]?.id ?? "";
+    expect(keptId).toBe("b:f1");
+    // Seat A's section now cites the SURVIVOR, not the id that collapsed into it.
+    const section = merged.elements.find(({ id }) => id === "findings");
+    expect((section?.data as { children?: string[] } | undefined)?.children).toEqual([keptId]);
+    expect(admitBoardReferences(merged, "ps-1").unrepairable).toEqual([]);
+
+    const root = await mkdtemp(join(tmpdir(), "lens-flagged-merge-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const accepted = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(merged) as never,
+        "lens:flagged",
+      );
+      expect(accepted.response).toMatchObject({ ok: true });
+
+      // POSITIVE CONTROL — put the collapsed id back in the section's children (the shape
+      // the merge produced before it repointed) and the real service rejects the write.
+      const unrepointed = mkBoard(
+        merged.elements.map((element) =>
+          element.id === "findings"
+            ? ({
+                ...element,
+                data: { ...(element.data as object), children: ["f1"] },
+              } as DraftBoard["elements"][number])
+            : element,
+        ),
+      );
+      const rejected = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(unrepointed) as never,
+        "lens:flagged",
+      );
+      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("rebuilds the document opening from the final reconciled severity picture", () => {
     const primaryDocument = {
@@ -1935,12 +2162,47 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(applied.map(({ boardId }) => boardId)).not.toContain("board:sequence");
   });
 
-  it("classifies a drafting turn that emitted no board as RETRYABLE (#549)", async () => {
+  it("RE-ASKS the seat when the drafting turn emitted no board, and settles the board it then draws (#549)", async () => {
+    // The production no-board shape: the harness completes the turn with NO structured
+    // output. It is retryable, and here that classification does the retrying — the seat
+    // is re-asked and its second draw settles the lane as a board, not a failure.
+    const noiseTurns: string[] = [];
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => {
         const lens = lensFromPrompt(prompt);
+        if (lens !== "noise") return cleanBody(lens);
+        noiseTurns.push(prompt);
         // `undefined` structured output ⇒ the harness completed WITHOUT emitting.
-        return lens === "noise" ? undefined : cleanBody(lens);
+        return noiseTurns.length === 1 ? undefined : cleanBody("noise");
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.absence).toBeUndefined();
+    expect(noise?.board?.elements.length).toBeGreaterThan(0);
+    // The lane really was re-asked: two turns, the second one a re-ask carrying the
+    // ladder's pointers rather than a fresh copy of the base prompt.
+    expect(noiseTurns).toHaveLength(2);
+    expect(noiseTurns[1]).not.toBe(noiseTurns[0]);
+  });
+
+  it("settles TERMINAL only after the re-asks are spent, naming the non-emission (#549)", async () => {
+    const noiseTurns: string[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "noise") return cleanBody(lens);
+        noiseTurns.push(prompt);
+        return undefined;
       }),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
@@ -1954,10 +2216,104 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     const noise = result.boards.find(({ lens }) => lens === "noise");
     expect(noise?.absence).toBeUndefined();
+    // The words keep the original non-emission AND say the re-asks were spent.
     expect(noise?.failure).toContain("did not emit a board");
-    // The account, not just the words: a seat that produced nothing is exactly what
-    // a retry addresses, so it must not settle terminal.
-    expect(noise?.failureAccount).toEqual({ attempt: 0, classification: "retryable" });
+    expect(noise?.failure).toContain("no re-ask emitted one");
+    // Terminal, and only because the retries were actually spent — the attempt count is
+    // the ladder's, never the initial turn's `0`.
+    expect(noise?.failureAccount?.classification).toBe("terminal");
+    expect(noise?.failureAccount?.attempt).toBeGreaterThan(0);
+    expect(noiseTurns.length).toBe((noise?.failureAccount?.attempt ?? 0) + 1);
+  });
+
+  it("carries an aggregated account when BOTH flagged seats fail (#549)", async () => {
+    // Both seats emit nothing, on every turn, so both spend their ladders — the lens is
+    // terminal, and it says so with an account rather than a bare sentence.
+    const noBoard = (prompt: string): unknown =>
+      lensFromPrompt(prompt) === "flagged" ? undefined : cleanBody(lensFromPrompt(prompt));
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], noBoard),
+      codexExecutor: (async (req: { prompt: string }) => ({
+        output: noBoard(req.prompt),
+      })) as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const flagged = result.boards.find(({ lens }) => lens === "flagged");
+    expect(flagged?.failure).toContain("both flagged seats failed");
+    // Both seats named the SAME lane's failure; the account survives the aggregation
+    // instead of being rebuilt as a string with the classification thrown away.
+    expect(flagged?.failureAccount?.classification).toBe("terminal");
+    expect(flagged?.failureAccount?.attempt).toBeGreaterThan(0);
+  });
+
+  it("settles an EMPTY draw as each lens's admissible absence, and as a failure where none is (#549)", async () => {
+    // The empty-board settlement is derived from the protocol's admissibility table, not
+    // restated beside it: every lens admitting exactly one absence settles that one,
+    // Sequence (which admits none) fails, and Design fails because only a grounded
+    // dismissal — never an empty board — proves its `no-material`.
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], () => ({ elements: [] })),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const settled = new Map(result.boards.map((outcome) => [outcome.lens, outcome]));
+    expect(settled.get("decisions")?.absence).toBe("no-decisions");
+    expect(settled.get("flagged")?.absence).toBe("no-findings");
+    expect(settled.get("noise")?.absence).toBe("no-noise");
+    expect(settled.get("sequence")?.absence).toBeUndefined();
+    expect(settled.get("sequence")?.failure).toBeDefined();
+    expect(settled.get("design")?.absence).toBeUndefined();
+    expect(settled.get("design")?.failure).toBeDefined();
+    // Every absence this pipeline settles is one the protocol table admits for that lens.
+    for (const outcome of result.boards) {
+      if (outcome.absence === undefined || outcome.lens === "report") continue;
+      expect(
+        lensAdmitsAbsence(outcome.lens, outcome.absence),
+        `${outcome.lens} settled an inadmissible ${outcome.absence}`,
+      ).toBe(true);
+    }
+  });
+
+  it("a re-ask that draws an EMPTY board settles the lens absence, not a failure (#549)", async () => {
+    // The seat's own empty-board claim is what authorizes a clean absence. A first turn
+    // that emitted nothing made no claim either way, so the first EMITTED draw decides —
+    // and a signal-only change whose Noise seat draws an empty board settles `no-noise`.
+    const noiseTurns: string[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "noise") return cleanBody(lens);
+        noiseTurns.push(prompt);
+        return noiseTurns.length === 1 ? undefined : { elements: [] };
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.absence).toBe("no-noise");
+    expect(lensAdmitsAbsence("noise", "no-noise")).toBe(true);
   });
 
   it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {

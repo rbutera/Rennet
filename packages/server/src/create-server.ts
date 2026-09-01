@@ -4229,7 +4229,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ) {
         return undefined;
       }
-      return stored.failedLenses?.[lens];
+      const message = stored.failedLenses?.[lens];
+      if (message === undefined) return undefined;
+      const account = stored.failedLensAccounts?.[lens];
+      return { message, ...(account === undefined ? {} : { account }) };
     },
     retryRound: async ({ review }) => {
       const sessionId = sessionIdForReview(review);

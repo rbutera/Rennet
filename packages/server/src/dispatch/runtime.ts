@@ -32,6 +32,7 @@ import type {
   HandoffBundle,
   LensAbsenceReason,
   LensBoard,
+  LensFailureAccount,
   LensKind,
   NoiseReview,
   OpenSpecChange,
@@ -695,12 +696,14 @@ export interface DispatchDeps {
     generation: string,
     lens: LensKind,
   ) => Promise<LensAbsenceReason | undefined>;
-  /** A durable terminal drafting failure for this exact review generation and lens. */
+  /** A durable drafting failure for this exact review generation and lens, with the typed
+   *  account when the attempt that failed recorded one (#549). NOT necessarily terminal —
+   *  the classification is the account's to state, and an absent account means unknown. */
   readonly lensFailureForReview?: (
     reviewId: string,
     generation: string,
     lens: LensKind,
-  ) => Promise<string | undefined>;
+  ) => Promise<{ readonly message: string; readonly account?: LensFailureAccount } | undefined>;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

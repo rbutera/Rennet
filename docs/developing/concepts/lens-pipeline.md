@@ -176,9 +176,31 @@ and calls board regeneration through this runtime.
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
+   A drafting turn that emits **no board at all** is not a settlement. It seeds
+   the same retry ladder an unparseable first return does, so the seat is
+   re-asked rather than the lane failing at attempt zero. Only a ladder that ran
+   out without any turn emitting settles a failure, and that failure names both
+   facts: the original non-emission and the re-asks it spent.
 4. **Freeze.** The validated structured draft becomes the lens board without a
    second model rewrite. Host-owned Design projections, Flagged reconciliation,
    round composition, delta stamps, and metadata persistence remain deterministic.
+
+   Those host-owned passes run *after* lint, so the board that gets written is
+   not the board lint last saw. A **reference-admission pass** at the write
+   boundary checks every element reference against the exact document being
+   written, because the board service validates references in batch order and
+   rejects the whole write as `bad-ref` when one names an element the document
+   does not contain. An inadmissible reference is repaired only when its unique
+   intended target is provable — exactly one element of that document shares the
+   reference's identity (case and separators are typography, not identity), and
+   a `code_ref` target must cite the captured patchset. Every repair is recorded
+   on the board's durable metadata. An ambiguous or absent target is not proof:
+   the lane settles a typed failure instead. An element is **never** dropped to
+   make the rest of a board acceptable — an accepted board that silently sheds
+   produced material is the quiet lie the complete-coverage ruling forbids. The
+   board service stays authoritative and keeps rejecting; repairs happen
+   producer-side. The Flagged dual-seat merge repoints its own collapsed
+   findings' citers at the surviving partner for the same reason.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
    part lives in `core/board/`: the coverage assertion (every patchset hunk is
@@ -336,7 +358,24 @@ those core lenses. Flagged persists any round finding-resolution migration befor
 that typed absence. The client treats the absence as settled, keeps its segment
 selectable with explicit empty-state copy, and stops polling. Sequence requires
 a reading result; a semantically empty return gets one explicit retry, then
-becomes a retryable lens failure rather than an arrival. A landed-round report
+becomes a retryable lens failure rather than an arrival.
+
+Which absence each lens may settle with is the protocol's `LENS_ADMISSIBLE_ABSENCES`
+table, and it is enforced where an outcome becomes durable rather than merely
+advised: a lens settling an absence its own row does not admit is a producer
+defect that persists as a typed failure, never as a clean result. The durable
+`GenerationSchema` stays permissive on purpose — sessions written before a field
+existed must keep parsing — so the boundary that refuses a wrong pairing is the
+write, never the read.
+
+A failure persists as the drafter's own words **plus a typed account**: which
+attempt failed, and whether another attempt could plausibly succeed
+(`retryable` / `terminal`). The account is durable beside the message, survives a
+daemon restart, and rides `board.read` to the client, so a lens whose seat simply
+did not draw is not presented as beyond another attempt. A failure with no
+account means the classification is unknown — which is not the same as terminal.
+For a multi-seat lens the account aggregates: retryable if **any** seat is, since
+the lens needs only one seat to draw a board. A landed-round report
 gets exactly one classification turn and fails honestly when that classification
 omits an ask, cites evidence outside the measured coding-turn diff, or fails to
 partition that evidence exactly once. A plain

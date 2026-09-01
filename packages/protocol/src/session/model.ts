@@ -161,7 +161,21 @@ export function lensAdmitsAbsence(lens: LensKind, reason: LensAbsenceReason): bo
  * is exactly what a retry addresses; a seat that never produced a parseable board across
  * its whole ladder has already spent those retries, so it is `terminal`.
  */
-export type LensFailureClassification = "retryable" | "terminal";
+export const LensFailureClassificationSchema = z.enum(["retryable", "terminal"]);
+export type LensFailureClassification = z.infer<typeof LensFailureClassificationSchema>;
+
+/**
+ * The durable account beside a lens failure MESSAGE: which attempt produced it and
+ * whether another attempt could plausibly succeed. The message alone cannot say either,
+ * so a reader (and a restart) that has only the string has to guess "terminal" — which
+ * is what it did before this shape existed.
+ */
+export const LensFailureAccountSchema = z.object({
+  /** The seat attempt that failed; `0` is the initial drafting turn. */
+  attempt: z.number().int().nonnegative(),
+  classification: LensFailureClassificationSchema,
+});
+export type LensFailureAccount = z.infer<typeof LensFailureAccountSchema>;
 
 export const GenerationSchema = z.object({
   id,
@@ -177,8 +191,12 @@ export const GenerationSchema = z.object({
   draftingReportBoardId: id.optional(),
   /** Successful per-lens absences, distinct from a board that has not arrived yet. */
   absentLenses: z.partialRecord(z.enum(LENS_KINDS), LensAbsenceReasonSchema).optional(),
-  /** Terminal failures from the most recent drafting attempt, in the drafter's own words. */
+  /** Failures from the most recent drafting attempt, in the drafter's own words. */
   failedLenses: z.partialRecord(z.enum(LENS_KINDS), z.string().min(1)).optional(),
+  /** The typed account for each `failedLenses` entry that could name one (#549). APPEND-ONLY
+   * beside the message: sessions written before this field carry the string alone and must
+   * keep parsing, so nothing may move the message into here or require this to be present. */
+  failedLensAccounts: z.partialRecord(z.enum(LENS_KINDS), LensFailureAccountSchema).optional(),
   /** The orchestrator-authored composition board (L3), once composed. */
   compositionBoardId: id.optional(),
   status: z.enum(["live", "frozen"]),

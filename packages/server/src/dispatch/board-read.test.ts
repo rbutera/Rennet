@@ -87,30 +87,59 @@ describe("board.read — the lens-board read", () => {
     expect(out).toEqual({ board: null, absence: "no-material" });
   });
 
-  it("projects a durably loaded lens failure through the board.read wire", async () => {
+  it("projects a durably loaded lens failure AND its typed account through the board.read wire", async () => {
     const dir = mkdtempSync(join(tmpdir(), "rennet-board-read-failure-"));
     const failure = "The Flagged council did not return a valid board.";
+    const legacyFailure = "noise lens: the initial drafting turn did not emit a board.";
     try {
       new GenerationStore(dir).save({
         id: "gen-failed",
         patchsetId: "ps-1",
         lensBoards: {},
         failedLenses: { flagged: failure },
+        failedLensAccounts: { flagged: { attempt: 2, classification: "retryable" } },
         status: "live",
       });
+      // A generation written BEFORE the account field existed: the string alone, and the
+      // store must still load it (append-only). Its wire answer carries no account —
+      // "unknown classification", never a fabricated one.
+      new GenerationStore(dir).save({
+        id: "gen-legacy",
+        patchsetId: "ps-1",
+        lensBoards: {},
+        failedLenses: { noise: legacyFailure },
+        status: "live",
+      });
+      // A FRESH store instance is the restart: nothing in memory, everything re-read.
       const restored = new GenerationStore(dir);
       const lensFailureForReview: DispatchDeps["lensFailureForReview"] = (
         _reviewId,
         generation,
         lens,
-      ) => Promise.resolve(restored.load(generation)?.failedLenses?.[lens]);
+      ) => {
+        const stored = restored.load(generation);
+        const message = stored?.failedLenses?.[lens];
+        if (message === undefined) return Promise.resolve(undefined);
+        const account = stored?.failedLensAccounts?.[lens];
+        return Promise.resolve({ message, ...(account === undefined ? {} : { account }) });
+      };
       const handler = harness({ lensFailureForReview })["board.read"];
 
       const failed = parseCommandOutput(
         "board.read",
         await handler({ reviewId: REVIEW_ID, generation: "gen-failed", lens: "flagged" }),
       );
-      expect(failed).toEqual({ board: null, failure });
+      expect(failed).toEqual({
+        board: null,
+        failure,
+        failureAccount: { attempt: 2, classification: "retryable" },
+      });
+
+      const legacy = parseCommandOutput(
+        "board.read",
+        await handler({ reviewId: REVIEW_ID, generation: "gen-legacy", lens: "noise" }),
+      );
+      expect(legacy).toEqual({ board: null, failure: legacyFailure });
 
       const missing = parseCommandOutput(
         "board.read",

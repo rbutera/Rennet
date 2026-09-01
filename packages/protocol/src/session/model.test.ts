@@ -9,6 +9,7 @@ import {
   LaneRowSchema,
   LENS_ADMISSIBLE_ABSENCES,
   LensAbsenceReasonSchema,
+  LensFailureAccountSchema,
   LensLaneSchema,
   lensAdmitsAbsence,
   RoundEventSchema,
@@ -269,6 +270,39 @@ describe("session/ durable shapes (#466/#457)", () => {
       );
       expect(admitting.map(([lens]) => lens)).toHaveLength(1);
     }
+  });
+
+  it("keeps the failure account APPEND-ONLY beside the message (#549)", () => {
+    // A generation persisted before the account field existed carries the string alone.
+    // It must keep parsing forever: the account is an addition, never a replacement.
+    const legacy = {
+      id: "gen-1",
+      patchsetId: "ps-1",
+      lensBoards: {},
+      failedLenses: { noise: "noise lens: the drafting seat threw." },
+      status: "live" as const,
+    };
+    const parsedLegacy = GenerationSchema.safeParse(legacy);
+    expect(parsedLegacy.success).toBe(true);
+    expect(parsedLegacy.success && parsedLegacy.data.failedLensAccounts).toBeUndefined();
+
+    const accounted = GenerationSchema.safeParse({
+      ...legacy,
+      failedLensAccounts: { noise: { attempt: 2, classification: "retryable" } },
+    });
+    expect(accounted.success && accounted.data.failedLensAccounts?.noise).toEqual({
+      attempt: 2,
+      classification: "retryable",
+    });
+
+    // The account is typed: neither a free-text classification nor a negative attempt
+    // can reach durable storage.
+    expect(
+      LensFailureAccountSchema.safeParse({ attempt: 0, classification: "maybe" }).success,
+    ).toBe(false);
+    expect(
+      LensFailureAccountSchema.safeParse({ attempt: -1, classification: "terminal" }).success,
+    ).toBe(false);
   });
 
   it("parses a round record with and without a minted generation", () => {

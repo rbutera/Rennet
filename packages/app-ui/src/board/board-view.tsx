@@ -228,9 +228,19 @@ export function LensBoardView({
           <p>{absenceCopy(shown.reason).detail}</p>
         </div>
       ) : shown.status === "failed" ? (
-        <div data-kind="board-failed" role="alert" className="text-danger text-sm">
+        <div
+          data-kind="board-failed"
+          data-classification={shown.account?.classification}
+          role="alert"
+          className="text-danger text-sm"
+        >
           <p className="font-medium">This lens failed to generate.</p>
           <p className="text-muted-foreground">{shown.reason}</p>
+          {shown.account?.classification === "retryable" ? (
+            <p className="text-muted-foreground">
+              Another drafting attempt can still produce this board.
+            </p>
+          ) : null}
         </div>
       ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">

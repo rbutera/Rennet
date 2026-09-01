@@ -209,9 +209,16 @@ reviewer can read the result.
 
 The same rule applies to drafting failures added after the absence field. A
 generation may carry a per-lens reason in `failedLenses`; `board.read` returns it
-as `failure` beside `board: null`, and the client treats it as terminal. Older
-generations omit the field and remain ordinary missing-board answers. The wire
-addition is optional in both persisted and command-output shapes.
+as `failure` beside `board: null`. Older generations omit the field and remain
+ordinary missing-board answers. The wire addition is optional in both persisted
+and command-output shapes.
+
+A failure's typed account arrived later still, and append-only beside the message
+rather than inside it: `failedLensAccounts` on the generation, `failureAccount`
+on `board.read`, each naming the attempt that failed and a `retryable` /
+`terminal` classification. A generation or a daemon without the field answers the
+message alone, and that absence means the classification is **unknown** — it is
+not a licence to present the lens as beyond another attempt.
 
 A client can also outrun the daemon it is connected to. An older daemon does not
 answer `session.rounds` or `session.roundEvents` at all, and the rounds surfaces

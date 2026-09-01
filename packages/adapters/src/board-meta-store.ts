@@ -54,6 +54,14 @@ const OmissionSchema = z.object({
   hunks: z.array(z.string()),
   reason: z.string(),
 });
+/** One provable reference repair the write boundary made before this board was written
+ *  (#548 D1). Durable so a repair stays accountable after the run that made it. */
+const RefRepairSchema = z.object({
+  elementId: z.string().min(1),
+  field: z.string().min(1),
+  from: z.string().min(1),
+  to: z.string().min(1),
+});
 
 /** The persisted board-meta shape — structurally B08's `BoardMeta`, validated on read.
  *  `session`/`generation` are the durable idempotency linkage (B09 F1): they tag each
@@ -70,6 +78,9 @@ export const BoardMetaRecordSchema = z.object({
   blemishes: z.array(ViolationSchema),
   omissions: z.array(OmissionSchema),
   immutability: z.array(ViolationSchema),
+  // Optional on read: boards written before reference admission carry no repairs, and an
+  // empty repair list is not written at all.
+  refRepairs: z.array(RefRepairSchema).optional(),
   session: z.string().min(1).optional(),
   generation: z.string().min(1).optional(),
 });
@@ -93,6 +104,8 @@ export interface BoardMetaInput {
     readonly reason: string;
   }[];
   readonly immutability: readonly z.infer<typeof ViolationSchema>[];
+  /** Reference repairs made at the write boundary (#548 D1); absent when none were. */
+  readonly refRepairs?: readonly z.infer<typeof RefRepairSchema>[];
   /** The durable idempotency linkage (B09 F1): the session + patchset generation
    *  that drafted this board. Absent for non-rounds writers. */
   readonly session?: string;

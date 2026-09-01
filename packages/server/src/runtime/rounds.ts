@@ -55,6 +55,7 @@ import {
   generationIdForPatchset,
   LENS_KINDS,
   type LensAbsenceReason,
+  type LensFailureAccount,
   type LensKind,
   type LensLane,
   lensAdmitsAbsence,
@@ -199,6 +200,19 @@ export function freezeGeneration(gen: Generation): Generation {
   return gen.status === "frozen" ? gen : { ...gen, status: "frozen" };
 }
 
+/**
+ * The defect message for a lens settling an absence its row does not admit (#549), or
+ * `undefined` when the pairing is admissible. `LENS_ADMISSIBLE_ABSENCES` is the protocol's
+ * table; this is the write-path enforcement of it. The DURABLE `GenerationSchema` stays
+ * append-only permissive on purpose: sessions persisted before this check must keep
+ * parsing, so the boundary that refuses a wrong pairing is the write, never the read.
+ */
+function inadmissibleAbsenceFailure(lens: LensKind, reason: LensAbsenceReason): string | undefined {
+  return lensAdmitsAbsence(lens, reason)
+    ? undefined
+    : `${lens} lens settled the absence \`${reason}\`, which ${lens} does not admit — recorded as a failure, never persisted as a clean result.`;
+}
+
 function lensAbsenceMessage(reason: LensAbsenceReason): string {
   switch (reason) {
     case "no-material":
@@ -224,27 +238,43 @@ export function withLensBoards(
   const lensBoards: Partial<Record<LensKind, string>> = {};
   const absentLenses: Partial<Record<LensKind, LensAbsenceReason>> = {};
   const failedLenses: Partial<Record<LensKind, string>> = {};
+  const failedLensAccounts: Partial<Record<LensKind, LensFailureAccount>> = {};
+  const fail = (lens: LensKind, message: string, account?: LensFailureAccount): void => {
+    failedLenses[lens] = message;
+    if (account !== undefined) failedLensAccounts[lens] = account;
+  };
   for (const o of result.boards) {
     if (o.lens === "report") continue;
     if (o.boardId !== undefined) {
       lensBoards[o.lens] = o.boardId;
       delete absentLenses[o.lens];
     } else if (o.absence !== undefined) {
-      absentLenses[o.lens] = o.absence;
-      delete lensBoards[o.lens];
+      // #549 — admissibility is ENFORCED where an outcome becomes durable, not merely
+      // advised. A lens settling an absence its own row does not admit is a producer
+      // defect; persisting it would make a wrong pairing indistinguishable from a real
+      // clean result forever after. It settles as a typed failure instead.
+      const inadmissible = inadmissibleAbsenceFailure(o.lens, o.absence);
+      if (inadmissible === undefined) {
+        absentLenses[o.lens] = o.absence;
+        delete lensBoards[o.lens];
+      } else {
+        fail(o.lens, inadmissible, { attempt: 0, classification: "terminal" });
+      }
     } else {
-      failedLenses[o.lens] = o.failure ?? "The drafter produced no board.";
+      fail(o.lens, o.failure ?? "The drafter produced no board.", o.failureAccount);
     }
   }
   const generationWithoutAttempt = { ...gen };
   delete generationWithoutAttempt.draftingBoardIds;
   delete generationWithoutAttempt.absentLenses;
   delete generationWithoutAttempt.failedLenses;
+  delete generationWithoutAttempt.failedLensAccounts;
   return {
     ...generationWithoutAttempt,
     lensBoards,
     ...(Object.keys(absentLenses).length === 0 ? {} : { absentLenses }),
     ...(Object.keys(failedLenses).length === 0 ? {} : { failedLenses }),
+    ...(Object.keys(failedLensAccounts).length === 0 ? {} : { failedLensAccounts }),
   };
 }
 
@@ -692,7 +722,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       }
       const failure = generation.failedLenses?.[lens];
       if (failure !== undefined) {
-        outcomes.push({ lens, omissions: [], blemishes: [], immutability: [], failure });
+        // The durable account rides back with the message (#549): a restart that restored
+        // only the words had to treat every failure as terminal, which is a claim the
+        // reconstruction never verified. An older generation carries no account, and that
+        // absence stays absent rather than being defaulted to a classification.
+        const failureAccount = generation.failedLensAccounts?.[lens];
+        outcomes.push({
+          lens,
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+          failure,
+          ...(failureAccount === undefined ? {} : { failureAccount }),
+        });
         continue;
       }
       const boardId = generation.lensBoards[lens] ?? generation.draftingBoardIds?.[lens];
@@ -877,15 +919,33 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const earlyAbsentLenses: Partial<Record<LensKind, LensAbsenceReason>> = {
       ...attemptGeneration.absentLenses,
     };
+    const earlyFailedLenses: Partial<Record<LensKind, string>> = {};
+    const earlyFailedLensAccounts: Partial<Record<LensKind, LensFailureAccount>> = {};
     const onLensAbsence =
       lanes === undefined && deps.persistGeneration === undefined
         ? undefined
         : async (lens: LensKind, reason: LensAbsenceReason): Promise<void> => {
-            lanes?.absent(lens, lensAbsenceMessage(reason));
-            earlyAbsentLenses[lens] = reason;
+            // The SAME admissibility enforcement `withLensBoards` applies at the final
+            // settle — this is the other path by which an absence becomes durable, and a
+            // check on only one of them would let a wrong pairing through the early write.
+            const inadmissible = inadmissibleAbsenceFailure(lens, reason);
+            if (inadmissible !== undefined) {
+              lanes?.failed(lens, inadmissible);
+              earlyFailedLenses[lens] = inadmissible;
+              earlyFailedLensAccounts[lens] = { attempt: 0, classification: "terminal" };
+            } else {
+              lanes?.absent(lens, lensAbsenceMessage(reason));
+              earlyAbsentLenses[lens] = reason;
+            }
             await deps.persistGeneration?.({
               ...attemptGeneration,
               absentLenses: { ...earlyAbsentLenses },
+              ...(Object.keys(earlyFailedLenses).length === 0
+                ? {}
+                : {
+                    failedLenses: { ...earlyFailedLenses },
+                    failedLensAccounts: { ...earlyFailedLensAccounts },
+                  }),
             });
           };
 
