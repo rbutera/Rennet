@@ -451,6 +451,16 @@ export async function resolveCodingHarness(input: {
       };
     }
   };
+  /** A resolver answering with a DIFFERENT provider than asked — the silent-substitution
+   *  shape #681 forbids. One sentence, so the pinned and unpinned paths account for it
+   *  identically instead of the unpinned path swallowing what the resolver returned. */
+  const misresolution = (
+    id: CodingHarnessSelection["id"],
+    port: HarnessPort | null,
+  ): string | undefined =>
+    port !== null && port.descriptor.id !== id
+      ? `The ${id} resolver returned ${port.descriptor.id}; refusing to run a different harness than the selected one.`
+      : undefined;
   const resolveExact = async (
     id: CodingHarnessSelection["id"],
   ): Promise<CodingHarnessResolution> => {
@@ -470,12 +480,8 @@ export async function resolveCodingHarness(input: {
           `${displayName(id)} is selected for this session but is not available on its execution host.`,
       };
     }
-    if (port.descriptor.id !== id) {
-      return {
-        status: "unavailable",
-        reason: `The ${id} resolver returned ${port.descriptor.id}; refusing to run a different harness than the selected one.`,
-      };
-    }
+    const mismatch = misresolution(id, port);
+    if (mismatch !== undefined) return { status: "unavailable", reason: mismatch };
     return {
       status: "ready",
       selection: { id, version: port.descriptor.version },
@@ -505,12 +511,19 @@ export async function resolveCodingHarness(input: {
       port: codex,
     };
   }
+  // Nothing usable resolved. Report what actually happened rather than a bare "none
+  // available": a resolver that THREW keeps its discovery error, and a resolver that
+  // handed back the wrong provider keeps its misresolution sentence. Dropping the
+  // latter is how an unpinned Codex-only host that misresolved once read as "no harness
+  // installed" — a wrong diagnosis pointing the user at an install they already have.
   return {
     status: "unavailable",
     reason:
       [
         "error" in claudeAttempt ? claudeAttempt.error : undefined,
+        misresolution("claude-code", claude),
         "error" in codexAttempt ? codexAttempt.error : undefined,
+        misresolution("codex", codex),
       ]
         .filter((reason) => reason !== undefined)
         .join("; ") ||
