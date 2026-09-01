@@ -4950,7 +4950,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     uiDist: options.uiDist,
   });
 
-  void coordinator.recover().catch((error) => {
+  void (async () => {
+    // A captured review need not belong to a persisted Project. Rehydrate the exact roots owned
+    // by durable rounds before recovery starts, just as repository.choose granted them before the
+    // daemon stopped; otherwise recovery races review.load and fails before the renderer reconnects.
+    for (const operation of roundOperationStore.listActive().operations) {
+      allowedRoots.add(operation.repoRoot);
+    }
+    await coordinator.recover();
+  })().catch((error) => {
     console.error("Durable round recovery failed", error);
   });
 

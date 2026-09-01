@@ -854,6 +854,11 @@ liveTest("LIVE: verified report and successor core boards survive daemon restart
     if (recoveredOperation?.type !== "operation") {
       throw new Error("daemon restart lost the durable operation snapshot");
     }
+    if (recoveredOperation.snapshot.state.phase === "failed") {
+      throw new Error(
+        `daemon restart terminalized the resumable round: ${JSON.stringify(recoveredOperation.snapshot.state.failure)}`,
+      );
+    }
     expect(["report-drafting", "report-verifying"]).toContain(
       recoveredOperation.snapshot.state.phase,
     );
@@ -953,16 +958,15 @@ liveTest("LIVE: verified report and successor core boards survive daemon restart
     await reveal.click();
     await expect(resumedGreeting).toHaveCount(0);
     await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 60_000 });
-    await expect(
-      page.locator(`article[data-generation="${successor.boardGeneration}"]`),
-    ).toBeVisible({ timeout: 60_000 });
+    const selectedSuccessorGeneration = page.locator(
+      `[data-kind="generation-switcher"] [data-generation="${successor.boardGeneration}"][aria-selected="true"]`,
+    );
+    await expect(selectedSuccessorGeneration).toBeVisible({ timeout: 60_000 });
 
     await page.reload();
     await expect(resumedGreeting).toHaveCount(0);
     await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 60_000 });
-    await expect(
-      page.locator(`article[data-generation="${successor.boardGeneration}"]`),
-    ).toBeVisible({ timeout: 60_000 });
+    await expect(selectedSuccessorGeneration).toBeVisible({ timeout: 60_000 });
     await expectTerminalLensesRendered(page, successorTerminal);
   } finally {
     stopRoundObservation?.();

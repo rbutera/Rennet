@@ -1763,6 +1763,104 @@ describe("createRoundExecutionCoordinator", () => {
       generation: "generation-1",
       report: reportBoard,
     });
+
+    const restartedDraftReport = vi.fn<RoundExecutionPorts["draftReport"]>(async () => {
+      throw new Error("unexpected cold retry");
+    });
+    const restarted = createRoundExecutionCoordinator({
+      store: new RoundOperationStore(test.dir),
+      ports: {
+        ...test.ports,
+        draftReport: restartedDraftReport,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const [recovered] = await restarted.recover();
+
+    expect(recovered?.state).toMatchObject({
+      phase: "failed",
+      failure: {
+        at: "report-drafting",
+        reason: "core lens regeneration failed",
+      },
+    });
+    expect(restartedDraftReport).not.toHaveBeenCalled();
+  });
+
+  it("cold-retries a retained post-handoff drafting failure without replaying settled work", async () => {
+    const test = scenario();
+    const first = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ attempt, recordReportHandoff }) {
+          recordReportHandoff({
+            reportBoardId: attempt.reportBoardId,
+            generation: attempt.generation,
+            report: reportBoard,
+          });
+          throw new Error("Repository access was not granted");
+        },
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+    const failed = await first.submit(operation());
+    if (failed.state.phase !== "failed" || failed.state.failure.at !== "report-drafting") {
+      throw new Error("expected the first post-handoff attempt to fail");
+    }
+    const priorHandoff = failed.state.failure.report.handoff;
+    if (priorHandoff === undefined) throw new Error("expected a durable report handoff");
+
+    const prepareWorkspace = vi.fn(test.ports.prepareWorkspace);
+    const runWorker = vi.fn(test.ports.runWorker);
+    const runGate = vi.fn(test.ports.runGate);
+    const settleCommits = vi.fn(test.ports.settleCommits);
+    const landSourceChanges = vi.fn(test.ports.landSourceChanges);
+    const recordRound = vi.fn(test.ports.recordRound);
+    const draftReport = vi.fn<RoundExecutionPorts["draftReport"]>(
+      async ({ operation: recovered, attempt, recordReportHandoff }) => {
+        const handoff = recordReportHandoff({
+          reportBoardId: attempt.reportBoardId,
+          generation: attempt.generation,
+          report: reportBoard,
+        });
+        expect(handoff.operationRevision).toBe(recovered.revision);
+        expect(handoff.operationRevision).toBeGreaterThan(priorHandoff.operationRevision);
+        return { ...attempt, draftedAt: handoff.operationRevision + 100 };
+      },
+    );
+    const restarted = createRoundExecutionCoordinator({
+      store: new RoundOperationStore(test.dir),
+      ports: {
+        ...test.ports,
+        prepareWorkspace,
+        runWorker,
+        runGate,
+        settleCommits,
+        landSourceChanges,
+        recordRound,
+        draftReport,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const [recovered] = await restarted.recover();
+
+    expect(recovered?.state.phase).toBe("completed");
+    expect(draftReport).toHaveBeenCalledTimes(1);
+    expect(prepareWorkspace).not.toHaveBeenCalled();
+    expect(runWorker).not.toHaveBeenCalled();
+    expect(runGate).not.toHaveBeenCalled();
+    expect(settleCommits).not.toHaveBeenCalled();
+    expect(landSourceChanges).not.toHaveBeenCalled();
+    expect(recordRound).not.toHaveBeenCalled();
   });
 
   it("mints a fresh report epoch before retrying regeneration with a queued rerun", async () => {

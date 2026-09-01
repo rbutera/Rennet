@@ -172,6 +172,15 @@ function sameReportHandoffContent(
   );
 }
 
+function canColdRetryRepositoryAccessFailure(operation: RoundOperation): boolean {
+  return (
+    operation.state.phase === "failed" &&
+    operation.state.failure.at === "report-drafting" &&
+    operation.state.failure.reason === "Repository access was not granted" &&
+    operation.state.failure.report.handoff !== undefined
+  );
+}
+
 function errorReason(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) return error.message;
   return "round effect failed without an error message";
@@ -370,23 +379,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     if (active === undefined) return Promise.resolve(undefined);
     if (active.state.phase !== "failed") return this.start(active);
 
-    let retrying = this.persist(
-      active,
-      retryState(active.state.failure),
-      Math.max(this.now(), active.updatedAt),
-    ).operation;
-    if (retrying.state.phase === "report-drafting" && retrying.state.report.handoff !== undefined) {
-      const handoff = retrying.state.report.handoff;
-      retrying = this.persistReportHandoff(
-        retrying,
-        {
-          reportBoardId: handoff.reportBoardId,
-          generation: handoff.generation,
-          report: handoff.report,
-        },
-        true,
-      ).operation;
-    }
+    const retrying = this.retryFailed(active);
     const running = this.inFlight.get(sessionId);
     if (running === undefined) return this.start(retrying);
 
@@ -434,6 +427,9 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     }
     return Promise.all(
       operations.map((operation) => {
+        if (canColdRetryRepositoryAccessFailure(operation)) {
+          return this.start(this.retryFailed(operation));
+        }
         if (operation.state.phase !== "report-drafting") return this.start(operation);
         const handoff = operation.state.report.handoff;
         if (handoff === undefined) return this.start(operation);
@@ -449,6 +445,29 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
         return this.start(replay.operation);
       }),
     );
+  }
+
+  private retryFailed(operation: RoundOperation): RoundOperation {
+    if (operation.state.phase !== "failed") return operation;
+    let retrying = this.persist(
+      operation,
+      retryState(operation.state.failure),
+      Math.max(this.now(), operation.updatedAt),
+    ).operation;
+    if (retrying.state.phase !== "report-drafting" || retrying.state.report.handoff === undefined) {
+      return retrying;
+    }
+    const handoff = retrying.state.report.handoff;
+    retrying = this.persistReportHandoff(
+      retrying,
+      {
+        reportBoardId: handoff.reportBoardId,
+        generation: handoff.generation,
+        report: handoff.report,
+      },
+      true,
+    ).operation;
+    return retrying;
   }
 
   private start(operation: RoundOperation): Promise<RoundOperation> {

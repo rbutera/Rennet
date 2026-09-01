@@ -1,6 +1,16 @@
-import { commandIdFor, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import {
+  commandIdFor,
+  type Project,
+  parseCommandInput,
+  parseCommandOutput,
+} from "@rennet/protocol";
+import { projectRepositoryRoots } from "../project-forge-registry";
 import { runProjectProcess } from "./project";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
+
+function grantProjectRoots(allowedRoots: Set<string>, project: Project): void {
+  for (const root of projectRepositoryRoots(project)) allowedRoots.add(root);
+}
 
 export function projectsHandlers(rt: DispatchRuntime) {
   const { deps, allowedRoots } = rt;
@@ -9,9 +19,8 @@ export function projectsHandlers(rt: DispatchRuntime) {
       const name = "projects.list" as const;
       parseCommandInput(name, rawInput);
       const projects = deps.projects.list();
-      // Re-grant every persisted project's open target so a project row opened
-      // after a relaunch reaches `review.capture` (the user added these paths).
-      for (const project of projects) allowedRoots.add(project.openPath);
+      // Re-grant every persisted workspace member, not only its first open target.
+      for (const project of projects) grantProjectRoots(allowedRoots, project);
       return parseCommandOutput(name, { projects });
     },
     "projects.add": async (rawInput) => {
@@ -28,7 +37,7 @@ export function projectsHandlers(rt: DispatchRuntime) {
         includedRepos: [...input.includedRepos],
         primaryBranch: input.primaryBranch,
       });
-      allowedRoots.add(project.openPath);
+      grantProjectRoots(allowedRoots, project);
       void runProjectProcess(rt, {
         commandId: commandIdFor(`project.process:${project.id}`),
         projectId: project.id,
