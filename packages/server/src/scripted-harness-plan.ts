@@ -17,6 +17,9 @@ import { z } from "zod";
 /** The version every scripted seat reports — the marker the bundle-boundary check greps. */
 const SCRIPTED_HARNESS_VERSION = "685-scripted-v1";
 
+/** The two providers a scripted plan can present as (`HarnessId` minus `omp`). */
+type ScriptedProvider = "claude-code" | "codex";
+
 const PATCHSET_PLAN_VALUE = `\${patchsetId}`;
 const CANDIDATE_PLAN_VALUE = `\${candidateId}`;
 const ASK_PLAN_VALUE = `\${askId}`;
@@ -110,6 +113,15 @@ interface InvocationRecord {
   readonly promptDigest: string;
   readonly resumed: boolean;
   readonly recovered: boolean;
+  /**
+   * The EXECUTING seat's own provider (#681 / C14 D3) — read off the session that ran
+   * this turn (`HarnessSession.harness`), never off the plan or the port descriptor.
+   * The receipt the app displays comes from the RESOLVER's stamp, so it stays green if
+   * the seat underneath silently executes as something else; this is the independent
+   * half that does not. Stamping it from `plan.harness` here would re-close the same
+   * loop, which is why the session hands its own value down.
+   */
+  readonly harness: ScriptedProvider;
 }
 
 function parsePlan(path: string): ScriptedHarnessPlan {
@@ -152,6 +164,7 @@ function readInvocationRecords(path: string): InvocationRecord[] {
         promptDigest: z.string(),
         resumed: z.boolean(),
         recovered: z.boolean(),
+        harness: z.enum(["claude-code", "codex"]),
       })
       .safeParse(JSON.parse(line));
     if (!parsed.success) {
@@ -460,8 +473,10 @@ class ScriptedHarnessSession implements HarnessSession {
   #sent = false;
 
   constructor(
-    readonly harness: HarnessSession["harness"],
-    private readonly run: (prompt: string) => SessionOutcome,
+    readonly harness: ScriptedProvider,
+    // The run callback is handed the session's OWN provider so the ledger it writes
+    // records who executed, not what the plan declared (#681 / C14 D3).
+    private readonly run: (prompt: string, harness: ScriptedProvider) => SessionOutcome,
   ) {
     let resolveOutcome: (outcome: SessionOutcome) => void = () => undefined;
     this.#outcome = new Promise((resolvePromise) => {
@@ -495,7 +510,7 @@ class ScriptedHarnessSession implements HarnessSession {
   async send(input: TurnInput): Promise<TurnId> {
     if (this.#sent) throw new Error("scripted harness sessions accept exactly one turn");
     this.#sent = true;
-    this.#resolveOutcome(this.run(input.prompt));
+    this.#resolveOutcome(this.run(input.prompt, this.harness));
     return this.#turnId;
   }
 
@@ -550,6 +565,7 @@ function recordInvocation(
     readonly prompt: string;
     readonly resumed: boolean;
     readonly recovered: boolean;
+    readonly harness: ScriptedProvider;
   },
 ): void {
   const invocation: InvocationRecord = {
@@ -562,6 +578,7 @@ function recordInvocation(
     promptDigest: createHash("sha256").update(fields.prompt).digest("hex"),
     resumed: fields.resumed,
     recovered: fields.recovered,
+    harness: fields.harness,
   };
   appendFileSync(plan.invocationLog, `${JSON.stringify(invocation)}\n`);
 }
@@ -581,7 +598,14 @@ export function loadScriptedCodexExecutor(path: string): CodexExecutor {
       { cwd, outputSchema: request.outputSchema } as SessionSpec,
       request.prompt,
     );
-    recordInvocation(plan, step, { cwd, prompt: request.prompt, resumed: false, recovered: false });
+    // A CodexExecutor IS the Codex utility seat — there is no other provider it could be.
+    recordInvocation(plan, step, {
+      cwd,
+      prompt: request.prompt,
+      resumed: false,
+      recovered: false,
+      harness: "codex",
+    });
     if (completed.outcome.status !== "completed") {
       throw new Error(`scripted codex step ${step.id} did not complete`);
     }
@@ -616,7 +640,7 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
     },
     health: async () => ({ state: "ready", version: SCRIPTED_HARNESS_VERSION }),
     createSession: async (spec) =>
-      new ScriptedHarnessSession(harness, (prompt) => {
+      new ScriptedHarnessSession(harness, (prompt, executingHarness) => {
         const step = selectStep(plan, prompt, spec.outputSchema === undefined);
         if (step.kind === "edit" && consumedEdits.has(step.id)) {
           throw new Error(`scripted harness edit step ${step.id} was already consumed`);
@@ -628,6 +652,10 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
           prompt,
           resumed: spec.resume !== undefined,
           recovered: completed.recovered,
+          // `executingHarness` is the SESSION's own field, not `harness` from this
+          // closure — a session constructed as a different provider than the plan
+          // declared writes what it really is, and the e2e ledger assertion reddens.
+          harness: executingHarness,
         });
         return {
           ...completed.outcome,

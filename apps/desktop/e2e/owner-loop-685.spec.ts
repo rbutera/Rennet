@@ -495,14 +495,28 @@ async function runLaunchedOwnerLoop(
     ).toBe("export const ownerValue = 'decoy-reviewed';\n");
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: target }).toString()).toBe("");
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: decoy }).toString()).toBe("");
+    const ledger = readFileSync(invocationLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { kind: string; stepId: string; harness: string });
     expect(
-      readFileSync(invocationLog, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line))
-        .filter((record) => record.kind === "edit")
-        .map((record) => record.stepId),
+      ledger.filter((record) => record.kind === "edit").map((record) => record.stepId),
     ).toEqual(["round-one-edit", "round-two-edit"]);
+    // The EXECUTING half of #681's provenance acceptance. The receipt asserted during each
+    // round reads the RESOLVER's stamp (`runResolvedCodingHarnessTurn` stamps
+    // `resolution.selection` on the outcome), so it stays green even if the seat underneath
+    // executes as a different provider — the stamp and the execution have a common cause
+    // only when nothing lies between them. This reads each turn's OWN session
+    // (`HarnessSession.harness`, written into the scripted ledger by the run callback) and
+    // is therefore independent of the stamp.
+    //
+    // POSITIVE CONTROL (run 2026-09-01, restored after): construct the scripted session as
+    // `new ScriptedHarnessSession("claude-code", ...)` in `loadScriptedHarnessPlan` while
+    // leaving the port descriptor at `harness`. Resolution and the displayed receipt stay
+    // green on the Codex leg — the exact hole Codex flagged — and this assertion reddens
+    // with `["claude-code"]` where `["codex"]` was expected.
+    expect(ledger.length).toBeGreaterThan(0);
+    expect([...new Set(ledger.map((record) => record.harness))]).toEqual([harness]);
   } finally {
     bridge?.close();
     await launched.application.close().catch(() => undefined);
