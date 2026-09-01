@@ -449,6 +449,35 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     expect(ctx?.baseFiles?.get("src/untouched.ts")).toBe(380);
   });
 
+  it("roots the drafter seats at the evidence checkout, resolved AFTER recapture", async () => {
+    const { deps, seen } = reviewHarness();
+    const resolvedOver: string[] = [];
+    await runBoardRegeneration(
+      {
+        ...deps,
+        // The evidence checkout: a detached worktree at the reviewed head. It is
+        // resolved over the POST-recapture review, because a landed round
+        // advances the reviewed head.
+        draftingRootFor: async (current) => {
+          resolvedOver.push(current.activePatchsetId);
+          return "/data/worktrees/review/r-1";
+        },
+      },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: WORKED,
+      },
+    );
+    // Seats run in the evidence worktree; the identity root stays "/repo" for
+    // the caller's stores. The resolver saw the SUCCESSOR patchset, not ps-pre.
+    expect(seen[0]?.repoRoot).toBe("/repo");
+    expect(seen[0]?.draftingRoot).toBe("/data/worktrees/review/r-1");
+    expect(resolvedOver).toEqual(["ps-post"]);
+  });
+
   it("refreshes the ledger-selected visible generation after a completed round", async () => {
     const { deps, seen } = reviewHarness();
     const visibleGeneration = {

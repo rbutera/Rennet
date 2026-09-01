@@ -327,8 +327,15 @@ export interface WorkerReturn {
 /** One round's inputs — the per-round pipeline universe plus the worked change. */
 export interface RoundInput {
   readonly session: SessionModel;
-  /** The PR worktree the drafters are rooted at, and ports/boards resolve against. */
+  /** The review's durable identity root: boards, meta, ports, and transitions key on it. */
   readonly repoRoot: string;
+  /**
+   * The EVIDENCE checkout the drafter seats run in (a detached worktree pinned
+   * at the reviewed head). Seat cwd ONLY — board storage and every persisted
+   * key stay on {@link repoRoot}, or a restart could not find its own boards.
+   * Absent ⇒ seats run at {@link repoRoot}.
+   */
+  readonly draftingRoot?: string;
   /** Durable ids reserved before drafting starts. A restarted report attempt reuses
    * these boards and generation instead of minting a second set after a crash. */
   readonly draftPlan?: RoundDraftPlan;
@@ -884,7 +891,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const pipelineInput = {
       claudePort,
       codexExecutor,
-      repoRoot: input.repoRoot,
+      repoRoot: input.draftingRoot ?? input.repoRoot,
       deltaPacket: input.deltaPacket,
       currentGeneration: attemptGeneration.id,
       ...(input.round === undefined
@@ -909,7 +916,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             designArtifacts: input.designArtifacts,
             ...(claudePort === null
               ? {}
-              : { mapDesignCoverage: createDesignCoverageMapper(claudePort, input.repoRoot) }),
+              : {
+                  mapDesignCoverage: createDesignCoverageMapper(
+                    claudePort,
+                    input.draftingRoot ?? input.repoRoot,
+                  ),
+                }),
           }),
       ...(input.designArtifactFailure === undefined
         ? {}
