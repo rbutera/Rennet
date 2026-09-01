@@ -79,15 +79,15 @@
 
 ## 9. Benchmark telemetry
 
-- [ ] 9.1 Define the versioned benchmark record schema on the #725 timing spine; one recorder, durable storage, bound to round/map revision; every STAGE record carries its actually resolved harness and model; run-level mode (dual-model, Claude-only, Codex-only) derived from stages; failed/aborted runs recorded as such
-- [ ] 9.2 Instrument project processing: one timing per deterministic Repo Map build stage (resolve, tree, workspace, conventions, symbols, build, verify, store) plus the scout and the end-to-end total — there are no model-backed layers to time since the context-map kill
-- [ ] 9.3 Instrument lens drafting: per-lens draft, dual-review, repair/post-process, per-lens total, and whole-process timing
-- [ ] 9.4 Instrument the post-round report: classification-turn and report-gate timings bound to the round
-- [ ] 9.5 Add the default-on benchmark-recording setting to `client-settings.json` resolution and a Settings toggle; disabled means zero new records, identical pipeline behavior
-- [ ] 9.6 Build the Settings benchmarks panel: recorded runs with stage breakdowns split by derived mode, virtualized/responsive on a large history, styled per DESIGN.md
-- [ ] 9.7 Build the deterministic developer-run export command aggregating records into committed JSON under `docs/` with provenance (date, machine, revision)
-- [ ] 9.8 Build the docs benchmarks page rendering the committed data (stage breakdowns for map, lenses, report, split by derived harness mode); build-time verification fails on missing/corrupt data
-- [ ] 9.9 Controls: recording-off writes nothing; panel perf check on large history; export/render round-trip with a control that corrupts the data and fails the build
+- [x] 9.1 Define the versioned benchmark record schema on the #725 timing spine; one recorder, durable storage, bound to round/map revision; every STAGE record carries its actually resolved harness and model; run-level mode (dual-model, Claude-only, Codex-only) derived from stages; failed/aborted runs recorded as such
+- [x] 9.2 Instrument project processing: one timing per deterministic Repo Map build stage (resolve, tree, workspace, conventions, symbols, build, verify, store) plus the scout and the end-to-end total — there are no model-backed layers to time since the context-map kill
+- [x] 9.3 Instrument lens drafting: per-lens draft, dual-review, repair/post-process, per-lens total, and whole-process timing
+- [x] 9.4 Instrument the post-round report: classification-turn and report-gate timings bound to the round
+- [x] 9.5 Add the default-on benchmark-recording setting to `client-settings.json` resolution and a Settings toggle; disabled means zero new records, identical pipeline behavior
+- [x] 9.6 Build the Settings benchmarks panel: recorded runs with stage breakdowns split by derived mode, virtualized/responsive on a large history, styled per DESIGN.md
+- [x] 9.7 Build the deterministic developer-run export command aggregating records into committed JSON under `docs/` with provenance (date, machine, revision)
+- [x] 9.8 Build the docs benchmarks page rendering the committed data (stage breakdowns for map, lenses, report, split by derived harness mode); build-time verification fails on missing/corrupt data
+- [x] 9.9 Controls: recording-off writes nothing; panel perf check on large history; export/render round-trip with a control that corrupts the data and fails the build
 
 ## 10. Owner-journey proof and close-out
 
