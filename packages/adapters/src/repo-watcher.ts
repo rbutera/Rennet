@@ -1,5 +1,5 @@
 import { HOST_LOCUS, type Locus } from "@rennet/core";
-import { isAppOwnedPath } from "@rennet/protocol";
+import { isAppOwnedPath, toRepositoryRelativePath } from "@rennet/protocol";
 import { type FSWatcher, watch } from "chokidar";
 
 /** True for a `\\wsl.localhost\…` / `\\wsl$\…` UNC view of a WSL filesystem. */
@@ -41,14 +41,20 @@ const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
 /**
  * True when a watched path is app-owned Rennet state, or inside an ignored segment.
  *
- * The app-owned check comes from the shared authority the board-store writer places
- * itself by (#729, D6): board artifacts Rennet writes into the reviewed repository must
- * never mark that repository dirty. It currently sits INSIDE the blanket `.rennet`
- * segment above, which #729's capture work narrows to exactly this prefix so a tracked
+ * `repositoryRoot` is the root the watcher was started on, and it is required rather
+ * than inferred: ownership is root-relative (#729, D6). The board store is exactly
+ * `<repositoryRoot>/.rennet/boards/`, so chokidar's absolute path has to be relativized
+ * against that root before the shared authority can answer — otherwise a checkout living
+ * under some ancestor `.rennet/boards` would report every one of its files as app-owned.
+ *
+ * A path outside the root is not the watcher's to own; the segment check below still
+ * applies to it. That check currently ignores all of `.rennet`, which is a superset of
+ * the app-owned prefix — #729's capture work narrows it so a tracked
  * `.rennet/conventions.json` edit invalidates like any other project file.
  */
-export function isIgnoredPath(path: string): boolean {
-  return isAppOwnedPath(path) || IGNORED_SEGMENT.test(path);
+export function isIgnoredPath(repositoryRoot: string, path: string): boolean {
+  const relative = toRepositoryRelativePath(repositoryRoot, path);
+  return (relative !== undefined && isAppOwnedPath(relative)) || IGNORED_SEGMENT.test(path);
 }
 
 export class RepoWatcher {
@@ -95,7 +101,7 @@ export class RepoWatcher {
     const wslUncRoot = isWslUncPath(repositoryRoot);
     this.watcher = watch(repositoryRoot, {
       ignoreInitial: true,
-      ignored: (path) => isIgnoredPath(path),
+      ignored: (path) => isIgnoredPath(repositoryRoot, path),
       ...(locus.kind === "wsl" || wslUncRoot ? { usePolling: true, interval: 500 } : {}),
     });
     this.watcher.on("ready", () => {
