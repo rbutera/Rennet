@@ -407,8 +407,16 @@ that host's repair.
    deep-linkable and cold: opening it mid-round reattaches to the newest durable
    receipt and never re-dispatches. The first round pins one enabled installed
    Claude Code or Codex harness to the session; later rounds use that exact harness,
-   and the run receipt names its version. It stays on the run through report drafting
-   and verification. Terminal completion first enters a resumable handback:
+   and the run receipt names its version. The durable `report-drafting` phase is
+   currently coarse: it covers both the report classification and the whole lens
+   regeneration call. Operation-scoped progress refines that phase in the client.
+   As soon as the host has read back and verified the durable report, the run route
+   hands off to the report greeting while regeneration remains nonterminal. A cold
+   reload on the board route reconstructs that greeting from the durable operation
+   and report projection; it does not depend on the in-memory greeting arm. If the
+   same operation later fails, the client returns to the existing run failure view
+   instead of falling through to a board. Terminal completion first enters a
+   resumable handback:
    Rennet records the stable Return turn, consumes the exact dispatched ask
    occurrences, and cleans up the round source before the durable operation
    records that the round has returned. Only that return receipt hands the UI
@@ -425,13 +433,18 @@ that host's repair.
    *Dispatch it.* when the operation is claimed, then a receipt-derived
    *Round N is back* turn after verified completion. Recovery and repeated
    terminal drain reuse those row identities rather than duplicating them.
-4. On completion the **round report** drafts first — its own seat on its own
-   prompt (`packages/prompts`, `src/prompts/report.md`), through the
-   same post-process pass as every draft. It verifies each ask against the
-   round's diff rather than taking the worker's word, and classifies the
-   outcome: addressed / partial / untouched / beyond the asks, each item
-   anchored. Each outcome copies the exact id of the ask this round dispatched.
-   Before completion, the host parses the persisted report as a report board,
+4. On completion the **round report** runs first. One provider-neutral,
+   Council-routed classification turn receives the report prompt
+   (`packages/prompts`, `src/prompts/report.md`), the successor patchset id, the
+   durable asks, and the exact coding-turn receipt. The default assignment is
+   Sonnet at low effort when Claude is available, including the dual-provider
+   scenario, and Terra at low effort in Codex-only installs. Task and tier
+   overrides remain authoritative.
+   It verifies each ask against the round's diff rather than taking the worker's
+   word, and returns only addressed / partial / untouched / beyond classifications
+   with changed-line anchors. The host copies exact ask ids and text into a
+   deterministic report board; this path has no generic board retry or
+   post-process turn. Before completion, the host parses that report as a report board,
    requires exactly one non-beyond outcome for every dispatched ask, rejects
    duplicate or invented ask references, and resolves every addressed, partial,
    or beyond evidence anchor against the expected successor patchset and an
@@ -441,31 +454,43 @@ that host's repair.
    line-addressable evidence. This verification runs before the successor
    generation, quote migrations, or real-generation ledger row are published;
    rejection leaves the pending placeholder and dispatched asks retryable.
-   The report is one artifact with two consumers: the reviewer's greeting, and
-   the successor account the lens drafters receive — which is why it must draft
-   before they start.
+   The report is one artifact with two consumers: the reviewer's greeting and
+   additional round context for the lens drafters. It is separate from the
+   deterministic successor account. A verified report is a sequencing boundary,
+   not an approval or capability gate: lens fan-out starts after that artifact is
+   readable. A failed or unavailable required report instead ends report drafting
+   immediately with its exact reason; the host does not spend five lens turns on
+   a generation that has no usable greeting.
 5. The reviewer reads the report while the lens drafters regenerate in the
    background, their progress live beneath it — one lane per lens, streamed
    from the round's real progress, with the kicker reading *Regenerating the
    Boards* until the generation composes and *Regenerated the Boards* after.
+   After the report verifies, all five lens lanes run concurrently and each
+   settles from its own semantically accepted board, typed absence, or explicit
+   failure. Sequence requires a reachable `order_step`; Decisions and Flagged
+   require a reachable `decision` or `finding`, or their exact typed absence.
    A settled lane reads **carrying forward** or **reworked**; see
    [Carry-forward is a verdict, not a skip](#carry-forward-is-a-verdict-not-a-skip)
-   for exactly what that claims. A drafter that produced no board settles its
-   lane as **failed** carrying the reason — a lane left running after the round
-   is over would read as "still working". The surface never locks, and it always
+   for exactly what that claims. A drafter that produced neither an accepted board nor a
+   typed absence settles its lane as **failed** carrying the reason — a lane left
+   running after the round is over would read as "still working". The surface never locks, and it always
    ends: composing is terminal from wherever the round had got to, exactly as
    failing is, so a round that finishes can always say so even when an
-   intermediate step never happened. When the new generation composes, the way
-   to it appears — a control that exists only once it is ready, never a disabled
-   button. A round where *every* drafter failed composes nothing, so it ends on
+   intermediate step never happened. The early greeting never exposes **View the
+   New Boards** while regeneration or persisted verification is nonterminal.
+   That control appears only after the durable operation reaches terminal
+   `composed`; it is never a disabled button waiting to enable. A round where
+   *every* drafter failed composes nothing, so it ends on
    a terminal failure carrying the drafters' reasons rather than offering a way
    to boards nobody wrote.
 
    A round that lands a successor patchset supplies explicit round context. The
-   report receives the round number and exact dispatched asks; the host keeps
-   the prior generation and durable finding dispositions for composition. If
-   no report seat resolves or its draft fails, the lens drafters still proceed;
-   the host has no addressed outcomes to compose in that case. A coding turn
+   report receives the successor patchset id, exact dispatched asks, and exact
+   worker receipt; the host keeps the prior generation and durable finding
+   dispositions for composition. The round number is display and ledger data,
+   not classifier input. If
+   no report seat resolves or its draft fails, the round fails at that boundary
+   before any lens starts and keeps the dispatched asks retryable. A coding turn
    that changes no code keeps the existing generation and records no report or
    addressed claim; it terminates as unchanged and consumes only the exact ask
    occurrences that turn handled. Dispatched intent alone is not evidence that
@@ -577,22 +602,40 @@ keeping them apart.
 
 Two absences beside it are stated rather than smoothed over. A round rebuilt
 from durable board metadata after a restart cannot recompute its cross-lens
-coverage — that is derived from the drafted boards, which the metadata does not
-hold — so it reports coverage as *unknown* instead of an empty violation list
+coverage. That is derived from the drafted boards, which the metadata does not
+hold, so it reports coverage as *unknown* instead of an empty violation list
 that would claim a clean round nobody checked. And a client talking to a daemon
 older than itself gets no answer to the rounds reads at all; the surfaces say
 that, with the daemon's own reason, rather than showing the empty ledger that
 reads as "no rounds have completed".
 
-The round report's **arrival** is live: the progress channel carries the drafted
-report board's id the moment the report seat lands, which gates regeneration and
-starts the lanes. The durable round row pins that same exact id.
+The round report's **arrival** is live. After the report board and metadata have
+landed, the host reads them back, re-runs the exact evidence verification, and
+emits an operation-scoped event carrying the operation id, operation revision,
+report board id, and validated report projection. That event makes the greeting
+readable and starts the visible lane block while the coarse durable
+`report-drafting` phase continues. Lens-progress events carry the same operation
+identity. The client chooses the newest compatible operation revision before it
+compares event sequence numbers, because a restarted daemon can reset its
+transport sequence. Legacy unscoped report and lens events remain accepted only
+for callers without a durable operation.
+
+The durable round row pins that same exact report id.
 `session.rounds` joins it on read to the persisted report metadata and whiteboard
 state only when board id, session, and generation all match, then embeds the
 report projection on that row. The client resolves the greeting and ledger from
 the exact row naming the requested id. That projection is never written back to
 the round store; an old row or a genuinely missing report remains honestly
 absent.
+
+On a partial retry, Rennet reconstructs the exact reserved report from its
+metadata and element log, then runs the same evidence verification again. A
+verified report is reused without another classifier turn. Every other reserved
+partial board is scrubbed before re-drafting. Recovery removes its metadata
+first and clears the board state second, so a crash cannot leave metadata that
+promotes elements the next retry intends to replace. A malformed or
+semantically invalid report follows that same scrub order before one fresh
+classification attempt.
 
 ### What a round measures itself against
 

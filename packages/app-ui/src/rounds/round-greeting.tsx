@@ -132,11 +132,11 @@ function laneNote(lane: LensLane): string {
  * The synthetic tail steps (C15 4.2) — the two lines the regeneration shows after the
  * drafters settle, DERIVED from the real phase, never pre-rendered:
  *
- *   • "Cleaning up drafts · post-process pass" — the window between the last lens board
- *     arriving and the generation composing IS the post-process + composition pass
- *     (`lens-pipeline.ts` funnels every draft through it before `runRound` emits
- *     `composed`). So it appears once every lane has settled and reads `running` until
- *     the `composed` event lands. While any lane is still queued or running it is ABSENT.
+ *   • "Finalizing generation" is the window between the last lens arrival and the
+ *     `composed` event. Cross-lens coverage has already run before those arrivals. The
+ *     runtime still has to finish any configured review composition, validate the required
+ *     boards, persist the generation and ledger record, then emit `composed`. While any
+ *     lane is still queued or running this step is absent.
  *   • "Composed generation <id>" — the `composed` event itself, naming the generation the
  *     reveal opens. The spike numbered it ("Composed generation 2") off a fixture round
  *     counter; the live machine knows the minted generation's IDENTITY and no ordinal, so
@@ -148,14 +148,11 @@ function finishSteps(state: RoundState, lanes: readonly LensLane[]): readonly La
     lanes.every((l) => l.status === "done" || l.status === "absent" || l.status === "failed");
   if (state.phase === "composed") {
     return [
-      { id: "post-process", label: "Cleaning up drafts · post-process pass", status: "done" },
+      { id: "finalizing", label: "Generation finalized", status: "done" },
       { id: "composed", label: `Composed generation ${state.newGeneration}`, status: "done" },
     ];
   }
-  if (settled)
-    return [
-      { id: "post-process", label: "Cleaning up drafts · post-process pass", status: "running" },
-    ];
+  if (settled) return [{ id: "finalizing", label: "Finalizing generation", status: "running" }];
   return NO_STEPS;
 }
 

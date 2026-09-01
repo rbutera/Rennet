@@ -177,6 +177,17 @@ function PhaseProbe({ slug }: { readonly slug: string }) {
   );
 }
 
+function ScopedLaneProbe({ slug }: { readonly slug: string }) {
+  const state = useRoundState(slug);
+  const sequence =
+    (state.phase === "composing" || state.phase === "verifying" || state.phase === "composed") &&
+    state.lanes !== undefined
+      ? state.lanes.find((lane) => lane.id === "sequence")
+      : undefined;
+  const revision = "operation" in state ? state.operation.revision : -1;
+  return <span>{`attempt:${revision}/sequence:${sequence?.status ?? "none"}`}</span>;
+}
+
 function CrossSessionProbe({
   onFirstSettled,
   onSecondSettled = () => undefined,
@@ -1023,6 +1034,92 @@ describe("the read and the push merge by seq, neither erasing the other", () => 
       { type: "prep", rows: [], seq: 1 },
     ];
     expect(mergeRoundEvents(read, streamed).map((e) => e.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("accepts a recovered attempt's lower seq only after its durable revision advances", async () => {
+    const report = {
+      lens: "report" as const,
+      generation: "generation-recovered",
+      boardId: "report-recovered",
+      document: { title: "Round report", introMarkdown: "Recovered", measure: "reading" as const },
+      sections: [],
+      elements: [],
+      skippedHunks: [],
+    };
+    const oldAttempt = operationEvent(
+      {
+        phase: "report-drafting",
+        ...SETTLED_OPERATION,
+        report: { status: "drafting" },
+      },
+      8,
+    );
+    const bridge = new MemoryBridge({
+      ...resolutionHandlers,
+      "session.roundEvents": () => ({
+        events: [
+          { ...oldAttempt, seq: 99 },
+          {
+            type: "report",
+            operationId: OPERATION_BASE.operationId,
+            operationRevision: 8,
+            reportBoardId: report.boardId,
+            report,
+            seq: 100,
+          },
+          {
+            type: "lens",
+            operationId: OPERATION_BASE.operationId,
+            operationRevision: 8,
+            lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+            seq: 101,
+          },
+        ],
+      }),
+      "session.rounds": () => ({ records: [] }),
+    });
+    const history = memoryHistory(`/s/${REVIEW}/run`);
+    const r = mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveScope>
+            <ScopedLaneProbe slug={REVIEW} />
+          </LiveScope>
+        </Router>
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(r.getByText("attempt:8/sequence:running")).toBeTruthy());
+
+    act(() => {
+      bridge.emitRoundProgress(REVIEW, {
+        ...operationEvent(
+          {
+            phase: "report-drafting",
+            ...SETTLED_OPERATION,
+            report: { status: "drafting" },
+          },
+          9,
+        ),
+        seq: 0,
+      });
+      bridge.emitRoundProgress(REVIEW, {
+        type: "report",
+        operationId: OPERATION_BASE.operationId,
+        operationRevision: 9,
+        reportBoardId: report.boardId,
+        report,
+        seq: 1,
+      });
+      bridge.emitRoundProgress(REVIEW, {
+        type: "lens",
+        operationId: OPERATION_BASE.operationId,
+        operationRevision: 9,
+        lanes: [{ id: "sequence", label: "Sequence", status: "done", verdict: "reworked" }],
+        seq: 2,
+      });
+    });
+
+    await waitFor(() => expect(r.getByText("attempt:9/sequence:done")).toBeTruthy());
   });
 });
 

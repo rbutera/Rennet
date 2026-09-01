@@ -26,6 +26,7 @@ import {
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   parseSessionFrame,
+  RoundEventSchema,
 } from "@rennet/protocol";
 import { ConnectionError } from "./connection-error";
 
@@ -65,6 +66,156 @@ export interface WsRennetBridgeOptions {
    * state machine off these. Optional: a direct caller omits it.
    */
   readonly onLifecycle?: (event: BridgeLifecycleEvent) => void;
+}
+
+function reportDiagnosticMilestone(
+  milestone: Extract<RoundEvent, { readonly type: "report-diagnostic" }>["milestone"],
+): Readonly<Record<string, unknown>> {
+  switch (milestone.stage) {
+    case "turn-started":
+      return {
+        stage: milestone.stage,
+        harness: milestone.harness,
+        model: milestone.model,
+        effort: milestone.effort,
+        elapsedMs: milestone.elapsedMs,
+      };
+    case "provider-settled":
+      return {
+        stage: milestone.stage,
+        outcome: milestone.outcome,
+        elapsedMs: milestone.elapsedMs,
+      };
+    case "turn-settled":
+      return {
+        stage: milestone.stage,
+        status: milestone.status,
+        elapsedMs: milestone.elapsedMs,
+      };
+    case "schema-parsed":
+    case "evidence-verified":
+    case "persisted":
+      return { stage: milestone.stage, elapsedMs: milestone.elapsedMs };
+    default:
+      return {};
+  }
+}
+
+export function roundDiagnostic(
+  reviewId: string,
+  event: RoundEvent,
+): Readonly<Record<string, unknown>> {
+  const base = {
+    at: new Date().toISOString(),
+    reviewId,
+    type: event.type,
+    ...("seq" in event && event.seq !== undefined ? { seq: event.seq } : {}),
+  };
+  if (event.type === "operation") {
+    const failure =
+      event.snapshot.state.phase === "failed" ? event.snapshot.state.failure : undefined;
+    return {
+      ...base,
+      operationId: event.snapshot.operationId,
+      revision: event.snapshot.revision,
+      phase: event.snapshot.state.phase,
+      draining: event.snapshot.draining === true,
+      ...(failure === undefined ? {} : { failureAt: failure.at }),
+      ...(failure !== undefined && "report" in failure
+        ? { failureReason: failure.report.reason }
+        : {}),
+    };
+  }
+  if (event.type === "report") {
+    return {
+      ...base,
+      reportBoardId: event.reportBoardId,
+      ...(event.operationId === undefined ? {} : { operationId: event.operationId }),
+      ...(event.operationRevision === undefined
+        ? {}
+        : { operationRevision: event.operationRevision }),
+    };
+  }
+  if (event.type === "report-diagnostic") {
+    return {
+      ...base,
+      ...(event.operationId === undefined ? {} : { operationId: event.operationId }),
+      ...(event.operationRevision === undefined
+        ? {}
+        : { operationRevision: event.operationRevision }),
+      ...reportDiagnosticMilestone(event.milestone),
+    };
+  }
+  if (event.type === "lens") {
+    return {
+      ...base,
+      ...(event.operationId === undefined ? {} : { operationId: event.operationId }),
+      ...(event.operationRevision === undefined
+        ? {}
+        : { operationRevision: event.operationRevision }),
+      lanes: event.lanes.map((lane) => ({
+        id: lane.id,
+        status: lane.status,
+        ...("verdict" in lane ? { verdict: lane.verdict } : {}),
+      })),
+    };
+  }
+  return base;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function fixedReportDiagnosticMilestone(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  switch (value.stage) {
+    case "turn-started":
+      return {
+        stage: value.stage,
+        harness: value.harness,
+        model: value.model,
+        effort: value.effort,
+        elapsedMs: value.elapsedMs,
+      };
+    case "provider-settled":
+      return {
+        stage: value.stage,
+        outcome: value.outcome,
+        elapsedMs: value.elapsedMs,
+      };
+    case "turn-settled":
+      return {
+        stage: value.stage,
+        status: value.status,
+        elapsedMs: value.elapsedMs,
+      };
+    case "schema-parsed":
+    case "evidence-verified":
+    case "persisted":
+      return { stage: value.stage, elapsedMs: value.elapsedMs };
+    default:
+      return { stage: value.stage };
+  }
+}
+
+function reportDiagnosticsFrom(
+  output: unknown,
+): readonly Extract<RoundEvent, { readonly type: "report-diagnostic" }>[] {
+  if (typeof output !== "object" || output === null || !("events" in output)) return [];
+  if (!Array.isArray(output.events)) return [];
+
+  return output.events.flatMap((candidate) => {
+    if (!isRecord(candidate) || candidate.type !== "report-diagnostic") return [];
+    const parsed = RoundEventSchema.safeParse({
+      type: candidate.type,
+      milestone: fixedReportDiagnosticMilestone(candidate.milestone),
+      operationId: candidate.operationId,
+      operationRevision: candidate.operationRevision,
+      seq: candidate.seq,
+    });
+    return parsed.success && parsed.data.type === "report-diagnostic" ? [parsed.data] : [];
+  });
 }
 
 /**
@@ -138,6 +289,8 @@ export class WsRennetBridge implements RennetBridge {
   readonly #askProjectionListeners = new Map<string, Set<(projection: AskProjection) => void>>();
   /** Live round-progress listeners, keyed by review id (C15 3.1). */
   readonly #roundListeners = new Map<string, Set<(event: RoundEvent) => void>>();
+  readonly #loggedRoundDiagnostics = new Set<string>();
+  readonly #loggedRoundDiagnosticOrder: string[] = [];
   /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
   readonly #attentionListeners = new Set<(event: AttentionEventFrame) => void>();
 
@@ -153,17 +306,50 @@ export class WsRennetBridge implements RennetBridge {
   }
 
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>> {
-    return this.#whenReady().then(
-      (socket) =>
-        new Promise<CommandOutput<K>>((resolve, reject) => {
-          const requestId = crypto.randomUUID();
-          this.#pending.set(requestId, {
-            resolve: (output) => resolve(output as CommandOutput<K>),
-            reject,
-          });
-          socket.send(JSON.stringify({ type: "request", requestId, command: name, input }));
-        }),
-    );
+    return this.#whenReady()
+      .then(
+        (socket) =>
+          new Promise<CommandOutput<K>>((resolve, reject) => {
+            const requestId = crypto.randomUUID();
+            this.#pending.set(requestId, {
+              resolve: (output) => resolve(output as CommandOutput<K>),
+              reject,
+            });
+            socket.send(JSON.stringify({ type: "request", requestId, command: name, input }));
+          }),
+      )
+      .then((output) => {
+        if (name !== "session.roundEvents") return output;
+        const reviewId = (input as { readonly reviewId: string }).reviewId;
+        for (const event of reportDiagnosticsFrom(output))
+          this.#logRoundDiagnostic(reviewId, event);
+        return output;
+      });
+  }
+
+  #logRoundDiagnostic(
+    reviewId: string,
+    event: Extract<RoundEvent, { readonly type: "report-diagnostic" }>,
+  ): void {
+    if (event.seq !== undefined) {
+      const key = `${reviewId}\0${event.seq}`;
+      if (this.#loggedRoundDiagnostics.has(key)) return;
+      this.#loggedRoundDiagnostics.add(key);
+      this.#loggedRoundDiagnosticOrder.push(key);
+      if (this.#loggedRoundDiagnosticOrder.length > 256) {
+        const oldest = this.#loggedRoundDiagnosticOrder.shift();
+        if (oldest !== undefined) this.#loggedRoundDiagnostics.delete(oldest);
+      }
+    }
+    this.#writeRoundDiagnostic(reviewId, event);
+  }
+
+  #writeRoundDiagnostic(reviewId: string, event: RoundEvent): void {
+    try {
+      console.info("[rennet:round]", roundDiagnostic(reviewId, event));
+    } catch {
+      // The optional developer console never owns progress delivery or catch-up reads.
+    }
   }
 
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void {
@@ -508,6 +694,11 @@ export class WsRennetBridge implements RennetBridge {
         return;
       }
       case "roundProgress": {
+        if (frame.event.type === "report-diagnostic") {
+          this.#logRoundDiagnostic(frame.reviewId, frame.event);
+        } else {
+          this.#writeRoundDiagnostic(frame.reviewId, frame.event);
+        }
         const listeners = this.#roundListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
         return;

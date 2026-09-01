@@ -53,16 +53,108 @@ const lintContextFor = (lens: LintTarget): LintContext => ({ lens, hunks: [], fi
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
 const lensFromPrompt = (prompt: string): string =>
   /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
-const cleanBody = (lens: string): DraftBoard =>
-  ({
+const cleanBody = (lens: string): DraftBoard => {
+  const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
+  if (lens === "sequence") {
+    return {
+      elements: [
+        {
+          id: "sequence-root",
+          kind: "section",
+          data: { author, title: "Reading order", children: ["sequence-step"] },
+        },
+        {
+          id: "sequence-step",
+          kind: "order_step",
+          data: {
+            author,
+            title: "Read the changed entry point",
+            span: "sequence-detail",
+            children: [],
+          },
+        },
+        {
+          id: "sequence-detail",
+          kind: "prose",
+          data: { author, markdown: "The changed entry point begins the reading." },
+        },
+      ],
+      skippedHunks: [],
+    } as DraftBoard;
+  }
+  if (lens === "decisions") {
+    return {
+      elements: [
+        {
+          id: "decisions-root",
+          kind: "section",
+          data: { author, title: "Decisions", children: ["decision"] },
+        },
+        {
+          id: "decision",
+          kind: "decision",
+          data: {
+            author,
+            statement: "Persist the review generation atomically.",
+            evidence: ["decision-evidence"],
+            alternatives: ["decision-alternative"],
+            why: "Restart reconstruction must see one coherent generation.",
+          },
+        },
+        {
+          id: "decision-evidence",
+          kind: "prose",
+          data: { author, markdown: "The generation owns its exact board identities." },
+        },
+        {
+          id: "decision-alternative",
+          kind: "prose",
+          data: { author, markdown: "Persist each board identity independently." },
+        },
+      ],
+      skippedHunks: [],
+    } as DraftBoard;
+  }
+  if (lens === "flagged") {
+    return {
+      elements: [
+        {
+          id: "flagged-root",
+          kind: "section",
+          data: { author, title: "Findings", children: ["finding"] },
+        },
+        {
+          id: "finding",
+          kind: "finding",
+          data: {
+            author,
+            severity: "medium",
+            concern: "A partial retry could otherwise duplicate board state.",
+            code: [],
+            concurrence: [],
+            status: "open",
+          },
+        },
+      ],
+      skippedHunks: [],
+    } as DraftBoard;
+  }
+  return {
     elements: [
+      {
+        id: `${lens}-root`,
+        kind: "section",
+        data: { author, title: `${lens} notes`, children: [`${lens}-p1`] },
+      },
       {
         id: `${lens}-p1`,
         kind: "prose",
-        data: { author: { kind: "lens-agent", id: `${lens}-seat` }, markdown: "Reads cleanly." },
+        data: { author, markdown: "Reads cleanly." },
       },
     ],
-  }) as unknown as DraftBoard;
+    skippedHunks: [],
+  } as DraftBoard;
+};
 
 /** A fake Claude port answering a lens-appropriate clean board every turn. */
 function fakeClaudePort(): HarnessPort {
@@ -77,12 +169,17 @@ function fakeClaudePort(): HarnessPort {
           /* nothing to release */
         },
         events: (async function* () {
+          const prompt = capture.prompt ?? "";
+          const lens = lensFromPrompt(prompt);
+          const context =
+            lens === "post-process" ? /rennet:layer context>>>\n(\{.*)/s.exec(prompt) : null;
           yield {
             kind: "session.ended",
             native: {},
             outcome: {
               status: "completed",
-              structuredOutput: cleanBody(lensFromPrompt(capture.prompt ?? "")),
+              structuredOutput:
+                context === null ? cleanBody(lens) : JSON.parse(context[1] as string).board,
             },
           };
         })(),

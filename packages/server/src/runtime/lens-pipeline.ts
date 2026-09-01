@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
+import { performance } from "node:perf_hooks";
+import type { DesignArtifactSet, ProviderTurnSettlement, WhiteboardClient } from "@rennet/adapters";
 import { councilSeatTurn, createCoverageTurn } from "@rennet/adapters";
 import {
   assertCoverage,
@@ -14,7 +15,6 @@ import {
   type DeltaPacket,
   type DesignTaskProgressSource,
   deriveDesignTaskProgress,
-  elementReferenceFields,
   elementReferences,
   type FindingResolution,
   type HarnessPort,
@@ -24,6 +24,7 @@ import {
   type LintContext,
   type LintHunk,
   type LintTarget,
+  lint,
   lintReviewDraft,
   NO_CONCERN_ANSWER,
   type Omission,
@@ -36,7 +37,6 @@ import {
 } from "@rennet/core";
 import {
   LENS_PROMPT_FILES,
-  POST_PROCESS_FILE,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   renderLayer,
@@ -44,7 +44,10 @@ import {
 import {
   type BoardDocument,
   type ComposableAsk,
+  type CouncilEffort,
+  type CouncilHarnessId,
   type CouncilJobId,
+  type CouncilModel,
   type CouncilResolveContext,
   type DraftBoard,
   DraftBoardSchema,
@@ -58,11 +61,21 @@ import {
   type LensAbsenceReason,
   type LensKind,
   parseDraft,
+  type RoundReportDiagnosticMilestone,
   resolveBoardDocument,
   SEVERITY_LEVELS,
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import { projectRoundReportBoard } from "./lens-board-read";
+import {
+  CLASSIFIED_ROUND_REPORT_AUTHOR,
+  CLASSIFIED_ROUND_REPORT_SECTION_ID,
+  CLASSIFIED_ROUND_REPORT_SECTION_TITLE,
+  CLASSIFIED_ROUND_REPORT_STATUS_ORDER,
+  classifiedRoundReportIntro,
+  verifyRoundReportEvidence,
+} from "./round-report-verification";
 
 /**
  * The lens drafting pipeline SCHEDULER (#464 + #493 + #486, B08 cluster 5): the
@@ -70,9 +83,8 @@ import { z } from "zod";
  * `knowledge-swarm.ts`. It seeds one drafter harness session per lens IN THE PR
  * WORKTREE with the inlined DeltaPacket (B5) + the lens prompt (`@rennet/prompts`)
  * + the host board schema (D1), validates each structured return through the
- * cluster-3 loop (`validateDraft` over `parseDraft`/`lint`), runs the
- * `board-post-process` editor pass (D2 postProcess seam), and — as the SOLE op
- * writer — writes the validated board through `whiteboard-client` (the drafters
+ * cluster-3 loop (`validateDraft` over `parseDraft`/`lint`), and — as the SOLE
+ * op writer — writes the validated board through `whiteboard-client` (the drafters
  * never call whiteboard tools). Council-routed: every seat resolves through
  * `resolveAssignment` on the RESOLVED harness (Claude port / Codex utility
  * executor), exactly the B06 `councilSeatTurn` precedent.
@@ -82,9 +94,9 @@ import { z } from "zod";
  * `runTurn` and never makes a live model call (D-seam, like B06's swarm tests).
  *
  * ── Wiring points (packet 5.1 "record the wiring point in the ledger") ──
- *   - postProcess (validate.ts seam, identity by default) ← the REAL
- *     `board-post-process` editor pass (`POST_PROCESS_FILE`). Not a parallel
- *     gate runner — the one seam cluster 3 left.
+ *   - postProcess (validate.ts seam, identity by default) stays unused here.
+ *     A second model turn to rewrite an already-valid board doubles the common
+ *     path without adding source facts; deterministic validation owns cleanup.
  *   - compositionGate (validate.ts per-board seam) STAYS no-op; the cross-lens
  *     `assertCoverage(boards, hunks)` (cluster 4) runs ONCE over the frozen board
  *     set here, after every lens freezes — never per board.
@@ -93,6 +105,60 @@ import { z } from "zod";
 // ── The board output schema (the host schema the drafter's session is constrained to) ──
 
 let cachedBoardSchema: unknown;
+const RoundReportEvidenceSchema = z
+  .object({
+    path: z.string().min(1),
+    side: z.enum(["base", "head"]),
+    startLine: z.number().int().positive(),
+    endLine: z.number().int().positive(),
+  })
+  .strict()
+  .refine((evidence) => evidence.startLine === evidence.endLine, {
+    message: "evidence must cite one exact changed line",
+  });
+const RoundReportClassificationSchema = z
+  .object({
+    outcomes: z.array(
+      z.discriminatedUnion("status", [
+        z
+          .object({
+            askId: z.string().min(1),
+            status: z.literal("addressed"),
+            note: z.string().trim().min(1),
+            evidence: RoundReportEvidenceSchema,
+          })
+          .strict(),
+        z
+          .object({
+            askId: z.string().min(1),
+            status: z.literal("partial"),
+            note: z.string().trim().min(1),
+            evidence: RoundReportEvidenceSchema,
+          })
+          .strict(),
+        z
+          .object({
+            askId: z.string().min(1),
+            status: z.literal("untouched"),
+            note: z.string().trim().min(1),
+          })
+          .strict(),
+      ]),
+    ),
+    beyond: z.array(
+      z
+        .object({
+          ref: z.string().min(1),
+          text: z.string().trim().min(1),
+          note: z.string().trim().min(1),
+          evidence: RoundReportEvidenceSchema,
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+type RoundReportClassification = z.infer<typeof RoundReportClassificationSchema>;
+let cachedRoundReportClassificationSchema: unknown;
 const DesignNoMaterialSchema = z.object({
   absence: z.literal("no-material"),
   candidates: z.array(
@@ -120,6 +186,27 @@ export function boardOutputSchema(): unknown {
     cachedBoardSchema = { type: "object", properties: { elements: { type: "array" } } };
   }
   return cachedBoardSchema;
+}
+
+function roundReportClassificationOutputSchema(): unknown {
+  if (cachedRoundReportClassificationSchema !== undefined) {
+    return cachedRoundReportClassificationSchema;
+  }
+  try {
+    cachedRoundReportClassificationSchema = z.toJSONSchema(RoundReportClassificationSchema, {
+      io: "output",
+    });
+  } catch {
+    cachedRoundReportClassificationSchema = {
+      type: "object",
+      required: ["outcomes", "beyond"],
+      properties: {
+        outcomes: { type: "array" },
+        beyond: { type: "array" },
+      },
+    };
+  }
+  return cachedRoundReportClassificationSchema;
 }
 
 export function designDraftOutputSchema(): unknown {
@@ -171,6 +258,23 @@ export function draftToOps(
   };
   for (const el of board.elements) visit(el);
   return ordered.map((element) => ({ op: "create", element }));
+}
+
+/** Keep recovery deletes behind the same sole board-op writer as normal draft writes. */
+export async function deleteBoardElements(
+  whiteboard: Pick<WhiteboardClient, "apply">,
+  boardId: string,
+  elementIds: readonly string[],
+  actor: string,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }> {
+  const result = await whiteboard.apply(
+    boardId,
+    elementIds.map((id) => ({ op: "delete" as const, id })),
+    actor,
+  );
+  return result.response.ok
+    ? { ok: true }
+    : { ok: false, code: (result.response as { code?: string }).code ?? "rejected" };
 }
 
 // ── Flagged dual seat: reconcile two boards' findings (J1/J2, cluster 5.2) ──
@@ -296,26 +400,27 @@ function finalizedFlaggedDocument(
   return { ...authored, introMarkdown, measure: "reading" };
 }
 
-/** The findings the served board can reach from its top-level section roots. */
-function reachableFindingElements(elements: readonly DraftElement[]): DraftElement[] {
+/** Domain elements the served board can reach from its top-level section roots. */
+function reachableElementsOfKind(
+  elements: readonly DraftElement[],
+  kind: DraftElement["kind"],
+): DraftElement[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const nested = new Set<string>();
   for (const element of elements) {
-    if (element.kind !== "section" && element.kind !== "order_step") continue;
-    for (const child of element.data.children) nested.add(child);
+    const children = element.data.children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
   }
 
-  const findings: DraftElement[] = [];
+  const matches: DraftElement[] = [];
   const visited = new Set<string>();
   const visit = (id: string): void => {
     if (visited.has(id)) return;
     visited.add(id);
     const element = byId.get(id);
     if (element === undefined) return;
-    if (element.kind === "finding") {
-      findings.push(element);
-      return;
-    }
+    if (element.kind === kind) matches.push(element);
     if (element.kind !== "section" && element.kind !== "order_step") return;
     for (const child of element.data.children) visit(child);
   };
@@ -323,7 +428,27 @@ function reachableFindingElements(elements: readonly DraftElement[]): DraftEleme
   for (const element of elements) {
     if (element.kind === "section" && !nested.has(element.id)) visit(element.id);
   }
-  return findings;
+  return matches;
+}
+
+const MATERIAL_KIND_BY_LENS: Partial<Record<LensKind, DraftElement["kind"]>> = {
+  sequence: "order_step",
+  decisions: "decision",
+  flagged: "finding",
+};
+
+/** Whether a lens produced content the served board can actually render as its result. */
+function hasLensMaterial(lens: LensKind, board: DraftBoard): boolean {
+  const kind = MATERIAL_KIND_BY_LENS[lens];
+  return kind === undefined
+    ? board.elements.length > 0
+    : reachableElementsOfKind(board.elements, kind).length > 0;
+}
+
+/** Only a parsed, zero-element provider return can support a typed clean absence. */
+function isTrulyEmptyDraft(output: unknown): boolean {
+  const parsed = DraftBoardSchema.safeParse(output);
+  return parsed.success && parsed.data.elements.length === 0;
 }
 
 /**
@@ -550,11 +675,6 @@ export function renderRetryPrompt(
   return `${basePrompt}\n\n${prior}`;
 }
 
-/** The post-process editor's prompt: its instructions plus the board to polish. */
-export function renderPostProcessPrompt(promptText: string, board: DraftBoard): string {
-  return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", JSON.stringify({ board }))}`;
-}
-
 // ── The prompt-file reader seam (prompts is node-free; the caller resolves files) ──
 
 /** Read a prompt file from an on-disk copy of the `@rennet/prompts` src dir. */
@@ -647,6 +767,15 @@ export interface LensBoardOutcome {
   readonly absence?: LensAbsenceReason;
 }
 
+/** A report already durably written under this drafting attempt's reserved identity. */
+export interface ReusableRoundReport {
+  readonly boardId: string;
+  readonly board: DraftBoard;
+  readonly omissions: readonly Omission[];
+  readonly blemishes: readonly Violation[];
+  readonly immutability: readonly Violation[];
+}
+
 export interface DesignCoverageRequest {
   readonly patchsetId: string;
   readonly requirements: readonly CoverageRequirementInput[];
@@ -722,18 +851,22 @@ export interface LensPipelineDeps {
   readonly whiteboard: Pick<WhiteboardClient, "apply">;
   /** The board id one lens's ops land on (caller mints via `createRennetBoard`). */
   readonly boardIdFor: (lens: LintTarget) => string;
+  /** Exact report state recovered from this attempt's reserved board after a restart.
+   *  The pipeline re-verifies it against the worker receipt before announcing or reusing
+   *  it, and never opens another report provider turn when this candidate is present. */
+  readonly reusableRoundReport?: ReusableRoundReport;
+  /** Remove stale report metadata before clearing a recovered report board. */
+  readonly removeBoardMeta?: (boardId: string) => void | Promise<void>;
   /** The per-board arrival broadcast (B09 consumes; optional). */
-  readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
+  readonly onBoardArrival?: (event: BoardArrivalEvent) => void | Promise<void>;
+  /** Content-free timing checkpoints for a classified round report only. */
+  readonly onReportDiagnostic?: (milestone: RoundReportDiagnosticMilestone) => void;
   /** A successful lens absence, emitted as soon as discovery settles it. */
   readonly onLensAbsence?: (lens: LensKind, reason: LensAbsenceReason) => void | Promise<void>;
   /**
    * The lens drafters are about to start. Fires exactly once per pipeline, immediately
-   * before the first lens drafts — so AFTER the round report has settled, whichever way it
-   * settled. This is the honest kickoff signal: the caller's lane block reads "queued" until
-   * something says otherwise, and the report's ARRIVAL cannot be that something on a run
-   * where the report was expected and then FAILED (no arrival is announced, and the failure
-   * sweep only runs once the whole pipeline is over). The lenses run regardless — the report
-   * gates the reveal, not the drafting — so the lanes must start regardless too.
+   * before the first lens drafts. A required report must already have arrived; a report
+   * failure aborts the pipeline before this callback or any lens seat starts.
    */
   readonly onLensDraftingStart?: () => void;
   /**
@@ -774,6 +907,8 @@ export interface LensPipelineDeps {
   /** Curation feedback threaded from the prior generation into the authoring prompt (C2). */
   readonly curationFeedback?: string;
   readonly signal?: AbortSignal;
+  /** Clock seam for integer report milestone timing. */
+  readonly now?: () => number;
 }
 
 export interface RoundDraftContext {
@@ -791,6 +926,171 @@ export interface RoundDraftContext {
     readonly changedPaths: readonly string[];
     readonly commitRange: { readonly from: string; readonly to: string };
   };
+}
+
+type LandedRoundDraftContext = RoundDraftContext & {
+  readonly worker: NonNullable<RoundDraftContext["worker"]>;
+};
+
+/**
+ * The report classifier receives only the identity and evidence needed to judge this
+ * coding turn. The full DeltaPacket and all-kind board schema belong to lens drafting,
+ * not to the per-ask classification boundary.
+ */
+export function renderRoundReportClassifierPrompt(
+  promptText: string,
+  patchsetId: string,
+  round: LandedRoundDraftContext,
+): string {
+  const context = JSON.stringify({
+    patchsetId,
+    dispatchedAsks: round.dispatchedAsks.map(({ id, path, instruction, span, side }) => ({
+      id,
+      path,
+      instruction,
+      ...(span === undefined ? {} : { span }),
+      ...(side === undefined ? {} : { side }),
+    })),
+    worker: round.worker,
+  });
+  return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
+}
+
+type ClassifiedRoundOutcome =
+  | {
+      readonly status: "addressed" | "partial" | "untouched";
+      readonly ref: string;
+      readonly text: string;
+      readonly note: string;
+      readonly evidence?: z.infer<typeof RoundReportEvidenceSchema>;
+    }
+  | {
+      readonly status: "beyond";
+      readonly ref: string;
+      readonly text: string;
+      readonly note: string;
+      readonly evidence: z.infer<typeof RoundReportEvidenceSchema>;
+    };
+
+function classifiedRoundOutcomes(
+  classification: RoundReportClassification,
+  asks: readonly ComposableAsk[],
+): ClassifiedRoundOutcome[] {
+  const known = new Set(asks.map((ask) => ask.id));
+  const byAsk = new Map<string, RoundReportClassification["outcomes"][number]>();
+  for (const outcome of classification.outcomes) {
+    if (!known.has(outcome.askId)) {
+      throw new Error(`contains unknown dispatched ask ${outcome.askId}`);
+    }
+    if (byAsk.has(outcome.askId)) {
+      throw new Error(`repeats dispatched ask ${outcome.askId}`);
+    }
+    if (outcome.status !== "untouched" && outcome.evidence.endLine < outcome.evidence.startLine) {
+      throw new Error(`outcome for ${outcome.askId} has an inverted diff evidence range`);
+    }
+    byAsk.set(outcome.askId, outcome);
+  }
+
+  for (const outcome of classification.beyond) {
+    if (outcome.evidence.endLine < outcome.evidence.startLine) {
+      throw new Error(`beyond outcome ${outcome.ref} has an inverted diff evidence range`);
+    }
+  }
+
+  const missing = asks.filter((ask) => !byAsk.has(ask.id)).map((ask) => ask.id);
+  if (missing.length > 0) throw new Error(`omitted dispatched asks: ${missing.join(", ")}`);
+
+  const outcomes: ClassifiedRoundOutcome[] = asks.map((ask) => {
+    const classified = byAsk.get(ask.id);
+    if (classified === undefined) throw new Error(`omitted dispatched ask ${ask.id}`);
+    return classified.status === "untouched"
+      ? {
+          status: classified.status,
+          ref: ask.id,
+          text: ask.instruction,
+          note: classified.note,
+        }
+      : {
+          status: classified.status,
+          ref: ask.id,
+          text: ask.instruction,
+          note: classified.note,
+          evidence: classified.evidence,
+        };
+  });
+  outcomes.sort(
+    (left, right) =>
+      CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(left.status) -
+      CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(right.status),
+  );
+  const beyond: ClassifiedRoundOutcome[] = classification.beyond
+    .map((outcome) => ({
+      status: "beyond" as const,
+      ref: outcome.ref,
+      text: outcome.text,
+      note: outcome.note,
+      evidence: outcome.evidence,
+    }))
+    .sort((left, right) => left.ref.localeCompare(right.ref));
+  return [...outcomes, ...beyond];
+}
+
+function buildClassifiedRoundReport(
+  classification: RoundReportClassification,
+  round: LandedRoundDraftContext,
+  patchsetId: string,
+): DraftBoard {
+  const outcomes = classifiedRoundOutcomes(classification, round.dispatchedAsks);
+  const elements: DraftElement[] = [];
+  const outcomeIds: string[] = [];
+  for (const [index, outcome] of outcomes.entries()) {
+    const outcomeId = `rennet:host:round-report:${index}:outcome`;
+    const codeRefId = `rennet:host:round-report:${index}:code`;
+    outcomeIds.push(outcomeId);
+    if (outcome.evidence !== undefined) {
+      elements.push({
+        id: codeRefId,
+        kind: "code_ref",
+        data: {
+          author: CLASSIFIED_ROUND_REPORT_AUTHOR,
+          patchset_id: patchsetId,
+          path: outcome.evidence.path,
+          side: outcome.evidence.side,
+          start_line: outcome.evidence.startLine,
+          end_line: outcome.evidence.endLine,
+        },
+      });
+    }
+    elements.push({
+      id: outcomeId,
+      kind: "round_outcome",
+      data: {
+        author: CLASSIFIED_ROUND_REPORT_AUTHOR,
+        status: outcome.status,
+        ask: { ref: outcome.ref, text: outcome.text },
+        note: outcome.note,
+        ...(outcome.evidence === undefined ? {} : { code_ref: codeRefId }),
+      },
+    });
+  }
+  elements.unshift({
+    id: CLASSIFIED_ROUND_REPORT_SECTION_ID,
+    kind: "section",
+    data: {
+      author: CLASSIFIED_ROUND_REPORT_AUTHOR,
+      title: CLASSIFIED_ROUND_REPORT_SECTION_TITLE,
+      children: outcomeIds,
+    },
+  });
+  return {
+    document: {
+      title: "Round report",
+      introMarkdown: classifiedRoundReportIntro(outcomes.map((outcome) => outcome.status)),
+      measure: "reading",
+    },
+    elements,
+    skippedHunks: [],
+  } as DraftBoard;
 }
 
 export interface LensPipelineResult {
@@ -828,13 +1128,9 @@ function pipelineGenerationId(
  * Whether this run drafts a ROUND REPORT ahead of the lens boards — see the R58/D3 note
  * at the call site for why the two shapes differ.
  *
- * Exported because the report is also what promotes the live lens lanes' first drafter:
- * the arrival of the report calls `lanes.start()`. A run that drafts no report has to
- * start them at kickoff instead, and the caller can only know which it is by asking the
- * same question the pipeline asks. Copying the predicate over there would let the two
- * drift into a run that starts its lanes twice (the first lane reads "running" while the
- * report is still drafting) or never (the first lens reads "queued" for its whole run,
- * which is the bug this was extracted for).
+ * The predicate stays with the pipeline. Callers do not mirror it: `onLensDraftingStart`
+ * fires exactly once after a required report arrives or the report is skipped, and promotes
+ * all five independent lanes from that real kickoff boundary.
  */
 export function draftsRoundReport(
   deps: Pick<LensPipelineDeps, "currentGeneration" | "deltaPacket" | "round">,
@@ -859,7 +1155,18 @@ function resolveBoardSeat(
   council: CouncilResolveContext,
   outputSchema: unknown = boardOutputSchema(),
 ): ((prompt: string, attempt: number) => Promise<HarnessTurnResult>) | { failure: string } {
-  const seat = councilSeatTurn(
+  const seat = resolveBoardSeatDetails(jobId, deps, council, outputSchema);
+  return "failure" in seat ? { failure: seat.failure } : seat.runTurn;
+}
+
+function resolveBoardSeatDetails(
+  jobId: CouncilJobId,
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+  outputSchema: unknown,
+  onProviderSettled?: (milestone: ProviderTurnSettlement) => void,
+) {
+  return councilSeatTurn(
     jobId,
     outputSchema,
     {
@@ -868,10 +1175,10 @@ function resolveBoardSeat(
       repoRoot: deps.repoRoot,
       label: `board.${jobId}`,
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+      ...(onProviderSettled === undefined ? {} : { onProviderSettled }),
     },
     council,
   );
-  return "failure" in seat ? { failure: seat.failure } : seat.runTurn;
 }
 
 /** The body of a turn, or an empty board on an honest turn failure. */
@@ -892,15 +1199,22 @@ const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = {
   noise: "no-noise",
 };
 
-function requiredBoardRetryPrompt(basePrompt: string, lens: LintTarget): string {
-  const name = lens === "report" ? "round report" : `${lens} lens`;
-  return `${basePrompt}\n\nRETRY: The ${name} response validated but contained zero elements. This lane requires a visible reading result. Return a populated board grounded in the supplied change; do not return an empty elements array.`;
+function requiredBoardFailure(lens: LensKind): string {
+  switch (lens) {
+    case "sequence":
+      return "sequence lens: produced no reachable `order_step` in the emitted board; retry the generation to draft this required board.";
+    case "decisions":
+      return "decisions lens: produced no reachable `decision` in the emitted board; retry the generation to distinguish decisions from malformed output.";
+    case "flagged":
+      return "flagged lens: produced no reachable `finding` in the emitted board; retry the generation to distinguish findings from malformed output.";
+    default:
+      return `${lens} lens: produced zero elements in the emitted board; retry the generation to draft this required board.`;
+  }
 }
 
 /**
- * Draft one lens: seed the seat, run the cluster-3 validation loop (post-process
- * wired to the real `board-post-process` editor pass), and return the validated
- * board — or an honest `failure` (finding 6). A failure is recorded, never a
+ * Draft one lens: seed the seat, run the cluster-3 deterministic validation loop,
+ * and return the validated board — or an honest `failure` (finding 6). A failure is recorded, never a
  * throw and never a silent empty-success board, when: the INITIAL turn does not
  * emit a board (an empty fallback would ship as a schema-valid empty board), the
  * loop NEVER produces a parseable board across its attempts (`everParsed`), or a
@@ -912,34 +1226,23 @@ function requiredBoardRetryPrompt(basePrompt: string, lens: LintTarget): string 
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
-  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   ctx: LintContext,
   transformOutput?: (output: unknown) => unknown,
-): Promise<Awaited<ReturnType<typeof validateDraft>> | { readonly failure: string }>;
+): Promise<DraftedLens | { readonly failure: string }>;
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
-  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   ctx: LintContext,
   transformOutput: (output: unknown) => unknown,
   initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
-): Promise<
-  | Awaited<ReturnType<typeof validateDraft>>
-  | { readonly failure: string }
-  | { readonly absence: "no-material" }
->;
+): Promise<DraftedLens | { readonly failure: string } | { readonly absence: "no-material" }>;
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
-  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   ctx: LintContext,
   transformOutput: (output: unknown) => unknown = (output) => output,
   initialAbsence?: (output: unknown) => { readonly absence: "no-material" } | undefined,
-): Promise<
-  | Awaited<ReturnType<typeof validateDraft>>
-  | { readonly failure: string }
-  | { readonly absence: "no-material" }
-> {
+): Promise<DraftedLens | { readonly failure: string } | { readonly absence: "no-material" }> {
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
@@ -950,10 +1253,12 @@ async function draftOneLens(
     }
     const absence = initialAbsence?.(first.body);
     if (absence !== undefined) return absence;
+    const transformedFirst = transformOutput(first.body);
+    const initialOutputWasEmpty = isTrulyEmptyDraft(transformedFirst);
     let retryAbsence: { readonly absence: "no-material" } | undefined;
     let validated: Awaited<ReturnType<typeof validateDraft>>;
     try {
-      validated = await validateDraft(transformOutput(first.body), ctx, {
+      validated = await validateDraft(transformedFirst, ctx, {
         runTurn: async (req) => {
           try {
             const retry = await seatTurn(
@@ -975,11 +1280,6 @@ async function draftOneLens(
             return req.draft;
           }
         },
-        ...(postProcess === undefined
-          ? {}
-          : {
-              postProcess: async (board: DraftBoard) => transformOutput(await postProcess(board)),
-            }),
       });
     } catch (error) {
       if (error instanceof GroundedDesignAbsenceSignal && retryAbsence !== undefined) {
@@ -992,7 +1292,7 @@ async function draftOneLens(
         failure: `${who}: no parseable board across ${validated.attempts} attempts — recorded as a failure, not an empty board.`,
       };
     }
-    return validated;
+    return { ...validated, initialOutputWasEmpty };
   } catch (err) {
     // A throw on the FIRST turn (or anywhere outside the retry channel) degrades to
     // a recorded failure — never an uncaught throw that aborts the whole generation.
@@ -1038,128 +1338,12 @@ async function persistBoard(
   return { ok: true };
 }
 
-const POST_PROCESS_NARRATIVE_KINDS: ReadonlySet<DraftElement["kind"]> = new Set([
-  "prose",
-  "callout",
-  "annotation",
-]);
-
-/** Keep typed output and the document envelope stable across the prose-only editor pass. */
-function preservePostProcessDocument(before: DraftBoard, edited: unknown): unknown {
-  const parsed = DraftBoardSchema.safeParse(edited);
-  if (!parsed.success) return edited;
-
-  const beforeById = new Map(before.elements.map((element) => [element.id, element]));
-  const preservedIds = new Set<string>();
-  const preserveTree = (id: string): void => {
-    if (preservedIds.has(id)) return;
-    const element = beforeById.get(id);
-    if (element === undefined) return;
-    preservedIds.add(id);
-    const children = (element.data as { children?: unknown }).children;
-    if (!Array.isArray(children)) return;
-    for (const child of children) if (typeof child === "string") preserveTree(child);
-  };
-  for (const element of before.elements) {
-    if (element.kind === "requirement") {
-      preserveTree(element.id);
-      const scenarios = (element.data as { scenarios?: unknown }).scenarios;
-      if (Array.isArray(scenarios)) {
-        for (const scenario of scenarios) if (typeof scenario === "string") preserveTree(scenario);
-      }
-      continue;
-    }
-    if (
-      element.kind === "section" &&
-      ((element.data as { sources?: unknown }).sources !== undefined ||
-        (element.data as { spec_delta?: unknown }).spec_delta !== undefined)
-    ) {
-      preserveTree(element.id);
-    }
-  }
-  const isProtectedOriginal = (element: DraftElement): boolean =>
-    preservedIds.has(element.id) || !POST_PROCESS_NARRATIVE_KINDS.has(element.kind);
-  const preserveReferenceFields = (
-    original: DraftElement,
-    editedElement: DraftElement,
-  ): DraftElement => {
-    const data = { ...(editedElement.data as Record<string, unknown>) };
-    const originalData = original.data as Record<string, unknown>;
-    for (const field of elementReferenceFields(original)) {
-      if (Object.hasOwn(originalData, field)) data[field] = originalData[field];
-      else delete data[field];
-    }
-    return { ...editedElement, data } as DraftElement;
-  };
-  const editedById = new Map(parsed.data.elements.map((element) => [element.id, element]));
-  const originalIds = new Set(before.elements.map((element) => element.id));
-  const elements: DraftElement[] = [];
-  for (const original of before.elements) {
-    if (isProtectedOriginal(original)) {
-      elements.push(original);
-      continue;
-    }
-    const editedElement = editedById.get(original.id);
-    if (editedElement === undefined) continue;
-    elements.push(
-      POST_PROCESS_NARRATIVE_KINDS.has(editedElement.kind)
-        ? preserveReferenceFields(original, editedElement)
-        : original,
-    );
-  }
-  for (const element of parsed.data.elements) {
-    if (originalIds.has(element.id) || !POST_PROCESS_NARRATIVE_KINDS.has(element.kind)) continue;
-    elements.push(element);
-  }
-
-  if (before.document === undefined) {
-    const withoutInventedDocument = { ...parsed.data, elements };
-    delete withoutInventedDocument.document;
-    return withoutInventedDocument;
-  }
-
-  const document =
-    parsed.data.document === undefined
-      ? { ...before.document }
-      : {
-          ...parsed.data.document,
-          title: before.document.title,
-          measure: before.document.measure,
-        };
-  if (before.document.sources === undefined) delete document.sources;
-  else document.sources = before.document.sources;
-  if (before.document.stats === undefined) delete document.stats;
-  else document.stats = before.document.stats;
-
-  return {
-    ...parsed.data,
-    document,
-    elements,
-  };
-}
-
-/** Build the `board-post-process` editor seam, or `undefined` when no seat resolves. */
-function buildPostProcess(
-  deps: LensPipelineDeps,
-  council: CouncilResolveContext,
-  postProcessText: string,
-): ((board: DraftBoard) => Promise<unknown>) | undefined {
-  const seat = resolveBoardSeat("board-post-process", deps, council);
-  if ("failure" in seat) return undefined; // no editor seat ⇒ identity (validate.ts default)
-  return async (board: DraftBoard) => {
-    const result = await seat(renderPostProcessPrompt(postProcessText, board), 0);
-    // A failed editor turn is identity — the immutability gate has nothing to
-    // catch, prose is simply un-polished. Never a block.
-    return preservePostProcessDocument(board, bodyOr(result, board));
-  };
-}
-
 /**
  * Run the lens drafting pipeline for one generation. Seeds the five lens
- * drafters, validates + post-processes + writes each board, emits per-board
+ * drafters, validates + writes each board, emits per-board
  * arrival on freeze, and runs the cross-lens coverage assert ONCE over the
- * frozen set. Honest degradation throughout: a lens whose seat cannot resolve is
- * recorded as a failure, never a throw.
+ * frozen set. A required report is the one sequencing boundary: it must exist before fanout.
+ * Individual lens failures remain recorded outcomes rather than throws.
  */
 export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipelineResult> {
   const council: CouncilResolveContext = deps.council ?? {
@@ -1171,30 +1355,48 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     },
   };
 
-  const postProcessText = await deps.readPrompt(POST_PROCESS_FILE);
-  const postProcess = buildPostProcess(deps, council, postProcessText);
-
   // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
   // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.
-  const report = draftsRoundReport(deps)
-    ? await runRoundReport(deps, council, postProcess)
-    : undefined;
+  const reportRequired = draftsRoundReport(deps);
+  const report = reportRequired ? await runRoundReport(deps, council) : undefined;
+  if (reportRequired && report?.board === undefined) {
+    throw new Error(
+      report?.failure ??
+        "round-report seat: required report did not produce a board; retry the generation.",
+    );
+  }
   const reportBoard = report?.board;
 
-  // The report has settled — arrived, failed, or was never expected — and the lens drafters
-  // start now in all three cases. Saying so here, from the run itself, is what keeps the
-  // caller's lane block honest on the path where the report was expected and FAILED: nothing
-  // announces an arrival, so a caller that starts its lanes off the arrival alone shows
-  // "queued" for the whole run while Design is the one lens working. This fires after the
-  // report's arrival, never before, so the report's announce-first contract still holds.
+  // A required report has arrived, or this generation does not need one. Only now may the
+  // independent lens seats start; report failure exits above without launching hidden work.
   deps.onLensDraftingStart?.();
 
-  const outcomes: LensBoardOutcome[] = [];
-  for (const lens of LENS_KINDS) {
-    const outcome = await runLensBoard(lens, deps, council, postProcess, reportBoard);
-    outcomes.push(outcome);
-    if (outcome.absence !== undefined) await deps.onLensAbsence?.(lens, outcome.absence);
-  }
+  // Each lens owns a distinct seat, board id, and metadata record, so the five drafts can
+  // run independently once the report gate settles. Absence notifications are the one
+  // cumulative persistence seam: serialize them in settlement order, and keep the tail
+  // alive after a rejected callback so one failed save cannot suppress a later absence.
+  let absenceNotificationTail = Promise.resolve();
+  const notifyAbsence = (lens: LensKind, reason: LensAbsenceReason): Promise<void> => {
+    const notification = absenceNotificationTail.then(() => deps.onLensAbsence?.(lens, reason));
+    absenceNotificationTail = notification.then(
+      () => undefined,
+      () => undefined,
+    );
+    return notification;
+  };
+  const settledOutcomes = await Promise.allSettled(
+    LENS_KINDS.map(async (lens) => {
+      const outcome = await runLensBoard(lens, deps, council, reportBoard);
+      if (outcome.absence !== undefined) await notifyAbsence(lens, outcome.absence);
+      return outcome;
+    }),
+  );
+  // Wait for every launched lane before propagating an unexpected infrastructure error.
+  // Array order remains LENS_KINDS even when persistence completed in another order.
+  const outcomes = settledOutcomes.map((result) => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
+  });
 
   // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
   // stays no-op per board — this is the cross-lens obligation). Runs BEFORE any lens
@@ -1208,7 +1410,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // Announce each accepted lens board now that coverage is known (finding 2/3).
   for (const o of outcomes) {
     if (o.board !== undefined && o.boardId !== undefined) {
-      deps.onBoardArrival?.({
+      await deps.onBoardArrival?.({
         lens: o.lens,
         boardId: o.boardId,
         elementCount: o.board.elements.length,
@@ -1249,20 +1451,304 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   };
 }
 
-/**
- * The round-report drafter (D3, R58): resolves the `round-report` seat, drafts
- * with the report lint register (`ctx.lens === "report"` ⇒ `REPORT_RULES`, no
- * hunk-coverage obligation), funnels through the SAME post-process pass, writes
- * to the report board, and announces its arrival. Honest degradation: no seat ⇒
- * `undefined`, and the lens drafters simply proceed without a report.
- */
-async function runRoundReport(
+/** The production round report: one semantic classification turn, deterministic shape. */
+function verifyClassifiedRoundReport(
+  deps: LensPipelineDeps,
+  round: LandedRoundDraftContext,
+  boardId: string,
+  board: DraftBoard,
+): void {
+  const projected = projectRoundReportBoard(board.elements, {
+    lens: "report",
+    generation: pipelineGenerationId(deps),
+    boardId,
+    document: board.document,
+    skippedHunks: boardSkippedHunks(board),
+  });
+  verifyRoundReportEvidence({
+    board: projected,
+    dispatchedAsks: round.dispatchedAsks,
+    expectedPatchsetId: deps.deltaPacket.patchset.id,
+    diff: round.worker.diff,
+    changedPaths: round.worker.changedPaths,
+  });
+}
+
+async function reuseClassifiedRoundReport(
+  deps: LensPipelineDeps,
+  round: LandedRoundDraftContext,
+  report: ReusableRoundReport,
+): Promise<LensBoardOutcome | undefined> {
+  const boardId = deps.boardIdFor("report");
+  if (report.boardId !== boardId) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: reusable report ${report.boardId} does not match reserved board ${boardId}.`,
+    };
+  }
+  try {
+    verifyClassifiedRoundReport(deps, round, boardId, report.board);
+  } catch (error) {
+    try {
+      await deps.removeBoardMeta?.(boardId);
+    } catch (removeError) {
+      return {
+        lens: "report",
+        omissions: report.omissions,
+        blemishes: report.blemishes,
+        immutability: report.immutability,
+        failure: `round-report seat: reusable report failed verification and its metadata could not be removed — ${
+          removeError instanceof Error ? removeError.message : String(removeError)
+        }`,
+      };
+    }
+    const elementIds = draftToOps(report.board)
+      .reverse()
+      .map(({ element }) => element.id);
+    const cleared = await deleteBoardElements(
+      deps.whiteboard,
+      boardId,
+      elementIds,
+      "host:round-report-recovery",
+    );
+    if (!cleared.ok) {
+      return {
+        lens: "report",
+        omissions: report.omissions,
+        blemishes: report.blemishes,
+        immutability: report.immutability,
+        failure: `round-report seat: reusable report failed verification and its reserved board could not be cleared (${cleared.code}) — ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+    // A stale or corrupt candidate must not poison every retry. Once its reserved board
+    // is empty, fall through to the same single classification turn as a fresh attempt;
+    // the new metadata overwrites the stale record after the replacement board lands.
+    return undefined;
+  }
+  await deps.onBoardArrival?.({
+    lens: "report",
+    boardId,
+    elementCount: report.board.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), report.board),
+  });
+  return {
+    lens: "report",
+    boardId,
+    board: report.board,
+    omissions: report.omissions,
+    blemishes: report.blemishes,
+    immutability: report.immutability,
+  };
+}
+
+function roundReportTurnStartedMilestone(
+  seat: {
+    readonly harness: CouncilHarnessId;
+    readonly model: CouncilModel;
+    readonly effort: CouncilEffort;
+  },
+  elapsedMs: number,
+): RoundReportDiagnosticMilestone | undefined {
+  if (seat.harness === "claude-code") {
+    switch (seat.model) {
+      case "haiku":
+      case "sonnet-5":
+      case "opus-4.8":
+        return {
+          stage: "turn-started",
+          harness: "claude-code",
+          model: seat.model,
+          effort: seat.effort,
+          elapsedMs,
+        };
+      default:
+        return undefined;
+    }
+  }
+  switch (seat.model) {
+    case "gpt-5.5":
+    case "gpt-5.6-sol":
+    case "gpt-5.6-terra":
+    case "gpt-5.6-luna":
+      return {
+        stage: "turn-started",
+        harness: "codex",
+        model: seat.model,
+        effort: seat.effort,
+        elapsedMs,
+      };
+    default:
+      return undefined;
+  }
+}
+
+async function runClassifiedRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
-  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+  round: LandedRoundDraftContext,
+): Promise<LensBoardOutcome | undefined> {
+  const now = deps.now ?? (() => performance.now());
+  const startedAt = now();
+  let lastElapsedMs = 0;
+  const elapsedMs = (): number => {
+    const elapsed = now() - startedAt;
+    const measured = Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
+    lastElapsedMs = Math.max(lastElapsedMs, measured);
+    return lastElapsedMs;
+  };
+  const emitDiagnostic = (milestone: RoundReportDiagnosticMilestone): void => {
+    try {
+      deps.onReportDiagnostic?.(milestone);
+    } catch {
+      // Report-only diagnostics never change the classified result they describe.
+    }
+  };
+  const seat = resolveBoardSeatDetails(
+    "round-report",
+    deps,
+    council,
+    roundReportClassificationOutputSchema(),
+    (milestone) => emitDiagnostic({ ...milestone, elapsedMs: elapsedMs() }),
+  );
+  if ("failure" in seat) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: ${seat.failure}`,
+    };
+  }
+
+  const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
+  const prompt = renderRoundReportClassifierPrompt(promptText, deps.deltaPacket.patchset.id, round);
+  const turnStarted = roundReportTurnStartedMilestone(seat, elapsedMs());
+  if (turnStarted !== undefined) emitDiagnostic(turnStarted);
+  let turn: HarnessTurnResult;
+  try {
+    turn = await seat.runTurn(prompt, 0);
+  } catch (error) {
+    emitDiagnostic({ stage: "turn-settled", status: "failed", elapsedMs: elapsedMs() });
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification turn threw — ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+    };
+  }
+  emitDiagnostic({ stage: "turn-settled", status: turn.status, elapsedMs: elapsedMs() });
+  if (turn.status !== "emitted") {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification turn did not emit (${turn.status}: ${turn.message}).`,
+    };
+  }
+  const parsed = RoundReportClassificationSchema.safeParse(turn.body);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "output"}: ${issue.message}`)
+      .join("; ");
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification output was invalid — ${issues}.`,
+    };
+  }
+  emitDiagnostic({ stage: "schema-parsed", elapsedMs: elapsedMs() });
+
+  let board: DraftBoard;
+  try {
+    board = buildClassifiedRoundReport(parsed.data, round, deps.deltaPacket.patchset.id);
+  } catch (error) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+    };
+  }
+
+  const stamped = stampDeltas(deps.previous?.get("report"), board);
+  const boardId = deps.boardIdFor("report");
+  try {
+    verifyClassifiedRoundReport(deps, round, boardId, stamped);
+  } catch (error) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: deterministic verification failed — ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  emitDiagnostic({ stage: "evidence-verified", elapsedMs: elapsedMs() });
+
+  const validated: ValidatedLike = {
+    board: stamped,
+    omissions: [],
+    blemishes: lint(stamped, deps.lintContextFor("report")),
+    immutability: [],
+  };
+  const persisted = await persistBoard(deps, "report", boardId, stamped, validated, "seat:report");
+  if (!persisted.ok) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: validated.blemishes,
+      immutability: [],
+      failure: persisted.reason,
+    };
+  }
+  emitDiagnostic({ stage: "persisted", elapsedMs: elapsedMs() });
+  await deps.onBoardArrival?.({
+    lens: "report",
+    boardId,
+    elementCount: stamped.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), stamped),
+  });
+  return {
+    lens: "report",
+    boardId,
+    board: stamped,
+    omissions: [],
+    blemishes: validated.blemishes,
+    immutability: [],
+  };
+}
+
+/** Legacy callers without an exact worker receipt keep the old generic board path. */
+async function runLegacyRoundReport(
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
 ): Promise<LensBoardOutcome | undefined> {
   const seat = resolveBoardSeat("round-report", deps, council);
-  if ("failure" in seat) return undefined;
+  if ("failure" in seat) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: ${seat.failure}`,
+    };
+  }
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
   const basePrompt = renderDrafterPrompt(
@@ -1274,7 +1760,7 @@ async function runRoundReport(
     deps.round,
   );
   const ctx = deps.lintContextFor("report");
-  let validated = await draftOneLens(basePrompt, seat, postProcess, ctx);
+  const validated = await draftOneLens(basePrompt, seat, ctx);
   if ("failure" in validated) {
     return {
       lens: "report",
@@ -1285,31 +1771,14 @@ async function runRoundReport(
     };
   }
   if (validated.board.elements.length === 0) {
-    validated = await draftOneLens(
-      requiredBoardRetryPrompt(basePrompt, "report"),
-      seat,
-      postProcess,
-      ctx,
-    );
-    if ("failure" in validated) {
-      return {
-        lens: "report",
-        omissions: [],
-        blemishes: [],
-        immutability: [],
-        failure: validated.failure,
-      };
-    }
-    if (validated.board.elements.length === 0) {
-      return {
-        lens: "report",
-        omissions: validated.omissions,
-        blemishes: validated.blemishes,
-        immutability: validated.immutability,
-        failure:
-          "round-report seat: produced zero elements after one explicit retry; retry the generation to draft this required board.",
-      };
-    }
+    return {
+      lens: "report",
+      omissions: validated.omissions,
+      blemishes: validated.blemishes,
+      immutability: validated.immutability,
+      failure:
+        "round-report seat: produced zero elements in the emitted board; retry the generation to draft this required board.",
+    };
   }
   const stamped = stampDeltas(deps.previous?.get("report"), validated.board);
 
@@ -1324,9 +1793,7 @@ async function runRoundReport(
       failure: persisted.reason,
     };
   }
-  // The report is the reviewer's greeting (R58) — it announces its arrival inline,
-  // ahead of the lens boards, once its write is accepted and its metadata is durable.
-  deps.onBoardArrival?.({
+  await deps.onBoardArrival?.({
     lens: "report",
     boardId,
     elementCount: stamped.elements.length,
@@ -1343,13 +1810,37 @@ async function runRoundReport(
   };
 }
 
-/** Draft, validate, post-process, write, and announce one lens board. */
+/**
+ * Draft the report before lens fanout. Landed production rounds use the compact
+ * classifier; only legacy callers without exact worker evidence use generic board drafting.
+ */
+async function runRoundReport(
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+): Promise<LensBoardOutcome | undefined> {
+  if (deps.round?.worker !== undefined) {
+    const round = deps.round as LandedRoundDraftContext;
+    if (deps.reusableRoundReport !== undefined) {
+      const reused = await reuseClassifiedRoundReport(deps, round, deps.reusableRoundReport);
+      if (reused !== undefined) return reused;
+    }
+    return runClassifiedRoundReport(deps, council, round);
+  }
+  return runLegacyRoundReport(deps, council);
+}
+
+/** Draft, validate, write, and announce one lens board. */
 /** The shape the common tail needs — one seat's or the reconciled dual seat's. */
 interface ValidatedLike {
   readonly board: DraftBoard;
   readonly omissions: readonly Omission[];
   readonly blemishes: readonly Violation[];
   readonly immutability: readonly Violation[];
+}
+
+/** A validated lens result plus the provider-return fact that authorizes clean absence. */
+interface DraftedLens extends ValidatedLike {
+  readonly initialOutputWasEmpty: boolean;
 }
 
 function discoveredArtifacts(set: DesignArtifactSet | null | undefined): readonly {
@@ -2095,10 +2586,9 @@ async function groundDesignCoverage(
  */
 async function runFlaggedDual(
   deps: LensPipelineDeps,
-  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   basePrompt: string,
   ctx: LintContext,
-): Promise<ValidatedLike | { failure: string }> {
+): Promise<DraftedLens | { failure: string }> {
   const claudeSeat = deps.claudePort
     ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["claude-code"] } })
     : { failure: "no claude harness" };
@@ -2118,7 +2608,7 @@ async function runFlaggedDual(
       ? (claudeSeat as (p: string, a: number) => Promise<HarnessTurnResult>)
       : (codexSeat as (p: string, a: number) => Promise<HarnessTurnResult>);
     const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
-    const single = await draftOneLens(basePrompt, seat, postProcess, ctx);
+    const single = await draftOneLens(basePrompt, seat, ctx);
     if ("failure" in single) return { failure: single.failure };
     return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
   }
@@ -2128,13 +2618,11 @@ async function runFlaggedDual(
     draftOneLens(
       basePrompt,
       claudeSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
-      postProcess,
       ctx,
     ),
     draftOneLens(
       basePrompt,
       codexSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
-      postProcess,
       ctx,
     ),
   ]);
@@ -2148,12 +2636,12 @@ async function runFlaggedDual(
   }
   // One seat failed ⇒ degrade to the survivor with honest single-model concurrence.
   if (!aOk || !bOk) {
-    const ok = (aOk ? a : b) as ValidatedLike;
+    const ok = (aOk ? a : b) as DraftedLens;
     const label = aOk ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
     return { ...ok, board: stampSingleSeatConcurrence(ok.board, label) };
   }
-  const seatA = a as ValidatedLike;
-  const seatB = b as ValidatedLike;
+  const seatA = a as DraftedLens;
+  const seatB = b as DraftedLens;
   const labels = { a: DEFAULT_SEAT_LABELS["claude-code"], b: DEFAULT_SEAT_LABELS.codex };
   const merged = reconcileFlaggedBoards(seatA.board, seatB.board, labels);
   // Wire-validate the merged board (finding 7): a reconciliation that produced a
@@ -2171,6 +2659,7 @@ async function runFlaggedDual(
     omissions: [...seatA.omissions, ...seatB.omissions],
     blemishes: [...seatA.blemishes, ...seatB.blemishes, ...mergeBlemishes],
     immutability: [...seatA.immutability, ...seatB.immutability],
+    initialOutputWasEmpty: seatA.initialOutputWasEmpty && seatB.initialOutputWasEmpty,
   };
 }
 
@@ -2178,7 +2667,6 @@ async function runLensBoard(
   lens: LensKind,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
-  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
   if (lens === "design" && deps.designArtifactFailure !== undefined) {
@@ -2236,10 +2724,10 @@ async function runLensBoard(
       : withoutCoverage;
   };
 
-  let validated: ValidatedLike;
+  let validated: DraftedLens;
   if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
-    const dual = await runFlaggedDual(deps, postProcess, basePrompt, ctx);
+    const dual = await runFlaggedDual(deps, basePrompt, ctx);
     if ("failure" in dual) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: dual.failure };
     }
@@ -2255,43 +2743,17 @@ async function runLensBoard(
     if ("failure" in seat) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
     }
-    let drafted =
+    const drafted =
       semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
-        ? await draftOneLens(basePrompt, seat, postProcess, ctx, transformDesignOutput, (output) =>
+        ? await draftOneLens(basePrompt, seat, ctx, transformDesignOutput, (output) =>
             groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
           )
         : await draftOneLens(
             basePrompt,
             seat,
-            postProcess,
             ctx,
             lens === "design" ? transformDesignOutput : undefined,
           );
-    if (
-      !("failure" in drafted) &&
-      !("absence" in drafted) &&
-      drafted.board.elements.length === 0 &&
-      (lens === "design" || lens === "sequence")
-    ) {
-      const retryPrompt = requiredBoardRetryPrompt(basePrompt, lens);
-      drafted =
-        semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
-          ? await draftOneLens(
-              retryPrompt,
-              seat,
-              postProcess,
-              ctx,
-              transformDesignOutput,
-              (output) => groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
-            )
-          : await draftOneLens(
-              retryPrompt,
-              seat,
-              postProcess,
-              ctx,
-              lens === "design" ? transformDesignOutput : undefined,
-            );
-    }
     if ("failure" in drafted) {
       return { lens, omissions: [], blemishes: [], immutability: [], failure: drafted.failure };
     }
@@ -2299,6 +2761,31 @@ async function runLensBoard(
       return { lens, omissions: [], blemishes: [], immutability: [], absence: drafted.absence };
     }
     validated = drafted;
+  }
+
+  if (!hasLensMaterial(lens, validated.board)) {
+    const absence = validated.initialOutputWasEmpty ? EMPTY_LENS_ABSENCE[lens] : undefined;
+    if (absence === undefined) {
+      return {
+        lens,
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        failure: requiredBoardFailure(lens),
+      };
+    }
+    // A round's empty Flagged result still owns disposition migration. Let it pass
+    // through composeFindingRound and persistFindingResolutions before the final
+    // no-findings absence. Other clean absences have no round-owned state to migrate.
+    if (lens !== "flagged" || deps.round === undefined) {
+      return {
+        lens,
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        absence,
+      };
+    }
   }
 
   if (lens === "design") {
@@ -2349,7 +2836,7 @@ async function runLensBoard(
   }
 
   if (lens === "flagged") {
-    const visibleElements = reachableFindingElements(validated.board.elements);
+    const visibleElements = reachableElementsOfKind(validated.board.elements, "finding");
     validated = {
       ...validated,
       board: {
@@ -2359,30 +2846,19 @@ async function runLensBoard(
     };
   }
 
-  if (validated.board.elements.length === 0) {
-    const absence = EMPTY_LENS_ABSENCE[lens];
-    if (absence !== undefined) {
-      return {
-        lens,
-        omissions: validated.omissions,
-        blemishes: validated.blemishes,
-        immutability: validated.immutability,
-        absence,
-      };
-    }
-    return {
-      lens,
-      omissions: validated.omissions,
-      blemishes: validated.blemishes,
-      immutability: validated.immutability,
-      failure: `${lens} lens: produced zero elements after one explicit retry; retry the generation to draft this required board.`,
-    };
-  }
-
-  const boardId = deps.boardIdFor(lens);
-
-  if (
+  const migratesFindingResolutions =
     lens === "flagged" &&
+    findingResolutions !== undefined &&
+    findingDispositions !== undefined &&
+    deps.persistFindingResolutions !== undefined;
+  const flaggedBoardId = migratesFindingResolutions ? deps.boardIdFor(lens) : undefined;
+
+  // A Flagged round can consume the last reachable finding while retaining its flat-pool
+  // history. Migrate the reviewer-owned resolution before returning typed absence so the
+  // next round does not lose the disposition merely because there is no board to serve.
+  if (
+    migratesFindingResolutions &&
+    flaggedBoardId !== undefined &&
     findingResolutions !== undefined &&
     findingDispositions !== undefined &&
     deps.persistFindingResolutions !== undefined
@@ -2390,7 +2866,7 @@ async function runLensBoard(
     try {
       await deps.persistFindingResolutions(
         pipelineGenerationId(deps),
-        boardId,
+        flaggedBoardId,
         findingResolutions,
         findingDispositions,
       );
@@ -2405,6 +2881,29 @@ async function runLensBoard(
       };
     }
   }
+
+  if (!hasLensMaterial(lens, validated.board)) {
+    const absence = EMPTY_LENS_ABSENCE[lens];
+    if (absence !== undefined) {
+      return {
+        lens,
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        ...(findingResolutions === undefined ? {} : { findingResolutions }),
+        absence,
+      };
+    }
+    return {
+      lens,
+      omissions: validated.omissions,
+      blemishes: validated.blemishes,
+      immutability: validated.immutability,
+      failure: requiredBoardFailure(lens),
+    };
+  }
+
+  const boardId = flaggedBoardId ?? deps.boardIdFor(lens);
 
   // R58 delta stamps against the prior generation's board (cluster 4).
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);

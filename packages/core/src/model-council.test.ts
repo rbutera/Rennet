@@ -361,7 +361,7 @@ describe("resolveAssignment — the board-rebuild drafting seats (#489 B08)", ()
     }
   });
 
-  it("routes the heavy drafting seats to Claude under both (the reading surface stays on Claude, R39)", () => {
+  it("routes the heavy lens drafting seats to Claude under both (the reading surface stays on Claude, R39)", () => {
     expect(resolveAssignment("lens-draft", ctx(BOTH))).toMatchObject({
       harness: "claude-code",
       model: "opus-4.8",
@@ -370,13 +370,27 @@ describe("resolveAssignment — the board-rebuild drafting seats (#489 B08)", ()
       harness: "claude-code",
       model: "sonnet-5",
     });
+  });
+
+  it("routes the single-turn round classifier at low effort instead of board-drafting effort", () => {
     expect(resolveAssignment("round-report", ctx(BOTH))).toMatchObject({
       harness: "claude-code",
       model: "sonnet-5",
+      effort: "low",
+    });
+    expect(resolveAssignment("round-report", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "sonnet-5",
+      effort: "low",
+    });
+    expect(resolveAssignment("round-report", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-terra",
+      effort: "low",
     });
   });
 
-  it("the two light board seats cross to Codex under both; the heavy seats do not", () => {
+  it("the two light drafting seats cross to Codex under both; the classifier and heavy seats do not", () => {
     for (const jobId of ["lens-draft-noise", "board-post-process"] as const) {
       const light = resolveAssignment(jobId, ctx(BOTH));
       if (light.kind !== "model") throw new Error("expected a model resolution");

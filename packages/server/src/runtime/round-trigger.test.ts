@@ -82,16 +82,83 @@ function patchset(): Patchset {
 function orderedFakeClaudePort(order: string[]): HarnessPort {
   const lensFromPrompt = (p: string): string =>
     /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
-  const board = (lens: string): DraftBoard =>
-    ({
-      elements: [
-        {
-          id: `${lens}-p1`,
-          kind: "prose",
-          data: { author: { kind: "lens-agent", id: `${lens}-seat` }, markdown: "Reads cleanly." },
-        },
-      ],
-    }) as unknown as DraftBoard;
+  const board = (lens: string): DraftBoard => {
+    const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
+    const prose = {
+      id: `${lens}-detail`,
+      kind: "prose" as const,
+      data: { author, markdown: "Reads cleanly." },
+    };
+    if (lens === "sequence") {
+      return {
+        elements: [
+          {
+            id: "sequence-section",
+            kind: "section",
+            data: { author, title: "Sequence", children: ["sequence-step"] },
+          },
+          {
+            id: "sequence-step",
+            kind: "order_step",
+            data: { author, title: "Read the change", span: prose.id, children: [] },
+          },
+          prose,
+        ],
+      } as unknown as DraftBoard;
+    }
+    if (lens === "decisions") {
+      return {
+        elements: [
+          {
+            id: "decisions-section",
+            kind: "section",
+            data: { author, title: "Decisions", children: ["decision"] },
+          },
+          {
+            id: "decision",
+            kind: "decision",
+            data: {
+              author,
+              statement: "The changed assignment is deliberate.",
+              evidence: [prose.id],
+              alternatives: ["decision-alternative"],
+              why: "The new value is the intended result.",
+            },
+          },
+          prose,
+          {
+            id: "decision-alternative",
+            kind: "prose",
+            data: { author, markdown: "Keep the previous value." },
+          },
+        ],
+      } as unknown as DraftBoard;
+    }
+    if (lens === "flagged") {
+      return {
+        elements: [
+          {
+            id: "flagged-section",
+            kind: "section",
+            data: { author, title: "Flagged", children: ["finding"] },
+          },
+          {
+            id: "finding",
+            kind: "finding",
+            data: {
+              author,
+              severity: "medium",
+              concern: "The changed assignment needs review.",
+              code: [],
+              concurrence: [],
+              status: "open",
+            },
+          },
+        ],
+      } as unknown as DraftBoard;
+    }
+    return { elements: [prose] } as unknown as DraftBoard;
+  };
   return {
     createSession: async () => {
       const cap: { prompt?: string } = {};
@@ -105,10 +172,17 @@ function orderedFakeClaudePort(order: string[]): HarnessPort {
         events: (async function* () {
           const lens = lensFromPrompt(cap.prompt ?? "");
           order.push(lens);
+          const postProcess = /rennet:layer context>>>\n(\{.*)/s.exec(cap.prompt ?? "");
           yield {
             kind: "session.ended",
             native: {},
-            outcome: { status: "completed", structuredOutput: board(lens) },
+            outcome: {
+              status: "completed",
+              structuredOutput:
+                lens === "post-process" && postProcess !== null
+                  ? (JSON.parse(postProcess[1] as string).board as unknown)
+                  : board(lens),
+            },
           };
         })(),
       } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;
@@ -297,8 +371,8 @@ describe("Generation-authoritative BoardMeta selection", () => {
 // The seams below are fakes; the ORDER under test is the real one.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PRE_LINE = "+  return `Hi ${name}`;";
-const POST_LINE = "+  return `Hello, ${name}!`;";
+const PRE_LINE = `+  return \`Hi \${name}\`;`;
+const POST_LINE = `+  return \`Hello, \${name}!\`;`;
 
 /** A one-file patchset whose single added line is `added` — the content the drafters read. */
 function greetPatchset(id: string, added: string): Patchset {
@@ -315,7 +389,7 @@ function greetPatchset(id: string, added: string): Patchset {
         patch: [
           "@@ -1,3 +1,3 @@",
           " export function greet(name: string): string {",
-          "-  return `Hey ${name}`;",
+          `-  return \`Hey \${name}\`;`,
           added,
           " }",
         ].join("\n"),

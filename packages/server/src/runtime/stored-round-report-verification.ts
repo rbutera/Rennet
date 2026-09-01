@@ -1,5 +1,5 @@
 import type { BoardMetaRecord } from "@rennet/adapters";
-import type { Generation, Review, RoundOperation } from "@rennet/protocol";
+import type { ComposableAsk, Generation, Review, RoundOperation } from "@rennet/protocol";
 import { projectRoundReportBoard } from "./lens-board-read";
 import { verifyRoundReportEvidence } from "./round-report-verification";
 
@@ -23,6 +23,7 @@ export interface StoredRoundReportVerificationDeps {
     boardId: string,
   ) => Promise<readonly StoredBoardElement[]>;
   readonly loadBoardMeta: (boardId: string) => BoardMetaRecord | undefined;
+  readonly loadDispatchedAsks: (operation: RoundOperation) => readonly ComposableAsk[];
 }
 
 /**
@@ -72,7 +73,7 @@ export async function verifyStoredRoundReport(
   });
   verifyRoundReportEvidence({
     board,
-    dispatchedAskIds: operation.askOccurrences.map((occurrence) => occurrence.id),
+    dispatchedAsks: deps.loadDispatchedAsks(operation),
     expectedPatchsetId: identity.expectedPatchsetId,
     diff: operation.state.worker.diff,
     changedPaths: operation.state.worker.changedPaths,

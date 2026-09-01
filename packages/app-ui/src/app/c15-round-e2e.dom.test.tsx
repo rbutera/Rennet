@@ -18,9 +18,10 @@
 //     app tree binds (`routes/app.tsx`). Its round state is the `session.roundEvents`
 //     catch-up read with the `roundProgress` push channel folded in, reduced through the
 //     production `advance`. No fixture clock, no tick, no `setTimeout`.
-//   • Progress is the coordinator's durable `operation` snapshot stream. Each event is
-//     parsed through `RoundEventSchema`; the ledger refresh assertion is therefore pinned
-//     to the event shape create-server publishes now.
+//   • Progress is the coordinator's durable `operation` snapshot stream plus its
+//     operation-scoped, verified report and lens snapshots. Each event is parsed through
+//     `RoundEventSchema`; the ledger refresh assertion is therefore pinned to the event
+//     shape create-server publishes now.
 //   • The RECORD is the durable one — parsed through `RoundLedgerRecordSchema`, carrying the
 //     `frozenPredecessor` C15 2.2 stamps (distinct from `boardGeneration`), which is what
 //     un-parks C09 finding F3 and gives the ledger's switcher a real gen-1 to open. Its exact
@@ -94,6 +95,22 @@ const COMPLETED_STATE = {
   },
 } as const;
 
+const RUNNING_LANES = [
+  { id: "design", label: "Design", status: "running" },
+  { id: "sequence", label: "Sequence", status: "queued" },
+  { id: "decisions", label: "Decisions", status: "queued" },
+  { id: "flagged", label: "Flagged", status: "queued" },
+  { id: "noise", label: "Noise", status: "queued" },
+] as const;
+
+const SETTLED_LANES = [
+  { id: "design", label: "Design", status: "done", verdict: "carrying-forward" },
+  { id: "sequence", label: "Sequence", status: "done", verdict: "reworked" },
+  { id: "decisions", label: "Decisions", status: "done", verdict: "reworked" },
+  { id: "flagged", label: "Flagged", status: "done", verdict: "reworked" },
+  { id: "noise", label: "Noise", status: "done", verdict: "carrying-forward" },
+] as const;
+
 function progressEvent(
   revision: number,
   state: unknown,
@@ -142,13 +159,36 @@ const SERVER_ROUND: readonly RoundEvent[] = [
     commits: COMMITS,
     report: { status: "drafting" },
   }),
+  RoundEventSchema.parse({
+    type: "report",
+    operationId: OPERATION_IDENTITY.operationId,
+    operationRevision: 6,
+    reportBoardId: REPORT_BOARD_ID,
+    report: reportBoardFixture,
+  }),
+  RoundEventSchema.parse({
+    type: "lens",
+    operationId: OPERATION_IDENTITY.operationId,
+    operationRevision: 6,
+    lanes: RUNNING_LANES,
+  }),
+  RoundEventSchema.parse({
+    type: "lens",
+    operationId: OPERATION_IDENTITY.operationId,
+    operationRevision: 6,
+    lanes: SETTLED_LANES,
+  }),
   progressEvent(7, {
     phase: "report-verifying",
     workspace: WORKSPACE,
     worker: WORKER,
     gate: GATE,
     commits: COMMITS,
-    report: { status: "verifying" },
+    report: {
+      status: "verifying",
+      reportBoardId: "report-round-1",
+      generation: "gen2",
+    },
   }),
   progressEvent(8, COMPLETED_STATE, { draining: true }),
   TERMINAL_OPERATION,
@@ -318,18 +358,33 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     expect(run()?.getAttribute("data-phase")).toBe("committing");
     shown("2 · run route walked working → gating → committing on real events (no clock)");
 
-    // ── 3 · THE RUN HOLDS THROUGH REPORT AND REGENERATION ─────────────────────
+    // ── 3 · THE VERIFIED REPORT RETURNS WHILE REGENERATION RUNS ───────────────
     push(SERVER_ROUND[6] as RoundEvent);
-    push(SERVER_ROUND[7] as RoundEvent); // report verification starts
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
-    expect(run()?.getAttribute("data-phase")).toBe("verifying");
-    expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
-    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
-    shown("3 · report and regeneration held the run route; reveal absent");
+    expect(run()?.getAttribute("data-phase")).toBe("drafting-report");
 
-    // ── 4 · SETTLED LANES STILL DO NOT NAVIGATE EARLY ────────────────────────
-    push(SERVER_ROUND[8] as RoundEvent); // Return is still draining into the durable stores
-    expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
+    push(SERVER_ROUND[7] as RoundEvent); // durable read-back verified; report is now readable
+    push(SERVER_ROUND[8] as RoundEvent); // the five lens drafters begin
+    await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
+    expect(r.container.textContent).toContain("Token refresh exits are now observable");
+    expect(r.getByTestId("report-tally").textContent).toContain("addressed");
+    expect(r.getByTestId("regeneration-progress").textContent).toContain("Regenerating the Boards");
+    expect(r.container.querySelector('[data-row="design"]')?.textContent).toContain("re-drafting");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    shown("3 · verified report returned while five lens drafters continued; reveal absent");
+
+    // ── 4 · SETTLED LANES STILL DO NOT DECLARE COMPLETION ─────────────────────
+    push(SERVER_ROUND[9] as RoundEvent);
+    expect(r.container.querySelector('[data-row="sequence"]')?.textContent).toContain("reworked");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    push(SERVER_ROUND[10] as RoundEvent); // final durable report verification
+    expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`);
+    expect(r.container.textContent).toContain("Token refresh exits are now observable");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    push(SERVER_ROUND[11] as RoundEvent); // Return is still draining into durable stores
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    shown("4 · settled lenses and durable verification kept completion-only acts hidden");
 
     // ── 5 · VERIFIED COMPLETION RETURNS WITH THE SETTLED ACCOUNT ─────────────
     const readsBeforeRecord = ledgerReads();
@@ -340,25 +395,27 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     // Persisting server truth does not invent a client refresh. Only the terminal receipt
     // below proves that the durable row is ready and changes the live ledger projection.
     expect(ledgerReads()).toBe(readsBeforeRecord);
-    push(SERVER_ROUND[9] as RoundEvent); // durable completed/changed operation, generation gen2
+    push(SERVER_ROUND[12] as RoundEvent); // durable completed/changed operation, generation gen2
     await waitFor(() => expect(ledgerReads()).toBeGreaterThan(readsBeforeRecord));
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
     const progress = () => r.getByTestId("regeneration-progress");
     expect(progress().textContent).toContain("Regenerated the Boards");
-    // A complete durable snapshot supersedes the compatibility deltas. It does not carry
-    // per-lens verdicts, so the greeting must not replay rows from the older event shape.
-    expect(r.container.querySelector('[data-row="design"]')).toBeNull();
-    expect(r.container.querySelector('[data-row="sequence"]')).toBeNull();
-    // 4.2's post-process and composed receipts are present on the returned surface.
-    expect(r.container.querySelector('[data-step="post-process"]')?.textContent).toContain(
-      "Cleaning up drafts · post-process pass",
+    // The terminal durable snapshot carries completion; its operation-scoped lens account
+    // remains beside it so the five settled outcomes do not blink out at the finish line.
+    expect(r.container.querySelector('[data-row="design"]')?.textContent).toContain(
+      "carrying forward",
+    );
+    expect(r.container.querySelector('[data-row="sequence"]')?.textContent).toContain("reworked");
+    // 4.2's finalization and composed receipts are present on the returned surface.
+    expect(r.container.querySelector('[data-step="finalizing"]')?.textContent).toContain(
+      "Generation finalized",
     );
     expect(r.container.querySelector('[data-step="composed"]')?.textContent).toContain(
       "Composed generation gen2",
     );
-    shown("4 · completion returned with settled regeneration receipts");
+    shown("5 · completion enabled reveal with settled regeneration receipts intact");
 
     // ── 6 · VIEW THE NEW BOARDS ──────────────────────────────────────────────
     const reveal = r.getByTestId("reveal-new-boards");
@@ -372,7 +429,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     expect(
       boardSwitcher?.querySelector('[data-generation="gen1"][data-frozen="true"]'),
     ).not.toBeNull();
-    shown('5 · "Regenerated the Boards" + reveal → gen2 boards over board.read');
+    shown('6 · "Regenerated the Boards" + reveal → gen2 boards over board.read');
 
     // ── 6 · THE DURABLE RECORD IN THE LEDGER, GEN-1 REACHABLE ────────────────
     act(() => history.navigate(`/s/${REVIEW_ID}?view=rounds`));
@@ -393,7 +450,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     await waitFor(() =>
       expect(r.container.querySelector('article[data-generation="gen1"]')).not.toBeNull(),
     );
-    shown("6 · retrospective line + gen-1 drill-down off the durable frozenPredecessor");
+    shown("7 · retrospective line + gen-1 drill-down off the durable frozenPredecessor");
 
     // The evidence chain, SHOWN — the nine C9 claims walked over one live round.
     console.log(`[c15-e2e]\n  ${evidence.join("\n  ")}`);

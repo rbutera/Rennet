@@ -1,8 +1,13 @@
 import type { AddressInfo } from "node:net";
-import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  MIN_COMPATIBLE_PROTOCOL_VERSION,
+  PROTOCOL_VERSION,
+  type RoundEvent,
+  RoundEventSchema,
+} from "@rennet/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type WebSocket as NodeWebSocket, WebSocketServer } from "ws";
-import { WsRennetBridge } from "./ws-bridge";
+import { roundDiagnostic, WsRennetBridge } from "./ws-bridge";
 
 // The bridge speaks the real session envelope; these tests drive it against a `ws`
 // stub server that we script frame-by-frame, pinning the transport behaviour
@@ -105,9 +110,56 @@ function trackBridge(bridge: WsRennetBridge): WsRennetBridge {
 afterEach(async () => {
   for (const bridge of bridges.splice(0)) bridge.close();
   for (const stub of stubs.splice(0)) await stub.close();
+  vi.restoreAllMocks();
 });
 
 describe("WsRennetBridge", () => {
+  it("keeps lane failure prose out of developer-console progress summaries", () => {
+    const event = RoundEventSchema.parse({
+      type: "lens",
+      operationId: "operation-1",
+      operationRevision: 3,
+      lanes: [{ id: "flagged", label: "Flagged", status: "failed", reason: "SECRET CODE" }],
+      seq: 9,
+    });
+
+    const diagnostic = roundDiagnostic("review-1", event);
+
+    expect(diagnostic).toMatchObject({
+      reviewId: "review-1",
+      operationId: "operation-1",
+      operationRevision: 3,
+      lanes: [{ id: "flagged", status: "failed" }],
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain("SECRET CODE");
+  });
+
+  it("logs only the fixed fields from a classified-report milestone", () => {
+    const event = RoundEventSchema.parse({
+      type: "report-diagnostic",
+      operationId: "operation-1",
+      operationRevision: 4,
+      milestone: {
+        stage: "provider-settled",
+        outcome: "stream-ended-without-terminal",
+        elapsedMs: 23,
+      },
+    });
+
+    expect(roundDiagnostic("review-1", event)).toMatchObject({
+      reviewId: "review-1",
+      type: "report-diagnostic",
+      operationId: "operation-1",
+      operationRevision: 4,
+      stage: "provider-settled",
+      outcome: "stream-ended-without-terminal",
+      elapsedMs: 23,
+    });
+    expect(JSON.stringify(roundDiagnostic("review-1", event))).not.toMatch(
+      /prompt|output|diff|path|evidence|note/i,
+    );
+  });
+
   it("correlates interleaved invokes to their own outputs regardless of response order", async () => {
     const stub = await startStub();
     stubs.push(stub);
@@ -227,9 +279,10 @@ describe("WsRennetBridge", () => {
     expect(stub.helloCount).toBe(1); // terminal: no reconnect against the rejected token
   });
 
-  it("routes progress, ask-stream, and ask-projection frames to their keyed listeners", async () => {
+  it("routes keyed frames and writes safe round progress to the developer console", async () => {
     const stub = await startStub();
     stubs.push(stub);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
     // Wait for the handshake so the socket is open before we broadcast.
     await new Promise<void>((resolve) => {
@@ -239,9 +292,11 @@ describe("WsRennetBridge", () => {
     const progress: unknown[] = [];
     const asks: unknown[] = [];
     const projections: unknown[] = [];
+    const rounds: unknown[] = [];
     bridge.onProgress("cmd-1", (event) => progress.push(event));
     bridge.onAskStream("rev-1", (event) => asks.push(event));
     bridge.onAskProjection("rev-1", (projection) => projections.push(projection));
+    bridge.onRoundProgress("rev-1", (event) => rounds.push(event));
 
     stub.broadcast({
       type: "progressEvent",
@@ -282,10 +337,191 @@ describe("WsRennetBridge", () => {
         verdictOverride: null,
       },
     });
-    await waitFor(() => progress.length === 1 && asks.length === 1 && projections.length === 1);
+    stub.broadcast({
+      type: "roundProgress",
+      reviewId: "rev-1",
+      event: { type: "dispatched", seq: 7 },
+    });
+    stub.broadcast({
+      type: "roundProgress",
+      reviewId: "other",
+      event: { type: "dispatched", seq: 8 },
+    });
+    await waitFor(
+      () =>
+        progress.length === 1 &&
+        asks.length === 1 &&
+        projections.length === 1 &&
+        rounds.length === 1,
+    );
     expect(progress).toEqual([{ kind: "repo-error", repo: "r", message: "m" }]);
     expect(asks).toEqual([{ kind: "ask-focus", anchor: "a" }]);
     expect(projections).toHaveLength(1);
+    expect(rounds).toEqual([{ type: "dispatched", seq: 7 }]);
+    expect(consoleInfo).toHaveBeenCalledWith("[rennet:round]", {
+      at: expect.any(String),
+      reviewId: "rev-1",
+      seq: 7,
+      type: "dispatched",
+    });
+  });
+
+  it("deduplicates live diagnostics on catch-up while a fresh bridge replays them", async () => {
+    const stub = await startStub();
+    stubs.push(stub);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    stub.onRequest = (socket, frame) => {
+      socket.send(
+        JSON.stringify({
+          type: "response",
+          requestId: frame.requestId,
+          output: {
+            events: [
+              {
+                type: "report-diagnostic",
+                operationId: "operation-1",
+                operationRevision: 8,
+                seq: 12,
+                milestone: {
+                  stage: "provider-settled",
+                  outcome: "stream-ended-without-terminal",
+                  elapsedMs: 41,
+                  prompt: "SECRET_CATCHUP_PROMPT",
+                  providerProse: "SECRET_PROVIDER_PROSE",
+                },
+              },
+            ],
+          },
+        }),
+      );
+    };
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url, initialBackoffMs: 10 }));
+    await waitFor(() => stub.helloCount === 1);
+    stub.broadcast({
+      type: "roundProgress",
+      reviewId: "rev-1",
+      event: {
+        type: "report-diagnostic",
+        operationId: "operation-1",
+        operationRevision: 8,
+        seq: 12,
+        milestone: {
+          stage: "provider-settled",
+          outcome: "stream-ended-without-terminal",
+          elapsedMs: 41,
+        },
+      },
+    });
+    await waitFor(() => consoleInfo.mock.calls.length === 1);
+    stub.dropConnections();
+    await waitFor(() => stub.helloCount === 2, 2000);
+
+    await bridge.invoke("session.roundEvents", { reviewId: "rev-1" });
+    expect(consoleInfo).toHaveBeenCalledTimes(1);
+
+    const freshBridge = trackBridge(new WsRennetBridge({ url: stub.url }));
+    await waitFor(() => stub.helloCount === 3);
+    await freshBridge.invoke("session.roundEvents", { reviewId: "rev-1" });
+
+    expect(consoleInfo).toHaveBeenCalledTimes(2);
+    for (const call of consoleInfo.mock.calls) {
+      expect(call).toEqual([
+        "[rennet:round]",
+        {
+          at: expect.any(String),
+          reviewId: "rev-1",
+          type: "report-diagnostic",
+          operationId: "operation-1",
+          operationRevision: 8,
+          seq: 12,
+          stage: "provider-settled",
+          outcome: "stream-ended-without-terminal",
+          elapsedMs: 41,
+        },
+      ]);
+    }
+    expect(JSON.stringify(consoleInfo.mock.calls)).not.toMatch(/SECRET_|prompt|providerProse/i);
+  });
+
+  it("passes through a legacy round-events reply without breaking optional diagnostics", async () => {
+    const stub = await startStub();
+    stubs.push(stub);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    stub.onRequest = (socket, frame) => {
+      socket.send(
+        JSON.stringify({
+          type: "response",
+          requestId: frame.requestId,
+          output: {},
+        }),
+      );
+    };
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
+
+    await expect(bridge.invoke("session.roundEvents", { reviewId: "rev-1" })).resolves.toEqual({});
+    expect(consoleInfo).not.toHaveBeenCalled();
+  });
+
+  it("keeps live progress and catch-up working when the optional console throws", async () => {
+    const stub = await startStub();
+    stubs.push(stub);
+    const milestone = {
+      stage: "provider-settled" as const,
+      outcome: "completed" as const,
+      elapsedMs: 17,
+    };
+    stub.onRequest = (socket, frame) => {
+      socket.send(
+        JSON.stringify({
+          type: "response",
+          requestId: frame.requestId,
+          output: {
+            events: [
+              {
+                type: "report-diagnostic",
+                operationId: "operation-1",
+                operationRevision: 8,
+                seq: 13,
+                milestone,
+              },
+            ],
+          },
+        }),
+      );
+    };
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {
+      throw new Error("console unavailable");
+    });
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
+    await waitFor(() => stub.helloCount === 1);
+    const rounds: RoundEvent[] = [];
+    bridge.onRoundProgress("rev-1", (event) => rounds.push(event));
+
+    stub.broadcast({
+      type: "roundProgress",
+      reviewId: "rev-1",
+      event: {
+        type: "report-diagnostic",
+        operationId: "operation-1",
+        operationRevision: 8,
+        seq: 12,
+        milestone,
+      },
+    });
+
+    await waitFor(() => rounds.length === 1);
+    await expect(bridge.invoke("session.roundEvents", { reviewId: "rev-1" })).resolves.toEqual({
+      events: [
+        {
+          type: "report-diagnostic",
+          operationId: "operation-1",
+          operationRevision: 8,
+          seq: 13,
+          milestone,
+        },
+      ],
+    });
+    expect(consoleInfo).toHaveBeenCalledTimes(2);
   });
 
   it("fans attentionEvent frames out to onAttention listeners (#383 batch)", async () => {

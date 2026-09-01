@@ -23,7 +23,7 @@ import {
   type RoundRunReceipt,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import type { BoardsRuntime } from "../boards/boards-runtime";
+import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
 import {
   createRoundsRuntime,
@@ -46,22 +46,109 @@ const lintContextFor = (lens: LintTarget): LintContext => ({ lens, hunks: [], fi
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
 const lensFromPrompt = (prompt: string): string =>
   /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
-const cleanBody = (lens: string): DraftBoard =>
-  ({
+const cleanBody = (lens: string): DraftBoard => {
+  const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
+  if (lens === "sequence") {
+    return {
+      elements: [
+        {
+          id: "sequence-root",
+          kind: "section",
+          data: { author, title: "Reading order", children: ["sequence-step"] },
+        },
+        {
+          id: "sequence-step",
+          kind: "order_step",
+          data: {
+            author,
+            title: "Read the changed entry point",
+            span: "sequence-span",
+            children: [],
+          },
+        },
+        {
+          id: "sequence-span",
+          kind: "prose",
+          data: { author, markdown: "The changed entry point begins the reading." },
+        },
+      ],
+      skippedHunks: [],
+    } as DraftBoard;
+  }
+  if (lens === "decisions") {
+    return {
+      elements: [
+        {
+          id: "decisions-root",
+          kind: "section",
+          data: { author, title: "Implementation decisions", children: ["decision"] },
+        },
+        {
+          id: "decision-evidence",
+          kind: "prose",
+          data: { author, markdown: "The write path commits one complete batch." },
+        },
+        {
+          id: "decision-alternative",
+          kind: "prose",
+          data: { author, markdown: "Write each event independently." },
+        },
+        {
+          id: "decision",
+          kind: "decision",
+          data: {
+            author,
+            statement: "Commit the event batch atomically.",
+            evidence: ["decision-evidence"],
+            alternatives: ["decision-alternative"],
+            why: "Readers never observe a partial batch.",
+          },
+        },
+      ],
+      skippedHunks: [],
+    } as DraftBoard;
+  }
+  if (lens === "flagged") {
+    return {
+      elements: [
+        {
+          id: "flagged-root",
+          kind: "section",
+          data: { author, title: "Findings", children: ["flagged-finding"] },
+        },
+        {
+          id: "flagged-finding",
+          kind: "finding",
+          data: {
+            author,
+            severity: "medium",
+            concern: "A partial write leaves the event batch inconsistent.",
+            code: [],
+            concurrence: [],
+            status: "open",
+          },
+        },
+      ],
+      skippedHunks: [],
+    } as DraftBoard;
+  }
+  return {
     elements: [
       {
         id: `${lens}-p1`,
         kind: "prose",
-        data: { author: { kind: "lens-agent", id: `${lens}-seat` }, markdown: "Reads cleanly." },
+        data: { author, markdown: "Reads cleanly." },
       },
     ],
-  }) as unknown as DraftBoard;
+    skippedHunks: [],
+  } as DraftBoard;
+};
 
 /** A fake Claude port that answers a lens-appropriate clean board every turn, or whatever
  *  `bodyFor` decides when a test needs a specific seat to answer something particular. */
 function fakeClaudePort(
   captures: { prompt?: string }[] = [],
-  bodyFor: (prompt: string) => DraftBoard = (prompt) => cleanBody(lensFromPrompt(prompt)),
+  bodyFor: (prompt: string) => unknown = (prompt) => cleanBody(lensFromPrompt(prompt)),
 ): HarnessPort {
   return {
     createSession: async () => {
@@ -97,9 +184,23 @@ function fakeBoardsRuntimeFor(): (
   let seq = 0;
   return () =>
     ({
-      service: { apply: async () => ({ ok: true }) },
+      service: {
+        apply: async () => ({ ok: true }),
+        getState: async () => new Map(),
+      },
       createRennetBoard: async () => `board:${seq++}`,
     }) as unknown as Pick<BoardsRuntime, "service" | "createRennetBoard">;
+}
+
+function reservedBoardIds(prefix: string): Record<LintTarget, string> {
+  return {
+    design: `${prefix}:design`,
+    sequence: `${prefix}:sequence`,
+    decisions: `${prefix}:decisions`,
+    flagged: `${prefix}:flagged`,
+    noise: `${prefix}:noise`,
+    report: `${prefix}:report`,
+  };
 }
 
 const PREV_GEN: Generation = {
@@ -462,7 +563,252 @@ describe("createRoundsRuntime", () => {
     expect(after.pipeline.coverage).toBeUndefined();
   });
 
-  it("preserves typed empty results when complete durable evidence reconstructs", async () => {
+  it("reuses a verified reserved report after a crash without another report provider turn", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-report-resume-repo-"));
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-report-resume-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-report-resume-generation-")),
+    );
+    const boards = createBoardsRuntime(repoRoot);
+    const boardsRuntimeFor = () => boards;
+    const diff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
+    const landedRound: NonNullable<RoundInput["round"]> = {
+      number: 1,
+      previousGeneration: PREV_GEN.id,
+      dispatchedAsks: [
+        {
+          id: "ask-one",
+          path: "src/auth.ts",
+          type: "request-change",
+          instruction: "Replace the line.",
+          context: "",
+        },
+      ],
+      findingDispositions: {},
+      worker: {
+        outcome: "completed",
+        diff,
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "c0", to: "c1" },
+      },
+    };
+    const classification = {
+      outcomes: [
+        {
+          askId: "ask-one",
+          status: "addressed",
+          note: "The exact changed line now carries the requested value.",
+          evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+        },
+      ],
+      beyond: [],
+    };
+    let crashAfterReport = true;
+    const firstCaptures: { prompt?: string }[] = [];
+    const durableDeps = {
+      boardsRuntimeFor,
+      persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) => {
+        meta.save(record);
+        if (record.lens === "report" && crashAfterReport) {
+          crashAfterReport = false;
+          throw new Error("crash after report persistence");
+        }
+      },
+      loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+        meta.listForGeneration(sessionId, generation),
+      removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+      persistGeneration: (generation: Generation) => generations.save(generation),
+      loadGeneration: (id: string) => generations.load(id),
+    } satisfies Partial<RoundsRuntimeDeps>;
+    const firstRuntime = createRoundsRuntime(
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () =>
+          fakeClaudePort(firstCaptures, (prompt) =>
+            lensFromPrompt(prompt) === "report"
+              ? classification
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
+      }),
+    );
+    const input = roundInput({
+      repoRoot,
+      asksDispatched: ["ask-one"],
+      round: landedRound,
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
+    });
+
+    await expect(firstRuntime.runRound(input)).rejects.toThrow("crash after report persistence");
+    expect(
+      firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    const attempt = generations.load("gen:ps-1");
+    expect(attempt?.draftingBoardIds).toBeDefined();
+    expect(attempt?.draftingReportBoardId).toBeDefined();
+    if (attempt?.draftingBoardIds === undefined || attempt.draftingReportBoardId === undefined) {
+      throw new Error("expected the crashed attempt's reserved board identities");
+    }
+    const boardIds = {
+      ...attempt.draftingBoardIds,
+      report: attempt.draftingReportBoardId,
+    } as Readonly<Record<LintTarget, string>>;
+
+    const retryCaptures: { prompt?: string }[] = [];
+    const progress: RoundEvent[] = [];
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () =>
+          fakeClaudePort(retryCaptures, (prompt) => {
+            if (lensFromPrompt(prompt) === "report") {
+              throw new Error("a persisted report must not open another provider turn");
+            }
+            return cleanBody(lensFromPrompt(prompt));
+          }),
+      }),
+    ).runRound({
+      ...input,
+      draftPlan: { generation: attempt.id, boardIds },
+      onProgress: (event) => progress.push(event),
+    });
+
+    expect(retryCaptures.some(({ prompt }) => prompt?.includes("prompts/report.md"))).toBe(false);
+    expect(retryCaptures.some(({ prompt }) => prompt?.includes("prompts/design.md"))).toBe(true);
+    expect(progress[0]?.type).toBe("report");
+    expect(recovered.pipeline.report?.boardId).toBe(attempt.draftingReportBoardId);
+    expect(recovered.record.reportBoard).toBe(attempt.draftingReportBoardId);
+  });
+
+  it("redrafts when every lens has exact metadata but the required report does not", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-missing-report-repo-"));
+    const boards = createBoardsRuntime(repoRoot);
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-missing-report-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-missing-report-generation-")),
+    );
+    const boardIds = reservedBoardIds("missing-report");
+    const input = roundInput({
+      repoRoot,
+      draftPlan: { generation: "gen:ps-1", boardIds },
+    });
+    const durableDeps = {
+      boardsRuntimeFor: () => boards,
+      persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) =>
+        meta.save(record),
+      removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+      loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+        meta.listForGeneration(sessionId, generation),
+      persistGeneration: (generation: Generation) => generations.save(generation),
+      loadGeneration: (id: string) => generations.load(id),
+    } satisfies Partial<RoundsRuntimeDeps>;
+
+    await createRoundsRuntime(baseDeps(durableDeps)).runRound(input);
+    expect(LENS_KINDS.every((lens) => meta.load(boardIds[lens])?.lens === lens)).toBe(true);
+    expect(meta.load(boardIds.report)?.lens).toBe("report");
+    meta.remove(boardIds.report);
+    expect(meta.load(boardIds.report)).toBeUndefined();
+
+    const captures: { prompt?: string }[] = [];
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () => fakeClaudePort(captures),
+      }),
+    ).runRound(input);
+
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/report.md"))).toBe(true);
+    expect(recovered.pipeline.report?.boardId).toBe(boardIds.report);
+    expect(meta.load(boardIds.report)?.lens).toBe("report");
+  });
+
+  it("clears a partial attempt before retrying an append that crashed before BoardMeta", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-append-before-meta-repo-"));
+    const boards = createBoardsRuntime(repoRoot);
+    const meta = new BoardMetaStore(
+      mkdtempSync(join(tmpdir(), "rounds-append-before-meta-store-")),
+    );
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-append-before-meta-generation-")),
+    );
+    const boardIds = reservedBoardIds("append-before-meta");
+    const input = roundInput({
+      repoRoot,
+      draftPlan: { generation: "gen:ps-1", boardIds },
+    });
+    let crashBeforeSequenceMeta = true;
+    const first = createRoundsRuntime(
+      baseDeps({
+        boardsRuntimeFor: () => boards,
+        persistBoardMeta: (_repo, record) => {
+          if (record.lens === "sequence" && crashBeforeSequenceMeta) {
+            crashBeforeSequenceMeta = false;
+            throw new Error("crash before Sequence BoardMeta");
+          }
+          meta.save(record);
+        },
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    );
+
+    await expect(first.runRound(input)).rejects.toThrow("crash before Sequence BoardMeta");
+    expect((await boards.service.getState(boardIds.sequence)).size).toBeGreaterThan(0);
+    expect(meta.load(boardIds.sequence)).toBeUndefined();
+
+    const recoveryOrder: string[] = [];
+    const recoveryService = new Proxy(boards.service, {
+      get: (target, property) => {
+        if (property === "apply") {
+          return async (...args: Parameters<BoardsRuntime["service"]["apply"]>) => {
+            const [boardId, , actor] = args;
+            if (actor === "host:round-retry-recovery") recoveryOrder.push(`clear:${boardId}`);
+            return target.apply(...args);
+          };
+        }
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const recoveryBoardsRuntime = () => ({ ...boards, service: recoveryService });
+    const captures: { prompt?: string }[] = [];
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        boardsRuntimeFor: recoveryBoardsRuntime,
+        resolveClaudePort: async () => fakeClaudePort(captures),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        removeBoardMeta: (_repo, boardId) => {
+          recoveryOrder.push(`remove:${boardId}`);
+          meta.remove(boardId);
+        },
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    for (const boardId of Object.values(boardIds)) {
+      expect(recoveryOrder.indexOf(`remove:${boardId}`)).toBeGreaterThanOrEqual(0);
+      expect(recoveryOrder.indexOf(`clear:${boardId}`)).toBeGreaterThan(
+        recoveryOrder.indexOf(`remove:${boardId}`),
+      );
+    }
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/sequence.md"))).toBe(true);
+    expect(recovered.boardGeneration.lensBoards.sequence).toBe(boardIds.sequence);
+    expect((await boards.service.getState(boardIds.sequence)).size).toBeGreaterThan(0);
+    expect(meta.load(boardIds.sequence)?.lens).toBe("sequence");
+  });
+
+  it("preserves typed core-empty results when complete durable evidence reconstructs", async () => {
     const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-absence-meta-")));
     const generations = new GenerationStore(
       mkdtempSync(join(tmpdir(), "rounds-absence-generation-")),
@@ -474,6 +820,7 @@ describe("createRoundsRuntime", () => {
           fakeClaudePort([], (prompt) => {
             const lens = lensFromPrompt(prompt);
             if (
+              lens === "decisions" ||
               lens === "flagged" ||
               (lens === "post-process" && prompt.includes('"elements":[]'))
             ) {
@@ -487,7 +834,9 @@ describe("createRoundsRuntime", () => {
       }),
     ).runRound(input);
     expect(first.boardGeneration.absentLenses?.design).toBe("no-material");
+    expect(first.boardGeneration.absentLenses?.decisions).toBe("no-decisions");
     expect(first.boardGeneration.absentLenses?.flagged).toBe("no-findings");
+    expect(first.boardGeneration.lensBoards.sequence).toBeDefined();
 
     const recovered = await createRoundsRuntime(
       baseDeps({
@@ -507,13 +856,146 @@ describe("createRoundsRuntime", () => {
     expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged")?.absence).toBe(
       "no-findings",
     );
+    expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "decisions")?.absence).toBe(
+      "no-decisions",
+    );
     expect(recovered.boardGeneration.absentLenses?.design).toBe("no-material");
+    expect(recovered.boardGeneration.absentLenses?.decisions).toBe("no-decisions");
     expect(recovered.boardGeneration.absentLenses?.flagged).toBe("no-findings");
+    expect(recovered.boardGeneration.lensBoards.sequence).toBeDefined();
     expect(recovered.boardGeneration.lensBoards.design).toBeUndefined();
+    expect(recovered.boardGeneration.lensBoards.decisions).toBeUndefined();
     expect(recovered.boardGeneration.lensBoards.flagged).toBeUndefined();
   });
 
-  it("reconstructs a settled four-board Generation without opening a new attempt", async () => {
+  it.each(["sequence", "decisions", "flagged"] as const)(
+    "keeps a generation retryable when the %s core lane fails beside Design and Noise",
+    async (failedCoreLens) => {
+      const repoRoot = mkdtempSync(join(tmpdir(), `rounds-${failedCoreLens}-failure-repo-`));
+      const boards = createBoardsRuntime(repoRoot);
+      const meta = new BoardMetaStore(
+        mkdtempSync(join(tmpdir(), `rounds-${failedCoreLens}-failure-meta-`)),
+      );
+      const generations = new GenerationStore(
+        mkdtempSync(join(tmpdir(), `rounds-${failedCoreLens}-failure-generation-`)),
+      );
+      const boardIds = reservedBoardIds(`${failedCoreLens}-failure`);
+      const input = roundInput({
+        repoRoot,
+        draftPlan: { generation: "gen:ps-1", boardIds },
+      });
+      const durableDeps = {
+        boardsRuntimeFor: () => boards,
+        persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) =>
+          meta.save(record),
+        removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+        loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation: Generation) => generations.save(generation),
+        loadGeneration: (id: string) => generations.load(id),
+      } satisfies Partial<RoundsRuntimeDeps>;
+      const invalid = {
+        elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+        skippedHunks: [],
+      };
+
+      await expect(
+        createRoundsRuntime(
+          baseDeps({
+            ...durableDeps,
+            resolveClaudePort: async () =>
+              fakeClaudePort([], (prompt) =>
+                lensFromPrompt(prompt) === failedCoreLens
+                  ? invalid
+                  : cleanBody(lensFromPrompt(prompt)),
+              ),
+          }),
+        ).runRound(input),
+      ).rejects.toThrow(`required core lens ${failedCoreLens}`);
+
+      const failedAttempt = generations.load("gen:ps-1");
+      expect(failedAttempt?.lensBoards.design).toBe(boardIds.design);
+      expect(failedAttempt?.lensBoards.noise).toBe(boardIds.noise);
+      expect(failedAttempt?.failedLenses?.[failedCoreLens]).toEqual(expect.any(String));
+      expect(meta.load(boardIds.design)?.lens).toBe("design");
+      expect(meta.load(boardIds.noise)?.lens).toBe("noise");
+
+      const retryCaptures: { prompt?: string }[] = [];
+      const recovered = await createRoundsRuntime(
+        baseDeps({
+          ...durableDeps,
+          resolveClaudePort: async () => fakeClaudePort(retryCaptures),
+        }),
+      ).runRound(input);
+
+      expect(
+        retryCaptures.some(({ prompt }) =>
+          prompt?.includes(`PROMPT_FILE:prompts/${failedCoreLens}.md`),
+        ),
+      ).toBe(true);
+      expect(recovered.boardGeneration.lensBoards[failedCoreLens]).toBe(boardIds[failedCoreLens]);
+      expect(recovered.boardGeneration.failedLenses).toBeUndefined();
+      expect(recovered.record.boardGeneration).toBe("gen:ps-1");
+
+      const reconstructed = await createRoundsRuntime(
+        baseDeps({
+          ...durableDeps,
+          resolveClaudePort: async () => {
+            throw new Error("successful core evidence must reconstruct without a model");
+          },
+        }),
+      ).runRound(input);
+
+      expect(reconstructed.boardGeneration.lensBoards[failedCoreLens]).toBe(
+        boardIds[failedCoreLens],
+      );
+    },
+  );
+
+  it("preserves an explicit lens failure when complete durable evidence reconstructs", async () => {
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-failure-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-failure-generation-")),
+    );
+    const first = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) =>
+            lensFromPrompt(prompt) === "design"
+              ? ({
+                  elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+                } as unknown as DraftBoard)
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(roundInput());
+    const firstFailure = first.pipeline.boards.find(({ lens }) => lens === "design")?.failure;
+    expect(firstFailure).toEqual(expect.any(String));
+    expect(first.boardGeneration.failedLenses?.design).toBe(firstFailure);
+    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(4);
+
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => {
+          throw new Error("complete failure evidence must reconstruct without a model");
+        },
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(roundInput());
+
+    expect(recovered.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
+    expect(recovered.pipeline.boards.find(({ lens }) => lens === "design")?.failure).toBe(
+      firstFailure,
+    );
+    expect(recovered.boardGeneration.failedLenses?.design).toBe(firstFailure);
+  });
+
+  it("redrafts a settled Generation whose fifth lens has no terminal evidence", async () => {
     const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-settled-meta-")));
     const generations = new GenerationStore(
       mkdtempSync(join(tmpdir(), "rounds-settled-generation-")),
@@ -529,14 +1011,14 @@ describe("createRoundsRuntime", () => {
     delete fourBoards.flagged;
     generations.save({ ...seeded.boardGeneration, lensBoards: fourBoards });
     let attemptWrites = 0;
+    const captures: { prompt?: string }[] = [];
 
     const recovered = await createRoundsRuntime(
       baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("a settled partial success must not re-draft");
-        },
+        resolveClaudePort: async () => fakeClaudePort(captures),
         loadDraftedBoards: (_repo, sessionId, generation) =>
           meta.listForGeneration(sessionId, generation),
+        persistBoardMeta: (_repo, record) => meta.save(record),
         persistGeneration: (generation) => {
           if (generation.draftingBoardIds !== undefined) attemptWrites += 1;
           generations.save(generation);
@@ -545,10 +1027,66 @@ describe("createRoundsRuntime", () => {
       }),
     ).runRound(roundInput());
 
-    expect(attemptWrites).toBe(0);
-    expect(recovered.pipeline.boards).toHaveLength(4);
-    expect(recovered.boardGeneration.lensBoards).toEqual(fourBoards);
-    expect(recovered.boardGeneration.lensBoards.flagged).toBeUndefined();
+    expect(attemptWrites).toBeGreaterThan(0);
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/flagged.md"))).toBe(true);
+    expect(recovered.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
+    expect(recovered.boardGeneration.lensBoards.flagged).toBeDefined();
+
+    const reconstructed = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => {
+          throw new Error("complete replacement evidence must reconstruct without a model");
+        },
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(roundInput());
+
+    expect(reconstructed.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
+    expect(reconstructed.boardGeneration.lensBoards.flagged).toBe(
+      recovered.boardGeneration.lensBoards.flagged,
+    );
+  });
+
+  it("redrafts a settled all-empty or failed Generation with no surviving board", async () => {
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-boardless-generation-")),
+    );
+    generations.save({
+      id: "gen:ps-1",
+      patchsetId: "ps-1",
+      lensBoards: {},
+      absentLenses: {
+        design: "no-material",
+        decisions: "no-decisions",
+        flagged: "no-findings",
+        noise: "no-noise",
+      },
+      failedLenses: { sequence: "The Sequence drafter produced no board." },
+      status: "live",
+    });
+    let attemptWrites = 0;
+    const captures: { prompt?: string }[] = [];
+
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => fakeClaudePort(captures),
+        loadDraftedBoards: () => [],
+        persistGeneration: (generation) => {
+          if (generation.draftingBoardIds !== undefined) attemptWrites += 1;
+          generations.save(generation);
+        },
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(roundInput());
+
+    expect(attemptWrites).toBeGreaterThan(0);
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/sequence.md"))).toBe(true);
+    expect(recovered.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
+    expect(Object.keys(recovered.boardGeneration.lensBoards)).toHaveLength(LENS_KINDS.length);
+    expect(recovered.boardGeneration.absentLenses).toBeUndefined();
+    expect(recovered.boardGeneration.failedLenses).toBeUndefined();
   });
 
   it("retries an incomplete generation after restart and binds reconstruction to its replacement boards", async () => {
@@ -599,9 +1137,7 @@ describe("createRoundsRuntime", () => {
           throw new Error("a complete generation must not re-draft");
         },
         loadDraftedBoards: (_repo, session, generation) =>
-          partialMeta
-            .listForGeneration(session, generation)
-            .filter((meta) => meta.lens !== "report"),
+          partialMeta.listForGeneration(session, generation),
         persistGeneration: (generation) => generationStore.save(generation),
         loadGeneration: (id) => generationStore.load(id),
       }),
@@ -675,6 +1211,10 @@ describe("createRoundsRuntime", () => {
         ],
       }) as unknown as DraftBoard;
     const previousFlagged = flagged("The retry can lose its terminal record.");
+    let releaseMigration!: () => void;
+    const migrationReached = new Promise<void>((resolve) => {
+      releaseMigration = resolve;
+    });
     const boardsRuntime = (
       attempt: "attempt-a" | "attempt-b",
       crashFlagged: boolean,
@@ -686,11 +1226,13 @@ describe("createRoundsRuntime", () => {
           createRennetBoard: async () => `${attempt}:${targets[nextBoard++]}`,
           service: {
             apply: async (boardId: string) => {
-              if (crashFlagged && boardId === `${attempt}:flagged`) {
+              if (crashFlagged && boardId === `${attempt}:noise`) {
+                await migrationReached;
                 throw new Error("crash after Flagged migration");
               }
               return { ok: true };
             },
+            getState: async () => new Map(),
           },
         }) as unknown as Pick<BoardsRuntime, "service" | "createRennetBoard">;
     };
@@ -713,6 +1255,10 @@ describe("createRoundsRuntime", () => {
           ...dispositions,
           [findingRefKey(event.finding)]: { finding: event.finding, disposition: "dismissed" },
         };
+      }
+      if (successorBoardId === "attempt-a:flagged") {
+        releaseMigration();
+        throw new Error("finding migration callback lost its response");
       }
     };
     const input = (): RoundInput =>
@@ -1133,7 +1679,13 @@ describe("createRoundsRuntime", () => {
 
   it("drafts the round-report FIRST, then reveals each board (arrival order)", async () => {
     const arrivals: BoardArrivalEvent[] = [];
-    const runtime = createRoundsRuntime(baseDeps({ onBoardArrival: (e) => arrivals.push(e) }));
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
+      }),
+    );
     await runtime.runRound(roundInput());
     // The report announces its arrival ahead of the lens boards (R58).
     expect(arrivals[0]?.lens).toBe("report");
@@ -1143,6 +1695,107 @@ describe("createRoundsRuntime", () => {
         .map((a) => a.lens)
         .sort(),
     ).toEqual(["decisions", "design", "flagged", "noise", "sequence"].sort());
+  });
+
+  it("does not announce or start lenses until classified report progress settles", async () => {
+    const round: NonNullable<RoundInput["round"]> = {
+      number: 1,
+      previousGeneration: PREV_GEN.id,
+      dispatchedAsks: [
+        {
+          id: "ask-one",
+          path: "src/auth.ts",
+          type: "request-change",
+          instruction: "Replace the line.",
+          context: "",
+        },
+      ],
+      findingDispositions: {},
+      worker: {
+        outcome: "completed",
+        diff: [
+          "diff --git a/src/auth.ts b/src/auth.ts",
+          "--- a/src/auth.ts",
+          "+++ b/src/auth.ts",
+          "@@ -1 +1 @@",
+          "-old line",
+          "+new line",
+        ].join("\n"),
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "c0", to: "c1" },
+      },
+    };
+    const classification = {
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
+      beyond: [],
+    };
+    const start = (onReportProgress: NonNullable<RoundInput["onReportProgress"]>) => {
+      const captures: { prompt?: string }[] = [];
+      const arrivals: BoardArrivalEvent[] = [];
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort(captures, (prompt) =>
+              lensFromPrompt(prompt) === "report"
+                ? classification
+                : cleanBody(lensFromPrompt(prompt)),
+            ),
+          onBoardArrival: (event) => {
+            arrivals.push(event);
+          },
+        }),
+      );
+      return {
+        captures,
+        arrivals,
+        run: runtime.runRound(
+          roundInput({
+            asksDispatched: ["ask-one"],
+            round,
+            onReportProgress,
+            runWorkers: async () => ({
+              commitRange: { from: "c0", to: "c1" },
+              patchsetId: "ps-1",
+            }),
+          }),
+        ),
+      };
+    };
+
+    let releaseReport: () => void = () => undefined;
+    const reportGate = new Promise<void>((resolve) => {
+      releaseReport = resolve;
+    });
+    let announceReport: () => void = () => undefined;
+    const reportProgressStarted = new Promise<void>((resolve) => {
+      announceReport = resolve;
+    });
+    const deferred = start((event) => {
+      if (event.type !== "report") return;
+      announceReport();
+      return reportGate;
+    });
+    await reportProgressStarted;
+    expect(deferred.arrivals).toEqual([]);
+    expect(
+      deferred.captures.some(({ prompt }) =>
+        prompt === undefined ? false : LENS_KINDS.some((lens) => prompt.includes(`${lens}.md`)),
+      ),
+    ).toBe(false);
+    releaseReport();
+    await deferred.run;
+    expect(deferred.arrivals[0]?.lens).toBe("report");
+
+    const rejected = start((event) => {
+      if (event.type === "report") throw new Error("report progress rejected");
+    });
+    await expect(rejected.run).rejects.toThrow("report progress rejected");
+    expect(rejected.arrivals).toEqual([]);
+    expect(
+      rejected.captures.some(({ prompt }) =>
+        prompt === undefined ? false : LENS_KINDS.some((lens) => prompt.includes(`${lens}.md`)),
+      ),
+    ).toBe(false);
   });
 
   it("persists each board's meta durably; a reconstruction reads it back", async () => {
@@ -1252,6 +1905,96 @@ describe("createRoundsRuntime", () => {
     );
     expect(recovered.boardGeneration.absentLenses).toEqual({ design: "no-material" });
     expect(recovered.boardGeneration.lensBoards).not.toHaveProperty("design");
+  });
+
+  it("serializes concurrent absence saves so a delayed partial snapshot cannot win", async () => {
+    let durable: Generation | undefined;
+    let designOnlyWrites = 0;
+    let releaseDelayedSave = (): void => undefined;
+    let announceDelayedSave = (): void => undefined;
+    let announceFlaggedDraft = (): void => undefined;
+    const delayedSaveRelease = new Promise<void>((resolve) => {
+      releaseDelayedSave = resolve;
+    });
+    const delayedSaveStarted = new Promise<void>((resolve) => {
+      announceDelayedSave = resolve;
+    });
+    const flaggedDraftFinished = new Promise<void>((resolve) => {
+      announceFlaggedDraft = resolve;
+    });
+    const copyGeneration = (generation: Generation): Generation => ({
+      ...generation,
+      lensBoards: { ...generation.lensBoards },
+      ...(generation.draftingBoardIds === undefined
+        ? {}
+        : { draftingBoardIds: { ...generation.draftingBoardIds } }),
+      ...(generation.absentLenses === undefined
+        ? {}
+        : { absentLenses: { ...generation.absentLenses } }),
+    });
+
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const lens = lensFromPrompt(prompt);
+            if (lens === "flagged") {
+              announceFlaggedDraft();
+              return { elements: [], skippedHunks: [] } as unknown as DraftBoard;
+            }
+            return cleanBody(lens);
+          }),
+        persistGeneration: async (generation) => {
+          const snapshot = copyGeneration(generation);
+          const absent = Object.keys(snapshot.absentLenses ?? {});
+          if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
+            designOnlyWrites += 1;
+            if (designOnlyWrites === 2) {
+              announceDelayedSave();
+              await delayedSaveRelease;
+            }
+          }
+          durable = snapshot;
+        },
+      }),
+    );
+
+    const run = runtime.runRound(
+      roundInput({
+        designArtifacts: null,
+        verifyDraftedReport: () => {
+          throw new Error("stop before final generation persist");
+        },
+      }),
+    );
+
+    const beforeNextTurn = (promise: Promise<void>, message: string): Promise<void> =>
+      Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          setImmediate(() => reject(new Error(message)));
+        }),
+      ]);
+    let controlFailure: unknown;
+    try {
+      await beforeNextTurn(delayedSaveStarted, "the first absence save never started");
+      await beforeNextTurn(
+        flaggedDraftFinished,
+        "Flagged provider turn did not settle while the first absence save was delayed",
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } catch (error) {
+      controlFailure = error;
+    } finally {
+      releaseDelayedSave();
+    }
+    await expect(run).rejects.toThrow("stop before final generation persist");
+    if (controlFailure !== undefined) throw controlFailure;
+
+    expect(durable?.absentLenses).toEqual({
+      design: "no-material",
+      flagged: "no-findings",
+    });
   });
 
   // ── A dispatch that THROWS (review finding 5) ──────────────────────────────

@@ -3201,15 +3201,19 @@ function frontDoorHarness(seed: {
       rename: () => ({ project: null, projects: [...stored] }),
       add: (input) => {
         addCalls.push({ ...input, includedRepos: [...input.includedRepos] });
+        const included = input.discovery.repos.filter((repo) =>
+          input.includedRepos.includes(repo.name),
+        );
         const project: Project = {
           id: "added-1",
           name: "orbital",
           path: input.discovery.path,
           kind: input.discovery.kind,
           repoCount: input.includedRepos.length,
-          branchCount: 3,
+          branchCount: included.reduce((total, repo) => total + repo.branches, 0),
           primaryBranch: input.primaryBranch,
-          openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
+          openPath: included[0]?.path ?? input.discovery.path,
+          includedRepoPaths: included.map((repo) => repo.path),
           addedAt: "2026-08-09T00:00:00.000Z",
           source: input.discovery.source,
         };
@@ -3288,15 +3292,16 @@ function persistedProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("createDispatch — front door (issue #29)", () => {
-  it("projects.list returns the stored projects and GRANTS each open target", async () => {
-    const project = persistedProject();
+  it("projects.list returns the stored projects and grants every workspace member", async () => {
+    const project = persistedProject({
+      includedRepoPaths: ["/orbital/atlas", "/orbital/docs"],
+    });
     const { dispatch, allowedRoots } = frontDoorHarness({ projects: [project] });
-    // The open target is not pre-granted: listing is what makes a persisted row openable.
-    expect(allowedRoots.has(project.openPath)).toBe(false);
+    expect([...allowedRoots]).toEqual([]);
 
     const out = (await dispatch("projects.list", {})) as { projects: Project[] };
     expect(out.projects).toEqual([project]);
-    expect(allowedRoots.has(project.openPath)).toBe(true);
+    expect([...allowedRoots].sort()).toEqual(["/orbital/atlas", "/orbital/docs"].sort());
   });
 
   it("project.discover refuses a path that was never chosen (the read-only gate)", async () => {
@@ -3323,7 +3328,7 @@ describe("createDispatch — front door (issue #29)", () => {
     expect(discoverCalls).toEqual([{ path: REPO, kind: "repo" }]);
   });
 
-  it("projects.add derives + persists from the confirmed discovery and grants the open target", async () => {
+  it("projects.add derives + persists from discovery and grants every included repo", async () => {
     const { dispatch, allowedRoots, addCalls, processCalls } = frontDoorHarness({});
     const discovery: DiscoveryResult = {
       path: "/orbital",
@@ -3338,11 +3343,13 @@ describe("createDispatch — front door (issue #29)", () => {
     const out = (await dispatch("projects.add", {
       commandId: randomUUID(),
       discovery,
-      includedRepos: ["atlas"],
+      includedRepos: ["atlas", "docs"],
       primaryBranch: "trunk",
     })) as { project: Project; projects: Project[] };
 
-    expect(addCalls).toEqual([{ discovery, includedRepos: ["atlas"], primaryBranch: "trunk" }]);
+    expect(addCalls).toEqual([
+      { discovery, includedRepos: ["atlas", "docs"], primaryBranch: "trunk" },
+    ]);
     expect(out.project.openPath).toBe("/orbital/atlas");
     expect(out.projects).toHaveLength(1);
     expect(processCalls).toEqual([
@@ -3351,8 +3358,7 @@ describe("createDispatch — front door (issue #29)", () => {
         projectId: "added-1",
       },
     ]);
-    // The freshly added project is immediately openable.
-    expect(allowedRoots.has("/orbital/atlas")).toBe(true);
+    expect([...allowedRoots].sort()).toEqual(["/orbital/atlas", "/orbital/docs"].sort());
   });
 
   it("carries the selected source end to end: discover(source) → add → persisted Project.source", async () => {

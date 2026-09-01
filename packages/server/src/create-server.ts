@@ -204,6 +204,7 @@ import type {
   Review,
   RoundEvent,
   RoundOperation,
+  RoundReportHandoff,
   RoundRunReceipt,
   SessionModel,
   SessionPreparation,
@@ -288,7 +289,11 @@ import {
   supportsNativeRoundSourceLanding,
 } from "./round-source-landing-native";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
-import { projectLensBoard, readRoundReportBoardForRecord } from "./runtime/lens-board-read";
+import {
+  projectLensBoard,
+  projectRoundReportBoard,
+  readRoundReportBoardForRecord,
+} from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime, scoutQuestionnaire } from "./runtime/project-scout";
 import {
@@ -302,7 +307,7 @@ import {
   type RoundExecutionPorts,
   roundRetryMode,
 } from "./runtime/round-execution";
-import { RoundProgressHub } from "./runtime/round-progress";
+import { RoundProgressHub, roundEventsForDurableOperation } from "./runtime/round-progress";
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
@@ -833,6 +838,53 @@ export function createBoardDraftCoordinator(
       ...(signal === undefined ? {} : { signal }),
     });
     return tracked;
+  };
+}
+
+export function createRoundRegenerationProgressQueue(handlers: {
+  readonly onDiagnostic: (
+    event: Extract<RoundEvent, { readonly type: "report-diagnostic" }>,
+  ) => void;
+  readonly onReport: (event: Extract<RoundEvent, { readonly type: "report" }>) => Promise<void>;
+  readonly onLens: (event: Extract<RoundEvent, { readonly type: "lens" }>) => void;
+}): {
+  readonly emit: (event: RoundEvent) => Promise<void>;
+  readonly settle: () => Promise<void>;
+} {
+  let failure: { readonly error: unknown } | undefined;
+  let tail = Promise.resolve();
+  const emit = (event: RoundEvent): Promise<void> => {
+    if (event.type === "report-diagnostic") {
+      try {
+        handlers.onDiagnostic(event);
+      } catch {
+        // Diagnostic publication is best-effort and cannot poison the durable handoff queue.
+      }
+      return Promise.resolve();
+    }
+    const scheduled = tail.then(async () => {
+      if (failure !== undefined) return;
+      if (event.type === "failed") {
+        failure = { error: new Error(event.reason) };
+        return;
+      }
+      if (event.type === "report") {
+        await handlers.onReport(event);
+        return;
+      }
+      if (event.type === "lens") handlers.onLens(event);
+    });
+    tail = scheduled.catch((error) => {
+      if (failure === undefined) failure = { error };
+    });
+    return event.type === "report" ? scheduled : tail;
+  };
+  return {
+    emit,
+    settle: async () => {
+      await tail;
+      if (failure !== undefined) throw failure.error;
+    },
   };
 }
 
@@ -2677,6 +2729,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
+    removeBoardMeta: (_repoRoot: string, boardId: string) => boardMetaStore.remove(boardId),
     persistGeneration: (gen) => generationStore.save(gen),
     recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
     readRounds: (sessionId) => roundRecordStore.read(sessionId),
@@ -2765,6 +2818,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     recapture: () => Promise<void>,
     emit: (event: RoundEvent) => void,
     reviewNow: () => Review = () => service.reviewById(review.id) ?? review,
+    awaitReport?: (event: Extract<RoundEvent, { readonly type: "report" }>) => void | Promise<void>,
   ): BoardRegenerationDeps => ({
     recapture,
     reviewNow,
@@ -2837,7 +2891,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         generationId,
       ),
     runRound: (input: Parameters<typeof roundsRuntime.runRound>[0]) =>
-      roundsRuntime.runRound(input),
+      roundsRuntime.runRound({
+        ...input,
+        ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
+      }),
     emit,
   });
 
@@ -2944,11 +3001,51 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     };
   };
 
+  const reportHandoffForPublishedOperation = (
+    operation: RoundOperation,
+  ): RoundReportHandoff | undefined => {
+    const state = operation.state;
+    if (state.phase === "report-drafting" || state.phase === "report-verifying") {
+      return state.report.handoff;
+    }
+    if (state.phase === "completed" && state.result.kind === "changed") {
+      return state.result.report.handoff;
+    }
+    if (
+      state.phase === "failed" &&
+      (state.failure.at === "report-drafting" || state.failure.at === "report-verifying")
+    ) {
+      return state.failure.report.handoff;
+    }
+    return undefined;
+  };
+
   const publishRoundOperation = (operation: RoundOperation): void => {
     roundProgress.emit(operation.reviewId, {
       type: "operation",
       snapshot: roundOperationProgressSnapshot(operation),
     });
+    const handoff = reportHandoffForPublishedOperation(operation);
+    const meta = handoff === undefined ? undefined : boardMetaStore.load(handoff.reportBoardId);
+    if (
+      handoff?.operationId === operation.operationId &&
+      handoff.operationRevision === operation.revision &&
+      meta !== undefined &&
+      meta.boardId === handoff.reportBoardId &&
+      meta.lens === "report" &&
+      meta.session === operation.sessionId &&
+      meta.generation === handoff.generation &&
+      JSON.stringify(meta.document) === JSON.stringify(handoff.report.document) &&
+      JSON.stringify(meta.skippedHunks) === JSON.stringify(handoff.report.skippedHunks)
+    ) {
+      roundProgress.emit(operation.reviewId, {
+        type: "report",
+        operationId: handoff.operationId,
+        operationRevision: handoff.operationRevision,
+        reportBoardId: handoff.reportBoardId,
+        report: handoff.report,
+      });
+    }
   };
 
   const planRoundWorkspace = createRoundWorkspacePlanner({
@@ -3054,6 +3151,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...(await boardsRuntimeFor(repoRoot).service.getState(boardId)).values(),
     ],
     loadBoardMeta: (boardId: string) => boardMetaStore.load(boardId),
+    loadDispatchedAsks: (operation: RoundOperation) =>
+      exactWorkOrderFor(operation).tasks.flatMap((task) => task.asks),
   };
 
   const coordinator = createRoundExecutionCoordinator({
@@ -3179,7 +3278,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           startedAt: Date.now(),
         };
       },
-      draftReport: async ({ operation, attempt }) => {
+      draftReport: async ({ operation, attempt, recordReportHandoff }) => {
         if (operation.state.phase !== "report-drafting") {
           throw new Error("Round report started outside its durable drafting phase.");
         }
@@ -3217,12 +3316,63 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           roundRecordStore.read(session.id),
           operation.sourcePatchsetId,
         );
+        let progressOperation = {
+          operationId: operation.operationId,
+          operationRevision: operation.revision,
+        };
+        const progress = createRoundRegenerationProgressQueue({
+          onDiagnostic: (event) => {
+            roundProgress.emit(operation.reviewId, { ...event, ...progressOperation });
+          },
+          onReport: async (event) => {
+            await verifyStoredRoundReport(storedRoundReportVerification, operation, {
+              point: "precommit",
+              reportBoardId: event.reportBoardId,
+              generation: attempt.generation,
+              expectedPatchsetId: review.activePatchsetId,
+            });
+            const meta = boardMetaStore.load(event.reportBoardId);
+            if (
+              meta === undefined ||
+              meta.boardId !== event.reportBoardId ||
+              meta.lens !== "report" ||
+              meta.session !== operation.sessionId ||
+              meta.generation !== attempt.generation
+            ) {
+              throw new Error("Round report progress lost its durable board identity.");
+            }
+            const reportElements = await boardsRuntimeFor(operation.repoRoot).service.getState(
+              event.reportBoardId,
+            );
+            const report = projectRoundReportBoard([...reportElements.values()], {
+              lens: "report",
+              generation: attempt.generation,
+              boardId: event.reportBoardId,
+              document: meta.document,
+              skippedHunks: meta.skippedHunks,
+            });
+            const handoff = recordReportHandoff({
+              reportBoardId: event.reportBoardId,
+              generation: attempt.generation,
+              report,
+            });
+            progressOperation = {
+              operationId: handoff.operationId,
+              operationRevision: handoff.operationRevision,
+            };
+          },
+          onLens: (event) => {
+            roundProgress.emit(operation.reviewId, { ...event, ...progressOperation });
+          },
+        });
         const regenerated = await runBoardRegeneration(
           boardDraftingDeps(
             review,
             session,
             async () => undefined,
-            () => undefined,
+            progress.emit,
+            undefined,
+            progress.emit,
           ),
           {
             session,
@@ -3261,6 +3411,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             recaptured: true,
           },
         );
+        await progress.settle();
         const record = roundRecordStore
           .read(session.id)
           .findLast((candidate) => candidate.dispatchId === operation.dispatchId);
@@ -3941,16 +4092,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (!review) return [];
       return transcriptStore.read(sessionIdForReview(review));
     },
-    // The live round-progress catch-up read (C15 3.1). Keyed by review id — the same id the
-    // run route's slug carries — so a cold `/s/:slug/run` mount folds the round already in
-    // flight instead of showing an absent one. Honest-empty until a round dispatches.
+    // The live round-progress catch-up read (C15 3.1). The durable operation remains the
+    // authority; its operation-scoped report/lens log stays beside the drafting, verification,
+    // and terminal snapshots so the client can select the latest attempt, read the verified
+    // report while lenses run, and keep their settled account at completion.
     roundEventsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (review === null) return [];
       const operation = roundOperationStore.read(sessionIdForReview(review));
-      return operation === undefined
-        ? roundProgress.read(reviewId)
-        : [{ type: "operation", snapshot: roundOperationProgressSnapshot(operation) }];
+      if (operation === undefined) return roundProgress.read(reviewId);
+      return roundEventsForDurableOperation({
+        operation,
+        liveEvents: roundProgress.read(reviewId),
+        reportHandoffIsReadable: (handoff) => {
+          const meta = boardMetaStore.load(handoff.reportBoardId);
+          return (
+            meta !== undefined &&
+            meta.boardId === handoff.reportBoardId &&
+            meta.lens === "report" &&
+            meta.session === operation.sessionId &&
+            meta.generation === handoff.generation &&
+            JSON.stringify(meta.document) === JSON.stringify(handoff.report.document) &&
+            JSON.stringify(meta.skippedHunks) === JSON.stringify(handoff.report.skippedHunks)
+          );
+        },
+      });
     },
     // The sidebar's sessions (C03 cluster 2, bound in C18), served from the SAME durable
     // session store the round dispatch mints into — so a session the reviewer worked in is
@@ -4784,7 +4950,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     uiDist: options.uiDist,
   });
 
-  void coordinator.recover().catch((error) => {
+  void (async () => {
+    // A captured review need not belong to a persisted Project. Rehydrate the exact roots owned
+    // by durable rounds before recovery starts, just as repository.choose granted them before the
+    // daemon stopped; otherwise recovery races review.load and fails before the renderer reconnects.
+    for (const operation of roundOperationStore.listActive().operations) {
+      allowedRoots.add(operation.repoRoot);
+    }
+    await coordinator.recover();
+  })().catch((error) => {
     console.error("Durable round recovery failed", error);
   });
 

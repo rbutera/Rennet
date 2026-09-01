@@ -50,6 +50,19 @@ describe("BoardMetaStore", () => {
     expect(ids).toEqual(["board:design", "board:report"]);
   });
 
+  it("removes one board's metadata idempotently without touching siblings", () => {
+    const store = new BoardMetaStore(dir());
+    store.save(meta("board:design", "design"));
+    store.save(meta("board:report", "report"));
+
+    store.remove("board:design");
+    expect(store.load("board:design")).toBeUndefined();
+    expect(store.list().map((record) => record.boardId)).toEqual(["board:report"]);
+
+    expect(() => store.remove("board:design")).not.toThrow();
+    expect(store.load("board:report")?.lens).toBe("report");
+  });
+
   it("round-trips the (session, generation) idempotency linkage and queries by it (F1)", () => {
     const store = new BoardMetaStore(dir());
     store.save({ ...meta("board:design", "design"), session: "s1", generation: "gen:ps-1" });

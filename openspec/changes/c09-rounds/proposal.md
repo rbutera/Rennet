@@ -2,11 +2,37 @@
 
 ## Why
 
-INVENTORY §7 carries ~40 `[ws:C9]` claims — the review's **iteration** loop (R34, #458). A reviewer stages asks on a board, dispatches a **work-order round**, watches a worker apply the asks live in a detached worktree, and is greeted on return by a **round report** — the successor account of what changed — while the five lens drafters regenerate the boards beneath it. When the new generation composes, one control transitions to it; delta marks say what moved. Every completed round stays reachable through a ledger beside the Map·Diff pill. C9 is the surface that turns C5's board reading and C8's own-branch hand-off into a loop the reviewer drives to convergence.
+INVENTORY §7 carries ~40 `[ws:C9]` claims — the review's **iteration** loop (R34, #458). A reviewer stages asks on a board, dispatches a **work-order round**, watches a worker apply the asks live in a detached worktree, and is greeted on return by a **round report** built from the exact worker receipt while the five lens drafters regenerate the boards beneath it. That report is separate from the deterministic successor account and Delta machinery. When the new generation composes, one control transitions to it; delta marks say what moved. Every completed round stays reachable through a ledger beside the Map·Diff pill. C9 is the surface that turns C5's board reading and C8's own-branch hand-off into a loop the reviewer drives to convergence.
 
 The spike animated the whole loop with **simulated `setTimeout` timelines** (§13): `run-view.tsx` counts a fake clock to 10 100ms and fires `onReady`; `round-report.tsx` runs a scripted regeneration to 8 300ms. Both are rewrites, not ports — real progress rides `onProgress` folded through `useCommandStream` into a read, exactly as C1 built the data seam. The named anti-pattern is autopsy **S9**: the spike's `app/s/[slug]/run/page.tsx` navigates from an effect and needs an `alreadyRanAtMount` ref to stop its own `router.replace` racing a `router.push` — a race its own comment admits. C9's run route models the round as a **state machine** and navigates from its transitions, never from an effect that reads the state the navigation mutates. That is the spine of this change.
 
 The report is not a bespoke component. INVENTORY §7.1 makes it a **first-class board** that reuses C5's element registry: a `LensBoard`-shaped board whose elements are `round_outcome` items (status · ask · note · code_ref) under a prose greeting. C5 already excludes `round_outcome` from the lens-board registry and annotates it "→ C9's round report (reuses this registry)". So the report renders through the same `Element`/`Section` machinery with the registry **widened** to carry `round_outcome` — one renderer, one totality proof, not a second rendering path.
+
+```mermaid
+sequenceDiagram
+  participant Worker
+  participant Operation as Durable round operation
+  participant Classifier as Council report classifier
+  participant Host
+  participant UI
+  participant Lenses as Five lens lanes
+
+  Worker-->>Operation: Exact diff, changed paths, and commit range
+  Operation->>Classifier: Successor patchset id, durable asks, worker receipt
+  Classifier-->>Host: Ask classifications and evidence
+  Host->>Host: Build, persist, read back, and verify report
+  Host-->>UI: Operation id, revision, report id, and report projection
+  UI->>UI: Show the report greeting while the operation is nonterminal
+  Host->>Lenses: Start all lanes after report settlement
+  Lenses-->>UI: Operation-scoped regeneration progress
+  alt Later operation failure
+    Operation-->>UI: Durable failure
+    UI->>UI: Return to the run failure view
+  else Durable composed completion
+    Operation-->>UI: Terminal generation
+    UI->>UI: Show View the New Boards
+  end
+```
 
 ## What Changes
 
@@ -14,13 +40,13 @@ The report is not a bespoke component. INVENTORY §7.1 makes it a **first-class 
 - **The round-report board** — reuse and **widen** C5's element registry with a `round_outcome` renderer (`board/kinds/round-outcome.tsx`) plus a report registry that carries it; the greeting is the board's prose. A report board with an unrendered kind is a **compile error** (the C5 `assertNever` totality, extended).
 - **The run route** (`rounds/run-route.tsx`) — replaces the `Interim` placeholder now mounted at `ROUTES.sessionRun` in `routes/app.tsx`. Live takeover driven by folded `onProgress` (never `setTimeout`), modeled as a state machine, deep-linkable **cold**: mounting reads current round state and reattaches its subscription with **no dispatch on mount** (dispatch is the explicit Dispatch act only), so a cold mid-round deep-link never double-dispatches.
 - **Dispatch wiring** — close C8's deliberately-disabled `onDispatch` seam (`rounds-lanes.tsx: disabled={!gathering || !onDispatch}`): thread `onDispatch` from the workspace → `HandoffView` → `RoundsLanes` through the seam's `dispatch()` + navigate to `/s/:slug/run`.
-- **The round report as greeting + progressive reveal** — on return the report board fills the surface (readable immediately) while regeneration progress streams beneath; **View the New Boards** appears at composition, **derived from state, never a disabled button waiting to enable**.
+- **The round report as greeting + progressive reveal** — after the host verifies the persisted report read-back, the report board fills the surface while regeneration is still nonterminal. A required report failure returns to the run failure view before lens fan-out; it cannot masquerade as long-running report drafting. A cold board-route reload reconstructs a successful handoff from durable state rather than an in-memory arm. A later failure returns to the run failure view. **View the New Boards** appears only at terminal composition, derived from state and never a disabled button waiting to enable.
 - **The rounds ledger** (`?view=rounds`) — the `rounds` branch in `ReviewWorkspace`, its pill present **exactly when** the session has ≥1 completed round (absent-not-disabled). One row per round; the selected report renders beneath (the same report registry); each round's frozen generation is reachable via C5's generation switcher and its diff via the diff surface.
 - **Post-round delta marks** (R58) — on landing at generation N+1, section `delta` badges (`new`/`reworked`; carried = absent) surface what moved and decay on view, **reusing** C5's `board/viewed-delta.ts`, not a new mechanism.
 
 ## Out of scope
 
-The round engine (B8/B9/B11) — the worker, the report drafter seat, the append-then-freeze generation minting. The exits lanes themselves (C8). C9 introduces **no protocol change**: `RoundRecord`, the `round_outcome` element, and `SectionDelta` already exist in `packages/protocol`.
+The round engine (B8/B9/B11) — the worker, the report classification seat, the append-then-freeze generation minting. The exits lanes themselves (C8). C9 introduced **no protocol change**: `RoundRecord`, the `round_outcome` element, and `SectionDelta` already existed in `packages/protocol`. The later durable-runtime binding added operation-scoped report and lens events; that is a runtime follow-up, not a retroactive C9 ownership claim.
 
 ## Reconciliations (part of the spec)
 
@@ -41,7 +67,7 @@ The round engine (B8/B9/B11) — the worker, the report drafter seat, the append
 
 Dual review (opus APPROVE / Codex BLOCK) raised 6 findings; the orchestrator upheld all 6 under Rule Zero (none is a gate/ceremony/capability-removal). These are logic/honesty fixes on C09-owned machinery that is B11-gated at runtime (`ABSENT_ROUNDS_SOURCE`), fixed now because C09 owns it.
 
-- **F1 (High) — the report gates the reveal.** `review-workspace-route.tsx` branched on `greetingArmed && inReportPhase && report.status === "valid"`; a missing/invalid report fell through to `LensBoardView` at the composed generation, exposing the new boards WITHOUT the "View the New Boards" act and swallowing the report failure. Now branches on `greetingArmed && inReportPhase` first and renders honest `missing`/`invalid` states (`ReportUnavailable`), keeping the new generation hidden behind the reveal. Honest-failure surface, not a gate.
+- **F1 (High) — the report owns the reveal.** `review-workspace-route.tsx` first branched on `greetingArmed && inReportPhase && report.status === "valid"`; a missing/invalid report fell through to `LensBoardView` at the composed generation, exposing the new boards WITHOUT the "View the New Boards" act and swallowing the report failure. The original fix branched on `greetingArmed && inReportPhase` and rendered honest `missing`/`invalid` states (`ReportUnavailable`). The durable-runtime binding goes further: a nonterminal report phase shows the verified report projection even after a cold reload, regardless of the ephemeral arm; completed greetings still require the arm, so reload does not resurrect a consumed greeting. A later durable failure returns to the run failure surface. The successor boards stay hidden until the terminal Reveal act. Honest-failure surface, not a gate.
 - **F2 (High) — the Round-diff link stops silently resolving to "latest".** The ledger's Round-diff link navigated to a bare `?view=diff`; `DiffViewContainer` reads only `review.activePatchsetId`, so selecting Round 1 after Round 2 showed the LATEST patchset, not Round 1's immutable diff (packet §7). The link now carries the round's generation identity (`?round=<generation>`, wired through `SessionQuery`), and `DiffViewContainer` renders an HONEST round-diff-pending state for a round request. B9/B4 gap parked: resolving a generation to its frozen patchset needs a per-round patchset the projection does not carry (`Review` has only `activePatchsetId` + current `patchsets`, no generation/commit-range key). C09 wires the URL identity now; the immutable-diff resolution lands when B9 adds `RoundRecord.patchsetId` or a generation-to-patchset projection. The link no longer lies.
 - **F4 (Medium) — report validation now holds the runtime domain.** `resolveReportBoard` checked only `LensBoardSchema`. It did not verify the resolved board's `boardId` against the requested id (a cross-wired board rendered AS the selected report), nor reject a `review_comment` element — a schema-valid `HostKind` outside `ReportKind` that parses `valid` then THROWS in `ReportElement` (`assertExcludedKind`). `resolveReportBoard(raw, expectedId)` now takes the expected id (from `useReportBoard`), rejects an id mismatch, and rejects any board carrying `review_comment` (the sole kind outside the report domain — `BOARD_EXCLUDED_KINDS` minus `round_outcome`). Both resolve `invalid` DATA; the compile-time `@ts-expect-error` totality control for `ReportKind` is untouched — this is the runtime boundary it cannot cover. Controls: wrong-id board, referenced-`review_comment`.
 - **F5 (Medium) — regeneration lanes render every status honestly.** The greeting's `RegenerationProgress` collapsed every status except `running` to a green check + "done", so a `queued` or `failed` drafter read as a settled success. It now renders through the SAME `StatusIcon` the run route uses (exported and shared) with an exhaustive `RowStatus` label — queued reads "queued", failed reads "failed" (danger-tinted). DOM cases for queued and failed. UI honesty — a feature.

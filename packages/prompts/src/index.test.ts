@@ -80,17 +80,40 @@ describe("lens prompt manifest", () => {
     );
   });
 
-  it("carries the round-report drafter with verification duty and the shared ground rules", () => {
+  it("keeps the round report to a narrow semantic classification", () => {
     const text = readFileSync(join(srcDir, ROUND_REPORT_FILE), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
     expect(text.length).toBeGreaterThan(500);
     expect(text).toMatch(/^# /);
     expect(text).toContain("Ground rules");
-    // The seat's defining duties: verify against the diff, never launder.
-    expect(text).toContain("Investigate before you report");
+    expect(text).toContain("`worker.diff`");
     expect(text).toMatch(/[Nn]ever launder/);
-    expect(text).toContain("`document.title`");
-    expect(text).toContain("`document.introMarkdown`");
-    expect(text).toMatch(/Set `document\.measure` to\s+`reading`/);
+    expect(text).toContain("`outcomes`");
+    expect(text).toContain("`beyond`");
+    expect(text).toContain("Never add the unified diff's `a/` or `b/` prefix");
+    expect(normalized).toContain(
+      "source path from the diff, which on a rename or deletion can differ",
+    );
+    expect(normalized).toContain(
+      'Use `side: "head"` for a `+` line and its number in the hunk\'s `+start,count` range',
+    );
+    expect(normalized).toContain(
+      'Use `side: "base"` for a `-` line and its number in the `-start,count` range',
+    );
+    expect(text).toContain("Context lines are not evidence");
+    expect(text).toContain("Do not emit a document");
+    expect(text).not.toContain("Set `document.measure`");
+  });
+
+  it.each([
+    ["decisions", "decision"],
+    ["flagged", "finding"],
+  ] as const)("requires a served root section for every non-empty %s result", (lens, kind) => {
+    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[lens]), "utf8").replace(/\s+/g, " ");
+
+    expect(text).toContain("top-level `section`");
+    expect(text).toContain(`\`${kind}\``);
+    expect(text).toContain("`section.data.children`");
   });
 
   it("carries the review-draft voice rules", () => {

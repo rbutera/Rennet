@@ -146,7 +146,7 @@ Architecture per asset 1. Two packages die (`types`, `instructions`),
 | B5 | delta-packet | `core/delta`: hunk index, element-diffs, collation/counterpart, blast-radius, openspec parse, noise pre-classify → `buildDeltaPacket()` (the drafters' entire input). `delta-account` → `successor-account`. |
 | B6 | context-map-swarm | #460: partitions, light workers, verify seat, council job ids, incremental delta with carry. |
 | B7 | related-context | #461: ref extraction, `gh` first-class, dossier shape, project-scout adapter, settings-ladder keys. |
-| B8 | lens-pipeline | #464 + #493 + #486: drafter dispatch (warm sessions, structured returns), lint (19 rules, pure) + scoped-retry ladder (cap 10, blemishes exit), post-process, immutability check, mechanical + authored composition, every-hunk check, round-report seat. |
+| B8 | lens-pipeline | #464 + #493 + #486: drafter dispatch (warm sessions, structured returns), lint (19 rules, pure) + one repair turn (honest omissions and blemishes), post-process, immutability check, mechanical + authored composition, every-hunk check, round-report seat. |
 | B9 | session-rounds | #466: session as durable root, claim, cursor-resume harness, one-turn lock, rework queue, rounds state machine, idempotent pipeline starts. |
 | B10 | commands-and-settings | #465 registry-bound dispatch (kills the 2,479-line switch), `app_*` in-process tools, #476 settings ladder + `client-settings.json`/`daemon-settings.json` split + `config.json` migration. |
 | B11 | exits-backend | **Asks durable host-side per session** (decided), work-order composition, PR + GitHub two-strata review composition, idempotent push + open-PR. |
@@ -250,7 +250,7 @@ Carried into the packets so they cannot be lost:
 - Two derivation chains get drift *tests*: `DraftBoardSchema` from
   `HostBoardSchema`, and Zod → whiteboard wire.
 - #493's warm-session concurrency cost model is falsifiable — B8 measures
-  before trusting cap 10.
+  before trusting the six-seat fan-out.
 - Mobile board rebuild is out of scope: route stubbed in B2, fresh wayfinder
   effort after desktop ships.
 - Docs: each change updates the pages it invalidates (definition of done);

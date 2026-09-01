@@ -83,7 +83,7 @@ Fed ONLY by `test/fixtures/rounds/timeline.ts` (`FIXTURE_ROUND_TIMELINE`). NO li
 nothing converts the server's real round progress (`onBoardArrival`, pipeline phases, mint/compose)
 into `RoundEvent`s over the wire and into `advance()`. That live channel is the bulk of cluster 4.
 Plus these honest-absent GAPS (grep found NONE in non-test app-ui):
-- "Cleaning up drafts · post-process pass" + "Composed generation 2" synthetic steps — NOT rendered.
+- "Finalizing generation" + "Composed generation 2" derived steps — NOT rendered. Finalization starts after cross-lens coverage and every lens arrival.
 - Kicker MISMATCH: greeting renders "Re-drafting the boards"; claim wants
   "Regenerating the Boards" → "Regenerated the Boards". Label swap on phase.
 - Retrospective collapsed line "Regenerated the boards · N reworks · generation M" — NOT in ledger.
@@ -99,13 +99,13 @@ Plus these honest-absent GAPS (grep found NONE in non-test app-ui):
 | 1 | **Collation bridge** — LintHunk mapper, `lintContextFor`, deltaPacket+successorAccount sourcing, `runRound` trigger after worker. FIRST prod `runLensPipeline`. | L | none directly, but PREREQ for all — makes real regeneration data exist |
 | 2 | **Generation mint/freeze durability** — persist Generation, freeze prior, durable RoundRecord mint fields, expose gen-1 drill-down data | S | gen-1 drill-down + intro line (data); retrospective "generation M / N reworks" (data); "new generation, prior frozen" |
 | 3 | **Live round-progress channel** — pipeline phases + onBoardArrival → `RoundEvent` over WS → `advance()` in prod (replace fixture) | M | report readable while drafters regen live; per-lens regen block; kicker Regenerating→Regenerated; View-New-Boards real gating; surface never locks |
-| 4 | **UI completions** — post-process + "Composed generation 2" steps, kicker text swap, retrospective line render, gen-1 drill-down + intro render | S–M | "post-process pass" + "Composed generation 2"; retrospective line (render); gen-1 drill-down + intro (render) |
+| 4 | **UI completions** — finalization + "Composed generation 2" steps, kicker text swap, retrospective line render, gen-1 drill-down + intro render | S–M | "Finalizing generation" + "Composed generation 2"; retrospective line (render); gen-1 drill-down + intro (render) |
 
 Clusters 3+4 are coupled (4's steps ride 3's stream) and could merge under one UI-owning team;
 kept split to isolate the risky wire (3) from bounded render polish (4). Cluster 1 gates 2/3/4 —
 real data must flow before the UI can show anything but fixtures.
 
-**All 9 claims land: C1 report-readable→c3+c1 · C2 per-lens block→c3 · C3 post-process/Composed→c4
+**All 9 claims land: C1 report-readable→c3+c1 · C2 per-lens block→c3 · C3 finalization/Composed→c4
 · C4 kicker→c4 · C5 View-New-Boards→c3 · C6 non-locking→c3 · C7 retrospective→c4+c2 · C8 gen-1
 drill-down→c2+c4 · C9(§3 intro line)→c2+c4.**
 

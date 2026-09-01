@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 import {
   type RoundOperation,
   type RoundRecordingAttempt,
+  type RoundReportBoard,
+  type RoundReportDraftAttempt,
+  type RoundReportHandoff,
   type RoundSourceLandingAttempt,
   type RoundWorkerCompletedReceipt,
   type RoundWorkspaceAttempt,
@@ -96,6 +99,28 @@ const reportDraftAttempt = {
   startedAt: 13,
 } as const;
 const reportDraftReceipt = { ...reportDraftAttempt, draftedAt: 14 } as const;
+const reportBoard = {
+  lens: "report" as const,
+  generation: reportDraftAttempt.generation,
+  boardId: reportDraftAttempt.reportBoardId,
+  document: {
+    title: "Round report",
+    introMarkdown: "The requested change landed.",
+    measure: "reading" as const,
+  },
+  sections: [],
+  elements: [],
+  skippedHunks: [],
+} satisfies RoundReportBoard;
+function reportHandoff(operationId: string, operationRevision: number): RoundReportHandoff {
+  return {
+    operationId,
+    operationRevision,
+    reportBoardId: reportDraftAttempt.reportBoardId,
+    generation: reportDraftAttempt.generation,
+    report: reportBoard,
+  };
+}
 const verificationAttempt = { executionId: "report-verify-1", startedAt: 15 } as const;
 const changedRoundEvidence = {
   workspace,
@@ -584,6 +609,9 @@ if (RACE_ROLE !== undefined) {
           report: reportDraftAttempt,
         },
       });
+      if (drafting.state.phase !== "report-drafting") {
+        throw new Error("expected report drafting fixture");
+      }
       const store = storeWithPersistedOperation(drafting);
 
       expect(() =>
@@ -600,6 +628,112 @@ if (RACE_ROLE !== undefined) {
           updatedAt: 15,
         }),
       ).toThrow(RoundOperationConflictError);
+    });
+
+    it("allows only an append-only report handoff epoch within report drafting", () => {
+      const drafting = operation({
+        operationId: "durable-report-handoff",
+        revision: 8,
+        state: {
+          phase: "report-drafting",
+          ...changedRoundEvidence,
+          report: reportDraftAttempt,
+        },
+      });
+      if (drafting.state.phase !== "report-drafting") {
+        throw new Error("expected report drafting fixture");
+      }
+      const draftingState = drafting.state;
+      const store = storeWithPersistedOperation(drafting);
+      const handedOff = store.compareAndSwap(expectation(drafting), {
+        state: {
+          ...draftingState,
+          report: {
+            ...reportDraftAttempt,
+            handoff: reportHandoff(drafting.operationId, drafting.revision + 1),
+          },
+        },
+        updatedAt: 14,
+      });
+      expect(handedOff.revision).toBe(9);
+      if (handedOff.state.phase !== "report-drafting") {
+        throw new Error("expected report drafting to remain active");
+      }
+      expect(handedOff.state.report.handoff?.operationRevision).toBe(handedOff.revision);
+
+      const replayed = store.compareAndSwap(expectation(handedOff), {
+        state: {
+          ...handedOff.state,
+          report: {
+            ...handedOff.state.report,
+            handoff: reportHandoff(handedOff.operationId, handedOff.revision + 1),
+          },
+        },
+        updatedAt: 15,
+      });
+      expect(replayed.revision).toBe(10);
+      if (replayed.state.phase !== "report-drafting") {
+        throw new Error("expected replayed report drafting to remain active");
+      }
+      const replayedState = replayed.state;
+      expect(replayedState.report.handoff?.operationRevision).toBe(replayed.revision);
+
+      const invalidReports: RoundReportDraftAttempt[] = [
+        { ...replayedState.report, handoff: undefined },
+        {
+          ...replayedState.report,
+          handoff: {
+            ...reportHandoff(replayed.operationId, replayed.revision + 1),
+            report: {
+              ...reportBoard,
+              document: { ...reportBoard.document, title: "Changed after handoff" },
+            },
+          },
+        },
+        {
+          ...replayedState.report,
+          handoff: reportHandoff(replayed.operationId, replayed.revision),
+        },
+      ];
+      for (const report of invalidReports) {
+        expect(() =>
+          store.compareAndSwap(expectation(replayed), {
+            state: { ...replayedState, report },
+            updatedAt: 16,
+          }),
+        ).toThrow(RoundOperationConflictError);
+      }
+    });
+
+    it("queues a rerun without rewriting the persisted report handoff revision", () => {
+      const handedOff = operation({
+        operationId: "queued-after-report-handoff",
+        revision: 8,
+        state: {
+          phase: "report-drafting",
+          ...changedRoundEvidence,
+          report: {
+            ...reportDraftAttempt,
+            handoff: reportHandoff("queued-after-report-handoff", 8),
+          },
+        },
+      });
+      if (handedOff.state.phase !== "report-drafting") {
+        throw new Error("expected handed-off report drafting to remain active");
+      }
+      const handedOffReport = handedOff.state.report;
+      const store = storeWithPersistedOperation(handedOff);
+
+      const queued = store.requestRerun(expectation(handedOff));
+
+      expect(queued.revision).toBe(9);
+      expect(queued.rerunRequested).toBe(true);
+      expect(queued.state.phase).toBe("report-drafting");
+      if (queued.state.phase !== "report-drafting") {
+        throw new Error("expected queued report drafting to remain active");
+      }
+      expect(queued.state.report.handoff).toEqual(handedOffReport.handoff);
+      expect(queued.state.report.handoff?.operationRevision).toBe(8);
     });
 
     it("rejects a verified report receipt that rewrites a lens board id", () => {

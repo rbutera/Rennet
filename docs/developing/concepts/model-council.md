@@ -41,8 +41,11 @@ Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
 Claude and Codex on the same instructions, reconciled by cross-model
 concurrence), `lens-draft-noise` (the noise lens), `board-post-process` (the
 editor pass that reshapes and de-slops board prose between the lint loop and the
-immutability gate), and `round-report` (the per-round seat that drafts first on
-a re-review). The Flagged dual-seat merge routes through `finding-reconcile`.
+immutability gate), and `round-report`. The last is a single-turn
+classifier for landed coding rounds, not another full board drafter. It receives
+the successor patchset id, durable asks, and exact worker receipt. The host builds
+and verifies the report board from its classification. The Flagged dual-seat
+merge routes through `finding-reconcile`.
 
 Every model path in the product resolves through the council.
 
@@ -104,6 +107,12 @@ flowchart LR
 With both providers available, a light job may resolve to a Codex harness while
 the review's heavy session runs on Claude. The resolution trace marks that
 cross-harness choice.
+
+`round-report` has an explicit provider routing choice. Under both-provider and
+Claude-only availability it defaults to
+`sonnet-5` at `low`; under Codex-only availability it defaults to
+`gpt-5.6-terra` at `low`. These are table defaults, not hard-coded provider
+choices. The normal task override, then tier override, remains authoritative.
 
 ## The dual-model second seat
 

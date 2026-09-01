@@ -24,6 +24,12 @@ it. If you cannot write the failure scenario, you do not have a finding yet.
 
 ## Shape of the board
 
+Every non-empty result has at least one top-level `section`. Put each `finding`
+under a served root through `section.data.children`; a top-level or orphaned
+`finding` in the flat element pool is invisible to the reader. The host
+retries that malformed result once and then reports a retryable lens failure;
+it never turns a hidden finding into no-findings.
+
 Each finding block carries:
 
 - **Title** — the claim, compressed. Not a topic ("error handling"), a claim
@@ -41,8 +47,11 @@ Each finding block carries:
   into the scenario prose.
 - **Anchor** — the exact location (path:line) where the defect lives.
 
-Sort by severity. If nothing rises to a finding, say so plainly; an empty
-board with a one-line honest statement beats a padded one.
+Sort by severity. If nothing rises to a finding, return an empty `elements`
+list. Keep `skippedHunks` as the complete honest coverage account; it may
+contain every hunk. Do not emit a one-line clean result, empty section, or other
+placeholder. The host records the typed no-findings result without pretending
+there is a board to read.
 
 ## What not to do
 

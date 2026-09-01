@@ -13,6 +13,7 @@ import {
 } from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
+import type { CouncilEffort, CouncilModel } from "../domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
 import { LENS_KINDS } from "../manifests";
 import { sha256Hex } from "../sha256";
@@ -568,6 +569,35 @@ export const RoundRecordingReceiptSchema = RoundRecordingAttemptSchema.extend({
 });
 export type RoundRecordingReceipt = z.infer<typeof RoundRecordingReceiptSchema>;
 
+/** The exact verified report projection handed to the renderer while the rest of the
+ * successor boards were still regenerating. The outer operation owns `operationId`; the
+ * revision records the durable report-attempt epoch that emitted this projection. */
+export const RoundReportHandoffSchema = z
+  .object({
+    operationId: id,
+    operationRevision: z.number().int().nonnegative(),
+    reportBoardId: id,
+    generation: id,
+    report: RoundReportBoardSchema,
+  })
+  .superRefine((handoff, context) => {
+    if (handoff.report.boardId !== handoff.reportBoardId) {
+      context.addIssue({
+        code: "custom",
+        path: ["report", "boardId"],
+        message: "does not match reportBoardId",
+      });
+    }
+    if (handoff.report.generation !== handoff.generation) {
+      context.addIssue({
+        code: "custom",
+        path: ["report", "generation"],
+        message: "does not match generation",
+      });
+    }
+  });
+export type RoundReportHandoff = z.infer<typeof RoundReportHandoffSchema>;
+
 export const RoundReportDraftAttemptSchema = z
   .object({
     executionId: id,
@@ -581,11 +611,29 @@ export const RoundReportDraftAttemptSchema = z
       noise: id,
       report: id,
     }),
+    /** Present after the early report passed its durable read-back verification. */
+    handoff: RoundReportHandoffSchema.optional(),
     startedAt: z.number().int().nonnegative(),
   })
-  .refine((attempt) => attempt.reportBoardId === attempt.boardIds.report, {
-    path: ["reportBoardId"],
-    message: "does not match boardIds.report",
+  .superRefine((attempt, context) => {
+    if (attempt.reportBoardId !== attempt.boardIds.report) {
+      context.addIssue({
+        code: "custom",
+        path: ["reportBoardId"],
+        message: "does not match boardIds.report",
+      });
+    }
+    if (
+      attempt.handoff !== undefined &&
+      (attempt.handoff.reportBoardId !== attempt.reportBoardId ||
+        attempt.handoff.generation !== attempt.generation)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["handoff"],
+        message: "does not match the reserved report identity",
+      });
+    }
   });
 export type RoundReportDraftAttempt = z.infer<typeof RoundReportDraftAttemptSchema>;
 
@@ -813,6 +861,24 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
 ]);
 export type RoundOperationState = z.infer<typeof RoundOperationStateSchema>;
 
+function reportHandoffFromOperationState(
+  state: RoundOperationState,
+): RoundReportHandoff | undefined {
+  if (state.phase === "report-drafting" || state.phase === "report-verifying") {
+    return state.report.handoff;
+  }
+  if (state.phase === "completed" && state.result.kind === "changed") {
+    return state.result.report.handoff;
+  }
+  if (
+    state.phase === "failed" &&
+    (state.failure.at === "report-drafting" || state.failure.at === "report-verifying")
+  ) {
+    return state.failure.report.handoff;
+  }
+  return undefined;
+}
+
 export const RoundSourceTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("branch"), branch: id }),
   z.object({ kind: z.literal("detached"), head: id }),
@@ -906,6 +972,18 @@ export const RoundOperationSchema = z
       });
     }
     const state = operation.state;
+    const reportHandoff = reportHandoffFromOperationState(state);
+    if (
+      reportHandoff !== undefined &&
+      (reportHandoff.operationId !== operation.operationId ||
+        reportHandoff.operationRevision > operation.revision)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["state", "report", "handoff"],
+        message: "does not belong to this durable operation revision",
+      });
+    }
     const failure = state.phase === "failed" ? state.failure : undefined;
     const gate =
       state.phase !== "failed" && "gate" in state
@@ -1116,7 +1194,15 @@ const failedCommits = z.object({
 });
 
 const draftingReport = z.object({ status: z.literal("drafting") });
-const verifyingReport = z.object({ status: z.literal("verifying") });
+const verifyingReport = z.union([
+  z.object({
+    status: z.literal("verifying"),
+    reportBoardId: id,
+    generation: id,
+  }),
+  /** Backward-compatible progress from daemons that did not project report identity yet. */
+  z.object({ status: z.literal("verifying") }),
+]);
 const verifiedReport = z.object({
   status: z.literal("verified"),
   reportBoardId: id,
@@ -1450,7 +1536,11 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         worker: doneWorkerProgress(state.worker),
         gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
-        report: { status: "verifying" },
+        report: {
+          status: "verifying",
+          reportBoardId: state.report.reportBoardId,
+          generation: state.report.generation,
+        },
       };
     case "completed":
       return {
@@ -1690,13 +1780,134 @@ export type SessionPreparation = z.infer<typeof SessionPreparationSchema>;
  */
 const seq = z.number().int().nonnegative().optional();
 
+const diagnosticElapsedMs = z.number().int().nonnegative();
+const diagnosticEfforts = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly CouncilEffort[];
+const claudeDiagnosticModels = [
+  "haiku",
+  "sonnet-5",
+  "opus-4.8",
+] as const satisfies readonly CouncilModel[];
+const codexDiagnosticModels = [
+  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const satisfies readonly CouncilModel[];
+
+const RoundReportTurnStartedMilestoneSchema = z.union([
+  z
+    .object({
+      stage: z.literal("turn-started"),
+      harness: z.literal("claude-code"),
+      model: z.enum(claudeDiagnosticModels),
+      effort: z.enum(diagnosticEfforts),
+      elapsedMs: diagnosticElapsedMs,
+    })
+    .strict(),
+  z
+    .object({
+      stage: z.literal("turn-started"),
+      harness: z.literal("codex"),
+      model: z.enum(codexDiagnosticModels),
+      effort: z.enum(diagnosticEfforts),
+      elapsedMs: diagnosticElapsedMs,
+    })
+    .strict(),
+]);
+
+/** Content-free checkpoints for one classified report turn. The fixed vocabularies and
+ * elapsed integer are the complete payload; provider text and review material cannot fit. */
+export const RoundReportDiagnosticMilestoneSchema = z.union([
+  RoundReportTurnStartedMilestoneSchema,
+  z
+    .object({
+      stage: z.literal("provider-settled"),
+      outcome: z.enum([
+        "completed",
+        "failed",
+        "cancelled",
+        "stream-ended-without-terminal",
+        "threw",
+      ]),
+      elapsedMs: diagnosticElapsedMs,
+    })
+    .strict(),
+  z
+    .object({
+      stage: z.literal("turn-settled"),
+      status: z.enum(["emitted", "failed"]),
+      elapsedMs: diagnosticElapsedMs,
+    })
+    .strict(),
+  z.object({ stage: z.literal("schema-parsed"), elapsedMs: diagnosticElapsedMs }).strict(),
+  z.object({ stage: z.literal("evidence-verified"), elapsedMs: diagnosticElapsedMs }).strict(),
+  z.object({ stage: z.literal("persisted"), elapsedMs: diagnosticElapsedMs }).strict(),
+]);
+export type RoundReportDiagnosticMilestone = z.infer<typeof RoundReportDiagnosticMilestoneSchema>;
+
 /**
  * One folded round-progress event. The server emits these from REAL round progress —
  * never a clock — and the client's `advance` walks the phases off them. `failed` is the
  * terminal arm: a crashed worker or a broken regeneration emits it, so a stalled round
  * surfaces as a failure rather than silence.
  */
-export const RoundEventSchema = z.discriminatedUnion("type", [
+const LegacyRoundReportEventSchema = z.object({
+  type: z.literal("report"),
+  reportBoardId: id,
+  operationId: z.never().optional(),
+  operationRevision: z.never().optional(),
+  report: z.never().optional(),
+  seq,
+});
+
+const ScopedRoundReportEventSchema = z.object({
+  type: z.literal("report"),
+  reportBoardId: id,
+  operationId: id,
+  operationRevision: z.number().int().nonnegative(),
+  /** The already-validated report projection, readable before lens drafting settles. */
+  report: RoundReportBoardSchema,
+  seq,
+});
+
+const LegacyRoundLensEventSchema = z.object({
+  type: z.literal("lens"),
+  lanes: z.array(LensLaneSchema),
+  operationId: z.never().optional(),
+  operationRevision: z.never().optional(),
+  seq,
+});
+
+const ScopedRoundLensEventSchema = z.object({
+  type: z.literal("lens"),
+  lanes: z.array(LensLaneSchema),
+  operationId: id,
+  operationRevision: z.number().int().nonnegative(),
+  seq,
+});
+
+const LegacyRoundReportDiagnosticEventSchema = z.object({
+  type: z.literal("report-diagnostic"),
+  milestone: RoundReportDiagnosticMilestoneSchema,
+  operationId: z.never().optional(),
+  operationRevision: z.never().optional(),
+  seq,
+});
+
+const ScopedRoundReportDiagnosticEventSchema = z.object({
+  type: z.literal("report-diagnostic"),
+  milestone: RoundReportDiagnosticMilestoneSchema,
+  operationId: id,
+  operationRevision: z.number().int().nonnegative(),
+  seq,
+});
+
+const BasicRoundEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("operation"),
     snapshot: RoundOperationProgressSnapshotSchema,
@@ -1707,12 +1918,19 @@ export const RoundEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("worker"), rows: z.array(LaneRowSchema), seq }),
   z.object({ type: z.literal("gate"), seq }),
   z.object({ type: z.literal("committed"), seq }),
-  z.object({ type: z.literal("report"), reportBoardId: id, seq }),
-  z.object({ type: z.literal("lens"), lanes: z.array(LensLaneSchema), seq }),
   z.object({ type: z.literal("composed"), generation: id, seq }),
   /** The worker completed but its checkpoint was empty, so no generation was regenerated. */
   z.object({ type: z.literal("unchanged"), seq }),
   z.object({ type: z.literal("failed"), reason: z.string(), seq }),
+]);
+export const RoundEventSchema = z.union([
+  BasicRoundEventSchema,
+  LegacyRoundReportEventSchema,
+  ScopedRoundReportEventSchema,
+  LegacyRoundLensEventSchema,
+  ScopedRoundLensEventSchema,
+  LegacyRoundReportDiagnosticEventSchema,
+  ScopedRoundReportDiagnosticEventSchema,
 ]);
 export type RoundEvent = z.infer<typeof RoundEventSchema>;
 

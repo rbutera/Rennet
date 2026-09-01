@@ -50,6 +50,45 @@ uses the real WebSocket protocol, persistence stores, capture path, board runtim
 round coordinator, and restart behavior. The spec is committed as a launched
 journey but is not part of the browser-free local gate.
 
+### Live board and round proofs
+
+Two opt-in checks exercise installed harnesses. Terminal accounting alone is not
+a functional pass. Sequence must contain a reachable `order_step`. Decisions and
+Flagged must contain a reachable `decision` or `finding`, or return the exact
+`no-decisions` or `no-findings` typed absence. Prose-only boards, empty sections,
+detached typed elements, Design, and Noise cannot satisfy those core checks. The
+server check requires both Claude Code and Codex, records the start and terminal
+result of each provider call, and runs the real round-report and five-lens
+pipeline. The command streams timestamped round progress plus provider-call start
+and terminal records directly to the invoking terminal. A
+watchdog aborts the provider turns one minute before the outer test timeout so a
+stalled run leaves its last lane and in-flight call in the log:
+
+```sh
+pnpm nx run rennet-server:real-rounds
+```
+
+`real-rounds` is uncached because its verdict depends on installed harnesses and
+provider responses. The launched desktop command counts as owner-journey proof
+only when it exits green. Its initial, reconstructed, and successor generations
+must all pass the same reachable core oracle above. It records the first healthy
+daemon PID, closes the app-owned daemon, proves that process and its claim are
+gone, and requires the relaunched app to use a different healthy PID. After
+`board.read` reconstructs the same results, the check stages an exact source edit,
+dispatches a real coding round, and mounts the live `/run` route. It waits for
+durable Return to navigate back to the review automatically, then uses the visible
+**View the New Boards** control. Without reloading the page, the final assertions
+read the changed fixture, round diff and commit range, successor patchset, new
+generation, and visible successor terminal results: reachable Sequence material
+plus reachable Decisions and Flagged material or their exact typed absences:
+
+```sh
+RENNET_LIVE_E2E=1 pnpm nx run rennet-desktop:e2e --args="board-drafting-live"
+```
+
+Both commands can send the reviewed material to the configured harness provider.
+They stay outside `pnpm check` and must run only against an authorised repository.
+
 ## The normalized session
 
 The current port exposes descriptor and health information plus one operation:

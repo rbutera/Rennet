@@ -45,6 +45,7 @@ import {
   createCompositionBoardsForReview,
   createGitLabPrSubmissionResolver,
   createRennetServer,
+  createRoundRegenerationProgressQueue,
   createRoundSourceLandingPorts,
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
@@ -447,6 +448,43 @@ describe("publish board-drafting coordination", () => {
     });
 
     await expect(source(advanced.id, "gen:patch-1")).resolves.toEqual({ status: "drafting" });
+  });
+});
+
+describe("round regeneration progress coordination", () => {
+  it("keeps a throwing diagnostic sink outside the awaited report handoff queue", async () => {
+    const order: string[] = [];
+    let releaseReport!: () => void;
+    const reportGate = new Promise<void>((resolve) => {
+      releaseReport = resolve;
+    });
+    const progress = createRoundRegenerationProgressQueue({
+      onDiagnostic: () => {
+        throw new Error("console sink failed");
+      },
+      onReport: async () => {
+        order.push("report-started");
+        await reportGate;
+        order.push("report-recorded");
+      },
+      onLens: () => order.push("lens-started"),
+    });
+
+    await expect(
+      progress.emit({
+        type: "report-diagnostic",
+        milestone: { stage: "schema-parsed", elapsedMs: 7 },
+      }),
+    ).resolves.toBeUndefined();
+    const report = progress.emit({ type: "report", reportBoardId: "report-board" });
+    const lens = progress.emit({ type: "lens", lanes: [] });
+    await vi.waitFor(() => expect(order).toEqual(["report-started"]));
+
+    releaseReport();
+    await expect(report).resolves.toBeUndefined();
+    await expect(lens).resolves.toBeUndefined();
+    await expect(progress.settle()).resolves.toBeUndefined();
+    expect(order).toEqual(["report-started", "report-recorded", "lens-started"]);
   });
 });
 
@@ -1343,6 +1381,253 @@ describe("durable round execution recovery", () => {
     for (const shutdown of shutdowns.splice(0)) shutdown();
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
+
+  it("restores an active round repository before recovering its report draft", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-root-recovery-data-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-round-root-recovery-workspace-"));
+    const primaryRepo = join(workspace, "primary");
+    const includedRepo = join(workspace, "included");
+    const recoveryWorktree = join(workspace, "recovery-worktree");
+    dirs.push(dataDir, workspace);
+    for (const repo of [primaryRepo, includedRepo]) {
+      execFileSync("git", ["init", "-b", "main", repo]);
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+      writeFileSync(join(repo, "a.ts"), "export const value = 1;\n");
+      execFileSync("git", ["add", "a.ts"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    }
+    writeFileSync(join(includedRepo, "a.ts"), "export const value = 2;\n");
+    const sourceHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: includedRepo,
+      encoding: "utf8",
+    }).trim();
+
+    const reviewId = "review-root-recovery";
+    const sourcePatchsetId = "patchset-root-recovery";
+    const sourcePatchset: Review["patchsets"][number] = {
+      id: sourcePatchsetId,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      repository: {
+        id: "included",
+        root: includedRepo,
+        commonDir: join(includedRepo, ".git"),
+        baseRef: "main",
+        baseOid: sourceHead,
+        headOid: sourceHead,
+      },
+      files: [],
+      rawDiff: "",
+      byteLength: 0,
+      truncated: false,
+    };
+    const reviewStore = new SqliteReviewStore(join(dataDir, "rennet.sqlite"));
+    reviewStore.appendRawForTesting(reviewId, "ReviewCreated", 1, {
+      reviewId,
+      patchset: sourcePatchset,
+    });
+    reviewStore.close();
+
+    const sessionId = "session-root-recovery";
+    const operationId = "operation-root-recovery";
+    const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+    let operation = operationStore.claimIfIdle({
+      operationId,
+      sessionId,
+      reviewId,
+      dispatchId: "dispatch-root-recovery",
+      sourcePatchsetId,
+      askOccurrences: [{ id: "ask-root-recovery", revision: 1 }],
+      roundNumber: 1,
+      sourceTarget: { kind: "detached", head: sourceHead },
+      repoRoot: includedRepo,
+      workOrderPrompt: "recover the persisted report draft",
+      workOrderDigest: sha256Hex("recover the persisted report draft"),
+      gatePlan: { kind: "absent" },
+      revision: 0,
+      rerunRequested: false,
+      createdAt: 1,
+      updatedAt: 1,
+      state: { phase: "claimed" },
+    });
+    const transition = (state: RoundOperation["state"], updatedAt: number): void => {
+      operation = operationStore.compareAndSwap(
+        {
+          sessionId: operation.sessionId,
+          operationId: operation.operationId,
+          revision: operation.revision,
+        },
+        { state, updatedAt },
+      );
+    };
+    const workspaceAttempt = {
+      kind: "detached-worktree" as const,
+      worktreePath: recoveryWorktree,
+      sourceTreeOid: sourceHead,
+      sourceParentHead: sourceHead,
+      startedAt: 2,
+    };
+    transition({ phase: "workspace-preparing", workspace: workspaceAttempt }, 2);
+    const workspaceReceipt = { ...workspaceAttempt, sourceHead, preparedAt: 3 };
+    transition({ phase: "prepared", workspace: workspaceReceipt }, 3);
+    const workerAttempt = { executionId: "worker-root-recovery", startedAt: 4 };
+    transition({ phase: "worker-running", workspace: workspaceReceipt, worker: workerAttempt }, 4);
+    const workerReceipt = {
+      ...workerAttempt,
+      outcome: "completed" as const,
+      completedAt: 5,
+      diff: "diff --git a/a.ts b/a.ts\n+export const value = 2;",
+      changedPaths: ["a.ts"],
+    };
+    transition({ phase: "worker-settled", workspace: workspaceReceipt, worker: workerReceipt }, 5);
+    const gate = { outcome: "skipped" as const, reason: "not-configured" as const, settledAt: 6 };
+    transition(
+      { phase: "gate-settled", workspace: workspaceReceipt, worker: workerReceipt, gate },
+      6,
+    );
+    const commitAttempt = {
+      executionId: "commit-root-recovery",
+      baseHead: sourceHead,
+      startedAt: 7,
+    };
+    transition(
+      {
+        phase: "committing",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commit: commitAttempt,
+      },
+      7,
+    );
+    const commits = {
+      ...commitAttempt,
+      from: sourceHead,
+      to: `${sourceHead}-worker`,
+      count: 1,
+      committedAt: 8,
+    };
+    transition(
+      {
+        phase: "commits-settled",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commits,
+      },
+      8,
+    );
+    const landingAttempt = {
+      effect: "source-landing" as const,
+      executionId: "landing-root-recovery",
+      baselineCommit: sourceHead,
+      workerHead: commits.to,
+      startedAt: 9,
+    };
+    transition(
+      {
+        phase: "source-landing",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commits,
+        landing: landingAttempt,
+      },
+      9,
+    );
+    const landing = { ...landingAttempt, outcome: "applied" as const, landedAt: 10 };
+    transition(
+      {
+        phase: "source-landed",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commits,
+        landing,
+      },
+      10,
+    );
+    const recordingAttempt = {
+      effect: "round-recording" as const,
+      executionId: "recording-root-recovery",
+      startedAt: 11,
+    };
+    transition(
+      {
+        phase: "round-recording",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commits,
+        landing,
+        recording: recordingAttempt,
+      },
+      11,
+    );
+    const recording = { ...recordingAttempt, recordedAt: 12 };
+    transition(
+      {
+        phase: "round-recorded",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commits,
+        landing,
+        recording,
+      },
+      12,
+    );
+    transition(
+      {
+        phase: "report-drafting",
+        workspace: workspaceReceipt,
+        worker: workerReceipt,
+        gate,
+        commits,
+        landing,
+        recording,
+        report: {
+          executionId: "00000000-0000-4000-8000-000000000013",
+          reportBoardId: "report-board-root-recovery",
+          generation: "generation-root-recovery",
+          boardIds: {
+            design: "design-board-root-recovery",
+            sequence: "sequence-board-root-recovery",
+            decisions: "decisions-board-root-recovery",
+            flagged: "flagged-board-root-recovery",
+            noise: "noise-board-root-recovery",
+            report: "report-board-root-recovery",
+          },
+          startedAt: 13,
+        },
+      },
+      13,
+    );
+    operationStore.close();
+
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+    });
+    shutdowns.push(server.shutdown);
+
+    await vi.waitFor(
+      () => {
+        const recoveredStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const recovered = recoveredStore.read(sessionId);
+        recoveredStore.close();
+        expect(recovered?.state.phase).toBe("failed");
+        if (recovered?.state.phase !== "failed") return;
+        expect(recovered.state.failure.reason).toContain("lost its session");
+        expect(recovered.state.failure.reason).not.toContain("Repository access was not granted");
+      },
+      { timeout: 10_000, interval: 20 },
+    );
+    const recoveredReviewStore = new SqliteReviewStore(join(dataDir, "rennet.sqlite"));
+    const recoveredReview = recoveredReviewStore.reviewById(reviewId);
+    recoveredReviewStore.close();
+    expect(recoveredReview?.activePatchsetId).not.toBe(sourcePatchsetId);
+  }, 15_000);
 
   it("recovers a worker-running operation into preserved partial evidence without a second turn", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-recovery-data-"));

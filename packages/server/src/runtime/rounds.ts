@@ -30,10 +30,9 @@
 //      rounds ledger is `RoundRecord[]` data (no UI — C9 out of scope).
 //
 // B09 does NOT edit the pipeline's pure logic: the round-report drafts FIRST and
-// gates the regeneration, per-board arrival powers the reveal, and the durable
-// `persistBoardMeta` are all the pipeline's own behavior (whether a report drafts at
-// all is the pipeline's exported `draftsRoundReport`) — this runtime only wires the
-// seams.
+// gates the regeneration, all five lens lanes then start together, per-board arrival
+// powers the reveal, and durable `persistBoardMeta` writes are all the pipeline's own
+// behavior. This runtime only wires the seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
@@ -50,6 +49,7 @@ import {
   type AskOccurrence,
   type ComposedHandoffBundle,
   type DraftBoard,
+  DraftBoardSchema,
   type Generation,
   generationIdForDispatch,
   generationIdForPatchset,
@@ -69,6 +69,8 @@ import {
   type BoardArrivalEvent,
   type BoardMeta,
   createDesignCoverageMapper,
+  deleteBoardElements,
+  draftsRoundReport,
   type LensBoardOutcome,
   type LensPipelineDeps,
   type LensPipelineResult,
@@ -103,9 +105,9 @@ type LaneState = LensLane extends infer Arm
  * change, matching the `lens` event's snapshot contract (a duplicate or re-ordered frame
  * just re-states rows the client already folded).
  *
- * The pipeline drafts the lenses in `LENS_KINDS` order, one at a time, so "this lens
- * finished" (its board meta persists) is also "the next lens started" — the sequence is
- * read off the real run, never guessed from a clock.
+ * Once the required report is verified and durably handed off, all five independent lens
+ * turns run concurrently. Each lane starts together and settles only from its own
+ * persistence/arrival event.
  */
 function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
   const lanes = new Map<LensKind, LensLane>(
@@ -118,27 +120,23 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
     if (lanes.has(lens)) lanes.set(lens, { id: lens, label: LENS_LANE_LABEL[lens], ...next });
   };
   return {
-    /** The first drafter is under way. Called when the round report lands (it gated the
+    /** The lens drafters are under way. Called when the round report lands (it gated the
      *  regeneration) AND at the pipeline's own lens kickoff, which fires on every run —
      *  including the one where a report was expected and failed, the case an arrival-only
-     *  trigger left reading `queued` for the whole run. Idempotent by construction: it
-     *  promotes the first lane only while that lane is still `queued`, so the second caller
-     *  is a no-op rather than a lane reset or a duplicate frame. */
+     *  trigger left reading `queued` for the whole run. Idempotent by construction: only
+     *  queued lanes are promoted, so the second caller is a no-op rather than a reset. */
     start(): void {
-      const first = LENS_KINDS[0];
-      if (first === undefined || lanes.get(first)?.status !== "queued") return;
-      set(first, { status: "running" });
+      const queued = LENS_KINDS.filter((lens) => lanes.get(lens)?.status === "queued");
+      if (queued.length === 0) return;
+      for (const lens of queued) set(lens, { status: "running" });
       emit(snapshot());
     },
-    /** A lens board's draft landed; the next lens in the pipeline's order is now running.
-     *  The lane reads `drafted`, NOT `done`: cross-lens coverage has not run and the delta
+    /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: cross-lens
+     *  coverage has not run and the delta
      *  verdict is not known yet, and a settled lane without its verdict is exactly the
      *  in-between state the union refuses to represent. */
     drafted(lens: LensKind): void {
       set(lens, { status: "drafted" });
-      const next = LENS_KINDS[LENS_KINDS.indexOf(lens) + 1];
-      if (next !== undefined && lanes.get(next)?.status === "queued")
-        set(next, { status: "running" });
       emit(snapshot());
     },
     /**
@@ -164,9 +162,6 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
     /** Discovery completed successfully and found no material for this lens. */
     absent(lens: LensKind, reason: string): void {
       set(lens, { status: "absent", reason });
-      const next = LENS_KINDS[LENS_KINDS.indexOf(lens) + 1];
-      if (next !== undefined && lanes.get(next)?.status === "queued")
-        set(next, { status: "running" });
       emit(snapshot());
     },
   };
@@ -299,6 +294,26 @@ function failureReasons(pipeline: LensPipelineResult): string {
   return reasons.length > 0 ? reasons.join("; ") : "no drafter reported a reason";
 }
 
+/** The review cannot advance without its three load-bearing reading surfaces. Sequence
+ * must always contain a real board; Decisions and Flagged may instead settle with their
+ * explicit typed clean result. A drafter failure is never equivalent to either clean
+ * result, even when Design or Noise happened to produce useful boards beside it. */
+function missingRequiredCoreLens(
+  outcomes: readonly LensBoardOutcome[],
+): "sequence" | "decisions" | "flagged" | undefined {
+  const sequence = outcomes.find((outcome) => outcome.lens === "sequence");
+  if (sequence?.boardId === undefined) return "sequence";
+
+  const decisions = outcomes.find((outcome) => outcome.lens === "decisions");
+  if (decisions?.boardId === undefined && decisions?.absence !== "no-decisions") {
+    return "decisions";
+  }
+
+  const flagged = outcomes.find((outcome) => outcome.lens === "flagged");
+  if (flagged?.boardId === undefined && flagged?.absence !== "no-findings") return "flagged";
+  return undefined;
+}
+
 // ── The round call ──
 
 /** The regeneration handoff: the worker's observed commit range plus the recaptured
@@ -374,6 +389,10 @@ export interface RoundInput {
    * mapping from pipeline callbacks to events. Absent ⇒ no live channel, same round.
    */
   readonly onProgress?: (event: RoundEvent) => void;
+  /** Load-bearing report handoff. The runtime awaits it before observers or lens seats start. */
+  readonly onReportProgress?: (
+    event: Extract<RoundEvent, { readonly type: "report" }>,
+  ) => void | Promise<void>;
   /**
    * The composed review draft's citation grounding. REQUIRED (W5): an absent one
    * grounds the composition lint on an empty inventory, so every real `path:line`
@@ -438,8 +457,10 @@ export interface RoundsRuntimeDeps {
     sessionId: string,
     generation: string,
   ) => readonly BoardMeta[];
+  /** Remove one board's durable metadata before retry cleanup mutates its board state. */
+  readonly removeBoardMeta?: (repoRoot: string, boardId: string) => void | Promise<void>;
   /** The per-board arrival broadcast that powers the progressive reveal (R58). */
-  readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
+  readonly onBoardArrival?: (event: BoardArrivalEvent) => void | Promise<void>;
   /** The orchestrator's heavy authoring turn for the composition write-through (C2),
    *  resolved per repo. Absent ⇒ composition is skipped (the lens boards are the surface). */
   readonly composeTurn?: (
@@ -606,28 +627,37 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   }
 
   /** Does the Generation's state have enough exact durable evidence to reconstruct?
-   * An active attempt must settle all five slots. A settled partial success has no attempt
-   * map; its named boards plus absences/failures are the honest result. An all-failure
-   * generation remains retryable, so it deliberately does not reconstruct as success. */
-  function hasCompleteLensEvidence(generation: Generation, records: readonly BoardMeta[]): boolean {
-    if (generation.draftingBoardIds === undefined) {
-      const namedLenses = LENS_KINDS.filter((lens) => generation.lensBoards[lens] !== undefined);
-      return (
-        namedLenses.length > 0 &&
-        namedLenses.every((lens) => {
-          const boardId = generation.lensBoards[lens];
-          return records.some((record) => record.lens === lens && record.boardId === boardId);
-        })
-      );
-    }
-    return LENS_KINDS.every((lens) => {
-      if (generation.absentLenses?.[lens] !== undefined) return true;
-      const boardId = generation.draftingBoardIds?.[lens];
-      return (
+   * Every lens must own exactly one terminal board, absence, or failure. A named board is
+   * terminal only when its exact durable metadata exists. Sequence must be a board, while
+   * Decisions and Flagged may be boards or their typed clean absences; failures in those
+   * three core lanes remain partial. A report-required run additionally owns one exact
+   * reserved report record; five settled lenses cannot substitute for it. */
+  function hasCompleteLensEvidence(
+    generation: Generation,
+    records: readonly BoardMeta[],
+    reportRequired: boolean,
+  ): boolean {
+    const terminalKinds = LENS_KINDS.map((lens) => {
+      const boardId = generation.draftingBoardIds?.[lens] ?? generation.lensBoards[lens];
+      const hasBoard =
         boardId !== undefined &&
-        records.some((record) => record.lens === lens && record.boardId === boardId)
-      );
+        records.some((record) => record.lens === lens && record.boardId === boardId);
+      const hasAbsence = generation.absentLenses?.[lens] !== undefined;
+      const hasFailure = generation.failedLenses?.[lens] !== undefined;
+      if (Number(hasBoard) + Number(hasAbsence) + Number(hasFailure) !== 1) return undefined;
+      if (hasBoard) return "board";
+      return hasAbsence ? "absence" : "failure";
     });
+    const lensesComplete =
+      terminalKinds.every((kind) => kind !== undefined) &&
+      terminalKinds.includes("board") &&
+      missingRequiredCoreLens(reconstructFromMeta(records, generation).boards) === undefined;
+    if (!lensesComplete || !reportRequired) return lensesComplete;
+    const reportBoardId = generation.draftingReportBoardId;
+    return (
+      reportBoardId !== undefined &&
+      records.some((record) => record.lens === "report" && record.boardId === reportBoardId)
+    );
   }
 
   /** Reconstruct the drafting result from complete durable BoardMeta (B09 F1): a fresh
@@ -699,8 +729,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   async function draft(
     input: RoundInput,
     boardGeneration: Generation,
+    start: "fresh" | "partial",
   ): Promise<{ readonly generation: Generation; readonly pipeline: LensPipelineResult }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
+    const whiteboard = new WhiteboardClient(boards.service);
     const boardIds = new Map<LintTarget, string>();
     for (const target of LINT_TARGETS) {
       boardIds.set(target, await boards.createRennetBoard(input.draftPlan?.boardIds[target]));
@@ -725,8 +757,66 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? { absentLenses: { design: "no-material" as const } }
         : {}),
     };
-    // Attempt identity lands before any BoardMeta. A retry replaces these ids first, so
-    // partial rows from different attempts can never masquerade as one complete draft.
+    const durableRecords =
+      start === "partial"
+        ? (deps.loadDraftedBoards?.(input.repoRoot, input.session.id, attemptGeneration.id) ?? [])
+        : [];
+    const reusableReportMeta =
+      start !== "partial" || input.round?.worker === undefined
+        ? undefined
+        : durableRecords.find(
+            (record) =>
+              record.lens === "report" &&
+              record.boardId === attemptGeneration.draftingReportBoardId,
+          );
+    let reusableRoundReport: LensPipelineDeps["reusableRoundReport"];
+    if (reusableReportMeta !== undefined) {
+      const state = [...(await boards.service.getState(reusableReportMeta.boardId)).values()];
+      const recovered = DraftBoardSchema.safeParse({
+        ...(reusableReportMeta.document === undefined
+          ? {}
+          : { document: reusableReportMeta.document }),
+        elements: state,
+        skippedHunks: reusableReportMeta.skippedHunks,
+      });
+      if (recovered.success) {
+        reusableRoundReport = {
+          boardId: reusableReportMeta.boardId,
+          board: recovered.data,
+          omissions: reusableReportMeta.omissions,
+          blemishes: reusableReportMeta.blemishes,
+          immutability: reusableReportMeta.immutability,
+        };
+      }
+    }
+
+    if (start === "partial") {
+      for (const target of LINT_TARGETS) {
+        const boardId = boardIdFor(target);
+        if (target === "report" && reusableRoundReport?.boardId === boardId) continue;
+        // Metadata must disappear first. A crash before the state clear then retries this
+        // same reconciliation; it can never reconstruct from metadata for a board whose
+        // old elements are about to be replaced.
+        await deps.removeBoardMeta?.(input.repoRoot, boardId);
+        const state = [...(await boards.service.getState(boardId)).values()];
+        if (state.length === 0) continue;
+        const cleared = await deleteBoardElements(
+          whiteboard,
+          boardId,
+          state.reverse().map((element) => element.id),
+          "host:round-retry-recovery",
+        );
+        if (!cleared.ok) {
+          throw new Error(
+            `rounds: could not clear partial ${target} board ${boardId} (${cleared.code})`,
+          );
+        }
+      }
+    }
+
+    // Attempt identity lands after cleanup and before any new BoardMeta. A crash at any
+    // cleanup point leaves the prior partial identity retryable; a crash after this write
+    // leaves the replacement attempt identifiable by these exact reserved ids.
     await deps.persistGeneration?.(attemptGeneration);
 
     const [claudePort, codexExecutor] = await Promise.all([
@@ -738,31 +828,43 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
     // ── The live progress mapping (C15 3.1) ──
     // Two pipeline callbacks carry the real regeneration timeline: `persistBoardMeta`
-    // fires as each board's draft lands (per-lens progress, in order), and
+    // fires as each board's draft lands (per-lens progress, in completion order), and
     // `onBoardArrival` fires once the board is announced — the report inline and ahead
     // of the lenses, the lenses together after cross-lens coverage, each carrying its
     // delta verdict. Both are wrapped here so the round's own sink sees them without the
     // pipeline learning about the wire.
     const onProgress = input.onProgress;
+    const onReportProgress = input.onReportProgress;
     const lanes =
       onProgress === undefined
         ? undefined
-        : createRegenerationLanes((rows) => onProgress({ type: "lens", lanes: [...rows] }));
+        : createRegenerationLanes((rows) => {
+            void onProgress({ type: "lens", lanes: [...rows] });
+          });
     const runtimeArrival = deps.onBoardArrival;
     const onBoardArrival =
-      runtimeArrival === undefined && lanes === undefined
+      runtimeArrival === undefined && lanes === undefined && onReportProgress === undefined
         ? undefined
-        : (event: BoardArrivalEvent): void => {
-            runtimeArrival?.(event);
-            if (lanes === undefined || onProgress === undefined) return;
+        : async (event: BoardArrivalEvent): Promise<void> => {
             if (event.lens === "report") {
-              // The report is the greeting: it announces FIRST, and the reviewer reads it
-              // while the lens drafters below keep running (C1/C6 — the surface never locks).
-              onProgress({ type: "report", reportBoardId: event.boardId });
-              lanes.start();
+              // The load-bearing progress sink verifies and records the report handoff.
+              // Only then may an observer announce it or a lens seat start.
+              const reportEvent = { type: "report" as const, reportBoardId: event.boardId };
+              if (onReportProgress === undefined) onProgress?.(reportEvent);
+              else await onReportProgress(reportEvent);
+              await runtimeArrival?.(event);
+              lanes?.start();
               return;
             }
+            await runtimeArrival?.(event);
+            if (lanes === undefined) return;
             lanes.arrived(event.lens, event.carried);
+          };
+    const onReportDiagnostic =
+      onProgress === undefined
+        ? undefined
+        : (milestone: Extract<RoundEvent, { type: "report-diagnostic" }>["milestone"]): void => {
+            void onProgress({ type: "report-diagnostic", milestone });
           };
     const earlyAbsentLenses: Partial<Record<LensKind, LensAbsenceReason>> = {
       ...attemptGeneration.absentLenses,
@@ -813,9 +915,16 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? {}
         : { designArtifactFailure: input.designArtifactFailure }),
       readPrompt: deps.readPrompt,
-      whiteboard: new WhiteboardClient(boards.service),
+      whiteboard,
       boardIdFor,
+      ...(reusableRoundReport === undefined ? {} : { reusableRoundReport }),
+      ...(deps.removeBoardMeta === undefined
+        ? {}
+        : {
+            removeBoardMeta: (boardId: string) => deps.removeBoardMeta?.(input.repoRoot, boardId),
+          }),
       ...(onBoardArrival === undefined ? {} : { onBoardArrival }),
+      ...(onReportDiagnostic === undefined ? {} : { onReportDiagnostic }),
       ...(onLensAbsence === undefined ? {} : { onLensAbsence }),
       ...(lanes === undefined ? {} : { onLensDraftingStart: () => lanes.start() }),
       ...(persistBoardMeta === undefined && lanes === undefined
@@ -843,14 +952,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     } satisfies Parameters<typeof runLensPipeline>[0];
 
-    // The lanes' first drafter used to be promoted ONLY by the round report's ARRIVAL,
-    // because a report gates the regeneration and lands ahead of the lenses. Two runs had
-    // nothing to promote it and read "queued" while Design was the one lens working: the
-    // initial drafting path, which drafts no report at all, and the run whose report was
-    // expected and then FAILED (no arrival, and the post-pipeline failure sweep below skips
-    // `report`). Both are now covered by `onLensDraftingStart`, which the pipeline fires
-    // once the report has settled either way — the honest kickoff, read off the real run
-    // instead of re-derived here from `draftsRoundReport`.
+    // Lens progress used to be promoted only by the round report's ARRIVAL. The initial
+    // path has no report, so it could read "queued" while lens work was live.
+    // `onLensDraftingStart` promotes all five lanes only when the no-report path is valid or
+    // the required report has been verified and persisted; a failed report exits earlier.
 
     const pipeline = await runLensPipeline(pipelineInput);
     // A drafter that produced no board settles its lane as failed. Without this the lane
@@ -937,7 +1042,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // Durable idempotency across the crash boundary (F1): a fresh runtime after a
     // restart has an EMPTY in-memory guard. BoardMeta presence alone is insufficient —
     // a crash or one failed lens can leave a non-empty partial set. Reconstruct only when
-    // all five generation slots are backed by their exact meta or an honest absence.
+    // all five generation slots are backed by their exact meta, an honest absence, or a
+    // non-core failure, and the three core reading surfaces satisfy their stronger contract.
     // Partial durable state bypasses the guard (which may hold a settled incomplete run)
     // and redrafts; the new Generation ids become the authority over stale partial meta.
     const durableEvidence =
@@ -945,7 +1051,35 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const draftingInput = landed
       ? input
       : { ...input, deltaPacket: withoutSuccessorAccount(input.deltaPacket) };
-    const completeEvidence = hasCompleteLensEvidence(boardGeneration, durableEvidence);
+    const reportRequired = draftsRoundReport({
+      currentGeneration: boardGeneration.id,
+      deltaPacket: draftingInput.deltaPacket,
+      ...(draftingInput.round === undefined ? {} : { round: draftingInput.round }),
+    });
+    let completeEvidence = hasCompleteLensEvidence(
+      boardGeneration,
+      durableEvidence,
+      reportRequired,
+    );
+    if (completeEvidence && reportRequired && draftingInput.round?.worker !== undefined) {
+      const reportBoardId = boardGeneration.draftingReportBoardId;
+      if (reportBoardId === undefined || input.verifyDraftedReport === undefined) {
+        completeEvidence = false;
+      } else {
+        try {
+          await input.verifyDraftedReport({
+            reportBoardId,
+            generation: boardGeneration.id,
+            patchsetId: boardGeneration.patchsetId,
+          });
+        } catch {
+          // A semantically invalid stored report is partial evidence, not a terminal
+          // generation. The retry path re-verifies the recovered board, removes its
+          // metadata, clears it, and runs the one-shot classifier again.
+          completeEvidence = false;
+        }
+      }
+    }
     const hasPartialDurableState =
       durableEvidence.length > 0 ||
       Object.keys(boardGeneration.lensBoards).length > 0 ||
@@ -958,11 +1092,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           pipeline: reconstructFromMeta(durableEvidence, boardGeneration),
         }
       : hasPartialDurableState
-        ? await draft(draftingInput, boardGeneration)
+        ? await draft(draftingInput, boardGeneration, "partial")
         : await guard.start(
             input.session.id,
             `${boardGeneration.id}:${boardGeneration.projectContextRevision ?? "legacy"}`,
-            () => draft(draftingInput, boardGeneration),
+            () => draft(draftingInput, boardGeneration, "fresh"),
           );
     // Durable BoardMeta is keyed only by generation, so evidence for an existing
     // generation may contain the report from the round that minted it. A no-code round
@@ -978,9 +1112,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // for this field ("`ROUND_NO_REGEN` when the round drafted no report board").
     const reportBoard = pipeline.report?.boardId ?? ROUND_NO_REGEN;
     // A report is an account of the round, not a regenerated review board. Filing a real
-    // generation when all five lenses failed would turn a failed retry into durable success
-    // and consume its asks. Keep the completed placeholder pending until at least one lens
-    // board exists; the next dispatch resumes regeneration without rerunning the worker.
+    // generation without its load-bearing core review evidence would turn a failed retry
+    // into durable success and consume its asks. Persist the partial attempt but keep the
+    // completed placeholder pending; the next regeneration call takes the cleanup path.
     const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
     if (draftedLensBoards.length === 0) {
       await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
@@ -995,6 +1129,13 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         generation: boardGeneration.id,
         patchsetId: boardGeneration.patchsetId,
       });
+    }
+    const missingCoreLens = missingRequiredCoreLens(pipeline.boards);
+    if (missingCoreLens !== undefined) {
+      await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+      throw new Error(
+        `The required core lens ${missingCoreLens} did not produce review evidence: ${failureReasons(pipeline)}`,
+      );
     }
     // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
     // prior generation exists, it freezes and its id is the earlier generation the ledger's
