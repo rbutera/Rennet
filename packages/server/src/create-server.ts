@@ -114,6 +114,7 @@ import {
   repositoryIdentity,
   resolveGitHubAuth,
   resolveTrackerConfig,
+  reviewWorktreePath,
   runConfiguredRoundGate,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
@@ -1778,15 +1779,41 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     writeFileSync(prWorktreeIndexPath, JSON.stringify(index));
   }
   /**
-   * The checkout board drafting roots its seats at. A PR review has a detached
-   * worktree pinned at the reviewed head — the seats must read THOSE bytes, not
-   * whatever ref the ambient clone happens to have checked out. Every other
-   * review shape drafts at the capture root (a working-tree review's root IS
-   * the reviewed checkout).
+   * The checkout board drafting roots its seats at — the EVIDENCE checkout.
+   *
+   * A working-tree capture's evidence is the live checkout the capture froze
+   * (`reviewedTreeOid` pins the exact bytes), so it drafts at the capture root.
+   * Every RANGE capture — a PR review or a branch review — pins OIDs without
+   * touching the working tree, so the ambient clone can sit on any ref; the
+   * seats must read the reviewed bytes, which means a detached worktree at the
+   * reviewed head. Ensured HERE, at drafting time, because a landed round
+   * advances the reviewed head: `ensurePrWorktree` replaces a superseded
+   * checkout in place, so round regeneration self-heals. A PR review's
+   * recorded worktree is reused (and re-pinned) rather than duplicated.
+   *
+   * Honest degrade: if the worktree cannot be ensured, drafting falls back to
+   * the capture root — the task-layer prompt already teaches pinned reads
+   * (`git show <oid>:<path>`), so a seat there is degraded, not lied to.
    */
-  function draftingRootFor(review: Review): string {
+  async function draftingRootFor(review: Review): Promise<string> {
+    const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
+    if (patchset === undefined) return review.repositoryRoot;
+    if (patchset.repository.reviewedTreeOid !== undefined) return review.repositoryRoot;
     const entry = readPrWorktreeIndex()[review.id];
-    return entry && existsSync(entry.path) ? entry.path : review.repositoryRoot;
+    const worktree = entry?.path ?? reviewWorktreePath(dataDir, review.id);
+    try {
+      const { created } = await ensurePrWorktree(
+        gitForRepo(review.repositoryRoot),
+        review.repositoryRoot,
+        worktree,
+        patchset.repository.headOid,
+      );
+      if (!entry) recordPrWorktree(review.id, worktree);
+      if (created) void runPrWorktreeSetup(worktree).catch(() => undefined);
+      return worktree;
+    } catch {
+      return review.repositoryRoot;
+    }
   }
 
   /**
@@ -2751,6 +2778,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): BoardRegenerationDeps => ({
     recapture,
     reviewNow,
+    draftingRootFor,
     // The packet's fan-in reads the snapshot gated fresh at the patchset's own
     // base OID. The reader is the OVERLAY-MERGED one: a review on a non-default
     // base resolves through a warmed overlay, and a bare reader would refuse it
@@ -3523,7 +3551,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
       {
         session,
-        repoRoot: draftingRootFor(review),
+        repoRoot: review.repositoryRoot,
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,

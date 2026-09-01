@@ -368,6 +368,13 @@ export interface BoardRegenerationDeps {
   /** The gated snapshot for the drafters' packet fan-in, over the patchset they will
    *  read. Nullable: a snapshot can fail the freshness gate, and the packet degrades. */
   readonly snapshotFor: (patchset: Patchset) => PacketSnapshotSource;
+  /**
+   * The EVIDENCE checkout the drafter seats root at, resolved over the review
+   * AS IT STANDS after {@link recapture} — a landed round advances the reviewed
+   * head, and a range capture's ambient clone can sit on any ref. Absent ⇒ the
+   * caller's `repoRoot` input stands (tests, legacy composition).
+   */
+  readonly draftingRootFor?: (review: Review) => Promise<string>;
   /** The REAL prior generation + its drafted boards, or `undefined` for a first generation
    *  ({@link readPriorGeneration} over the durable stores in production). */
   readonly priorGeneration: (generationId: string) => Promise<PriorGeneration | undefined>;
@@ -524,10 +531,15 @@ export async function runBoardRegeneration(
         input.priorGenerationId ??
         generationIdForPatchset(input.priorPatchsetId),
     );
+    // The seats' evidence checkout, resolved over the POST-recapture review: the
+    // successor patchset's head is what the drafters must read. Identity keys
+    // (boards, meta, ports) stay on the caller's repoRoot.
+    const draftingRoot = await deps.draftingRootFor?.(review);
     try {
       await deps.runRound({
         session: input.session,
         repoRoot: input.repoRoot,
+        ...(draftingRoot === undefined ? {} : { draftingRoot }),
         ...(input.draftPlan === undefined ? {} : { draftPlan: input.draftPlan }),
         ...(prior === undefined
           ? {}

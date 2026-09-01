@@ -566,11 +566,23 @@ describe("#685 owner loop through a real server", () => {
       "report-round-two",
       "post-process",
     ]);
+    // Board seats draft in the review's EVIDENCE worktree — a detached checkout
+    // pinned at the reviewed head — never in the ambient clone, whose checked-out
+    // ref (main, holding BASE bytes) is unrelated to the reviewed branch.
+    const evidenceRoot = realpathSync(join(dataDir, "worktrees", "review", reviewId));
+    const boardRecords = records.filter((record) => targetBoardSteps.has(String(record.stepId)));
+    expect(boardRecords.length).toBeGreaterThan(0);
     expect(
-      records
-        .filter((record) => targetBoardSteps.has(String(record.stepId)))
-        .every((record) => record.cwd === target),
+      boardRecords.every(
+        (record) => typeof record.cwd === "string" && realpathSync(record.cwd) === evidenceRoot,
+      ),
     ).toBe(true);
+    expect(boardRecords.some((record) => record.cwd === target)).toBe(false);
+    // The load-bearing half: a seat reading the source file at its cwd observes
+    // the REVIEWED bytes (the final round's content), not the clone's base bytes.
+    expect(readFileSync(join(evidenceRoot, OWNER_LOOP_SOURCE), "utf8")).toBe(
+      "export const ownerValue = 'round-two';\n",
+    );
     for (const stepId of ["design", "sequence", "decisions", "flagged", "noise"]) {
       expect(records.filter((record) => record.stepId === stepId)).toHaveLength(3);
     }

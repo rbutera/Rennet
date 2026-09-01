@@ -405,6 +405,7 @@ export {
   prWorktreePath,
   readSetupLogTail,
   readSetupStatus,
+  reviewWorktreePath,
   runPrWorktreeSetup,
   type SetupStatus,
 } from "./pr-worktree";
