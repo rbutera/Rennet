@@ -144,7 +144,7 @@ Architecture per asset 1. Two packages die (`types`, `instructions`),
 | B3 | protocol-contracts | `protocol/{board,commands,session,delta,manifests}`: #462 host schema (13 kinds; `DraftBoardSchema` **derived** by omit + drift test), the **`LensBoard` projection shape** (missing today — blocks the board surface), #465 command registry table, **patchset span-read command** (citations hydrate from the captured patchset, never the checkout). **Gate for Track C proper.** |
 | B4 | boards-runtime | Embed `@whiteboard/server` in-process, event log under `.rennet/`, `projection.ts` privacy wrap over board events, `adapters/whiteboard-client` (only writer of board ops). Blocked by A5. |
 | B5 | delta-packet | `core/delta`: hunk index, element-diffs, collation/counterpart, blast-radius, openspec parse, noise pre-classify → `buildDeltaPacket()` (the drafters' entire input). `delta-account` → `successor-account`. |
-| B6 | context-map-swarm | #460: partitions, light workers, verify seat, council job ids, incremental delta with carry. |
+| B6 | ~~context-map-swarm~~ | #460's knowledge swarm. **Superseded and deleted, 2026-09-01** (`openspec/changes/2026-09-01-kill-context-map`): it burned the usage limit and its packet contribution blew the drafter prompt. Lens drafters investigate the checkout with their own tools instead. |
 | B7 | related-context | #461: ref extraction, `gh` first-class, dossier shape, project-scout adapter, settings-ladder keys. |
 | B8 | lens-pipeline | #464 + #493 + #486: drafter dispatch (warm sessions, structured returns), lint (19 rules, pure) + one repair turn (honest omissions and blemishes), post-process, immutability check, mechanical + authored composition, every-hunk check, round-report seat. |
 | B9 | session-rounds | #466: session as durable root, claim, cursor-resume harness, one-turn lock, rework queue, rounds state machine, idempotent pipeline starts. |
@@ -170,7 +170,7 @@ registry with `assertNever`; fixtures only as `MemoryBridge`.
 | C9 | rounds | run view, round report, ledger on `onProgress` (§7) |
 | C10 | settings-help | pages ported, values real (§8) |
 | C11 | command-menu | ⌘P/⌘K, the six advertised keybindings wired, remapping (§9, §14, R70/#492) |
-| C12 | projects-flow | add-project, directory browser (reuse existing), scouting, context map, new-chat (§10) |
+| C12 | projects-flow | add-project, directory browser (reuse existing), scouting, new-chat (§10). The context-map surface it also shipped was deleted with B6. |
 | C13 | onboarding | coach marks per R55, refs not selectors, client-settings persistence (§11) |
 | C14 | conformance-sweep | §14 residue, inventory audit: every `[ws:*]` line verified in the running client, generated issues closed |
 

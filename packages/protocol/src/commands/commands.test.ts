@@ -82,11 +82,8 @@ const ABSORBED_IDS = [
   "pairing.revokeDevice",
   "patchset.readSpan",
   "project.cleanupWorktree",
-  "project.contextAsk",
-  "project.contextMap",
   "project.detail",
   "project.discover",
-  "project.knowledgeDisposition",
   "project.process",
   "project.rename",
   "projects.add",
@@ -170,7 +167,7 @@ const AGENT_INVENTORY = [
 ] as const;
 
 // The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
-// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 107 commands
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 104 commands
 // lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
 // input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
 // an action rather than a UI-driven read, its output is not the point, and it does not
@@ -181,7 +178,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(107);
+    expect(ABSORBED_IDS).toHaveLength(104);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
@@ -241,30 +238,16 @@ describe("command registry invariants (#465)", () => {
     expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
   });
 
-  it("keeps Context Map repository addresses provider-qualified and non-contradictory", () => {
+  it("keeps session.mint repository addresses provider-qualified and non-contradictory", () => {
     const address = {
       projectId: "project-1",
+      commandId: "9b3f2b7e-3a68-4a2e-9a51-2a8f4a4d1c11",
       repository: "acme/repo-b",
       forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
     };
-    expect(parseCommandInput("project.contextMap", address)).toEqual(address);
-    expect(
-      parseCommandOutput("project.contextMap", {
-        status: "members",
-        members: [
-          {
-            repository: "acme/repo-a",
-            forgeRepository: { forge: "github", owner: "acme", name: "repo-a" },
-          },
-          {
-            repository: "acme/repo-b",
-            forgeRepository: address.forgeRepository,
-          },
-        ],
-      }),
-    ).toMatchObject({ status: "members" });
+    expect(parseCommandInput("session.mint", address)).toEqual(address);
     expect(() =>
-      parseCommandInput("project.contextMap", {
+      parseCommandInput("session.mint", {
         ...address,
         forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-a" },
       }),

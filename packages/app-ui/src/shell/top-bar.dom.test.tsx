@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 //
-// The 56px session top-bar (C03 §4). The History · Map · Diff pill derives its
+// The 56px session top-bar (C03 §4). The History · Diff pill derives its
 // selection from `?view` and toggles with `viewToggle` (replace — no back-stack
 // entry); the back arrow shows exactly off-board; the trail renders title +
 // `project › target` + needs-you WORDS from the projection.
@@ -268,19 +268,18 @@ describe("session top-bar (C03 §4)", () => {
   });
 
   it("derives the pill selection from ?view", () => {
-    const { getByText } = mountTopBar("/s/s2?view=map");
-    expect(getByText("Map").closest("button")?.getAttribute("aria-pressed")).toBe("true");
-    expect(getByText("Diff").closest("button")?.getAttribute("aria-pressed")).toBe("false");
+    const { getByText } = mountTopBar("/s/s2?view=diff");
+    expect(getByText("Diff").closest("button")?.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("the pills are ONE labelled group, however many outlines they wear", () => {
-    // Two visual outlines (History alone, Map · Diff joined) but one control: the
+    // Two visual outlines (History alone, Diff joined) but one control: the
     // kit ToggleGroup's role and name, with every member inside it. A hand-rolled
     // rebuild loses this without any test noticing, which is how it was lost.
     const { container, getByText } = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
     const group = container.querySelector<HTMLElement>('[role="group"]');
     expect(group?.getAttribute("aria-label")).toBe("Session view");
-    for (const label of ["History", "Map", "Diff"]) {
+    for (const label of ["History", "Diff"]) {
       const button = getByText(label).closest("button");
       expect(group?.contains(button as Node)).toBe(true);
       // The visible label IS the name — no aria-label repeating it on top.
@@ -290,7 +289,7 @@ describe("session top-bar (C03 §4)", () => {
   });
 
   it("arrow keys walk the pills, across the outline boundary and back to the head", async () => {
-    // The roving-focus half of the group. History and Map sit in DIFFERENT wrapper
+    // The roving-focus half of the group. History and Diff sit in DIFFERENT wrapper
     // divs, so this also proves the composite registers NESTED members — and Home
     // reaching History from Diff proves the walk is one ring, not two.
     const { getByText } = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
@@ -303,16 +302,15 @@ describe("session top-bar (C03 §4)", () => {
 
     button("History").focus();
     expect(document.activeElement).toBe(button("History"));
-    await press("History", "ArrowRight", "Map");
-    await press("Map", "ArrowRight", "Diff");
-    await press("Diff", "ArrowLeft", "Map");
-    await press("Map", "ArrowRight", "Diff");
+    await press("History", "ArrowRight", "Diff");
+    await press("Diff", "ArrowLeft", "History");
+    await press("History", "ArrowRight", "Diff");
     await press("Diff", "Home", "History");
   });
 
   it("selects no pill on the board view", () => {
     const { getByText, queryByText } = mountTopBar("/s/s2");
-    for (const label of ["Map", "Diff"]) {
+    for (const label of ["Diff"]) {
       expect(getByText(label).closest("button")?.getAttribute("aria-pressed")).toBe("false");
     }
     // History (rounds) is gated on a completed round — absent over the default source.

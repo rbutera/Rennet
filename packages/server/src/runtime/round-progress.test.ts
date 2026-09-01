@@ -12,7 +12,6 @@ import type {
   ComposableAsk,
   DraftBoard,
   Generation,
-  KnowledgeSet,
   LensLane,
   PatchFile,
   Patchset,
@@ -239,15 +238,6 @@ function patchset(): Patchset {
 /** The same patchset under another id — one activation per round in the lineage test. */
 const patchsetAt = (id: string): Patchset => ({ ...patchset(), id });
 
-const KNOWLEDGE: KnowledgeSet = {
-  schemaVersion: 1,
-  repoKey: "repo",
-  baseOid: "0".repeat(40),
-  snapshotFingerprint: "fp",
-  generator: "t",
-  statements: [],
-};
-
 const NO_MATERIAL_DESIGN_ARTIFACTS: DesignArtifactSet = {
   changedPaths: ["src/a.ts"],
   omittedChangedPathCount: 0,
@@ -390,7 +380,6 @@ const session: SessionModel = {
 const collationFor = () =>
   assembleRoundCollation({
     patchset: patchset(),
-    knowledge: KNOWLEDGE,
     dossier: [],
     // A successor account makes this a ROUND: the report drafts first and the delta
     // stamps run against `previous`.
@@ -703,7 +692,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
       asksDispatched: [],
       runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-landed" }),
       onProgress: (event) => events.push(event),
-      ...assembleRoundCollation({ patchset: patchset(), knowledge: KNOWLEDGE, dossier: [] }),
+      ...assembleRoundCollation({ patchset: patchset(), dossier: [] }),
     });
 
     // No report announced — the premise, asserted rather than assumed.
@@ -1038,7 +1027,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
               status: "current",
               successorAccount: { asks: [], beyondAsks: [] },
             }) as unknown as Review,
-          knowledgeFor: () => ({ set: KNOWLEDGE, snapshot: null }),
+          snapshotFor: () => ({ snapshot: null }),
           priorGeneration: (id) =>
             readPriorGeneration(
               {
@@ -1193,7 +1182,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
               status: "current",
               successorAccount: { asks: [], beyondAsks: [] },
             }) as unknown as Review,
-          knowledgeFor: () => ({ set: KNOWLEDGE, snapshot: null }),
+          snapshotFor: () => ({ snapshot: null }),
           priorGeneration: (id) =>
             readPriorGeneration(
               {

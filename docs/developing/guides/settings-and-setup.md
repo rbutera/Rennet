@@ -376,14 +376,12 @@ every platform, and `RENNET_USER_DATA` or `--data-dir` moves the whole of it.
 └── projects/
     └── <escaped-absolute-path>/
         ├── config.json
-        ├── map/
-        └── knowledge/
+        └── map/
 
 <repo>/.rennet/
 ├── .gitignore
 ├── conventions.json
-├── map/
-└── knowledge/
+└── map/
 ```
 
 The project-store key is the escaped real path of the checkout. Relocation
@@ -414,16 +412,13 @@ The pool is shared by filesystem work and GitHub name resolution.
 rennet serve
 rennet status
 rennet stop
-rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]
+rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]
 ```
 
 `serve`, `status`, and `stop` operate on the daemon. `map` runs without the
 daemon, builds the same deterministic Repo Map used by project processing, and
 stores it under the path-keyed local project directory. `--json` exports the map.
-`--enrich` runs the model-backed knowledge swarm after the deterministic map has
-landed. The Model Council assigns the worker and verify seats from the harnesses
-the CLI discovers, and the command exits non-zero when no usable harness is
-available.
+It calls no model and needs no harness.
 
 ## Diagnose setup
 

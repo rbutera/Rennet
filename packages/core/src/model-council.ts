@@ -140,7 +140,6 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
           "Handoff-bundle composition (M24)",
           15,
         ),
-        job("context-ask-fetch", "light", "per-call", false, "context.ask — fetch/quick", 16),
         job(
           "ci-failure-classification",
           "light",
@@ -148,17 +147,6 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
           false,
           "CI failure classification (#182)",
           28,
-        ),
-        // Issue #460: the context-map swarm. partition-worker is the light
-        // fan-out (one turn per partition slice); the map path is uncapped by
-        // construction — its runners take no InvocationBudget (#460 point 5).
-        job(
-          "partition-worker",
-          "light",
-          "batched",
-          false,
-          "Context-map partition worker (#460)",
-          29,
         ),
         // Issue #461: one retrieval worker per review session, re-run per round.
         // Budget-normal (only the #460 map path is uncapped).
@@ -171,7 +159,6 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
           31,
         ),
         // ── Heavy tier (§2.2) ──
-        job("context-ask-thorough", "heavy", "per-call", false, "context.ask — thorough", 17),
         job("decomposition-skeleton", "heavy", "per-call", false, "Decomposition skeleton", 18),
         job("decomposition-proposal", "heavy", "per-call", false, "Decomposition proposal", 19),
         // Riders: they ride the decomposition-proposal session (granularity is the
@@ -208,11 +195,6 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
         job("orchestrator-chat", "heavy", "per-call", false, "Orchestrator + diff chat", 24),
         job("adjudication", "heavy", "per-call", false, "Adjudication / second opinion", 25),
         job("self-consistency", "heavy", "per-call", false, "Self-consistency (divergence)", 26),
-        // Issue #460: the single verify/synthesis seat over the swarm's output.
-        job("map-verify", "heavy", "per-call", false, "Context-map verify/synthesis (#460)", 30),
-        // Issue #584: one medium-effort selector when a repository produces more
-        // than the deterministic worker cap. It chooses whole slices only.
-        job("map-scope", "heavy", "per-call", false, "Context-map scope selection (#584)", 37),
         // Issue #461: fills only what the deterministic detection pass could not,
         // at project add (re-runnable). "Medium" in #461 is the model class,
         // not a tier (B06 reconciliation-2 reading).
@@ -370,12 +352,9 @@ const TABLE_BOTH: AssignmentTable = {
   "claim-canonicalisation": pick("gpt-5.6-terra", "low"),
   "comment-refinement": pick("gpt-5.6-terra", "medium"),
   "handoff-bundle-composition": pick("gpt-5.6-terra", "medium"),
-  "context-ask-fetch": pick("gpt-5.6-luna", "low"),
   "ci-failure-classification": pick("gpt-5.6-luna", "low"),
-  "partition-worker": pick("gpt-5.6-luna", "low"), // #460 names cheap Codex (Luna); effort [extrapolated]
   "related-context-retrieval": pick("gpt-5.6-luna", "low"), // #461 light tier; model+effort [extrapolated]
   // Heavy → Claude review seats.
-  "context-ask-thorough": pick("sonnet-5", "medium"),
   "decomposition-skeleton": pick("sonnet-5", "low"),
   "decomposition-proposal": pick("opus-4.8", "high"),
   "decision-why": pick("opus-4.8", "high"),
@@ -391,8 +370,6 @@ const TABLE_BOTH: AssignmentTable = {
   "orchestrator-chat": pick("sonnet-5", "medium"),
   adjudication: pick("opus-4.8", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("opus-4.8", "xhigh"), // generator's model at xhigh; divergence-triggered
-  "map-verify": pick("sonnet-5", "medium"), // #460 point 4 verbatim (Claude sonnet-5); packet fixes medium
-  "map-scope": pick("sonnet-5", "medium"),
   "project-scout": pick("sonnet-5", "medium"), // #461 names medium (the model class); effort [extrapolated]
   // ── Board-rebuild seats (#489 B08). Heavy lens drafting stays on Claude (R39);
   // the noise draft and post-process editor cross to Codex. The narrow report
@@ -425,9 +402,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "claim-canonicalisation": pick("sonnet-5", "low"),
   "comment-refinement": pick("sonnet-5", "medium"),
   "handoff-bundle-composition": pick("sonnet-5", "medium"),
-  "context-ask-fetch": pick("haiku", "low"),
   "ci-failure-classification": pick("haiku", "low"),
-  "context-ask-thorough": pick("sonnet-5", "medium"),
   "decomposition-skeleton": pick("sonnet-5", "low"),
   "decomposition-proposal": pick("opus-4.8", "high"),
   "decision-why": pick("opus-4.8", "high"),
@@ -441,9 +416,6 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "orchestrator-chat": pick("sonnet-5", "medium"),
   adjudication: pick("opus-4.8", "high"), // degraded single-provider self-consistency; badge at execution
   "self-consistency": pick("opus-4.8", "xhigh"),
-  "partition-worker": pick("haiku", "low"), // [extrapolated] #460 silent on claude-only; house light model
-  "map-verify": pick("sonnet-5", "medium"),
-  "map-scope": pick("sonnet-5", "medium"),
   "related-context-retrieval": pick("haiku", "low"), // [extrapolated] #461 silent on claude-only; house light model
   "project-scout": pick("sonnet-5", "medium"), // #461 names medium (the model class); effort [extrapolated]
   // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──
@@ -472,9 +444,7 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "claim-canonicalisation": pick("gpt-5.6-terra", "low"),
   "comment-refinement": pick("gpt-5.6-terra", "medium"),
   "handoff-bundle-composition": pick("gpt-5.6-terra", "medium"),
-  "context-ask-fetch": pick("gpt-5.6-luna", "low"),
   "ci-failure-classification": pick("gpt-5.6-luna", "low"),
-  "context-ask-thorough": pick("gpt-5.6-sol", "medium"),
   "decomposition-skeleton": pick("gpt-5.6-terra", "medium"),
   "decomposition-proposal": pick("gpt-5.6-sol", "high"),
   "decision-why": pick("gpt-5.6-sol", "high"),
@@ -489,9 +459,6 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "orchestrator-chat": pick("gpt-5.6-terra", "medium"),
   adjudication: pick("gpt-5.6-sol", "high"), // pairs with Sol-high (fresh session); primary seat here
   "self-consistency": pick("gpt-5.6-sol", "xhigh"),
-  "partition-worker": pick("gpt-5.6-luna", "low"), // #460 names cheap Codex; effort [extrapolated]
-  "map-verify": pick("gpt-5.6-terra", "medium"), // [extrapolated] #460 silent on codex-only; house mid model
-  "map-scope": pick("gpt-5.6-terra", "medium"),
   "related-context-retrieval": pick("gpt-5.6-luna", "low"), // #461 light tier; model+effort [extrapolated]
   "project-scout": pick("gpt-5.6-terra", "medium"), // [extrapolated] #461 silent on codex-only; house mid model
   // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──

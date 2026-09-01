@@ -50,7 +50,6 @@ import type {
   SymbolInspection,
 } from "@rennet/protocol";
 import {
-  type CommandInput,
   type CommandOutput,
   type ConversationAnchorWire,
   type DetectedForge,
@@ -60,13 +59,10 @@ import {
   type FsListDirResult,
   type GitHubAuthStatus,
   type GitHubConnectPoll,
-  type KnowledgeDispositionResult,
   type PairedDevice,
   type PersistedThreadMessageWire,
   type ProcessedRepoSummary,
   type Project,
-  type ProjectContextAskResult,
-  type ProjectContextMapResult,
   type ProjectDetail,
   type ProjectDetailProgressEvent,
   type ProjectKind,
@@ -326,25 +322,6 @@ export interface DispatchDeps {
    * destructive local act; the host handler is a documented stub this wave.
    */
   cleanupWorktree(input: { projectId: string; worktreeId: string }): Promise<{ ok: boolean }>;
-  /**
-   * The Context Map surface's read (change add-context-map-view): the persisted Repo
-   * Map — deterministic ProjectMap + local knowledge set — from the on-disk project
-   * store. Pure read: no rebuild, no model spend; absent/stale gates to typed absent.
-   */
-  projectContextMap(input: CommandInput<"project.contextMap">): Promise<ProjectContextMapResult>;
-  /**
-   * Project-scoped context ask (change add-context-map-view): the same engine
-   * `context.ask` runs for a review, keyed at the project's persisted tip. Model
-   * spend through the user's own harness; unanswered/failed are first-class.
-   */
-  projectContextAsk(input: CommandInput<"project.contextAsk">): Promise<ProjectContextAskResult>;
-  /**
-   * Human disposition of a knowledge statement (the R54 "a human confirms it"
-   * surface): flip status by id, persist the set. Never edits the claim.
-   */
-  knowledgeDisposition(
-    input: CommandInput<"project.knowledgeDisposition">,
-  ): Promise<KnowledgeDispositionResult>;
   /**
    * The Flagged lens's input (issue #138): the automated review layer's findings for
    * a review. The LIVE finding-generation runner (#32) is wired behind this — it

@@ -13,7 +13,6 @@ import { ReviewWorkspace } from "../app/review-workspace-route";
 import { Icon } from "../components/icon";
 import { BridgeProvider, useCommand, useMutation, useRefreshCommand } from "../data";
 import { ArchivedView } from "../project/archived-view";
-import { ProjectContextMapView } from "../project/context-map-view";
 import { BackgroundNarration } from "../project/indexing/background-narration";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
@@ -531,13 +530,6 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
                         {(p) => (
                           <ProjectRoute projectId={p.id ?? ""}>
                             <IndexingView projectId={p.id ?? ""} />
-                          </ProjectRoute>
-                        )}
-                      </Route>
-                      <Route path={ROUTES.projectMap}>
-                        {(p) => (
-                          <ProjectRoute projectId={p.id ?? ""}>
-                            <ProjectContextMapView projectId={p.id ?? ""} />
                           </ProjectRoute>
                         )}
                       </Route>

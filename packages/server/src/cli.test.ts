@@ -351,32 +351,7 @@ describe("rennet map (daemonless repo-map build)", () => {
     const code = await runSourceCli(["map", "one", "two"], captured.io, {}, noDeps);
     expect(code).toBe(2);
     expect(captured.err.at(-1)).toBe(
-      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
+      "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]",
     );
   });
-
-  it("--enrich fails honestly when no harness is available, after the map landed", async () => {
-    const repo = makeDir("rennet-map-repo-");
-    await git(repo, "init", "-b", "main");
-    await git(repo, "config", "user.email", "cli-test@rennet.local");
-    await git(repo, "config", "user.name", "CLI Test");
-    writeFileSync(resolve(repo, "thing.ts"), "export const thing = 1;\n");
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-m", "init");
-
-    const projectsDir = makeDir("rennet-map-store-");
-    const captured = captureIo();
-    const code = await runSourceCli(
-      ["map", repo, "--base", "main", "--projects-dir", projectsDir, "--enrich"],
-      captured.io,
-      // The hermetic harness-off hook (#386): discovery reports unavailable, so the
-      // enrichment leg refuses with an honest reason instead of spawning a model.
-      { RENNET_DISABLE_HARNESS: "1" },
-      noDeps,
-    );
-    expect(code).toBe(1);
-    expect(captured.err.at(-1)).toContain("no harness available");
-    // The deterministic build still persisted before the enrichment refusal.
-    expect(readdirSync(projectsDir)).toHaveLength(1);
-  }, 30_000);
 });

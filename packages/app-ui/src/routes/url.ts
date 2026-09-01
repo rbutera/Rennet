@@ -10,8 +10,8 @@ import { LENS_KINDS, type LensKind } from "@rennet/protocol";
 
 /** The board view a session route can show (#480/#489). `board` is the default; the
  *  others are explicit `?view=` alternatives. */
-export type ViewKind = "board" | "diff" | "map" | "handoff" | "rounds";
-export const VIEW_KINDS: readonly ViewKind[] = ["board", "diff", "map", "handoff", "rounds"];
+export type ViewKind = "board" | "diff" | "handoff" | "rounds";
+export const VIEW_KINDS: readonly ViewKind[] = ["board", "diff", "handoff", "rounds"];
 /** The board default view — an unknown or absent ?view falls back here, and it alone is
  *  omitted from a serialized query (diff/map/handoff/rounds always serialize). */
 export const DEFAULT_VIEW: ViewKind = "board";
@@ -28,7 +28,6 @@ export const ROUTES = {
   sessionRun: "/s/:slug/run",
   archived: "/archived",
   projectIndexing: "/projects/:id/indexing",
-  projectMap: "/projects/:id/map",
   settings: "/settings/:page",
   // Interim (reconciliation 2): the front-door project list and project detail have
   // no #480 row. They mount here so they stay reachable; their permanent addresses
@@ -104,10 +103,6 @@ export function projectSettingsPath(id: string): string {
 
 export function archivedPath(): string {
   return ROUTES.archived;
-}
-
-export function projectMapPath(id: string): string {
-  return `/projects/${encodeURIComponent(id)}/map`;
 }
 
 export function projectIndexingPath(id: string): string {

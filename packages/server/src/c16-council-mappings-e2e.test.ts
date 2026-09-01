@@ -81,7 +81,7 @@ describe("C16 E2E — a role assignment edit over the real settings command path
     // ── STAGE. Boot 1 reads the mappings with nothing persisted. ──────────────
     const host1 = boot(dir);
     const baseline = await host1.get();
-    expect(baseline).toHaveLength(8);
+    expect(baseline).toHaveLength(6);
     // Every cell is the council table's own answer — no override exists yet.
     for (const role of baseline) {
       expect([role.dual.layer, role.claudeOnly.layer, role.codexOnly.layer]).toEqual([

@@ -23,18 +23,7 @@ the surrounding heavy analysis session instead of requiring an independent seat.
 A catalogue entry is assignment metadata, not proof that a feature currently
 calls it. Live call sites include review-pipeline jobs, selection-aware context
 questions, CI analysis, delta digests, pull-request body drafting, handoff
-composition, comment refinement, orchestration, adjudication, and knowledge
-generation.
-
-Knowledge generation can run three Council jobs. `map-scope` is a heavy
-per-call job at medium effort. It runs only when the candidate catalogue exceeds
-64 slices and selects at most 64 whole slices. `partition-worker` is a light
-batched job that reads one selected
-[module batch](./code-intelligence.md#module-batching), including its skeleton,
-resolved edges, and neighbour map, and emits anchored claims. `map-verify` is a
-heavier seat that runs *after* a deterministic merge pass and sees only what a
-script could not settle: the cross-batch seams and flagged contradictions. It
-does not re-adjudicate the swarm, and it runs no turn when that residue is empty.
+composition, comment refinement, orchestration, and adjudication.
 
 The lens drafting pipeline runs five: `lens-draft` (the drafting seat for the
 Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
@@ -150,17 +139,11 @@ The resolver does not consume a model-call budget. Live runners consult a shared
 invocation budget before each turn. This separation keeps assignment pure while
 letting the execution path account for retries, multiple seats, reconciliation,
 and follow-up turns against one shared allowance. Review-generation runners use
-a refused grant to stop that runner and expose degraded output. `context.ask`
-records the refusal as an overage and continues the requested answer under Rule
-Zero. The knowledge swarm takes no invocation budget at all. Its runners have no
-budget parameter to consult, including the conditional `map-scope` turn,
-selected partition workers, retries, and verification. Exact coverage comes
-from recording every snapshot file as mapped, scope-excluded, or mechanically
-excluded. It does not mean every candidate slice receives a worker turn.
+a refused grant to stop that runner and expose degraded output.
 
 ## Review roles in Settings
 
-The council routes jobs; the settings surface shows **review roles** — eight
+The council routes jobs; the settings surface shows **review roles** — six
 user-legible names, each mapped to a council job that already exists in the
 catalogue. The mapping adds no job IDs and changes no table value; it is a reading
 of the tables, not a second source of truth.
@@ -168,23 +151,20 @@ of the tables, not a second source of truth.
 | Review role | Council job |
 |---|---|
 | Orchestrator | `orchestrator-chat` |
-| Context-Map Workers | `partition-worker` |
 | Confirmation Worker | `self-consistency` |
 | Lens Drafters | `lens-draft` |
 | Flagged Second Seat | `lens-draft-flagged` |
 | Adjudication | `adjudication` |
 | Post-Process | `board-post-process` |
-| Utility | `context-ask-fetch` |
 
-`map-scope` is not a ninth review role. The **Context-Map Workers** row maps only
-`partition-worker`; scope selection keeps its own Council job id and assignments
-but has no separate user-facing role in this settings table.
+`REVIEW_ROLE_CATALOGUE` in `packages/core/src/model-council-roles.ts` is the
+source of truth for that list.
 
 Settings → Environments → *(host card)* → **Edit Mappings** resolves every role in
 all three availability scenarios and shows the result in two columns: **Dual
 Harness**, and a **Single Harness** column that resolves to whichever provider is
 enabled on that host. The read is
-**honest-present**: the tables are static, so the eight roles are always there with
+**honest-present**: the tables are static, so the six roles are always there with
 real values, even on an install that has never been configured. A role that does
 not run in a scenario resolves to a null cell and renders an em dash — the Flagged
 Second Seat is the case that matters, since it exists only when both providers are

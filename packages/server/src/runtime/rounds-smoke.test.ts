@@ -17,7 +17,6 @@ import {
   type LintContext,
   type LintHunk,
   type LintTarget,
-  selectPacketKnowledge,
 } from "@rennet/core";
 import {
   type DossierItem,
@@ -107,19 +106,6 @@ function smallPatchset(): Patchset {
     truncated: false,
   };
 }
-
-const KNOWLEDGE = selectPacketKnowledge({
-  set: {
-    schemaVersion: 1,
-    repoKey: "repo",
-    baseOid: "0".repeat(40),
-    snapshotFingerprint: "fp",
-    generator: "c15-smoke",
-    statements: [],
-  },
-  snapshot: null,
-  changedPaths: [],
-});
 
 const DOSSIER: readonly DossierItem[] = [];
 
@@ -599,7 +585,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       const promptsSrcDir = join(dirname(fileURLToPath(import.meta.url)), "../../../prompts/src");
       const boards = createBoardsRuntime(boardsRoot);
 
-      const deltaPacket = buildDeltaPacket(smallPatchset(), KNOWLEDGE, DOSSIER, SUCCESSOR);
+      const deltaPacket = buildDeltaPacket(smallPatchset(), DOSSIER, SUCCESSOR);
       expect(deltaPacket.successorAccount).not.toBeUndefined(); // isRound fires
 
       // The COVERAGE CONTROL, driven through the real path (review finding 11's shape).

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildDeltaPacket, type HarnessTurnResult, selectPacketKnowledge } from "@rennet/core";
+import { buildDeltaPacket, type HarnessTurnResult } from "@rennet/core";
 import {
   DOSSIER_BODY_MAX_CHARS,
   dossierItemSchema,
@@ -76,19 +76,6 @@ function patchsetOf(files: PatchFile[]): Patchset {
   };
 }
 
-const KNOWLEDGE = selectPacketKnowledge({
-  set: {
-    schemaVersion: 1,
-    repoKey: "repo",
-    baseOid: "0".repeat(40),
-    snapshotFingerprint: "fp",
-    generator: "test",
-    statements: [],
-  },
-  snapshot: null,
-  changedPaths: [],
-});
-
 describe("B07 packet e2e — frozen PR #514 capture through the full retrieval flow", () => {
   const run = async () => {
     const keepAll = async (): Promise<HarnessTurnResult> => ({
@@ -155,7 +142,6 @@ describe("B07 packet e2e — frozen PR #514 capture through the full retrieval f
           patch,
         },
       ]),
-      KNOWLEDGE,
       result.items,
     );
     // Byte-identical pass-through — the packet carries the items untruncated.

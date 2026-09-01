@@ -1,6 +1,6 @@
 ## Purpose
 
-Define default-on benchmark recording with honest stage breakdowns for Rennet's three heavy pipelines — context-map generation, lens drafting, and the post-round report — plus the Settings panel that renders the records and the repo-committed data that populates the docs benchmarks page.
+Define default-on benchmark recording with honest stage breakdowns for Rennet's measured pipelines — the deterministic Repo Map build, lens drafting, and the post-round report — plus the Settings panel that renders the records and the repo-committed data that populates the docs benchmarks page.
 
 ## ADDED Requirements
 
@@ -18,14 +18,14 @@ Debug benchmark recording SHALL be a persisted setting, enabled by default, with
 - **WHEN** the reviewer turns benchmark recording off and runs a review
 - **THEN** no new benchmark records are written and the pipelines behave identically otherwise
 
-### Requirement: Context-map generation records per-layer timings
+### Requirement: Repo Map generation records per-stage timings
 
-While recording is enabled, context-map generation SHALL durably record a timing for every layer — each deterministic layer and each non-deterministic (model-backed) layer individually — plus the end-to-end total, labeled by layer name and bound to the generated map's revision.
+While recording is enabled, the deterministic Repo Map build SHALL durably record a timing for every build stage individually plus the end-to-end total, labeled by stage name and bound to the generated snapshot's revision. There are no model-backed layers: the build is deterministic end to end.
 
 #### Scenario: Map generation completes
 
-- **WHEN** a context map generates while recording is enabled
-- **THEN** the benchmark record carries one timing per deterministic layer, one per non-deterministic layer, and the total, each labeled and attributable
+- **WHEN** a Repo Map builds while recording is enabled
+- **THEN** the benchmark record carries one timing per build stage and the total, each labeled and attributable
 
 ### Requirement: Lens drafting records per-lens and whole-process timings
 
@@ -66,7 +66,7 @@ Every benchmark stage record SHALL carry the harness and model that actually exe
 
 ### Requirement: The Settings surface presents recorded benchmarks
 
-The Settings surface SHALL contain a benchmarks panel that renders recorded runs with their stage breakdowns — context-map layers, per-lens drafting, report — remaining responsive as history accumulates.
+The Settings surface SHALL contain a benchmarks panel that renders recorded runs with their stage breakdowns — Repo Map build stages, per-lens drafting, report — remaining responsive as history accumulates.
 
 #### Scenario: Reviewer opens the benchmarks panel
 
@@ -75,7 +75,7 @@ The Settings surface SHALL contain a benchmarks panel that renders recorded runs
 
 ### Requirement: Exported benchmark data populates the docs benchmarks page
 
-An export SHALL land recorded benchmark data in the rennet repository in a form the documentation site renders as a dedicated benchmarks page with stage breakdowns for context-map generation, lens drafting, and the post-round report. The docs page SHALL render from that committed data, not hand-written numbers, and SHALL state the provenance (machine, date, change measured) of what it shows.
+An export SHALL land recorded benchmark data in the rennet repository in a form the documentation site renders as a dedicated benchmarks page with stage breakdowns for the Repo Map build, lens drafting, and the post-round report. The docs page SHALL render from that committed data, not hand-written numbers, and SHALL state the provenance (machine, date, change measured) of what it shows.
 
 #### Scenario: Dogfood run refreshes the docs data
 

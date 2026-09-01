@@ -25,9 +25,9 @@ import { escapePath } from "@rennet/core";
 import type { DossierItem } from "@rennet/protocol";
 import { dossierItemSchema, serializeDossier } from "@rennet/protocol";
 import { z } from "zod";
-import { writeAtomic } from "./knowledge-store";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 import type { RawContextPayload } from "./related-context";
+import { writeAtomic } from "./write-atomic";
 
 /** The store key: one review target at one patchset ref. */
 export interface DossierKey {

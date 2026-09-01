@@ -85,10 +85,10 @@ fills both fields.
 Adding a project lands on its processing view. A scout reads the git remotes,
 checks for issue-tracker markers and CI config, reads the README, contributing
 guide, and any agent instruction files, then reports how many answers it
-detected and how many it guessed. Context-map generation starts when the scout
+detected and how many it guessed. The structural map is built when the scout
 returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
-While the map generates, a prefilled questionnaire offers the project's setup for
+While the map builds, a prefilled questionnaire offers the project's setup for
 a look: issue tracker, default branch, worktree location, gate command, and the
 project's mark. Every answer carries a chip reading **detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
@@ -97,20 +97,23 @@ it is evidence for choosing one of the fixed sidebar glyphs in **Settings →
 Projects → Identity**, and never enters agent context. Answer it or skip it — the
 map finishes and the project works either way.
 
-When generation finishes and the map is built, the processing view shows a
-**Context Map Ready** summary — its scope, file, and confirmed/rejected-claim
-counts — with **View Context Map** to open the [context map](./context-map.md),
-and a full-width **Start a Review** button beneath it that carries you into New
-Chat for the project you just added. That ready state appears only after the
-knowledge verification pass settles; the same boundary clears the project's
-sidebar spinner. A delayed or failed knowledge pass cannot leave an indexed
-header above a running timeline. **Start a Review** is still offered after a
-failure, because a rough index never blocks you.
+When the map is built, the processing view shows a **Project Ready** summary —
+its scope and file counts — and a full-width **Start a Review** button beneath it
+that carries you into New Chat for the project you just added. That ready state
+appears only once the run's last phase has settled; the same boundary clears the
+project's sidebar spinner, so an indexed header never sits above a running
+timeline. **Start a Review** is still offered after a failure, because a rough
+index never blocks you.
 
-The processing command has a stable identity and stores scout, structural-map,
-and knowledge checkpoints beside the map. Reopening the view reattaches to that
-run. If the daemon restarts, it resumes the first incomplete phase and reuses
-completed work instead of duplicating progress rows.
+Nothing here calls a model to summarize your repository. The map is read off the
+tree: files, packages, entry points, exported symbols, and imports. When a review
+runs, each lens is a coding agent started in the reviewed checkout — it reads the
+code itself, with the tools it would have anyway.
+
+The processing command has a stable identity and stores scout and structural-map
+checkpoints beside the map. Reopening the view reattaches to that run. If the
+daemon restarts, it resumes the first incomplete phase and reuses completed work
+instead of duplicating progress rows.
 
 The project remembers which machine it lives on and reconnects there when you
 reopen it. See [Windows and WSL](./windows-and-wsl.md#wsl-requirements) for
@@ -203,7 +206,7 @@ the boards in the order shown below. The session URL owns the selection:
 Flagged is the address-free default and another lens uses `?lens=`. A completed
 frozen generation without Flagged falls back to its first available board and
 replaces the URL with that honest address. A live generation keeps the requested
-address while its boards arrive. Selecting a lens from History, Map, or Diff
+address while its boards arrive. Selecting a lens from History or Diff
 returns to its board. Reloading the URL opens the same selection.
 
 | Board | Question |
@@ -245,11 +248,9 @@ ran and there was no second opinion to compare. **Request This Change** stages t
 the hand-off; the same control becomes a **Staged · Request Change** receipt and
 unstages it when clicked again.
 
-### Map and Diff
+### Diff
 
-Beside the switcher sits the **Map · Diff** pill.
-
-**Map** opens the project's [context map](./context-map.md). **Diff** opens the
+Beside the switcher sits the **Diff** pill. It opens the
 raw patchset in the familiar files-changed shape: a filterable file tree on the
 right, per-file cards with unified hunks and dual line-number gutters on the
 left, a summary line reading files changed with total additions and deletions,
@@ -306,7 +307,7 @@ by one. Explain threads never count. Undo of any kind takes the count back down.
 ## The three exits
 
 The gold button opens the hand-off view — a view over the main surface, exactly
-like Map and Diff, and the back arrow leaves it. What it offers depends on the
+like Diff, and the back arrow leaves it. What it offers depends on the
 target.
 
 ### Post one GitHub review
@@ -424,8 +425,8 @@ chapter at its foot, newest last. The selected generation lives in
 the same frozen board. With no frozen predecessor, the generation control is
 absent.
 
-Once a round has completed, a **History** control joins Map · Diff in the
-header. It lists one row per round with its tally; selecting a round renders its
+Once a round has completed, a **History** control joins Diff in the
+header, making the pill read **History · Diff**. It lists one row per round with its tally; selecting a round renders its
 full report. Each modern row states when the round ran, its exact branch or
 detached target, the coding harness and version that ran it, and the outcome tally
 from that round's own report, so nothing
@@ -446,7 +447,7 @@ in Rennet. Leave the console closed during ordinary use.
 
 Press `⌘P` (or `⌘K`) to open the command menu from anywhere — the same menu the
 sidebar's **Search** row opens. It filters fuzzily over your sessions, each
-project's context map and new-chat entry, every settings page, and the
+project's new-chat entry, every settings page, and the
 add-project and add-environment actions. Board and diff content is deliberately
 not searchable from here; the boards are where you read.
 
@@ -539,6 +540,5 @@ development and ad hoc packages do not contact it.
 ## Next steps
 
 - [Review a GitHub pull request](./reviewing-a-github-pr.md) covers the teammate review path in full.
-- [The Context Map](./context-map.md) covers stored project structure and knowledge.
 - [Windows and WSL](./windows-and-wsl.md) covers running against a distro.
 - [Common questions](../concepts/common-questions.md) covers models, credentials, and data.

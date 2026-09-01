@@ -9,7 +9,7 @@ import {
   sanitizeSchemaForCodex,
   stripNullDeep,
 } from "./codex-exec";
-import { councilSeatTurn } from "./knowledge-swarm";
+import { councilSeatTurn } from "./council-seat-turn";
 
 // ── A fake SpawnAppServer scripting one utility turn (no process) ──────────────
 
@@ -393,7 +393,7 @@ describe("createCodexExecutor (app-server)", () => {
     ]);
   });
 
-  it("starts every Context Map model seat with an empty MCP table", async () => {
+  it("starts every board-pipeline model seat with an empty MCP table", async () => {
     const { effects, spawns, mcpLists } = fakeExecEffects({
       finalText: "{}",
       mcpList: MCP_INVENTORY,
@@ -401,19 +401,19 @@ describe("createCodexExecutor (app-server)", () => {
     const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
     const council = { availability: { installed: ["codex" as const] } };
     const scope = councilSeatTurn(
-      "map-scope",
+      "lens-draft",
       { type: "object" },
       { codexExecutor: executor, repoRoot: "/repo" },
       council,
     );
     const worker = councilSeatTurn(
-      "partition-worker",
+      "lens-draft-noise",
       { type: "object" },
       { codexExecutor: executor, repoRoot: "/repo" },
       council,
     );
     const verify = councilSeatTurn(
-      "map-verify",
+      "round-report",
       { type: "object" },
       { codexExecutor: executor, repoRoot: "/repo" },
       council,

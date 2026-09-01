@@ -929,7 +929,7 @@ a[href^="http"]:not(.button)::after {
   border-radius: 11px;
   background: var(--gold-soft);
 }
-.map-layer.learned {
+.map-layer.agent {
   margin-left: 8%;
   background: var(--gold-soft);
 }
@@ -1476,7 +1476,7 @@ a[href^="http"]:not(.button)::after {
     gap: 8px;
   }
 
-  .map-layer.learned {
+  .map-layer.agent {
     margin-left: 0;
   }
 

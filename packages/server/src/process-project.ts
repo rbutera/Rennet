@@ -1,8 +1,7 @@
 import { basename } from "node:path";
-import type { GenerateOptions, GenerateResult, KnowledgeSwarmOutcome } from "@rennet/adapters";
+import type { GenerateOptions, GenerateResult } from "@rennet/adapters";
 import {
   commandIdFor,
-  type KnowledgeSet,
   type ProcessedRepoSummary,
   type Project,
   type ProjectProcessEvent,
@@ -25,23 +24,12 @@ export interface ProjectScoutRunInput {
   readonly narrate: (event: ProjectProcessEvent) => void;
 }
 
-export interface ProjectKnowledgeRunInput {
-  readonly projectId: string;
-  readonly runId: string;
-  readonly repoKey: string;
-  readonly repoRoot: string;
-  readonly toOid: string;
-  readonly narrate: (event: ProjectProcessEvent) => void;
-}
-
 export interface ProcessProjectDeps {
   generate(repoRoot: string, options: GenerateOptions): Promise<GenerateResult>;
   listProjects(): Project[];
   repoKeyForRoot?(repoRoot: string): string;
   journal?: ProjectProcessJournal;
   runScout?(input: ProjectScoutRunInput): Promise<ProjectScoutQuestionnaire | null>;
-  runKnowledge?(input: ProjectKnowledgeRunInput): Promise<KnowledgeSwarmOutcome>;
-  loadKnowledge?(repoKey: string): KnowledgeSet | null;
 }
 
 interface LiveProjectProcess {
@@ -110,14 +98,6 @@ function totalsOf(record: ProjectProcessJournalRecord) {
       (total, checkpoint) => total + (checkpoint.snapshot?.scopes ?? 0),
       0,
     ),
-    confirmed: record.repos.reduce(
-      (total, checkpoint) => total + (checkpoint.knowledge?.confirmed ?? 0),
-      0,
-    ),
-    rejected: record.repos.reduce(
-      (total, checkpoint) => total + (checkpoint.knowledge?.rejected ?? 0),
-      0,
-    ),
   };
 }
 
@@ -137,7 +117,7 @@ export function projectProcessRunFromRecord(
       return {
         ...base,
         status: "running",
-        phase: record.phase === "complete" ? "knowledge" : record.phase,
+        phase: record.phase === "complete" ? "map" : record.phase,
       };
     case "done":
       return { ...base, status: "done", phase: "complete", totals: totalsOf(record) };
@@ -146,20 +126,13 @@ export function projectProcessRunFromRecord(
       return {
         ...base,
         status: "failed",
-        phase: failure?.phase ?? (record.phase === "complete" ? "knowledge" : record.phase),
+        phase: failure?.phase ?? (record.phase === "complete" ? "map" : record.phase),
         reason:
           record.failures.map((entry) => `${entry.repo}: ${entry.reason}`).join("; ") ||
           "Project processing failed",
       };
     }
   }
-}
-
-function knowledgeCounts(set: KnowledgeSet): { confirmed: number; rejected: number } {
-  return {
-    confirmed: set.statements.filter((statement) => statement.status === "confirmed").length,
-    rejected: set.statements.filter((statement) => statement.status === "rejected").length,
-  };
 }
 
 const MAP_NOTE: Record<string, string> = {
@@ -380,85 +353,21 @@ export function createProcessProject(deps: ProcessProjectDeps) {
       }
     }
 
-    if (record.repos.some((checkpoint) => checkpoint.snapshot && !checkpoint.knowledge))
-      setState("running", "knowledge");
+    // Every snapshotted repo is done once its map lands — there is no post-map
+    // model phase. The artifact-stamped repo-done is what flips the UI row.
     for (const checkpoint of record.repos) {
       const current = record.repos.find((candidate) => candidate.path === checkpoint.path);
-      if (!current?.snapshot || current.knowledge) continue;
-      if (!deps.runKnowledge) {
-        replaceRepo(checkpoint.path, (repo) => ({
-          ...repo,
-          knowledge: { confirmed: 0, rejected: 0 },
-        }));
-        narrate({
-          kind: "repo-done",
-          repo: checkpoint.repo,
-          summary: current.snapshot.summary,
-          artifact: { kind: "project", projectId: project.id },
-        });
-        continue;
-      }
-      const repoKey = deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path;
-      let outcome: KnowledgeSwarmOutcome;
-      try {
-        outcome = await deps.runKnowledge({
-          projectId: project.id,
-          runId,
-          repoKey,
-          repoRoot: checkpoint.path,
-          toOid: current.snapshot.baseOid,
-          narrate,
-        });
-      } catch (error) {
-        fail({
-          repo: checkpoint.repo,
-          path: checkpoint.path,
-          phase: "knowledge",
-          reason: error instanceof Error ? error.message : String(error),
-        });
-        continue;
-      }
-      let counts: { confirmed: number; rejected: number } | undefined;
-      if (outcome.status === "ok") {
-        counts = knowledgeCounts(outcome.set);
-      } else if (outcome.status === "skipped") {
-        const storedKnowledge = deps.loadKnowledge?.(repoKey) ?? null;
-        if (storedKnowledge) counts = knowledgeCounts(storedKnowledge);
-      } else {
-        fail({
-          repo: checkpoint.repo,
-          path: checkpoint.path,
-          phase: "knowledge",
-          reason: outcome.reason,
-        });
-        continue;
-      }
-      if (counts) {
-        replaceRepo(checkpoint.path, (repo) => ({ ...repo, knowledge: counts }));
-        const latest = record.repos.find((candidate) => candidate.path === checkpoint.path);
-        if (latest?.snapshot) {
-          narrate({
-            kind: "repo-done",
-            repo: checkpoint.repo,
-            summary: latest.snapshot.summary,
-            artifact: { kind: "project", projectId: project.id },
-          });
-        }
-      } else {
-        fail({
-          repo: checkpoint.repo,
-          path: checkpoint.path,
-          phase: "knowledge",
-          reason: "knowledge was skipped but no current set could be read",
-        });
-      }
+      if (!current?.snapshot) continue;
+      narrate({
+        kind: "repo-done",
+        repo: checkpoint.repo,
+        summary: current.snapshot.summary,
+        artifact: { kind: "project", projectId: project.id },
+      });
     }
 
     if (record.failures.length > 0) {
-      const phase = record.failures.some((failure) => failure.phase === "knowledge")
-        ? "knowledge"
-        : "map";
-      setState("failed", phase);
+      setState("failed", "map");
     } else {
       setState("done", "complete");
     }

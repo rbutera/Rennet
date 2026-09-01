@@ -8,7 +8,6 @@ import {
   GitBranch,
   GitMerge,
   GitPullRequest,
-  Map as MapIcon,
   Search,
   TriangleAlert,
 } from "lucide-react";
@@ -17,7 +16,7 @@ import { useLocation, useSearch } from "wouter";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { useCommand } from "../data";
-import { newChatPath, projectMapPath } from "../routes/url";
+import { newChatPath } from "../routes/url";
 import { usePriorSurface } from "../settings/prior-surface";
 import { ProjectPicker } from "../settings/projects/project-picker";
 import { TargetBadge } from "../shell/sidebar/target-icon";
@@ -246,14 +245,6 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
           <span className="font-medium text-ink">New Chat</span>
         </span>
         <span className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate(projectMapPath(projectId))}
-            className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs font-medium text-ink-soft transition-colors hover:bg-raised hover:text-ink"
-          >
-            <Icon icon={MapIcon} className="size-3.5" />
-            Map
-          </button>
           <kbd className="rounded border border-line px-1 py-0.5 text-10 text-ink-faint">esc</kbd>
         </span>
       </header>

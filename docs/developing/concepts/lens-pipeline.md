@@ -296,9 +296,9 @@ The landed-round report classifier intentionally receives only the successor
 patchset id, durable asks, and exact worker receipt; full raw payloads stay
 behind a context tool. Items are structured (id, tracker, title, state, bounded body,
 acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
-how ticket citations reach boards. Standing tracker knowledge enters the
-context map through the knowledge swarm instead; cosmetic
-project facts (the logo) never enter agent context. When no tracker is
+how ticket citations reach boards. Standing project background is not fetched
+for the drafter: a drafter that wants it reads the repository it is standing in.
+Cosmetic project facts (the logo) never enter agent context. When no tracker is
 configured, the orchestrator asks in chat and persists the answer to project
 settings — the review proceeds meanwhile.
 

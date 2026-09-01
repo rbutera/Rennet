@@ -15,23 +15,17 @@ const snapshotCheckpointSchema = z.object({
   scopes: z.number().int().nonnegative(),
 });
 
-const knowledgeCheckpointSchema = z.object({
-  confirmed: z.number().int().nonnegative(),
-  rejected: z.number().int().nonnegative(),
-});
-
 const repoCheckpointSchema = z.object({
   repo: z.string().min(1),
   path: z.string().min(1),
   scout: projectScoutQuestionnaireSchema.optional(),
   snapshot: snapshotCheckpointSchema.optional(),
-  knowledge: knowledgeCheckpointSchema.optional(),
 });
 
 const processFailureSchema = z.object({
   repo: z.string().min(1),
   path: z.string().min(1),
-  phase: z.enum(["scout", "map", "knowledge"]),
+  phase: z.enum(["scout", "map"]),
   reason: z.string().min(1),
   summary: processedRepoSummarySchema.optional(),
 });
@@ -41,7 +35,7 @@ export const projectProcessJournalSchema = z.object({
   runId: z.uuid(),
   projectId: z.string().min(1),
   status: z.enum(["queued", "running", "done", "failed"]),
-  phase: z.enum(["scout", "map", "knowledge", "complete"]),
+  phase: z.enum(["scout", "map", "complete"]),
   repos: z.array(repoCheckpointSchema),
   failures: z.array(processFailureSchema),
   events: z.array(projectProcessEventSchema),

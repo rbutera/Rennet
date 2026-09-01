@@ -129,9 +129,6 @@ still goes through the one seam; only the label is hand-written.
 | `project.process` | Needs the project; the indexing surface narrates the run. |
 | `project.detail` | Read the project surface drives. |
 | `project.cleanupWorktree` | Needs the project and the worktree it removes. |
-| `project.contextMap` | Read the Context Map surface drives for its project. |
-| `project.contextAsk` | Needs the project and the question. |
-| `project.knowledgeDisposition` | Needs the project and the disposition being recorded. |
 
 ### fs, patchset, board
 

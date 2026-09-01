@@ -134,28 +134,5 @@ export function projectHandlers(rt: DispatchRuntime) {
       });
       return parseCommandOutput(name, result);
     },
-    "project.contextMap": async (rawInput) => {
-      const name = "project.contextMap" as const;
-      // Pure read of the persisted Repo Map — no rebuild, no model spend. An
-      // absent or gate-failing snapshot returns the typed absent, never a
-      // fabricated or partially-served map.
-      const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(name, await deps.projectContextMap(input));
-    },
-    "project.contextAsk": async (rawInput) => {
-      const name = "project.contextAsk" as const;
-      // Project-scoped ask over the persisted snapshot + knowledge set. A real
-      // model turn through the user's own harness; an absent harness or a
-      // snapshot refusal is an honest failed result carrying its cost.
-      const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(name, await deps.projectContextAsk(input));
-    },
-    "project.knowledgeDisposition": async (rawInput) => {
-      const name = "project.knowledgeDisposition" as const;
-      // The human-confirm surface (R54): flip the statement's status by id and
-      // persist. Disposition never edits the claim, so the id stays stable.
-      const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(name, await deps.knowledgeDisposition(input));
-    },
   } satisfies Record<string, CommandHandler>;
 }

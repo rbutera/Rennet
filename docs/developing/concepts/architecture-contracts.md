@@ -46,29 +46,27 @@ fresh.
 
 ## Repo Map and project context
 
-The Repo Map combines deterministic project structure with evidence-backed
-knowledge:
+The Repo Map is a deterministic project snapshot. It records what reading the
+tree proves and nothing else:
 
 | Part | Contains | Identity |
 |---|---|---|
 | Project snapshot | Files, packages, entry points, exported symbols, identifier references, and dependencies | Pinned Git OID and content hashes |
-| Knowledge layer | Project explanations, claims, evidence, confidence, and freshness | Project and source evidence |
 
-Snapshots and knowledge are composed by the live server. Multi-repository
-contexts refer to member maps and their pinned identities instead of flattening
-all content into one document.
+Snapshots are composed by the live server. Multi-repository contexts refer to
+member maps and their pinned identities instead of flattening all content into
+one document.
 
 Project processing writes its canonical state beneath
-`~/.rennet/projects/<escaped-path>/`. Promotion to `.rennet/map/` or
-`.rennet/knowledge/` is explicit and never stages or commits those files.
+`~/.rennet/projects/<escaped-path>/`. Promotion to `.rennet/map/` is explicit and
+never stages or commits those files.
 
-An add-project run is one durable scout → structural-map → knowledge sequence.
-Its stable command identity and per-repository checkpoints live in
-`project-process.json` beside the snapshot. The coordinator persists each phase
-before advancing, replays the latest state of each logical progress step, and
-resumes the first incomplete checkpoint after a daemon restart. Only the terminal
-`done` record carries the scope, file, confirmed, and rejected totals that the UI
-may call ready.
+An add-project run is one durable scout → structural-map sequence. Its stable
+command identity and per-repository checkpoints live in `project-process.json`
+beside the snapshot. The coordinator persists each phase before advancing,
+replays the latest state of each logical progress step, and resumes the first
+incomplete checkpoint after a daemon restart. Only the terminal `done` record
+carries the repo, file, and scope totals that the UI may call ready.
 
 ## Provenance
 

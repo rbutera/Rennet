@@ -62,7 +62,7 @@ describe("command menu (§9)", () => {
   it("renders grouped entries with the group label beside each title", async () => {
     mountMenu();
     // Projects are real → their entries appear once projects.list resolves.
-    await waitFor(() => expect(screen.getByText("atlas — Context Map")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("New Chat in atlas")).toBeTruthy());
     expect(screen.getByText("New Chat in orbit")).toBeTruthy();
     // Settings pages + actions are always present.
     expect(screen.getByText("Appearance")).toBeTruthy();
@@ -79,7 +79,7 @@ describe("command menu (§9)", () => {
     act(() => {
       fireEvent.input(input, { target: { value: "Appearance" } });
     });
-    await waitFor(() => expect(screen.queryByText("atlas — Context Map")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("New Chat in atlas")).toBeNull());
     expect(screen.getByText("Appearance")).toBeTruthy();
     // A query nothing matches → the honest empty state.
     act(() => {

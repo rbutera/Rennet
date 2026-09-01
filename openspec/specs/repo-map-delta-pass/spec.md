@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Rennet keeps the default-branch Repo Map current with deterministic incremental passes, composes non-default bases as overlays, and updates model-derived knowledge outside the review's critical path.
+Rennet keeps the default-branch Repo Map current with deterministic incremental passes and composes non-default bases as overlays. No pass invokes a model.
 
 ## Requirements
 
@@ -59,18 +59,3 @@ A review against a non-default base SHALL use the default-branch map as the **ba
 
 - **WHEN** the default-branch base advances (via a delta pass) under an open non-default-base review
 - **THEN** the overlay is treated as stale on its `(defaultOid, nonDefaultBaseOid)` pair and re-derived against the new base
-
-### Requirement: An uncapped LLM knowledge pass runs off the same trigger and never blocks review
-
-The baseline-advance trigger SHALL also run a knowledge-enrichment pass. It SHALL invalidate statements whose evidence anchors intersect the diff, then use an uncapped model pass to assess the invalidated statements and find new statements in the affected scope maps. Untouched knowledge SHALL stay pinned to its original evidence. A generator, schema, guideline, or accumulation-threshold change SHALL trigger a full rollup. The pass SHALL debounce and coalesce work to the newest OID. It SHALL NEVER block a review. Reviews proceed on the current snapshot and surviving knowledge. The `ContextManifest` SHALL disclose statements withheld as `invalidated-pending`. Only this pass, not the structural pass, may invoke a model.
-
-#### Scenario: A review proceeds while knowledge is re-enriching
-
-- **WHEN** a knowledge delta pass is running after a baseline advance and a review reads context
-- **THEN** the review proceeds on the current snapshot and the surviving (non-invalidated) knowledge without waiting
-- **AND** any statement withheld as invalidated-pending is disclosed in the ContextManifest rather than silently omitted
-
-#### Scenario: Untouched knowledge is not re-run
-
-- **WHEN** a knowledge delta pass runs for a diff that does not intersect a statement's evidence anchors
-- **THEN** that statement stays pinned to its original evidence and is not re-adjudicated

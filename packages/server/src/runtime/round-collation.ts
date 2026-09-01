@@ -20,7 +20,6 @@ import {
   type LintTarget,
   type LoadedSnapshot,
   type RegisterLintContext,
-  selectPacketKnowledge,
 } from "@rennet/core";
 import {
   type AskOccurrence,
@@ -28,7 +27,6 @@ import {
   type DraftBoard,
   type Generation,
   generationIdForPatchset,
-  type KnowledgeSet,
   LENS_KINDS,
   type LensKind,
   type PatchFile,
@@ -214,17 +212,6 @@ export interface RoundCollation {
   readonly reviewDraftLintCtx: RegisterLintContext;
 }
 
-/** Every path the patchset touches — BOTH sides of a rename, since a statement anchored
- *  on the old path is exactly as relevant as one anchored on the new. */
-function changedPathsOf(patchset: Patchset): string[] {
-  const paths = new Set<string>();
-  for (const file of patchset.files) {
-    paths.add(file.path);
-    if (file.previousPath !== undefined) paths.add(file.previousPath);
-  }
-  return [...paths];
-}
-
 /**
  * The blast-radius fan-in index for a snapshot, or `undefined` when the snapshot
  * cannot genuinely answer "what depends on this file?".
@@ -259,19 +246,14 @@ function packetFanIn(snapshot: LoadedSnapshot): FanInIndex | undefined {
  * `isRound` branch fires (the round-report drafts first); when it is absent the packet
  * is a first-generation (non-round) draft — the honest degrade, never a crash.
  *
- * This is also where the packet meets the SNAPSHOT (context-map rebuild, W5b). Given
- * one, two things stop being dishonest at once: the knowledge field becomes a
- * projected, change-scoped, capped selection instead of the whole stored set dumped
- * unprojected (`selectPacketKnowledge`), and fan-in becomes an edge-backed count
- * instead of a NOT-ASSESSED mark (`packetFanIn`). Without one, both degrade loudly —
- * the packet says which mode it got, and never quietly offers less.
+ * This is also where the packet meets the SNAPSHOT (W5b): given one, fan-in becomes
+ * an edge-backed count instead of a NOT-ASSESSED mark (`packetFanIn`). Without one it
+ * degrades loudly — the packet says so, and never quietly offers less.
  *
  * Pure over its inputs; the caller owns loading the snapshot.
  */
 export function assembleRoundCollation(input: {
   patchset: Patchset;
-  /** The stored knowledge set, or null when the repo has never been enriched. */
-  knowledge: KnowledgeSet | null;
   /** The snapshot gated fresh at the patchset's base OID; omitted when the gate refused. */
   snapshot?: LoadedSnapshot;
   dossier: readonly DossierItem[];
@@ -281,15 +263,9 @@ export function assembleRoundCollation(input: {
   tree?: TreeInventories;
 }): RoundCollation {
   const snapshot = input.snapshot ?? null;
-  const knowledge = selectPacketKnowledge({
-    set: input.knowledge,
-    snapshot,
-    changedPaths: changedPathsOf(input.patchset),
-  });
   const fanIn = snapshot === null ? undefined : packetFanIn(snapshot);
   const deltaPacket = buildDeltaPacket(
     input.patchset,
-    knowledge,
     input.dossier,
     input.successorAccount,
     fanIn,
@@ -307,14 +283,12 @@ export function assembleRoundCollation(input: {
 // ── The prior generation (C15 2.1/3.3) — the lineage a round actually has ────
 
 /**
- * What the packet's knowledge field is selected FROM: the stored set and the
- * snapshot to project and scope it against. Kept as one value because the two are
- * read for the same patchset and must describe the same base OID.
+ * The gated snapshot the packet's fan-in is derived from, with its content
+ * identity (the project-context revision stamped on the round).
  */
-export interface PacketKnowledgeSource {
-  readonly set: KnowledgeSet | null;
+export interface PacketSnapshotSource {
   readonly snapshot: LoadedSnapshot | null;
-  /** Content identity of the exact snapshot + knowledge pair above. */
+  /** Content identity of the exact snapshot above. */
   readonly revision?: string;
 }
 
@@ -391,10 +365,9 @@ export interface BoardRegenerationDeps {
   readonly recapture: () => Promise<void>;
   /** The review as it stands NOW. Read AFTER {@link recapture}, never a pre-round closure. */
   readonly reviewNow: () => Review;
-  /** The repo's knowledge set + gated snapshot for the drafters' packet, over the patchset
-   *  they will read. Both halves are nullable and independently so: a repo can be mapped
-   *  but not yet enriched, and an enriched repo's snapshot can fail the freshness gate. */
-  readonly knowledgeFor: (patchset: Patchset) => PacketKnowledgeSource;
+  /** The gated snapshot for the drafters' packet fan-in, over the patchset they will
+   *  read. Nullable: a snapshot can fail the freshness gate, and the packet degrades. */
+  readonly snapshotFor: (patchset: Patchset) => PacketSnapshotSource;
   /** The REAL prior generation + its drafted boards, or `undefined` for a first generation
    *  ({@link readPriorGeneration} over the durable stores in production). */
   readonly priorGeneration: (generationId: string) => Promise<PriorGeneration | undefined>;
@@ -505,7 +478,7 @@ export async function runBoardRegeneration(
     // content-derived, so this is the honest test: a turn that committed no net change
     // keeps the existing generation and has no successor report to draft.
     const landed = successor.id !== input.priorPatchsetId;
-    const knowledgeSource = deps.knowledgeFor(successor);
+    const snapshotSource = deps.snapshotFor(successor);
     // The whole-tree citation grounding (W5). Best-effort by design: a tree git
     // could not read still drafts — on the diff-derived inventories, the behaviour
     // before this change — rather than sinking the round over a lint input. The
@@ -536,8 +509,7 @@ export async function runBoardRegeneration(
     }
     const collation = assembleRoundCollation({
       patchset: successor,
-      knowledge: knowledgeSource.set,
-      ...(knowledgeSource.snapshot === null ? {} : { snapshot: knowledgeSource.snapshot }),
+      ...(snapshotSource.snapshot === null ? {} : { snapshot: snapshotSource.snapshot }),
       // Dossier is the related-context tray (a separate producer); an empty dossier is
       // honest — the drafters simply have no tracker items inlined this round.
       dossier: [],
@@ -571,9 +543,9 @@ export async function runBoardRegeneration(
         ...(input.verifyDraftedReport === undefined
           ? {}
           : { verifyDraftedReport: input.verifyDraftedReport }),
-        ...(knowledgeSource.revision === undefined
+        ...(snapshotSource.revision === undefined
           ? {}
-          : { projectContextRevision: knowledgeSource.revision }),
+          : { projectContextRevision: snapshotSource.revision }),
         ...(input.round === undefined
           ? {}
           : {

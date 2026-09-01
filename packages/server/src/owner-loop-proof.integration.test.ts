@@ -286,33 +286,6 @@ describe("#685 owner loop through a real server", () => {
       [target, true],
       [decoy, true],
     ]);
-    const targetMap = parseCommandOutput(
-      "project.contextMap",
-      await first.dispatch("project.contextMap", {
-        projectId: added.project.id,
-        repository: "owner/target",
-        forgeRepository: { forge: "github", owner: "owner", name: "target" },
-      }),
-    );
-    const decoyMap = parseCommandOutput(
-      "project.contextMap",
-      await first.dispatch("project.contextMap", {
-        projectId: added.project.id,
-        repository: "owner/decoy",
-        forgeRepository: { forge: "github", owner: "owner", name: "decoy" },
-      }),
-    );
-    expect(targetMap.status).toBe("ok");
-    expect(decoyMap.status).toBe("ok");
-    if (targetMap.status !== "ok" || decoyMap.status !== "ok") {
-      throw new Error("owner-loop Context Maps were not both readable");
-    }
-    expect(targetMap.map.baseOid).toBe(git(target, "rev-parse", "main"));
-    expect(decoyMap.map.baseOid).toBe(git(decoy, "rev-parse", "main"));
-    expect(targetMap.map.baseOid).not.toBe(decoyMap.map.baseOid);
-    expect(targetMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
-    expect(decoyMap.map.files.map((file) => file.path)).toContain(OWNER_LOOP_SOURCE);
-
     const minted = parseCommandOutput(
       "session.mint",
       await first.dispatch("session.mint", {

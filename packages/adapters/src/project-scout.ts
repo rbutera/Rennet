@@ -28,9 +28,9 @@ import type { GlobalConfig } from "@rennet/protocol";
 import { z } from "zod";
 import { CONVENTIONS_FILE } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
-import { writeAtomic } from "./knowledge-store";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 import type { MissingConfigFact, TrackerConfig } from "./related-context";
+import { writeAtomic } from "./write-atomic";
 
 export type ScoutProvenance = "detected" | "guessed";
 

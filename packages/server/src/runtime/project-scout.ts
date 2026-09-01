@@ -173,7 +173,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
           narrate({
             kind: "stage",
             repo: repoLabel,
-            stage: "knowledge",
+            stage: "scout",
             note: "Project scout complete",
             detail: `${questionnaire.detected} detected, ${questionnaire.guessed} guessed`,
           });
@@ -196,7 +196,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
             : {
                 kind: "stage",
                 repo: repoLabel,
-                stage: "knowledge",
+                stage: "scout",
                 note: "Project scout failed",
                 detail,
               },

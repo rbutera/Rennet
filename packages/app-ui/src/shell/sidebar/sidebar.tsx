@@ -37,7 +37,6 @@ import {
   ChevronDown,
   CircleHelp,
   FolderPlus,
-  Map as MapIcon,
   MessageSquarePlus,
   Monitor,
   Pencil,
@@ -61,7 +60,6 @@ import { useBridge, useCommand } from "../../data";
 import {
   archivedPath,
   newChatPath,
-  projectMapPath,
   projectSettingsPath,
   sessionPath,
   settingsPath,
@@ -741,10 +739,6 @@ function SidebarTree() {
                     </Collapse>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
-                    <ContextMenuItem onClick={() => navigate(projectMapPath(project.id))}>
-                      <Icon icon={MapIcon} />
-                      View Context Map
-                    </ContextMenuItem>
                     <ContextMenuItem onClick={() => beginProjectRename(project)}>
                       <Icon icon={Pencil} />
                       Rename

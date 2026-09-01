@@ -19,12 +19,12 @@ describe("url grammar", () => {
       expect(sessionPath("abc", { view: DEFAULT_VIEW, lens: DEFAULT_LENS })).toBe("/s/abc");
       expect(
         sessionPath("abc", {
-          view: "map",
+          view: "diff",
           lens: "design",
           generation: "gen:ps-2",
           file: "src/a.ts",
         }),
-      ).toBe("/s/abc?view=map&lens=design&generation=gen%3Aps-2&file=src%2Fa.ts");
+      ).toBe("/s/abc?view=diff&lens=design&generation=gen%3Aps-2&file=src%2Fa.ts");
     });
 
     it("board is the default (omitted); diff is a non-default and MUST serialize (#489)", () => {
@@ -39,7 +39,7 @@ describe("url grammar", () => {
 
   describe("parseView / parseLens — fallback on unknown", () => {
     it("falls back to the board default for an unknown or absent view", () => {
-      expect(parseView("map")).toBe("map");
+      expect(parseView("map")).toBe(DEFAULT_VIEW);
       expect(parseView("bogus")).toBe(DEFAULT_VIEW);
       expect(parseView(null)).toBe(DEFAULT_VIEW);
     });
@@ -81,15 +81,15 @@ describe("url grammar", () => {
 
   describe("navigation intents — replace vs push", () => {
     it("view/lens toggles REPLACE; opening a screen PUSHES", () => {
-      expect(viewToggle("abc", "map")).toEqual({ path: "/s/abc?view=map", replace: true });
+      expect(viewToggle("abc", "diff")).toEqual({ path: "/s/abc?view=diff", replace: true });
       expect(lensToggle("abc", "design")).toEqual({ path: "/s/abc?lens=design", replace: true });
       expect(openSession("abc")).toEqual({ path: "/s/abc", replace: false });
       expect(openSettings("appearance")).toEqual({ path: "/settings/appearance", replace: false });
     });
 
     it("a toggle preserves the other current query params", () => {
-      expect(viewToggle("abc", "map", { lens: "design", file: "a.ts" })).toEqual({
-        path: "/s/abc?view=map&lens=design&file=a.ts",
+      expect(viewToggle("abc", "diff", { lens: "design", file: "a.ts" })).toEqual({
+        path: "/s/abc?view=diff&lens=design&file=a.ts",
         replace: true,
       });
     });

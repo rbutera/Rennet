@@ -67,7 +67,7 @@ worktree with one at the new commit.
 
 The boards are drafted over that pinned patchset: Design, Sequence, Decisions,
 Flagged, Noise, with the raw files-changed view one click away behind the
-**Map · Diff** pill. [Getting started](./getting-started.md#read-the-boards)
+**History · Diff** pill. [Getting started](./getting-started.md#read-the-boards)
 covers how a board reads — folded sections, cited code, findings and their
 proposed fixes.
 
@@ -185,6 +185,5 @@ post it. If GitHub is unavailable, everything already stored stays readable.
 ## Next steps
 
 - [Getting started](./getting-started.md) covers the whole loop, including your own branch.
-- [The Context Map](./context-map.md) covers stored repository structure and claims.
 - [Product and vision](../concepts/product-and-vision.md) explains the shared review model.
 - [Remote access](./remote-access.md) covers reviewing from another device.

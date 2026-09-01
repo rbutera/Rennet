@@ -16,25 +16,13 @@ import { existsSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import {
-  createClaudeHarness,
-  createCodexExecutor,
-  defaultCodexDiscoveryDeps,
-  defaultCodexExecEffects,
-  discoverCodex,
-  type GenerateResult,
-  KnowledgeStore,
-  ProjectSnapshotGenerator,
-  type ProjectSnapshotStore,
-  snapshotStoreFor,
-} from "@rennet/adapters";
+import { type GenerateResult, ProjectSnapshotGenerator, snapshotStoreFor } from "@rennet/adapters";
 import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
 import type { ProjectSnapshotManifest } from "@rennet/protocol";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
 import { WebSocket } from "ws";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
-import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import { findHealthyDaemon } from "./supervise";
 
 export interface CliIo {
@@ -68,12 +56,11 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
-  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]   build & store the repo map",
+  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]   build & store the repo map",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
   "(default: the current directory) and stores it under ~/.rennet/projects/.",
-  "`--enrich` additionally runs the council-routed knowledge swarm (full or delta)",
   "on your installed harnesses — model choice is the Model Council's.",
 ].join("\n");
 
@@ -141,7 +128,6 @@ export async function runCli(
           base?: string;
           json?: string;
           "projects-dir"?: string;
-          enrich?: boolean;
         };
         positionals: string[];
       };
@@ -154,15 +140,12 @@ export async function runCli(
             base: { type: "string" },
             json: { type: "string" },
             "projects-dir": { type: "string" },
-            enrich: { type: "boolean" },
           },
         });
         if (parsed.positionals.length > 1) throw new Error("expected at most one repository path");
       } catch (error) {
         io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
-        io.err(
-          "Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--enrich]",
-        );
+        io.err("Usage: rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]");
         return 2;
       }
       return buildMap(
@@ -171,10 +154,8 @@ export async function runCli(
           base: parsed.values.base,
           json: parsed.values.json,
           projectsDir: parsed.values["projects-dir"],
-          enrich: parsed.values.enrich === true,
         },
         io,
-        env,
       );
     }
     case "-h":
@@ -449,10 +430,8 @@ async function buildMap(
     base?: string;
     json?: string;
     projectsDir?: string;
-    enrich?: boolean;
   },
   io: CliIo,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
   const root = resolve(repoPath);
   const store = opts.projectsDir ? snapshotStoreFor(opts.projectsDir) : snapshotStoreFor();
@@ -491,11 +470,6 @@ async function buildMap(
     `  shards: ${generated.extractedSymbolShards} extracted, ${generated.reusedSymbolShards} reused`,
   );
   io.out(`  stored: ${store.paths(manifest.repoKey).mapDir}`);
-  const knowledgeStore = new KnowledgeStore(store);
-  if (opts.enrich) {
-    const enrichExit = await enrichMap({ store, manifest, root, io, env });
-    if (enrichExit !== 0) return enrichExit;
-  }
   if (opts.json) {
     const materialized = materializeSnapshot(manifest, (digest) =>
       store.loadShard(manifest.repoKey, digest),
@@ -523,7 +497,6 @@ async function buildMap(
           fingerprint: manifest.fingerprint,
           map: projectMap,
           symbols,
-          knowledge: knowledgeStore.loadLocal(manifest.repoKey),
         },
         null,
         2,
@@ -531,87 +504,5 @@ async function buildMap(
     );
     io.out(`  exported: ${jsonPath}`);
   }
-  return 0;
-}
-
-/**
- * The `--enrich` leg: run the council-routed knowledge swarm (#460) against the
- * just-built snapshot — the same scheduler the daemon runs after a snapshot
- * advance. The swarm decides skip vs delta vs full from the stored prior set's
- * identity. Model choice is the council's (the map path takes no --model).
- */
-async function enrichMap(input: {
-  store: ProjectSnapshotStore;
-  manifest: ProjectSnapshotManifest;
-  root: string;
-  io: CliIo;
-  env: NodeJS.ProcessEnv;
-}): Promise<number> {
-  const { store, manifest, root, io, env } = input;
-  io.out("Discovering harnesses");
-  const { adapter } = await createClaudeHarness({ env });
-  // The hermetic harness-off hook (#386) covers the codex probe too — discovery
-  // must not spawn a login shell in a harness-disabled environment.
-  const explicitBin = env.RENNET_CODEX_BIN;
-  const codexChosen =
-    env.RENNET_DISABLE_HARNESS === "1"
-      ? null
-      : (
-          await discoverCodex(defaultCodexDiscoveryDeps(), {
-            ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
-          })
-        ).chosen;
-  const codexExecutor = codexChosen
-    ? createCodexExecutor(defaultCodexExecEffects, {
-        bin: codexChosen.path,
-        harnessVersion: codexChosen.version,
-        ...(codexChosen.runtimePath === undefined ? {} : { runtimePath: codexChosen.runtimePath }),
-        // The repository being mapped — the swarm's seats read it (W5).
-        repoRoot: root,
-      })
-    : null;
-  if (!adapter && !codexExecutor) {
-    io.err("rennet map: no harness available (neither claude nor codex resolved)");
-    return 1;
-  }
-  const runtime = createKnowledgeSwarmRuntime({
-    store,
-    resolveClaudePort: async () => adapter ?? null,
-    resolveCodexExecutor: async () => codexExecutor,
-    // The CLI narrates to its own stdout, so the per-project channel scoping
-    // that the app's WS broadcast needs is irrelevant here.
-    narrate: (_projectId, event) => {
-      if (event.kind === "stage")
-        io.out(`  ${event.note}${event.detail ? ` (${event.detail})` : ""}`);
-    },
-  });
-  io.out(`Running the knowledge swarm at ${manifest.baseOid.slice(0, 12)}`);
-  const outcome = await runtime.runForRepo({
-    projectId: manifest.repoKey,
-    repoKey: manifest.repoKey,
-    repoRoot: root,
-    toOid: manifest.baseOid,
-  });
-  if (outcome.status === "snapshot-unavailable") {
-    io.err(`rennet map: snapshot unavailable for enrichment (${outcome.reason})`);
-    return 1;
-  }
-  if (outcome.status === "skipped") {
-    io.out(`  knowledge: ${outcome.reason}; unchanged`);
-    return 0;
-  }
-  if (outcome.status !== "ok") {
-    io.err(`rennet map: knowledge swarm failed: ${outcome.reason}`);
-    return 1;
-  }
-  // The cosmetic skip is named only when it happened: on a full run it is always 0,
-  // and a permanent ", 0 skipped" reads as a feature that never fires.
-  const skipped =
-    outcome.skippedCosmetic === 0
-      ? ""
-      : `, ${outcome.skippedCosmetic} unchanged in structure and skipped`;
-  io.out(
-    `  knowledge: ${outcome.set.statements.length} statements (${outcome.ranPartitions}/${outcome.totalPartitions} partitions ran, ${outcome.carried} carried${skipped})`,
-  );
   return 0;
 }

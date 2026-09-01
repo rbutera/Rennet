@@ -7,7 +7,6 @@ import {
   currentGenerationId,
   type DraftBoard,
   type Generation,
-  type KnowledgeSet,
   type PatchFile,
   type Patchset,
   type Review,
@@ -224,14 +223,6 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     const successorAccount: SuccessorAccount = { asks: [], beyondAsks: [] };
     const collation = assembleRoundCollation({
       patchset: patchset(),
-      knowledge: {
-        schemaVersion: 1,
-        repoKey: "repo",
-        baseOid: "0".repeat(40),
-        snapshotFingerprint: "fp",
-        generator: "t",
-        statements: [],
-      },
       dossier: [],
       successorAccount,
     });
@@ -261,14 +252,6 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     const order: string[] = [];
     const collation = assembleRoundCollation({
       patchset: patchset(),
-      knowledge: {
-        schemaVersion: 1,
-        repoKey: "repo",
-        baseOid: "0".repeat(40),
-        snapshotFingerprint: "fp",
-        generator: "t",
-        statements: [],
-      },
       dossier: [],
       // no successorAccount ⇒ first-generation (non-round): the report does NOT draft first.
     });
@@ -309,7 +292,6 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
   it("a hunk no board teaches comes back as the round's own coverage violation", async () => {
     const collation = assembleRoundCollation({
       patchset: patchset(),
-      knowledge: KNOWLEDGE,
       dossier: [],
       successorAccount: { asks: [], beyondAsks: [] },
     });
@@ -398,15 +380,6 @@ function greetPatchset(id: string, added: string): Patchset {
   };
 }
 
-const KNOWLEDGE: KnowledgeSet = {
-  schemaVersion: 1,
-  repoKey: "repo",
-  baseOid: "0".repeat(40),
-  snapshotFingerprint: "fp",
-  generator: "t",
-  statements: [],
-};
-
 describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", () => {
   /** A review that starts on the pre-worker patchset; `recapture` activates the successor,
    *  exactly as `review.regenerate` does after the worker's tree lands. */
@@ -436,7 +409,7 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
           } as unknown as Review;
         },
         reviewNow: () => review,
-        knowledgeFor: () => ({ set: KNOWLEDGE, snapshot: null }),
+        snapshotFor: () => ({ snapshot: null }),
         // No generation has ever been minted for this session — an honest first generation.
         priorGeneration: async () => undefined,
         runRound: async (input: RoundInput) => {

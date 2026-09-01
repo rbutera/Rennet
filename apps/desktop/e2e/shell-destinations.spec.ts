@@ -44,9 +44,7 @@ test("shell navigation and project rename reach real destinations", async () => 
     // On the board: the board element is the marker for "the default view is on screen".
     // (It was the `REVIEW ·` eyebrow, which the board no longer carries.)
     const board = page.locator('[data-kind="lens-board-view"]');
-    const map = page.locator(".context-map-title");
     await expect(board).toBeVisible();
-    await expect(map).toHaveCount(0);
 
     // ── Project rename ───────────────────────────────────────────────────────
     const sidebar = page.locator('[data-region="sidebar"]');
@@ -73,22 +71,6 @@ test("shell navigation and project rename reach real destinations", async () => 
     await expect(page.getByRole("textbox", { name: "Project name" })).toHaveValue("Shell fixture");
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(board).toBeVisible();
-
-    // ── Map ──────────────────────────────────────────────────────────────────
-    await page
-      .locator('[data-slot="toggle-group"]')
-      .getByRole("button", { name: "Map", exact: true })
-      .click();
-    // The context map mounted…
-    await expect(map).toBeVisible({ timeout: 60_000 });
-    // …and — the load-bearing half — the board it replaced is GONE. Without this the spec
-    // would pass against the broken build, because the broken build renders the board.
-    await expect(board).toHaveCount(0);
-
-    // Back returns to the board rather than leaving the session for New Chat.
-    await page.getByRole("button", { name: "Back to board" }).click();
-    await expect(board).toBeVisible();
-    await expect(map).toHaveCount(0);
 
     // ── ⌘N ───────────────────────────────────────────────────────────────────
     await page.keyboard.press("Meta+n");

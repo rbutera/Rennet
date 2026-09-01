@@ -106,12 +106,6 @@ export {
   deriveCodexImplementedEvidence,
 } from "./codex-turn-transport";
 export {
-  type ContextAskBackendDeps,
-  type ContextAskBackendPart,
-  contextAskBackend,
-  createContextAskRunTurn,
-} from "./context-ask-backend";
-export {
   assembleContextForComposition,
   DEFAULT_CONTEXT_BYTE_BUDGET,
   gatherContextDocuments,
@@ -124,6 +118,15 @@ export {
   loadConventionCatalogue,
   saveConventionCatalogue,
 } from "./convention-catalogue-reader";
+export {
+  type CouncilSeatDeps,
+  councilSeatTurn,
+  createClaudeSwarmTurn,
+  createCodexSwarmTurn,
+  type ProviderTurnSettlement,
+  type RunTurn,
+  type SwarmTurnOptions,
+} from "./council-seat-turn";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
 export {
   DESIGN_ARTIFACT_LIMITS,
@@ -319,41 +322,6 @@ export {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
-export {
-  type KnowledgeBackendPart,
-  knowledgeBackend,
-} from "./knowledge-backend";
-export {
-  type JournalTarget,
-  journalKey,
-  KNOWLEDGE_JOURNAL_DIR,
-  KnowledgeJournal,
-  STALE_TARGET_AGE_MS,
-} from "./knowledge-journal";
-export {
-  committedKnowledgeDir,
-  type DiscoverKnowledgeResult,
-  KNOWLEDGE_FILE,
-  KnowledgeStore,
-  type PromoteKnowledgeResult,
-  writeAtomic,
-} from "./knowledge-store";
-export {
-  type CouncilSeatDeps,
-  changedPathsBetween,
-  councilSeatTurn,
-  createClaudeSwarmTurn,
-  createCodexSwarmTurn,
-  DEFAULT_SWARM_CONCURRENCY_BY_HARNESS,
-  FAILED_BATCH_RETRIES,
-  type KnowledgeSwarmDeps,
-  type KnowledgeSwarmOutcome,
-  type KnowledgeSwarmProgress,
-  type ProviderTurnSettlement,
-  runKnowledgeSwarmForRepo,
-  type SwarmTurnOptions,
-  snapshotContextFromLoaded,
-} from "./knowledge-swarm";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,
@@ -702,6 +670,7 @@ export {
   type RemoteIdentity,
   resolveForgeRemote,
 } from "./worktree-discovery";
+export { writeAtomic } from "./write-atomic";
 export {
   type WslClaudeExecutable,
   type WslClaudeLauncherInput,

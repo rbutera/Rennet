@@ -1,13 +1,6 @@
 import { currentGenerationId, type LensKind } from "@rennet/protocol";
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
-import {
-  ArrowLeft,
-  FileDiff,
-  History,
-  type LucideIcon,
-  Map as MapIcon,
-  PanelLeft,
-} from "lucide-react";
+import { ArrowLeft, FileDiff, History, type LucideIcon, PanelLeft } from "lucide-react";
 import { Fragment, useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
@@ -35,7 +28,7 @@ import { Trail, type TrailProps } from "./trail";
 // 6). A three-column grid: LEFT slot (back arrow exactly when `?view` is not the
 // board; then the app's ONE chat open/close toggle; then the two-line trail —
 // only while the chat dock is SHUT, since the open dock's header carries it), a
-// CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Map · Diff
+// CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Diff
 // pills — a C2 `ToggleGroup` over `?view`, selection DERIVED from the URL, toggling
 // navigating with `viewToggle` (replace).
 //
@@ -65,16 +58,15 @@ import { Trail, type TrailProps } from "./trail";
 
 /** The pill's three explicit views, in order, with their labels and glyphs. */
 const PILL: ReadonlyArray<{
-  readonly view: Extract<ViewKind, "rounds" | "map" | "diff">;
+  readonly view: Extract<ViewKind, "rounds" | "diff">;
   readonly label: string;
   readonly icon: LucideIcon;
   /** The container width below which the label folds away, leaving the glyph. */
   readonly foldBelow: string;
 }> = [
-  // History folds EARLIER than Map · Diff: it sits nearest the centred lens pill,
+  // History folds EARLIER than Diff: it sits nearest the centred lens pill,
   // and the two look cramped the moment they touch.
   { view: "rounds", label: "History", icon: History, foldBelow: "hidden @[66rem]:inline" },
-  { view: "map", label: "Map", icon: MapIcon, foldBelow: "hidden @[54rem]:inline" },
   { view: "diff", label: "Diff", icon: FileDiff, foldBelow: "hidden @[54rem]:inline" },
 ];
 
@@ -194,7 +186,7 @@ export function TopBar() {
   // The History (rounds) toggle is present EXACTLY when a round has completed (C09 §6.2) —
   // the derived-presence url.ts gates `?view=rounds` on, never a disabled tab. With no
   // completed round it drops from the pill entirely (honest-absent by default, since no
-  // rounds runtime is bound yet — Reconciliation 1). Map · Diff are always present.
+  // rounds runtime is bound yet — Reconciliation 1). Diff is always present.
   // …and ALSO present when the rounds cannot be read at all (review finding 9): dropping the
   // toggle then would hide the disclosure behind an absence that reads as "no rounds", and
   // the reviewer would have no way to reach the reason. Presence still tracks the truth —
@@ -316,7 +308,7 @@ export function TopBar() {
         />
       </div>
 
-      {/* RIGHT slot: the History · Map · Diff pills. ONE group for the semantics
+      {/* RIGHT slot: the History · Diff pills. ONE group for the semantics
           (label, roving focus, selection), TWO outlines for the look — History is a
           ledger and joins only once a round has completed, so it carries its own
           round outline; Map and Diff share one, split by a hairline. The wrapping

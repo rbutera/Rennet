@@ -14,7 +14,6 @@ with the tour, then follow the guide for the change in front of you.
 - [The onboarding tour](./guides/onboarding-tour.md) explains the contextual coach marks shown after setup: one at a time, skippable, and replayable from Help.
 - [Connect to GitHub](./guides/github-auth.md) signs Rennet into GitHub for pull request reviews.
 - [Review a GitHub pull request](./guides/reviewing-a-github-pr.md) covers a teammate's pull request and the review you post on it.
-- [The Context Map](./guides/context-map.md) shows the project context available to reviews.
 - [Remote access](./guides/remote-access.md) connects another device to a Rennet daemon.
 
 ## Understand the product
