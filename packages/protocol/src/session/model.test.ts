@@ -7,7 +7,10 @@ import {
   HarnessCursorSchema,
   isRoundOperationTerminal,
   LaneRowSchema,
+  LENS_ADMISSIBLE_ABSENCES,
+  LensAbsenceReasonSchema,
   LensLaneSchema,
+  lensAdmitsAbsence,
   RoundEventSchema,
   RoundOperationSchema,
   RoundRecordSchema,
@@ -228,6 +231,44 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(
       GenerationSchema.safeParse({ ...generation, failedLenses: { design: "" } }).success,
     ).toBe(false);
+  });
+
+  it("declares which absence each lens may settle with (#549)", () => {
+    // Sequence admits NONE: no order board means nothing to read, so an absent
+    // Sequence is a failure and never a clean settlement.
+    expect(LENS_ADMISSIBLE_ABSENCES.sequence).toEqual([]);
+    expect(lensAdmitsAbsence("sequence", "no-material")).toBe(false);
+    expect(lensAdmitsAbsence("sequence", "no-findings")).toBe(false);
+
+    // Noise's no-noise is a first-class SUCCESS, admitted by Noise alone.
+    expect(lensAdmitsAbsence("noise", "no-noise")).toBe(true);
+    expect(lensAdmitsAbsence("decisions", "no-noise")).toBe(false);
+    expect(lensAdmitsAbsence("flagged", "no-noise")).toBe(false);
+    expect(lensAdmitsAbsence("design", "no-noise")).toBe(false);
+
+    expect(lensAdmitsAbsence("decisions", "no-decisions")).toBe(true);
+    expect(lensAdmitsAbsence("flagged", "no-findings")).toBe(true);
+    expect(lensAdmitsAbsence("design", "no-material")).toBe(true);
+    // Each lens's own reason is its own: a decisions absence is not a flagged one.
+    expect(lensAdmitsAbsence("flagged", "no-decisions")).toBe(false);
+    expect(lensAdmitsAbsence("decisions", "no-findings")).toBe(false);
+  });
+
+  it("admits only reasons the durable absence enum can persist", () => {
+    // The admissibility table and the persisted enum are one domain, not two: an
+    // admissible reason the generation cannot store would settle a lens unreadably.
+    for (const reasons of Object.values(LENS_ADMISSIBLE_ABSENCES)) {
+      for (const reason of reasons) {
+        expect(LensAbsenceReasonSchema.safeParse(reason).success).toBe(true);
+      }
+    }
+    // ...and every persistable reason is admitted by exactly one lens.
+    for (const reason of LensAbsenceReasonSchema.options) {
+      const admitting = Object.entries(LENS_ADMISSIBLE_ABSENCES).filter(([, reasons]) =>
+        reasons.includes(reason),
+      );
+      expect(admitting.map(([lens]) => lens)).toHaveLength(1);
+    }
   });
 
   it("parses a round record with and without a minted generation", () => {

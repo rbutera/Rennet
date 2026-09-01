@@ -13,6 +13,7 @@ import {
   type DraftBoard,
   findingRefKey,
   type LensKind,
+  lensAdmitsAbsence,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -1848,10 +1849,91 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
       expect(emptyLensTurns).toBe(1);
       expect(result.boards.find(({ lens }) => lens === emptyLens)).toMatchObject({ absence });
+      // The settled absence must be one the protocol admits FOR THIS LENS (#549) —
+      // the pipeline reads the canonical table rather than restating it.
+      expect(lensAdmitsAbsence(emptyLens, absence)).toBe(true);
       expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${emptyLens}`);
       expect(arrivals.map(({ lens }) => lens)).not.toContain(emptyLens);
     },
   );
+
+  it("refuses an absence for the Sequence lane, which admits none (#549)", async () => {
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "sequence") return { elements: [], skippedHunks: [] };
+        if (lens === "post-process" && prompt.includes('"elements":[]')) {
+          return { elements: [], skippedHunks: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    // A review with no order board has nothing to read: an empty Sequence is a
+    // failure, never the clean settlement the other lanes are allowed.
+    expect(sequence?.absence).toBeUndefined();
+    expect(sequence?.failure).toBeDefined();
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:sequence");
+  });
+
+  it("classifies a drafting turn that emitted no board as RETRYABLE (#549)", async () => {
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        // `undefined` structured output ⇒ the harness completed WITHOUT emitting.
+        return lens === "noise" ? undefined : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.absence).toBeUndefined();
+    expect(noise?.failure).toContain("did not emit a board");
+    // The account, not just the words: a seat that produced nothing is exactly what
+    // a retry addresses, so it must not settle terminal.
+    expect(noise?.failureAccount).toEqual({ attempt: 0, classification: "retryable" });
+  });
+
+  it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        // Structurally impossible output on every attempt, including the retries.
+        return lens === "noise" ? { document: 5, elements: "not-a-list" } : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toContain("no parseable board");
+    expect(noise?.failureAccount?.classification).toBe("terminal");
+    // The ladder is spent, so the account names a later attempt than the initial turn.
+    expect(noise?.failureAccount?.attempt).toBeGreaterThan(0);
+  });
 
   it.each([
     ["decisions", "prose-only", () => proseOnlyBody("decisions", "No choices found.")],

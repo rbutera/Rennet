@@ -57,6 +57,7 @@ import {
   type LensAbsenceReason,
   type LensKind,
   type LensLane,
+  lensAdmitsAbsence,
   ROUND_NO_REGEN,
   type RoundEvent,
   type RoundRecord,
@@ -298,19 +299,19 @@ function failureReasons(pipeline: LensPipelineResult): string {
  * must always contain a real board; Decisions and Flagged may instead settle with their
  * explicit typed clean result. A drafter failure is never equivalent to either clean
  * result, even when Design or Noise happened to produce useful boards beside it. */
+const REQUIRED_CORE_LENSES = ["sequence", "decisions", "flagged"] as const;
+
 function missingRequiredCoreLens(
   outcomes: readonly LensBoardOutcome[],
-): "sequence" | "decisions" | "flagged" | undefined {
-  const sequence = outcomes.find((outcome) => outcome.lens === "sequence");
-  if (sequence?.boardId === undefined) return "sequence";
-
-  const decisions = outcomes.find((outcome) => outcome.lens === "decisions");
-  if (decisions?.boardId === undefined && decisions?.absence !== "no-decisions") {
-    return "decisions";
+): (typeof REQUIRED_CORE_LENSES)[number] | undefined {
+  for (const lens of REQUIRED_CORE_LENSES) {
+    const outcome = outcomes.find((candidate) => candidate.lens === lens);
+    if (outcome?.boardId !== undefined) continue;
+    // Admissibility is the protocol's to declare, not this function's to restate:
+    // Sequence admits no absence, so it is missing whenever it has no board.
+    if (outcome?.absence !== undefined && lensAdmitsAbsence(lens, outcome.absence)) continue;
+    return lens;
   }
-
-  const flagged = outcomes.find((outcome) => outcome.lens === "flagged");
-  if (flagged?.boardId === undefined && flagged?.absence !== "no-findings") return "flagged";
   return undefined;
 }
 

@@ -15,7 +15,7 @@ import {
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import type { CouncilEffort, CouncilModel } from "../domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
-import { LENS_KINDS } from "../manifests";
+import { LENS_KINDS, type LensKind } from "../manifests";
 import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
@@ -129,6 +129,39 @@ export const LensAbsenceReasonSchema = z.enum([
   "no-noise",
 ]);
 export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
+
+/**
+ * Which absence each lens may honestly settle with (#549). This is the admissibility
+ * half of the ONE canonical settlement domain — board / absence / failure, as
+ * `lensBoards` / `absentLenses` / `failedLenses` already model it. Nothing may
+ * introduce a second settlement model beside it.
+ *
+ * Sequence admits none: a review whose order board never arrived has nothing to read,
+ * so an absent Sequence is a failure and never a clean result. Noise's `no-noise` is a
+ * first-class SUCCESS — a change carrying no mechanical noise settled correctly, it did
+ * not fail — and Design's `no-material` is proven by grounded dismissal, not by an
+ * empty board.
+ */
+export const LENS_ADMISSIBLE_ABSENCES: Readonly<Record<LensKind, readonly LensAbsenceReason[]>> = {
+  design: ["no-material"],
+  sequence: [],
+  decisions: ["no-decisions"],
+  flagged: ["no-findings"],
+  noise: ["no-noise"],
+};
+
+/** True when `reason` is an absence `lens` may settle with as a success. */
+export function lensAdmitsAbsence(lens: LensKind, reason: LensAbsenceReason): boolean {
+  return LENS_ADMISSIBLE_ABSENCES[lens].includes(reason);
+}
+
+/**
+ * Whether a further attempt at a failed lens could plausibly succeed (#549). A drafting
+ * turn that emitted no board is `retryable` — the seat ran and produced nothing, which
+ * is exactly what a retry addresses; a seat that never produced a parseable board across
+ * its whole ladder has already spent those retries, so it is `terminal`.
+ */
+export type LensFailureClassification = "retryable" | "terminal";
 
 export const GenerationSchema = z.object({
   id,

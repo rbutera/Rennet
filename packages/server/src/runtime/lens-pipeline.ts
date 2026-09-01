@@ -59,6 +59,7 @@ import {
   generationIdForPatchset,
   LENS_KINDS,
   type LensAbsenceReason,
+  type LensFailureClassification,
   type LensKind,
   parseDraft,
   type RoundReportDiagnosticMilestone,
@@ -826,6 +827,24 @@ function boardSkippedHunks(board: DraftBoard): { hunk: string; reason: string }[
 
 // ── One lens's outcome ──
 
+/**
+ * The typed account beside a lens `failure` (#549): which attempt produced it and
+ * whether another attempt could plausibly succeed. `failure` stays the drafter's own
+ * words — this classifies them, so the no-board path is distinguishable from a lens
+ * that has already spent its ladder without ever parsing.
+ */
+export interface LensFailureAccount {
+  /** The seat attempt that failed; `0` is the initial drafting turn. */
+  readonly attempt: number;
+  readonly classification: LensFailureClassification;
+}
+
+/** A drafting failure as the internal drafters report it, before it becomes an outcome. */
+type LensDraftFailure = {
+  readonly failure: string;
+  readonly failureAccount?: LensFailureAccount;
+};
+
 export interface LensBoardOutcome {
   readonly lens: LintTarget;
   /** The board id the ops landed on, when a seat ran and wrote. */
@@ -839,6 +858,8 @@ export interface LensBoardOutcome {
   readonly findingResolutions?: readonly FindingResolution[];
   /** An honest resolution failure — no harness for this seat (never a throw, never a block). */
   readonly failure?: string;
+  /** The typed classification of `failure`, when the failing path could name one. */
+  readonly failureAccount?: LensFailureAccount;
   /** A successful typed absence: the lens ran and honestly found nothing to render. */
   readonly absence?: LensAbsenceReason;
 }
@@ -1275,6 +1296,11 @@ const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = {
   noise: "no-noise",
 };
 
+/** A lens that settled with nothing but a failure — the drafter's words and its account. */
+function failedLensOutcome(lens: LintTarget, failure: LensDraftFailure): LensBoardOutcome {
+  return { lens, omissions: [], blemishes: [], immutability: [], ...failure };
+}
+
 function requiredBoardFailure(lens: LensKind): string {
   switch (lens) {
     case "sequence":
@@ -1304,27 +1330,30 @@ function draftOneLens(
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   transformOutput?: (output: unknown) => unknown,
-): Promise<DraftedLens | { readonly failure: string }>;
+): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   transformOutput: (output: unknown) => unknown,
   initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
-): Promise<DraftedLens | { readonly failure: string } | { readonly absence: "no-material" }>;
+): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }>;
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   transformOutput: (output: unknown) => unknown = (output) => output,
   initialAbsence?: (output: unknown) => { readonly absence: "no-material" } | undefined,
-): Promise<DraftedLens | { readonly failure: string } | { readonly absence: "no-material" }> {
+): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }> {
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
     if (first.status !== "emitted") {
+      // RETRYABLE (#549): the seat ran and produced nothing. That is precisely what
+      // another attempt addresses, so it must never settle terminal.
       return {
         failure: `${who}: the initial drafting turn did not emit a board (${first.status}: ${first.message}).`,
+        failureAccount: { attempt: 0, classification: "retryable" },
       };
     }
     const absence = initialAbsence?.(first.body);
@@ -1364,8 +1393,10 @@ async function draftOneLens(
       throw error;
     }
     if (!validated.everParsed) {
+      // TERMINAL: the ladder is already spent — these ARE the retries.
       return {
         failure: `${who}: no parseable board across ${validated.attempts} attempts — recorded as a failure, not an empty board.`,
+        failureAccount: { attempt: validated.attempts, classification: "terminal" },
       };
     }
     return { ...validated, initialOutputWasEmpty };
@@ -2668,7 +2699,7 @@ async function runFlaggedDual(
   deps: LensPipelineDeps,
   basePrompt: string,
   ctx: LintContext,
-): Promise<DraftedLens | { failure: string }> {
+): Promise<DraftedLens | LensDraftFailure> {
   const claudeSeat = deps.claudePort
     ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["claude-code"] } })
     : { failure: "no claude harness" };
@@ -2689,7 +2720,8 @@ async function runFlaggedDual(
       : (codexSeat as (p: string, a: number) => Promise<HarnessTurnResult>);
     const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
     const single = await draftOneLens(basePrompt, seat, ctx);
-    if ("failure" in single) return { failure: single.failure };
+    // Carry the account, not just the words: the sole seat's classification IS the lens's.
+    if ("failure" in single) return single;
     return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
   }
 
@@ -2809,7 +2841,7 @@ async function runLensBoard(
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
     const dual = await runFlaggedDual(deps, basePrompt, ctx);
     if ("failure" in dual) {
-      return { lens, omissions: [], blemishes: [], immutability: [], failure: dual.failure };
+      return failedLensOutcome(lens, dual);
     }
     validated = dual;
   } else {
@@ -2821,7 +2853,7 @@ async function runLensBoard(
       semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
     );
     if ("failure" in seat) {
-      return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
+      return failedLensOutcome(lens, seat);
     }
     const drafted =
       semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
@@ -2835,7 +2867,7 @@ async function runLensBoard(
             lens === "design" ? transformDesignOutput : undefined,
           );
     if ("failure" in drafted) {
-      return { lens, omissions: [], blemishes: [], immutability: [], failure: drafted.failure };
+      return failedLensOutcome(lens, drafted);
     }
     if ("absence" in drafted) {
       return { lens, omissions: [], blemishes: [], immutability: [], absence: drafted.absence };
