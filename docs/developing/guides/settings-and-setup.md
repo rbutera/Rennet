@@ -112,12 +112,18 @@ Appearance edits the color scheme, theme pack, and code theme, and carries the
 Benchmarks carries the recording toggle and the recorded history; Environments and
 Projects are described below.
 
-The Benchmarks page renders every recorded run with its stage breakdown, split by
-the harness mode **derived from that run's own stage records** — a run is labelled
+The Benchmarks page renders the recorded runs with their stage breakdowns, split by
+the harness mode **derived from each run's own stage records** — a run is labelled
 dual-model because two stages named two providers, never because a setting said so.
 Records live in `~/.rennet/benchmarks.jsonl` and never leave the machine. Turning
 recording off writes nothing new and changes nothing else about how a review runs.
 The published numbers are in [Benchmarks](../reference/benchmarks.md).
+
+The history is **paged**, and the page says what it is not showing: how many runs are
+rendered, how many the archive holds, and any archive line the reader could not parse.
+A long history is served capped and rendered a page at a time, so both the cap and the
+page hide runs — a shorter list that announced neither would be indistinguishable from
+a shorter history.
 
 The Keyboard Shortcuts page lists the app shortcuts that a single global key owner
 fires: Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle

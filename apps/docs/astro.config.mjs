@@ -21,11 +21,13 @@ export default defineConfig({
     remarkPlugins: [remarkCanonicalLinks, remarkMermaid, remarkBenchmarks],
   },
   integrations: [
-    // Verify the committed benchmark data on EVERY build. The remark plugin renders it,
-    // but Astro caches rendered Markdown, so an unchanged page would not re-read a
-    // corrupted file — proven by a build that shipped stale numbers with exit code 0.
-    benchmarkData(),
     docsProjection(),
+    // Validates the committed benchmark data on every build, and then checks the BUILT
+    // HTML actually states that data — the remark plugin renders the tables, but a page
+    // whose Markdown had not changed carries no dependency on the numbers it shows, so a
+    // reused render would ship measurements that are no longer true. See
+    // `verifyRenderedBenchmarks` for what a real build was observed to do.
+    benchmarkData(),
     starlight({
       title: "Rennet",
       description: "How to use and build the local-first Rennet review harness.",

@@ -489,7 +489,8 @@ pages:
 - **Keyboard Shortcuts** — every named command and its binding.
 - **Benchmarks** — a switch for benchmark recording (on by default) and the local
   history of recorded runs, each broken down by stage and grouped by the harness
-  mode its stages actually name. Nothing here leaves your machine.
+  mode its stages actually name. The list is paged and states how many runs it is
+  showing out of how many were recorded. Nothing here leaves your machine.
 - **Projects** — scoped to one project: its name and mark, worktree location
   and naming pattern, review context, issue tracker, and the guidance rules the
   review agents read. The name is live — renaming here renames the sidebar row,

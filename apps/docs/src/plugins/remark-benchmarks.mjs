@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -20,6 +21,13 @@ import { fileURLToPath } from "node:url";
 
 const WORKSPACE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const DATA_PATH = resolve(WORKSPACE_ROOT, "docs/data/benchmarks.json");
+/** Astro's build output, checked after the fact — see {@link verifyRenderedBenchmarks}. */
+const DIST_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../dist");
+
+/** The marker `renderBenchmarkHtml` puts on every rendered provenance line. It is how the
+ *  post-build check finds the pages that rendered the data without anyone maintaining a
+ *  path list, and it is why that class name must not change without changing this. */
+const PROVENANCE_MARKER = 'class="benchmark-provenance"';
 
 const MODE_LABEL = {
   "dual-model": "Dual model (council)",
@@ -35,6 +43,51 @@ const KIND_LABEL = {
 
 const MODES = Object.keys(MODE_LABEL);
 const KINDS = Object.keys(KIND_LABEL);
+const OUTCOMES = ["complete", "failed", "aborted"];
+
+/**
+ * The stage vocabulary PER KIND, mirroring `benchmarkRunSchema`'s own per-kind check in
+ * `@rennet/protocol`. It is duplicated rather than imported on purpose (apps/docs depends
+ * on no Rennet package but the theme, and a `.mjs` remark plugin runs before any TypeScript
+ * build), so the lists are kept honest by `remark-benchmarks.test.ts`, which asserts a
+ * cross-kind row is refused. Accepting an arbitrary string here meant a `lens-draft` row
+ * filed under `repo-map` — a model-backed stage attributed to the deterministic pipeline —
+ * rendered without complaint.
+ *
+ * The record-level rules the protocol also enforces (a stage names its harness AND its
+ * model or neither; a repo-map stage names no provider at all) have NO counterpart here:
+ * the committed artifact is an AGGREGATE and carries no harness, model or subject. What is
+ * mirrorable is the vocabulary, the lens scoping and the closed enums, and that is what
+ * this validator checks.
+ */
+const STAGES_FOR_KIND = {
+  "repo-map": [
+    "scout",
+    "resolve",
+    "tree",
+    "workspace",
+    "conventions",
+    "symbols",
+    "build",
+    "verify",
+    "store",
+    "total",
+  ],
+  generation: [
+    "report",
+    "report-classification",
+    "lens-draft",
+    "lens-repair",
+    "lens-post-process",
+    "coverage",
+    "reveal",
+    "first-core-board",
+  ],
+};
+
+/** The lane-scoped stages, which must name a lens; every other stage must not. */
+const LENS_SCOPED_STAGES = ["lens-draft", "lens-repair", "lens-post-process", "first-core-board"];
+const LENSES = ["design", "sequence", "decisions", "flagged", "noise"];
 
 function fail(message, path) {
   throw new Error(`remark-benchmarks: ${message} (${path})`);
@@ -85,7 +138,24 @@ export function readBenchmarkData(path = DATA_PATH) {
     if (row === null || typeof row !== "object") bad(`stages[${index}] must be an object`);
     if (!KINDS.includes(row.kind)) bad(`stages[${index}].kind is not a known run kind`);
     if (!MODES.includes(row.mode)) bad(`stages[${index}].mode is not a derived mode`);
+    if (!OUTCOMES.includes(row.outcome)) bad(`stages[${index}].outcome is not a run outcome`);
     requireString(row.stage, `stages[${index}].stage`, path);
+    // Pinned per kind, not merely "a string": a `lens-draft` row filed under `repo-map`
+    // attributes a model-backed stage to the deterministic pipeline, and the page renders
+    // it beside the map's own stages as though the map had run a provider.
+    if (!STAGES_FOR_KIND[row.kind].includes(row.stage)) {
+      bad(`stages[${index}].stage '${row.stage}' does not belong to a ${row.kind} run`);
+    }
+    const laneScoped = LENS_SCOPED_STAGES.includes(row.stage);
+    if (row.lens !== undefined && !LENSES.includes(row.lens)) {
+      bad(`stages[${index}].lens is not a lens`);
+    }
+    if (laneScoped && row.lens === undefined) {
+      bad(`stages[${index}] measures one lane and must name its lens`);
+    }
+    if (!laneScoped && row.lens !== undefined) {
+      bad(`stages[${index}] is run-wide and must not name a lens`);
+    }
     requireCount(row.samples, `stages[${index}].samples`, path);
     requireCount(row.medianMs, `stages[${index}].medianMs`, path);
     requireCount(row.slowestMs, `stages[${index}].slowestMs`, path);
@@ -95,7 +165,19 @@ export function readBenchmarkData(path = DATA_PATH) {
     if (!KINDS.includes(row.kind)) bad(`runs[${index}].kind is not a known run kind`);
     if (!MODES.includes(row.mode)) bad(`runs[${index}].mode is not a derived mode`);
     requireCount(row.count, `runs[${index}].count`, path);
-    requireCount(row.medianMs, `runs[${index}].medianMs`, path);
+    requireCount(row.complete, `runs[${index}].complete`, path);
+    requireCount(row.failed, `runs[${index}].failed`, path);
+    requireCount(row.aborted, `runs[${index}].aborted`, path);
+    // ABSENT is legal and means "nothing in this group completed"; present must be a
+    // number. A group of three failures has no latency, and a `0` there would read as an
+    // instantaneous pipeline rather than as one that never finished.
+    if (row.medianMs !== undefined) requireCount(row.medianMs, `runs[${index}].medianMs`, path);
+    if (row.medianMs === undefined && row.complete > 0) {
+      bad(`runs[${index}] completed ${row.complete} runs but states no median`);
+    }
+    if (!Array.isArray(row.producers) || row.producers.length === 0) {
+      bad(`runs[${index}].producers must name at least one producer`);
+    }
   }
   return data;
 }
@@ -144,24 +226,28 @@ export function renderBenchmarkHtml(data) {
       const summary = data.runs.find((row) => row.kind === kind && row.mode === mode);
       parts.push(`<h3>${escapeHtml(MODE_LABEL[mode])}</h3>`);
       if (summary) {
+        // The median is over the COMPLETE runs only, and says so. Mixing a run that
+        // finished with one that fell over halfway reports a number describing neither.
         parts.push(
           `<p>${summary.count} ${summary.count === 1 ? "run" : "runs"} — ${
             summary.complete ?? 0
-          } complete, ${summary.failed ?? 0} failed, ${
-            summary.aborted ?? 0
-          } aborted. Median run: ${formatMs(summary.medianMs)}.</p>`,
+          } complete, ${summary.failed ?? 0} failed, ${summary.aborted ?? 0} aborted. ${
+            summary.medianMs === undefined
+              ? "No run in this group completed, so it states no median."
+              : `Median complete run: ${formatMs(summary.medianMs)}.`
+          } Recorded by ${escapeHtml((summary.producers ?? []).join(", "))}.</p>`,
         );
       }
       parts.push(
-        "<table><thead><tr><th>Stage</th><th>Lens</th><th>Samples</th><th>Median</th><th>Slowest</th></tr></thead><tbody>",
+        "<table><thead><tr><th>Stage</th><th>Lens</th><th>Outcome</th><th>Samples</th><th>Median</th><th>Slowest</th></tr></thead><tbody>",
       );
       for (const row of rows) {
         parts.push(
           `<tr><td><code>${escapeHtml(row.stage)}</code></td><td>${
             row.lens ? escapeHtml(row.lens) : "—"
-          }</td><td>${row.samples}</td><td>${formatMs(row.medianMs)}</td><td>${formatMs(
-            row.slowestMs,
-          )}</td></tr>`,
+          }</td><td>${escapeHtml(row.outcome)}</td><td>${row.samples}</td><td>${formatMs(
+            row.medianMs,
+          )}</td><td>${formatMs(row.slowestMs)}</td></tr>`,
         );
       }
       parts.push("</tbody></table>");
@@ -200,25 +286,132 @@ export default function remarkBenchmarks({ dataPath = DATA_PATH } = {}) {
   };
 }
 
+/** Every built HTML page that rendered the benchmark data, found by the provenance marker
+ *  rather than by a path list that could drift away from the docs. */
+function renderedBenchmarkPages(dir) {
+  const pages = [];
+  for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".html")) continue;
+    const path = join(entry.parentPath ?? entry.path ?? dir, entry.name);
+    const html = readFileSync(path, "utf8");
+    if (html.includes(PROVENANCE_MARKER)) pages.push({ path, html });
+  }
+  return pages;
+}
+
 /**
- * The build-time verification, as an INTEGRATION rather than a remark side effect.
+ * Assert that what was BUILT states the data that is committed.
  *
- * The remark plugin alone was not enough and the difference is not theoretical: Astro
- * caches rendered Markdown, so a build whose `.md` bytes are unchanged never re-runs the
- * transform — a corrupted `benchmarks.json` sailed through a full `astro build` with exit
- * code 0 while the page served the previously rendered numbers. That is precisely the
- * "stale or invented numbers" failure the verification exists to prevent, and it was found
- * by running the build, not by reading it.
+ * This is a check on the output rather than a guess about the cache, and the difference is
+ * the whole point. Validating the data file catches a CORRUPT file; it cannot catch a
+ * VALID edit that never reached the HTML, because there is nothing wrong to throw about.
+ * Astro's content layer digests a page's raw bytes to decide whether to reuse its rendered
+ * HTML, and `docs/data/benchmarks.json` is not one of those bytes — the fence carries no
+ * number and the transform reads the file at render time — so a page whose Markdown had
+ * not changed could in principle be served with numbers that are no longer true.
  *
- * `astro:build:start` runs on every build regardless of any cache, so the data is read and
- * validated there, through the same reader the renderer uses.
+ * What was observed, and what was not: a stale render of this page was reported twice
+ * during review. On this checkout it does not reproduce — `astro build` writes no
+ * persisted content store, and an executed control (a changed `provenance.machine`, a warm
+ * build, no cache cleared) reached `dist` every time. So this check is not repairing a
+ * reproduced defect; it makes the property the docs page CLAIMS — "no number on it was
+ * typed by hand", provenance included — something the build proves rather than assumes.
+ *
+ * Two failures, both loud, because both are the same lie in different clothes: a page that
+ * renders the wrong provenance, and NO page rendering the data at all — the second being
+ * how this check would quietly stop meaning anything if the page were moved or the fence
+ * renamed.
+ *
+ * @param {{ dir?: string, data?: any }} [options]
  */
-export function benchmarkData() {
+export function verifyRenderedBenchmarks({ dir = DIST_ROOT, data } = {}) {
+  let pages;
+  try {
+    pages = renderedBenchmarkPages(dir);
+  } catch (error) {
+    fail(`the built docs could not be read — ${error?.message ?? error}`, dir);
+  }
+  if (pages.length === 0) {
+    fail("no built page rendered the benchmark data; the page or the fence has moved", dir);
+  }
+  for (const { path, html } of pages) {
+    if (html.includes(escapeHtml(data.provenance.machine))) continue;
+    fail(
+      `${path} was built without the committed provenance (${data.provenance.machine}); it is serving stale numbers`,
+      dir,
+    );
+  }
+  return pages.map(({ path }) => path);
+}
+
+/**
+ * Drop Astro's persisted content store when the measurements change, so the pages that
+ * render them are rebuilt.
+ *
+ * THIS IS THE HALF THAT WAS MISSING, and it is not theoretical — it was caught by the
+ * verification below, on a real build: with a valid edit to `docs/data/benchmarks.json`,
+ * `astro build` completed and the emitted page still carried the PREVIOUS export's
+ * provenance. Astro's content layer keeps rendered pages in `node_modules/.astro/
+ * data-store.json`, keyed on a digest of each page's own bytes. The benchmarks page has no
+ * number in it — the fence is empty and the transform reads the file at render time — so
+ * its digest does not move when the data does, and the stored render is reused.
+ *
+ * Keying the page on the data by writing into it was not available: `src/content/docs/` is
+ * a byte copy of the canonical `docs/` tree and `scripts/check-docs.mjs` enforces exactly
+ * that. So the store is dropped instead, and only when the data's hash actually changes —
+ * an ordinary docs build keeps its cache. `cacheDir` comes from Astro's own resolved
+ * config rather than a guessed path.
+ *
+ * @param {{ cacheDir: string, data?: unknown }} options
+ */
+export function invalidateBenchmarkRenders({ cacheDir, data }) {
+  const digest = createHash("sha256").update(JSON.stringify(data)).digest("hex").slice(0, 16);
+  const marker = join(cacheDir, "rennet-benchmarks.digest");
+  let previous;
+  try {
+    previous = readFileSync(marker, "utf8").trim();
+  } catch {
+    // No marker yet: a first build, or a cleaned cache. Either way the store is dropped
+    // once and the marker written, so the next build is a normal cached one.
+  }
+  if (previous === digest) return { digest, invalidated: false };
+  mkdirSync(cacheDir, { recursive: true });
+  const store = join(cacheDir, "data-store.json");
+  if (existsSync(store)) rmSync(store);
+  writeFileSync(marker, `${digest}\n`, "utf8");
+  return { digest, invalidated: true };
+}
+
+/**
+ * The committed data's build-time contract, as an INTEGRATION rather than a remark side
+ * effect. Three jobs, because the failures are different:
+ *
+ * 1. VALIDATE the data on every build, regardless of what any cache holds, so a corrupt or
+ *    missing file stops the build even when no page re-renders.
+ * 2. INVALIDATE the stored renders when the data changed (see
+ *    {@link invalidateBenchmarkRenders}), so a VALID change actually reaches the HTML.
+ *    Validation can never do this: there is nothing wrong to throw about.
+ * 3. VERIFY THE OUTPUT afterwards (see {@link verifyRenderedBenchmarks}), so if the
+ *    invalidation ever stops working the build FAILS instead of shipping stale numbers.
+ *
+ * Three is what makes two trustworthy. The invalidation reasons about a cache this file
+ * does not own; the verification reads what was actually written, and holds whatever the
+ * cause.
+ *
+ * @param {{ dir?: string, cacheDir?: string }} [options]
+ */
+export function benchmarkData({ dir = DIST_ROOT, cacheDir } = {}) {
   return {
     name: "rennet-benchmark-data",
     hooks: {
-      "astro:build:start": () => {
-        readBenchmarkData();
+      "astro:config:setup": ({ config } = {}) => {
+        const data = readBenchmarkData();
+        const resolved =
+          cacheDir ?? (config?.cacheDir ? fileURLToPath(config.cacheDir) : undefined);
+        if (resolved !== undefined) invalidateBenchmarkRenders({ cacheDir: resolved, data });
+      },
+      "astro:build:done": () => {
+        verifyRenderedBenchmarks({ dir, data: readBenchmarkData() });
       },
     },
   };

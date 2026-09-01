@@ -9,6 +9,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "resolve",
       "samples": 3,
       "medianMs": 50,
@@ -17,6 +18,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "tree",
       "samples": 3,
       "medianMs": 170,
@@ -25,6 +27,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "workspace",
       "samples": 3,
       "medianMs": 162,
@@ -33,6 +36,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "conventions",
       "samples": 3,
       "medianMs": 6,
@@ -41,6 +45,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "symbols",
       "samples": 3,
       "medianMs": 14030,
@@ -49,6 +54,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "build",
       "samples": 3,
       "medianMs": 279,
@@ -57,6 +63,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "verify",
       "samples": 3,
       "medianMs": 158,
@@ -65,6 +72,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "store",
       "samples": 3,
       "medianMs": 688,
@@ -73,6 +81,7 @@
     {
       "kind": "repo-map",
       "mode": "unattributed",
+      "outcome": "complete",
       "stage": "total",
       "samples": 3,
       "medianMs": 15546,
@@ -87,7 +96,8 @@
       "complete": 3,
       "failed": 0,
       "aborted": 0,
-      "medianMs": 15546
+      "medianMs": 15546,
+      "producers": ["cli-map"]
     }
   ]
 }
