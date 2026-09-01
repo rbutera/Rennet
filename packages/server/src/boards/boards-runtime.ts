@@ -1,5 +1,9 @@
 import { join } from "node:path";
-import { BOARD_WIRE_SCHEMA, type BoardEventFrame } from "@rennet/protocol";
+import {
+  APP_OWNED_BOARD_SEGMENTS,
+  BOARD_WIRE_SCHEMA,
+  type BoardEventFrame,
+} from "@rennet/protocol";
 import { BoardService, type BoardStore } from "@wboard/server";
 import { FileBoardStore } from "./file-board-store";
 
@@ -31,7 +35,9 @@ export function createBoardsRuntime(
   projectRoot: string,
   onEvents?: BoardEventsListener,
 ): BoardsRuntime {
-  const store = new FileBoardStore(join(projectRoot, ".rennet", "boards"));
+  // The store's location comes from the shared app-owned-paths authority, not a literal:
+  // capture, the watcher and freshness exclude exactly what this joins (#729, D6).
+  const store = new FileBoardStore(join(projectRoot, ...APP_OWNED_BOARD_SEGMENTS));
   // Observe append rather than wrapping `BoardService.apply`: append returns the
   // events WITH their assigned seqs, and it is the one path every write takes.
   const observed: BoardStore = !onEvents

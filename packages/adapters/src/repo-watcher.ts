@@ -1,4 +1,5 @@
 import { HOST_LOCUS, type Locus } from "@rennet/core";
+import { isAppOwnedPath } from "@rennet/protocol";
 import { type FSWatcher, watch } from "chokidar";
 
 /** True for a `\\wsl.localhost\…` / `\\wsl$\…` UNC view of a WSL filesystem. */
@@ -37,9 +38,17 @@ export function isWslUncPath(path: string): boolean {
  */
 const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
 
-/** True when a watched path is inside an ignored segment. */
+/**
+ * True when a watched path is app-owned Rennet state, or inside an ignored segment.
+ *
+ * The app-owned check comes from the shared authority the board-store writer places
+ * itself by (#729, D6): board artifacts Rennet writes into the reviewed repository must
+ * never mark that repository dirty. It currently sits INSIDE the blanket `.rennet`
+ * segment below, which #729's capture work narrows to exactly this prefix so a tracked
+ * `.rennet/conventions.json` edit invalidates like any other project file.
+ */
 export function isIgnoredPath(path: string): boolean {
-  return IGNORED_SEGMENT.test(path);
+  return isAppOwnedPath(path) || IGNORED_SEGMENT.test(path);
 }
 
 export class RepoWatcher {

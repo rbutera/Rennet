@@ -1,5 +1,6 @@
 // The package's single export: a re-export seam over the five contract folders
 // (B3, #489) plus the parked legacy residue below.
+export * from "./app-owned-paths";
 export * from "./board";
 export * from "./commands";
 export * from "./delta";
