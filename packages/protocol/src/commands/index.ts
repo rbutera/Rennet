@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { benchmarkRunSchema } from "../benchmarks";
 import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
 import { FindingRefSchema } from "../board/schema";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
@@ -1096,6 +1097,27 @@ const definitions = {
   "settings.setCoachmarks": {
     input: coachMarksSchema,
     output: coachMarksSchema,
+  },
+  // ── Settings: turn benchmark recording on or off (#731, D8) ────────────────
+  // Observability configuration, not a consent gate: while ON (the default) the
+  // measured pipelines archive the per-stage timings they already record; while OFF
+  // nothing new is written and the pipelines behave identically. A personal,
+  // app-side write — client settings only, never a repo — refused (throws) on a
+  // malformed file exactly as `setCoachmarks`. Output echoes the resolved state.
+  "settings.setBenchmarkRecording": {
+    input: z.object({ enabled: z.boolean() }),
+    output: z.object({ enabled: z.boolean() }),
+  },
+  // ── Benchmarks: the recorded runs behind the Settings panel (#731) ─────────
+  // Read-only over the durable archive, newest first. `limit` caps what crosses the
+  // wire, because the panel's responsiveness on a long history is a property of how
+  // much it is handed, not only of how it renders. Each run carries its own stage
+  // records; the run-level mode is DERIVED from them by every reader
+  // (`deriveBenchmarkMode`), never stored, so no two surfaces can label one run
+  // differently. Fail-safe: an absent or unreadable archive reads as no runs.
+  "benchmarks.list": {
+    input: z.object({ limit: z.number().int().positive().max(2000).optional() }),
+    output: z.object({ runs: z.array(benchmarkRunSchema) }),
   },
   // ── Settings: set (or reset) a review role's model assignment (C16 · #485) ──
   // The Environments → Review mappings dialog's cell edit. A personal, app-side

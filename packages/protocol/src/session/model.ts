@@ -195,7 +195,9 @@ export type GenerationCoverage = z.infer<typeof GenerationCoverageSchema>;
 /**
  * The phases one generation is measured in (#725 D4, and the spine #726's benchmark
  * records ride). Each is a REAL boundary in the drafting runtime, so no label can absorb
- * another phase's time: `report` is the classification turn alone, the three `lens-*`
+ * another phase's time: `report` is the whole report gate and `report-classification` the
+ * provider turn inside it (the gate also builds and measures the evidence manifest,
+ * resolves the seat and verifies the result deterministically), the three `lens-*`
  * phases split one lane's provider drafting from its repair ladder and from the
  * deterministic work between the ladder and the accepted write, `coverage` is the
  * cross-lens assert, `reveal` is the window in which settled lanes became visible, and
@@ -204,6 +206,11 @@ export type GenerationCoverage = z.infer<typeof GenerationCoverageSchema>;
  */
 export const GenerationPhaseSchema = z.enum([
   "report",
+  // The classification TURN inside the report gate (#731 9.4). `report` is the whole
+  // gate — manifest build, seat resolution, turn, deterministic verification, write —
+  // and this is the provider turn alone, which is the only part of it a harness ran and
+  // therefore the only part that can name one.
+  "report-classification",
   "lens-draft",
   "lens-repair",
   "lens-post-process",

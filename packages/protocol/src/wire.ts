@@ -1952,8 +1952,22 @@ export const clientSettingsSchema = z.object({
   navigation: z
     .object({ lastProjectBySource: z.record(z.string(), z.string().min(1)).optional() })
     .optional(),
+  /**
+   * Benchmark recording (#731, D8). DEFAULT-ON: absent means recording, so an untouched
+   * install measures itself and the slice only ever appears once the reviewer has moved
+   * the toggle. This is observability configuration, never a consent gate — nothing in
+   * the pipeline reads it, only the archive writer does.
+   */
+  benchmarks: z.object({ record: z.boolean() }).optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
+
+/** Whether benchmark recording is on for these client settings. Absent slice ⇒ ON: the
+ *  default is stated in ONE place, so a reader and a writer cannot disagree about what
+ *  an untouched install does. */
+export function benchmarkRecordingEnabled(settings: ClientSettings): boolean {
+  return settings.benchmarks?.record ?? true;
+}
 
 /**
  * Daemon settings — the global ladder rung as it exists ON ITS HOST, stored at
@@ -2399,6 +2413,12 @@ export const settingsViewSchema = z.object({
    * no override set; a role that does not run in a scenario carries a `null` cell.
    */
   reviewRoles: z.array(reviewRoleMappingSchema).optional(),
+  /**
+   * Whether benchmark recording is on (#731). RESOLVED, not raw: the client settings
+   * slice is absent on an untouched install and that means ON, so serving the resolved
+   * boolean keeps the default in the resolver rather than in every reader.
+   */
+  benchmarkRecording: z.boolean().optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 

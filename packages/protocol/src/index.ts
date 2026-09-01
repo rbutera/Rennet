@@ -3,6 +3,7 @@
 // no folder to sit in (`app-owned-paths`, `round-evidence`, `forge`), and the parked
 // legacy residue described below. A root module is not automatically residue.
 export * from "./app-owned-paths";
+export * from "./benchmarks";
 export * from "./board";
 export * from "./commands";
 export * from "./delta";
