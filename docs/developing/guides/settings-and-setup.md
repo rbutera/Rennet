@@ -91,6 +91,7 @@ Global settings live in two machine-local files, split by who owns the value:
 | `~/.rennet/client-settings.json` | | Coachmarks | `{ seen: MarkId[]; skipAll: boolean }` | Remembers which onboarding [coach marks](../../using/guides/onboarding-tour.md) you have seen and whether you skipped the tour; **Replay Tour** or a one-shot `?tour=reset` route clears it through `settings.setCoachmarks`. |
 | `~/.rennet/client-settings.json` | | Navigation | `{ lastProjectBySource: Record<string, string> }` | Remembers the last valid project per source so bare New Chat opens the real project picker directly. |
 | `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
+| `~/.rennet/client-settings.json` | | Benchmark recording | `{ record: boolean }` | Whether measured pipelines archive their per-stage timings to `~/.rennet/benchmarks.jsonl`. **Default-on**: an untouched install has no slice and records. Written by **Settings → Benchmarks**; observability configuration, never a gate on a review. See [Benchmarks](../reference/benchmarks.md). |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
 
 Appearance and keybindings are personal, app-side choices — never a repo fact,
@@ -102,13 +103,27 @@ is read directly; a remote or WSL host is listed so it is visible, but its rung
 lives on that host and is not read from here.
 
 Settings is a full-view takeover reached by route, not a set of tabs. The left
-nav lists four pages — **Environments**, **Appearance**, **Keyboard Shortcuts**,
-and **Projects** — each its own route (`/settings/:page`); the active page is read
-from the URL, so a page deep-links and reloads directly. **Archived** is a
-sibling main-surface route (`/archived`), not a settings page. Appearance edits
-the color scheme, theme pack, and code theme, and carries the **First Run** row
-that replays the welcome; Keyboard Shortcuts edits keybindings; Environments and
+nav lists five pages — **Environments**, **Appearance**, **Keyboard Shortcuts**,
+**Projects**, and **Benchmarks** — each its own route (`/settings/:page`); the
+active page is read from the URL, so a page deep-links and reloads directly.
+**Archived** is a sibling main-surface route (`/archived`), not a settings page.
+Appearance edits the color scheme, theme pack, and code theme, and carries the
+**First Run** row that replays the welcome; Keyboard Shortcuts edits keybindings;
+Benchmarks carries the recording toggle and the recorded history; Environments and
 Projects are described below.
+
+The Benchmarks page renders the recorded runs with their stage breakdowns, split by
+the harness mode **derived from each run's own stage records** — a run is labelled
+dual-model because two stages named two providers, never because a setting said so.
+Records live in `~/.rennet/benchmarks.jsonl` and never leave the machine. Turning
+recording off writes nothing new and changes nothing else about how a review runs.
+The published numbers are in [Benchmarks](../reference/benchmarks.md).
+
+The history is **paged**, and the page says what it is not showing: how many runs are
+rendered, how many the archive holds, and any archive line the reader could not parse.
+A long history is served capped and rendered a page at a time, so both the cap and the
+page hide runs — a shorter list that announced neither would be indistinguishable from
+a shorter history.
 
 The Keyboard Shortcuts page lists the app shortcuts that a single global key owner
 fires: Search (⌘P), Command Menu (⌘K), New Chat (⌘N), Toggle Sidebar (⌘B), Toggle
@@ -380,9 +395,18 @@ every platform, and `RENNET_USER_DATA` or `--data-dir` moves the whole of it.
 
 <repo>/.rennet/
 ├── .gitignore
+├── boards/
 ├── conventions.json
 └── map/
 ```
+
+`boards/` is app-owned: capture, the repository watcher, and freshness exclude
+it by name, so board writes never change what a review is pinned to. The other
+entries are the user's, and a change to one of them invalidates a review like any
+other tracked or non-ignored file. `map/` is the exception under `local`
+visibility: the Rennet-managed block in the `.gitignore` beside it keeps derived
+map data out of git, so capture never sees a map rebuild and the review stays
+current.
 
 The project-store key is the escaped real path of the checkout. Relocation
 records and aliases can move local state when a checkout moves. A worktree has

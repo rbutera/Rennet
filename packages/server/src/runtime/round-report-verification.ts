@@ -1,11 +1,16 @@
-import { parseUnifiedDiffFiles } from "@rennet/adapters";
-import { buildHunkIndex } from "@rennet/core";
 import {
   type ComposableAsk,
   type HostElement,
+  type RoundEvidenceAnchor,
+  type RoundEvidenceUnit,
   type RoundReportBoard,
   RoundReportBoardSchema,
 } from "@rennet/protocol";
+import {
+  buildRoundEvidenceManifest,
+  compareByCodeUnit,
+  verifyRoundEvidencePartition,
+} from "./round-evidence-manifest";
 
 export interface RoundReportVerificationEvidence {
   readonly board: RoundReportBoard;
@@ -13,12 +18,6 @@ export interface RoundReportVerificationEvidence {
   readonly expectedPatchsetId: string;
   readonly diff: string;
   readonly changedPaths: readonly string[];
-}
-
-interface FileEvidence {
-  readonly canonicalPath: string;
-  readonly binary: boolean;
-  readonly hasLineChanges: boolean;
 }
 
 type RoundOutcome = Extract<HostElement, { kind: "round_outcome" }>;
@@ -75,7 +74,7 @@ function canonicalOutcomeOrder(
       CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(right.data.status);
     if (statusOrder !== 0) return statusOrder;
     if (left.data.status === "beyond" && right.data.status === "beyond") {
-      return left.data.ask.ref.localeCompare(right.data.ask.ref);
+      return compareByCodeUnit(left.data.ask.ref, right.data.ask.ref);
     }
     return (
       (askOrder.get(left.data.ask.ref) ?? Number.MAX_SAFE_INTEGER) -
@@ -146,6 +145,7 @@ function verifyCanonicalClassifiedRoundReport(
         "status",
         "ask",
         "note",
+        ...(outcome.data.evidence_ids === undefined ? [] : ["evidence_ids"]),
         ...(outcome.data.code_ref === undefined ? [] : ["code_ref"]),
       ])
     ) {
@@ -250,60 +250,41 @@ function verifyCanonicalClassifiedRoundReport(
   }
 }
 
-function lineKey(side: "base" | "head", path: string): string {
-  return `${side}\0${path}`;
+/**
+ * The round's evidence manifest, rebuilt from the measured diff. The verifier parses
+ * the diff itself rather than trusting the board: this is the check that a RECOVERED
+ * report is the report the deterministic builder would have written for this exact
+ * coding turn, ids and anchors included.
+ */
+function manifestFor(diff: string): {
+  readonly units: readonly RoundEvidenceUnit[];
+  readonly byId: ReadonlyMap<string, RoundEvidenceUnit>;
+} {
+  const units = buildRoundEvidenceManifest(diff);
+  return { units, byId: new Map(units.map((unit) => [unit.id, unit])) };
 }
 
-function evidenceHunks(diff: string): {
-  readonly changedLines: ReadonlyMap<string, ReadonlySet<number>>;
-  readonly files: ReadonlyMap<string, FileEvidence>;
-} {
-  const patchFiles = parseUnifiedDiffFiles(diff, Number.POSITIVE_INFINITY);
-  const indexed = buildHunkIndex({ files: patchFiles });
-  const changedLines = new Map<string, Set<number>>();
-  const files = new Map<string, FileEvidence>();
+function previousPathOf(unit: RoundEvidenceUnit): string | undefined {
+  return "previousPath" in unit ? unit.previousPath : undefined;
+}
 
-  const addLine = (side: "base" | "head", path: string, line: number): void => {
-    const key = lineKey(side, path);
-    const lines = changedLines.get(key) ?? new Set<number>();
-    lines.add(line);
-    changedLines.set(key, lines);
-  };
-
-  for (const file of patchFiles) {
-    const fileHunks = indexed.hunks.filter((hunk) => hunk.path === file.path);
-    const basePath = file.previousPath ?? file.path;
-    let fileHasLineChanges = false;
-    for (const hunk of fileHunks) {
-      let oldLine = hunk.spans.old.start;
-      let newLine = hunk.spans.new.start;
-      for (const line of hunk.body) {
-        if (line.startsWith("+")) {
-          addLine("head", file.path, newLine);
-          newLine += 1;
-          fileHasLineChanges = true;
-        } else if (line.startsWith("-")) {
-          addLine("base", basePath, oldLine);
-          oldLine += 1;
-          fileHasLineChanges = true;
-        } else if (line.startsWith(" ")) {
-          oldLine += 1;
-          newLine += 1;
-        }
-      }
-    }
-    const fileEvidence = {
-      canonicalPath: file.path,
-      binary: file.binary,
-      hasLineChanges: fileHasLineChanges,
-    };
-    files.set(file.path, fileEvidence);
-    if (file.previousPath !== undefined) {
-      files.set(file.previousPath, fileEvidence);
-    }
-  }
-
-  return { changedLines, files };
+/** The host's anchor derivation, mirrored here so the stored board can be held to it:
+ *  the first cited TEXT HUNK in canonical manifest order, preferring the ask's path. */
+function derivedAnchor(
+  ids: readonly string[],
+  units: readonly RoundEvidenceUnit[],
+  preferredPath?: string,
+): RoundEvidenceAnchor | undefined {
+  const cited = new Set(ids);
+  const hunks = units.filter(
+    (unit): unit is Extract<RoundEvidenceUnit, { kind: "text-hunk" }> =>
+      unit.kind === "text-hunk" && cited.has(unit.id),
+  );
+  const preferred =
+    preferredPath === undefined
+      ? undefined
+      : hunks.find((unit) => unit.path === preferredPath || unit.anchor.path === preferredPath);
+  return (preferred ?? hunks[0])?.anchor;
 }
 
 function citedElement(
@@ -323,69 +304,108 @@ function citedElement(
   return element;
 }
 
-function verifyEvidenceAnchor(
+/**
+ * Does this ask's `path` actually NAME a file, or is it prose?
+ *
+ * A prose / quote-of-board ask carries the QUOTED TEXT in `path`: `publish-review.ts`'s
+ * `handoffDispositionsFromProjection` ends `{ ...common, path: ask.anchor }` when the
+ * anchor does not parse as `path:line`, and a prose anchor is not a path (`dispatch/
+ * ask.ts` draws the same line with the same whitespace-free heuristic when deciding what
+ * to validate as repo-relative). No evidence unit can ever sit "on" such a path, so
+ * requiring one made every prose-anchored outcome permanently unverifiable.
+ *
+ * The discriminator is the PATH SHAPE, not the absence of a span. Spanless asks come in
+ * two flavours on that same code path — the prose one above, and a frozen-`codeRef` ask
+ * that yields `{ ...common, path: ref.path }`: a real repo path with no span to
+ * reinterpret. Skipping every spanless ask would drop the containment check for the
+ * second flavour too, which is a real guard against an outcome citing the wrong file.
+ */
+function namesAContainablePath(ask: ComposableAsk): boolean {
+  return /^\S+$/.test(ask.path);
+}
+
+/**
+ * Verify one outcome's evidence: every cited id is real manifest evidence on a path the
+ * round actually changed, and the displayed anchor is EXACTLY the one the host derives
+ * from that evidence — or absent, when every cited unit is a rename, a mode change, or a
+ * binary file. Nothing here accepts a line number the diff does not carry.
+ *
+ * `ask` is absent for a `beyond` outcome (there is no dispatched ask to relate to). Its
+ * path still steers anchor derivation exactly as the builder steers it — prose included,
+ * where it simply matches nothing — but only a containable path is REQUIRED to appear
+ * among the cited evidence.
+ */
+function verifyOutcomeEvidence(
   elementsById: ReadonlyMap<string, HostElement>,
   outcome: Extract<HostElement, { kind: "round_outcome" }>,
-  evidence: ReturnType<typeof evidenceHunks>,
+  manifest: ReturnType<typeof manifestFor>,
   changedPaths: ReadonlySet<string>,
   expectedPatchsetId: string,
-): Extract<HostElement, { kind: "code_ref" }> {
+  ask?: ComposableAsk,
+): void {
+  const askPath = ask?.path;
+  const ids = outcome.data.evidence_ids ?? [];
+  if (ids.length === 0) {
+    throw new Error(
+      `Round report outcome ${outcome.id} (${outcome.data.status}) cites no round evidence.`,
+    );
+  }
+  const cited = ids.map((id) => {
+    const unit = manifest.byId.get(id);
+    if (unit === undefined) {
+      throw new Error(
+        `Round report outcome ${outcome.id} cites evidence ${id}, which is absent from the round diff.`,
+      );
+    }
+    if (!changedPaths.has(unit.path)) {
+      throw new Error(
+        `Round report outcome ${outcome.id} cites ${unit.path}, which is absent from the round diff.`,
+      );
+    }
+    return unit;
+  });
+  if (
+    ask !== undefined &&
+    askPath !== undefined &&
+    namesAContainablePath(ask) &&
+    !cited.some(
+      (unit) =>
+        unit.path === askPath ||
+        previousPathOf(unit) === askPath ||
+        (unit.kind === "text-hunk" && unit.anchor.path === askPath),
+    )
+  ) {
+    throw new Error(
+      `Round report outcome ${outcome.id} cites no evidence on the asked path ${askPath}.`,
+    );
+  }
+  const anchor = derivedAnchor(ids, manifest.units, askPath);
+  if (anchor === undefined) {
+    if (outcome.data.code_ref !== undefined) {
+      throw new Error(
+        `Round report outcome ${outcome.id} anchors a line, but its evidence has no line-addressable change.`,
+      );
+    }
+    return;
+  }
   const codeRef = citedElement(elementsById, outcome);
   if (codeRef.data.patchset_id !== expectedPatchsetId) {
     throw new Error(
       `Round report outcome ${outcome.id} cites patchset ${codeRef.data.patchset_id}, not ${expectedPatchsetId}.`,
     );
   }
-  const file = evidence.files.get(codeRef.data.path);
-  if (file === undefined || !changedPaths.has(file.canonicalPath)) {
-    throw new Error(
-      `Round report outcome ${outcome.id} cites ${codeRef.data.path}, which is absent from the round diff.`,
-    );
-  }
-  if (file.binary || !file.hasLineChanges) {
-    throw new Error(
-      `Round report outcome ${outcome.id} cites ${codeRef.data.path}, which has no line-addressable change in the round diff.`,
-    );
-  }
-  if (codeRef.data.start_line !== codeRef.data.end_line) {
-    throw new Error(
-      `Round report outcome ${outcome.id} must cite one exact changed line, not ${codeRef.data.start_line}-${codeRef.data.end_line}.`,
-    );
-  }
-  const lines = evidence.changedLines.get(lineKey(codeRef.data.side, codeRef.data.path));
-  if (!lines?.has(codeRef.data.start_line)) {
-    throw new Error(
-      `Round report outcome ${outcome.id} cites ${codeRef.data.path}:${codeRef.data.start_line}-${codeRef.data.end_line}, outside the changed lines in the round diff.`,
-    );
-  }
-  return codeRef;
-}
-
-function verifyAskPath(
-  ask: ComposableAsk,
-  codeRef: Extract<HostElement, { kind: "code_ref" }>,
-  evidence: ReturnType<typeof evidenceHunks>,
-): void {
-  const askedFile = evidence.files.get(ask.path);
-  const citedFile = evidence.files.get(codeRef.data.path);
   if (
-    askedFile === undefined ||
-    citedFile === undefined ||
-    askedFile.canonicalPath !== citedFile.canonicalPath
+    codeRef.data.path !== anchor.path ||
+    codeRef.data.side !== anchor.side ||
+    codeRef.data.start_line !== anchor.line ||
+    codeRef.data.end_line !== anchor.line
   ) {
     throw new Error(
-      `Round report outcome for ${ask.id} cites ${codeRef.data.path}, not the asked path ${ask.path}.`,
+      `Round report outcome ${outcome.id} anchors ${codeRef.data.side} ${codeRef.data.path}:${codeRef.data.start_line}-${codeRef.data.end_line}, not the derived ${anchor.side} ${anchor.path}:${anchor.line}.`,
     );
   }
 }
 
-/**
- * Verify the report's structural account against the exact worker receipt.
- *
- * This deliberately proves only facts the host can prove without another model pass: one
- * non-beyond outcome for every exact dispatched ask, no invented/duplicate ask references,
- * and concrete evidence for every claimed change on that ask's path in the measured diff.
- */
 export function verifyRoundReportEvidence(input: RoundReportVerificationEvidence): void {
   const board = RoundReportBoardSchema.parse(input.board);
   const asksById = new Map(input.dispatchedAsks.map((ask) => [ask.id, ask]));
@@ -393,8 +413,25 @@ export function verifyRoundReportEvidence(input: RoundReportVerificationEvidence
   const counts = new Map(input.dispatchedAsks.map((ask) => [ask.id, 0]));
   const beyondRefs = new Set<string>();
   const elementsById = new Map(board.elements.map((element) => [element.id, element]));
-  const evidence = evidenceHunks(input.diff);
+  const manifest = manifestFor(input.diff);
   const changedPaths = new Set(input.changedPaths);
+
+  // #726 — the durable report partitions the round's evidence exactly once. A
+  // recovered board that lost, duplicated, or invented an id fails here, before it can
+  // be reused as this round's report.
+  verifyRoundEvidencePartition(
+    board.elements.flatMap((element) =>
+      element.kind === "round_outcome"
+        ? [
+            {
+              bucket: `outcome ${element.id}`,
+              evidenceIds: element.data.evidence_ids ?? [],
+            },
+          ]
+        : [],
+    ),
+    manifest.units,
+  );
 
   for (const element of board.elements) {
     if (element.kind !== "round_outcome") continue;
@@ -407,7 +444,13 @@ export function verifyRoundReportEvidence(input: RoundReportVerificationEvidence
         throw new Error(`Round report repeats beyond-ask reference ${askRef}.`);
       }
       beyondRefs.add(askRef);
-      verifyEvidenceAnchor(elementsById, element, evidence, changedPaths, input.expectedPatchsetId);
+      verifyOutcomeEvidence(
+        elementsById,
+        element,
+        manifest,
+        changedPaths,
+        input.expectedPatchsetId,
+      );
       continue;
     }
 
@@ -424,15 +467,15 @@ export function verifyRoundReportEvidence(input: RoundReportVerificationEvidence
     }
     counts.set(askRef, prior + 1);
     if (element.data.status === "addressed" || element.data.status === "partial") {
-      const codeRef = verifyEvidenceAnchor(
+      verifyOutcomeEvidence(
         elementsById,
         element,
-        evidence,
+        manifest,
         changedPaths,
         input.expectedPatchsetId,
+        ask,
       );
-      verifyAskPath(ask, codeRef, evidence);
-    } else if (element.data.code_ref !== undefined) {
+    } else if (element.data.code_ref !== undefined || element.data.evidence_ids !== undefined) {
       throw new Error(`Round report marks untouched ask ${askRef} with change evidence.`);
     }
   }

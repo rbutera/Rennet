@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   buildCapabilities,
+  type CodexExecutor,
   type HarnessEvent,
   type HarnessPort,
   type HarnessSession,
@@ -13,9 +14,19 @@ import {
 } from "@rennet/core";
 import { z } from "zod";
 
+/** The version every scripted seat reports — the marker the bundle-boundary check greps. */
+const SCRIPTED_HARNESS_VERSION = "685-scripted-v1";
+
+/** The two providers a scripted plan can present as (`HarnessId` minus `omp`). */
+type ScriptedProvider = "claude-code" | "codex";
+
 const PATCHSET_PLAN_VALUE = `\${patchsetId}`;
 const CANDIDATE_PLAN_VALUE = `\${candidateId}`;
 const ASK_PLAN_VALUE = `\${askId}`;
+/** Whole-string placeholder: becomes the round's ACTUAL evidence-manifest ids (#727).
+ *  The ids are content-derived from the coding turn's diff, so a scripted plan cannot
+ *  hard-code them — it asks for whatever the host measured. */
+const EVIDENCE_IDS_PLAN_VALUE = `\${evidenceIds}`;
 
 const relativeRepoPath = z
   .string()
@@ -66,6 +77,13 @@ const editStepSchema = z.object({
 export const ScriptedHarnessPlanSchema = z.object({
   schemaVersion: z.literal(1),
   lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+  /**
+   * The provider this plan presents as (#681 proof). The composition root routes the
+   * test port BY DESCRIPTOR, so a `codex` plan makes a hermetic run a Codex-resolved
+   * host with Claude Code genuinely absent — the only way the Codex leg of round
+   * dispatch gets a launched proof. Absent ⇒ `claude-code`, the original behaviour.
+   */
+  harness: z.enum(["claude-code", "codex"]).optional(),
   invocationLog: z.string().refine(isAbsolute, "invocationLog must be an absolute path"),
   steps: z
     .array(
@@ -95,6 +113,15 @@ interface InvocationRecord {
   readonly promptDigest: string;
   readonly resumed: boolean;
   readonly recovered: boolean;
+  /**
+   * The EXECUTING seat's own provider (#681 / C14 D3) — read off the session that ran
+   * this turn (`HarnessSession.harness`), never off the plan or the port descriptor.
+   * The receipt the app displays comes from the RESOLVER's stamp, so it stays green if
+   * the seat underneath silently executes as something else; this is the independent
+   * half that does not. Stamping it from `plan.harness` here would re-close the same
+   * loop, which is why the session hands its own value down.
+   */
+  readonly harness: ScriptedProvider;
 }
 
 function parsePlan(path: string): ScriptedHarnessPlan {
@@ -137,6 +164,7 @@ function readInvocationRecords(path: string): InvocationRecord[] {
         promptDigest: z.string(),
         resumed: z.boolean(),
         recovered: z.boolean(),
+        harness: z.enum(["claude-code", "codex"]),
       })
       .safeParse(JSON.parse(line));
     if (!parsed.success) {
@@ -217,14 +245,36 @@ function findDispatchedAskId(value: unknown): string | undefined {
   return undefined;
 }
 
+/** The classifier context's evidence manifest ids, in canonical order. */
+function findEvidenceIds(value: unknown): readonly string[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if ("evidence" in value && Array.isArray(value.evidence)) {
+    const ids = value.evidence.flatMap((unit) =>
+      typeof unit === "object" && unit !== null && "id" in unit && typeof unit.id === "string"
+        ? [unit.id]
+        : [],
+    );
+    if (ids.length > 0) return ids;
+  }
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findEvidenceIds(nested);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function substitutePlanValues(
   value: unknown,
   values: {
     readonly patchsetId: string;
     readonly candidateId?: string;
     readonly askId?: string;
+    readonly evidenceIds?: readonly string[];
   },
 ): unknown {
+  if (value === EVIDENCE_IDS_PLAN_VALUE && values.evidenceIds !== undefined) {
+    return [...values.evidenceIds];
+  }
   if (typeof value === "string") {
     return value
       .replaceAll(PATCHSET_PLAN_VALUE, values.patchsetId)
@@ -379,8 +429,11 @@ function completedOutcome(
   const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
   const needsCandidate = containsPlanValue(step.output, CANDIDATE_PLAN_VALUE);
   const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
+  const needsEvidence = containsPlanValue(step.output, EVIDENCE_IDS_PLAN_VALUE);
   const context =
-    needsPatchset || needsCandidate || needsAsk ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
+    needsPatchset || needsCandidate || needsAsk || needsEvidence
+      ? jsonLayer(prompt, CONTEXT_PREFIX)
+      : undefined;
   const patchsetId = context === undefined ? "" : findPatchsetId(context);
   if (needsPatchset && patchsetId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current patchset id`);
@@ -393,6 +446,10 @@ function completedOutcome(
   if (needsAsk && askId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the dispatched ask id`);
   }
+  const evidenceIds = context === undefined ? undefined : findEvidenceIds(context);
+  if (needsEvidence && evidenceIds === undefined) {
+    throw new Error(`scripted harness step ${step.id} could not resolve the round evidence ids`);
+  }
   return {
     outcome: {
       status: "completed",
@@ -401,6 +458,7 @@ function completedOutcome(
         patchsetId: patchsetId ?? "",
         ...(candidateId === undefined ? {} : { candidateId }),
         ...(askId === undefined ? {} : { askId }),
+        ...(evidenceIds === undefined ? {} : { evidenceIds }),
       }),
     },
     recovered: false,
@@ -409,13 +467,17 @@ function completedOutcome(
 
 class ScriptedHarnessSession implements HarnessSession {
   readonly id = randomUUID();
-  readonly harness: HarnessSession["harness"] = "claude-code";
   readonly #turnId = randomUUID();
   readonly #outcome: Promise<SessionOutcome>;
   readonly #resolveOutcome: (outcome: SessionOutcome) => void;
   #sent = false;
 
-  constructor(private readonly run: (prompt: string) => SessionOutcome) {
+  constructor(
+    readonly harness: ScriptedProvider,
+    // The run callback is handed the session's OWN provider so the ledger it writes
+    // records who executed, not what the plan declared (#681 / C14 D3).
+    private readonly run: (prompt: string, harness: ScriptedProvider) => SessionOutcome,
+  ) {
     let resolveOutcome: (outcome: SessionOutcome) => void = () => undefined;
     this.#outcome = new Promise((resolvePromise) => {
       resolveOutcome = resolvePromise;
@@ -427,12 +489,13 @@ class ScriptedHarnessSession implements HarnessSession {
     const outcome = this.#outcome;
     const sessionId = this.id;
     const turnId = this.#turnId;
+    const harness = this.harness;
     return {
       async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
         const terminal = await outcome;
         yield {
           seq: 1,
-          harness: "claude-code",
+          harness,
           sessionId,
           turnId,
           receivedAt: Date.now(),
@@ -447,7 +510,7 @@ class ScriptedHarnessSession implements HarnessSession {
   async send(input: TurnInput): Promise<TurnId> {
     if (this.#sent) throw new Error("scripted harness sessions accept exactly one turn");
     this.#sent = true;
-    this.#resolveOutcome(this.run(input.prompt));
+    this.#resolveOutcome(this.run(input.prompt, this.harness));
     return this.#turnId;
   }
 
@@ -460,8 +523,103 @@ class ScriptedHarnessSession implements HarnessSession {
   }
 }
 
+/** The one step whose prompt match is unique for this turn; ambiguity is a plan bug. */
+function selectStep(
+  plan: ScriptedHarnessPlan,
+  prompt: string,
+  wantsEdit: boolean,
+): ScriptedHarnessStep {
+  const matching = plan.steps.filter((step) => {
+    const inclusions =
+      typeof step.promptIncludes === "string" ? [step.promptIncludes] : step.promptIncludes;
+    const exclusions =
+      step.promptExcludes === undefined
+        ? []
+        : typeof step.promptExcludes === "string"
+          ? [step.promptExcludes]
+          : step.promptExcludes;
+    return (
+      inclusions.every((included) => prompt.includes(included)) &&
+      exclusions.every((excluded) => !prompt.includes(excluded)) &&
+      (wantsEdit ? step.kind === "edit" : step.kind !== "edit")
+    );
+  });
+  if (matching.length === 0) {
+    throw new Error(`scripted harness plan ${plan.lane} has no step for this prompt`);
+  }
+  if (matching.length > 1) {
+    throw new Error(
+      `scripted harness plan ${plan.lane} matched multiple steps: ${matching.map((step) => step.id).join(", ")}`,
+    );
+  }
+  const step = matching[0];
+  if (step === undefined) throw new Error("scripted harness step disappeared");
+  return step;
+}
+
+function recordInvocation(
+  plan: ScriptedHarnessPlan,
+  step: ScriptedHarnessStep,
+  fields: {
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly resumed: boolean;
+    readonly recovered: boolean;
+    readonly harness: ScriptedProvider;
+  },
+): void {
+  const invocation: InvocationRecord = {
+    schemaVersion: 1,
+    lane: plan.lane,
+    invocationId: randomUUID(),
+    stepId: step.id,
+    kind: step.kind,
+    cwd: fields.cwd,
+    promptDigest: createHash("sha256").update(fields.prompt).digest("hex"),
+    resumed: fields.resumed,
+    recovered: fields.recovered,
+    harness: fields.harness,
+  };
+  appendFileSync(plan.invocationLog, `${JSON.stringify(invocation)}\n`);
+}
+
+/**
+ * The plan as a Codex utility executor — the council's Codex seats (#681 proof). Read-only
+ * by construction: `edit` steps belong to the agentic coding turn, so a utility seat that
+ * matched one would be running a write turn on the read-only path, and this refuses instead.
+ */
+export function loadScriptedCodexExecutor(path: string): CodexExecutor {
+  const plan = parsePlan(path);
+  return async (request) => {
+    const cwd = request.cwd ?? "";
+    const step = selectStep(plan, request.prompt, false);
+    const completed = completedOutcome(
+      step,
+      { cwd, outputSchema: request.outputSchema } as SessionSpec,
+      request.prompt,
+    );
+    // A CodexExecutor IS the Codex utility seat — there is no other provider it could be.
+    recordInvocation(plan, step, {
+      cwd,
+      prompt: request.prompt,
+      resumed: false,
+      recovered: false,
+      harness: "codex",
+    });
+    if (completed.outcome.status !== "completed") {
+      throw new Error(`scripted codex step ${step.id} did not complete`);
+    }
+    return {
+      output: completed.outcome.structuredOutput,
+      model: request.model,
+      harnessVersion: SCRIPTED_HARNESS_VERSION,
+    };
+  };
+}
+
 export function loadScriptedHarnessPlan(path: string): HarnessPort {
   const plan = parsePlan(path);
+  const harness = plan.harness ?? "claude-code";
   const consumedEdits = new Set(
     readInvocationRecords(plan.invocationLog)
       .filter((record) => record.lane === plan.lane && record.kind === "edit")
@@ -470,9 +628,9 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
 
   return {
     descriptor: {
-      id: "claude-code",
+      id: harness,
       displayName: `Scripted harness (${plan.lane})`,
-      version: "685-scripted-v1",
+      version: SCRIPTED_HARNESS_VERSION,
       binaryPath: path,
       capabilities: buildCapabilities({
         implementedByAdapter: ["resume", "structuredOutput"],
@@ -480,51 +638,25 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
         availableInSession: ["resume", "structuredOutput"],
       }),
     },
-    health: async () => ({ state: "ready", version: "685-scripted-v1" }),
+    health: async () => ({ state: "ready", version: SCRIPTED_HARNESS_VERSION }),
     createSession: async (spec) =>
-      new ScriptedHarnessSession((prompt) => {
-        const matching = plan.steps.filter((step) => {
-          const inclusions =
-            typeof step.promptIncludes === "string" ? [step.promptIncludes] : step.promptIncludes;
-          const exclusions =
-            step.promptExcludes === undefined
-              ? []
-              : typeof step.promptExcludes === "string"
-                ? [step.promptExcludes]
-                : step.promptExcludes;
-          return (
-            inclusions.every((included) => prompt.includes(included)) &&
-            exclusions.every((excluded) => !prompt.includes(excluded)) &&
-            (spec.outputSchema === undefined ? step.kind === "edit" : step.kind !== "edit")
-          );
-        });
-        if (matching.length === 0) {
-          throw new Error(`scripted harness plan ${plan.lane} has no step for this prompt`);
-        }
-        if (matching.length > 1) {
-          throw new Error(
-            `scripted harness plan ${plan.lane} matched multiple steps: ${matching.map((step) => step.id).join(", ")}`,
-          );
-        }
-        const step = matching[0];
-        if (step === undefined) throw new Error("scripted harness step disappeared");
+      new ScriptedHarnessSession(harness, (prompt, executingHarness) => {
+        const step = selectStep(plan, prompt, spec.outputSchema === undefined);
         if (step.kind === "edit" && consumedEdits.has(step.id)) {
           throw new Error(`scripted harness edit step ${step.id} was already consumed`);
         }
         const completed = completedOutcome(step, spec, prompt);
         if (step.kind === "edit") consumedEdits.add(step.id);
-        const invocation: InvocationRecord = {
-          schemaVersion: 1,
-          lane: plan.lane,
-          invocationId: randomUUID(),
-          stepId: step.id,
-          kind: step.kind,
+        recordInvocation(plan, step, {
           cwd: spec.cwd,
-          promptDigest: createHash("sha256").update(prompt).digest("hex"),
+          prompt,
           resumed: spec.resume !== undefined,
           recovered: completed.recovered,
-        };
-        appendFileSync(plan.invocationLog, `${JSON.stringify(invocation)}\n`);
+          // `executingHarness` is the SESSION's own field, not `harness` from this
+          // closure — a session constructed as a different provider than the plan
+          // declared writes what it really is, and the e2e ledger assertion reddens.
+          harness: executingHarness,
+        });
         return {
           ...completed.outcome,
           ...(completed.outcome.status === "completed"

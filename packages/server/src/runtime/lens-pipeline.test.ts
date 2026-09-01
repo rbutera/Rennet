@@ -10,14 +10,23 @@ import {
 } from "@rennet/adapters";
 import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
 import {
+  AUTHORED_BOARD_SCHEMA,
   type DraftBoard,
   findingRefKey,
+  type GenerationCoverage,
+  type GenerationPhaseTiming,
   type LensKind,
+  lensAdmitsAbsence,
+  ROUND_EVIDENCE_MANIFEST_MAX_BYTES,
+  ROUND_REPORT_MAX_BEYOND_ENTRIES,
+  ROUND_REPORT_OUTPUT_MAX_BYTES,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import {
+  admitBoardReferences,
+  aggregateFailureAccount,
   type BoardArrivalEvent,
   type BoardMeta,
   boardOutputSchema,
@@ -26,12 +35,55 @@ import {
   type DesignCoverageMapper,
   designDraftOutputSchema,
   draftToOps,
+  LENS_RETRY_BUDGET,
+  lensRetryBudget,
   projectDesignTaskProgress,
+  REPAIR_TARGET_KINDS,
   reconcileFlaggedBoards,
   renderDrafterPrompt,
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
+
+// ── Round-report classifier fixtures (#727) ────────────────────────────────────
+
+/** The manifest ids the host mints for a fixture diff. Classification fixtures cite
+ *  these exactly as a live classifier does — the ids are content-derived, so a fixture
+ *  cannot hard-code one and drift from the diff beside it. */
+const manifestIds = (diff: string): string[] =>
+  buildRoundEvidenceManifest(diff).map((unit) => unit.id);
+
+/** One changed line in `src/auth.ts` — one manifest entry. */
+const ONE_LINE_DIFF = [
+  "diff --git a/src/auth.ts b/src/auth.ts",
+  "--- a/src/auth.ts",
+  "+++ b/src/auth.ts",
+  "@@ -1 +1 @@",
+  "-old line",
+  "+new line",
+].join("\n");
+const [ONE_LINE_EVIDENCE] = manifestIds(ONE_LINE_DIFF);
+
+/** One beyond-ask entry past the declared cardinality limit. Every entry cites the one
+ *  manifest id (the schema requires at least one), which would ALSO trip the partition —
+ *  the cap is checked first, on purpose, so a cap failure is never reported as something
+ *  else and never becomes a second classifier turn. */
+const OVER_CAP_BEYOND_CLASSIFICATION = {
+  outcomes: [
+    {
+      askId: "ask-one",
+      status: "untouched",
+      note: "The turn changed something, but not this ask.",
+    },
+  ],
+  beyond: Array.from({ length: ROUND_REPORT_MAX_BEYOND_ENTRIES + 1 }, (_unused, index) => ({
+    ref: `beyond:${index}`,
+    text: "An unrequested change.",
+    note: "The turn changed something no ask asked for.",
+    evidenceIds: [ONE_LINE_EVIDENCE as string],
+  })),
+} as const;
 
 // ── Flagged-board fixtures (5.2) ────────────────────────────────────────────────
 
@@ -637,6 +689,7 @@ interface HarnessCapture {
   model?: string;
   prompt?: string;
   outputSchema?: unknown;
+  outputByteCap?: number;
 }
 
 /** A fake Claude port: captures the resolved session and answers a lens-appropriate board. */
@@ -645,10 +698,15 @@ function fakeClaudePort(
   bodyFor: (prompt: string) => unknown,
 ): HarnessPort {
   return {
-    createSession: async (options: { model?: string; outputSchema?: unknown }) => {
+    createSession: async (options: {
+      model?: string;
+      outputSchema?: unknown;
+      outputByteCap?: number;
+    }) => {
       const capture: HarnessCapture = {
         model: options.model,
         outputSchema: options.outputSchema,
+        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
       };
       captures.push(capture);
       return {
@@ -692,6 +750,70 @@ function fakeWhiteboard(applied: Applied[]) {
       return { response: { ok: true }, ops } as never;
     },
   };
+}
+
+/**
+ * The reveal assertion (#725 D4). `revealAfterEachRelease[n]` is what the reveal had
+ * published once the (n+1)-th lane in `releaseOrder` finished writing its board. A
+ * progressive reveal shows exactly the lanes released so far; a global all-lanes barrier
+ * shows nothing until the last one, which is the shape this throws on by name.
+ *
+ * Kept as a function rather than inline expectations so the control below can feed it a
+ * barriered stream and prove it rejects one — an assertion that cannot tell the two shapes
+ * apart would pass over a restored barrier.
+ */
+function assertProgressiveReveal(
+  revealAfterEachRelease: readonly (readonly LensKind[])[],
+  releaseOrder: readonly LensKind[],
+): void {
+  for (const [index, revealed] of revealAfterEachRelease.entries()) {
+    if (revealed.length === 0 && index < releaseOrder.length - 1) {
+      throw new Error(
+        `the reveal revealed nothing until lane ${index + 2} of ${releaseOrder.length} settled — a global barrier is holding settled boards`,
+      );
+    }
+    const expected = releaseOrder.slice(0, index + 1);
+    if (revealed.join(",") !== expected.join(",")) {
+      throw new Error(
+        `after releasing ${expected.join(", ")} the reveal held ${revealed.join(", ") || "nothing"}`,
+      );
+    }
+  }
+}
+
+/**
+ * The timing assertion (#725 7.4): the `report` phase record must cover the report turn
+ * and NOTHING else. A record whose span swallows the lens lanes that ran after it is the
+ * exact defect the durable per-phase timings exist to make impossible — one label
+ * absorbing another phase's time.
+ *
+ * The property asserted is exactly "no lens time sits under the report label": the report
+ * span and every lens span must not OVERLAP, which for phases that run in this order is
+ * `reportEnd <= lensStart`. Two earlier readings of this both got it wrong and in opposite
+ * directions — comparing the lens's END to the report's end missed a report that ends
+ * PARTWAY through a lane (the lane finishes later, so the check passed while real lens
+ * time sat under the report label), and a strict `<` on the boundary would fail an honest
+ * zero-duration lens starting the instant the report ended. Touching is not overlapping.
+ *
+ * A function, not inline expectations, so the controls below can feed it a mislabeled
+ * stream and prove it rejects one.
+ */
+function assertReportLabelExcludesLensTime(timings: readonly GenerationPhaseTiming[]): void {
+  // EVERY report record, not the first: a regression that adds a second, wider `report`
+  // span beside an honest one is the same lie, and a `find` would read past it.
+  for (const report of timings.filter(({ phase }) => phase === "report")) {
+    const reportEnds = report.startedAtMs + report.durationMs;
+    // …and EVERY lens phase, not the first: one absorbed lane is the defect regardless of
+    // how many honest ones sit beside it.
+    for (const timing of timings) {
+      if (!timing.phase.startsWith("lens-")) continue;
+      if (reportEnds > timing.startedAtMs) {
+        throw new Error(
+          `the report label absorbed ${timing.phase}${timing.lens === undefined ? "" : ` (${timing.lens})`}: the report record runs to ${reportEnds}, past that lens phase's start at ${timing.startedAtMs}`,
+        );
+      }
+    }
+  }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1253,6 +1375,390 @@ describe("draftToOps", () => {
   });
 });
 
+describe("admitBoardReferences — the write-boundary ref admission (#548 D1)", () => {
+  /**
+   * The production `bad-ref` shape, as the smoke run observed it: a Sequence step whose
+   * `span` names an element id the board does not contain. The step is real material the
+   * seat produced — the whole point of D1 is that it must NOT be dropped to get the rest
+   * of the board accepted.
+   */
+  const sequenceFixture = (span: string, codeRefId = "sequence-code"): DraftBoard =>
+    mkBoard([
+      {
+        id: "sequence-step",
+        kind: "order_step",
+        data: {
+          author: { kind: "lens-agent", id: "sequence-seat" },
+          title: "Read the entry point",
+          span,
+          children: [],
+        },
+      } as unknown as DraftBoard["elements"][number],
+      mkCodeRef(codeRefId, "src/auth.ts", 11, 12),
+      mkSection("sequence-root", "Reading order", ["sequence-step"], {
+        kind: "lens-agent",
+        id: "sequence-seat",
+      }),
+    ]);
+
+  it("repairs a reference whose unique intended target is provable, and records it", () => {
+    const admitted = admitBoardReferences(sequenceFixture("sequence_code"), "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    expect(admitted.repairs).toEqual([
+      { elementId: "sequence-step", field: "span", from: "sequence_code", to: "sequence-code" },
+    ]);
+    // The REWRITTEN board is what gets written — assert the exact field, not merely that
+    // some repair was reported.
+    const step = admitted.board.elements.find(({ id }) => id === "sequence-step");
+    expect((step?.data as { span?: string } | undefined)?.span).toBe("sequence-code");
+    // The rest of the board is untouched; nothing was dropped to make it acceptable.
+    expect(admitted.board.elements.map(({ id }) => id)).toEqual(
+      sequenceFixture("sequence_code").elements.map(({ id }) => id),
+    );
+  });
+
+  it("refuses a reference with no candidate rather than dropping the element", () => {
+    const board = sequenceFixture("missing-sequence-code");
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-step", field: "span", targetId: "missing-sequence-code" },
+    ]);
+    // Refusal leaves the board ALONE — the citing element is still there for the retry.
+    expect(admitted.board).toBe(board);
+  });
+
+  it("refuses an AMBIGUOUS reference: two candidates are not proof of either", () => {
+    const board = mkBoard([
+      ...sequenceFixture("sequence_code").elements,
+      mkCodeRef("sequenceCode", "src/other.ts", 3, 4),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable.map(({ targetId }) => targetId)).toEqual(["sequence_code"]);
+  });
+
+  it("refuses a code_ref candidate that cites a DIFFERENT patchset", () => {
+    // Same identity, but the only candidate points outside the captured patchset this
+    // generation is reading — so it is not a provable target for this board.
+    const admitted = admitBoardReferences(sequenceFixture("sequence_code"), "ps-other");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable.map(({ targetId }) => targetId)).toEqual(["sequence_code"]);
+  });
+
+  it("repairs an element reference inside a MANY field without disturbing its siblings", () => {
+    const board = mkBoard([
+      mkFinding("f1", "cites both", ["c1", "C_2"]),
+      mkCodeRef("c1", "src/a.ts", 1, 2),
+      mkCodeRef("c-2", "src/b.ts", 3, 4),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    const finding = admitted.board.elements.find(({ id }) => id === "f1");
+    // Order preserved, only the dangling entry rewritten.
+    expect((finding?.data as { code?: string[] } | undefined)?.code).toEqual(["c1", "c-2"]);
+  });
+
+  it("leaves an admissible board byte-identical (no repair, no copy)", () => {
+    const board = sequenceFixture("sequence-code");
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([]);
+    expect(admitted.board).toBe(board);
+  });
+
+  it("the REAL board service accepts the repaired write and rejects the bypassed one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lens-ref-admission-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const fixture = sequenceFixture("sequence_code");
+
+      // POSITIVE CONTROL — bypass the admission pass and write the fixture as the seat
+      // authored it. The board service is authoritative and still rejects: `bad-ref`.
+      const bypassed = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(fixture) as never,
+        "lens:sequence",
+      );
+      expect(bypassed.response).toMatchObject({ ok: false, code: "bad-ref" });
+
+      // The same fixture through the admission pass is admitted, with the step intact.
+      const repairedBoardId = await runtime.createRennetBoard();
+      const admitted = admitBoardReferences(fixture, "ps-1");
+      const accepted = await client.apply(
+        repairedBoardId,
+        draftToOps(admitted.board) as never,
+        "lens:sequence",
+      );
+      expect(accepted.response).toMatchObject({ ok: true });
+      const state = await runtime.service.getState(repairedBoardId);
+      expect(state.has("sequence-step")).toBe(true);
+      expect(state.has("sequence-code")).toBe(true);
+
+      // And the UNREPAIRABLE fixture is refused BEFORE the write — the refusal is not
+      // gratuitous: writing it raw is rejected by the service exactly as the bypass was.
+      const unrepairable = sequenceFixture("missing-sequence-code");
+      expect(admitBoardReferences(unrepairable, "ps-1").unrepairable).toHaveLength(1);
+      const rejected = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(unrepairable) as never,
+        "lens:sequence",
+      );
+      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to repair a reference onto its OWN element (a self-citation is not a target)", () => {
+    // The production shape: a section whose `children` names a variant of the SECTION's
+    // own id. Folding, the only candidate is the citer itself — and a repair to it writes
+    // an element that cites itself, which the board service rejects. The pass would then
+    // have manufactured the very `bad-ref` it exists to prevent.
+    const board = mkBoard([
+      mkSection("sequence-root", "Reading order", ["Sequence_Root"]),
+      mkCodeRef("sequence-code", "src/auth.ts", 11, 12),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-root", field: "children", targetId: "Sequence_Root" },
+    ]);
+    expect(admitted.board).toBe(board);
+  });
+
+  it("refuses an EXACT id whose code_ref cites another patchset (the id is not a licence)", () => {
+    // The bypass this closes: the repair path already refuses a foreign-patchset candidate,
+    // so a drafter that spelled the id right got what a drafter that mistyped it could not.
+    const foreign = {
+      ...mkCodeRef("sequence-code", "src/auth.ts", 11, 12),
+      data: {
+        author: { kind: "lens-agent", id: "sequence-seat" },
+        patchset_id: "ps-other",
+        path: "src/auth.ts",
+        side: "head",
+        start_line: 11,
+        end_line: 12,
+      },
+    } as DraftBoard["elements"][number];
+    const board = mkBoard([
+      {
+        id: "sequence-step",
+        kind: "order_step",
+        data: {
+          author: { kind: "lens-agent", id: "sequence-seat" },
+          title: "Read the entry point",
+          span: "sequence-code",
+          children: [],
+        },
+      } as unknown as DraftBoard["elements"][number],
+      foreign,
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-step", field: "span", targetId: "sequence-code" },
+    ]);
+    // Control, same board and same spelling: when the code_ref is THIS patchset's, the
+    // exact reference is admitted untouched — the refusal is about the patchset, not the id.
+    expect(admitBoardReferences(board, "ps-other").unrepairable).toEqual([]);
+  });
+
+  it("keeps a carried round chapter's own generation anchor (host history is about it)", () => {
+    // A prior round's addressed chapter is host-authored and cites the patchset that round
+    // reviewed. It rides into every later board verbatim, so judging it against the current
+    // patchset would cost every round after the first its Sequence board.
+    const hostAuthor = { kind: "orchestrator" as const, id: "rennet:round-composition" };
+    const carried = "rennet:host:round-addressed:1:0:code-ref";
+    const board = mkBoard([
+      {
+        id: carried,
+        kind: "code_ref",
+        data: {
+          author: hostAuthor,
+          patchset_id: "ps-0",
+          path: "src/auth.ts",
+          side: "head",
+          start_line: 11,
+          end_line: 12,
+        },
+      } as unknown as DraftBoard["elements"][number],
+      {
+        id: "rennet:host:round-addressed:1:0:annotation",
+        kind: "annotation",
+        data: { author: hostAuthor, code_ref: carried, body: "Addressed in round 1." },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    expect(admitted.repairs).toEqual([]);
+    // Control: the same foreign-patchset code_ref authored by a LENS SEAT is refused —
+    // the exemption is the orchestrator's carried history, not "any old patchset id".
+    const drafted = mkBoard([
+      {
+        ...board.elements[0],
+        data: { ...(board.elements[0]?.data as object), author: flaggedAuthor },
+      } as DraftBoard["elements"][number],
+      board.elements[1] as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(drafted, "ps-1").unrepairable).toHaveLength(1);
+
+    // …and the author KIND alone does not buy the exemption. A seat can type
+    // `{kind: "orchestrator"}` into its own output; only the host composer's own id, or an
+    // element the host minted into its round-history namespace, is host-composed history.
+    const forgedAuthor = mkBoard([
+      {
+        ...board.elements[0],
+        id: "seat-invented-code-ref",
+        data: {
+          ...(board.elements[0]?.data as object),
+          author: { kind: "orchestrator", id: "sequence-seat" },
+        },
+      } as DraftBoard["elements"][number],
+      {
+        id: "seat-invented-annotation",
+        kind: "annotation",
+        data: {
+          author: { kind: "orchestrator", id: "sequence-seat" },
+          code_ref: "seat-invented-code-ref",
+          body: "Cites another patchset.",
+        },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(forgedAuthor, "ps-1").unrepairable).toHaveLength(1);
+
+    // The other half of the namespace clause: an element the HOST minted keeps the
+    // exemption even under an author id this predicate does not enumerate.
+    const hostNamespaced = mkBoard([
+      {
+        ...board.elements[0],
+        data: {
+          ...(board.elements[0]?.data as object),
+          author: { kind: "orchestrator", id: "rennet:some-later-host-writer" },
+        },
+      } as DraftBoard["elements"][number],
+      board.elements[1] as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(hostNamespaced, "ps-1").unrepairable).toEqual([]);
+  });
+
+  it("never folds two ids apart by a LETTER, ASCII or not", () => {
+    // The fold used to strip every non-`[a-z0-9]` character, which deleted the letters
+    // themselves: `authé` and `authø` both became `auth`, so a board holding both offered
+    // a "unique" candidate for a reference meaning either.
+    // The discriminating shape is a FALSE UNIQUE: one dangling `authé`, one candidate
+    // `authø`, and a fold that deletes both accented letters makes the second the sole
+    // "provable" target of the first. They differ in a letter; neither is proof of the
+    // other, so this settles as unrepairable and the lane retries.
+    const falseUnique = mkBoard([
+      mkFinding("f1", "cites an id this board does not hold", ["authé"]),
+      mkCodeRef("authø", "src/authø.ts", 3, 4),
+    ]);
+    expect(admitBoardReferences(falseUnique, "ps-1").repairs).toEqual([]);
+    expect(admitBoardReferences(falseUnique, "ps-1").unrepairable).toEqual([
+      { elementId: "f1", field: "code", targetId: "authé" },
+    ]);
+
+    // Two accented ids that differ in a letter also stay two elements when BOTH are on the
+    // board and one is cited exactly — the citation resolves to the id it names.
+    const both = mkBoard([
+      mkFinding("f1", "cites the accented anchor", ["authé"]),
+      mkCodeRef("authé", "src/authé.ts", 1, 2),
+      mkCodeRef("authø", "src/authø.ts", 3, 4),
+    ]);
+    expect(admitBoardReferences(both, "ps-1")).toMatchObject({ repairs: [], unrepairable: [] });
+
+    // The other direction of the control: case and the separator set still fold, including
+    // on a non-ASCII id, so the fix narrowed the fold without disabling it.
+    const foldable = mkBoard([
+      mkFinding("f1", "cites the same anchor, typed differently", ["Auth_É.ref"]),
+      mkCodeRef("auth-éref", "src/authé.ts", 1, 2),
+    ]);
+    expect(admitBoardReferences(foldable, "ps-1").repairs).toEqual([
+      { elementId: "f1", field: "code", from: "Auth_É.ref", to: "auth-éref" },
+    ]);
+  });
+
+  it("refuses a sole folded candidate of the WRONG KIND for the field", () => {
+    // `order_step.span` is declared to hold a code_ref. A prose element that folds to the
+    // step's dangling span is a different element, not the code the step spans.
+    const board = mkBoard([
+      {
+        id: "sequence-step",
+        kind: "order_step",
+        data: {
+          author: { kind: "lens-agent", id: "sequence-seat" },
+          title: "Read the entry point",
+          span: "sequence_span",
+          children: [],
+        },
+      } as unknown as DraftBoard["elements"][number],
+      {
+        id: "sequence-span",
+        kind: "prose",
+        data: { author: { kind: "lens-agent", id: "sequence-seat" }, markdown: "The entry point." },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-step", field: "span", targetId: "sequence_span" },
+    ]);
+
+    // Control: the same shape with the candidate as the declared kind repairs — the
+    // refusal above is about the kind and not about the fold failing.
+    const withCodeRef = mkBoard([
+      board.elements[0] as DraftBoard["elements"][number],
+      mkCodeRef("sequence-span", "src/auth.ts", 11, 12),
+    ]);
+    expect(admitBoardReferences(withCodeRef, "ps-1").repairs).toEqual([
+      { elementId: "sequence-step", field: "span", from: "sequence_span", to: "sequence-span" },
+    ]);
+
+    // A field the schema declares WITHOUT a target kind (`section.children`) still repairs
+    // onto any kind: nothing about its target's kind is provable, so nothing is enforced.
+    const children = mkBoard([
+      mkSection("sequence-root", "Reading order", ["sequence_span"]),
+      {
+        id: "sequence-span",
+        kind: "prose",
+        data: { author: { kind: "lens-agent", id: "sequence-seat" }, markdown: "The entry point." },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(children, "ps-1").repairs).toHaveLength(1);
+  });
+
+  it("declares a target kind for every reference field the board schema says holds one", () => {
+    // The drift guard on the explicit map: the schema's own attribute descriptions name
+    // `code_ref` for exactly the fields that hold one, so a new such field (or a renamed
+    // one) fails here rather than silently repairing across kinds.
+    const declared = Object.entries(AUTHORED_BOARD_SCHEMA).flatMap(([kind, definition]) =>
+      Object.entries(definition.attributes).flatMap(([field, attribute]) =>
+        attribute.type === "element" && attribute.description.includes("code_ref")
+          ? [`${kind}.${field}`]
+          : [],
+      ),
+    );
+    expect(declared.length).toBeGreaterThan(0);
+    expect(Object.keys(REPAIR_TARGET_KINDS).sort()).toEqual(declared.sort());
+    for (const field of declared) expect(REPAIR_TARGET_KINDS[field]).toBe("code_ref");
+  });
+
+  it("deduplicates a `many` field whose entries repair onto the same element", () => {
+    // Two spellings of one id are one citation. Left as written, the finding lists the
+    // same code twice and the reader is shown a duplicate anchor.
+    const board = mkBoard([
+      mkFinding("f1", "cites one anchor, spelled twice", ["auth-code", "Auth_Code"]),
+      mkCodeRef("auth-code", "src/auth.ts", 1, 2),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    const finding = admitted.board.elements.find(({ id }) => id === "f1");
+    expect((finding?.data as { code?: string[] } | undefined)?.code).toEqual(["auth-code"]);
+  });
+});
+
 describe("boardOutputSchema", () => {
   it("derives a JSON schema from the frozen DraftBoardSchema (never hand-authored)", () => {
     const schema = boardOutputSchema() as Record<string, unknown>;
@@ -1292,8 +1798,119 @@ describe("Codex board output-schema compatibility", () => {
   });
 });
 
+describe("aggregateFailureAccount — one lens account from many seats (#549)", () => {
+  const terminal = (attempt: number) => ({ attempt, classification: "terminal" as const });
+  const retryable = (attempt: number) => ({ attempt, classification: "retryable" as const });
+
+  it("is RETRYABLE when any seat is: the lens needs only one seat to draw a board", () => {
+    expect(
+      aggregateFailureAccount([
+        { failure: "seat A", failureAccount: terminal(3) },
+        { failure: "seat B", failureAccount: retryable(1) },
+      ]),
+    ).toEqual(retryable(1));
+  });
+
+  it("is TERMINAL only when every seat is, and reports the deepest spent attempt", () => {
+    expect(
+      aggregateFailureAccount([
+        { failure: "seat A", failureAccount: terminal(1) },
+        { failure: "seat B", failureAccount: terminal(3) },
+      ]),
+    ).toEqual(terminal(3));
+  });
+
+  it("names no account when no seat named one — unknown stays unknown", () => {
+    expect(
+      aggregateFailureAccount([{ failure: "no runnable seat" }, { failure: "no runnable seat" }]),
+    ).toBeUndefined();
+  });
+});
+
 describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () => {
   const labels = { a: "Claude", b: "Codex" };
+
+  it("repoints a collapse the seats reached at DIFFERENT spans in the same window", async () => {
+    // The live shape (#548): two seats agree about one concern but cite spans a couple of
+    // lines apart. The reconciler matches within a line window, so they still collapse —
+    // and an anchor-equality repointing would miss exactly this, leaving the merged board
+    // unwritable. The fixture carries the difference on purpose.
+    const seatA = mkBoard([
+      mkFinding("f-1", "Short.", ["c1"]),
+      mkCodeRef("c1", "src/client.ts", 11, 12),
+      mkSection("sec-1", "Findings", ["f-1"]),
+    ]);
+    const seatB = mkBoard([
+      mkFinding("f-1", "A materially longer statement of the very same concern.", ["c1"]),
+      mkCodeRef("c1", "src/client.ts", 13, 14),
+      mkSection("sec-1", "Findings", ["f-1"]),
+    ]);
+
+    const merged = reconcileFlaggedBoards(seatA, seatB, labels);
+    expect(merged.elements.filter(({ kind }) => kind === "finding")).toHaveLength(1);
+    const section = merged.elements.find(({ id }) => id === "sec-1");
+    expect((section?.data as { children?: string[] } | undefined)?.children).toEqual(["b:f-1"]);
+    expect(admitBoardReferences(merged, "ps-1").unrepairable).toEqual([]);
+  });
+
+  it("repoints a COLLAPSED finding's citers at its kept partner, so the merge is writable", async () => {
+    // Both seats raise the same finding at the same location; seat B's wording is longer,
+    // so the reconciler keeps B's finding and drops A's. Seat A's section still cites the
+    // dropped id — the exact `bad-ref` the board service rejects a whole write for.
+    const seatA = mkBoard([
+      mkFinding("f1", "Short.", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+      mkSection("findings", "Findings", ["f1"]),
+    ]);
+    const seatB = mkBoard([
+      mkFinding("f1", "A materially longer statement of the very same concern.", ["c1"]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+      mkSection("findings", "Findings", ["f1"]),
+    ]);
+
+    const merged = reconcileFlaggedBoards(seatA, seatB, labels);
+    const findings = merged.elements.filter(({ kind }) => kind === "finding");
+    expect(findings).toHaveLength(1);
+    const keptId = findings[0]?.id ?? "";
+    expect(keptId).toBe("b:f1");
+    // Seat A's section now cites the SURVIVOR, not the id that collapsed into it.
+    const section = merged.elements.find(({ id }) => id === "findings");
+    expect((section?.data as { children?: string[] } | undefined)?.children).toEqual([keptId]);
+    expect(admitBoardReferences(merged, "ps-1").unrepairable).toEqual([]);
+
+    const root = await mkdtemp(join(tmpdir(), "lens-flagged-merge-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const accepted = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(merged) as never,
+        "lens:flagged",
+      );
+      expect(accepted.response).toMatchObject({ ok: true });
+
+      // POSITIVE CONTROL — put the collapsed id back in the section's children (the shape
+      // the merge produced before it repointed) and the real service rejects the write.
+      const unrepointed = mkBoard(
+        merged.elements.map((element) =>
+          element.id === "findings"
+            ? ({
+                ...element,
+                data: { ...(element.data as object), children: ["f1"] },
+              } as DraftBoard["elements"][number])
+            : element,
+        ),
+      );
+      const rejected = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(unrepointed) as never,
+        "lens:flagged",
+      );
+      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("rebuilds the document opening from the final reconciled severity picture", () => {
     const primaryDocument = {
@@ -1522,7 +2139,7 @@ describe("composeReviewDraft — the authored composition write-through (C2)", (
 });
 
 describe("runLensPipeline — the real drafting path (fake harness, no live model)", () => {
-  it("drafts all five lenses, writes each board via whiteboard, and emits arrival on freeze", async () => {
+  it("drafts all five lenses, writes each board via whiteboard, and announces each lane as it settles", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
@@ -1556,7 +2173,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     for (const a of applied) {
       for (const op of a.ops as { op: string }[]) expect(op.op).toBe("create");
     }
-    expect(arrivals.map((a) => a.lens)).toEqual(lenses);
+    // #725 D4 — arrivals are published in SETTLEMENT order, not in a fixed lens order: the
+    // five lanes are independent and each announces the moment its own board is written.
+    // The set is what this test owns; the ORDERING property has its own test below
+    // ("reveals each lens board as its own lane settles"), which releases the lanes in a
+    // known order and asserts the reveal follows it.
+    expect([...arrivals.map((a) => a.lens)].sort()).toEqual([...lenses].sort());
     expect(captures.map(({ prompt }) => lensFromPrompt(prompt ?? "")).sort()).toEqual(
       [...lenses].sort(),
     );
@@ -1712,6 +2334,121 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     }
   });
 
+  it("writes a repair-requiring board ONLY because the production write path admitted it", async () => {
+    // The direct `admitBoardReferences` unit tests above prove the pass; they do not prove
+    // the pipeline calls it, so deleting the production call site left them green. This
+    // drives the real production path — `runLensPipeline` → `persistBoard` → the REAL
+    // board service — over a reference the ladder cannot see.
+    //
+    // The shape is MODELLED on a round carry-forward — a prior round's addressed chapter
+    // riding verbatim into this round's Sequence board after lint — but the fixture builds
+    // the `previous` board by hand, with the mis-cased citation written in. It does not run
+    // `composeFindingRound`, so it proves nothing about whether that composer can produce
+    // this shape; what it proves is that when a board reaches the write boundary carrying
+    // one, the production path admits it instead of losing the board.
+    const root = await mkdtemp(join(tmpdir(), "lens-admission-production-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const hostAuthor = { kind: "orchestrator" as const, id: "rennet:round-composition" };
+      const carriedRef = "rennet:host:round-addressed:1:0:code-ref";
+      const citedAs = "rennet:host:round-addressed:1:0:code_ref";
+      const annotationId = "rennet:host:round-addressed:1:0:annotation";
+      const previousSequence = mkBoard([
+        {
+          id: carriedRef,
+          kind: "code_ref",
+          data: {
+            author: hostAuthor,
+            patchset_id: "ps-1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 11,
+            end_line: 12,
+          },
+        } as unknown as DraftBoard["elements"][number],
+        {
+          id: annotationId,
+          kind: "annotation",
+          data: { author: hostAuthor, code_ref: citedAs, body: "Addressed in round 1." },
+        } as unknown as DraftBoard["elements"][number],
+      ]);
+
+      const boardIds = new Map<LintTarget, string>();
+      for (const lens of ["design", "sequence", "decisions", "flagged", "noise"] as const) {
+        boardIds.set(lens, await runtime.createRennetBoard());
+      }
+      const metas: BoardMeta[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === "post-process") {
+            const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+            return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+          }
+          return cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        currentGeneration: "gen:ps-1",
+        // A same-generation round: it composes, and it drafts no report to verify.
+        round: {
+          number: 2,
+          previousGeneration: "gen:ps-1",
+          dispatchedAsks: [],
+          findingDispositions: {},
+        },
+        previous: new Map<LintTarget, DraftBoard>([["sequence", previousSequence]]),
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: client,
+        boardIdFor: (lens) => boardIds.get(lens) ?? "",
+        persistBoardMeta: (meta) => {
+          metas.push(meta);
+        },
+      });
+
+      const sequence = result.boards.find(({ lens }) => lens === "sequence");
+      expect(sequence?.failure).toBeUndefined();
+      // The repair landed in the SERVICE's state, not merely in the returned board.
+      const state = await runtime.service.getState(boardIds.get("sequence") ?? "");
+      expect(state.has(carriedRef)).toBe(true);
+      expect((state.get(annotationId)?.data as { code_ref?: string } | undefined)?.code_ref).toBe(
+        carriedRef,
+      );
+      // And it is ACCOUNTED FOR durably: a repair is recorded on the board's meta, never a
+      // silent rewrite of what the producer wrote.
+      const meta = metas.find(({ lens }) => lens === "sequence");
+      expect(meta?.refRepairs).toEqual([
+        { elementId: annotationId, field: "code_ref", from: citedAs, to: carriedRef },
+      ]);
+
+      // The control that makes the write load-bearing: put the reference back the way the
+      // composition produced it and hand the SAME board to the same service. It is refused
+      // wholesale, so the accepted write above happened only because production admitted it.
+      const written = sequence?.board;
+      if (written === undefined) throw new Error("Sequence settled without a board");
+      const bypassed = written.elements.map((element) =>
+        element.id === annotationId
+          ? ({
+              ...element,
+              data: { ...(element.data as object), code_ref: citedAs },
+            } as DraftBoard["elements"][number])
+          : element,
+      );
+      const rejected = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(mkBoard(bypassed)) as never,
+        "lens:sequence",
+      );
+      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("treats a deterministically empty Design artifact set as a successful absent lane", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
     const applied: Applied[] = [];
@@ -1848,10 +2585,231 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
       expect(emptyLensTurns).toBe(1);
       expect(result.boards.find(({ lens }) => lens === emptyLens)).toMatchObject({ absence });
+      // The settled absence must be one the protocol admits FOR THIS LENS (#549) —
+      // the pipeline reads the canonical table rather than restating it.
+      expect(lensAdmitsAbsence(emptyLens, absence)).toBe(true);
       expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${emptyLens}`);
       expect(arrivals.map(({ lens }) => lens)).not.toContain(emptyLens);
     },
   );
+
+  it("refuses an absence for the Sequence lane, which admits none (#549)", async () => {
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "sequence") return { elements: [], skippedHunks: [] };
+        if (lens === "post-process" && prompt.includes('"elements":[]')) {
+          return { elements: [], skippedHunks: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    // A review with no order board has nothing to read: an empty Sequence is a
+    // failure, never the clean settlement the other lanes are allowed.
+    expect(sequence?.absence).toBeUndefined();
+    expect(sequence?.failure).toBeDefined();
+    expect(applied.map(({ boardId }) => boardId)).not.toContain("board:sequence");
+  });
+
+  it("RE-ASKS the seat when the drafting turn emitted no board, and settles the board it then draws (#549)", async () => {
+    // The production no-board shape: the harness completes the turn with NO structured
+    // output. It is retryable, and here that classification does the retrying — the seat
+    // is re-asked and its second draw settles the lane as a board, not a failure.
+    const noiseTurns: string[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "noise") return cleanBody(lens);
+        noiseTurns.push(prompt);
+        // `undefined` structured output ⇒ the harness completed WITHOUT emitting.
+        return noiseTurns.length === 1 ? undefined : cleanBody("noise");
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.absence).toBeUndefined();
+    expect(noise?.board?.elements.length).toBeGreaterThan(0);
+    // The lane really was re-asked, and the re-ask is the LADDER's: "not the same string"
+    // was satisfied by any second prompt at all, including one that re-asks for nothing.
+    expect(noiseTurns).toHaveLength(2);
+    const reask = noiseTurns[1] ?? "";
+    // The base prompt is carried verbatim and the prior-failure layer is appended AFTER it,
+    // so the seat re-reads its instructions and then what went wrong — in that order.
+    expect(reask.startsWith(noiseTurns[0] ?? "")).toBe(true);
+    expect(reask.slice((noiseTurns[0] ?? "").length)).toContain(
+      "Your previous draft did not pass. Fix ONLY these issues and return the whole board:",
+    );
+    // The pointers are the PARSE issues the non-emission produced — `validateDraft` cannot
+    // coerce a turn that emitted nothing into a board, so the ladder's first rung is the
+    // schema itself rather than a lens rule about a board that does not exist.
+    expect(reask).toMatch(/- schema at \[[^\]]*\]: /);
+    expect(reask).toContain("Previous draft:");
+  });
+
+  it("settles TERMINAL only after the re-asks are spent, naming the non-emission (#549)", async () => {
+    const noiseTurns: string[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "noise") return cleanBody(lens);
+        noiseTurns.push(prompt);
+        return undefined;
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.absence).toBeUndefined();
+    // The words keep the original non-emission AND say the re-asks were spent.
+    expect(noise?.failure).toContain("did not emit a board");
+    expect(noise?.failure).toContain("no re-ask emitted one");
+    // Terminal, and only because the retries were actually spent — the attempt count is
+    // the ladder's, never the initial turn's `0`.
+    expect(noise?.failureAccount?.classification).toBe("terminal");
+    expect(noise?.failureAccount?.attempt).toBeGreaterThan(0);
+    expect(noiseTurns.length).toBe((noise?.failureAccount?.attempt ?? 0) + 1);
+  });
+
+  it("carries an aggregated account when BOTH flagged seats fail (#549)", async () => {
+    // Both seats emit nothing, on every turn, so both spend their ladders — the lens is
+    // terminal, and it says so with an account rather than a bare sentence.
+    const noBoard = (prompt: string): unknown =>
+      lensFromPrompt(prompt) === "flagged" ? undefined : cleanBody(lensFromPrompt(prompt));
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], noBoard),
+      codexExecutor: (async (req: { prompt: string }) => ({
+        output: noBoard(req.prompt),
+      })) as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const flagged = result.boards.find(({ lens }) => lens === "flagged");
+    expect(flagged?.failure).toContain("both flagged seats failed");
+    // Both seats named the SAME lane's failure; the account survives the aggregation
+    // instead of being rebuilt as a string with the classification thrown away.
+    expect(flagged?.failureAccount?.classification).toBe("terminal");
+    expect(flagged?.failureAccount?.attempt).toBeGreaterThan(0);
+  });
+
+  it("settles an EMPTY draw as each lens's admissible absence, and as a failure where none is (#549)", async () => {
+    // The empty-board settlement is derived from the protocol's admissibility table, not
+    // restated beside it: every lens admitting exactly one absence settles that one,
+    // Sequence (which admits none) fails, and Design fails because only a grounded
+    // dismissal — never an empty board — proves its `no-material`.
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], () => ({ elements: [] })),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const settled = new Map(result.boards.map((outcome) => [outcome.lens, outcome]));
+    expect(settled.get("decisions")?.absence).toBe("no-decisions");
+    expect(settled.get("flagged")?.absence).toBe("no-findings");
+    expect(settled.get("noise")?.absence).toBe("no-noise");
+    expect(settled.get("sequence")?.absence).toBeUndefined();
+    expect(settled.get("sequence")?.failure).toBeDefined();
+    expect(settled.get("design")?.absence).toBeUndefined();
+    expect(settled.get("design")?.failure).toBeDefined();
+    // Every absence this pipeline settles is one the protocol table admits for that lens.
+    for (const outcome of result.boards) {
+      if (outcome.absence === undefined || outcome.lens === "report") continue;
+      expect(
+        lensAdmitsAbsence(outcome.lens, outcome.absence),
+        `${outcome.lens} settled an inadmissible ${outcome.absence}`,
+      ).toBe(true);
+    }
+  });
+
+  it("a re-ask that draws an EMPTY board settles the lens absence, not a failure (#549)", async () => {
+    // The seat's own empty-board claim is what authorizes a clean absence. A first turn
+    // that emitted nothing made no claim either way, so the first EMITTED draw decides —
+    // and a signal-only change whose Noise seat draws an empty board settles `no-noise`.
+    const noiseTurns: string[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens !== "noise") return cleanBody(lens);
+        noiseTurns.push(prompt);
+        return noiseTurns.length === 1 ? undefined : { elements: [] };
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.absence).toBe("no-noise");
+    expect(lensAdmitsAbsence("noise", "no-noise")).toBe(true);
+  });
+
+  it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        // Structurally impossible output on every attempt, including the retries.
+        return lens === "noise" ? { document: 5, elements: "not-a-list" } : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toContain("no parseable board");
+    expect(noise?.failureAccount?.classification).toBe("terminal");
+    // The ladder is spent, so the account names a later attempt than the initial turn.
+    expect(noise?.failureAccount?.attempt).toBeGreaterThan(0);
+  });
 
   it.each([
     ["decisions", "prose-only", () => proseOnlyBody("decisions", "No choices found.")],
@@ -3236,18 +4194,35 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
     const diagnostics: RoundReportDiagnosticMilestone[] = [];
-    const diagnosticTimes = [100, 110, 105, 120, 115, 130, 125];
+    // The first entry is the pipeline's own report-PHASE start (#725 7.4): it reads the
+    // clock once before the report seat takes its baseline (100), so the six milestone
+    // reads that follow are unchanged and the assertion below still pins them exactly.
+    // The scripted clock the report gate reads. Two entries are consumed by the
+    // `report-classification` phase record (#731 9.4), which brackets the turn on the SAME
+    // injected clock — one read before `runTurn`, one after it settles. They sit where the
+    // gate reads them so the DIAGNOSTIC elapsed sequence below is unchanged by the
+    // measurement: a phase record that shifted the diagnostics would be observing the run
+    // by altering it.
+    const diagnosticTimes = [90, 100, 110, 110, 105, 120, 120, 115, 130, 125];
+    const reportTimings: GenerationPhaseTiming[] = [];
     let reportTurns = 0;
+    // Three hunks, so the round has three manifest entries and the classification can
+    // partition them across an addressed ask, a partial ask, and one beyond entry.
     const workerDiff = [
       "diff --git a/src/auth.ts b/src/auth.ts",
       "--- a/src/auth.ts",
       "+++ b/src/auth.ts",
-      "@@ -1,2 +1,2 @@",
+      "@@ -1 +1 @@",
       "-old first line",
-      "-old second line",
       "+new first line",
+      "@@ -10 +10 @@",
+      "-old second line",
       "+new second line",
+      "@@ -20 +20 @@",
+      "-old neighbor line",
+      "+new neighbor line",
     ].join("\n");
+    const [firstEvidence, secondEvidence, neighborEvidence] = manifestIds(workerDiff);
     const round = {
       number: 2,
       previousGeneration: "gen:ps-0",
@@ -3289,36 +4264,21 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-second",
                 status: "partial",
                 note: "The second line moved, but its follow-up remains.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 2,
-                  endLine: 2,
-                },
+                evidenceIds: [secondEvidence],
               },
               {
                 askId: "ask-first",
                 status: "addressed",
                 note: "The first line now carries the requested value.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: [firstEvidence],
               },
             ],
             beyond: [
               {
                 ref: "beyond:first-line-cleanup",
                 text: "Tighten the neighboring first-line wording.",
-                note: "The same changed line includes a small neighboring cleanup.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                note: "A neighboring line the asks never mentioned also changed.",
+                evidenceIds: [neighborEvidence],
               },
             ],
           };
@@ -3346,6 +4306,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         arrivals.push(event);
       },
       onReportDiagnostic: (milestone) => diagnostics.push(milestone),
+      onPhaseTiming: (timing) => {
+        reportTimings.push(timing);
+      },
       now: () => diagnosticTimes.shift() ?? 125,
     });
 
@@ -3353,11 +4316,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(reportTurns).toBe(1);
     expect(reportCaptures).toHaveLength(1);
     expect(reportCaptures[0]?.model).toBe("sonnet-5");
+    // The classifier's raw-response cap rides the session spec into the adapter (#727).
+    expect(reportCaptures[0]?.outputByteCap).toBe(ROUND_REPORT_OUTPUT_MAX_BYTES);
     const outputSchema = reportCaptures[0]?.outputSchema;
     const reportSchema = JSON.stringify(outputSchema);
     expect(reportSchema).toContain('"askId"');
-    expect(reportSchema).toContain('"evidence"');
+    expect(reportSchema).toContain('"evidenceIds"');
     expect(reportSchema).toContain('"beyond"');
+    // No output shape can carry a line number: the host derives every anchor.
+    expect(reportSchema).not.toContain('"startLine"');
     expect(reportSchema).not.toContain('"elements"');
     expect(reportSchema).not.toContain('"document"');
     expect(reportSchema).not.toContain('"round_outcome"');
@@ -3385,9 +4352,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const untouchedSchema = branchFor("untouched");
     expect(addressedSchema).toBeDefined();
     expect(untouchedSchema).toBeDefined();
-    expect(addressedSchema?.required).toContain("evidence");
-    expect(untouchedSchema?.required).not.toContain("evidence");
-    expect(untouchedSchema?.properties).not.toHaveProperty("evidence");
+    expect(addressedSchema?.required).toContain("evidenceIds");
+    expect(untouchedSchema?.required).not.toContain("evidenceIds");
+    expect(untouchedSchema?.properties).not.toHaveProperty("evidenceIds");
     expect(untouchedSchema?.additionalProperties).toBe(false);
     const reportPrompt = reportCaptures[0]?.prompt ?? "";
     const reportContext = /rennet:layer context>>>\n(\{.*)/s.exec(reportPrompt);
@@ -3404,7 +4371,13 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         },
         { id: "ask-second", path: "src/auth.ts", instruction: "Replace the second line." },
       ],
-      worker: round.worker,
+      // The verbatim diff no longer crosses this boundary; the measured manifest does.
+      worker: {
+        outcome: "completed",
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "before", to: "after" },
+      },
+      evidence: buildRoundEvidenceManifest(workerDiff),
     });
     expect(reportPrompt).not.toContain("hostSchema");
     expect(reportPrompt).not.toContain("deltaPacket");
@@ -3422,6 +4395,23 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       diagnostics.every(({ elapsedMs }) => Number.isInteger(elapsedMs) && elapsedMs >= 0),
     ).toBe(true);
     expect(diagnostics.map(({ elapsedMs }) => elapsedMs)).toEqual([10, 10, 20, 20, 30, 30]);
+
+    // The report gate records TWO spans (#731 9.4): the whole gate, and the classification
+    // turn inside it. Only the turn names an executor, because only the turn had one — the
+    // gate also builds the evidence manifest, resolves the seat and verifies the result,
+    // none of which a harness ran.
+    const gate = reportTimings.find(({ phase }) => phase === "report");
+    const classification = reportTimings.find(({ phase }) => phase === "report-classification");
+    expect(gate?.harness).toBeUndefined();
+    expect(classification?.harness).toBe("claude-code");
+    expect(classification?.model).toBeDefined();
+    // The turn is measured on the same wall clock as the rest, and sits INSIDE the gate.
+    expect(classification?.startedAtMs).toBe(110);
+    expect(classification?.durationMs).toBe(10);
+    expect(gate?.startedAtMs).toBe(90);
+    expect((gate?.startedAtMs ?? 0) + (gate?.durationMs ?? 0)).toBeGreaterThanOrEqual(
+      (classification?.startedAtMs ?? 0) + (classification?.durationMs ?? 0),
+    );
     expect(JSON.stringify(diagnostics)).not.toContain("SECRET_");
     expect(
       captures.filter(
@@ -3446,6 +4436,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       ["partial", "ask-second", "Replace the second line."],
       ["beyond", "beyond:first-line-cleanup", "Tighten the neighboring first-line wording."],
     ]);
+    // Every manifest id lands in exactly one outcome (#726), durably on the board.
+    expect(outcomes.flatMap((element) => element.data.evidence_ids ?? []).sort()).toEqual(
+      [firstEvidence, secondEvidence, neighborEvidence].sort(),
+    );
     const addressed = outcomes[0];
     const addressedCodeRef =
       addressed?.kind === "round_outcome"
@@ -3474,8 +4468,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
   it("awaits classified report handoff before starting any lens and aborts on rejection", async () => {
     const classification = {
-      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
-      beyond: [],
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence for this ask." }],
+      beyond: [
+        {
+          ref: "beyond:line",
+          text: "An unrequested line change.",
+          note: "The turn changed a line no ask asked for.",
+          evidenceIds: [ONE_LINE_EVIDENCE],
+        },
+      ],
     };
     const round = {
       number: 1,
@@ -3492,14 +4493,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       findingDispositions: {},
       worker: {
         outcome: "completed" as const,
-        diff: [
-          "diff --git a/src/auth.ts b/src/auth.ts",
-          "--- a/src/auth.ts",
-          "+++ b/src/auth.ts",
-          "@@ -1 +1 @@",
-          "-old line",
-          "+new line",
-        ].join("\n"),
+        diff: ONE_LINE_DIFF,
         changedPaths: ["src/auth.ts"],
         commitRange: { from: "before", to: "after" },
       },
@@ -3568,7 +4562,70 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(rejected.lensTurns()).toBe(0);
   });
 
+  it("fails an over-budget evidence manifest with zero provider calls and no truncation", async () => {
+    const applied: Applied[] = [];
+    const captures: HarnessCapture[] = [];
+    // One hunk whose body alone exceeds the manifest budget: the round is honestly too
+    // big to classify, which is a typed local failure, never a shortened manifest.
+    const hugeDiff = [
+      "diff --git a/src/huge.ts b/src/huge.ts",
+      "--- a/src/huge.ts",
+      "+++ b/src/huge.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      `+${"x".repeat(ROUND_EVIDENCE_MANIFEST_MAX_BYTES)}`,
+    ].join("\n");
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:oversized",
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-0",
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/huge.ts",
+            type: "request-change",
+            instruction: "Rewrite the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: hugeDiff,
+          changedPaths: ["src/huge.ts"],
+          commitRange: { from: "before", to: "after" },
+        },
+      },
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    }).catch((error: unknown) => error as Error);
+
+    const failure = result instanceof Error ? result.message : result.report?.failure;
+    expect(failure).toContain(`over the ${ROUND_EVIDENCE_MANIFEST_MAX_BYTES}-byte limit`);
+    expect(failure).toContain("classification was not attempted");
+    // Zero provider calls: not one session was opened for any seat.
+    expect(captures).toHaveLength(0);
+    expect(applied).toHaveLength(0);
+  });
+
   it("accepts the guarded one-line widget turn after one classification turn", async () => {
+    const widgetDiff = [
+      "diff --git a/src/widget.ts b/src/widget.ts",
+      "--- a/src/widget.ts",
+      "+++ b/src/widget.ts",
+      "@@ -1 +1 @@",
+      "-export const widget = 2;",
+      "+export const widget = 3;",
+    ].join("\n");
     let reportTurns = 0;
     const applied: Applied[] = [];
     const result = await runLensPipeline({
@@ -3582,12 +4639,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-one",
                 status: "addressed",
                 note: "The exact changed line now carries the requested value.",
-                evidence: {
-                  path: "src/widget.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: manifestIds(widgetDiff),
               },
             ],
             beyond: [],
@@ -3619,14 +4671,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         findingDispositions: {},
         worker: {
           outcome: "completed",
-          diff: [
-            "diff --git a/src/widget.ts b/src/widget.ts",
-            "--- a/src/widget.ts",
-            "+++ b/src/widget.ts",
-            "@@ -1 +1 @@",
-            "-export const widget = 2;",
-            "+export const widget = 3;",
-          ].join("\n"),
+          diff: widgetDiff,
           changedPaths: ["src/widget.ts"],
           commitRange: { from: "before", to: "after" },
         },
@@ -3672,14 +4717,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       findingDispositions: {},
       worker: {
         outcome: "completed" as const,
-        diff: [
-          "diff --git a/src/auth.ts b/src/auth.ts",
-          "--- a/src/auth.ts",
-          "+++ b/src/auth.ts",
-          "@@ -1 +1 @@",
-          "-old line",
-          "+new line",
-        ].join("\n"),
+        diff: ONE_LINE_DIFF,
         changedPaths: ["src/auth.ts"],
         commitRange: { from: "before", to: "after" },
       },
@@ -3733,12 +4771,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-one",
                 status: "addressed",
                 note: "The exact changed line now carries the requested value.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: [ONE_LINE_EVIDENCE],
               },
             ],
             beyond: [],
@@ -3790,49 +4823,55 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it.each([
     ["missing durable ask", { outcomes: [], beyond: [] }, "omitted dispatched asks: ask-one"],
     [
-      "unified-diff-prefixed path",
+      "invented evidence id",
       {
         outcomes: [
           {
             askId: "ask-one",
             status: "addressed",
             note: "The exact changed line carries the request.",
-            evidence: { path: "b/src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+            evidenceIds: ["ev-not-in-this-round"],
           },
         ],
         beyond: [],
       },
-      "absent from the round diff",
+      "cites unknown evidence id ev-not-in-this-round",
     ],
     [
-      "anchor outside the measured diff",
+      "unplaced evidence",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "untouched",
+            note: "The turn changed something, but not this ask.",
+          },
+        ],
+        beyond: [],
+      },
+      "leaves evidence unplaced",
+    ],
+    [
+      "evidence claimed twice",
       {
         outcomes: [
           {
             askId: "ask-one",
             status: "addressed",
-            note: "The ask changed elsewhere.",
-            evidence: { path: "src/auth.ts", side: "head", startLine: 99, endLine: 99 },
+            note: "The changed line carries the request.",
+            evidenceIds: [ONE_LINE_EVIDENCE],
           },
         ],
-        beyond: [],
-      },
-      "outside the changed lines",
-    ],
-    [
-      "range that only happens to span a changed line",
-      {
-        outcomes: [
+        beyond: [
           {
-            askId: "ask-one",
-            status: "addressed",
-            note: "The range includes the changed line and unrelated context.",
-            evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 2 },
+            ref: "beyond:same-line",
+            text: "The same line, claimed again.",
+            note: "Double-counting the one change the turn made.",
+            evidenceIds: [ONE_LINE_EVIDENCE],
           },
         ],
-        beyond: [],
       },
-      "classification output was invalid",
+      "in more than one bucket",
     ],
     [
       "addressed ask without required evidence",
@@ -3841,7 +4880,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           {
             askId: "ask-one",
             status: "addressed",
-            note: "The ask changed, but this claim has no anchor.",
+            note: "The ask changed, but this claim cites nothing.",
           },
         ],
         beyond: [],
@@ -3856,12 +4895,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             askId: "ask-one",
             status: "untouched",
             note: "The exact diff does not establish the request.",
-            evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+            evidenceIds: [ONE_LINE_EVIDENCE],
           },
         ],
         beyond: [],
       },
       "classification output was invalid",
+    ],
+    [
+      "over-cap beyond bucket",
+      OVER_CAP_BEYOND_CLASSIFICATION,
+      `reports ${ROUND_REPORT_MAX_BEYOND_ENTRIES + 1} beyond-ask entries, over the ${ROUND_REPORT_MAX_BEYOND_ENTRIES}-entry limit`,
     ],
   ] as const)(
     "fails one %s classification before report persistence or lens fanout",
@@ -3903,14 +4947,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           findingDispositions: {},
           worker: {
             outcome: "completed",
-            diff: [
-              "diff --git a/src/auth.ts b/src/auth.ts",
-              "--- a/src/auth.ts",
-              "+++ b/src/auth.ts",
-              "@@ -1 +1 @@",
-              "-old line",
-              "+new line",
-            ].join("\n"),
+            diff: ONE_LINE_DIFF,
             changedPaths: ["src/auth.ts"],
             commitRange: { from: "before", to: "after" },
           },
@@ -3933,7 +4970,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     },
   );
 
-  it("starts every independent lens turn after the report and before any lens is released", async () => {
+  it("starts every independent lens turn after the report and reveals each lane as it settles", async () => {
     const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
     const started: LensKind[] = [];
     const applied: Applied[] = [];
@@ -4027,6 +5064,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       regressionFailure = error;
     }
 
+    // Release one lane at a time, newest lens first, recording what the reveal had
+    // published by the time each lane's board was written. #725 D4: a lane's settlement is
+    // visible the moment it lands, so the reveal must track the release order and must NOT
+    // wait for the four lanes still blocked below.
+    const revealAfterEachRelease: LensKind[][] = [];
     if (regressionFailure === undefined) {
       try {
         for (const lens of [...lenses].reverse()) {
@@ -4039,6 +5081,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
               setImmediate(() => reject(new Error(`${lens} did not persist after release`)));
             }),
           ]);
+          // Let the lane's own settlement publication run before sampling the reveal.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          revealAfterEachRelease.push([...arrivals]);
         }
       } catch (error) {
         regressionFailure = error;
@@ -4059,9 +5104,419 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(
       applied.map(({ boardId }) => boardId).filter((boardId) => boardId !== "board:report"),
     ).toEqual([...lenses].reverse().map((lens) => `board:${lens}`));
-    expect(arrivals).toEqual(lenses);
+    // The reveal followed the RELEASE order, not the lens order — each lane published on
+    // its own settlement.
+    // The progressive assertion first: it is the one that NAMES a restored barrier, and a
+    // plain order comparison would fail on the same run with a less useful message.
+    assertProgressiveReveal(revealAfterEachRelease, [...lenses].reverse());
+    expect(arrivals).toEqual([...lenses].reverse());
     expect(providerCalls).toEqual(["report", ...lenses]);
     expect(pipelineSettled).toBe(true);
+  });
+
+  it("records a distinct durable timing for every phase, and coverage moves pending → complete", async () => {
+    const applied: Applied[] = [];
+    const timings: GenerationPhaseTiming[] = [];
+    const coverageStates: GenerationCoverage[] = [];
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      onCoverageState: (coverage) => {
+        coverageStates.push(coverage);
+      },
+    });
+    expect(result.boards).toHaveLength(5);
+
+    // Coverage is explicitly pending from the moment the lanes start, and completes after
+    // them. It is a state the surface renders, never a gate on the reveal.
+    expect(coverageStates.map(({ state }) => state)).toEqual(["pending", "complete"]);
+    expect(coverageStates[1]).toEqual({ state: "complete", violations: 0 });
+
+    // Every lane has its own draft and post-process record; the cross-lens phases have one
+    // each. No report here (this generation drafts none), which is why `report` is absent
+    // rather than present-and-zero.
+    const phases = timings.map(
+      ({ phase, lens }) => `${phase}${lens === undefined ? "" : `:${lens}`}`,
+    );
+    for (const lens of ["design", "sequence", "decisions", "flagged", "noise"]) {
+      expect(phases).toContain(`lens-draft:${lens}`);
+      expect(phases).toContain(`lens-post-process:${lens}`);
+    }
+    expect(phases).toContain("coverage");
+    expect(phases).toContain("reveal");
+    expect(phases).not.toContain("report");
+    // Every record is a durable, non-negative integer span anchored to a wall clock.
+    for (const timing of timings) {
+      expect(Number.isInteger(timing.startedAtMs) && timing.startedAtMs > 0).toBe(true);
+      expect(Number.isInteger(timing.durationMs) && timing.durationMs >= 0).toBe(true);
+    }
+    // Every lane names the harness and model that actually ran it. Only one harness is
+    // installed here, so Flagged degrades to a single seat and names THAT one — the
+    // genuinely dual case is the test below, which needs two harnesses to exist at all.
+    const noiseDraft = timings.find((t) => t.phase === "lens-draft" && t.lens === "noise");
+    expect(noiseDraft?.harness).toBe("claude-code");
+    expect(noiseDraft?.model).toBeDefined();
+    const flaggedDrafts = timings.filter((t) => t.phase === "lens-draft" && t.lens === "flagged");
+    expect(flaggedDrafts).toHaveLength(1);
+    expect(flaggedDrafts[0]?.harness).toBe("claude-code");
+  });
+
+  it("emits ONE lens-draft record per Flagged seat, each naming what ran it (#726 D8)", async () => {
+    // A genuinely dual lane: BOTH fake harnesses are installed, so `runFlaggedDual` runs
+    // two seats rather than degrading. That is load-bearing — the previous version of this
+    // assertion ran with `codexExecutor: null`, so exactly one seat ever ran, and "the dual
+    // seat names no harness" passed because there was no dual seat.
+    const timings: GenerationPhaseTiming[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: (async (req: { prompt: string }) => ({
+        output: cleanBody(lensFromPrompt(req.prompt)),
+      })) as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+    });
+    expect(result.boards.find(({ lens }) => lens === "flagged")?.boardId).toBe("board:flagged");
+
+    // TWO Flagged draft records, one per seat, and between them BOTH harnesses — which is
+    // what makes "this run was dual-model" derivable from the stages instead of assumed
+    // from settings. Every record names its model too.
+    const flaggedDrafts = timings.filter((t) => t.phase === "lens-draft" && t.lens === "flagged");
+    expect(flaggedDrafts).toHaveLength(2);
+    expect(new Set(flaggedDrafts.map(({ harness }) => harness))).toEqual(
+      new Set(["claude-code", "codex"]),
+    );
+    for (const record of flaggedDrafts) expect(record.model).toBeDefined();
+
+    // A single-seat lane still emits exactly one, so the count itself distinguishes the two
+    // — a dual lane and a degraded one are not the same shape.
+    expect(timings.filter((t) => t.phase === "lens-draft" && t.lens === "noise")).toHaveLength(1);
+
+    // The LANE's aggregate span stays derivable: min start to max end across its seats.
+    const laneFrom = Math.min(...flaggedDrafts.map(({ startedAtMs }) => startedAtMs));
+    const laneTo = Math.max(...flaggedDrafts.map((t) => t.startedAtMs + t.durationMs));
+    expect(laneTo).toBeGreaterThanOrEqual(laneFrom);
+  });
+
+  it("ends the `reveal` window at the last lane that REVEALED, not the last that settled", async () => {
+    // Ordering is CONTROLLED, not hoped for: each lens seat waits on its own gate, so the
+    // lane that reveals nothing settles strictly last. Without that, a run where the
+    // failing lane happened to finish early would pass under both the honest code and the
+    // defect, and this test would prove nothing.
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+    const timings: GenerationPhaseTiming[] = [];
+    let ticks = 1_000;
+    const releases = new Map<LensKind, () => void>();
+    const gates = new Map<LensKind, Promise<void>>(
+      lenses.map((lens) => [
+        lens,
+        new Promise<void>((resolve) => {
+          releases.set(lens, resolve);
+        }),
+      ]),
+    );
+    const announceArrival = new Map<LensKind, () => void>();
+    const arrived = new Map<LensKind, Promise<void>>(
+      lenses.map((lens) => [
+        lens,
+        new Promise<void>((resolve) => {
+          announceArrival.set(lens, resolve);
+        }),
+      ]),
+    );
+    const revealing = lenses.filter((lens) => lens !== "design");
+
+    const pipeline = runLensPipeline({
+      claudePort: null,
+      codexExecutor: (async (req: { prompt: string }) => {
+        const lens = lensFromPrompt(req.prompt) as LensKind;
+        await gates.get(lens);
+        ticks += 1;
+        // Design never emits a parseable board, so it settles as a FAILURE — a settlement
+        // that reveals nothing, which is exactly the case the window must exclude.
+        return { output: lens === "design" ? { not: "a board" } : cleanBody(lens) };
+      }) as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => {
+        ticks += 5;
+        announceArrival.get(event.lens as LensKind)?.();
+      },
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      now: () => ticks,
+    });
+
+    for (const lens of revealing) releases.get(lens)?.();
+    await Promise.all(revealing.map((lens) => arrived.get(lens)));
+    // The clock at the moment the LAST reveal landed. Design is still parked on its gate,
+    // so nothing else can have moved it.
+    const lastRevealTick = ticks;
+
+    releases.get("design")?.();
+    const result = await pipeline;
+    expect(result.boards.find(({ lens }) => lens === "design")?.failure).toBeDefined();
+
+    // The failing lane's settlement moved the clock well past the last reveal, so the two
+    // candidate window ends are distinguishable — this is the control built into the test.
+    expect(ticks).toBeGreaterThan(lastRevealTick);
+    const reveal = timings.find(({ phase }) => phase === "reveal");
+    expect(reveal).toBeDefined();
+    expect((reveal?.startedAtMs ?? 0) + (reveal?.durationMs ?? 0)).toBe(lastRevealTick);
+  });
+
+  it("records the `reveal` timing even when a lane throws, and says coverage never ran", async () => {
+    // A scripted clock and a persistence sink that throws for one lane. The throwing lane
+    // settles LAST and reveals nothing, so two claims are under test at once:
+    //   • its settlement must not extend the `reveal` window — otherwise the record
+    //     measures the fan-out and wears the reveal's name;
+    //   • the record must exist at all, because it used to be written after an
+    //     `outcomes.map` that rethrows a rejected lane, and so was lost exactly when a run
+    //     failed.
+    const timings: GenerationPhaseTiming[] = [];
+    const coverageStates: GenerationCoverage[] = [];
+    let ticks = 1_000;
+    let revealed = 0;
+
+    await expect(
+      runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          ticks += 10;
+          return cleanBody(lensFromPrompt(prompt));
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [] as LintHunk[],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        persistBoardMeta: (meta) => {
+          // Noise dies on its durable write — an infrastructure failure, which is what
+          // `allSettled` collects as a REJECTED lane.
+          if (meta.lens === "noise") throw new Error("the noise lane's metadata store died");
+        },
+        onBoardArrival: () => {
+          revealed += 1;
+          // Every real reveal costs 100 ticks; the failing lane's settlement costs 1000, so
+          // a window that closed on it instead would be unmistakable.
+          ticks += 100;
+        },
+        onCoverageState: (coverage) => {
+          coverageStates.push(coverage);
+          ticks += 1_000;
+        },
+        onPhaseTiming: (timing) => {
+          timings.push(timing);
+        },
+        now: () => ticks,
+      }),
+    ).rejects.toThrow("the noise lane's metadata store died");
+
+    // Four lanes revealed; Noise died before its arrival.
+    expect(revealed).toBe(4);
+    // The record EXISTS. It used to be written after an `outcomes.map` that rethrows a
+    // rejected lane, so a run that died lost the timing for the window it most needed
+    // explaining. (Where the window ENDS is the test above, which controls the ordering.)
+    expect(timings.some(({ phase }) => phase === "reveal")).toBe(true);
+
+    // And coverage says what actually happened rather than sitting at `pending` forever.
+    expect(coverageStates.map(({ state }) => state)).toEqual(["pending", "failed"]);
+    // No `coverage` timing: that phase never ran, and a duration for it would be invented.
+    expect(timings.some(({ phase }) => phase === "coverage")).toBe(false);
+  });
+
+  it("keeps the report phase's timing to the report, never absorbing the lens lanes", async () => {
+    const applied: Applied[] = [];
+    const timings: GenerationPhaseTiming[] = [];
+    // A scripted clock: the report seat costs 1 tick, each lens lane costs 100. A `report`
+    // record that had absorbed the lens fan-out would be enormous next to that.
+    let ticks = 1_000;
+    const advance = (by: number): void => {
+      ticks += by;
+    };
+
+    await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        advance(lens === "report" ? 1 : 100);
+        return lens === "report" ? cleanBody("report") : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: { ...PACKET, successorAccount: { asks: [], beyondAsks: [] } },
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      now: () => ticks,
+    });
+
+    // Not vacuous: the assertion returns early when no report phase was recorded, so the
+    // record it judges has to exist and the lens records have to be there to judge against.
+    expect(timings.some(({ phase }) => phase === "report")).toBe(true);
+    expect(timings.filter(({ phase }) => phase === "lens-draft")).toHaveLength(5);
+    assertReportLabelExcludesLensTime(timings);
+  });
+
+  it("positive control: lens time routed under the report label fails the timing assertion", () => {
+    const honest: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 1 },
+      { phase: "lens-draft", lens: "sequence", startedAtMs: 1_001, durationMs: 100 },
+      { phase: "lens-draft", lens: "noise", startedAtMs: 1_001, durationMs: 100 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(honest)).not.toThrow();
+    // The defect this replaces: one label spanning the report AND the lens fan-out, which
+    // is what a durable timing that started before the report and ended after the lanes
+    // looks like. The assertion above must reject it.
+    const mislabeled: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 201 },
+      { phase: "lens-draft", lens: "sequence", startedAtMs: 1_001, durationMs: 100 },
+      { phase: "lens-draft", lens: "noise", startedAtMs: 1_101, durationMs: 100 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(mislabeled)).toThrow(/absorbed/);
+
+    // PARTIAL overlap — the case the earlier reading of this assertion could not see. The
+    // report ends partway through a lane that finishes later, so comparing the lane's END
+    // to the report's end passed it while real lens time sat under the report label.
+    const partial: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 50 },
+      { phase: "lens-draft", lens: "sequence", startedAtMs: 1_001, durationMs: 100 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(partial)).toThrow(/absorbed/);
+
+    // …and the boundary the same fix must NOT reject: a zero-duration lens phase starting
+    // the instant the report ended. Touching is not overlapping, and no lens time sits
+    // under the report label here.
+    const touching: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 1 },
+      { phase: "lens-repair", lens: "noise", startedAtMs: 1_001, durationMs: 0 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(touching)).not.toThrow();
+  });
+
+  it("budgets every whole-board attempt from the table, and never starves a repeat", async () => {
+    // The table's contract, over EVERY lane rather than the one the behavioural half below
+    // happens to drive: a repeat attempt is never RICHER than the first (that bound is what
+    // stops restart recovery refreshing a full ladder each time) and never ZERO (a zero
+    // repeat terminates a lane on one malformed output, so wave 3's restart recovery —
+    // which exists to re-draft a retryable lens — could never produce a board for it).
+    for (const [lens, [first, repeat]] of Object.entries(LENS_RETRY_BUDGET)) {
+      expect(`${lens}:${repeat <= first}`).toBe(`${lens}:true`);
+      expect(`${lens}:${repeat > 0}`).toBe(`${lens}:true`);
+    }
+    expect(lensRetryBudget("sequence", 0)).toBe(LENS_RETRY_BUDGET.sequence[0]);
+    // Every repeat draws the same repeat entry — attempt 5 is no richer than attempt 1.
+    expect(lensRetryBudget("sequence", 1)).toBe(LENS_RETRY_BUDGET.sequence[1]);
+    expect(lensRetryBudget("sequence", 5)).toBe(LENS_RETRY_BUDGET.sequence[1]);
+
+    const runWithAttempt = async (boardAttempt: number) => {
+      const sequenceTurns: string[] = [];
+      const applied: Applied[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens !== "sequence") return cleanBody(lens);
+          sequenceTurns.push(prompt);
+          // The first return never parses, so the ladder is what decides whether this lane
+          // gets a second chance. A budget of 0 means it does not.
+          return sequenceTurns.length === 1 ? { not: "a board" } : cleanBody("sequence");
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        boardAttempt,
+        hunks: [] as LintHunk[],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+      const sequence = result.boards.find(({ lens }) => lens === "sequence");
+      return { turns: sequenceTurns.length, sequence };
+    };
+
+    const first = await runWithAttempt(0);
+    expect(first.turns).toBe(2);
+    expect(first.sequence?.failure).toBeUndefined();
+    expect(first.sequence?.boardId).toBe("board:sequence");
+
+    // The repeat attempt still gets its repair turn, so ONE malformed output does not end
+    // the lane. This is the whole point of a reduced-but-non-zero repeat: the restart
+    // redraft recovers exactly the lens it was started for.
+    const repeat = await runWithAttempt(1);
+    expect(repeat.turns).toBe(2);
+    expect(repeat.sequence?.failure).toBeUndefined();
+    expect(repeat.sequence?.boardId).toBe("board:sequence");
+  });
+
+  it("names the BUDGET, not a bare count, when a lane's repair ladder produced no board", async () => {
+    // "across 0 attempts" read as a contradiction — it claimed a ladder was spent and that
+    // none was. The sentence now says what was allotted and what was used.
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        return lens === "sequence" ? { not: "a board" } : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    expect(sequence?.failure).toContain(
+      `no parseable board (${LENS_RETRY_BUDGET.sequence[0]} of ${LENS_RETRY_BUDGET.sequence[0]} budgeted repair turn`,
+    );
+    expect(sequence?.failureAccount?.classification).toBe("terminal");
+  });
+
+  it("positive control: a global all-lanes barrier before reveal fails the reveal assertion", () => {
+    const releaseOrder: LensKind[] = ["noise", "flagged", "decisions", "sequence", "design"];
+    // What the progressive reveal produces: one more lane visible after each release.
+    const progressive = releaseOrder.map((_lens, index) => releaseOrder.slice(0, index + 1));
+    expect(() => assertProgressiveReveal(progressive, releaseOrder)).not.toThrow();
+    // What a REINTRODUCED global barrier produces: nothing visible until the last lane
+    // settles, then all five at once. The assertion the test above relies on must reject
+    // it — otherwise that test would pass over a restored barrier and prove nothing.
+    const barriered = releaseOrder.map((_lens, index) =>
+      index === releaseOrder.length - 1 ? [...releaseOrder] : [],
+    );
+    expect(() => assertProgressiveReveal(barriered, releaseOrder)).toThrow(
+      /revealed nothing until/,
+    );
   });
 
   it("waits for sibling lenses and continues absence notifications before rethrowing one callback", async () => {
@@ -4212,6 +5667,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         data: { author: hostAuthor, markdown: "**First ask**\n\nFixed." },
       } as DraftBoard["elements"][number],
     ]);
+    const retryDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-outsideRetry();",
+      "+insideRetry();",
+    ].join("\n");
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => {
         const lens = lensFromPrompt(prompt);
@@ -4226,12 +5689,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-2",
                 status: "addressed",
                 note: "The retry boundary now owns the refresh.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: manifestIds(retryDiff),
               },
             ],
             beyond: [],
@@ -4259,14 +5717,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         findingDispositions: {},
         worker: {
           outcome: "completed",
-          diff: [
-            "diff --git a/src/auth.ts b/src/auth.ts",
-            "--- a/src/auth.ts",
-            "+++ b/src/auth.ts",
-            "@@ -1 +1 @@",
-            "-outsideRetry();",
-            "+insideRetry();",
-          ].join("\n"),
+          diff: retryDiff,
           changedPaths: ["src/auth.ts"],
           commitRange: { from: "same-head", to: "same-head" },
         },
@@ -4867,7 +6318,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     expect(applied).toEqual([]);
   });
 
-  it("preserves the harness failure account when an initial drafter emits no board", async () => {
+  it("keeps the harness's own words in the failure, under a spent-ladder terminal account", async () => {
     const failingPort = {
       createSession: async () => ({
         send: async () => undefined,
@@ -4892,7 +6343,13 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       boardIdFor: (l) => `board:${l}`,
     });
     for (const outcome of result.boards) {
+      // The harness's message survives into the lens failure verbatim…
       expect(outcome.failure).toContain("structured output exceeded the seat capability");
+      // …and the TYPED account beside it is the ladder's verdict, which the old name
+      // claimed and the old body never read: every re-ask was spent on a seat that never
+      // emitted, so it is terminal with a real attempt count, not `attempt: 0`.
+      expect(outcome.failureAccount?.classification).toBe("terminal");
+      expect(outcome.failureAccount?.attempt).toBeGreaterThan(0);
     }
   });
 });
@@ -5066,3 +6523,100 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
 function SECRET(s: string): string {
   return s;
 }
+
+describe("the report gate times a turn that DIED (#731 O4)", () => {
+  // The `finally` on the classification turn exists so a turn that did not produce a board
+  // still reports how long it took to fail and still names the harness that failed it. That
+  // is a control-flow claim, so it gets executed rather than reasoned about: a seat whose
+  // session cannot start, and the timing read back.
+  //
+  // What this CANNOT show, stated rather than implied: the seat wrapper converts an adapter
+  // throw into a `failed` turn result, so the observable shape of a dying turn here is
+  // `status: "failed"` and not a rejected promise. The `finally` covers both — it runs after
+  // the `catch` and after a non-emitting return — and only the second is reachable through
+  // the real harness path, which is the one this test drives.
+  const round = {
+    number: 1,
+    previousGeneration: "gen:ps-0",
+    dispatchedAsks: [
+      {
+        id: "ask-one",
+        path: "src/auth.ts",
+        type: "request-change" as const,
+        instruction: "Replace the line.",
+        context: "",
+      },
+    ],
+    findingDispositions: {},
+    worker: {
+      outcome: "completed" as const,
+      diff: ONE_LINE_DIFF,
+      changedPaths: ["src/auth.ts"],
+      commitRange: { from: "before", to: "after" },
+    },
+  };
+
+  it("still emits report-classification, with its harness, when the turn dies without emitting", async () => {
+    const timings: GenerationPhaseTiming[] = [];
+    let failure: unknown;
+    // The classification seat is the only one that caps its raw response, so this throws
+    // for THAT session and no other. The failure message asserted below is what proves it:
+    // a different session dying reports a different sentence.
+    const port = {
+      createSession: async (options: { outputByteCap?: number }) => {
+        if (options.outputByteCap !== undefined) {
+          throw new Error("the classification session could not start");
+        }
+        return {
+          send: async () => undefined,
+          close: async () => undefined,
+          events: (async function* () {
+            yield {
+              kind: "session.ended",
+              native: {},
+              outcome: { status: "completed", structuredOutput: cleanBody("design") },
+            };
+          })(),
+        };
+      },
+    } as unknown as HarnessPort;
+
+    await runLensPipeline({
+      claudePort: port,
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:o4",
+      round,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      now: () => Date.now(),
+    }).catch((error: unknown) => {
+      failure = error;
+    });
+
+    // The TURN really died, and died for the reason this test arranged — not the manifest
+    // measure, not the seat resolution, not the schema check, each of which returns BEFORE
+    // the timed block and would leave the assertion below passing vacuously.
+    expect(String(failure)).toContain("classification turn did not emit");
+    expect(String(failure)).toContain("the classification session could not start");
+
+    const classification = timings.find(({ phase }) => phase === "report-classification");
+    expect(classification).toBeDefined();
+    // The whole point: a failure that named no executor would leave the slowest, most
+    // interesting turns unattributed in the archive.
+    expect(classification?.harness).toBe("claude-code");
+    expect(classification?.model).toBeDefined();
+    expect(classification?.durationMs).toBeGreaterThanOrEqual(0);
+    // Attribution is one fact, not two — the benchmark schema refuses a half of it.
+    expect((classification?.harness === undefined) === (classification?.model === undefined)).toBe(
+      true,
+    );
+  });
+});

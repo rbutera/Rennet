@@ -2,12 +2,15 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import starlightSidebarTopics from "starlight-sidebar-topics";
 import docsProjection from "./src/plugins/docs-projection-integration";
+import remarkBenchmarks, { benchmarkData } from "./src/plugins/remark-benchmarks.mjs";
 import remarkCanonicalLinks from "./src/plugins/remark-canonical-links.mjs";
 import remarkMermaid from "./src/plugins/remark-mermaid.mjs";
 
 // Cloudflare Pages serves the static output. Starlight Sidebar Topics separates
 // reader and contributor navigation. The local Mermaid plugin renders diagrams
-// during the build without a browser.
+// during the build without a browser, and the benchmarks plugin renders the
+// committed measurement data — failing the build when it is missing or corrupt,
+// so the page can never show a stale or invented number.
 export default defineConfig({
   site: "https://docs.rennet.dev",
   markdown: {
@@ -15,10 +18,16 @@ export default defineConfig({
     // runs; excludeLangs is belt-and-suspenders so a stray fence is never sent
     // to the syntax highlighter.
     syntaxHighlight: { type: "shiki", excludeLangs: ["mermaid"] },
-    remarkPlugins: [remarkCanonicalLinks, remarkMermaid],
+    remarkPlugins: [remarkCanonicalLinks, remarkMermaid, remarkBenchmarks],
   },
   integrations: [
     docsProjection(),
+    // Validates the committed benchmark data on every build, and then checks the BUILT
+    // HTML actually states that data — the remark plugin renders the tables, but a page
+    // whose Markdown had not changed carries no dependency on the numbers it shows, so a
+    // reused render would ship measurements that are no longer true. See
+    // `verifyRenderedBenchmarks` for what a real build was observed to do.
+    benchmarkData(),
     starlight({
       title: "Rennet",
       description: "How to use and build the local-first Rennet review harness.",
@@ -164,6 +173,10 @@ export default defineConfig({
               {
                 label: "Reference",
                 items: [
+                  {
+                    label: "Benchmarks",
+                    link: "/developing/reference/benchmarks/",
+                  },
                   {
                     label: "Dependency standard",
                     link: "/developing/reference/dependency-standard/",

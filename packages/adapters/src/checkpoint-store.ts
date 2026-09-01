@@ -10,6 +10,7 @@ import {
   locusCommand,
 } from "@rennet/core";
 import { execa } from "execa";
+import { appOwnedPathspec } from "./git-range-diff";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The workspace checkpoint store — the CAPTURE side of the review→agent handoff
@@ -122,12 +123,59 @@ async function headOid(locus: Locus, root: string): Promise<string | null> {
  * temporary index followed by `add -A` silently omits a tracked path that is now
  * ignored (including a newly force-added path), even though it belongs to the
  * user's reviewed tree.
+ *
+ * App-owned board state is dropped from the temporary index BEFORE the tree is
+ * written (#729, D6). This is the one place it can be dropped: every other fact a
+ * capture derives — the reviewed-tree OID, the diff, the file list, byte counts,
+ * intent and the patchset id — comes from this tree, so filtering downstream would
+ * still leave a contaminated OID silently changing the review's identity every time
+ * Rennet wrote a board. `git rm --cached` is index-only and never touches a file on
+ * disk; `-f` skips the up-to-date check and `--ignore-unmatch` makes the usual case
+ * (no board store at all) a no-op rather than an error.
+ *
+ * The removal covers the checkpoint store too, and should: a bracketed agent turn's
+ * diff is what the AGENT changed, not what Rennet wrote beside it.
+ *
+ * Everything else under `.rennet/` stays. Tracked means intentional, so a
+ * `.rennet/conventions.json` edit is captured like any other project file — and
+ * `.rennet/boards-extra` is the user's, because the app never writes there.
+ *
+ * The pathspec folds case when the repository's filesystem does, because git matches it
+ * against the spelling in the index: a pre-existing `.Rennet/Boards/` alias absorbs the
+ * writer's lowercase join, and the case-sensitive spelling then removes nothing.
  */
 async function writeWorkingTree(locus: Locus, root: string, indexFile: string): Promise<string> {
   const indexTree = await git(locus, root, ["write-tree"]);
   await git(locus, root, ["read-tree", indexTree], indexFile);
   await git(locus, root, ["add", "-A"], indexFile);
+  const ignoreCase = await repositoryIgnoresCase(locus, root);
+  await git(
+    locus,
+    root,
+    [
+      "rm",
+      "--cached",
+      "-r",
+      "-f",
+      "--quiet",
+      "--ignore-unmatch",
+      "--",
+      appOwnedPathspec(ignoreCase),
+    ],
+    indexFile,
+  );
   return git(locus, root, ["write-tree"], indexFile);
+}
+
+/** git's own filesystem probe, recorded at init/clone; `--default` keeps unset at exit 0. */
+async function repositoryIgnoresCase(locus: Locus, root: string): Promise<boolean> {
+  const result = await runGit(
+    locus,
+    root,
+    ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"],
+    { reject: false },
+  );
+  return result.stdout.trim() === "true";
 }
 
 async function removeSnapshotIndex(locus: Locus, indexFile: string): Promise<void> {

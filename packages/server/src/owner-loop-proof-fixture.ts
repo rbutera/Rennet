@@ -16,6 +16,7 @@ const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
 const patchsetPlanValue = `\${patchsetId}`;
 const candidatePlanValue = `\${candidateId}`;
 const askPlanValue = `\${askId}`;
+const evidenceIdsPlanValue = `\${evidenceIds}`;
 
 function codeRef(id: string): DraftBoard["elements"][number] {
   return {
@@ -242,22 +243,23 @@ function reportClassification(value: string): unknown {
         askId: askPlanValue,
         status: "addressed",
         note: `\`${OWNER_LOOP_SOURCE}\` now exports \`${value}\`.`,
-        evidence: {
-          path: OWNER_LOOP_SOURCE,
-          side: "head",
-          startLine: 1,
-          endLine: 1,
-        },
+        // The whole round is this one ask's work, so the ask owns every measured
+        // evidence id and the `beyond` bucket stays empty (#726).
+        evidenceIds: evidenceIdsPlanValue,
       },
     ],
     beyond: [],
   };
 }
 
-export function ownerLoopScriptedHarnessPlan(invocationLog: string): ScriptedHarnessPlan {
+export function ownerLoopScriptedHarnessPlan(
+  invocationLog: string,
+  harness: ScriptedHarnessPlan["harness"] = "claude-code",
+): ScriptedHarnessPlan {
   return {
     schemaVersion: 1,
     lane: OWNER_LOOP_LANE,
+    harness,
     invocationLog,
     steps: [
       {
@@ -363,12 +365,18 @@ export function ownerLoopScriptedHarnessPlan(invocationLog: string): ScriptedHar
   };
 }
 
-export function writeOwnerLoopScriptedHarnessPlan(root: string): {
+export function writeOwnerLoopScriptedHarnessPlan(
+  root: string,
+  harness: ScriptedHarnessPlan["harness"] = "claude-code",
+): {
   readonly planPath: string;
   readonly invocationLog: string;
 } {
   const invocationLog = join(root, `${OWNER_LOOP_LANE}-invocations.jsonl`);
   const planPath = join(root, `${OWNER_LOOP_LANE}-plan.json`);
-  writeFileSync(planPath, `${JSON.stringify(ownerLoopScriptedHarnessPlan(invocationLog))}\n`);
+  writeFileSync(
+    planPath,
+    `${JSON.stringify(ownerLoopScriptedHarnessPlan(invocationLog, harness))}\n`,
+  );
   return { planPath, invocationLog };
 }

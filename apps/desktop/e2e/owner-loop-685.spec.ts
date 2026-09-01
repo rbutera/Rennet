@@ -1,6 +1,6 @@
-import { type ChildProcess, execFileSync, fork } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import { generationIdForPatchset, LENS_KINDS } from "@rennet/protocol";
@@ -20,6 +20,7 @@ import {
   modelFreeEnv,
   writeRepoFile,
 } from "./harness";
+import { startTestDaemon } from "./scripted-daemon";
 
 function seedRepo(root: string, name: "target" | "decoy"): void {
   mkdirSync(root, { recursive: true });
@@ -81,77 +82,6 @@ function seedWorkspace(): { workspace: string; target: string; decoy: string } {
   seedRepo(target, "target");
   seedRepo(decoy, "decoy");
   return { workspace, target, decoy };
-}
-
-function gateCapableEnv(home: string): NodeJS.ProcessEnv {
-  const environment = modelFreeEnv(home);
-  const nodeBin = dirname(process.execPath);
-  const npm = join(nodeBin, process.platform === "win32" ? "npm.cmd" : "npm");
-  if (!existsSync(npm)) throw new Error(`npm is missing beside the test Node binary: ${npm}`);
-  return {
-    ...environment,
-    PATH: [nodeBin, environment.PATH].filter(Boolean).join(delimiter),
-  };
-}
-
-async function startTestDaemon(options: {
-  userData: string;
-  home: string;
-  planPath: string;
-}): Promise<ChildProcess> {
-  const desktopPackage: unknown = JSON.parse(
-    readFileSync(resolve("apps/desktop/package.json"), "utf8"),
-  );
-  if (
-    typeof desktopPackage !== "object" ||
-    desktopPackage === null ||
-    !("version" in desktopPackage) ||
-    typeof desktopPackage.version !== "string"
-  ) {
-    throw new Error("apps/desktop/package.json has no version");
-  }
-  const bundleRoot = makeTempDir("rennet-e2e-685-daemon-");
-  const bundlePath = join(bundleRoot, "owner-loop-685-daemon.cjs");
-  execFileSync(resolve("node_modules/esbuild/bin/esbuild"), [
-    resolve("apps/desktop/e2e/owner-loop-685-daemon.ts"),
-    "--bundle",
-    "--platform=node",
-    "--format=cjs",
-    "--target=node24",
-    "--external:electron",
-    "--external:@anthropic-ai/claude-agent-sdk",
-    "--define:import.meta.url=__rennetBundledImportMetaUrl",
-    '--banner:js=const __rennetBundledImportMetaUrl = require("node:url").pathToFileURL(__filename).href;',
-    `--outfile=${bundlePath}`,
-    "--log-level=warning",
-  ]);
-  cpSync(resolve("packages/prompts/src/prompts"), join(bundleRoot, "prompts"), {
-    recursive: true,
-  });
-  cpSync(resolve("packages/server/dist/native"), join(bundleRoot, "native"), {
-    recursive: true,
-  });
-  const child = fork(bundlePath, [], {
-    cwd: resolve("."),
-    env: {
-      ...gateCapableEnv(options.home),
-      RENNET_USER_DATA: options.userData,
-      RENNET_OWNER_LOOP_PLAN: options.planPath,
-      RENNET_SERVER_VERSION: desktopPackage.version,
-    },
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-  });
-  let stderr = "";
-  child.stderr?.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  await new Promise<void>((resolveReady, rejectReady) => {
-    child.once("message", resolveReady);
-    child.once("error", rejectReady);
-    child.once("exit", (code) => rejectReady(new Error(`test daemon exited ${code}: ${stderr}`)));
-  });
-  child.once("exit", () => rmSync(bundleRoot, { recursive: true, force: true }));
-  return child;
 }
 
 async function bridgeFor(page: Page): Promise<WsRennetBridge> {
@@ -250,6 +180,7 @@ async function dispatchVisibleRound(
   page: Page,
   askBody: string,
   expectedExitCount: number,
+  expectedHarness: string,
 ): Promise<void> {
   await page
     .getByRole("button", { name: `Continue, ${expectedExitCount} staged`, exact: true })
@@ -258,6 +189,12 @@ async function dispatchVisibleRound(
   await expect(page.locator('[data-screen="session-run"]')).toBeVisible({ timeout: 30_000 });
   const greeting = page.locator('[data-screen="round-greeting"]');
   await expect(greeting).toBeVisible({ timeout: 180_000 });
+  // #681 acceptance: the DISPLAYED provenance names the harness that actually ran, with
+  // its live version. The Codex journey asserts the same locator says "Codex", so a
+  // hardcoded provider or an assumed default fails one of the two legs.
+  await expect(greeting.getByTestId("round-run-receipt")).toContainText(
+    `using ${expectedHarness} 685-scripted-v1`,
+  );
   await expect(greeting.getByTestId("round-run-receipt")).toContainText("Passed npm run check");
   await expect(greeting.locator('[data-kind="round-report"]')).toBeVisible();
   const outcome = greeting.locator('[data-kind="round_outcome"]');
@@ -268,13 +205,23 @@ async function dispatchVisibleRound(
   await expect(page.locator("article[data-lens]")).toBeVisible({ timeout: 30_000 });
 }
 
-test("#685: launched owner loop survives two rounds and a daemon-preserving app restart", async () => {
+/**
+ * The launched owner loop on ONE resolved harness. Parameterized for #681/C14 D3: the
+ * scripted plan declares the provider, the composition root routes the test port by its
+ * descriptor, and the OTHER provider is genuinely absent — so the Codex journey proves a
+ * Codex-resolved host end to end (round one, restart, round two) rather than a Claude
+ * round wearing a Codex label. `expectedHarness` is the displayed name in the receipt.
+ */
+async function runLaunchedOwnerLoop(
+  harness: "claude-code" | "codex",
+  expectedHarness: "Claude Code" | "Codex",
+): Promise<void> {
   test.setTimeout(600_000);
   assertProductionBundleBoundary();
   const { workspace, target, decoy } = seedWorkspace();
   const userData = makeTempDir("rennet-e2e-685-state-");
   const home = makeTempDir("rennet-e2e-685-home-");
-  const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(workspace);
+  const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(workspace, harness);
   const daemon = await startTestDaemon({ userData, home, planPath });
   let launched = await launchRennet({
     repository: workspace,
@@ -339,7 +286,7 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       reviewId,
       OWNER_LOOP_ROUND_ONE_BODY,
     );
-    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY, 1);
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY, 1, expectedHarness);
     const afterRoundOne = await bridge.invoke("session.rounds", { reviewId });
     expect(afterRoundOne.records).toHaveLength(1);
     const roundOneGeneration = afterRoundOne.records[0]?.boardGeneration ?? "";
@@ -402,9 +349,15 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       reviewId,
       OWNER_LOOP_ROUND_TWO_BODY,
     );
-    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY, 2);
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY, 2, expectedHarness);
     const finalRounds = await bridge.invoke("session.rounds", { reviewId });
     expect(finalRounds.records).toHaveLength(2);
+    // Durable half of the same acceptance: every round's receipt names the harness that
+    // ran it, and the session stayed pinned to it across the restart (no silent switch).
+    expect(finalRounds.records.map((record) => record.run?.harness)).toEqual([
+      { id: harness, version: "685-scripted-v1" },
+      { id: harness, version: "685-scripted-v1" },
+    ]);
     expect(finalRounds.records[1]?.frozenPredecessor).toBe(finalRounds.records[0]?.boardGeneration);
     const finalGeneration = finalRounds.records[1]?.boardGeneration ?? "";
     const finalPatchset = finalRounds.records[1]?.resultPatchsetId ?? "";
@@ -472,14 +425,37 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
     ).toBe("export const ownerValue = 'decoy-reviewed';\n");
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: target }).toString()).toBe("");
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: decoy }).toString()).toBe("");
+    const ledger = readFileSync(invocationLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { kind: string; stepId: string; harness: string });
     expect(
-      readFileSync(invocationLog, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line))
-        .filter((record) => record.kind === "edit")
-        .map((record) => record.stepId),
+      ledger.filter((record) => record.kind === "edit").map((record) => record.stepId),
     ).toEqual(["round-one-edit", "round-two-edit"]);
+    // The EXECUTING half of #681's provenance acceptance. The receipt asserted during each
+    // round reads the RESOLVER's stamp (`runResolvedCodingHarnessTurn` stamps
+    // `resolution.selection` on the outcome), so it stays green even if the seat underneath
+    // executes as a different provider — the stamp and the execution have a common cause
+    // only when nothing lies between them. This reads each turn's OWN session
+    // (`HarnessSession.harness`, written into the scripted ledger by the run callback) and
+    // is therefore independent of the stamp.
+    //
+    // ⚠️ NOT CONTROL-PROVEN HERE, and saying so is the point. On 2026-09-01 this spec could
+    // not be run to this line at all: BOTH legs fail at round one, in `report-drafting`,
+    // with "Round report outcome … cites src/owner.ts, not the asked path Read
+    // `src/owner.ts` first." — a pre-existing `verifyAskPath` defect
+    // (`packages/server/src/runtime/round-report-verification.ts`), reproduced identically
+    // with every file this branch touches reverted to its base commit. So no mutation of
+    // the seat could be watched reddening THIS assertion; it is written to be right, not
+    // yet observed being right.
+    // The mechanism it stands on IS control-proven, one level down, in
+    // `packages/server/src/scripted-harness-plan.test.ts` ("records the executing session's
+    // own provider in the ledger, not the plan's"): constructing the session as
+    // `claude-code` while the descriptor stays `codex` leaves the resolver — and therefore
+    // the receipt above — green, and reddens the ledger reading. What remains unproven is
+    // only that this spec reaches here, which the `verifyAskPath` fix settles.
+    expect(ledger.length).toBeGreaterThan(0);
+    expect([...new Set(ledger.map((record) => record.harness))]).toEqual([harness]);
   } finally {
     bridge?.close();
     await launched.application.close().catch(() => undefined);
@@ -488,4 +464,10 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
     rmSync(userData, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
-});
+}
+
+test("#685: launched owner loop survives two rounds and a daemon-preserving app restart", () =>
+  runLaunchedOwnerLoop("claude-code", "Claude Code"));
+
+test("#681: the same launched owner loop runs both rounds on a Codex-only host", () =>
+  runLaunchedOwnerLoop("codex", "Codex"));

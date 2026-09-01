@@ -1,11 +1,24 @@
 import type { HostElement, RoundOperation } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import {
   type StoredRoundReportVerificationDeps,
   verifyStoredRoundReport,
 } from "./stored-round-report-verification";
 
 const author = { kind: "lens-agent" as const, id: "round-report" };
+const workerDiff = [
+  "diff --git a/src/auth.ts b/src/auth.ts",
+  "--- a/src/auth.ts",
+  "+++ b/src/auth.ts",
+  "@@ -1,1 +1,2 @@",
+  " keep",
+  "+refresh();",
+  "",
+].join("\n");
+/** The stored report's partition is re-verified against the diff on recovery, so the
+ *  fixture must carry the ids the host would have minted for this exact turn. */
+const authEvidence = buildRoundEvidenceManifest(workerDiff)[0]?.id ?? "";
 const elements: HostElement[] = [
   {
     id: "rennet:host:round-report:section",
@@ -36,6 +49,7 @@ const elements: HostElement[] = [
       status: "addressed",
       ask: { ref: "ask-auth", text: "Refresh auth" },
       note: "Refreshes auth on the successor.",
+      evidence_ids: [authEvidence],
       code_ref: "rennet:host:round-report:0:code",
     },
   },
@@ -48,15 +62,7 @@ const operation = {
   state: {
     phase: "report-verifying",
     worker: {
-      diff: [
-        "diff --git a/src/auth.ts b/src/auth.ts",
-        "--- a/src/auth.ts",
-        "+++ b/src/auth.ts",
-        "@@ -1,1 +1,2 @@",
-        " keep",
-        "+refresh();",
-        "",
-      ].join("\n"),
+      diff: workerDiff,
       changedPaths: ["src/auth.ts"],
     },
   },

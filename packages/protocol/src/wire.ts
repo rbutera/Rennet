@@ -19,7 +19,11 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
-import { SessionPreparationSchema, SessionTranscriptRowSchema } from "./session/model";
+import {
+  CodingHarnessSelectionSchema,
+  SessionPreparationSchema,
+  SessionTranscriptRowSchema,
+} from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -1610,10 +1614,33 @@ const openSpecCoverageEdgeSchema = z.object({
   tests: z.number(),
 });
 
-export const openSpecCoverageSchema = z.object({
-  status: z.enum(["ok", "failed"]),
-  edges: z.array(openSpecCoverageEdgeSchema),
-});
+export const openSpecCoverageSchema = z
+  .object({
+    status: z.enum(["ok", "failed", "unavailable"]),
+    edges: z.array(openSpecCoverageEdgeSchema),
+    /**
+     * Provenance (#681 / C14 D3): the harness the mapping turn was SELECTED to run on,
+     * stamped whether or not the turn reached the model. `failed` is stamped at the seat,
+     * before the session is constructed, so this is attempted-on provenance rather than
+     * ran-on — "attempted: Claude Code 2.x" is honest for a turn that died at session
+     * construction, "ran" would not be. On `unavailable` it is the harness that DID
+     * resolve for this repository while the coverage seat wanted another — so a
+     * Codex-only install reads as "Codex resolved, coverage did not run", not as an
+     * assumed Claude default. Absent when no harness resolved at all.
+     */
+    harness: CodingHarnessSelectionSchema.optional(),
+    /** The typed account for `unavailable`: what the seat sought and what was found. */
+    reason: z.string().min(1).optional(),
+  })
+  // An `unavailable` MUST say why. The whole point of the state is that it explains
+  // itself where `failed` cannot — `{status:"unavailable",edges:[]}` is a bare absence
+  // the Spec view could only render as an unexplained blank, so the wire refuses it.
+  // `ok`/`failed` are unconstrained, so values persisted before `unavailable` existed
+  // still parse.
+  .refine((coverage) => coverage.status !== "unavailable" || coverage.reason !== undefined, {
+    path: ["reason"],
+    message: "an unavailable coverage result must carry its reason",
+  });
 
 // ── Settings: the config ladder (wireframe #15, Settings and Setup Plan) ──────
 // The settings surface edits a small, HONEST slice of the ladder the plan
@@ -1925,8 +1952,22 @@ export const clientSettingsSchema = z.object({
   navigation: z
     .object({ lastProjectBySource: z.record(z.string(), z.string().min(1)).optional() })
     .optional(),
+  /**
+   * Benchmark recording (#731, D8). DEFAULT-ON: absent means recording, so an untouched
+   * install measures itself and the slice only ever appears once the reviewer has moved
+   * the toggle. This is observability configuration, never a consent gate — nothing in
+   * the pipeline reads it, only the archive writer does.
+   */
+  benchmarks: z.object({ record: z.boolean() }).optional(),
 });
 export type ClientSettings = z.infer<typeof clientSettingsSchema>;
+
+/** Whether benchmark recording is on for these client settings. Absent slice ⇒ ON: the
+ *  default is stated in ONE place, so a reader and a writer cannot disagree about what
+ *  an untouched install does. */
+export function benchmarkRecordingEnabled(settings: ClientSettings): boolean {
+  return settings.benchmarks?.record ?? true;
+}
 
 /**
  * Daemon settings — the global ladder rung as it exists ON ITS HOST, stored at
@@ -2372,6 +2413,12 @@ export const settingsViewSchema = z.object({
    * no override set; a role that does not run in a scenario carries a `null` cell.
    */
   reviewRoles: z.array(reviewRoleMappingSchema).optional(),
+  /**
+   * Whether benchmark recording is on (#731). RESOLVED, not raw: the client settings
+   * slice is absent on an untouched install and that means ON, so serving the resolved
+   * boolean keeps the default in the resolver rather than in every reader.
+   */
+  benchmarkRecording: z.boolean().optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 
@@ -2856,10 +2903,12 @@ export type OpenSpecCoverageEdge = z.infer<typeof openSpecCoverageEdgeSchema>;
 /**
  * The coverage producer's result over a whole change. `status: "ok"` means the
  * mapping RAN — every requirement has an edge (covered or an honest zero), so the
- * Spec view can render every chip. `status: "failed"` means the runner did not
- * complete (no model available, budget refused, every turn failed): `edges` is empty
- * and the Spec view renders NO chips, keeping "not computed" distinct from a real
- * zero. Never a fabricated edge on failure.
+ * Spec view can render every chip. `status: "failed"` means the runner RAN and did
+ * not complete (budget refused, every turn failed). `status: "unavailable"` means it
+ * was never attempted because the seat's harness did not resolve — `reason` names
+ * what was sought and what was found, and `harness` names the provider that resolved
+ * instead. All three carry `edges: []` on anything but `ok`, and the Spec view renders
+ * NO chips, keeping "not computed" distinct from a real zero. Never a fabricated edge.
  */
 export type OpenSpecCoverage = z.infer<typeof openSpecCoverageSchema>;
 // ─────────────────────────────────────────────────────────────────────────────

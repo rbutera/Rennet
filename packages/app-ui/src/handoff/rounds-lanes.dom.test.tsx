@@ -149,6 +149,35 @@ describe("RoundsLanes", () => {
     expect(onDispatch).toHaveBeenCalledOnce();
   });
 
+  it("a composed PR draft does not terminate the loop — a new ask reopens Changes (C14 §8.3)", async () => {
+    // D7's exit contract: the loop ends when the reviewer SUBMITS, never when a draft exists.
+    // With the same ready draft handed in throughout, staging one more ask must take the
+    // surface back to Changes with a LIVE Dispatch Round — the draft is held, not spent.
+    const onDispatch = vi.fn();
+    const r = mount(<RoundsLanes review={review} pr={draftedPr} onDispatch={onDispatch} />);
+
+    // Zero rounds, nothing staged: the submit exit is already the page. No round is required
+    // to reach it.
+    expect(r.getByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
+    expect(r.getByRole("button", { name: /Open Pull Request/ })).toBeTruthy();
+
+    // One more change to request, draft still in hand.
+    stage("src/a.ts:5", "guard the boundary", "request-change");
+    expect(r.getByRole("heading", { name: "Changes" })).toBeTruthy();
+    expect(r.queryByRole("button", { name: /Open Pull Request/ })).toBeNull();
+    const dispatchButton = r.getByRole("button", { name: "Dispatch Round" });
+    expect(dispatchButton.hasAttribute("disabled")).toBe(false);
+    await r.user.click(dispatchButton);
+    expect(onDispatch).toHaveBeenCalledOnce();
+
+    // The draft was never discarded: draining the ask returns the same submission, byte for
+    // byte, rather than an empty surface waiting to recompose.
+    act(() => store().reviewActions.unstageAsk("src/a.ts:5"));
+    expect(r.getByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
+    expect(r.getByText("Guards the boundary.")).toBeTruthy();
+    expect(r.getByText("main ← feat/retry · Draft")).toBeTruthy();
+  });
+
   it("stays on Changes with an unripe PR (no asks, not ready)", () => {
     const r = mount(<RoundsLanes review={review} pr={{ ...draftedPr, ready: false }} />);
     expect(r.getByText("Nothing staged yet.")).toBeTruthy();

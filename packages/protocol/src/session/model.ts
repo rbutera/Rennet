@@ -13,9 +13,9 @@ import {
 } from "../board";
 // Thread anchors cite code through the canonical CodeRef (delta/citations, B3 task 6.2).
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
-import type { CouncilEffort, CouncilModel } from "../domain";
+import type { CouncilEffort, CouncilHarnessId, CouncilModel } from "../domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
-import { LENS_KINDS } from "../manifests";
+import { LENS_KINDS, type LensKind } from "../manifests";
 import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
@@ -130,6 +130,166 @@ export const LensAbsenceReasonSchema = z.enum([
 ]);
 export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
 
+/**
+ * Which absence each lens may honestly settle with (#549). This is the admissibility
+ * half of the ONE canonical settlement domain — board / absence / failure, as
+ * `lensBoards` / `absentLenses` / `failedLenses` already model it. Nothing may
+ * introduce a second settlement model beside it.
+ *
+ * Sequence admits none: a review whose order board never arrived has nothing to read,
+ * so an absent Sequence is a failure and never a clean result. Noise's `no-noise` is a
+ * first-class SUCCESS — a change carrying no mechanical noise settled correctly, it did
+ * not fail — and Design's `no-material` is proven by grounded dismissal, not by an
+ * empty board.
+ */
+export const LENS_ADMISSIBLE_ABSENCES: Readonly<Record<LensKind, readonly LensAbsenceReason[]>> = {
+  design: ["no-material"],
+  sequence: [],
+  decisions: ["no-decisions"],
+  flagged: ["no-findings"],
+  noise: ["no-noise"],
+};
+
+/** True when `reason` is an absence `lens` may settle with as a success. */
+export function lensAdmitsAbsence(lens: LensKind, reason: LensAbsenceReason): boolean {
+  return LENS_ADMISSIBLE_ABSENCES[lens].includes(reason);
+}
+
+/**
+ * Whether a further attempt at a failed lens could plausibly succeed (#549). A drafting
+ * turn that emitted no board is `retryable` — the seat ran and produced nothing, which
+ * is exactly what a retry addresses; a seat that never produced a parseable board across
+ * its whole ladder has already spent those retries, so it is `terminal`.
+ */
+export const LensFailureClassificationSchema = z.enum(["retryable", "terminal"]);
+export type LensFailureClassification = z.infer<typeof LensFailureClassificationSchema>;
+
+/**
+ * The durable account beside a lens failure MESSAGE: which attempt produced it and
+ * whether another attempt could plausibly succeed. The message alone cannot say either,
+ * so a reader (and a restart) that has only the string has to guess "terminal" — which
+ * is what it did before this shape existed.
+ */
+export const LensFailureAccountSchema = z.object({
+  /** The seat attempt that failed; `0` is the initial drafting turn. */
+  attempt: z.number().int().nonnegative(),
+  classification: LensFailureClassificationSchema,
+});
+export type LensFailureAccount = z.infer<typeof LensFailureAccountSchema>;
+
+/**
+ * The generation-keyed cross-lens coverage state (#725 D4). Coverage is NOT a reveal
+ * barrier: core boards become visible as their lanes settle, and this state says
+ * explicitly where the cross-lens every-hunk assert stands beside them. `complete`
+ * carries the violation count the assert produced — coverage ANNOTATES the revealed
+ * boards; `compose.ts` returns violations without amending a board, so a revealed board
+ * is never rewritten by the state that lands after it.
+ */
+export const GenerationCoverageSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("pending") }),
+  z.object({ state: z.literal("complete"), violations: z.number().int().nonnegative() }),
+  z.object({ state: z.literal("failed"), reason: z.string().min(1) }),
+]);
+export type GenerationCoverage = z.infer<typeof GenerationCoverageSchema>;
+
+/**
+ * The phases one generation is measured in (#725 D4, and the spine #726's benchmark
+ * records ride). Each is a REAL boundary in the drafting runtime, so no label can absorb
+ * another phase's time: `report` is the whole report gate and `report-classification` the
+ * provider turn inside it (the gate also builds and measures the evidence manifest,
+ * resolves the seat and verifies the result deterministically), the three `lens-*`
+ * phases split one lane's provider drafting from its repair ladder and from the
+ * deterministic work between the ladder and the accepted write, `coverage` is the
+ * cross-lens assert, `reveal` is the window in which settled lanes became visible, and
+ * `first-core-board` is measured from the round's own start to the first core lane's
+ * arrival — the latency the reviewer actually waits.
+ */
+export const GenerationPhaseSchema = z.enum([
+  "report",
+  // The classification TURN inside the report gate (#731 9.4). `report` is the whole
+  // gate — manifest build, seat resolution, turn, deterministic verification, write —
+  // and this is the provider turn alone, which is the only part of it a harness ran and
+  // therefore the only part that can name one.
+  "report-classification",
+  "lens-draft",
+  "lens-repair",
+  "lens-post-process",
+  "coverage",
+  "reveal",
+  "first-core-board",
+]);
+export type GenerationPhase = z.infer<typeof GenerationPhaseSchema>;
+
+const councilHarnessIds = ["claude-code", "codex"] as const satisfies readonly CouncilHarnessId[];
+
+/**
+ * The phases that measure ONE lane and therefore must name it. Everything else is
+ * generation-wide and must not: a `coverage` record carrying a lens would read as "the
+ * cross-lens assert for Design", which is not a thing that exists.
+ */
+export const LENS_SCOPED_PHASES = [
+  "lens-draft",
+  "lens-repair",
+  "lens-post-process",
+  "first-core-board",
+] as const satisfies readonly GenerationPhase[];
+
+/**
+ * One phase's durable timing record. `startedAtMs` is a wall-clock epoch so records from
+ * different phases can be ordered and overlapped without a shared cursor; `durationMs` is
+ * the measured span. `harness`/`model` name what ACTUALLY executed the stage (the Council
+ * routes per job, so a run-level label would be an assumption) and are absent for phases
+ * no provider ran.
+ *
+ * `lens` is DISCRIMINATED, not merely optional (#725 7.4): the four lane-scoped phases
+ * require it and the three generation-wide ones forbid it, so neither "a lane record that
+ * forgot which lane" nor "a cross-lens record attributed to one lens" is representable.
+ * This is a constraint on the RECORD, not a new field — a generation written before
+ * timings existed carries no `timings` at all and keeps parsing untouched.
+ */
+export const GenerationPhaseTimingSchema = z
+  .object({
+    phase: GenerationPhaseSchema,
+    lens: z.enum(LENS_KINDS).optional(),
+    startedAtMs: z.number().int().nonnegative(),
+    durationMs: z.number().int().nonnegative(),
+    harness: z.enum(councilHarnessIds).optional(),
+    model: z.string().min(1).optional(),
+  })
+  .superRefine((timing, ctx) => {
+    const laneScoped = (LENS_SCOPED_PHASES as readonly GenerationPhase[]).includes(timing.phase);
+    if (laneScoped && timing.lens === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lens"],
+        message: `the ${timing.phase} phase measures one lane and must name its lens`,
+      });
+    }
+    if (!laneScoped && timing.lens !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lens"],
+        message: `the ${timing.phase} phase is generation-wide and must not name a lens`,
+      });
+    }
+  });
+export type GenerationPhaseTiming = z.infer<typeof GenerationPhaseTimingSchema>;
+
+/** The timing-record schema version. Bump when a record's MEANING changes; adding an
+ *  optional field does not, since every reader already tolerates its absence. */
+export const GENERATION_TIMINGS_VERSION = 1;
+
+/**
+ * A generation's durable per-phase timings. Versioned from day one so a later reader can
+ * tell a v1 record from a v2 one instead of guessing from which fields happen to be
+ * present.
+ */
+export const GenerationTimingsSchema = z.object({
+  version: z.literal(GENERATION_TIMINGS_VERSION),
+  phases: z.array(GenerationPhaseTimingSchema),
+});
+export type GenerationTimings = z.infer<typeof GenerationTimingsSchema>;
+
 export const GenerationSchema = z.object({
   id,
   patchsetId: id,
@@ -144,10 +304,20 @@ export const GenerationSchema = z.object({
   draftingReportBoardId: id.optional(),
   /** Successful per-lens absences, distinct from a board that has not arrived yet. */
   absentLenses: z.partialRecord(z.enum(LENS_KINDS), LensAbsenceReasonSchema).optional(),
-  /** Terminal failures from the most recent drafting attempt, in the drafter's own words. */
+  /** Failures from the most recent drafting attempt, in the drafter's own words. */
   failedLenses: z.partialRecord(z.enum(LENS_KINDS), z.string().min(1)).optional(),
+  /** The typed account for each `failedLenses` entry that could name one (#549). APPEND-ONLY
+   * beside the message: sessions written before this field carry the string alone and must
+   * keep parsing, so nothing may move the message into here or require this to be present. */
+  failedLensAccounts: z.partialRecord(z.enum(LENS_KINDS), LensFailureAccountSchema).optional(),
   /** The orchestrator-authored composition board (L3), once composed. */
   compositionBoardId: id.optional(),
+  /** The cross-lens coverage state for THIS generation (#725 D4). APPEND-ONLY beside the
+   *  lens settlements: generations written before this field carry none, and absent means
+   *  "no coverage state was recorded", never "coverage passed". */
+  coverage: GenerationCoverageSchema.optional(),
+  /** Per-phase durable timings for this generation (#725 D4). Append-only and versioned. */
+  timings: GenerationTimingsSchema.optional(),
   status: z.enum(["live", "frozen"]),
 });
 export type Generation = z.infer<typeof GenerationSchema>;
@@ -1194,6 +1364,18 @@ const failedCommits = z.object({
 });
 
 const draftingReport = z.object({ status: z.literal("drafting") });
+/**
+ * The report has been drafted, read back and durably HANDED OFF (#728) — the boundary
+ * after which the lens drafters run. The durable operation stays in `report-drafting`
+ * across that fan-out because it has no separate phase for it, so without this the surface
+ * reported the entire lens fan-out as "drafting the round report" (#725 7.4): a running
+ * label naming a phase that had already finished, absorbing every lens lane's time.
+ */
+const handedOffReport = z.object({
+  status: z.literal("handed-off"),
+  reportBoardId: id,
+  generation: id,
+});
 const verifyingReport = z.union([
   z.object({
     status: z.literal("verifying"),
@@ -1305,7 +1487,7 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     worker: settledWorker,
     gate: settledGate,
     commits: settledCommits,
-    report: draftingReport,
+    report: z.union([draftingReport, handedOffReport]),
   }),
   z.object({
     phase: z.literal("report-verifying"),
@@ -1527,7 +1709,16 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         worker: doneWorkerProgress(state.worker),
         gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
-        report: { status: "drafting" },
+        // The durable handoff is the report's own finish line (#728). Once it exists the
+        // seats that are actually running are the lens drafters, and the surface says so.
+        report:
+          state.report.handoff === undefined
+            ? { status: "drafting" }
+            : {
+                status: "handed-off",
+                reportBoardId: state.report.reportBoardId,
+                generation: state.report.generation,
+              },
       };
     case "report-verifying":
       return {
@@ -1751,6 +1942,9 @@ export const SessionPreparationSchema = z.discriminatedUnion("status", [
     status: z.literal("drafting"),
     reviewId: id,
     lanes: z.array(LensLaneSchema),
+    /** The initial generation's cross-lens coverage state (#725 D4) — the same explicit
+     *  state the post-round reveal carries, so both generation kinds say the same thing. */
+    coverage: GenerationCoverageSchema.optional(),
   }),
   z.object({
     status: z.literal("failed"),
@@ -1758,6 +1952,7 @@ export const SessionPreparationSchema = z.discriminatedUnion("status", [
     reason: z.string().min(1),
     reviewId: id.optional(),
     lanes: z.array(LensLaneSchema).optional(),
+    coverage: GenerationCoverageSchema.optional(),
   }),
   z.object({
     status: z.literal("cancelled"),
@@ -1878,6 +2073,10 @@ const ScopedRoundReportEventSchema = z.object({
 const LegacyRoundLensEventSchema = z.object({
   type: z.literal("lens"),
   lanes: z.array(LensLaneSchema),
+  /** The generation's cross-lens coverage state at this snapshot (#725 D4). Rides the
+   *  lane snapshot rather than a sixth event type: one frame, one fold, and a reveal
+   *  that can never show lanes and coverage from two different moments. */
+  coverage: GenerationCoverageSchema.optional(),
   operationId: z.never().optional(),
   operationRevision: z.never().optional(),
   seq,
@@ -1886,6 +2085,7 @@ const LegacyRoundLensEventSchema = z.object({
 const ScopedRoundLensEventSchema = z.object({
   type: z.literal("lens"),
   lanes: z.array(LensLaneSchema),
+  coverage: GenerationCoverageSchema.optional(),
   operationId: id,
   operationRevision: z.number().int().nonnegative(),
   seq,

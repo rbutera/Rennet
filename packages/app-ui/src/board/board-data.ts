@@ -3,6 +3,7 @@ import {
   type LensAbsenceReason,
   type LensBoard,
   LensBoardSchema,
+  type LensFailureAccount,
   type LensKind,
 } from "@rennet/protocol";
 import { useCommand } from "../data";
@@ -53,7 +54,13 @@ export type BoardInvalidReason = "shape" | "identity" | "excluded-kind" | "unrea
 export type BoardResolution =
   | { readonly status: "valid"; readonly board: LensBoard }
   | { readonly status: "absent"; readonly reason: LensAbsenceReason }
-  | { readonly status: "failed"; readonly reason: string }
+  | {
+      readonly status: "failed";
+      readonly reason: string;
+      /** The typed account when the host recorded one; absent means the classification
+       *  is unknown, which is NOT the same as terminal. */
+      readonly account?: LensFailureAccount;
+    }
   | { readonly status: "missing" }
   | { readonly status: "pending" }
   | { readonly status: "invalid"; readonly reason: BoardInvalidReason; readonly detail: unknown };
@@ -88,7 +95,12 @@ export function resolveBoard(raw: unknown, expected: BoardIdentity): BoardResolu
  *  through {@link resolveBoard} so shape and identity are still proven client-side. */
 function resolveRead(
   result: {
-    data?: { board: LensBoard | null; absence?: LensAbsenceReason; failure?: string };
+    data?: {
+      board: LensBoard | null;
+      absence?: LensAbsenceReason;
+      failure?: string;
+      failureAccount?: LensFailureAccount;
+    };
     error: unknown;
     pending: boolean;
   },
@@ -102,7 +114,12 @@ function resolveRead(
     return { status: "absent", reason: result.data.absence };
   }
   if (result.data?.board == null && result.data?.failure !== undefined) {
-    return { status: "failed", reason: result.data.failure };
+    const account = result.data.failureAccount;
+    return {
+      status: "failed",
+      reason: result.data.failure,
+      ...(account === undefined ? {} : { account }),
+    };
   }
   return resolveBoard(result.data?.board, expected);
 }

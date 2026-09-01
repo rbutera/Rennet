@@ -50,6 +50,7 @@ import type {
   SettingsView,
   ThemePack,
 } from "@rennet/protocol";
+import { benchmarkRecordingEnabled } from "@rennet/protocol";
 
 /**
  * The settings surface's composition (wireframe #15), extracted from the Electron
@@ -345,6 +346,12 @@ export interface SettingsComposition {
    * what skip/dismiss/replay persisted.
    */
   setCoachmarks(input: CoachMarks): CoachMarks;
+  /**
+   * Turn benchmark recording on or off (#731). A plain client-settings write, refused
+   * (throws) on a malformed file exactly as `setCoachmarks`. Returns the RESOLVED state
+   * after the write, so the surface adopts the resolver's own answer.
+   */
+  setBenchmarkRecording(enabled: boolean): boolean;
   /**
    * The model-council review-role mappings (C16, #485): the eight roles resolved
    * across `dual`/`claudeOnly`/`codexOnly`, layering the viewer's persisted
@@ -868,6 +875,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         // assignment tables are static, so the eight roles ride every read even
         // with no override stored — the Review section is never a blank.
         reviewRoles: resolveReviewRoleView(),
+        // Benchmark recording (#731), RESOLVED — an absent slice is the default-on
+        // install, and resolving here keeps that default in one place.
+        benchmarkRecording: benchmarkRecordingEnabled(schemeState.config),
       };
     },
 
@@ -1108,6 +1118,20 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // no ceremony (Rule Zero). Returns the stored slice so a reload reads it back.
       const written = deps.updateGlobal((current) => ({ ...current, coachmarks: input }));
       return written.coachmarks ?? { seen: [], skipAll: false };
+    },
+
+    setBenchmarkRecording: (enabled: boolean): boolean => {
+      // A plain write, first click, no confirmation (Rule Zero) — this is observability
+      // configuration and turning it off changes nothing about how a review runs.
+      // `updateGlobal` REFUSES (throws) on a malformed file (Rule 75). The slice is
+      // written EXPLICITLY in both directions rather than deleted when true, so a
+      // reviewer who deliberately re-enabled it reads back their own decision instead of
+      // an absence that merely happens to resolve the same way today.
+      const written = deps.updateGlobal((current) => ({
+        ...current,
+        benchmarks: { record: enabled },
+      }));
+      return benchmarkRecordingEnabled(written);
     },
 
     reviewRoles: resolveReviewRoleView,

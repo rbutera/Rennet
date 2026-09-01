@@ -22,11 +22,12 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getClaudeHarness call (no host-default)", () => {
     const calls = callArgs("getClaudeHarness");
-    // Exactly the direct read-pipeline sites and the shared claudeAdapterForRepo
-    // resolver used by handoff turns (the contextAsk/knowledge sites died with the
-    // context map). Exact, not `>=`: a new host-default site added later must fail
-    // this, not slip under a floor.
-    expect(calls).toHaveLength(4);
+    // ONE site: `claudeAdapterForRepo`. The direct read-pipeline sites (flagged, noise,
+    // coverage) were folded into that single resolver with the #681 residue, so there is
+    // now exactly one Claude harness construction and one place a host default could
+    // creep back in. Exact, not `>=`: a new host-default site added later must fail this,
+    // not slip under a floor.
+    expect(calls).toHaveLength(1);
     for (const arg of calls) {
       // Every call threads the repo-resolved `locus` variable — never `HOST_LOCUS`,
       // never a zero-arg host default.
@@ -51,8 +52,39 @@ describe("locus threading in MAIN", () => {
     expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(3);
   });
 
-  it("threads the locus through the read-pipeline via locusContextForRepo", () => {
-    // The one-line adoption pattern every host-defaulting review site now uses.
+  // The CONSUMER half, restored (#681 residue / C14 D3). Folding the three read-pipeline
+  // Claude constructions into `claudeAdapterForRepo` moved the risk one layer out: the
+  // `getClaudeHarness` guard above now only proves the RESOLVER threads a locus, and
+  // would stay green while a consumer handed that resolver the wrong repository — which
+  // is precisely the workspace→repo mapping defect class (many repos, one project id).
+  // So enumerate the consumers as well. Every call must pass a repository root its own
+  // caller was given: the review's `review.repositoryRoot`, or the `repoRoot` the turn
+  // was addressed with. A project path, a workspace path, or a host default reddens this.
+  it("passes a caller-owned repository root into every claudeAdapterForRepo consumer", () => {
+    const calls = callArgs("claudeAdapterForRepo");
+    // Exact, not `>=`. FIVE consumers: the flagged runner, the coverage seat (#681), the
+    // noise runner — all three on `review.repositoryRoot` — plus the coding-round handoff
+    // turn and the review-ask run port, which receive `repoRoot` as a parameter. Bare
+    // references (`resolveClaudePort: claudeAdapterForRepo`) are not calls and do not
+    // match; they hand the function on, and the site that CALLS it is counted here.
+    expect(calls).toHaveLength(5);
+    expect(calls.filter((arg) => arg === "review.repositoryRoot")).toHaveLength(3);
+    for (const arg of calls) {
+      expect(
+        ["review.repositoryRoot", "repoRoot"],
+        `claudeAdapterForRepo(${arg}) must pass a caller-owned repository root`,
+      ).toContain(arg);
+    }
+  });
+
+  it("derives the flagged runner's Codex locus from the review's own repository root", () => {
+    // NOT the Claude read-pipeline adoption pattern any more — the Claude sites went
+    // through `claudeAdapterForRepo` (enumerated above), and the surviving
+    // `locusContextForRepo(review.repositoryRoot)` call is the flagged runner deriving
+    // the locus it hands `getCodexResolution`. What this CANNOT catch: it is a substring
+    // check, so it proves the call exists, not that the flagged runner is the only reader
+    // or that no second site resolves a locus from something else. The two enumerations
+    // above are the load-bearing guards; this pins the one remaining direct read.
     expect(source).toContain("locusContextForRepo(review.repositoryRoot)");
   });
 });

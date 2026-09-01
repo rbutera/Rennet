@@ -13,6 +13,7 @@ import {
   mergeRoundEvents,
   type RoundEvent,
   type RoundPhase,
+  type RoundState,
   runNavigation,
   runProgressFraction,
 } from "./round-machine";
@@ -46,6 +47,7 @@ function operationEvent(
     readonly seq?: number;
     readonly draining?: boolean;
     readonly rerunRequested?: boolean;
+    readonly roundNumber?: number;
   },
 ): Extract<RoundEvent, { type: "operation" }> {
   return {
@@ -54,6 +56,7 @@ function operationEvent(
       ...OPERATION_BASE,
       operationId: options?.operationId ?? OPERATION_BASE.operationId,
       createdAt: options?.createdAt ?? OPERATION_BASE.createdAt,
+      roundNumber: options?.roundNumber ?? OPERATION_BASE.roundNumber,
       revision,
       ...(options?.draining === undefined ? {} : { draining: options.draining }),
       ...(options?.rerunRequested === undefined ? {} : { rerunRequested: options.rerunRequested }),
@@ -339,6 +342,124 @@ describe("round-machine — the pure run state machine", () => {
       lanes: lens.lanes,
     });
     expect(canRevealNewBoards(state)).toBe(false);
+  });
+
+  it("stops labelling the round report as running once the lens fan-out starts", () => {
+    const drafting = operationEvent(4, {
+      phase: "report-drafting",
+      workspace: WORKSPACE,
+      worker: WORKER,
+      gate: GATE,
+      commits: { status: "done", count: 2 },
+      report: { status: "drafting" },
+    });
+    const draftingState = advance(initialRoundState, drafting);
+    const runningReportRow = "tail" in draftingState ? draftingState.tail.at(-1) : undefined;
+    // While the report seat really is running, the row says so.
+    expect(runningReportRow).toEqual({
+      id: "report",
+      label: "Drafting the round report",
+      status: "running",
+    });
+
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 4,
+      reportBoardId: "report-9",
+      report: { ...reportBoardFixture, boardId: "report-9" },
+    } satisfies RoundEvent;
+    const reporting = advance(draftingState, report);
+    // #725 7.4 — the report has been handed off; the phase that is now RUNNING is the lens
+    // fan-out, so the report's own row must settle rather than keep spinning over it.
+    const settledReportRow = "tail" in reporting ? reporting.tail.at(-1) : undefined;
+    expect(settledReportRow?.status).toBe("done");
+    expect(settledReportRow?.label).toBe("Drafted the round report");
+
+    const lens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 4,
+      lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+      coverage: { state: "pending" },
+    } satisfies RoundEvent;
+    const composing = advance(reporting, lens);
+    expect(composing.phase).toBe("composing");
+    expect("tail" in composing ? composing.tail.at(-1)?.status : undefined).toBe("done");
+  });
+
+  it("lands a client reconnecting mid-fan-out on the lens phase, not on the report's", () => {
+    // The durable operation has no phase of its own for the lens fan-out and stays in
+    // `report-drafting` throughout it. The handoff is what tells the two apart.
+    const handedOff = operationEvent(5, {
+      phase: "report-drafting",
+      workspace: WORKSPACE,
+      worker: WORKER,
+      gate: GATE,
+      commits: { status: "done", count: 2 },
+      report: { status: "handed-off", reportBoardId: "report-9", generation: "gen-9" },
+    });
+    const state = advance(initialRoundState, handedOff);
+    expect(state.phase).toBe("reporting");
+    expect("tail" in state ? state.tail.at(-1) : undefined).toMatchObject({
+      id: "report",
+      status: "done",
+    });
+    // …and the lens frame it receives next opens the regeneration block with its coverage.
+    const composing = advance(state, {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 5,
+      lanes: [{ id: "noise", label: "Noise", status: "drafted" }],
+      coverage: { state: "pending" },
+    });
+    expect(composing).toMatchObject({ phase: "composing", coverage: { state: "pending" } });
+  });
+
+  it("keeps the last honest coverage state when a later lens frame carries none", () => {
+    const reporting = advance(
+      advance(
+        initialRoundState,
+        operationEvent(6, {
+          phase: "report-drafting",
+          workspace: WORKSPACE,
+          worker: WORKER,
+          gate: GATE,
+          commits: { status: "done", count: 2 },
+          report: { status: "handed-off", reportBoardId: "report-9", generation: "gen-9" },
+        }),
+      ),
+      {
+        type: "lens",
+        operationId: OPERATION_BASE.operationId,
+        operationRevision: 6,
+        lanes: [{ id: "noise", label: "Noise", status: "drafted" }],
+        coverage: { state: "complete", violations: 2 },
+      },
+    );
+    expect(reporting).toMatchObject({ coverage: { state: "complete", violations: 2 } });
+    // A frame from a daemon that reports no coverage must not silently revert the surface
+    // to "no coverage reported" — an absent field is unknown, never a retraction.
+    const next = advance(reporting, {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 6,
+      lanes: [{ id: "noise", label: "Noise", status: "done", verdict: "reworked" }],
+    });
+    expect(next).toMatchObject({ coverage: { state: "complete", violations: 2 } });
+
+    // …but a frame that DOES carry a state replaces it, including a step "backwards" to
+    // pending. That is the restart redraft (#725 7.2): the daemon clears the replaced
+    // attempt's coverage and the first running-lane frame says pending, so the keep-last
+    // rule above must not be the thing that pins a stale completion on the screen.
+    const redrafting = advance(next, {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 6,
+      lanes: [{ id: "noise", label: "Noise", status: "queued" }],
+      coverage: { state: "pending" },
+    });
+    expect(redrafting).toMatchObject({ coverage: { state: "pending" } });
   });
 
   it("keeps a readable report attached when the same durable operation later fails", () => {
@@ -943,5 +1064,166 @@ describe("round-machine — the pure run state machine", () => {
 
     expect(queued.phase).toBe("dispatching");
     expect(runNavigation(queued, SLUG)).toBeNull();
+  });
+});
+
+// C14 §8 / D7 — the CLIENT half of the unbounded-loop proof. The server machine test
+// (`packages/server/src/round-loop-unbounded.test.ts`) proves dispatch never caps; this
+// proves the run machine the reviewer actually watches carries no ordinal branch either.
+//
+// The interesting part is that state is NOT reset between rounds: round k's terminal
+// `composed` is the state round k+1's first snapshot arrives into, so supersession
+// (`isNewerOperation`) is exercised at every depth rather than only at depth 1. An ordinal
+// branch — a "round two is different" arm, a cap that stops superseding — shows up as a
+// differing phase SEQUENCE, not a differing set.
+
+/** One durable round's full progress, as the daemon projects it. */
+function roundLifecycle(ordinal: number): readonly Extract<RoundEvent, { type: "operation" }>[] {
+  // The ordinal travels on the snapshot exactly as the daemon sends it, so a branch on
+  // `roundNumber` — the one field that carries depth into the client — is reachable here.
+  const identity = {
+    operationId: `operation-${ordinal}`,
+    createdAt: 1_000 * ordinal,
+    roundNumber: ordinal,
+  };
+  const settledPrefix = { workspace: WORKSPACE, worker: WORKER, gate: GATE } as const;
+  const commits = { status: "done", count: 2 } as const;
+  return [
+    operationEvent(0, { phase: "claimed" }, identity),
+    operationEvent(1, { phase: "prepared", workspace: WORKSPACE }, identity),
+    operationEvent(
+      2,
+      { phase: "worker-running", workspace: WORKSPACE, worker: { status: "running" } },
+      identity,
+    ),
+    operationEvent(
+      3,
+      {
+        phase: "gate-running",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: { status: "running" },
+      },
+      identity,
+    ),
+    operationEvent(
+      4,
+      { phase: "committing", ...settledPrefix, commits: { status: "running" } },
+      identity,
+    ),
+    operationEvent(
+      5,
+      { phase: "report-drafting", ...settledPrefix, commits, report: { status: "drafting" } },
+      identity,
+    ),
+    operationEvent(
+      6,
+      {
+        phase: "report-verifying",
+        ...settledPrefix,
+        commits,
+        report: {
+          status: "verifying",
+          reportBoardId: `report-${ordinal}`,
+          generation: `generation-${ordinal}`,
+        },
+      },
+      identity,
+    ),
+    operationEvent(
+      7,
+      {
+        phase: "completed",
+        ...settledPrefix,
+        commits,
+        result: {
+          kind: "changed",
+          report: {
+            status: "verified",
+            reportBoardId: `report-${ordinal}`,
+            generation: `generation-${ordinal}`,
+          },
+        },
+      },
+      identity,
+    ),
+  ];
+}
+
+/** The phase sequence one round produces. Identical for every round, at any depth. */
+const EXPECTED_ROUND_PHASES: readonly RoundPhase[] = [
+  "dispatching",
+  "preparing",
+  "working",
+  "gating",
+  "committing",
+  "drafting-report",
+  // `report-verifying` carrying a report identity is the run view's `verifying`, not the
+  // identity-less `verifying-report` — the phase names differ by what the daemon projected.
+  "verifying",
+  "composed",
+];
+
+function walkRounds(
+  rounds: number,
+  reduce: (state: RoundState, event: RoundEvent) => RoundState = advance,
+): readonly (readonly RoundPhase[])[] {
+  let state = initialRoundState;
+  const perRound: RoundPhase[][] = [];
+  for (let ordinal = 1; ordinal <= rounds; ordinal += 1) {
+    const phases: RoundPhase[] = [];
+    for (const event of roundLifecycle(ordinal)) {
+      state = reduce(state, event);
+      phases.push(state.phase);
+    }
+    perRound.push(phases);
+  }
+  return perRound;
+}
+
+describe("round-machine — arbitrary depth holds by construction (C14 §8, D7)", () => {
+  for (const rounds of [1, 2, 3, 5, 8]) {
+    it(`walks ${rounds} rounds back to back with the same phase sequence each time`, () => {
+      const perRound = walkRounds(rounds);
+
+      expect(perRound).toHaveLength(rounds);
+      for (const [index, phases] of perRound.entries()) {
+        // ORDERED. A set of phases is satisfied by a machine that visits them out of order
+        // or stalls and recovers; the sequence is not.
+        expect(phases, `round ${index + 1}`).toEqual(EXPECTED_ROUND_PHASES);
+      }
+    });
+  }
+
+  it("the eighth round's terminal state names its OWN generation, not the first's", () => {
+    let state: RoundState = initialRoundState;
+    const generations: string[] = [];
+    for (let ordinal = 1; ordinal <= 8; ordinal += 1) {
+      state = roundLifecycle(ordinal).reduce(advance, state);
+      generations.push("newGeneration" in state ? (state.newGeneration ?? "") : "");
+    }
+
+    expect(generations).toEqual(Array.from({ length: 8 }, (_, index) => `generation-${index + 1}`));
+    expect(state.phase).toBe("composed");
+  });
+
+  it("POSITIVE CONTROL: a machine that stops superseding after two rounds fails the walk", () => {
+    // The client-side shape of the same defect: the reducer refuses a third operation, so
+    // round three never leaves round two's terminal state. Rounds 1 and 2 stay identical to
+    // a healthy loop — which is exactly why three rounds cannot prove the class.
+    let landed = 0;
+    const capped = (state: RoundState, event: RoundEvent): RoundState => {
+      if (event.type === "operation" && event.snapshot.state.phase === "claimed") landed += 1;
+      return landed > 2 ? state : advance(state, event);
+    };
+    const perRound = walkRounds(4, capped);
+
+    expect(perRound[0]).toEqual(EXPECTED_ROUND_PHASES);
+    expect(perRound[1]).toEqual(EXPECTED_ROUND_PHASES);
+    expect(perRound[2]).not.toEqual(EXPECTED_ROUND_PHASES);
+    expect(perRound[3]).not.toEqual(EXPECTED_ROUND_PHASES);
+    // …and the same walk over the real reducer passes, so the assertion discriminates
+    // rather than merely being strict.
+    for (const phases of walkRounds(4)) expect(phases).toEqual(EXPECTED_ROUND_PHASES);
   });
 });

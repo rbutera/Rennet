@@ -425,6 +425,10 @@ export interface BoardRegenerationInput {
   };
   /** Operation-scoped report verifier, passed through to the runtime's pre-commit seam. */
   readonly verifyDraftedReport?: RoundInput["verifyDraftedReport"];
+  /** When the reviewer's wait for a board began — the captured input becoming ready on an
+   *  initial generation, the round landing on a returned one. Only the caller knows it;
+   *  see {@link RoundInput.firstBoardWaitOriginMs}. */
+  readonly firstBoardWaitOriginMs?: number;
   /** Cancels model-backed lens work for an initial preparation or an owning operation. */
   readonly signal?: AbortSignal;
 }
@@ -555,6 +559,9 @@ export async function runBoardRegeneration(
         ...(input.verifyDraftedReport === undefined
           ? {}
           : { verifyDraftedReport: input.verifyDraftedReport }),
+        ...(input.firstBoardWaitOriginMs === undefined
+          ? {}
+          : { firstBoardWaitOriginMs: input.firstBoardWaitOriginMs }),
         ...(snapshotSource.revision === undefined
           ? {}
           : { projectContextRevision: snapshotSource.revision }),

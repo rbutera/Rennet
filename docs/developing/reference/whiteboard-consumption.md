@@ -131,7 +131,9 @@ append twice.
 
 The board service's element state is a projection of an append-only attributed
 event log. Rennet persists that log through a `FileBoardStore` rooted at
-`.rennet/boards/` under the review project, local and ignored by default. Each
+`.rennet/boards/` under the review project — local, and capture and freshness
+exclude it through the shared app-owned-paths authority rather than through an
+ignore rule, so writing a board never invalidates the review it belongs to. Each
 board is a `schema.json` written once at creation plus an append-only `log.jsonl`
 with contiguous sequence numbers. Restart is replay: a fresh process over the
 same directory serves the identical element state. See
@@ -149,10 +151,13 @@ is the generation's `absentLenses` map. `board.read` pairs `board: null` with th
 `no-material` code for that case, keeping it distinct from a board that has not
 arrived yet.
 
-A drafter that terminally fails also has no board row. The generation records the
-reason in `failedLenses`, and `board.read` pairs `board: null` with that exact
-failure. This is restart-safe: an all-lens failure cannot fall back to an eternal
-“no board yet” after the process that saw the harness errors exits.
+A drafter that fails also has no board row. The generation records the reason in
+`failedLenses` and, when the failing path named one, its typed account in
+`failedLensAccounts`; `board.read` pairs `board: null` with that exact failure and
+account. This is restart-safe in both halves: an all-lens failure cannot fall back
+to an eternal “no board yet” after the process that saw the harness errors exits,
+and a restored failure carries the classification the run determined instead of
+reading as terminal by default.
 
 ### Write and broadcast path
 

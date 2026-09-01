@@ -32,7 +32,11 @@ export function boardHandlers(rt: DispatchRuntime) {
       return parseCommandOutput(name, {
         board,
         ...(absence === undefined ? {} : { absence }),
-        ...(failure === undefined ? {} : { failure }),
+        ...(failure === undefined ? {} : { failure: failure.message }),
+        // The classification travels with the message (#549). Without it the client can
+        // only assume terminal, which is what it used to do for a lens whose seat simply
+        // did not emit — a lens another attempt could still draft.
+        ...(failure?.account === undefined ? {} : { failureAccount: failure.account }),
       });
     },
   } satisfies Record<string, CommandHandler>;

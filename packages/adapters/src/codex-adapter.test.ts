@@ -105,6 +105,43 @@ describe("CodexAdapter", () => {
     expect(events[0]?.native).toEqual(STARTED);
   });
 
+  it("rejects an over-cap raw response before parsing it (#727)", async () => {
+    const structured = { note: "é".repeat(20) };
+    const raw = JSON.stringify(structured);
+    const bytes = new TextEncoder().encode(raw).length;
+    expect(bytes).toBeGreaterThan(raw.length);
+
+    const atCap = await adapter(
+      fakeTransport([STARTED, completed("completed", { finalMessage: raw })]).fn,
+    ).createSession({
+      cwd: "/repo",
+      outputSchema: { type: "object" },
+      outputByteCap: bytes,
+    });
+    await atCap.send({ prompt: "go" });
+    const passed = await drain(atCap);
+    expect(passed.outcome?.status).toBe("completed");
+    expect(
+      passed.outcome?.status === "completed" ? passed.outcome.structuredOutput : undefined,
+    ).toEqual(structured);
+
+    const overCap = await adapter(
+      fakeTransport([STARTED, completed("completed", { finalMessage: raw })]).fn,
+    ).createSession({
+      cwd: "/repo",
+      outputSchema: { type: "object" },
+      outputByteCap: bytes - 1,
+    });
+    await overCap.send({ prompt: "go" });
+    const rejected = await drain(overCap);
+    expect(rejected.outcome?.status).toBe("failed");
+    expect(rejected.outcome?.status === "failed" ? rejected.outcome.error.message : "").toContain(
+      "output cap",
+    );
+    // The raw message is never parsed, so no decoded value exists to surface.
+    expect(JSON.stringify(rejected.events)).not.toContain('"structuredOutput"');
+  });
+
   it("surfaces an unmodelled frame as passthrough with the raw native", async () => {
     const weird = { method: "model/rerouted", params: { to: "gpt-x" } };
     const t = fakeTransport([STARTED, weird, completed("completed")]);

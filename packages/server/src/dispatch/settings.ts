@@ -136,6 +136,29 @@ export function settingsHandlers(rt: DispatchRuntime) {
       }
       return parseCommandOutput(name, deps.settings.setCoachmarks(input));
     },
+    "settings.setBenchmarkRecording": async (rawInput) => {
+      const name = "settings.setBenchmarkRecording" as const;
+      // Observability configuration, not a gate (Rule Zero): the write lands on the
+      // first click and turning it off changes nothing about how a review runs. Client
+      // settings only, never a repo; the dep REFUSES (throws) on a malformed file.
+      // Absent dep ⇒ echo the request — there is nowhere to store it, and claiming a
+      // different state than the caller asked for would be the lie, not the honesty.
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(name, {
+        enabled: deps.settings?.setBenchmarkRecording(input.enabled) ?? input.enabled,
+      });
+    },
+    "benchmarks.list": async (rawInput) => {
+      const name = "benchmarks.list" as const;
+      // Read-only over the durable archive. Fail-safe: no recorder wired (or nothing
+      // recorded yet) reads as no runs, never a throw — an empty benchmarks panel is
+      // the honest answer for a fresh install.
+      const input = parseCommandInput(name, rawInput);
+      return parseCommandOutput(
+        name,
+        deps.listBenchmarks?.(input.limit ?? 200) ?? { runs: [], total: 0, skipped: [] },
+      );
+    },
     "settings.setRoleAssignment": async (rawInput) => {
       const name = "settings.setRoleAssignment" as const;
       // Personal, app-side (C16 #485): writes only the viewer's `routing.task`

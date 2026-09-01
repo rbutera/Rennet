@@ -95,6 +95,78 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
   });
 
+  it("stays legible and complete at six rounds — every row, in order, with its own report", async () => {
+    // C14 §8.3 / D7: round history must not degrade or truncate as rounds accumulate. Six
+    // rounds, each with its own run receipt and its own report board.
+    const baseRun = completedRoundRecord.run;
+    if (baseRun === undefined) throw new Error("completed round fixture is missing a run receipt");
+    // Each round's report carries its OWN visible text. Six identical reports would let every
+    // row open round 1's report and still satisfy "a report is showing".
+    const reportTitle = (ordinal: number) => `Round ${ordinal}: the refresh path`;
+    const records: RoundLedgerRecord[] = Array.from({ length: 6 }, (_, index) => {
+      const ordinal = index + 1;
+      const boardId = `report-round-${ordinal}`;
+      return {
+        ...completedRoundRecord,
+        reportBoard: boardId,
+        report: {
+          ...reportBoardFixture,
+          boardId,
+          document: {
+            ...reportBoardFixture.document,
+            title: reportTitle(ordinal),
+            introMarkdown: `What round ${ordinal} of the loop actually changed.`,
+          },
+        },
+        run: { ...baseRun, startedAt: Date.UTC(2026, 7, 20 + index, 9, 0) },
+      };
+    });
+    const source: RoundsSource = {
+      roundState: () => ({ phase: "absent" }),
+      roundRecords: () => records,
+      reportBoard: (id) => records.find((record) => record.reportBoard === id)?.report,
+    };
+    const { r } = renderWorkspace("/s/s-1?view=rounds", source);
+
+    // Ordered and COMPLETE: six rows, newest-first, none collapsed away or elided.
+    const rows = r.container.querySelectorAll('[data-testid="rounds-ledger-rows"] [data-round]');
+    expect([...rows].map((el) => el.getAttribute("data-round"))).toEqual([
+      "6",
+      "5",
+      "4",
+      "3",
+      "2",
+      "1",
+    ]);
+    // Each row carries ITS OWN run facts — the ordinal and the timestamp agree row by row,
+    // so a later round cannot be reading an earlier one's receipt.
+    expect([...rows].map((el) => el.querySelector("time")?.getAttribute("dateTime"))).toEqual([
+      "2026-08-25T09:00:00.000Z",
+      "2026-08-24T09:00:00.000Z",
+      "2026-08-23T09:00:00.000Z",
+      "2026-08-22T09:00:00.000Z",
+      "2026-08-21T09:00:00.000Z",
+      "2026-08-20T09:00:00.000Z",
+    ]);
+    // EVERY round — oldest to newest, six deep — opens ITS OWN report: the rendered board is
+    // the clicked round's, and the only round title on the surface is that round's. "A report
+    // is showing" would pass with all six rows opening round 1.
+    for (const ordinal of [6, 5, 4, 3, 2, 1]) {
+      await r.user.click(r.container.querySelector(`[data-round="${ordinal}"]`) as HTMLElement);
+      expect(
+        r.container.querySelector(`[data-round="${ordinal}"]`)?.getAttribute("aria-current"),
+      ).toBe("true");
+      const report = r.container.querySelector('[data-kind="round-report"]');
+      expect(report).not.toBeNull();
+      expect(report?.getAttribute("data-board-id")).toBe(`report-round-${ordinal}`);
+      const shown = [1, 2, 3, 4, 5, 6]
+        .map(reportTitle)
+        .filter((title) => report?.textContent?.includes(title));
+      expect(shown).toEqual([reportTitle(ordinal)]);
+      expect(report?.textContent).toContain(`What round ${ordinal} of the loop actually changed.`);
+    }
+  });
+
   it("summarises rows from immutable run facts and each exact report, never ask count", () => {
     const untouchedReport = {
       ...reportBoardFixture,

@@ -1,5 +1,9 @@
 import type { GenerateOptions, GenerateResult } from "@rennet/adapters";
-import type { ProjectProcessEvent, ProjectScoutQuestionnaire } from "@rennet/protocol";
+import type {
+  BenchmarkRun,
+  ProjectProcessEvent,
+  ProjectScoutQuestionnaire,
+} from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   createProcessProject,
@@ -367,5 +371,280 @@ describe("createProcessProject — the initial context dump wiring", () => {
         (event) => event.kind === "step" && event.phase === "scout" && event.step === "returned",
       ),
     ).toHaveLength(1);
+  });
+});
+
+describe("Repo Map benchmark stages (#731 9.2)", () => {
+  /** A clock that advances a fixed step per read, so a stage's duration is the number of
+   *  boundaries crossed inside it — deterministic, and readable in the assertion. */
+  function steppedClock(step: number): () => number {
+    let value = 1_000_000;
+    return () => {
+      value += step;
+      return value;
+    };
+  }
+
+  it("records one stage per real build boundary, plus the scout and the end-to-end total", async () => {
+    const recorded: BenchmarkRun[] = [];
+    const run = createProcessProject({
+      generate: async (_repoRoot, options) => {
+        // The generator's REAL progress shape: each stage announced, then re-announced
+        // with its detail. Two events, one stage — a timer that treated the re-announce
+        // as a new stage would halve every duration it reports.
+        for (const stage of ["resolve", "tree", "workspace", "conventions", "symbols"] as const) {
+          options.onProgress?.({ stage, note: stage });
+          options.onProgress?.({ stage, note: stage, detail: "d" });
+        }
+        options.onProgress?.({ stage: "build", note: "build" });
+        options.onProgress?.({ stage: "verify", note: "verify" });
+        options.onProgress?.({ stage: "store", note: "store" });
+        return {
+          manifest: { baseRef: "trunk", baseOid: "oid-benchmark" },
+          reusedSymbolShards: 0,
+          extractedSymbolShards: 0,
+          reusedReferenceShards: 0,
+          extractedReferenceShards: 0,
+          fileCount: 3,
+          scopeCount: 1,
+          symbolCount: 2,
+          referenceCount: 4,
+        } as GenerateResult;
+      },
+      listProjects: () => [project()],
+      runScout: async () => QUESTIONNAIRE,
+      recordBenchmark: (entry) => recorded.push(entry),
+      now: steppedClock(10),
+    });
+    await run({ projectId: "p1" }, () => undefined);
+
+    expect(recorded).toHaveLength(1);
+    const entry = recorded[0];
+    expect(entry?.kind).toBe("repo-map");
+    expect(entry?.outcome).toBe("complete");
+    // Bound to the snapshot revision it built, so a number is always attributable.
+    expect(entry?.subject.revision).toBe("oid-benchmark");
+    expect(entry?.stages.map((stage) => stage.stage)).toEqual([
+      "scout",
+      "resolve",
+      "tree",
+      "workspace",
+      "conventions",
+      "symbols",
+      "build",
+      "verify",
+      "store",
+      "total",
+    ]);
+    // Deterministic end to end: no stage names a harness, because none ran one.
+    expect(entry?.stages.every((stage) => stage.harness === undefined)).toBe(true);
+    // The total starts where this repo's work started and SUMS this repo's own stages
+    // (#731 N6). It is not a wall-clock span, because the scout pass and the map pass are
+    // separated by every sibling repository's work — see the two-repo test below.
+    const total = entry?.stages.find((stage) => stage.stage === "total");
+    const scout = entry?.stages.find((stage) => stage.stage === "scout");
+    expect(total?.startedAtMs).toBe(scout?.startedAtMs);
+    expect(total?.durationMs).toBeGreaterThan(0);
+    const parts = (entry?.stages ?? [])
+      .filter((stage) => stage.stage !== "total")
+      .reduce((sum, stage) => sum + stage.durationMs, 0);
+    expect(total?.durationMs).toBe(parts);
+  });
+
+  it("archives a build that DIED as a failed run carrying the stages it reached", async () => {
+    const recorded: BenchmarkRun[] = [];
+    const run = createProcessProject({
+      generate: async (_repoRoot, options) => {
+        options.onProgress?.({ stage: "resolve", note: "resolve" });
+        options.onProgress?.({ stage: "tree", note: "tree" });
+        throw new Error("the tree walk fell over");
+      },
+      listProjects: () => [project()],
+      runScout: async () => QUESTIONNAIRE,
+      recordBenchmark: (entry) => recorded.push(entry),
+      now: steppedClock(10),
+    });
+    await run({ projectId: "p1" }, () => undefined);
+
+    expect(recorded[0]?.outcome).toBe("failed");
+    expect(recorded[0]?.failure).toBe("the tree walk fell over");
+    expect(recorded[0]?.stages.map((stage) => stage.stage)).toEqual([
+      "scout",
+      "resolve",
+      "tree",
+      "total",
+    ]);
+    // Nothing was built, so nothing claims a revision.
+    expect(recorded[0]?.subject.revision).toBeUndefined();
+  });
+
+  it("writes no record at all when no recorder is wired", async () => {
+    // The positive control for "recording off writes nothing": the same run, the same
+    // generator, only the recorder absent.
+    const run = createProcessProject({
+      generate: async (_repoRoot, options) => {
+        options.onProgress?.({ stage: "tree", note: "tree" });
+        return {
+          manifest: { baseRef: "trunk", baseOid: "oid-1" },
+          reusedSymbolShards: 0,
+          extractedSymbolShards: 0,
+          reusedReferenceShards: 0,
+          extractedReferenceShards: 0,
+          fileCount: 0,
+          scopeCount: 0,
+          symbolCount: 0,
+          referenceCount: 0,
+        } as GenerateResult;
+      },
+      listProjects: () => [project()],
+      runScout: async () => QUESTIONNAIRE,
+    });
+    const result = await run({ projectId: "p1" }, () => undefined);
+    // …and processing itself is untouched.
+    expect(result.run.status).toBe("done");
+  });
+});
+
+describe("a repo's total is its OWN work (#731 N6)", () => {
+  function steppedClock(step: number): () => number {
+    let value = 1_000_000;
+    return () => {
+      value += step;
+      return value;
+    };
+  }
+
+  it("does not charge the first repo for the sibling scouted and mapped in between", async () => {
+    // The defect this pins: one timer per repo, opened in the ALL-REPO scout pass and
+    // closed in the LATER map pass. A wall-clock total therefore ran from repo A's scout,
+    // through repo B's scout, through repo A's whole map — so A absorbed B's scout, and
+    // A's number grew with the size of the project rather than with its own work.
+    const recorded: BenchmarkRun[] = [];
+    const run = createProcessProject({
+      generate: async (_repoRoot, options) => {
+        for (const stage of ["resolve", "tree", "store"] as const) {
+          options.onProgress?.({ stage, note: stage });
+        }
+        return {
+          manifest: { baseRef: "trunk", baseOid: "oid-1" },
+          reusedSymbolShards: 0,
+          extractedSymbolShards: 0,
+          reusedReferenceShards: 0,
+          extractedReferenceShards: 0,
+          fileCount: 0,
+          scopeCount: 0,
+          symbolCount: 0,
+          referenceCount: 0,
+        } as GenerateResult;
+      },
+      listProjects: () => [project({ includedRepoPaths: ["/ws/a", "/ws/b"], kind: "workspace" })],
+      runScout: async () => QUESTIONNAIRE,
+      recordBenchmark: (entry) => recorded.push(entry),
+      now: steppedClock(10),
+    });
+    await run({ projectId: "p1" }, () => undefined);
+
+    expect(recorded).toHaveLength(2);
+    for (const entry of recorded) {
+      const total = entry.stages.find((stage) => stage.stage === "total");
+      const parts = entry.stages
+        .filter((stage) => stage.stage !== "total")
+        .reduce((sum, stage) => sum + stage.durationMs, 0);
+      expect(total?.durationMs).toBe(parts);
+      // The sibling-absorption check, stated as the property rather than as a number: the
+      // total may not exceed the wall time from this repo's first stage to its last, and
+      // must be strictly BELOW it whenever a sibling ran in between — which it did.
+      const last = entry.stages
+        .filter((stage) => stage.stage !== "total")
+        .reduce((max, stage) => Math.max(max, stage.startedAtMs + stage.durationMs), 0);
+      const wallSpan = last - (total?.startedAtMs ?? 0);
+      expect(total?.durationMs).toBeLessThan(wallSpan);
+    }
+  });
+});
+
+describe("no measured attempt disappears (#731 N7)", () => {
+  function steppedClock(step: number): () => number {
+    let value = 1_000_000;
+    return () => {
+      value += step;
+      return value;
+    };
+  }
+
+  it("archives a FAILED scout, and the sibling it aborted, instead of returning silently", async () => {
+    // A scout that threw returned before anything was recorded, and a scout failure ends
+    // the whole project process — so neither the repo that failed nor the repo that never
+    // got to a map left any trace at all. The archive held only the runs that got far
+    // enough to be counted, which is the failure rate looking better than it is.
+    const recorded: BenchmarkRun[] = [];
+    const gen = fakeGenerator(() => ({}));
+    const run = createProcessProject({
+      generate: gen.generate,
+      listProjects: () => [project({ includedRepoPaths: ["/ws/a", "/ws/b"], kind: "workspace" })],
+      runScout: async ({ repoRoot }) => {
+        if (repoRoot === "/ws/b") throw new Error("the scout could not read the repository");
+        return QUESTIONNAIRE;
+      },
+      recordBenchmark: (entry) => recorded.push(entry),
+      now: steppedClock(10),
+    });
+    await run({ projectId: "p1" }, () => undefined);
+
+    expect(recorded).toHaveLength(2);
+    const failed = recorded.find((entry) => entry.outcome === "failed");
+    expect(failed?.failure).toBe("the scout could not read the repository");
+    expect(failed?.stages.map((stage) => stage.stage)).toEqual(["scout", "total"]);
+    // The repo that scouted cleanly did not fail — it was ABORTED by the sibling, and
+    // calling that a failure would file a defect against a repository that had none.
+    const aborted = recorded.find((entry) => entry.outcome === "aborted");
+    expect(aborted?.failure).toContain("another repository's scout failed");
+    // Nothing was built, so neither claims a revision.
+    expect(recorded.every((entry) => entry.subject.revision === undefined)).toBe(true);
+    // Every daemon-side run says which pipeline recorded it, so a missing `resolve` row
+    // reads as "it never got there" rather than as a lost measurement.
+    expect(recorded.every((entry) => entry.producer === "daemon")).toBe(true);
+  });
+
+  it("archives a build that died with NO measured stage at all", async () => {
+    // Dropped for having no `total` on the reasoning that a zero-length run reads as an
+    // instantaneous map. It read as nothing at all, which is worse: the earliest failures
+    // were the ones that vanished. No scout is wired here on purpose — with one, the scout
+    // stage supplies a `total` and this case never arises, which is why the earlier test
+    // could not see it.
+    const recorded: BenchmarkRun[] = [];
+    const run = createProcessProject({
+      generate: async () => {
+        throw new Error("the repository could not be opened");
+      },
+      listProjects: () => [project()],
+      recordBenchmark: (entry) => recorded.push(entry),
+      now: steppedClock(10),
+    });
+    await run({ projectId: "p1" }, () => undefined);
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("failed");
+    expect(recorded[0]?.failure).toBe("the repository could not be opened");
+    // An empty stage list, and it SAYS it is empty. That is the honest record of a run
+    // that died before it measured anything.
+    expect(recorded[0]?.stages).toEqual([]);
+    expect(recorded[0]?.durationMs).toBe(0);
+  });
+
+  it("archives a map failure that DID reach a stage, carrying the stages it reached", async () => {
+    const recorded: BenchmarkRun[] = [];
+    const run = createProcessProject({
+      generate: async (_repoRoot, options) => {
+        options.onProgress?.({ stage: "resolve", note: "resolve" });
+        throw new Error("the resolve fell over");
+      },
+      listProjects: () => [project()],
+      runScout: async () => QUESTIONNAIRE,
+      recordBenchmark: (entry) => recorded.push(entry),
+      now: steppedClock(10),
+    });
+    await run({ projectId: "p1" }, () => undefined);
+    expect(recorded[0]?.stages.map((stage) => stage.stage)).toEqual(["scout", "resolve", "total"]);
   });
 });

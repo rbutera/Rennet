@@ -1,43 +1,136 @@
 import { describe, expect, it, vi } from "vitest";
-import { isIgnoredPath } from "./repo-watcher";
+import { filesystemIgnoresCase, isIgnoredPath } from "./repo-watcher";
 
 describe("isIgnoredPath (add-windows-support: both separator flavours)", () => {
-  it("ignores .git and .rennet on POSIX paths", () => {
-    expect(isIgnoredPath("/repo/.git/HEAD")).toBe(true);
-    expect(isIgnoredPath("/repo/.rennet/map/x")).toBe(true);
+  it("ignores .git on POSIX paths", () => {
+    expect(isIgnoredPath("/repo", "/repo/.git/HEAD")).toBe(true);
   });
 
-  it("ignores .git and .rennet on Windows/UNC paths (backslashes)", () => {
-    expect(isIgnoredPath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git\\HEAD")).toBe(true);
-    expect(isIgnoredPath("C:\\dev\\repo\\.rennet\\map\\x")).toBe(true);
+  it("ignores .git on Windows/UNC paths (backslashes)", () => {
+    expect(
+      isIgnoredPath(
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git\\HEAD",
+      ),
+    ).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.git\\HEAD")).toBe(true);
+  });
+
+  // #729, D6: the watcher used to ignore ALL of `.rennet`, which is a superset of what
+  // capture excludes — so a tracked `.rennet/conventions.json` edit changed the captured
+  // patchset while the watcher stayed silent about it. Now the two agree exactly: the
+  // app-owned board prefix and nothing else.
+  it("ignores the app-owned board prefix, in either separator flavour", () => {
+    expect(isIgnoredPath("/repo", "/repo/.rennet/boards/board-1.jsonl")).toBe(true);
+    // The directory entry itself, so chokidar prunes before descending.
+    expect(isIgnoredPath("/repo", "/repo/.rennet/boards")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\boards\\board-1.jsonl")).toBe(
+      true,
+    );
+    expect(
+      isIgnoredPath(
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.rennet\\boards\\board-1.jsonl",
+      ),
+    ).toBe(true);
+  });
+
+  // Native Windows holds a root like `C:/dev/repo` while chokidar reports
+  // `C:\dev\repo\…`. A byte-for-byte prefix test made every one of those events look
+  // like it came from outside the repository, so a board write Rennet made marked the
+  // tree dirty and cost a recapture that could only ever find nothing.
+  it("relativizes one root across separator spellings, and case where Windows folds it", () => {
+    expect(isIgnoredPath("C:/dev/repo", "C:\\dev\\repo\\.rennet\\boards\\b.jsonl")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:/dev/repo/.rennet/boards/b.jsonl")).toBe(true);
+    // A drive letter or UNC share the daemon and chokidar spell differently.
+    expect(
+      isIgnoredPath("c:/dev/repo", "C:\\dev\\repo\\.rennet\\boards\\b.jsonl", { ignoreCase: true }),
+    ).toBe(true);
+    // …and normalizing separators must not smear one root into its sibling.
+    expect(isIgnoredPath("C:/dev/repo", "C:\\dev\\repo-2\\.rennet\\boards\\b.jsonl")).toBe(false);
+    expect(isIgnoredPath("C:/dev/repo", "C:\\dev\\repo-2\\src\\app.ts")).toBe(false);
+  });
+
+  // The macOS default. An existing `.Rennet/Boards/` IS `.rennet/boards/` there, so the
+  // board writer's lowercase join lands inside it and every event arrives spelled the
+  // alias's way. Where the filesystem does distinguish them the alias is a second,
+  // genuinely different directory that Rennet never writes to — so it stays watched.
+  it("ignores a case-aliased board directory only where the filesystem folds case", () => {
+    expect(isIgnoredPath("/repo", "/repo/.Rennet/Boards/b.jsonl", { ignoreCase: true })).toBe(true);
+    expect(isIgnoredPath("/repo", "/repo/.rennet/BOARDS", { ignoreCase: true })).toBe(true);
+    expect(isIgnoredPath("/repo", "/repo/.Rennet/Boards/b.jsonl")).toBe(false);
+    // The prefix boundary survives the fold: this is still the user's directory.
+    expect(
+      isIgnoredPath("/repo", "/repo/.Rennet/Boards-extra/notes.md", { ignoreCase: true }),
+    ).toBe(false);
+  });
+
+  // Capture asks git (`core.ignoreCase`) and the watcher probes the filesystem, because
+  // for a WSL project they address different filesystems and `start` cannot await a
+  // `git config`. Two probes of one property have to agree, or capture excludes a path
+  // the watcher reports and freshness contradicts the patchset — the defect #729 is.
+  it("agrees with git's own core.ignoreCase probe on this filesystem", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-case-"));
+    try {
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root, stdio: "ignore" });
+      const git = execFileSync(
+        "git",
+        ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"],
+        { cwd: root, encoding: "utf8" },
+      ).trim();
+      expect(filesystemIgnoresCase(root)).toBe(git === "true");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("watches the rest of .rennet — it is the user's project content, and it captures", () => {
+    // Tracked house rules: capture keeps them, so an edit has to invalidate.
+    expect(isIgnoredPath("/repo", "/repo/.rennet/conventions.json")).toBe(false);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\conventions.json")).toBe(false);
+    // The prefix boundary: a directory that merely starts with the same letters.
+    expect(isIgnoredPath("/repo", "/repo/.rennet/boards-extra/notes.md")).toBe(false);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\boards-extra\\notes.md")).toBe(
+      false,
+    );
+    // Ownership is anchored at the ROOT: a vendored checkout's own board directory is
+    // the user's, because Rennet never writes there.
+    expect(isIgnoredPath("/repo", "/repo/vendor/pkg/.rennet/boards/b.jsonl")).toBe(false);
   });
 
   // `.nx` is gitignored, so it can never enter a capture, and on this repository it is
   // 4,877 of 23,549 entries — a fifth of the walk, for nothing. Pruning it took the initial
   // walk from ~64s to ~900ms and 4,176–4,779 EMFILE failures to zero.
   it("ignores .nx — a fifth of this repo's tree, and git can never show it", () => {
-    expect(isIgnoredPath("/repo/.nx/workspace-data/d.db")).toBe(true);
-    expect(isIgnoredPath("/repo/.nx")).toBe(true);
-    expect(isIgnoredPath("C:\\dev\\repo\\.nx\\workspace-data\\d.db")).toBe(true);
+    expect(isIgnoredPath("/repo", "/repo/.nx/workspace-data/d.db")).toBe(true);
+    expect(isIgnoredPath("/repo", "/repo/.nx")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.nx\\workspace-data\\d.db")).toBe(true);
     // Not a prefix match: a real source directory whose name merely starts with it stays.
-    expect(isIgnoredPath("/repo/src/.nxrc/config.ts")).toBe(false);
+    expect(isIgnoredPath("/repo", "/repo/src/.nxrc/config.ts")).toBe(false);
   });
 
   it("ignores node_modules — the 9P poll storm's source (contents and the dir itself)", () => {
-    expect(isIgnoredPath("/repo/node_modules/foo/index.js")).toBe(true);
+    expect(isIgnoredPath("/repo", "/repo/node_modules/foo/index.js")).toBe(true);
     expect(
-      isIgnoredPath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\node_modules\\.bin\\semver"),
+      isIgnoredPath(
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\node_modules\\.bin\\semver",
+      ),
     ).toBe(true);
     // The directory entry itself must match so chokidar prunes before descending.
-    expect(isIgnoredPath("/repo/node_modules")).toBe(true);
-    expect(isIgnoredPath("C:\\dev\\repo\\node_modules")).toBe(true);
+    expect(isIgnoredPath("/repo", "/repo/node_modules")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\node_modules")).toBe(true);
   });
 
   it("does not ignore ordinary source files", () => {
-    expect(isIgnoredPath("/repo/src/app.ts")).toBe(false);
-    expect(isIgnoredPath("C:\\dev\\repo\\src\\app.ts")).toBe(false);
+    expect(isIgnoredPath("/repo", "/repo/src/app.ts")).toBe(false);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\src\\app.ts")).toBe(false);
     // A file whose name merely starts with an ignored segment is not ignored.
-    expect(isIgnoredPath("/repo/src/node_modules_helper.ts")).toBe(false);
+    expect(isIgnoredPath("/repo", "/repo/src/node_modules_helper.ts")).toBe(false);
   });
 });
 
@@ -171,6 +264,100 @@ describe("RepoWatcher hardening", () => {
       // A later save — the ordinary, always-worked path — is still reported.
       writeFileSync(edited, "export const value = 1000;\n");
       await sleep(500);
+      expect(watcher.isDirty()).toBe(true);
+    } finally {
+      await watcher.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // #729 through the real chokidar: Rennet writing its own board must not mark the
+  // reviewer's tree dirty, and the same watcher must still report the file beside it.
+  // The two halves are one run on purpose — a watcher that reported nothing at all
+  // would satisfy the first assertion perfectly.
+  it("stays quiet for app-owned board writes and still reports the file beside them", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { setTimeout: sleep } = await import("node:timers/promises");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-app-owned-"));
+    // The project content that lives under `.rennet` and belongs to the user, present
+    // before the watch is armed so the writes below are modifications, not arrivals.
+    mkdirSync(join(root, ".rennet", "boards-extra"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":[]}\n');
+    writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine\n");
+    writeFileSync(join(root, "src.ts"), "export const value = 1;\n");
+    const watcher = new RepoWatcher();
+    try {
+      watcher.start(root);
+      // Wait for the initial walk, then clear — a clear only sticks once chokidar has
+      // finished looking (#601), so this is also what proves the walk is done.
+      await sleep(500);
+      watcher.setDirty(false);
+      expect(watcher.isDirty()).toBe(false);
+
+      // Rennet writes a board, exactly where `createBoardsRuntime` roots the store.
+      mkdirSync(join(root, ".rennet", "boards"), { recursive: true });
+      writeFileSync(join(root, ".rennet", "boards", "board-1.jsonl"), '{"seq":1}\n');
+      await sleep(700);
+      expect(watcher.isDirty()).toBe(false);
+
+      // The prefix boundary and the tracked house rules are the user's, and both are in
+      // the capture — so both have to be reported.
+      writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine, edited\n");
+      await sleep(700);
+      expect(watcher.isDirty()).toBe(true);
+
+      watcher.setDirty(false);
+      writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":["one"]}\n');
+      await sleep(700);
+      expect(watcher.isDirty()).toBe(true);
+    } finally {
+      await watcher.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The macOS shape, through the real chokidar. A `.Rennet/Boards/` directory already
+  // exists; the board writer's lowercase join lands INSIDE it, because on this filesystem
+  // they are one directory — and chokidar reports the spelling that is on disk, not the
+  // one Rennet asked for. So the predicate is handed `.Rennet/Boards/board-1.jsonl`, and
+  // only a `start` that probed the filesystem and passed the answer down ignores it.
+  //
+  // Writing through `.Rennet/Boards` into a lowercase directory proves nothing: chokidar
+  // still reports the lowercase path and the assertion holds with the probe removed. It
+  // has to be the alias that is on disk. (A case-sensitive filesystem has no alias to
+  // build, so this test states that and stops rather than passing vacuously.)
+  it("stays quiet for a board write that lands in an existing case-aliased directory", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { setTimeout: sleep } = await import("node:timers/promises");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-alias-"));
+    const watcher = new RepoWatcher();
+    try {
+      if (!filesystemIgnoresCase(root)) {
+        expect(filesystemIgnoresCase(root)).toBe(false); // case-sensitive: no alias exists
+        return;
+      }
+      mkdirSync(join(root, ".Rennet", "Boards"), { recursive: true });
+      writeFileSync(join(root, "src.ts"), "export const value = 1;\n");
+      watcher.start(root);
+      await sleep(500);
+      watcher.setDirty(false);
+      expect(watcher.isDirty()).toBe(false);
+
+      // `createBoardsRuntime` joins the lowercase segments; this is that write.
+      writeFileSync(join(root, ".rennet", "boards", "board-1.jsonl"), '{"seq":1}\n');
+      await sleep(700);
+      expect(watcher.isDirty()).toBe(false);
+
+      // …and the same watcher still reports the reviewer's own file, so "quiet" above is
+      // not a watcher that had stopped reporting anything.
+      writeFileSync(join(root, "src.ts"), "export const value = 2;\n");
+      await sleep(700);
       expect(watcher.isDirty()).toBe(true);
     } finally {
       await watcher.close();

@@ -190,6 +190,53 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(container.querySelector("[data-kind=board-failed]")?.textContent).toContain(reason);
   });
 
+  it.each([
+    {
+      classification: "retryable" as const,
+      saysAnotherAttempt: true,
+      title: "tells the reviewer a retryable lens failure can still produce this board",
+    },
+    {
+      classification: "terminal" as const,
+      saysAnotherAttempt: false,
+      title: "promises no further attempt on a terminal lens failure",
+    },
+  ])("$title", async ({ classification, saysAnotherAttempt }) => {
+    // The two legs are each other's control: the same failure sentence, the same surface,
+    // and only the typed account differs — so the extra line is bound to the
+    // classification and not to "a lens failed".
+    const reason = "Noise output failed schema validation.";
+    const { container, user } = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": (input) =>
+              input.lens === "noise"
+                ? {
+                    board: null,
+                    failure: reason,
+                    failureAccount: { attempt: 1, classification },
+                  }
+                : fixtureBoardRead(input),
+          })
+        }
+      >
+        <BoardHarness generation="gen1" generations={["gen1"]} initialLens="design" />
+      </BridgeProvider>,
+    );
+    await settled(container);
+
+    const failedTab = container.querySelector<HTMLButtonElement>("[data-lens=noise]");
+    if (!failedTab) throw new Error("failed Noise lens is not selectable");
+    await user.click(failedTab);
+
+    const failed = container.querySelector("[data-kind=board-failed]");
+    expect(failed?.getAttribute("data-classification")).toBe(classification);
+    expect(failed?.textContent).toContain(reason);
+    const promise = "Another drafting attempt can still produce this board";
+    expect(failed?.textContent?.includes(promise)).toBe(saysAnotherAttempt);
+  });
+
   it("opens Flagged expanded when selected (R44) and folds every section on another lens", async () => {
     const { container, user } = await renderView("gen1");
     // R44: Flagged sections arrive expanded when that URL-owned lens is selected.

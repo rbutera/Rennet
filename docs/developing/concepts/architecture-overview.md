@@ -221,7 +221,11 @@ Rennet stores different kinds of state at their natural scopes:
 | Project `.rennet/map/` | Optional promoted context mirror |
 
 Promotion writes the optional project mirror but does not stage or commit it.
-The project's `.rennet/` directory remains local and ignored by default.
+Rennet never stages or commits anything under the project's `.rennet/`, and
+never writes an ignore rule into the user's repository to compensate. Only the
+app-owned `.rennet/boards/` prefix is excluded from capture, the repository
+watcher, and freshness; everything else there is the user's project content and
+captures normally.
 
 The SQLite review store persists commands and events transactionally. Reading a
 review folds its event history into the current projection. Conversation files

@@ -35,6 +35,13 @@ export interface SwarmTurnOptions {
   readonly collector?: MetricsCollector;
   /** The metrics label, e.g. "board.lens-draft". */
   readonly label?: string;
+  /** The turn's raw response budget in UTF-8 bytes, enforced by the adapter at the
+   *  transport boundary before structured-output decoding. Absent ⇒ no cap. */
+  readonly outputByteCap?: number;
+  /** The turn's provider-side output-token cap. Carried only on the Claude leg, which
+   *  is the only transport with a knob for it; `outputByteCap` is the enforced
+   *  backstop on both. Absent ⇒ no cap. */
+  readonly outputTokenCap?: number;
   /** Content-free provider settlement, emitted before one-shot session cleanup. */
   readonly onProviderSettled?: (milestone: ProviderTurnSettlement) => void;
 }
@@ -111,6 +118,8 @@ export function createClaudeSwarmTurn(
         outputSchema,
         model,
         effort,
+        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
+        ...(options.outputTokenCap === undefined ? {} : { outputTokenCap: options.outputTokenCap }),
         // #585: Rennet's internal one-shot turn — never the user's session history.
         ephemeral: true,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -176,13 +185,18 @@ export function createClaudeSwarmTurn(
  * THE CHECKOUT (`cwd`): seats read real files as evidence, so the classic
  * temp-dir utility posture would leave a Codex seat reasoning from filenames
  * alone (review P0). An executor throw is an honest turn failure.
+ *
+ * `outputTokenCap` is deliberately absent from the accepted options: `codex` has no
+ * model-output-token parameter or config override to carry it (codex-cli 0.147.0), so
+ * a Codex turn is bounded by `outputByteCap` alone. The type says so rather than a
+ * comment claiming a cap that nothing applies.
  */
 export function createCodexSwarmTurn(
   executor: CodexExecutor,
   model: string,
   effort: string,
   outputSchema: unknown,
-  options: Pick<SwarmTurnOptions, "signal" | "cwd" | "onProviderSettled"> &
+  options: Pick<SwarmTurnOptions, "signal" | "cwd" | "onProviderSettled" | "outputByteCap"> &
     Pick<CodexExecRequest, "mcpServers">,
   now: () => number = Date.now,
 ): RunTurn {
@@ -206,6 +220,7 @@ export function createCodexSwarmTurn(
         prompt,
         outputSchema,
         cwd: options.cwd,
+        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
         ...(options.mcpServers === undefined ? {} : { mcpServers: options.mcpServers }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
@@ -231,6 +246,12 @@ export interface CouncilSeatDeps {
   readonly signal?: AbortSignal;
   /** The metrics label for a Claude seat, e.g. "board.lens-draft". */
   readonly label?: string;
+  /** The seat's raw response budget in UTF-8 bytes; both harness legs enforce it. */
+  readonly outputByteCap?: number;
+  /** The seat's provider-side output-token cap. Only the Claude leg can carry it —
+   *  `codex` has no model-output-token parameter — so the byte cap above stays the
+   *  enforced limit on both. */
+  readonly outputTokenCap?: number;
   readonly onProviderSettled?: SwarmTurnOptions["onProviderSettled"];
 }
 
@@ -283,6 +304,7 @@ export function councilSeatTurn(
         schema,
         {
           cwd: deps.repoRoot,
+          ...(deps.outputByteCap === undefined ? {} : { outputByteCap: deps.outputByteCap }),
           // Board-pipeline jobs use only their inlined prompt and
           // native repository tools. Codex starts configured MCP servers eagerly,
           // so suppress them for those jobs while unrelated Council work inherits.
@@ -304,6 +326,8 @@ export function councilSeatTurn(
     effort: resolution.effort,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
+      ...(deps.outputByteCap === undefined ? {} : { outputByteCap: deps.outputByteCap }),
+      ...(deps.outputTokenCap === undefined ? {} : { outputTokenCap: deps.outputTokenCap }),
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),

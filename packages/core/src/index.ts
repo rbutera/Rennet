@@ -19,6 +19,7 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { buildSuccessorAccount, changedPathsBetween } from "./successor-account";
 
+export * from "./benchmark-export";
 export * from "./board";
 export * from "./ci-classification";
 export * from "./ci-refinement";

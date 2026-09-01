@@ -8,6 +8,9 @@ import { ArrowRight } from "lucide-react";
 import { Icon } from "../components/icon";
 import {
   canRevealNewBoards,
+  coverageNote,
+  coverageStatus,
+  type GenerationCoverage,
   type LaneRow,
   type LensLane,
   type RoundState,
@@ -133,10 +136,11 @@ function laneNote(lane: LensLane): string {
  * drafters settle, DERIVED from the real phase, never pre-rendered:
  *
  *   • "Finalizing generation" is the window between the last lens arrival and the
- *     `composed` event. Cross-lens coverage has already run before those arrivals. The
- *     runtime still has to finish any configured review composition, validate the required
- *     boards, persist the generation and ledger record, then emit `composed`. While any
- *     lane is still queued or running this step is absent.
+ *     `composed` event. Cross-lens coverage runs AFTER those arrivals (#725 D4) and is
+ *     reported on its own row, so this step covers the rest: any configured review
+ *     composition, validating the required boards, persisting the generation and the
+ *     ledger record, then emitting `composed`. While any lane is still queued or running
+ *     this step is absent.
  *   • "Composed generation <id>" — the `composed` event itself, naming the generation the
  *     reveal opens. The spike numbered it ("Composed generation 2") off a fixture round
  *     counter; the live machine knows the minted generation's IDENTITY and no ordinal, so
@@ -167,9 +171,11 @@ function finishSteps(state: RoundState, lanes: readonly LensLane[]): readonly La
 function RegenerationProgress({
   state,
   lanes,
+  coverage,
 }: {
   readonly state: RoundState;
   readonly lanes: readonly LensLane[];
+  readonly coverage?: GenerationCoverage;
 }) {
   const steps = finishSteps(state, lanes);
   return (
@@ -204,6 +210,20 @@ function RegenerationProgress({
             </div>
           ))}
         </div>
+      )}
+      {coverage !== undefined && (
+        <span
+          data-testid="cross-lens-coverage"
+          data-coverage={coverage.state}
+          // The RENDERED register, exposed so a test can see the glyph choice: a coverage
+          // run that completed with uncovered hunks is `warn`, never the green `done` check
+          // that would read as a clean result over text saying the opposite.
+          data-status={coverageStatus(coverage)}
+          className="flex items-center gap-1.5 pt-1 text-12-5 text-muted-foreground"
+        >
+          <StatusIcon status={coverageStatus(coverage)} compact />
+          {coverageNote(coverage)}
+        </span>
       )}
       {steps.map((step) => (
         <span
@@ -248,6 +268,7 @@ export function RoundGreeting({
       : state.phase === "composed"
         ? (state.lanes ?? NO_LANES)
         : NO_LANES;
+  const coverage = "coverage" in state ? state.coverage : undefined;
   const regenerating = state.phase === "composing" || state.phase === "composed";
   return (
     <section
@@ -256,7 +277,13 @@ export function RoundGreeting({
     >
       {receipt !== undefined && <RunReceiptSummary {...receipt} />}
       <RoundReportBoard board={board} />
-      {regenerating && <RegenerationProgress state={state} lanes={lanes} />}
+      {regenerating && (
+        <RegenerationProgress
+          state={state}
+          lanes={lanes}
+          {...(coverage === undefined ? {} : { coverage })}
+        />
+      )}
       {canRevealNewBoards(state) && (
         <Button
           data-testid="reveal-new-boards"

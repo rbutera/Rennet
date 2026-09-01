@@ -50,6 +50,16 @@ Group hunks by pattern, one group block per pattern:
 - **Member hunks** — every hunk in the group, each with path and a one-line
   summary. The reader must be able to audit the group's edges.
 
+## When nothing in the change is noise
+
+A change can be all signal. Say so by emitting a board with NO elements — an
+empty board is this lens's honest "nothing here is safely skippable", and the
+host settles it as that result and tells the reader in those words. Do not
+manufacture a board of signal verdicts to have something to show: a verdict
+that a hunk must be read is not this lens's output, it is every other lens's
+premise. Emit an empty board only when NO hunk is skip-safe; one skip-safe
+hunk means a real board naming it.
+
 ## The one rule that outranks the rest
 
 When in doubt, it is signal. A hunk that is 95% mechanical rename and 5%

@@ -2,14 +2,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  OWNER_LOOP_ROUND_ONE_ASK,
-  OWNER_LOOP_SOURCE,
-  ownerLoopScriptedHarnessPlan,
-} from "./owner-loop-proof-fixture";
+import { OWNER_LOOP_ROUND_ONE_ASK, ownerLoopScriptedHarnessPlan } from "./owner-loop-proof-fixture";
 import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
 
 const askPlanValue = `\${askId}`;
+const evidenceIdsPlanValue = `\${evidenceIds}`;
 const patchsetPlanValue = `\${patchsetId}`;
 
 function writePlan(root: string, plan: unknown): string {
@@ -50,12 +47,9 @@ describe("scripted harness JSON plan", () => {
           askId: OWNER_LOOP_ROUND_ONE_ASK,
           status: "addressed",
           note: "`src/owner.ts` now exports `round-one`.",
-          evidence: {
-            path: OWNER_LOOP_SOURCE,
-            side: "head",
-            startLine: 1,
-            endLine: 1,
-          },
+          // The fixture asks for the round's MEASURED evidence ids rather than naming
+          // a line: content-derived ids cannot be hard-coded in a scripted plan.
+          evidenceIds: evidenceIdsPlanValue,
         },
       ],
       beyond: [],
@@ -131,6 +125,60 @@ describe("scripted harness JSON plan", () => {
     await expect(terminalOutcome(restarted, repo, "Set the value to round one")).rejects.toThrow(
       "already consumed",
     );
+  });
+
+  // #681 / C14 D3. The launched-app spec asserts the executing provider by reading this
+  // ledger, but that spec cannot currently reach the assertion: BOTH legs fail at round
+  // one on a pre-existing `verifyAskPath` defect, proven identical at this branch's base.
+  // So the mechanism it depends on is control-proven HERE instead, at the level where it
+  // actually lives: the ledger's `harness` must come from the SESSION that ran the turn,
+  // not from the plan or the port descriptor — the two things the app's own receipt
+  // already reads, which is why they cannot corroborate it.
+  //
+  // TWO POSITIVE CONTROLS (both run 2026-09-01, restored after), because one was not
+  // enough: the first reddens too early to prove the last assertion.
+  //  1. `new ScriptedHarnessSession("claude-code", ...)` in `loadScriptedHarnessPlan`,
+  //     descriptor left at `harness`. `port.descriptor.id` stays green — the resolver, and
+  //     therefore the app's receipt, still reads Codex — and `session.harness` reddens.
+  //     But it reddens THERE, so it says nothing about the ledger line.
+  //  2. `harness: "claude-code"` in place of `harness: executingHarness` in the
+  //     `recordInvocation` call. Descriptor, session, and event all stay green, and ONLY
+  //     the ledger assertion reddens — which is the one the launched-app spec reads.
+  it("records the executing session's own provider in the ledger, not the plan's", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-scripted-provider-"));
+    const log = join(root, "provider-invocations.jsonl");
+    const planPath = writePlan(root, {
+      schemaVersion: 1,
+      lane: "provider-proof",
+      harness: "codex",
+      invocationLog: log,
+      steps: [
+        {
+          id: "structured-turn",
+          kind: "structured",
+          promptIncludes: "Report the provider",
+          output: { ok: true },
+        },
+      ],
+    });
+
+    const port = loadScriptedHarnessPlan(planPath);
+    expect(port.descriptor.id).toBe("codex");
+    const session = await port.createSession({ cwd: root, outputSchema: {} });
+    // The session's own declaration, and the event it emits, before any ledger read.
+    expect(session.harness).toBe("codex");
+    await session.send({ prompt: "Report the provider" });
+    for await (const event of session.events) {
+      if (event.kind === "session.ended") expect(event.harness).toBe("codex");
+    }
+
+    const records = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => [record.stepId, record.harness])).toEqual([
+      ["structured-turn", "codex"],
+    ]);
   });
 
   it("renders the current patchset into a structured result and echoes post-process input", async () => {

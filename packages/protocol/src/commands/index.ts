@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { benchmarkRunSchema } from "../benchmarks";
 import { LensBoardSchema, LensKindSchema } from "../board/lens-board";
 import { FindingRefSchema } from "../board/schema";
 import { anchorSideSchema, anchorSpanSchema, codeRefSchema } from "../delta/citations";
@@ -9,6 +10,7 @@ import {
   AskProjectionSchema,
   attentionFamilySchema,
   LensAbsenceReasonSchema,
+  LensFailureAccountSchema,
   QuoteThreadSchema,
   RoundEventSchema,
   RoundLedgerRecordSchema,
@@ -621,8 +623,13 @@ const definitions = {
       board: LensBoardSchema.nullable(),
       /** Present only when the generation durably settled this lens without a board. */
       absence: LensAbsenceReasonSchema.optional(),
-      /** Present only when the latest drafting attempt terminally failed this lens. */
+      /** Present only when the latest drafting attempt failed this lens. The message does
+       * NOT imply terminal: `failureAccount` carries the classification when the failing
+       * path named one, and its absence means the classification is unknown — never
+       * that the lens is beyond another attempt. */
       failure: z.string().min(1).optional(),
+      /** The typed account for `failure` (#549), when the attempt that failed recorded one. */
+      failureAccount: LensFailureAccountSchema.optional(),
     }),
   },
   "projects.add": {
@@ -982,9 +989,12 @@ const definitions = {
   // ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ──────────
   // The produced hunk↔requirement mapping over the review's OpenSpec change: a model
   // turn grounds each requirement to the offered hunks that implement it plus a test
-  // count, budget-gated. `status: "failed"` (no model / budget refused / turn failed)
-  // OR `null` (no change in the review) ⇒ the Spec view renders NO coverage chips —
-  // an uncomputed mapping never masquerades as a real zero.
+  // count, budget-gated. Three no-chip outcomes, and the Spec view renders NO coverage
+  // chips for any of them — an uncomputed mapping never masquerades as a real zero:
+  // `status: "failed"` (budget refused, or the turn was attempted and broke),
+  // `status: "unavailable"` (#681 / C14 D3 — the Claude Code seat the mapping needs did
+  // not resolve, so NOTHING was attempted; carries its `reason` and, when some other
+  // harness did resolve, that `harness`), OR `null` (no change in the review).
   "openspec.coverage": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: openSpecCoverageSchema.nullable(),
@@ -1087,6 +1097,39 @@ const definitions = {
   "settings.setCoachmarks": {
     input: coachMarksSchema,
     output: coachMarksSchema,
+  },
+  // ── Settings: turn benchmark recording on or off (#731, D8) ────────────────
+  // Observability configuration, not a consent gate: while ON (the default) the
+  // measured pipelines archive the per-stage timings they already record; while OFF
+  // nothing new is written and the pipelines behave identically. A personal,
+  // app-side write — client settings only, never a repo — refused (throws) on a
+  // malformed file exactly as `setCoachmarks`. Output echoes the resolved state.
+  "settings.setBenchmarkRecording": {
+    input: z.object({ enabled: z.boolean() }),
+    output: z.object({ enabled: z.boolean() }),
+  },
+  // ── Benchmarks: the recorded runs behind the Settings panel (#731) ─────────
+  // Read-only over the durable archive, newest first. `limit` caps what crosses the
+  // wire, because the panel's responsiveness on a long history is a property of how
+  // much it is handed, not only of how it renders. Each run carries its own stage
+  // records; the run-level mode is DERIVED from them by every reader
+  // (`deriveBenchmarkMode`), never stored, so no two surfaces can label one run
+  // differently. Fail-safe: an absent or unreadable archive reads as no runs.
+  //
+  // `total` and `skipped` exist because a CAP IS A LOSS AND SO IS DAMAGE, and neither
+  // announces itself: a list that came back with 200 rows when the archive holds 900
+  // looks exactly like an archive holding 200. The panel states both, so history the
+  // reviewer cannot see is history the reviewer is TOLD about.
+  "benchmarks.list": {
+    input: z.object({ limit: z.number().int().positive().max(2000).optional() }),
+    output: z.object({
+      runs: z.array(benchmarkRunSchema),
+      /** How many distinct runs the archive holds, before the limit. */
+      total: z.number().int().nonnegative(),
+      /** Interior archive lines that could not be read, in the store's own words. A torn
+       *  FINAL line — what a crash mid-append leaves — is not reported here. */
+      skipped: z.array(z.string()),
+    }),
   },
   // ── Settings: set (or reset) a review role's model assignment (C16 · #485) ──
   // The Environments → Review mappings dialog's cell edit. A personal, app-side

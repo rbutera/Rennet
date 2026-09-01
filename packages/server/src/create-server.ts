@@ -183,6 +183,7 @@ import type {
   FlaggedReview,
   ForgeRepoIdentity,
   Generation,
+  GenerationCoverage,
   GitHubAuthStatus,
   GitHubConnectPoll,
   LensBoard,
@@ -211,6 +212,7 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { buildAppTools } from "./agent-tools";
+import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
@@ -451,6 +453,16 @@ export async function resolveCodingHarness(input: {
       };
     }
   };
+  /** A resolver answering with a DIFFERENT provider than asked — the silent-substitution
+   *  shape #681 forbids. One sentence, so the pinned and unpinned paths account for it
+   *  identically instead of the unpinned path swallowing what the resolver returned. */
+  const misresolution = (
+    id: CodingHarnessSelection["id"],
+    port: HarnessPort | null,
+  ): string | undefined =>
+    port !== null && port.descriptor.id !== id
+      ? `The ${id} resolver returned ${port.descriptor.id}; refusing to run a different harness than the selected one.`
+      : undefined;
   const resolveExact = async (
     id: CodingHarnessSelection["id"],
   ): Promise<CodingHarnessResolution> => {
@@ -470,12 +482,8 @@ export async function resolveCodingHarness(input: {
           `${displayName(id)} is selected for this session but is not available on its execution host.`,
       };
     }
-    if (port.descriptor.id !== id) {
-      return {
-        status: "unavailable",
-        reason: `The ${id} resolver returned ${port.descriptor.id}; refusing to run a different harness than the selected one.`,
-      };
-    }
+    const mismatch = misresolution(id, port);
+    if (mismatch !== undefined) return { status: "unavailable", reason: mismatch };
     return {
       status: "ready",
       selection: { id, version: port.descriptor.version },
@@ -505,12 +513,19 @@ export async function resolveCodingHarness(input: {
       port: codex,
     };
   }
+  // Nothing usable resolved. Report what actually happened rather than a bare "none
+  // available": a resolver that THREW keeps its discovery error, and a resolver that
+  // handed back the wrong provider keeps its misresolution sentence. Dropping the
+  // latter is how an unpinned Codex-only host that misresolved once read as "no harness
+  // installed" — a wrong diagnosis pointing the user at an install they already have.
   return {
     status: "unavailable",
     reason:
       [
         "error" in claudeAttempt ? claudeAttempt.error : undefined,
+        misresolution("claude-code", claude),
         "error" in codexAttempt ? codexAttempt.error : undefined,
+        misresolution("codex", codex),
       ]
         .filter((reason) => reason !== undefined)
         .join("; ") ||
@@ -557,6 +572,44 @@ export async function runResolvedCodingHarnessTurn(input: {
   }
   const outcome = await input.run(resolution.port, persistedSessionId);
   return { ...outcome, harness: resolution.selection };
+}
+
+/**
+ * Route one resolved coding harness to the requirement-coverage seat (#681, C14 D3).
+ * The mapping turn needs the Claude Code structured-output seat, so a host that
+ * resolved Codex — or nothing — yields a TYPED ABSENCE naming what resolved instead
+ * of a `failed` that would read as "we tried and it broke". Exported so the branch is
+ * unit-testable without standing up the composition root.
+ */
+export function coverageSeatFor(resolution: CodingHarnessResolution):
+  | {
+      readonly kind: "claude";
+      readonly port: HarnessPort;
+      readonly harness: CodingHarnessSelection;
+    }
+  | { readonly kind: "absent"; readonly coverage: OpenSpecCoverage } {
+  if (resolution.status === "unavailable") {
+    return {
+      kind: "absent",
+      coverage: {
+        status: "unavailable",
+        edges: [],
+        reason: `Requirement coverage needs a Claude Code seat. ${resolution.reason}`,
+      },
+    };
+  }
+  if (resolution.selection.id !== "claude-code") {
+    return {
+      kind: "absent",
+      coverage: {
+        status: "unavailable",
+        edges: [],
+        harness: resolution.selection,
+        reason: `Requirement coverage needs a Claude Code seat; this repository resolved Codex ${resolution.selection.version}. No mapping was attempted.`,
+      },
+    };
+  }
+  return { kind: "claude", port: resolution.port, harness: resolution.selection };
 }
 
 export async function captureBranchPatchset(input: {
@@ -999,8 +1052,15 @@ export interface RennetServerOptions {
    * way), so a WSL update reports that plainly instead of shipping the wrong file.
    */
   readonly hostBundlePath?: string;
-  /** Test-composition seam for a hermetic harness. The production daemon never supplies it. */
+  /**
+   * Test-composition seam for a hermetic harness. The production daemon never supplies it.
+   * The port is routed BY ITS DESCRIPTOR: a `claude-code` port is the Claude seat and
+   * leaves Codex absent; a `codex` port is the Codex adapter and leaves Claude absent.
+   * That is what lets a hermetic run present a genuinely single-harness host (#681).
+   */
   readonly testHarnessPort?: HarnessPort;
+  /** Test-composition seam for the Codex utility executor (the council's Codex seats). */
+  readonly testCodexExecutor?: CodexExecutor;
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
@@ -1053,6 +1113,10 @@ export interface RennetServer {
 export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
   const env = options.env ?? process.env;
   const dataDir = options.dataDir;
+  // The benchmark archive (#731, D8): one recorder, one durable file, sibling to the
+  // settings stores. The recording toggle is enforced inside `record`, at the single
+  // write seam — every producer keeps its identical code path either way.
+  const { store: benchmarkStore, record: recordBenchmark } = createBenchmarkRecording(dataDir);
   const serverVersion = options.serverVersion ?? "0.0.0-dev";
 
   let editorExecutables: Promise<string[]> | null = null;
@@ -1275,21 +1339,43 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
   // light-tier turn runs the distro's claude/codex — not the host's.
   async function claudeAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
-    if (options.testHarnessPort !== undefined) return options.testHarnessPort;
+    if (options.testHarnessPort !== undefined) {
+      return options.testHarnessPort.descriptor.id === "claude-code"
+        ? options.testHarnessPort
+        : null;
+    }
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
   }
   /** The utility executor for a repo, ROOTED AT THAT CHECKOUT (W5) — locus-native, so a
    *  WSL project's seat gets the distro path the distro's codex can actually open. */
   async function codexExecutorForRepo(repoRoot: string): Promise<CodexExecutor | null> {
+    if (options.testCodexExecutor !== undefined) return options.testCodexExecutor;
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     const { makeExecutor } = await getCodexResolution(locus);
     return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
   }
 
   async function codexAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+    // The scripted-harness seam routes BY DESCRIPTOR (#681 proof): a test port that
+    // declares itself Codex is the Codex adapter, and one that declares Claude leaves
+    // Codex genuinely absent. Without this a hermetic run could never present a
+    // Codex-resolved host, so the Codex leg of round dispatch had no launched proof.
+    if (options.testHarnessPort !== undefined) {
+      return options.testHarnessPort.descriptor.id === "codex" ? options.testHarnessPort : null;
+    }
     const { locus } = locusContextForRepo(repoRoot);
     return (await getCodexResolution(locus)).adapter;
+  }
+
+  /** The viewer's per-host ruled-out agents (Settings → Environments) for one execution host. */
+  function disabledHarnessesFor(execution: HandoffTurnExecution): readonly string[] {
+    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
+    return daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [];
+  }
+  /** The same ruling for a repository whose execution host is the detected default. */
+  function disabledHarnessesForRepo(repoRoot: string): readonly string[] {
+    return disabledHarnessesFor(handoffTurnExecution(locusForRepo(repoRoot), repoRoot));
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -2047,8 +2133,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<FlaggedReviewRun> {
     const patchset = activePatchset(review);
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
-    const adapter = options.testHarnessPort ?? discoveredAdapter;
+    const adapter = await claudeAdapterForRepo(review.repositoryRoot);
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
@@ -2190,8 +2275,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * user's `claude` seat, budget-gated — grounding each requirement to the offered hunks
    * that implement it (any hallucinated hunk dropped) and completing every requirement,
    * so `ok` yields covered-or-honest-zero per requirement. NO change ⇒ `null` (no chips).
-   * NO adapter, a budget refusal, or a failed turn ⇒ `status: "failed"` with no edges
-   * (the Spec view renders no chips) — an uncomputed mapping never becomes a fake zero.
+   * A budget refusal or a failed turn ⇒ `status: "failed"` with no edges (the Spec view
+   * renders no chips) — an uncomputed mapping never becomes a fake zero.
+   *
+   * The seat resolves through the SAME authority round dispatch uses (#681, C14 D3), so a
+   * host where Claude Code did not resolve reports a typed ABSENCE naming what resolved
+   * instead, rather than a "failed" that implies a mapping was attempted and broke. Every
+   * outcome that ran carries the harness that ran it.
    */
   async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null> {
     const patchset = activePatchset(review);
@@ -2213,11 +2303,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // No requirements ⇒ an honest empty OK (nothing to map, no chips).
     if (requirements.length === 0) return { status: "ok", edges: [] };
 
-    const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
-    const adapter = options.testHarnessPort ?? discoveredAdapter;
-    // No model seat ⇒ cannot compute; honest failed (no chips), never a fabricated zero.
-    if (!adapter) return { status: "failed", edges: [] };
+    const seat = coverageSeatFor(
+      await resolveCodingHarness({
+        disabledHarnesses: disabledHarnessesForRepo(review.repositoryRoot),
+        resolveClaude: () => claudeAdapterForRepo(review.repositoryRoot),
+        resolveCodex: () => codexAdapterForRepo(review.repositoryRoot),
+      }),
+    );
+    if (seat.kind === "absent") return seat.coverage;
 
     // The offered hunks (the model may cite ONLY these; the runner grounds against them).
     // KNOWN §7 DEVIATION (as in runFlaggedReview): the read-only harness runs with `cwd`
@@ -2237,7 +2330,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         deletedLines: hunk.deletedLines,
       }));
 
-    const runTurn = createCoverageTurn(adapter, { cwd: review.repositoryRoot });
+    const runTurn = createCoverageTurn(seat.port, { cwd: review.repositoryRoot });
     const result = await runCoverageMapping({
       patchsetId: patchset.id,
       requirements,
@@ -2247,7 +2340,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       runTurn: guardSeatTurn(runTurn),
       budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
     });
-    return { status: result.status, edges: result.edges };
+    return { status: result.status, edges: result.edges, harness: seat.harness };
   }
 
   // The provenance seed for a live noise run (issue #34), mirroring the finding seed.
@@ -2297,9 +2390,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     contextFeed: ReviewContextFeed,
   ): Promise<NoiseReview> {
     const patchset = activePatchset(review);
-    const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
-    const adapter = options.testHarnessPort ?? discoveredAdapter;
+    const adapter = await claudeAdapterForRepo(review.repositoryRoot);
     if (!adapter) {
       return { status: "failed", reason: "no model harness is available to classify noise" };
     }
@@ -2408,6 +2499,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     listProjects: () => projectStore.list(),
     repoKeyForRoot,
     journal: projectProcessJournal,
+    // The Repo Map build's per-stage archive (#731 9.2). The stages come from the
+    // generator's own progress stream, so nothing new is measured here.
+    recordBenchmark,
     runScout: async (input) => {
       const result = await projectScoutRuntime.runForRepo({
         projectId: input.projectId,
@@ -2584,11 +2678,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         filesTouched: [],
       };
     }
-    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
     return runResolvedCodingHarnessTurn({
       ...(sessionId === undefined ? {} : { sessionId }),
       sessionStore,
-      disabledHarnesses: daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [],
+      disabledHarnesses: disabledHarnessesFor(execution),
       resolveClaude: () => claudeAdapterForRepo(repoRoot),
       resolveCodex: () => codexAdapterForRepo(repoRoot),
       run: (port, persistedSessionId) =>
@@ -2684,6 +2777,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const sessionIdForReview = (review: Review): string =>
     resolveRoundSessionId(review, sessionStore.list(), projectIdOf(review.repositoryRoot));
   const roundsRuntime = createRoundsRuntime({
+    // One generation's archive (#731 9.3/9.4), taken from the phase records the reveal
+    // block already persisted — the spine stays authoritative and unconditional.
+    recordBenchmark,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
     boardsRuntimeFor,
@@ -3312,6 +3408,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             roundProgress.emit(operation.reviewId, { ...event, ...progressOperation });
           },
         });
+        // The round's code has LANDED and been re-captured by the time this step runs, so
+        // this is the moment the reviewer starts waiting for a board (#725 D4). The
+        // rounds runtime cannot know it — from in there, the wait looks like it starts
+        // after board minting and provider resolution.
+        const firstBoardWaitOriginMs = Date.now();
         const regenerated = await runBoardRegeneration(
           boardDraftingDeps(
             review,
@@ -3324,6 +3425,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           {
             session,
             repoRoot: operation.repoRoot,
+            firstBoardWaitOriginMs,
             priorPatchsetId: operation.sourcePatchsetId,
             asksDispatched: operation.askOccurrences.map((occurrence) => occurrence.id),
             dispatchId: operation.dispatchId,
@@ -3517,6 +3619,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     emit: (event: RoundEvent) => void = () => undefined,
     signal?: AbortSignal,
   ): Promise<boolean> {
+    // The captured input is READY — this is where the reviewer's wait for a first board
+    // starts (#725 D4), ahead of the session entry, the collation and every mint.
+    const firstBoardWaitOriginMs = Date.now();
     const patchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
     if (patchset === undefined) return false;
     // The SAME mint the round dispatch takes (#580/#587): it prefers the session already
@@ -3552,6 +3657,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       {
         session,
         repoRoot: review.repositoryRoot,
+        firstBoardWaitOriginMs,
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,
@@ -3655,6 +3761,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     let review: Review | null =
       request.reviewId === undefined ? null : service.reviewById(request.reviewId);
     let lanes = initialPreparationLanes();
+    let coverage: GenerationCoverage | undefined;
     try {
       if (review === null) {
         await waitForPreparationDelay(
@@ -3754,15 +3861,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           draftingReview,
           (event) => {
             if (!preparationIsCurrent(sessionId, controller)) return;
-            if (event.type === "lens") lanes = [...event.lanes];
             if (event.type === "failed") terminalReason = event.reason;
-            if (event.type === "lens") {
-              setCurrentPreparation(sessionId, controller, {
-                status: "drafting",
-                reviewId: draftingReview.id,
-                lanes,
-              });
-            }
+            if (event.type !== "lens") return;
+            lanes = [...event.lanes];
+            // #725 D4 — the initial generation's coverage state travels with its lanes, so
+            // the preparation screen says coverage is pending beside boards it is already
+            // revealing rather than implying coverage passed.
+            if (event.coverage !== undefined) coverage = event.coverage;
+            setCurrentPreparation(sessionId, controller, {
+              status: "drafting",
+              reviewId: draftingReview.id,
+              lanes,
+              ...(coverage === undefined ? {} : { coverage }),
+            });
           },
           controller.signal,
         );
@@ -3781,6 +3892,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         reason,
         ...(review === null ? {} : { reviewId: review.id }),
         ...(stage === "boards" ? { lanes } : {}),
+        ...(stage === "boards" && coverage !== undefined ? { coverage } : {}),
       });
     } finally {
       if (sessionPreparations.get(sessionId) === controller) {
@@ -4145,7 +4257,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ) {
         return undefined;
       }
-      return stored.failedLenses?.[lens];
+      const message = stored.failedLenses?.[lens];
+      if (message === undefined) return undefined;
+      const account = stored.failedLensAccounts?.[lens];
+      return { message, ...(account === undefined ? {} : { account }) };
     },
     retryRound: async ({ review }) => {
       const sessionId = sessionIdForReview(review);
@@ -4581,6 +4696,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // resolution (the same identity the snapshot generator keys on), legacy-
     // workspace rediscovery, the two stores, the guidance reader, and the real
     // visibility switch. The malformed refusals live in the stores themselves.
+    // The benchmarks panel's read side (#731 9.6) — newest runs, capped by the caller.
+    listBenchmarks: (limit) => benchmarkStore.read(limit),
     settings: createSettingsComposition({
       listProjects: () => projectStore.list(),
       loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),

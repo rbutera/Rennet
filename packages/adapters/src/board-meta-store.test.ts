@@ -39,6 +39,20 @@ describe("BoardMetaStore", () => {
     expect(read?.omissions).toEqual([{ elementId: "e2", hunks: ["h2"], reason: "not covered" }]);
   });
 
+  it("round-trips the write-boundary reference repairs (#548 D1)", () => {
+    // A repair is accountable after the fact or it is a silent rewrite of what the producer
+    // wrote. The pipeline records it on the board's meta, so it has to survive the disk.
+    const store = new BoardMetaStore(dir());
+    const repairs = [
+      { elementId: "sequence-step", field: "span", from: "sequence_code", to: "sequence-code" },
+    ];
+    store.save({ ...meta("board:sequence", "sequence"), refRepairs: repairs });
+    expect(store.load("board:sequence")?.refRepairs).toEqual(repairs);
+    // A board that needed none carries none — absence is not an empty list.
+    store.save(meta("board:design", "design"));
+    expect(store.load("board:design")?.refRepairs).toBeUndefined();
+  });
+
   it("reconstructs the whole set with list()", () => {
     const store = new BoardMetaStore(dir());
     store.save(meta("board:design", "design"));

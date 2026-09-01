@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "provenance": {
+    "exportedAt": "2026-09-01T17:55:00.343Z",
+    "machine": "Apple M-series, macOS 15 (darwin arm64), 16 GB",
+    "revision": "12a4bc56b38be76dd2975b66199a889a7bc45172"
+  },
+  "stages": [
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "resolve",
+      "samples": 3,
+      "medianMs": 50,
+      "slowestMs": 52
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "tree",
+      "samples": 3,
+      "medianMs": 170,
+      "slowestMs": 275
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "workspace",
+      "samples": 3,
+      "medianMs": 162,
+      "slowestMs": 179
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "conventions",
+      "samples": 3,
+      "medianMs": 6,
+      "slowestMs": 6
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "symbols",
+      "samples": 3,
+      "medianMs": 14030,
+      "slowestMs": 14143
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "build",
+      "samples": 3,
+      "medianMs": 279,
+      "slowestMs": 281
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "verify",
+      "samples": 3,
+      "medianMs": 158,
+      "slowestMs": 159
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "store",
+      "samples": 3,
+      "medianMs": 688,
+      "slowestMs": 763
+    },
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "outcome": "complete",
+      "stage": "total",
+      "samples": 3,
+      "medianMs": 15546,
+      "slowestMs": 15855
+    }
+  ],
+  "runs": [
+    {
+      "kind": "repo-map",
+      "mode": "unattributed",
+      "count": 3,
+      "complete": 3,
+      "failed": 0,
+      "aborted": 0,
+      "medianMs": 15546,
+      "producers": ["cli-map"]
+    }
+  ]
+}

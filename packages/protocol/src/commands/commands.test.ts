@@ -32,7 +32,9 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // sidebar honest-empty projection was waiting on (session.list plus rename/setPinned/
 // archive, each persisted so it survives reload), plus session.mint (C21 — the New Chat
 // front door: a row click mints a durable session AND claims its target in one act, the
-// server path C12's cluster 7 was gated on and never came back for). A
+// server path C12's cluster 7 was gated on and never came back for), plus benchmarks.list
+// and settings.setBenchmarkRecording (#731 — the Settings benchmarks panel's read over the
+// durable archive, and the default-on recording toggle beside it). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row — and with its row in docs/developing/reference/command-menu-exposure.md,
 // which carries a menu-exposure verdict for every command in this list.
@@ -53,6 +55,7 @@ const ABSORBED_IDS = [
   "ask.stage",
   "ask.unstage",
   "attention.acknowledge",
+  "benchmarks.list",
   "board.read",
   "daemon.reconnect",
   "daemon.status",
@@ -133,6 +136,7 @@ const ABSORBED_IDS = [
   "settings.resetRepoValue",
   "settings.resetWelcome",
   "settings.setAppearance",
+  "settings.setBenchmarkRecording",
   "settings.setCoachmarks",
   "settings.setGuidance",
   "settings.setKeybinding",
@@ -178,7 +182,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(104);
+    expect(ABSORBED_IDS).toHaveLength(106);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

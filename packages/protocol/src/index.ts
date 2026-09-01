@@ -1,5 +1,9 @@
 // The package's single export: a re-export seam over the five contract folders
-// (B3, #489) plus the parked legacy residue below.
+// (B3, #489), the declared root contract modules that own one boundary each and have
+// no folder to sit in (`app-owned-paths`, `round-evidence`, `forge`), and the parked
+// legacy residue described below. A root module is not automatically residue.
+export * from "./app-owned-paths";
+export * from "./benchmarks";
 export * from "./board";
 export * from "./commands";
 export * from "./delta";
@@ -11,6 +15,7 @@ export * from "./delta";
 export * from "./domain";
 export * from "./forge";
 export * from "./manifests";
+export * from "./round-evidence";
 export * from "./session";
 export * from "./sha256";
 export * from "./wire";

@@ -136,8 +136,11 @@ function disagree(answers: FindingModelAnswer[]): FindingAgreement {
  * @param labels        the provider labels for the two seats (A rendered first).
  * @param proximity     the line window for the anchor match (default 3).
  *
- * Never produces a merged summary: a `concur` row reuses ONE seat's verbatim
- * summary; a `disagree` row carries both seats' verbatim answers side by side.
+ * Never produces a merged summary. Every row's `summary` is ONE seat's verbatim words: the
+ * clearer seat's on a concur, seat A's on a conflict, the raising seat's on a solo. The
+ * other seat's answer is not lost — a `disagree` agreement carries both verbatim, side by
+ * side, and the board stamps the row `conflict` so a reader is not shown a disagreement
+ * wearing the arithmetic of agreement.
  */
 export function reconcileFindings(
   seatAFindings: readonly FindingElement[],
@@ -145,7 +148,37 @@ export function reconcileFindings(
   labels: ReconcileLabels,
   proximity: number = DEFAULT_ANCHOR_PROXIMITY,
 ): FindingElement[] {
-  const out: FindingElement[] = [];
+  return reconcileFindingsWithProvenance(seatAFindings, seatBFindings, labels, proximity).map(
+    ({ finding }) => finding,
+  );
+}
+
+/** One reconciled row plus the seat finding ids it consumed. */
+export interface ReconciledFinding {
+  readonly finding: FindingElement;
+  /**
+   * Seat finding ids this row CONSUMED — every id that was matched into this one and is
+   * gone from the reconciled set. Both matched arms populate it: a CONCUR keeps the clearer
+   * seat's id and consumes the other's, and a CONFLICT keeps seat A's id (carrying both
+   * seats' verbatim answers in its `agreement`, stamped `conflict`) and consumes seat B's.
+   * Only a solo — one seat raised it, the other did not — consumes nothing.
+   *
+   * A caller holding the two seats' boards needs this: an element citing the consumed id
+   * would otherwise dangle, and only the matcher knows which surviving row it meant.
+   * Derived here rather than re-matched by a caller, because the pairing is greedy and
+   * order-sensitive — a second implementation of it would silently disagree.
+   */
+  readonly superseded: readonly string[];
+}
+
+/** {@link reconcileFindings}, keeping which seat ids each row consumed. */
+export function reconcileFindingsWithProvenance(
+  seatAFindings: readonly FindingElement[],
+  seatBFindings: readonly FindingElement[],
+  labels: ReconcileLabels,
+  proximity: number = DEFAULT_ANCHOR_PROXIMITY,
+): ReconciledFinding[] {
+  const out: ReconciledFinding[] = [];
   const matchedB = new Set<number>();
 
   for (const a of seatAFindings) {
@@ -163,14 +196,17 @@ export function reconcileFindings(
     if (partnerIndex === -1) {
       // Solo A: seat A raised it, seat B did not.
       out.push({
-        findingId: a.findingId,
-        anchor: a.anchor,
-        summary: a.summary,
-        severity: a.severity,
-        agreement: disagree([
-          { model: labels.a, answer: a.summary },
-          { model: labels.b, answer: NO_CONCERN_ANSWER },
-        ]),
+        finding: {
+          findingId: a.findingId,
+          anchor: a.anchor,
+          summary: a.summary,
+          severity: a.severity,
+          agreement: disagree([
+            { model: labels.a, answer: a.summary },
+            { model: labels.b, answer: NO_CONCERN_ANSWER },
+          ]),
+        },
+        superseded: [],
       });
       continue;
     }
@@ -183,24 +219,33 @@ export function reconcileFindings(
       // Concur: keep the clearer summary (and its id/anchor) plus the higher
       // severity. This is a SELECTION of one seat's words, never a merge.
       const kept = isClearer(b, a) ? b : a;
+      const dropped = kept === b ? a : b;
       out.push({
-        findingId: kept.findingId,
-        anchor: kept.anchor,
-        summary: kept.summary,
-        severity,
-        agreement: concur(2, 2),
+        finding: {
+          findingId: kept.findingId,
+          anchor: kept.anchor,
+          summary: kept.summary,
+          severity,
+          agreement: concur(2, 2),
+        },
+        // The other seat's finding is gone from the merged set; whoever cited it must be
+        // repointed at the row that kept it.
+        superseded: dropped.findingId === kept.findingId ? [] : [dropped.findingId],
       });
     } else {
       // Conflict: same location, materially different verdict → both verbatim.
       out.push({
-        findingId: a.findingId,
-        anchor: a.anchor,
-        summary: a.summary,
-        severity,
-        agreement: disagree([
-          { model: labels.a, answer: a.summary },
-          { model: labels.b, answer: b.summary },
-        ]),
+        finding: {
+          findingId: a.findingId,
+          anchor: a.anchor,
+          summary: a.summary,
+          severity,
+          agreement: disagree([
+            { model: labels.a, answer: a.summary },
+            { model: labels.b, answer: b.summary },
+          ]),
+        },
+        superseded: b.findingId === a.findingId ? [] : [b.findingId],
       });
     }
   }
@@ -211,14 +256,17 @@ export function reconcileFindings(
     const b = seatBFindings[i];
     if (b === undefined) continue;
     out.push({
-      findingId: b.findingId,
-      anchor: b.anchor,
-      summary: b.summary,
-      severity: b.severity,
-      agreement: disagree([
-        { model: labels.a, answer: NO_CONCERN_ANSWER },
-        { model: labels.b, answer: b.summary },
-      ]),
+      finding: {
+        findingId: b.findingId,
+        anchor: b.anchor,
+        summary: b.summary,
+        severity: b.severity,
+        agreement: disagree([
+          { model: labels.a, answer: NO_CONCERN_ANSWER },
+          { model: labels.b, answer: b.summary },
+        ]),
+      },
+      superseded: [],
     });
   }
 

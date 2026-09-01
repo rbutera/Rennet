@@ -25,6 +25,7 @@ import type {
   AnchorSpan,
   AskOccurrence,
   AskProjection,
+  BenchmarkRun,
   ComposedHandoffBundle,
   DeltaDigestResult,
   DispositionType,
@@ -32,6 +33,7 @@ import type {
   HandoffBundle,
   LensAbsenceReason,
   LensBoard,
+  LensFailureAccount,
   LensKind,
   NoiseReview,
   OpenSpecChange,
@@ -542,6 +544,17 @@ export interface DispatchDeps {
    */
   readonly settings?: SettingsComposition;
   /**
+   * The durable benchmark archive's read side (#731, D8) — the newest `limit` recorded
+   * runs, each with its own stage records, plus what the read COST: `total` before the
+   * limit and the interior lines that could not be read. Optional: absent ⇒ the panel
+   * reads an empty history, which is exactly what a fresh install has.
+   */
+  readonly listBenchmarks?: (limit: number) => {
+    readonly runs: BenchmarkRun[];
+    readonly total: number;
+    readonly skipped: readonly string[];
+  };
+  /**
    * The durable ask-log store (B11 cluster 2, Q15) — the file-backed per-session
    * event log the `ask.*` handlers are the SOLE writers of. `readProjection` folds
    * the log to the living-draft projection; `append` adds one event. Required: the
@@ -695,12 +708,14 @@ export interface DispatchDeps {
     generation: string,
     lens: LensKind,
   ) => Promise<LensAbsenceReason | undefined>;
-  /** A durable terminal drafting failure for this exact review generation and lens. */
+  /** A durable drafting failure for this exact review generation and lens, with the typed
+   *  account when the attempt that failed recorded one (#549). NOT necessarily terminal —
+   *  the classification is the account's to state, and an absent account means unknown. */
   readonly lensFailureForReview?: (
     reviewId: string,
     generation: string,
     lens: LensKind,
-  ) => Promise<string | undefined>;
+  ) => Promise<{ readonly message: string; readonly account?: LensFailureAccount } | undefined>;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

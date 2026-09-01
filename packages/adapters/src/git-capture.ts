@@ -17,11 +17,13 @@ import {
 } from "./checkpoint-store";
 import {
   DEFAULT_VISIBLE_BYTE_LIMIT,
+  excludeAppOwnedPathspec,
   execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
   parseChangedPaths,
   parseCounts,
+  repositoryIgnoresCase,
   visible,
 } from "./git-range-diff";
 import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
@@ -222,6 +224,12 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       reviewedTreeOid: baseReviewedTreeOid,
     });
 
+    // `baseReviewedTreeOid` is already sanitized of app-owned board state (#729, D6 —
+    // `writeWorkingTree` drops it before the tree is written), so every derivation
+    // below inherits that one decision. The exclusion rides the pathspec as well
+    // because only the reviewed side of this diff went through that tree: a board file
+    // committed at the BASE would otherwise reappear here as a deletion.
+    const excludeAppOwned = excludeAppOwnedPathspec(await repositoryIgnoresCase(run, gitRoot));
     const completeDiff = await git(run, gitRoot, [
       "diff",
       "--binary",
@@ -231,12 +239,29 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       baseOid,
       baseReviewedTreeOid,
       "--",
+      excludeAppOwned,
     ]);
     const changedPaths = parseChangedPaths(
-      await git(run, gitRoot, ["diff", "--name-status", "-z", baseOid, baseReviewedTreeOid, "--"]),
+      await git(run, gitRoot, [
+        "diff",
+        "--name-status",
+        "-z",
+        baseOid,
+        baseReviewedTreeOid,
+        "--",
+        excludeAppOwned,
+      ]),
     );
     const counts = parseCounts(
-      await git(run, gitRoot, ["diff", "--numstat", "-z", baseOid, baseReviewedTreeOid, "--"]),
+      await git(run, gitRoot, [
+        "diff",
+        "--numstat",
+        "-z",
+        baseOid,
+        baseReviewedTreeOid,
+        "--",
+        excludeAppOwned,
+      ]),
     );
 
     const files: PatchFile[] = [];
@@ -278,14 +303,36 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       reviewedTreeOid,
       ...(headRef !== undefined ? { headRef } : {}),
     };
+    // Identity derives from the SANITIZED tree and the content it produced — never from
+    // `headOid`/`baseOid` (#729, D6). Those stay on the record as provenance, and they
+    // remain range identity for `captureRangePatchset`, where the pair IS the patchset.
+    // Here they are not: a commit containing only app-owned board state moves HEAD, and
+    // on the base branch moves the merge-base with it, while `reviewedTreeOid`, the file
+    // list and the diff bytes stay byte-identical. Hashing the OIDs turned that
+    // content-identical capture into a new patchset and invalidated the review — the
+    // exact harm sanitizing the tree exists to prevent, arriving by the other door.
+    // `repository.id` (the common-dir digest) still separates two repositories that
+    // happen to hold identical content.
     const id = createHash("sha256")
       .update(
-        JSON.stringify({ repository, files: files.map(({ path, status }) => ({ path, status })) }),
+        JSON.stringify({
+          repositoryId: repository.id,
+          reviewedTreeOid,
+          files: files.map(({ path, status }) => ({ path, status })),
+        }),
       )
       .update(bytes)
       .digest("hex");
 
-    const intent = await captureLocalIntent(run, gitRoot, baseOid, headOid, reviewedTreeOid, files);
+    const intent = await captureLocalIntent(
+      run,
+      gitRoot,
+      baseOid,
+      headOid,
+      reviewedTreeOid,
+      files,
+      excludeAppOwned,
+    );
     const projectSnapshotId = await this.resolveProjectSnapshotId?.(hostRoot, baseOid);
 
     return {
@@ -319,8 +366,18 @@ async function captureLocalIntent(
   headOid: string,
   reviewedTreeOid: string,
   files: readonly PatchFile[],
+  excludeAppOwned: string,
 ): Promise<PatchsetIntent> {
-  const log = await git(run, gitRoot, ["log", "--format=%s", `${baseOid}..${headOid}`], false);
+  // Path-filtered by the same exclusion the diffs carry (#729, D6). A commit that only
+  // wrote app-owned board state describes nothing the reviewer is reading, and listing
+  // its subject put app-owned state back into the intent — and therefore into what the
+  // lenses are told the change is about — after the tree had been cleaned of it.
+  const log = await git(
+    run,
+    gitRoot,
+    ["log", "--format=%s", `${baseOid}..${headOid}`, "--", excludeAppOwned],
+    false,
+  );
   const commitSubjects = log
     .split("\n")
     .map((line) => line.trim())

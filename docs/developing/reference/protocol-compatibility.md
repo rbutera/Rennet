@@ -7,7 +7,11 @@ The desktop, mobile client, CLI, and daemon can run builds from different
 commits. `packages/protocol/src/session/wire.ts` defines their shared wire
 vocabulary and compatibility rules. It is one of the package's five contract
 folders — `board/`, `commands/`, `session/`, `delta/`, and `manifests/` — each
-exporting through a single seam that the root `index.ts` re-exports.
+exporting through a single seam that the root `index.ts` re-exports. Beside them
+the root carries declared contract modules that own one boundary each and have no
+folder to sit in — `app-owned-paths.ts`, `round-evidence.ts`, `forge.ts` — plus the
+parked legacy residue (`domain.ts`, `wire.ts`, `sha256.ts`) that migrates with the
+changes reworking it. A root module is not automatically residue.
 
 ## Evolve schemas append-only
 
@@ -205,9 +209,34 @@ reviewer can read the result.
 
 The same rule applies to drafting failures added after the absence field. A
 generation may carry a per-lens reason in `failedLenses`; `board.read` returns it
-as `failure` beside `board: null`, and the client treats it as terminal. Older
-generations omit the field and remain ordinary missing-board answers. The wire
-addition is optional in both persisted and command-output shapes.
+as `failure` beside `board: null`. Older generations omit the field and remain
+ordinary missing-board answers. The wire addition is optional in both persisted
+and command-output shapes.
+
+A failure's typed account arrived later still, and append-only beside the message
+rather than inside it: `failedLensAccounts` on the generation, `failureAccount`
+on `board.read`, each naming the attempt that failed and a `retryable` /
+`terminal` classification. A generation or a daemon without the field answers the
+message alone, and that absence means the classification is **unknown** — it is
+not a licence to present the lens as beyond another attempt.
+
+The generation's cross-lens **coverage state** and its per-phase **timings** follow
+the same rule. `coverage` is `pending`, `complete` (with a violation count), or
+`failed` (with a reason); it also rides the lens progress frame and the initial
+generation's session-preparation record. `timings` carries a `version` and one
+record per phase — per SEAT for a lane that ran more than one, so the Flagged
+dual seat contributes two `lens-draft` records rather than one anonymous span.
+A record's `lens` is discriminated by its phase: the lane-scoped phases require
+it and the generation-wide ones refuse it, which is a constraint on the record
+and never on the field's presence. A generation or a daemon without either field says nothing about
+coverage or duration: an absent coverage state means **unknown**, never "coverage
+passed", and the surfaces render no coverage line at all rather than a default one.
+
+The durable round operation's `report-drafting` phase gained a second projected
+report state, `handed-off`, beside `drafting`. It appears once the report's durable
+handoff exists — the boundary after which the lens drafters run — so a client can
+tell report time from lens time on a phase that covers both. A daemon that predates
+it projects `drafting` throughout, which older and newer clients both still parse.
 
 A client can also outrun the daemon it is connected to. An older daemon does not
 answer `session.rounds` or `session.roundEvents` at all, and the rounds surfaces

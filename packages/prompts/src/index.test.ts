@@ -86,21 +86,19 @@ describe("lens prompt manifest", () => {
     expect(text.length).toBeGreaterThan(500);
     expect(text).toMatch(/^# /);
     expect(text).toContain("Ground rules");
-    expect(text).toContain("`worker.diff`");
     expect(text).toMatch(/[Nn]ever launder/);
     expect(text).toContain("`outcomes`");
     expect(text).toContain("`beyond`");
-    expect(text).toContain("Never add the unified diff's `a/` or `b/` prefix");
+    // The manifest contract (#727 + #726): cite ids, never coordinates, and place
+    // every id exactly once. The old prompt taught diff line arithmetic; the host
+    // derives every anchor now, so instructions to compute one would be a lie.
+    expect(text).toContain("`evidenceIds`");
     expect(normalized).toContain(
-      "source path from the diff, which on a rename or deletion can differ",
+      "Every manifest id must appear in exactly one place — one ask outcome or one `beyond` entry",
     );
-    expect(normalized).toContain(
-      'Use `side: "head"` for a `+` line and its number in the hunk\'s `+start,count` range',
-    );
-    expect(normalized).toContain(
-      'Use `side: "base"` for a `-` line and its number in the `-start,count` range',
-    );
-    expect(text).toContain("Context lines are not evidence");
+    expect(normalized).toContain("Never write a line number, a range, a path, or a side");
+    expect(text).not.toContain("Never add the unified diff's `a/` or `b/` prefix");
+    expect(text).not.toContain("+start,count");
     expect(text).toContain("Do not emit a document");
     expect(text).not.toContain("Set `document.measure`");
   });
@@ -114,6 +112,27 @@ describe("lens prompt manifest", () => {
     expect(text).toContain("top-level `section`");
     expect(text).toContain(`\`${kind}\``);
     expect(text).toContain("`section.data.children`");
+  });
+
+  it("tells the Noise seat that an empty board IS the settlement for an all-signal change", () => {
+    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
+    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
+    // producer half of that contract. Delete it, or reverse it into "always emit a board",
+    // and the seat manufactures signal verdicts instead — which is every other lens's
+    // premise, not this one's output, and the reviewer never sees the honest absence.
+    const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(normalized).toContain("## When nothing in the change is noise");
+    expect(normalized).toContain("Say so by emitting a board with NO elements");
+    expect(normalized).toContain('honest "nothing here is safely skippable"');
+    expect(normalized).toContain("Do not manufacture a board of signal verdicts");
+    // …and the other edge of the same rule: an empty board is not a way out of a change
+    // that does have skippable churn.
+    expect(normalized).toContain(
+      "Emit an empty board only when NO hunk is skip-safe; one skip-safe hunk means a real board naming it",
+    );
   });
 
   it("carries the review-draft voice rules", () => {

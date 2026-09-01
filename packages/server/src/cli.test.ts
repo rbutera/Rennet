@@ -355,3 +355,86 @@ describe("rennet map (daemonless repo-map build)", () => {
     );
   });
 });
+
+describe("rennet benchmarks export — the byte-identity claim is exactly true (#731 N9)", () => {
+  function captureIo(): { io: CliIo; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+  }
+
+  /** One archived run, written straight into the archive the export reads. */
+  function seedArchive(startedAtMs: number, durationMs: number): string {
+    const dataDir = mkdtempSync(resolve(tmpdir(), "rennet-benchmarks-cli-"));
+    writeFileSync(
+      resolve(dataDir, "benchmarks.jsonl"),
+      `${JSON.stringify({
+        version: 1,
+        id: `r:${startedAtMs}`,
+        kind: "repo-map",
+        producer: "cli-map",
+        subject: { label: "rennet", repoKey: "rennet", revision: "deadbeef" },
+        startedAtMs,
+        durationMs,
+        outcome: "complete",
+        stages: [{ stage: "total", startedAtMs, durationMs }],
+      })}\n`,
+      "utf8",
+    );
+    return dataDir;
+  }
+
+  async function exportTo(dataDir: string, out: string, extra: string[] = []): Promise<number> {
+    const captured = captureIo();
+    return runSourceCli(
+      [
+        "benchmarks",
+        "export",
+        "--out",
+        out,
+        "--data-dir",
+        dataDir,
+        "--revision",
+        "abc123",
+        ...extra,
+      ],
+      captured.io,
+      {},
+      { probe: vi.fn(), kill: vi.fn() },
+    );
+  }
+
+  it("derives exportedAt from the archive, so re-exporting is a genuinely empty diff", async () => {
+    // The defect this pins: `new Date()` here meant the ONE field that could not be
+    // identical sat at the top of a file whose own documentation promised byte-identity.
+    const dataDir = seedArchive(1_700_000_000_000, 15_000);
+    const first = resolve(dataDir, "first.json");
+    const second = resolve(dataDir, "second.json");
+    expect(await exportTo(dataDir, first)).toBe(0);
+    expect(await exportTo(dataDir, second)).toBe(0);
+    expect(readFileSync(second, "utf8")).toBe(readFileSync(first, "utf8"));
+    // Derived from the END of the newest run, not from now.
+    expect(JSON.parse(readFileSync(first, "utf8")).provenance.exportedAt).toBe(
+      new Date(1_700_000_015_000).toISOString(),
+    );
+
+    // The positive control on "derived": a DIFFERENT archive must move the stamp, or
+    // "identical bytes" would only be proving the stamp is a constant.
+    const later = seedArchive(1_700_000_100_000, 15_000);
+    const third = resolve(later, "third.json");
+    expect(await exportTo(later, third)).toBe(0);
+    expect(JSON.parse(readFileSync(third, "utf8")).provenance.exportedAt).not.toBe(
+      JSON.parse(readFileSync(first, "utf8")).provenance.exportedAt,
+    );
+  });
+
+  it("takes an explicit --timestamp, and refuses one that is not a date", async () => {
+    const dataDir = seedArchive(1_700_000_000_000, 15_000);
+    const out = resolve(dataDir, "stated.json");
+    expect(await exportTo(dataDir, out, ["--timestamp", "2026-09-01T10:00:00.000Z"])).toBe(0);
+    expect(JSON.parse(readFileSync(out, "utf8")).provenance.exportedAt).toBe(
+      "2026-09-01T10:00:00.000Z",
+    );
+    expect(await exportTo(dataDir, out, ["--timestamp", "not a date"])).toBe(2);
+  });
+});

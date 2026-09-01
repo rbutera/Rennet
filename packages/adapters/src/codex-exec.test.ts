@@ -183,6 +183,26 @@ describe("createCodexExecutor (app-server)", () => {
     expect(turn.effort).toBe("low");
   });
 
+  it("rejects an over-cap raw final message before parsing it (#727)", async () => {
+    const raw = '{"note":"éééé"}';
+    const bytes = new TextEncoder().encode(raw).length;
+    const call = async (outputByteCap: number) => {
+      const { effects } = fakeExecEffects({ finalText: raw });
+      return createCodexExecutor(effects, { repoRoot: "/repo" })({
+        model: "m",
+        effort: "low",
+        prompt: "p",
+        outputSchema: { type: "object" },
+        outputByteCap,
+      });
+    };
+
+    await expect(call(bytes)).resolves.toMatchObject({ output: { note: "éééé" } });
+    await expect(call(bytes - 1)).rejects.toThrow(
+      `codex returned ${bytes} raw UTF-8 bytes, over this turn's ${bytes - 1}-byte output cap`,
+    );
+  });
+
   it("passes NO outputSchema turn param for a free-form docType", async () => {
     const { effects, turnStarts } = fakeExecEffects({ finalText: "{}" });
     const executor = createCodexExecutor(effects, { repoRoot: "/repo" });

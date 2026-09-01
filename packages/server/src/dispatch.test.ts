@@ -4420,6 +4420,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       // real council DEFAULTS, so the route is proven against honest values.
       reviewRoles: vi.fn(() => reviewRoleMappings()),
       setRoleAssignment: vi.fn(() => reviewRoleMappings()),
+      setBenchmarkRecording: vi.fn((enabled: boolean) => enabled),
     };
     const { dispatch } = harness(undefined, { settings });
 

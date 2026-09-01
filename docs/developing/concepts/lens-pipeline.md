@@ -55,7 +55,9 @@ the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
 `composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
 prompt reader — and drives a generation visit: the round-report seat settles its
 sequencing boundary first, then the five independent lens lanes draft concurrently.
-The per-board arrival events this scheduler emits order the progressive reveal, and a
+The per-board arrival events this scheduler emits drive the progressive reveal — each
+lane publishes its own settlement as it lands, so a slow Design or Noise lane never holds
+a finished core board back — and a
 `PipelineStartGuard` keyed on the session and
 exact generation visit makes a retry of that dispatch reattach rather than
 double-start. `create-server` owns the live trigger: the own-branch round loop
@@ -65,22 +67,23 @@ and calls board regeneration through this runtime.
 0. **Round-report first** (on landed rounds only). When a coding round returns
    with its exact worker receipt, the `round-report` seat makes one structured
    semantic-classification turn before any lens drafter starts. Its context is
-   only the successor patchset id, the durable dispatched asks, and the exact
-   coding-turn receipt: diff, changed paths, and observed commit range. It does
-   not receive the full DeltaPacket or the all-kind board schema. Each ask is
+   only the successor patchset id, the durable dispatched asks, the worker's
+   changed paths and observed commit range, and the round's **evidence manifest**
+   (see the classifier evidence contract below). It does not receive the full
+   DeltaPacket, the all-kind board schema, or the verbatim diff. Each ask is
    reduced to its durable id, path, instruction, and optional source anchor, so
-   stale prior-diff context cannot compete with the coding turn's measured diff.
-   The host sorts the outcomes and builds the document, section,
-   outcomes, and code refs deterministically, then verifies every claimed anchor
-   against an exact changed line on the durable ask's path (including a measured
-   rename alias) before persistence. Readback also requires the exact ask text and
-   forbids change evidence on an `untouched` outcome. There is no model retry or
-   generic post-process turn on this path. The resulting board is both the
-   reviewer's greeting and the lens drafters' input. Here, **legacy caller** means
-   an injected pipeline caller that supplies the older round context without an
-   exact worker receipt. It retains the generic drafting path for compatibility.
-   A live durable coding round always carries the receipt and never selects that
-   path.
+   stale prior-diff context cannot compete with the coding turn's measured
+   evidence. The host sorts the outcomes and builds the document, section,
+   outcomes, and code refs deterministically — including every line anchor, which
+   it derives from the cited evidence rather than reading from the model. It then
+   verifies the whole partition and every derived anchor before persistence.
+   Readback also requires the exact ask text and forbids change evidence on an
+   `untouched` outcome. There is no model retry or generic post-process turn on
+   this path. The resulting board is both the reviewer's greeting and the lens
+   drafters' input. Here, **legacy caller** means an injected pipeline caller that
+   supplies the older round context without an exact worker receipt. It retains
+   the generic drafting path (and the verbatim diff) for compatibility. A live
+   durable coding round always carries the receipt and never selects that path.
 1. **Draft.** One agent per lens receives the delta context and its lens
    prompt, plus the host board schema derived once from the frozen
    `DraftBoardSchema`, and returns a structured board. Each drafting instruction
@@ -115,14 +118,19 @@ and calls board regeneration through this runtime.
    coverage call when the board contains requirements, eligible hunks exist,
    and the caller supplied a coverage mapper.
 2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
-   location: a matched pair collapses to the clearer finding carrying both
-   models' concurrence, a solo finding carries only the raising model's. The
-   result is folded into each finding's board-native `concurrence` tally
-   (`{ model, agree, total }` per seat), alongside an `accord` stamp naming how
-   the seats landed: `concur`, `split` (one seat answered "no concern"), or
-   `conflict` (both raised it at materially different severities). The stamp is
-   load-bearing, because a concurrence and a conflict fold to the identical
-   tally pair — without it a reader cannot tell agreement from disagreement.
+   location: a matched pair collapses to ONE row carrying both models'
+   concurrence — the clearer of the two summaries when the seats concur, seat
+   A's when they conflict, with both seats' verbatim answers riding along in the
+   agreement — and a solo finding carries only the raising model's. Whichever id
+   the surviving row keeps, the consumed one is gone from the board, so the merge
+   repoints its citers rather than leaving them naming an element the write no
+   longer holds. The result is folded into each finding's board-native
+   `concurrence` tally (`{ model, agree, total }` per seat), alongside an
+   `accord` stamp naming how the seats landed: `concur`, `split` (one seat
+   answered "no concern"), or `conflict` (both raised it at materially different
+   severities). The stamp is load-bearing, because a concurrence and a conflict
+   fold to the identical tally pair — without it a reader cannot tell agreement
+   from disagreement.
    With only one harness available the lens degrades to a single seat, stamped
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
@@ -141,7 +149,9 @@ and calls board regeneration through this runtime.
    needs. Sequence requires a reachable `order_step`. Decisions and Flagged
    require a reachable `decision` or `finding`, unless the provider returned a
    parsed zero-element board that supports typed `no-decisions` or `no-findings`
-   absence. Noise has the equivalent `no-noise` absence. Missing core material
+   absence. Noise has the equivalent `no-noise` absence, and its prompt asks for exactly
+   that empty board when nothing in the change is skip-safe, rather than a board of
+   "this must be read" verdicts. Missing core material
    becomes that honest absence or a precise failure; it never starts a second
    full drafting session and never lands as an empty successful board.
 
@@ -166,7 +176,7 @@ and calls board regeneration through this runtime.
      lenses, boards, agents, seats, or drafts.
 
    Cross-lens every-hunk coverage runs once over the frozen board set rather than
-   per draft. The core validator retains its typed-data immutability result for
+   per draft, and after the boards have been revealed rather than before. The core validator retains its typed-data immutability result for
    callers that provide a deterministic transform; the production lens scheduler
    supplies no model-backed post-process transform.
    The design target is "19 rules"; against the frozen 13-kind board schema the
@@ -175,9 +185,39 @@ and calls board regeneration through this runtime.
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
+   A drafting turn that emits **no board at all** is not a settlement. It seeds
+   the same retry ladder an unparseable first return does, so the seat is
+   re-asked rather than the lane failing at attempt zero. Only a ladder that ran
+   out without any turn emitting settles a failure, and that failure names both
+   facts: the original non-emission and the re-asks it spent.
 4. **Freeze.** The validated structured draft becomes the lens board without a
    second model rewrite. Host-owned Design projections, Flagged reconciliation,
    round composition, delta stamps, and metadata persistence remain deterministic.
+
+   Those host-owned passes run *after* lint, so the board that gets written is
+   not the board lint last saw. A **reference-admission pass** at the write
+   boundary checks every element reference against the exact document being
+   written, because the board service validates references in batch order and
+   rejects the whole write as `bad-ref` when one names an element the document
+   does not contain. An inadmissible reference is repaired only when its unique
+   intended target is provable: exactly one element of that document shares the
+   reference's identity, it is not the citing element itself, and it is the kind
+   the field is declared to hold — an `order_step.span` may only land on a
+   `code_ref`. Identity folds case and the separator set (`-_./\` and space) and
+   nothing else; two ids that differ in a letter, ASCII or not, are two ids. A
+   `code_ref` must cite the captured patchset this generation reads, and that test
+   applies to a reference spelled exactly as much as to a repaired one, because an
+   id that happens to exist is not a licence to cite another patchset's code. The
+   one exception is host-carried round history: a prior round's addressed chapter
+   is *about* an earlier generation, so its orchestrator-authored anchors keep that
+   generation's patchset. Every repair is recorded on the board's durable metadata.
+   An ambiguous or absent target is not proof: the lane settles a typed failure
+   instead. An element is **never** dropped to
+   make the rest of a board acceptable — an accepted board that silently sheds
+   produced material is the quiet lie the complete-coverage ruling forbids. The
+   board service stays authoritative and keeps rejecting; repairs happen
+   producer-side. The Flagged dual-seat merge repoints its own collapsed
+   findings' citers at the surviving partner for the same reason.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
    part lives in `core/board/`: the coverage assertion (every patchset hunk is
@@ -205,14 +245,62 @@ and calls board regeneration through this runtime.
    (citations plus the machinery screen) — visible, never blocking.
 
 Each successful board persists its metadata as soon as its lane settles, so live
-progress follows completion order. Successful typed absences are reported in
-that same settlement order through a serialized callback, which keeps cumulative
-generation snapshots monotonic. Once every lane has settled, the scheduler runs
-the cross-lens coverage assertion and emits **per-board arrival events** in
-canonical Design, Sequence, Decisions, Flagged, Noise order. The returned
-outcomes use that same deterministic order regardless of which drafter finished
-first. The rounds machinery consumes these events to drive the reveal; the
-pipeline only emits them.
+progress follows completion order. Both successful typed absences and
+**per-board arrival events** are published in that same settlement order through
+one serialized callback, which keeps cumulative generation snapshots monotonic.
+A lane's arrival is emitted the moment its board is written — no global barrier
+over the five lanes, and cross-lens coverage does not gate it. The returned
+outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
+order regardless of which drafter finished first, because that array is
+completion bookkeeping rather than the reveal. The rounds machinery consumes the
+arrival events to drive the reveal; the pipeline only emits them.
+
+**Cross-lens coverage is a generation state, not a gate.** It runs once, after
+every lane has settled, and moves `pending` → `complete` (with the violation
+count) or `failed`. The state is durable on the generation and rendered
+explicitly beside boards that are already readable; because the coverage
+assertion returns violations without amending a board, coverage annotates a
+revealed board and never rewrites one.
+
+**Per-phase timings are durable and versioned.** One record per phase —
+`report` (the whole report gate) and `report-classification` (the provider turn
+inside it), each lane's `lens-draft` / `lens-repair` / `lens-post-process`, plus
+`coverage`, `reveal`, and `first-core-board` — carries the wall-clock start and
+the measured duration. They live on the generation under a versioned `timings`
+record, so no label can absorb another phase's time and the
+[benchmark archive](../reference/benchmarks.md) reads this one spine rather than
+measuring anything a second time. `lens` is discriminated on the record: the four
+lane-scoped phases require it, the generation-wide ones forbid it.
+
+Two of those records are measured from a boundary the pipeline does not own.
+`first-core-board` starts from the moment the **reviewer's** wait began — the
+captured input becoming ready on an initial generation, the round landing and
+its report verifying on a returned one — which the caller supplies, because
+measuring from the drafting runtime's own entry would silently exclude board
+minting, partial-state cleanup and provider resolution. `reveal` ends at the
+last lane that actually revealed something; a lane that failed revealed nothing
+and does not extend the window.
+
+**Every stage record names what ran it, one record per seat.** A single-seat
+lane emits one `lens-draft` record carrying that seat's harness and model. The
+Flagged lane runs two seats, so it emits **two** — each with its own provenance
+and its own wall-clock span, and the lane's aggregate span is min-start to
+max-end across them. That is what makes "this run was dual-model" derivable from
+the stages rather than assumed from settings; one merged record could name no
+harness at all, which answered the question with silence.
+
+**Repair budgets are per lane and per whole-board attempt.** The first drafting
+run over a generation spends the lane's full ladder; every repeat whole-board
+attempt — the redraft a restart's partial-state recovery starts — draws the same
+repeat entry, so one restart costs one draft plus that budget rather than a
+silently refreshed ladder. The repeat entry is reduced but never zero: a zero
+budget ends a lane on one malformed output, and the restart recovery that exists
+to re-draft a retryable lens could then never produce a board for it.
+
+**Cross-lens coverage is attempt-scoped.** A redraft clears the replaced
+attempt's coverage state durably and republishes `pending` on its first frame,
+so a reconnecting client never reads "every hunk covered" beside lanes that are
+queued for a redraft over boards that no longer exist.
 
 The classified report path also emits content-free diagnostics. Its fixed
 milestones distinguish provider time from session cleanup, schema parsing,
@@ -230,6 +318,84 @@ attempt: remove its metadata first, clear its board state second, then draft. Th
 order is repeatable after a crash and prevents stale metadata from presenting a
 partially cleared board as complete. A malformed or semantically invalid report
 is scrubbed the same way before one fresh classification turn.
+
+## The classifier evidence contract
+
+The round-report classification turn is bounded on both sides, locally, with the
+limits declared once in `@rennet/protocol`'s `round-evidence` module. The numbers
+below are those constants; if they disagree with the code, the code is right and
+this page is a bug.
+
+**What goes in.** The host parses the coding turn's measured diff into a
+canonically ordered **evidence manifest**. Each unit carries a content-derived id
+(`ev-` plus 16 hex characters of a SHA-256 over the unit's kind, path, and identity
+— hunk text, mode pair, previous path, or change status). The order is path
+(compared by code unit, never a locale-dependent comparator — one shared comparator
+serves the manifest, the report builder, and the report verifier), then kind
+(`rename`, `mode-change`, `binary`, `text-hunk`), then position within the file.
+
+Read the id's stability precisely, because the contract is narrower than "stable":
+
+- **Rebuilding the same measured diff yields the same ids.** That is the recovery
+  path — a report recovered after a crash is re-verified against ids rebuilt from
+  the same diff — and it is the property the system relies on.
+- **A change in an unrelated file never renumbers a surviving unit,** the way an
+  ordinal position would.
+- **An unrelated change in the same file, above a hunk, re-keys that hunk.** A text
+  hunk's identity includes its `@@` header, which carries line numbers. Dropping the
+  header would remove that shift and collide two byte-identical hunks in one file
+  onto a single id — ids must be unique within a manifest before stability across
+  manifests means anything. Uniqueness is enforced: a repeated id (a shared identity
+  or a 16-hex collision) is a typed local failure, not a silently merged bucket.
+
+Evidence is a discriminated union, and **no variant invents a line anchor**:
+
+| Variant | Carries | Anchor |
+| --- | --- | --- |
+| `text-hunk` | The verbatim `@@` header and body | The hunk's first added line, or its first deleted line when it only removes |
+| `rename` | The head path and the previous path | None |
+| `mode-change` | The old and new file modes | None |
+| `binary` | The path and the change status | None |
+
+A file that both moved and changed contributes a `rename` unit *and* its
+`text-hunk` units, so a mixed change stays lossless across variants.
+
+**The input budget.** The complete serialized manifest is measured in UTF-8 bytes
+by one serializer: at or under **262,144 bytes** and **400 entries** it is sent
+intact; over either limit produces a typed local failure with **zero provider
+calls**, routed to the durable round-failure path. Nothing is truncated, split, or
+summarized to fit — a manifest that fits by omission would classify a change that
+did not happen.
+
+**What comes back.** The classifier returns outcomes and `beyond` entries that cite
+manifest ids in `evidenceIds`; it never writes a path, a side, or a line number.
+The provider's raw response is capped at **131,072 UTF-8 bytes**, enforced at the
+harness transport boundary in both the Claude and the Codex adapter *before*
+structured-output decoding — core only ever sees decoded values, so a core-side
+check would already be too late. On the Claude leg the SDK hands the structured
+output back already decoded, so both carriers (the result text and the decoded
+object) are measured and the larger governs. Decoded cardinality limits then apply
+before persistence: at most **100** `beyond` entries, and exactly one outcome per
+dispatched ask.
+
+The turn also asks the provider for at most **32,768 output tokens**, so an
+over-long classification stops at the source rather than being paid for and then
+rejected. That cap is **asymmetric by transport, and honestly so**: the Claude
+harness takes it through its child environment, while `codex` exposes no
+model-output-token parameter or config override at all, so a Codex classification is
+bounded by the byte cap alone. The byte cap is the enforced backstop on both legs.
+
+**The partition.** Every manifest id appears in exactly one ask outcome or the
+`beyond asks` bucket. Unknown, duplicated, and omitted ids are all rejected before
+anything is persisted, and the accepted ids are stored on the board's
+`round_outcome` elements, so a recovered report is re-verified against the measured
+diff rather than trusted.
+
+**When it fails.** Every limit above fails typed to the durable round-failure path
+and spawns no further turn — a cap failure never becomes another classification
+attempt. Because the classifier is side-effect-free before durable projection,
+recovery after a crash MAY repeat the provider call; what is guaranteed is exactly
+one durable report projection per round, not exactly-once remote invocation.
 
 ## Reading a board back
 
@@ -257,9 +423,33 @@ those core lenses. Flagged persists any round finding-resolution migration befor
 that typed absence. The client treats the absence as settled, keeps its segment
 selectable with explicit empty-state copy, and stops polling. Sequence requires
 a reading result; a semantically empty return gets one explicit retry, then
-becomes a retryable lens failure rather than an arrival. A landed-round report
+becomes a retryable lens failure rather than an arrival.
+
+Which absence each lens may settle with is the protocol's `LENS_ADMISSIBLE_ABSENCES`
+table, and it is enforced where an outcome becomes durable rather than merely
+advised: a lens settling an absence its own row does not admit is a producer
+defect that persists as a typed failure, never as a clean result. That failure is
+`retryable` at attempt zero — nothing has been retried, and another drafting
+attempt is exactly what answers it. The durable
+`GenerationSchema` stays permissive on purpose — sessions written before a field
+existed must keep parsing — so the boundary that refuses a wrong pairing is the
+write, never the read.
+
+A failure persists as the drafter's own words **plus a typed account**: which
+attempt failed, and whether another attempt could plausibly succeed
+(`retryable` / `terminal`). The account is durable beside the message, survives a
+daemon restart, and rides `board.read` to the client, so a lens whose seat simply
+did not draw is not presented as beyond another attempt. A failure with no
+account means the classification is unknown — which is not the same as terminal.
+For a multi-seat lens the account aggregates: retryable if **any** seat is, since
+the lens needs only one seat to draw a board. The account also decides what a
+RESTART does with the failure: a retryable one is not complete evidence for its
+lens, so a fresh runtime over that durable state redrafts the generation instead
+of reconstructing the same failure forever. A terminal one is settled, and its
+generation reconstructs without a model. A landed-round report
 gets exactly one classification turn and fails honestly when that classification
-omits an ask or cites evidence outside the measured coding-turn diff. A plain
+omits an ask, cites evidence outside the measured coding-turn diff, or fails to
+partition that evidence exactly once. A plain
 `null` remains missing because the board may still be in flight. No board is
 assembled from another generation's elements.
 
@@ -297,8 +487,8 @@ from the branch name, commit messages, and PR body. GitHub is first-class via
 environment variable). The bounded dossier is inlined verbatim into lens
 drafting prompts, and the orchestrator and round workers can receive it too.
 The landed-round report classifier intentionally receives only the successor
-patchset id, durable asks, and exact worker receipt; full raw payloads stay
-behind a context tool. Items are structured (id, tracker, title, state, bounded body,
+patchset id, durable asks, the worker's identity, and the round's evidence
+manifest; full raw payloads stay behind a context tool. Items are structured (id, tracker, title, state, bounded body,
 acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
 how ticket citations reach boards. Standing project background is not fetched
 for the drafter: a drafter that wants it reads the repository it is standing in.

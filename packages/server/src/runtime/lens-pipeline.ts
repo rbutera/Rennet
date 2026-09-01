@@ -15,10 +15,13 @@ import {
   type DeltaPacket,
   type DesignTaskProgressSource,
   deriveDesignTaskProgress,
+  type ElementReference,
   elementReferences,
   type FindingResolution,
   type HarnessPort,
   type HarnessTurnResult,
+  HOST_COMPOSER_AUTHOR_ID,
+  HOST_ROUND_HISTORY_PREFIX,
   isCarriedForward,
   isScaffoldPath,
   type LintContext,
@@ -30,7 +33,7 @@ import {
   type Omission,
   parseDesignSourceObligations,
   type RegisterLintContext,
-  reconcileFindings,
+  reconcileFindingsWithProvenance,
   runCoverageMapping,
   stampDeltas,
   validateDraft,
@@ -56,11 +59,20 @@ import {
   type FindingAgreement,
   type FindingDisposition,
   type FindingElement,
+  type GenerationCoverage,
+  type GenerationPhaseTiming,
   generationIdForPatchset,
+  LENS_ADMISSIBLE_ABSENCES,
   LENS_KINDS,
   type LensAbsenceReason,
+  type LensFailureAccount,
   type LensKind,
   parseDraft,
+  ROUND_REPORT_MAX_BEYOND_ENTRIES,
+  ROUND_REPORT_OUTPUT_MAX_BYTES,
+  ROUND_REPORT_OUTPUT_MAX_TOKENS,
+  type RoundEvidenceAnchor,
+  type RoundEvidenceUnit,
   type RoundReportDiagnosticMilestone,
   resolveBoardDocument,
   SEVERITY_LEVELS,
@@ -68,6 +80,12 @@ import {
 } from "@rennet/protocol";
 import { z } from "zod";
 import { projectRoundReportBoard } from "./lens-board-read";
+import {
+  buildRoundEvidenceManifest,
+  compareByCodeUnit,
+  measureRoundEvidenceManifest,
+  verifyRoundEvidencePartition,
+} from "./round-evidence-manifest";
 import {
   CLASSIFIED_ROUND_REPORT_AUTHOR,
   CLASSIFIED_ROUND_REPORT_SECTION_ID,
@@ -105,17 +123,13 @@ import {
 // ── The board output schema (the host schema the drafter's session is constrained to) ──
 
 let cachedBoardSchema: unknown;
-const RoundReportEvidenceSchema = z
-  .object({
-    path: z.string().min(1),
-    side: z.enum(["base", "head"]),
-    startLine: z.number().int().positive(),
-    endLine: z.number().int().positive(),
-  })
-  .strict()
-  .refine((evidence) => evidence.startLine === evidence.endLine, {
-    message: "evidence must cite one exact changed line",
-  });
+/**
+ * The classifier cites MANIFEST IDS, never coordinates (#727). Every id the host put
+ * in the manifest lands in exactly one bucket, and the host derives the displayed line
+ * anchor from the hunk it parsed itself — so no output shape can invent a line number
+ * for a rename, a mode change, or a binary file.
+ */
+const RoundReportEvidenceIdsSchema = z.array(z.string().min(1)).min(1);
 const RoundReportClassificationSchema = z
   .object({
     outcomes: z.array(
@@ -125,7 +139,7 @@ const RoundReportClassificationSchema = z
             askId: z.string().min(1),
             status: z.literal("addressed"),
             note: z.string().trim().min(1),
-            evidence: RoundReportEvidenceSchema,
+            evidenceIds: RoundReportEvidenceIdsSchema,
           })
           .strict(),
         z
@@ -133,7 +147,7 @@ const RoundReportClassificationSchema = z
             askId: z.string().min(1),
             status: z.literal("partial"),
             note: z.string().trim().min(1),
-            evidence: RoundReportEvidenceSchema,
+            evidenceIds: RoundReportEvidenceIdsSchema,
           })
           .strict(),
         z
@@ -151,7 +165,7 @@ const RoundReportClassificationSchema = z
           ref: z.string().min(1),
           text: z.string().trim().min(1),
           note: z.string().trim().min(1),
-          evidence: RoundReportEvidenceSchema,
+          evidenceIds: RoundReportEvidenceIdsSchema,
         })
         .strict(),
     ),
@@ -258,6 +272,204 @@ export function draftToOps(
   };
   for (const el of board.elements) visit(el);
   return ordered.map((element) => ({ op: "create", element }));
+}
+
+// ── Reference admission at the write boundary (#548 D1) ──
+
+/** One repaired reference: what the producer cited, and the target it provably meant. */
+export interface RefRepair {
+  readonly elementId: string;
+  readonly field: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Fold an authored element id to its identity for provable-target comparison: case and
+ * the separator set below are the drafter's typography, not the id's identity, so
+ * `Decision_Code`, `decision-code`, `decision.code` and `decisionCode` fold together.
+ *
+ * LETTERS ARE NEVER DROPPED. An earlier fold stripped every character outside `[a-z0-9]`,
+ * which deleted the letters themselves out of a non-ASCII id: `authé` and `authø` both
+ * folded to `auth`, so two ids that differ in a LETTER became one "unique" candidate and
+ * the pass repaired a reference onto an element nobody meant. Two ids that differ in a
+ * letter are two different ids, and guessing between them is not proof.
+ */
+function refIdentity(id: string): string {
+  return id.toLowerCase().replace(/[-_./\\ ]+/g, "");
+}
+
+/**
+ * The element kind a reference field is declared to hold, for the fields whose
+ * {@link AUTHORED_BOARD_SCHEMA} declaration names one. A field absent here (`children`,
+ * `scenarios`, `alternatives`, `reply_to`, `quote_target`, `covers`) holds any kind, and
+ * nothing about its target's kind is provable.
+ *
+ * This constrains REPAIRS only. A repair is a guess about what the producer meant, and a
+ * sole folded candidate of the wrong kind is a different element — an `order_step.span`
+ * folding onto a `prose` is not proof that the prose is the code the step spans. The pass
+ * does NOT re-judge a reference the producer spelled exactly: that element is in the
+ * document, the board service admits it, and refusing it would cost the reviewer the whole
+ * board over a kind the service and the lint layer both accept (prose spans ship today).
+ */
+const REPAIR_TARGET_KIND: Readonly<Record<string, DraftElement["kind"]>> = {
+  "annotation.code_ref": "code_ref",
+  "decision.evidence": "code_ref",
+  "finding.code": "code_ref",
+  "message.code_ref": "code_ref",
+  "noise_verdict.hunk": "code_ref",
+  "order_step.span": "code_ref",
+  "requirement.trace": "code_ref",
+  "review_comment.code_ref": "code_ref",
+  "round_outcome.code_ref": "code_ref",
+};
+
+/** Exposed for the drift test that keeps the map in step with the authored schema. */
+export const REPAIR_TARGET_KINDS = REPAIR_TARGET_KIND;
+
+export interface RefAdmission {
+  /** The board with every provable repair applied; identical when there was nothing to repair. */
+  readonly board: DraftBoard;
+  readonly repairs: readonly RefRepair[];
+  /** References with no provable unique target. Non-empty ⇒ the board must NOT be written. */
+  readonly unrepairable: readonly { elementId: string; field: string; targetId: string }[];
+}
+
+/**
+ * The ref-admission pass (#548 D1). Every element reference in a board about to be
+ * written is checked against THAT document: the board service validates references in
+ * batch order and rejects the whole write as `bad-ref` when one names an element the
+ * document does not contain, so an unadmitted reference costs the lens its board.
+ *
+ * Lint already resolves references DURING drafting, but the board that gets written is
+ * not the board lint last saw: delta stamping, the round's finding composition, the
+ * Flagged document rewrite and Design coverage grounding all edit the board after the
+ * ladder ends. This pass is the boundary those edits cross.
+ *
+ * A dangling reference is REPAIRED only when its unique intended target is provable:
+ * exactly one element of this document shares the reference's identity (see
+ * {@link refIdentity}), it is not the citing element itself, it is the kind the field is
+ * declared to hold ({@link REPAIR_TARGET_KIND}), and — when it is a `code_ref` — it cites
+ * the captured patchset this generation is reading, so the repair points into the patchset
+ * the board is about. Ambiguity (two candidates) or absence (none) is not proof, and the
+ * lane settles a typed failure instead. Dropping the citing element to make the rest of the
+ * board acceptable is FORBIDDEN: an accepted board that silently sheds produced material
+ * is the quiet lie the complete-coverage ruling exists to prevent.
+ *
+ * The patchset test runs on a reference the producer spelled EXACTLY too: an id that
+ * happens to exist is not a licence to cite another patchset's code, and the repair path
+ * already refuses exactly that candidate. Host-carried round history is the one exception,
+ * and it is not an exception to the rule — a prior round's addressed chapter is ABOUT an
+ * earlier generation, so its orchestrator-authored anchors cite that generation's patchset
+ * by design, and every round after the first would otherwise lose its Sequence board.
+ *
+ * That exemption names the host composer EXACTLY ({@link isHostComposedHistory}): an
+ * `orchestrator` author alone is a claim any seat can type into its output, and a lens
+ * that stamped one on its own code_ref would have bought itself a licence to cite any
+ * patchset it liked. Only `composeFindingRound`'s own author id, or an element the host
+ * minted into its round-history namespace, clears the check.
+ */
+/* The two host-composer identities come from `@rennet/core`'s `finding-round`, which is
+ * the module that WRITES them. A local copy of either string made this gate and the
+ * composer two independent sources of one fact, and one rename apart from silently
+ * refusing the host's own elements. */
+
+/**
+ * Was this element composed by the HOST's round-history writer, rather than merely
+ * labelled `orchestrator` by whoever produced it? The author kind is necessary and not
+ * sufficient: it has to be the composer's own id, or an element the host minted into its
+ * round-history namespace. A seat that forges `{kind: "orchestrator"}` onto a code_ref it
+ * authored fails both halves and stays subject to the patchset test.
+ */
+function isHostComposedHistory(element: DraftElement): boolean {
+  const author = (element.data as { author?: { kind?: unknown; id?: unknown } }).author;
+  if (author?.kind !== "orchestrator") return false;
+  return author.id === HOST_COMPOSER_AUTHOR_ID || element.id.startsWith(HOST_ROUND_HISTORY_PREFIX);
+}
+
+export function admitBoardReferences(board: DraftBoard, patchsetId: string): RefAdmission {
+  const byId = new Map(board.elements.map((element) => [element.id, element]));
+  const byIdentity = new Map<string, DraftElement[]>();
+  for (const element of board.elements) {
+    const identity = refIdentity(element.id);
+    byIdentity.set(identity, [...(byIdentity.get(identity) ?? []), element]);
+  }
+  /** Does this element's citation belong to the patchset the board is about? */
+  const admissibleTarget = (element: DraftElement): boolean => {
+    if (element.kind !== "code_ref") return true;
+    const data = element.data as { patchset_id?: unknown };
+    return data.patchset_id === patchsetId || isHostComposedHistory(element);
+  };
+
+  const repairs: RefRepair[] = [];
+  const unrepairable: { elementId: string; field: string; targetId: string }[] = [];
+  const elements = mapElementReferences(board.elements, ({ sourceId, field, targetId }) => {
+    const exact = byId.get(targetId);
+    // Spelled exactly and admissible: the document holds it, so it is written as authored.
+    if (exact !== undefined && admissibleTarget(exact)) return undefined;
+    const expectedKind = REPAIR_TARGET_KIND[`${byId.get(sourceId)?.kind ?? ""}.${field}`];
+    const candidates = (byIdentity.get(refIdentity(targetId)) ?? []).filter(
+      (candidate) =>
+        candidate.id !== sourceId &&
+        (expectedKind === undefined || candidate.kind === expectedKind) &&
+        admissibleTarget(candidate),
+    );
+    const only = candidates.length === 1 ? candidates[0] : undefined;
+    if (only === undefined) {
+      unrepairable.push({ elementId: sourceId, field, targetId });
+      return undefined;
+    }
+    repairs.push({ elementId: sourceId, field, from: targetId, to: only.id });
+    return only.id;
+  });
+
+  if (repairs.length === 0) return { board, repairs, unrepairable };
+  return { board: { ...(board as object), elements } as DraftBoard, repairs, unrepairable };
+}
+
+/**
+ * Rewrite schema-declared element references across a set of elements. `resolve` names
+ * the replacement target for one reference, or `undefined` to leave it exactly as it is.
+ * Element order, kinds and every non-reference field are untouched, and an element with
+ * no rewritten reference is returned by identity — so a board with nothing to rewrite is
+ * not silently rebuilt.
+ *
+ * A rewritten `many` field is DEDUPLICATED, first occurrence winning: two entries can
+ * resolve to the same target (`["c1", "C_1"]` both meaning `c1`, or two seat findings
+ * collapsing into one), and a list naming the same element twice renders it twice.
+ */
+function mapElementReferences(
+  elements: readonly DraftElement[],
+  resolve: (reference: ElementReference) => string | undefined,
+): DraftElement[] {
+  return elements.map((element) => {
+    /** field → (current target → replacement). */
+    const byField = new Map<string, Map<string, string>>();
+    for (const reference of elementReferences(element)) {
+      const replacement = resolve(reference);
+      if (replacement === undefined) continue;
+      const targets = byField.get(reference.field) ?? new Map<string, string>();
+      targets.set(reference.targetId, replacement);
+      byField.set(reference.field, targets);
+    }
+    if (byField.size === 0) return element;
+    const data: Record<string, unknown> = { ...(element.data as Record<string, unknown>) };
+    for (const [field, targets] of byField) {
+      const value = data[field];
+      if (typeof value === "string") data[field] = targets.get(value) ?? value;
+      else if (Array.isArray(value)) {
+        const seen = new Set<string>();
+        data[field] = value.flatMap((item) => {
+          if (typeof item !== "string") return [item];
+          const mapped = targets.get(item) ?? item;
+          if (seen.has(mapped)) return [];
+          seen.add(mapped);
+          return [mapped];
+        });
+      }
+    }
+    return { ...element, data } as DraftElement;
+  });
 }
 
 /** Keep recovery deletes behind the same sole board-op writer as normal draft writes. */
@@ -494,13 +706,13 @@ export function reconcileFlaggedBoards(
   const boardB = namespaceBoard(boardBArg, "b:");
   const aFindings = boardFindings(boardA);
   const bFindings = boardFindings(boardB);
-  const reconciled = reconcileFindings(
+  const reconciled = reconcileFindingsWithProvenance(
     aFindings.map((el) => toFindingElement(el, boardA)),
     bFindings.map((el) => toFindingElement(el, boardB)),
     labels,
   );
   const byId = new Map<string, { agreement: FindingAgreement }>(
-    reconciled.map((r) => [r.findingId, { agreement: r.agreement }]),
+    reconciled.map(({ finding }) => [finding.findingId, { agreement: finding.agreement }]),
   );
 
   const merged = (el: DraftElement): DraftElement => {
@@ -516,19 +728,35 @@ export function reconcileFlaggedBoards(
     } as DraftElement;
   };
 
+  // A collapsed finding leaves its citers (its seat's own section `children`) pointing at
+  // an id the merged board no longer contains — a `bad-ref` the board service rejects the
+  // whole write for (#548). The reconciler is the one place that KNOWS the intended
+  // target, because it did the collapsing, so it hands back which ids each surviving row
+  // consumed and they are repointed here. Re-deriving the pairing from anchors would be a
+  // second matcher: the real one is greedy, order-sensitive and matches within a line
+  // window, so two seats agreeing at slightly different spans would not be recognised.
+  const successorOf = new Map<string, string>();
+  for (const { finding, superseded } of reconciled) {
+    for (const consumed of superseded) successorOf.set(consumed, finding.findingId);
+  }
+
   const placed = new Set<string>();
-  const elements: DraftElement[] = [];
+  const kept: DraftElement[] = [];
   for (const el of boardA.elements) {
     if (el.kind === "finding" && !byId.has(el.id)) continue; // collapsed into seat B's kept partner
-    elements.push(el.kind === "finding" ? merged(el) : el);
+    kept.push(el.kind === "finding" ? merged(el) : el);
     placed.add(el.id);
   }
   for (const el of boardB.elements) {
     if (placed.has(el.id)) continue;
     if (el.kind === "finding" && !byId.has(el.id)) continue; // collapsed into seat A's kept partner
-    elements.push(el.kind === "finding" ? merged(el) : el);
+    kept.push(el.kind === "finding" ? merged(el) : el);
     placed.add(el.id);
   }
+  const elements =
+    successorOf.size === 0
+      ? kept
+      : mapElementReferences(kept, ({ targetId }) => successorOf.get(targetId));
 
   const document = finalizedFlaggedDocument(boardA.document ?? boardBArg.document, elements);
 
@@ -775,6 +1003,118 @@ export function createNodePromptReader(promptsSrcDir: string): PromptReader {
   };
 }
 
+// ── Per-lane, per-attempt retry budgets (#725 D4) ──
+
+/**
+ * How many MODEL REPAIR turns one lane may spend, indexed by whole-board attempt
+ * (`[first attempt, every repeat]`). A "whole-board attempt" is a fresh drafting run over
+ * the same generation — the initial draft, then the re-draft a restart's partial-state
+ * recovery starts (#549's retryable failures re-draft; `rounds.ts` calls that path
+ * `"partial"`). The repeat entry is DELIBERATELY smaller than the first: a lane that has
+ * already had a full ladder and still needs a whole new board must not silently get a
+ * refreshed one, because that is how one restart multiplies into an unbounded provider
+ * bill.
+ *
+ * The table is per lane so a lane's cost can be tuned where its cost differs — Flagged
+ * runs two seats, so each repair turn there costs two provider calls. The first-attempt
+ * numbers below are the ladder that shipped ({@link RETRY_CAP} = 1) stated explicitly
+ * rather than inherited, so changing one lane is one edit and not a global re-tune.
+ */
+export const LENS_RETRY_BUDGET: Readonly<Record<LintTarget, readonly [number, number]>> = {
+  report: [1, 1],
+  sequence: [1, 1],
+  decisions: [1, 1],
+  flagged: [1, 1],
+  design: [1, 1],
+  noise: [1, 1],
+};
+
+/**
+ * This lane's repair budget for `boardAttempt` (0 = the first whole-board attempt). Every
+ * repeat draws the SAME repeat entry — attempt 5 is no richer than attempt 1, which is
+ * what bounds a restart: N restarts cost N × (one draft + the repeat budget), never a
+ * silently refreshed ladder that grows with each recovery.
+ *
+ * The repeat entry is a REDUCED budget, never a zero one, and the difference is the whole
+ * point. A zero repeat starves the redraft permanently: one malformed output on a repeat
+ * attempt terminates that lane, and the restart recovery that exists precisely to re-draft
+ * a retryable lens can then never produce a board for it. One repair turn keeps the bound
+ * and removes the starve.
+ */
+export function lensRetryBudget(lens: LintTarget, boardAttempt: number): number {
+  const [first, repeat] = LENS_RETRY_BUDGET[lens];
+  return boardAttempt <= 0 ? first : repeat;
+}
+
+// ── Per-phase timing (#725 D4 / #726 D8) ──
+
+/** What ran a seat — the Council routes per job, so this is read off the resolution, never
+ *  assumed from settings (#726 D8). */
+export interface SeatProvenance {
+  readonly harness?: CouncilHarnessId;
+  readonly model?: string;
+}
+
+/** One seat's wall-clock span in one phase, with the provenance that produced it. */
+export interface SeatSpan extends SeatProvenance {
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * Accumulate a lane's provider WALL-CLOCK spans, split into the drafting turn and the
+ * repair ladder and kept PER SEAT. Wall clock, not summed turn time: the Flagged lane runs
+ * two seats in parallel, and a sum would report a latency no reviewer ever waited.
+ *
+ * Per seat, because a single aggregate record for the dual lane could name no harness at
+ * all — and a stage record with no harness is exactly what makes "was this run dual-model
+ * or single-model?" underivable from the stages (#726 D8, which requires deriving it from
+ * them rather than from settings). Each seat gets its own record with its own provenance;
+ * the LANE's aggregate span stays derivable as min-start/max-end across them.
+ */
+function createSeatSpans(clock: () => number) {
+  const spans = new Map<string, { seat: SeatProvenance; from: number; to: number }>();
+  const key = (phase: string, seat: SeatProvenance): string =>
+    `${phase}\u0000${seat.harness ?? ""}\u0000${seat.model ?? ""}`;
+  const note = (
+    phase: "draft" | "repair",
+    seat: SeatProvenance,
+    from: number,
+    to: number,
+  ): void => {
+    const id = key(phase, seat);
+    const held = spans.get(id);
+    spans.set(
+      id,
+      held === undefined
+        ? { seat, from, to }
+        : { seat: held.seat, from: Math.min(held.from, from), to: Math.max(held.to, to) },
+    );
+  };
+  return {
+    /** Wrap a seat so every turn it runs lands in the right phase's span for THAT seat. */
+    wrap<T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(
+      seat: T,
+      provenance: SeatProvenance = {},
+    ): T {
+      return (async (prompt: string, attempt: number) => {
+        const from = clock();
+        try {
+          return await seat(prompt, attempt);
+        } finally {
+          note(attempt === 0 ? "draft" : "repair", provenance, from, clock());
+        }
+      }) as T;
+    },
+    /** Every seat's span in this phase, in the order the seats first ran. */
+    of(phase: "draft" | "repair"): readonly SeatSpan[] {
+      return [...spans.entries()]
+        .filter(([id]) => id.startsWith(`${phase}\u0000`))
+        .map(([, { seat, from, to }]) => ({ ...seat, from, to }));
+    },
+  };
+}
+
 // ── The per-board arrival event (B04 broadcast; B09 R58 reveal consumes it) ──
 
 /** One board froze and was persisted — the event that powers the progressive reveal (R58). */
@@ -810,6 +1150,9 @@ export interface BoardMeta {
   readonly blemishes: readonly Violation[];
   readonly omissions: readonly Omission[];
   readonly immutability: readonly Violation[];
+  /** The reference repairs the admission pass made before this board was written (#548 D1).
+   *  Recorded so a repair is accountable after the fact, never a silent rewrite. */
+  readonly refRepairs?: readonly RefRepair[];
 }
 
 /** Read a board's `skippedHunks` passthrough (board-level, not an element). */
@@ -826,6 +1169,24 @@ function boardSkippedHunks(board: DraftBoard): { hunk: string; reason: string }[
 
 // ── One lens's outcome ──
 
+/**
+ * The typed account beside a lens `failure` (#549): which attempt produced it and
+ * whether another attempt could plausibly succeed. `failure` stays the drafter's own
+ * words — this classifies them, so the no-board path is distinguishable from a lens
+ * that has already spent its ladder without ever parsing.
+ *
+ * The shape is the protocol's `LensFailureAccount`, not a pipeline-local twin: this
+ * account is written durably onto the generation and read back after a restart, so
+ * one definition owns the in-run value and the persisted one.
+ */
+export type { LensFailureAccount };
+
+/** A drafting failure as the internal drafters report it, before it becomes an outcome. */
+type LensDraftFailure = {
+  readonly failure: string;
+  readonly failureAccount?: LensFailureAccount;
+};
+
 export interface LensBoardOutcome {
   readonly lens: LintTarget;
   /** The board id the ops landed on, when a seat ran and wrote. */
@@ -839,8 +1200,12 @@ export interface LensBoardOutcome {
   readonly findingResolutions?: readonly FindingResolution[];
   /** An honest resolution failure — no harness for this seat (never a throw, never a block). */
   readonly failure?: string;
+  /** The typed classification of `failure`, when the failing path could name one. */
+  readonly failureAccount?: LensFailureAccount;
   /** A successful typed absence: the lens ran and honestly found nothing to render. */
   readonly absence?: LensAbsenceReason;
+  /** Reference repairs the admission pass made before this board was written (#548 D1). */
+  readonly refRepairs?: readonly RefRepair[];
 }
 
 /** A report already durably written under this drafting attempt's reserved identity. */
@@ -933,8 +1298,23 @@ export interface LensPipelineDeps {
   readonly reusableRoundReport?: ReusableRoundReport;
   /** Remove stale report metadata before clearing a recovered report board. */
   readonly removeBoardMeta?: (boardId: string) => void | Promise<void>;
+  /**
+   * Which WHOLE-BOARD attempt this generation is on: `0` (or absent) is the first
+   * drafting run, `1`+ a re-draft after a restart recovered partial state. It selects the
+   * per-lane repair budget ({@link lensRetryBudget}); a repeat attempt draws the reduced
+   * ladder, so restart recovery cannot silently refresh a full one every time.
+   */
+  readonly boardAttempt?: number;
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void | Promise<void>;
+  /**
+   * The generation's cross-lens coverage state as it moves `pending` → `complete`/`failed`
+   * (#725 D4). Coverage does NOT gate the reveal: this callback is how the surface can say
+   * "coverage pending" beside boards that are already readable.
+   */
+  readonly onCoverageState?: (coverage: GenerationCoverage) => void | Promise<void>;
+  /** One phase's measured duration (#725 D4). The caller owns durability. */
+  readonly onPhaseTiming?: (record: GenerationPhaseTiming) => void | Promise<void>;
   /** Content-free timing checkpoints for a classified round report only. */
   readonly onReportDiagnostic?: (milestone: RoundReportDiagnosticMilestone) => void;
   /** A successful lens absence, emitted as soon as discovery settles it. */
@@ -1012,13 +1392,23 @@ type LandedRoundDraftContext = RoundDraftContext & {
  * The report classifier receives only the identity and evidence needed to judge this
  * coding turn. The full DeltaPacket and all-kind board schema belong to lens drafting,
  * not to the per-ask classification boundary.
+ *
+ * `evidenceJson` is the manifest's MEASURED serialization, spliced in verbatim rather
+ * than re-serialized here (#727): the bytes the budget was measured on are then the
+ * exact bytes on the wire by construction, not because two call sites happen to agree.
+ * It REPLACES the verbatim `worker.diff` that used to ride here uncapped. The worker's
+ * own account (paths, commit range) still travels as identity; it was never authority.
  */
 export function renderRoundReportClassifierPrompt(
   promptText: string,
   patchsetId: string,
   round: LandedRoundDraftContext,
+  evidenceJson: string,
 ): string {
-  const context = JSON.stringify({
+  // The wrapper is serialized without `evidence`, then its closing brace is replaced by
+  // the measured bytes. The wrapper always has keys, so `slice(0, -1)` leaves a valid
+  // object prefix and no key can collide with the appended one.
+  const wrapper = JSON.stringify({
     patchsetId,
     dispatchedAsks: round.dispatchedAsks.map(({ id, path, instruction, span, side }) => ({
       id,
@@ -1027,31 +1417,60 @@ export function renderRoundReportClassifierPrompt(
       ...(span === undefined ? {} : { span }),
       ...(side === undefined ? {} : { side }),
     })),
-    worker: round.worker,
+    worker: {
+      outcome: round.worker.outcome,
+      changedPaths: round.worker.changedPaths,
+      commitRange: round.worker.commitRange,
+    },
   });
+  const context = `${wrapper.slice(0, -1)},"evidence":${evidenceJson}}`;
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
 }
 
-type ClassifiedRoundOutcome =
-  | {
-      readonly status: "addressed" | "partial" | "untouched";
-      readonly ref: string;
-      readonly text: string;
-      readonly note: string;
-      readonly evidence?: z.infer<typeof RoundReportEvidenceSchema>;
-    }
-  | {
-      readonly status: "beyond";
-      readonly ref: string;
-      readonly text: string;
-      readonly note: string;
-      readonly evidence: z.infer<typeof RoundReportEvidenceSchema>;
-    };
+interface ClassifiedRoundOutcome {
+  readonly status: "addressed" | "partial" | "untouched" | "beyond";
+  readonly ref: string;
+  readonly text: string;
+  readonly note: string;
+  /** The manifest ids this bucket owns. Empty only for `untouched`. */
+  readonly evidenceIds: readonly string[];
+  /** Host-DERIVED from the first cited text hunk; absent when every cited unit is a
+   *  rename, a mode change, or a binary file, which have no line to anchor to. */
+  readonly anchor?: RoundEvidenceAnchor;
+}
+
+/**
+ * The displayed anchor for one bucket: the first cited TEXT HUNK in canonical manifest
+ * order, preferring one on the ask's own path. Derived, never model-supplied — the
+ * classifier's job is which evidence, not which line.
+ */
+function deriveAnchor(
+  evidenceIds: readonly string[],
+  manifest: readonly RoundEvidenceUnit[],
+  preferredPath?: string,
+): RoundEvidenceAnchor | undefined {
+  const cited = new Set(evidenceIds);
+  const hunks = manifest.filter(
+    (unit): unit is Extract<RoundEvidenceUnit, { kind: "text-hunk" }> =>
+      unit.kind === "text-hunk" && cited.has(unit.id),
+  );
+  const preferred =
+    preferredPath === undefined
+      ? undefined
+      : hunks.find((unit) => unit.path === preferredPath || unit.anchor.path === preferredPath);
+  return (preferred ?? hunks[0])?.anchor;
+}
 
 function classifiedRoundOutcomes(
   classification: RoundReportClassification,
   asks: readonly ComposableAsk[],
+  manifest: readonly RoundEvidenceUnit[],
 ): ClassifiedRoundOutcome[] {
+  if (classification.beyond.length > ROUND_REPORT_MAX_BEYOND_ENTRIES) {
+    throw new Error(
+      `reports ${classification.beyond.length} beyond-ask entries, over the ${ROUND_REPORT_MAX_BEYOND_ENTRIES}-entry limit`,
+    );
+  }
   const known = new Set(asks.map((ask) => ask.id));
   const byAsk = new Map<string, RoundReportClassification["outcomes"][number]>();
   for (const outcome of classification.outcomes) {
@@ -1061,38 +1480,49 @@ function classifiedRoundOutcomes(
     if (byAsk.has(outcome.askId)) {
       throw new Error(`repeats dispatched ask ${outcome.askId}`);
     }
-    if (outcome.status !== "untouched" && outcome.evidence.endLine < outcome.evidence.startLine) {
-      throw new Error(`outcome for ${outcome.askId} has an inverted diff evidence range`);
-    }
     byAsk.set(outcome.askId, outcome);
-  }
-
-  for (const outcome of classification.beyond) {
-    if (outcome.evidence.endLine < outcome.evidence.startLine) {
-      throw new Error(`beyond outcome ${outcome.ref} has an inverted diff evidence range`);
-    }
   }
 
   const missing = asks.filter((ask) => !byAsk.has(ask.id)).map((ask) => ask.id);
   if (missing.length > 0) throw new Error(`omitted dispatched asks: ${missing.join(", ")}`);
 
+  // #726 — every manifest id lands in exactly one ask bucket or the beyond bucket,
+  // BEFORE anything is built or persisted.
+  verifyRoundEvidencePartition(
+    [
+      ...classification.outcomes.map((outcome) => ({
+        bucket: `the outcome for ${outcome.askId}`,
+        evidenceIds: outcome.status === "untouched" ? [] : outcome.evidenceIds,
+      })),
+      ...classification.beyond.map((outcome) => ({
+        bucket: `the beyond-ask entry ${outcome.ref}`,
+        evidenceIds: outcome.evidenceIds,
+      })),
+    ],
+    manifest,
+  );
+
   const outcomes: ClassifiedRoundOutcome[] = asks.map((ask) => {
     const classified = byAsk.get(ask.id);
     if (classified === undefined) throw new Error(`omitted dispatched ask ${ask.id}`);
-    return classified.status === "untouched"
-      ? {
-          status: classified.status,
-          ref: ask.id,
-          text: ask.instruction,
-          note: classified.note,
-        }
-      : {
-          status: classified.status,
-          ref: ask.id,
-          text: ask.instruction,
-          note: classified.note,
-          evidence: classified.evidence,
-        };
+    if (classified.status === "untouched") {
+      return {
+        status: classified.status,
+        ref: ask.id,
+        text: ask.instruction,
+        note: classified.note,
+        evidenceIds: [],
+      };
+    }
+    const anchor = deriveAnchor(classified.evidenceIds, manifest, ask.path);
+    return {
+      status: classified.status,
+      ref: ask.id,
+      text: ask.instruction,
+      note: classified.note,
+      evidenceIds: classified.evidenceIds,
+      ...(anchor === undefined ? {} : { anchor }),
+    };
   });
   outcomes.sort(
     (left, right) =>
@@ -1100,14 +1530,18 @@ function classifiedRoundOutcomes(
       CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(right.status),
   );
   const beyond: ClassifiedRoundOutcome[] = classification.beyond
-    .map((outcome) => ({
-      status: "beyond" as const,
-      ref: outcome.ref,
-      text: outcome.text,
-      note: outcome.note,
-      evidence: outcome.evidence,
-    }))
-    .sort((left, right) => left.ref.localeCompare(right.ref));
+    .map((outcome) => {
+      const anchor = deriveAnchor(outcome.evidenceIds, manifest);
+      return {
+        status: "beyond" as const,
+        ref: outcome.ref,
+        text: outcome.text,
+        note: outcome.note,
+        evidenceIds: outcome.evidenceIds,
+        ...(anchor === undefined ? {} : { anchor }),
+      };
+    })
+    .sort((left, right) => compareByCodeUnit(left.ref, right.ref));
   return [...outcomes, ...beyond];
 }
 
@@ -1115,25 +1549,26 @@ function buildClassifiedRoundReport(
   classification: RoundReportClassification,
   round: LandedRoundDraftContext,
   patchsetId: string,
+  manifest: readonly RoundEvidenceUnit[],
 ): DraftBoard {
-  const outcomes = classifiedRoundOutcomes(classification, round.dispatchedAsks);
+  const outcomes = classifiedRoundOutcomes(classification, round.dispatchedAsks, manifest);
   const elements: DraftElement[] = [];
   const outcomeIds: string[] = [];
   for (const [index, outcome] of outcomes.entries()) {
     const outcomeId = `rennet:host:round-report:${index}:outcome`;
     const codeRefId = `rennet:host:round-report:${index}:code`;
     outcomeIds.push(outcomeId);
-    if (outcome.evidence !== undefined) {
+    if (outcome.anchor !== undefined) {
       elements.push({
         id: codeRefId,
         kind: "code_ref",
         data: {
           author: CLASSIFIED_ROUND_REPORT_AUTHOR,
           patchset_id: patchsetId,
-          path: outcome.evidence.path,
-          side: outcome.evidence.side,
-          start_line: outcome.evidence.startLine,
-          end_line: outcome.evidence.endLine,
+          path: outcome.anchor.path,
+          side: outcome.anchor.side,
+          start_line: outcome.anchor.line,
+          end_line: outcome.anchor.line,
         },
       });
     }
@@ -1145,7 +1580,8 @@ function buildClassifiedRoundReport(
         status: outcome.status,
         ask: { ref: outcome.ref, text: outcome.text },
         note: outcome.note,
-        ...(outcome.evidence === undefined ? {} : { code_ref: codeRefId }),
+        ...(outcome.evidenceIds.length === 0 ? {} : { evidence_ids: [...outcome.evidenceIds] }),
+        ...(outcome.anchor === undefined ? {} : { code_ref: codeRefId }),
       },
     });
   }
@@ -1250,6 +1686,17 @@ function resolveBoardSeatDetails(
       codexExecutor: deps.codexExecutor,
       repoRoot: deps.repoRoot,
       label: `board.${jobId}`,
+      // The classifier's raw response cap rides the session spec, so the adapter
+      // rejects an oversized response at the transport boundary — core only ever
+      // sees decoded values, so a core-side check would already be too late. The
+      // token cap rides beside it and reaches only the Claude leg, which is the only
+      // transport with a knob for it; the byte cap is the backstop on both.
+      ...(jobId === "round-report"
+        ? {
+            outputByteCap: ROUND_REPORT_OUTPUT_MAX_BYTES,
+            outputTokenCap: ROUND_REPORT_OUTPUT_MAX_TOKENS,
+          }
+        : {}),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
       ...(onProviderSettled === undefined ? {} : { onProviderSettled }),
     },
@@ -1269,11 +1716,36 @@ class GroundedDesignAbsenceSignal extends Error {
   }
 }
 
-const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = {
-  decisions: "no-decisions",
-  flagged: "no-findings",
-  noise: "no-noise",
-};
+/**
+ * The lenses whose admissible absence is NOT provable by an empty board. Design admits
+ * `no-material`, but only a grounded dismissal of its candidate set proves it — an empty
+ * Design board is a drafting failure, so the design row of the protocol table is
+ * deliberately absent from {@link EMPTY_LENS_ABSENCE} below.
+ */
+const EMPTY_BOARD_PROVES_NO_ABSENCE: ReadonlySet<LensKind> = new Set(["design"]);
+
+/**
+ * The absence a parsed, zero-element board settles as, per lens — DERIVED from the
+ * protocol's `LENS_ADMISSIBLE_ABSENCES` rather than restating its rows (#549 finding d).
+ * A lens that admits exactly one absence gets it; a lens that admits none (Sequence)
+ * gets none, so an empty Sequence board stays a failure; Design is excluded above.
+ * Adding an absence to a lens in the protocol table therefore cannot leave this map
+ * silently disagreeing with it.
+ */
+const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = Object.fromEntries(
+  LENS_KINDS.flatMap((lens) => {
+    if (EMPTY_BOARD_PROVES_NO_ABSENCE.has(lens)) return [];
+    const admissible = LENS_ADMISSIBLE_ABSENCES[lens];
+    // More than one admissible absence would make "which one does empty mean?" a real
+    // question this map cannot answer; none means the lens has no clean empty settlement.
+    return admissible.length === 1 && admissible[0] !== undefined ? [[lens, admissible[0]]] : [];
+  }),
+);
+
+/** A lens that settled with nothing but a failure — the drafter's words and its account. */
+function failedLensOutcome(lens: LintTarget, failure: LensDraftFailure): LensBoardOutcome {
+  return { lens, omissions: [], blemishes: [], immutability: [], ...failure };
+}
 
 function requiredBoardFailure(lens: LensKind): string {
   switch (lens) {
@@ -1303,38 +1775,57 @@ function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
+  retryCap: number,
   transformOutput?: (output: unknown) => unknown,
-): Promise<DraftedLens | { readonly failure: string }>;
+): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
+  retryCap: number,
   transformOutput: (output: unknown) => unknown,
   initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
-): Promise<DraftedLens | { readonly failure: string } | { readonly absence: "no-material" }>;
+): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }>;
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
+  retryCap: number,
   transformOutput: (output: unknown) => unknown = (output) => output,
   initialAbsence?: (output: unknown) => { readonly absence: "no-material" } | undefined,
-): Promise<DraftedLens | { readonly failure: string } | { readonly absence: "no-material" }> {
+): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }> {
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
-    if (first.status !== "emitted") {
-      return {
-        failure: `${who}: the initial drafting turn did not emit a board (${first.status}: ${first.message}).`,
-      };
-    }
-    const absence = initialAbsence?.(first.body);
+    // #549 — a first turn that emitted NOTHING is retryable, and here that classification
+    // does the retrying: the non-emission seeds the lint ladder exactly as an unparseable
+    // first return already does, so the seat is re-asked instead of the lane settling at
+    // attempt 0. `validateDraft` cannot coerce `undefined` into a board, so its parse
+    // issues become the retry pointers and the ladder runs. Only a ladder that never
+    // parses settles a failure, and that one is terminal because the retries are spent.
+    const emitted = first.status === "emitted";
+    const noEmission = emitted ? undefined : `${first.status}: ${first.message}`;
+    const absence = emitted ? initialAbsence?.(first.body) : undefined;
     if (absence !== undefined) return absence;
-    const transformedFirst = transformOutput(first.body);
-    const initialOutputWasEmpty = isTrulyEmptyDraft(transformedFirst);
+    const transformedFirst = emitted ? transformOutput(first.body) : undefined;
+    // The seat's OWN empty-board claim, which is what authorizes a clean absence. A turn
+    // that emitted nothing made no such claim, so the first EMITTED return decides it —
+    // whether that was turn 0 or the re-ask that followed a non-emission.
+    let firstEmittedWasEmpty: boolean | undefined = emitted
+      ? isTrulyEmptyDraft(transformedFirst)
+      : undefined;
+    // Whether ANY turn emitted. A ladder in which none did still ends with a parseable
+    // board — the retry channel keeps the current (empty) draft on a turn failure — so
+    // `everParsed` alone would report "produced zero elements in the emitted board"
+    // about a board no seat ever emitted.
+    let anyEmitted = emitted;
     let retryAbsence: { readonly absence: "no-material" } | undefined;
     let validated: Awaited<ReturnType<typeof validateDraft>>;
     try {
       validated = await validateDraft(transformedFirst, ctx, {
+        // The lane's budget for THIS whole-board attempt (#725 7.5). A repeat attempt
+        // draws a reduced ladder, so the seat is never handed a refreshed full one.
+        retryCap,
         runTurn: async (req) => {
           try {
             const retry = await seatTurn(
@@ -1344,6 +1835,8 @@ async function draftOneLens(
             if (retry.status === "emitted") {
               retryAbsence = initialAbsence?.(retry.body);
               if (retryAbsence !== undefined) throw new GroundedDesignAbsenceSignal();
+              anyEmitted = true;
+              firstEmittedWasEmpty ??= isTrulyEmptyDraft(transformOutput(retry.body));
             }
             // An honest turn failure keeps the current draft — the loop re-lints, the
             // offending element escalates a rung, and an unfixable one becomes an
@@ -1363,12 +1856,24 @@ async function draftOneLens(
       }
       throw error;
     }
-    if (!validated.everParsed) {
+    if (!anyEmitted) {
+      // TERMINAL: the seat never emitted, initial turn or re-ask, and the ladder is spent.
       return {
-        failure: `${who}: no parseable board across ${validated.attempts} attempts — recorded as a failure, not an empty board.`,
+        failure: `${who}: the initial drafting turn did not emit a board (${noEmission}) and no re-ask emitted one across ${validated.attempts} attempts — recorded as a failure, not an empty board.`,
+        failureAccount: { attempt: validated.attempts, classification: "terminal" },
       };
     }
-    return { ...validated, initialOutputWasEmpty };
+    if (!validated.everParsed) {
+      // TERMINAL: the ladder is already spent — these ARE the retries.
+      return {
+        // Name the BUDGET, not just the count. "across 0 attempts" read as a contradiction
+        // — it says a ladder was spent and that none was — when the real fact is that this
+        // attempt was allotted that many repair turns and used them.
+        failure: `${who}: no parseable board (${validated.attempts} of ${retryCap} budgeted repair turn${retryCap === 1 ? "" : "s"} spent) — recorded as a failure, not an empty board.`,
+        failureAccount: { attempt: validated.attempts, classification: "terminal" },
+      };
+    }
+    return { ...validated, initialOutputWasEmpty: firstEmittedWasEmpty ?? false };
   } catch (err) {
     // A throw on the FIRST turn (or anywhere outside the retry channel) degrades to
     // a recorded failure — never an uncaught throw that aborts the whole generation.
@@ -1393,8 +1898,28 @@ async function persistBoard(
   board: DraftBoard,
   validated: ValidatedLike,
   actor: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const result = await deps.whiteboard.apply(boardId, draftToOps(board), actor);
+): Promise<
+  | { ok: true; board: DraftBoard; repairs: readonly RefRepair[] }
+  | { ok: false; reason: string; failureAccount?: LensFailureAccount }
+> {
+  // #548 D1 — admit every reference against THIS document before the write. An
+  // unrepairable one settles the lane as a typed retryable failure naming the exact
+  // element and field; it never drops the element to get the rest of the board accepted.
+  const admitted = admitBoardReferences(board, deps.deltaPacket.patchset.id);
+  if (admitted.unrepairable.length > 0) {
+    const cited = admitted.unrepairable
+      .map(({ elementId, field, targetId }) => `\`${elementId}.${field}\` → \`${targetId}\``)
+      .join(", ");
+    return {
+      ok: false,
+      reason: `${lens} board cites ${admitted.unrepairable.length === 1 ? "a reference" : "references"} this board does not contain and no unique target is provable for (${cited}) — recorded as a failure rather than dropping the element to make the board acceptable.`,
+      // RETRYABLE: the seat produced material that cannot be written as authored, which
+      // is exactly what another drafting attempt addresses.
+      failureAccount: { attempt: validated.attempts ?? 0, classification: "retryable" },
+    };
+  }
+  const admittedBoard = admitted.board;
+  const result = await deps.whiteboard.apply(boardId, draftToOps(admittedBoard), actor);
   if (!result.response.ok) {
     const code = (result.response as { code?: string }).code ?? "rejected";
     return {
@@ -1405,23 +1930,34 @@ async function persistBoard(
   await deps.persistBoardMeta?.({
     lens,
     boardId,
-    document: resolveBoardDocument(lens, board.document),
-    skippedHunks: boardSkippedHunks(board),
+    document: resolveBoardDocument(lens, admittedBoard.document),
+    skippedHunks: boardSkippedHunks(admittedBoard),
     blemishes: validated.blemishes,
     omissions: validated.omissions,
     immutability: validated.immutability,
+    ...(admitted.repairs.length === 0 ? {} : { refRepairs: admitted.repairs }),
   });
-  return { ok: true };
+  return { ok: true, board: admittedBoard, repairs: admitted.repairs };
 }
 
 /**
- * Run the lens drafting pipeline for one generation. Seeds the five lens
- * drafters, validates + writes each board, emits per-board
- * arrival on freeze, and runs the cross-lens coverage assert ONCE over the
- * frozen set. A required report is the one sequencing boundary: it must exist before fanout.
- * Individual lens failures remain recorded outcomes rather than throws.
+ * Run the lens drafting pipeline for one generation. Seeds the five lens drafters,
+ * validates + writes each board, and PUBLISHES EACH LANE'S SETTLEMENT THE MOMENT IT LANDS
+ * (#725 D4) — there is no global barrier over the five lanes, and cross-lens coverage does
+ * not gate a reveal. A required report is the one sequencing boundary: it must exist
+ * before fanout (#728). Individual lens failures remain recorded outcomes rather than
+ * throws.
+ *
+ * `Promise.allSettled` still gathers the run for BOOKKEEPING — the returned outcome array,
+ * the coverage assert over the frozen set, the composition write-through — because those
+ * are the run's completion, not its reveal. The settlement publications happen inside the
+ * lanes, before that gather ever resolves.
  */
 export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipelineResult> {
+  const clock = deps.now ?? Date.now;
+  const record = async (timing: GenerationPhaseTiming): Promise<void> => {
+    await deps.onPhaseTiming?.(timing);
+  };
   const council: CouncilResolveContext = deps.council ?? {
     availability: {
       installed: [
@@ -1434,7 +1970,18 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
   // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.
   const reportRequired = draftsRoundReport(deps);
+  const reportFrom = clock();
   const report = reportRequired ? await runRoundReport(deps, council) : undefined;
+  // The report phase is measured on its own, whether it produced a board or died: a
+  // classifier failure routes to the durable round-failure path and its time still
+  // belongs to `report` — a phase that only records its successes hides its slow half.
+  if (reportRequired) {
+    await record({
+      phase: "report",
+      startedAtMs: reportFrom,
+      durationMs: Math.max(0, clock() - reportFrom),
+    });
+  }
   if (reportRequired && report?.board === undefined) {
     throw new Error(
       report?.failure ??
@@ -1446,55 +1993,119 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
   deps.onLensDraftingStart?.();
+  // Coverage is EXPLICITLY pending from the moment the lanes start, so a surface showing
+  // settled boards can say where coverage stands instead of implying it passed.
+  await deps.onCoverageState?.({ state: "pending" });
+  const revealFrom = clock();
+  /** The last moment a lane actually revealed something — an arrival or a typed absence.
+   *  A failure settles the lane without revealing anything, so it does not extend the
+   *  window this record is named after. */
+  let lastRevealAt: number | undefined;
 
   // Each lens owns a distinct seat, board id, and metadata record, so the five drafts can
-  // run independently once the report gate settles. Absence notifications are the one
-  // cumulative persistence seam: serialize them in settlement order, and keep the tail
-  // alive after a rejected callback so one failed save cannot suppress a later absence.
-  let absenceNotificationTail = Promise.resolve();
-  const notifyAbsence = (lens: LensKind, reason: LensAbsenceReason): Promise<void> => {
-    const notification = absenceNotificationTail.then(() => deps.onLensAbsence?.(lens, reason));
-    absenceNotificationTail = notification.then(
+  // run independently once the report gate settles. Settlement publication is the one
+  // cumulative persistence seam: serialize absences AND arrivals on ONE tail so their
+  // durable writes land in settlement order, and keep the tail alive after a rejected
+  // callback so one failed save cannot suppress a later settlement. Serialized is not
+  // barriered — a lane publishes as soon as the tail reaches it, never after a sibling
+  // lane's SEAT finishes.
+  let settlementTail = Promise.resolve();
+  const publish = (settle: () => void | Promise<void>): Promise<void> => {
+    const published = settlementTail.then(settle);
+    settlementTail = published.then(
       () => undefined,
       () => undefined,
     );
-    return notification;
+    return published;
   };
   const settledOutcomes = await Promise.allSettled(
     LENS_KINDS.map(async (lens) => {
       const outcome = await runLensBoard(lens, deps, council, reportBoard);
-      if (outcome.absence !== undefined) await notifyAbsence(lens, outcome.absence);
+      if (outcome.absence !== undefined) {
+        await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
+        lastRevealAt = clock();
+      }
+      // #725 D4 — the lane's settlement is published HERE, the moment this board is
+      // written and its metadata is durable. Nothing waits for a sibling lane and
+      // nothing waits for cross-lens coverage.
+      if (outcome.board !== undefined && outcome.boardId !== undefined) {
+        const board = outcome.board;
+        const boardId = outcome.boardId;
+        await publish(() =>
+          deps.onBoardArrival?.({
+            lens,
+            boardId,
+            elementCount: board.elements.length,
+            // C15 3.3: the carried signal rides the arrival so the live lane label is the
+            // SAME `stampDeltas` fact the section markers render — not a re-derivation.
+            carried: isCarriedForward(deps.previous?.get(lens), board),
+          }),
+        );
+        lastRevealAt = clock();
+      }
       return outcome;
     }),
   );
+  // The `reveal` phase is recorded BEFORE the rejection check below, and its clock stops at
+  // the last lane that actually REVEALED something. Both halves are honesty fixes:
+  //
+  //  • A lane that FAILED revealed nothing, so closing the window on it would make this
+  //    record measure the fan-out rather than the reveal — the label would name one thing
+  //    and measure another. It closes on the last published arrival or absence instead.
+  //  • The record used to sit after the `outcomes` map, which THROWS on a rejected lane.
+  //    An infrastructure failure therefore lost the timing for the window it most needed
+  //    explaining. It is written first now, so a run that dies still reports its reveal.
+  await record({
+    phase: "reveal",
+    startedAtMs: revealFrom,
+    durationMs: Math.max(0, (lastRevealAt ?? revealFrom) - revealFrom),
+  });
+  const rejected = settledOutcomes.find((result) => result.status === "rejected");
+  if (rejected !== undefined) {
+    // Cross-lens coverage never ran, and it never will for this generation. Say so
+    // explicitly rather than leaving the last state (`pending`) standing forever — and say
+    // it BEFORE the throw, because the throw is what used to lose it. No `coverage` timing
+    // record: that phase did not run, and a duration for it would be invented.
+    await deps.onCoverageState?.({
+      state: "failed",
+      reason: `a lens lane failed before cross-lens coverage could run — ${rejected.reason instanceof Error ? rejected.reason.message : String(rejected.reason)}`,
+    });
+    throw rejected.reason;
+  }
   // Wait for every launched lane before propagating an unexpected infrastructure error.
-  // Array order remains LENS_KINDS even when persistence completed in another order.
+  // This is the run's COMPLETION bookkeeping, not its reveal — every settlement above has
+  // already been published. Array order remains LENS_KINDS even when persistence completed
+  // in another order.
   const outcomes = settledOutcomes.map((result) => {
     if (result.status === "rejected") throw result.reason;
     return result.value;
   });
 
-  // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
-  // stays no-op per board — this is the cross-lens obligation). Runs BEFORE any lens
-  // arrival is announced (finding 3): a board's write is already accepted and its
-  // metadata durably stored inside `runLensBoard`; the announcement waits until
-  // cross-lens coverage is known, so a reader never sees a lens announced "ready"
-  // before the coverage picture that frames it.
+  // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam stays
+  // no-op per board — this is the cross-lens obligation). It runs AFTER the boards were
+  // revealed and it ANNOTATES them: `assertCoverage` returns violations and amends no
+  // board, so a revealed board is never rewritten by the state that lands beside it.
   const boards = outcomes.map((o) => o.board).filter((b): b is DraftBoard => b !== undefined);
-  const coverage = assertCoverage(boards, deps.hunks);
-
-  // Announce each accepted lens board now that coverage is known (finding 2/3).
-  for (const o of outcomes) {
-    if (o.board !== undefined && o.boardId !== undefined) {
-      await deps.onBoardArrival?.({
-        lens: o.lens,
-        boardId: o.boardId,
-        elementCount: o.board.elements.length,
-        // C15 3.3: the carried signal rides the arrival so the live lane label is the
-        // SAME `stampDeltas` fact the section markers render — not a re-derivation.
-        carried: isCarriedForward(deps.previous?.get(o.lens), o.board),
-      });
-    }
+  const coverageFrom = clock();
+  let coverage: readonly Violation[] | undefined;
+  try {
+    coverage = assertCoverage(boards, deps.hunks);
+  } catch (error) {
+    // A coverage assert that throws leaves the generation's coverage UNKNOWN, and says so.
+    // The boards it would have annotated are already read; withholding them now would be
+    // the barrier this change removed.
+    await deps.onCoverageState?.({
+      state: "failed",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+  await record({
+    phase: "coverage",
+    startedAtMs: coverageFrom,
+    durationMs: Math.max(0, clock() - coverageFrom),
+  });
+  if (coverage !== undefined) {
+    await deps.onCoverageState?.({ state: "complete", violations: coverage.length });
   }
 
   // C2 — the authored composition write-through, when the orchestrator supplied a
@@ -1520,7 +2131,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
 
   return {
     boards: outcomes,
-    coverage,
+    ...(coverage === undefined ? {} : { coverage }),
     ...(findingResolutions === undefined ? {} : { findingResolutions }),
     ...(report === undefined ? {} : { report }),
     ...(composition === undefined ? {} : { composition }),
@@ -1684,6 +2295,19 @@ async function runClassifiedRoundReport(
       // Report-only diagnostics never change the classified result they describe.
     }
   };
+  // The manifest is measured BEFORE any seat exists, so an overflow costs zero
+  // provider calls (#727). It is never truncated, split, or summarized to fit.
+  const manifest = buildRoundEvidenceManifest(round.worker.diff);
+  const measured = measureRoundEvidenceManifest(manifest);
+  if (!measured.ok) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: ${measured.reason} — classification was not attempted.`,
+    };
+  }
   const seat = resolveBoardSeatDetails(
     "round-report",
     deps,
@@ -1702,10 +2326,22 @@ async function runClassifiedRoundReport(
   }
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
-  const prompt = renderRoundReportClassifierPrompt(promptText, deps.deltaPacket.patchset.id, round);
+  const prompt = renderRoundReportClassifierPrompt(
+    promptText,
+    deps.deltaPacket.patchset.id,
+    round,
+    measured.json,
+  );
   const turnStarted = roundReportTurnStartedMilestone(seat, elapsedMs());
   if (turnStarted !== undefined) emitDiagnostic(turnStarted);
   let turn: HarnessTurnResult;
+  // The classification turn measured on its own (#731 9.4), on the WALL clock the phase
+  // records share — `now` above may be `performance.now`, which is an origin-relative
+  // reading and not comparable with any other phase's start. Emitted from a `finally`,
+  // so a turn that threw or refused to emit still reports how long it took to fail and
+  // still names the harness that failed it.
+  const wall = deps.now ?? Date.now;
+  const turnFrom = Math.floor(wall());
   try {
     turn = await seat.runTurn(prompt, 0);
   } catch (error) {
@@ -1719,6 +2355,14 @@ async function runClassifiedRoundReport(
         error instanceof Error ? error.message : String(error)
       }.`,
     };
+  } finally {
+    await deps.onPhaseTiming?.({
+      phase: "report-classification",
+      startedAtMs: turnFrom,
+      durationMs: Math.max(0, Math.floor(wall()) - turnFrom),
+      harness: seat.harness,
+      model: seat.model,
+    });
   }
   emitDiagnostic({ stage: "turn-settled", status: turn.status, elapsedMs: elapsedMs() });
   if (turn.status !== "emitted") {
@@ -1747,7 +2391,7 @@ async function runClassifiedRoundReport(
 
   let board: DraftBoard;
   try {
-    board = buildClassifiedRoundReport(parsed.data, round, deps.deltaPacket.patchset.id);
+    board = buildClassifiedRoundReport(parsed.data, round, deps.deltaPacket.patchset.id, manifest);
   } catch (error) {
     return {
       lens: "report",
@@ -1791,19 +2435,25 @@ async function runClassifiedRoundReport(
       blemishes: validated.blemishes,
       immutability: [],
       failure: persisted.reason,
+      ...(persisted.failureAccount === undefined
+        ? {}
+        : { failureAccount: persisted.failureAccount }),
     };
   }
   emitDiagnostic({ stage: "persisted", elapsedMs: elapsedMs() });
+  // The WRITTEN board, not the pre-admission draft: a repaired reference must reach the
+  // arrival count, the returned outcome and the durable meta as it was actually written.
+  const written = persisted.board;
   await deps.onBoardArrival?.({
     lens: "report",
     boardId,
-    elementCount: stamped.elements.length,
-    carried: isCarriedForward(deps.previous?.get("report"), stamped),
+    elementCount: written.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), written),
   });
   return {
     lens: "report",
     boardId,
-    board: stamped,
+    board: written,
     omissions: [],
     blemishes: validated.blemishes,
     immutability: [],
@@ -1840,7 +2490,12 @@ async function runLegacyRoundReport(
     { omitTaskLayer: true, includeWorkerDiff: true },
   );
   const ctx = deps.lintContextFor("report");
-  const validated = await draftOneLens(basePrompt, seat, ctx);
+  const validated = await draftOneLens(
+    basePrompt,
+    seat,
+    ctx,
+    lensRetryBudget("report", deps.boardAttempt ?? 0),
+  );
   if ("failure" in validated) {
     return {
       lens: "report",
@@ -1871,19 +2526,23 @@ async function runLegacyRoundReport(
       blemishes: validated.blemishes,
       immutability: validated.immutability,
       failure: persisted.reason,
+      ...(persisted.failureAccount === undefined
+        ? {}
+        : { failureAccount: persisted.failureAccount }),
     };
   }
+  const written = persisted.board;
   await deps.onBoardArrival?.({
     lens: "report",
     boardId,
-    elementCount: stamped.elements.length,
-    carried: isCarriedForward(deps.previous?.get("report"), stamped),
+    elementCount: written.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), written),
   });
 
   return {
     lens: "report",
     boardId,
-    board: stamped,
+    board: written,
     omissions: validated.omissions,
     blemishes: validated.blemishes,
     immutability: validated.immutability,
@@ -1916,6 +2575,8 @@ interface ValidatedLike {
   readonly omissions: readonly Omission[];
   readonly blemishes: readonly Violation[];
   readonly immutability: readonly Violation[];
+  /** Model repair turns spent on this board; absent for boards that ran no lint ladder. */
+  readonly attempts?: number;
 }
 
 /** A validated lens result plus the provider-return fact that authorizes clean absence. */
@@ -2658,6 +3319,27 @@ async function groundDesignCoverage(
 }
 
 /**
+ * Aggregate the per-seat failure accounts of a multi-seat lens into the lens's one account
+ * (#549 finding b). RETRYABLE IFF ANY SEAT IS RETRYABLE: the lens needs one seat to
+ * produce a board, so one seat with attempts left is a lens with attempts left, and
+ * calling the pair terminal would spend a retry the lens still has. The reported
+ * `attempt` belongs to the seat that decided the classification — the first retryable
+ * one, otherwise the seat that spent the most attempts before settling terminal.
+ * Undefined when no seat named an account (a resolution failure, which has no attempt).
+ */
+export function aggregateFailureAccount(
+  seats: readonly LensDraftFailure[],
+): LensFailureAccount | undefined {
+  const accounts = seats.flatMap((seat) => (seat.failureAccount ? [seat.failureAccount] : []));
+  const retryable = accounts.find(({ classification }) => classification === "retryable");
+  if (retryable !== undefined) return retryable;
+  return accounts.reduce<LensFailureAccount | undefined>(
+    (worst, account) => (worst === undefined || account.attempt > worst.attempt ? account : worst),
+    undefined,
+  );
+}
+
+/**
  * The Flagged dual seat (J1/J2, cluster 5.2): run `lens-draft-flagged` as TWO
  * independent seats — Claude and Codex, each forced to its own provider — and
  * reconcile their findings by location into per-finding cross-model concurrence.
@@ -2668,50 +3350,83 @@ async function runFlaggedDual(
   deps: LensPipelineDeps,
   basePrompt: string,
   ctx: LintContext,
-): Promise<DraftedLens | { failure: string }> {
+  retryCap: number,
+  wrapSeat: <T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(
+    seat: T,
+    provenance?: SeatProvenance,
+  ) => T,
+): Promise<DraftedLens | LensDraftFailure> {
+  // `resolveBoardSeatDetails`, not `resolveBoardSeat`: the DETAILS carry the harness and
+  // model the Council actually routed to, and every timing record this lane emits names
+  // the seat that produced it (#726 D8) — including the single-seat degrade, which ran
+  // exactly one resolved seat and can say which.
   const claudeSeat = deps.claudePort
-    ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["claude-code"] } })
+    ? resolveBoardSeatDetails(
+        "lens-draft-flagged",
+        deps,
+        { availability: { installed: ["claude-code"] } },
+        boardOutputSchema(),
+      )
     : { failure: "no claude harness" };
   const codexSeat = deps.codexExecutor
-    ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["codex"] } })
+    ? resolveBoardSeatDetails(
+        "lens-draft-flagged",
+        deps,
+        { availability: { installed: ["codex"] } },
+        boardOutputSchema(),
+      )
     : { failure: "no codex harness" };
 
-  const haveClaude = typeof claudeSeat === "function";
-  const haveCodex = typeof codexSeat === "function";
+  const haveClaude = !("failure" in claudeSeat);
+  const haveCodex = !("failure" in codexSeat);
   if (!haveClaude && !haveCodex) {
     return { failure: "lens-draft-flagged resolved to no runnable seat" };
   }
 
-  // Single-seat degrade — honest single-model concurrence.
+  // Single-seat degrade — honest single-model concurrence, and an honestly ATTRIBUTED
+  // timing: one seat ran, so the record names it rather than leaving the stage anonymous.
   if (!haveClaude || !haveCodex) {
-    const seat = haveClaude
-      ? (claudeSeat as (p: string, a: number) => Promise<HarnessTurnResult>)
-      : (codexSeat as (p: string, a: number) => Promise<HarnessTurnResult>);
+    const resolved = haveClaude
+      ? (claudeSeat as Exclude<typeof claudeSeat, { failure: string }>)
+      : (codexSeat as Exclude<typeof codexSeat, { failure: string }>);
     const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
-    const single = await draftOneLens(basePrompt, seat, ctx);
-    if ("failure" in single) return { failure: single.failure };
+    const single = await draftOneLens(
+      basePrompt,
+      wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
+      ctx,
+      retryCap,
+    );
+    // Carry the account, not just the words: the sole seat's classification IS the lens's.
+    if ("failure" in single) return single;
     return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
   }
 
   // Both seats run independently; reconcile their findings (Claude is seat A).
+  const claude = claudeSeat as Exclude<typeof claudeSeat, { failure: string }>;
+  const codex = codexSeat as Exclude<typeof codexSeat, { failure: string }>;
   const [a, b] = await Promise.all([
     draftOneLens(
       basePrompt,
-      claudeSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
+      wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
       ctx,
+      retryCap,
     ),
     draftOneLens(
       basePrompt,
-      codexSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
+      wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
       ctx,
+      retryCap,
     ),
   ]);
   const aOk = !("failure" in a);
   const bOk = !("failure" in b);
   // Neither seat produced a board ⇒ the flagged lens honestly failed.
   if (!aOk && !bOk) {
+    const seats = [a as LensDraftFailure, b as LensDraftFailure];
+    const account = aggregateFailureAccount(seats);
     return {
-      failure: `both flagged seats failed — ${(a as { failure: string }).failure} | ${(b as { failure: string }).failure}`,
+      failure: `both flagged seats failed — ${seats[0]?.failure} | ${seats[1]?.failure}`,
+      ...(account === undefined ? {} : { failureAccount: account }),
     };
   }
   // One seat failed ⇒ degrade to the survivor with honest single-model concurrence.
@@ -2743,10 +3458,81 @@ async function runFlaggedDual(
   };
 }
 
+/**
+ * Run one lane and record its per-phase timings (#725 D4) — `lens-draft` (the drafting
+ * turn), `lens-repair` (the repair ladder) and `lens-post-process` (everything
+ * deterministic between the ladder and the accepted write). The records are emitted from a
+ * `finally`, so a lane that FAILED still reports how long it took to fail; a phase that
+ * only measures its successes reports the fast half of the truth.
+ */
 async function runLensBoard(
   lens: LensKind,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  reportBoard?: DraftBoard,
+): Promise<LensBoardOutcome> {
+  const clock = deps.now ?? Date.now;
+  const spans = createSeatSpans(clock);
+  let postProcessFrom: number | undefined;
+  try {
+    return await draftLensBoard(
+      lens,
+      deps,
+      council,
+      spans,
+      () => {
+        postProcessFrom = clock();
+      },
+      reportBoard,
+    );
+  } finally {
+    const emit = deps.onPhaseTiming;
+    if (emit !== undefined) {
+      // ONE record PER SEAT (#726 D8). A genuinely dual Flagged lane emits two `lens-draft`
+      // records, each naming the harness and model that produced it, so "dual-model" is
+      // derivable from the stages rather than assumed. The LANE's span is min-start /
+      // max-end across them, which is exactly what a single merged record used to carry —
+      // minus the provenance it could not name.
+      for (const draft of spans.of("draft")) {
+        await emit({
+          phase: "lens-draft",
+          lens,
+          startedAtMs: draft.from,
+          durationMs: Math.max(0, draft.to - draft.from),
+          ...(draft.harness === undefined ? {} : { harness: draft.harness }),
+          ...(draft.model === undefined ? {} : { model: draft.model }),
+        });
+      }
+      for (const repair of spans.of("repair")) {
+        await emit({
+          phase: "lens-repair",
+          lens,
+          startedAtMs: repair.from,
+          durationMs: Math.max(0, repair.to - repair.from),
+          ...(repair.harness === undefined ? {} : { harness: repair.harness }),
+          ...(repair.model === undefined ? {} : { model: repair.model }),
+        });
+      }
+      // Absent only when the lane never reached its post-process (a seat that failed to
+      // resolve, or a drafting ladder that produced nothing) — honestly no phase to time.
+      if (postProcessFrom !== undefined) {
+        await emit({
+          phase: "lens-post-process",
+          lens,
+          startedAtMs: postProcessFrom,
+          durationMs: Math.max(0, clock() - postProcessFrom),
+        });
+      }
+    }
+  }
+}
+
+async function draftLensBoard(
+  lens: LensKind,
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+  spans: ReturnType<typeof createSeatSpans>,
+  markPostProcess: () => void,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
   if (lens === "design" && deps.designArtifactFailure !== undefined) {
@@ -2804,44 +3590,55 @@ async function runLensBoard(
       : withoutCoverage;
   };
 
+  // #725 D4 — this lane's repair budget for this whole-board attempt.
+  const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
+
   let validated: DraftedLens;
   if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
-    const dual = await runFlaggedDual(deps, basePrompt, ctx);
+    const dual = await runFlaggedDual(deps, basePrompt, ctx, retryCap, spans.wrap);
     if ("failure" in dual) {
-      return { lens, omissions: [], blemishes: [], immutability: [], failure: dual.failure };
+      return failedLensOutcome(lens, dual);
     }
     validated = dual;
   } else {
     const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
-    const seat = resolveBoardSeat(
+    const resolved = resolveBoardSeatDetails(
       jobId,
       deps,
       council,
       semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
     );
-    if ("failure" in seat) {
-      return { lens, omissions: [], blemishes: [], immutability: [], failure: seat.failure };
+    if ("failure" in resolved) {
+      return failedLensOutcome(lens, resolved);
     }
+    const seat = spans.wrap(resolved.runTurn, {
+      harness: resolved.harness,
+      model: resolved.model,
+    });
     const drafted =
       semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
-        ? await draftOneLens(basePrompt, seat, ctx, transformDesignOutput, (output) =>
+        ? await draftOneLens(basePrompt, seat, ctx, retryCap, transformDesignOutput, (output) =>
             groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
           )
         : await draftOneLens(
             basePrompt,
             seat,
             ctx,
+            retryCap,
             lens === "design" ? transformDesignOutput : undefined,
           );
     if ("failure" in drafted) {
-      return { lens, omissions: [], blemishes: [], immutability: [], failure: drafted.failure };
+      return failedLensOutcome(lens, drafted);
     }
     if ("absence" in drafted) {
       return { lens, omissions: [], blemishes: [], immutability: [], absence: drafted.absence };
     }
     validated = drafted;
   }
+  // Everything from here to the accepted write is the lane's deterministic post-process:
+  // grounding, round composition, delta stamping, ref admission and the board write.
+  markPostProcess();
 
   if (!hasLensMaterial(lens, validated.board)) {
     const absence = validated.initialOutputWasEmpty ? EMPTY_LENS_ABSENCE[lens] : undefined;
@@ -2989,9 +3786,9 @@ async function runLensBoard(
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);
 
   // Write the board and INSPECT the response (finding 2): a rejected batch is a lens
-  // failure, never announced as arrived. On acceptance the coverage/validation
-  // metadata is durably stored (finding 3). Arrival is NOT emitted here — the pipeline
-  // announces lens arrivals only after cross-lens coverage runs over the frozen set.
+  // failure, never announced as arrived. On acceptance the coverage/validation metadata is
+  // durably stored (finding 3). Arrival is emitted by the lane in `runLensPipeline` the
+  // moment this returns — no sibling lane and no cross-lens coverage stands in between.
   const persisted = await persistBoard(deps, lens, boardId, stamped, validated, `lens:${lens}`);
   if (!persisted.ok) {
     return {
@@ -3000,16 +3797,21 @@ async function runLensBoard(
       blemishes: validated.blemishes,
       immutability: validated.immutability,
       failure: persisted.reason,
+      ...(persisted.failureAccount === undefined
+        ? {}
+        : { failureAccount: persisted.failureAccount }),
     };
   }
 
   return {
     lens,
     boardId,
-    board: stamped,
+    // The admitted board — what the board service actually holds for this lens.
+    board: persisted.board,
     omissions: validated.omissions,
     blemishes: validated.blemishes,
     immutability: validated.immutability,
+    ...(persisted.repairs.length === 0 ? {} : { refRepairs: persisted.repairs }),
     ...(findingResolutions === undefined ? {} : { findingResolutions }),
   };
 }

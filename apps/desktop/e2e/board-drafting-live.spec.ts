@@ -14,7 +14,15 @@ import {
   type RoundOperationProgressState,
 } from "@rennet/protocol";
 import { findHealthyDaemon, readDaemonFile } from "@rennet/server";
-import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./harness";
+import {
+  completeWelcome,
+  git,
+  initRepo,
+  launchRennet,
+  makeTempDir,
+  seedReviewRepo,
+  writeRepoFile,
+} from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE proof that CAPTURING A CHANGE DRAFTS ITS BOARDS — the core loop, end to end.
@@ -992,3 +1000,395 @@ liveTest("LIVE: verified report and successor core boards survive daemon restart
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #548 / #549 — the settlement proofs. The spec above proves the loop survives a
+// restart on a one-line change; these two prove what each lens SETTLES on a change
+// that actually has something to say, in the launched app, against the real harness.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A representative branch: a real judgement call with a viable alternative (so Decisions
+ * has material), several files to read in an order (so Sequence has material), and a
+ * bulk mechanical edit beside the substance (so Noise has material). Committed on the
+ * feature branch AND left with a working-tree edit, the shape a captured review reads.
+ */
+function seedRepresentativeRepo(prefix: string): string {
+  const repository = makeTempDir(prefix);
+  initRepo(repository);
+  writeRepoFile(
+    repository,
+    "src/tokens.ts",
+    [
+      "export interface Token {",
+      "  value: string;",
+      "  expiresAt: number;",
+      "}",
+      "",
+      "export function isExpired(token: Token, now: number): boolean {",
+      "  return token.expiresAt <= now;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeRepoFile(
+    repository,
+    "src/client.ts",
+    [
+      'import { isExpired, type Token } from "./tokens";',
+      "",
+      "export async function request(token: Token, now: number, send: () => Promise<number>) {",
+      '  if (isExpired(token, now)) throw new Error("expired token");',
+      "  return send();",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeRepoFile(
+    repository,
+    "src/labels.ts",
+    ["export const LABELS = {", "  a: 1,", "  b: 2,", "};", ""].join("\n"),
+  );
+  git(repository, "add", ".");
+  git(repository, "commit", "-qm", "initial");
+  git(repository, "checkout", "-qb", "feature/token-refresh");
+
+  // SUBSTANCE — refresh-then-retry instead of failing fast. A judgement call with a
+  // viable alternative (fail fast and let the caller re-authenticate).
+  writeRepoFile(
+    repository,
+    "src/tokens.ts",
+    [
+      "export interface Token {",
+      "  value: string;",
+      "  expiresAt: number;",
+      "  refresh?: () => Promise<Token>;",
+      "}",
+      "",
+      "export function isExpired(token: Token, now: number): boolean {",
+      "  return token.expiresAt <= now;",
+      "}",
+      "",
+      "/** Refresh an expired token when it knows how to; otherwise hand it back unchanged. */",
+      "export async function refreshed(token: Token, now: number): Promise<Token> {",
+      "  if (!isExpired(token, now) || token.refresh === undefined) return token;",
+      "  return token.refresh();",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeRepoFile(
+    repository,
+    "src/client.ts",
+    [
+      'import { isExpired, refreshed, type Token } from "./tokens";',
+      "",
+      "export async function request(token: Token, now: number, send: () => Promise<number>) {",
+      "  // We refresh before the call rather than failing fast, so a caller holding a",
+      "  // stale token does not have to re-authenticate for a routine expiry.",
+      "  const usable = await refreshed(token, now);",
+      '  if (isExpired(usable, now)) throw new Error("expired token");',
+      "  return send();",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  // MECHANICAL NOISE — a pure reindent/reorder of a constant table beside the substance.
+  writeRepoFile(
+    repository,
+    "src/labels.ts",
+    ["export const LABELS = {", "    b: 2,", "    a: 1,", "};", ""].join("\n"),
+  );
+  return repository;
+}
+
+/**
+ * A mechanically noisy change: one small substantive edit beside generated-lockfile churn
+ * and a mechanical rename across a file — the categories the Noise prompt names outright.
+ */
+function seedNoisyRepo(prefix: string): string {
+  const repository = makeTempDir(prefix);
+  initRepo(repository);
+  const lock = (revision: number): string =>
+    [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "  .:",
+      "    dependencies:",
+      ...Array.from(
+        { length: 40 },
+        (_unused, index) => `      pkg-${index}:\n        version: 1.0.${revision}`,
+      ),
+      "",
+    ].join("\n");
+  writeRepoFile(repository, "pnpm-lock.yaml", lock(0));
+  writeRepoFile(
+    repository,
+    "src/session-context.ts",
+    [
+      "export interface SessionContext {",
+      "  id: string;",
+      "}",
+      "",
+      "export function readSessionContext(context: SessionContext): string {",
+      "  return context.id;",
+      "}",
+      "",
+      "export function describeSessionContext(context: SessionContext): string {",
+      "  return `session ${readSessionContext(context)}`;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeRepoFile(
+    repository,
+    "src/timeout.ts",
+    ["export function timeoutMs(): number {", "  return 1_000;", "}", ""].join("\n"),
+  );
+  git(repository, "add", ".");
+  git(repository, "commit", "-qm", "initial");
+  git(repository, "checkout", "-qb", "feature/timeout");
+
+  // NOISE 1 — regenerated lockfile: forty mechanical version bumps.
+  writeRepoFile(repository, "pnpm-lock.yaml", lock(1));
+  // NOISE 2 — a mechanical rename, SessionContext -> ScopedSession, nothing else.
+  writeRepoFile(
+    repository,
+    "src/session-context.ts",
+    [
+      "export interface ScopedSession {",
+      "  id: string;",
+      "}",
+      "",
+      "export function readScopedSession(session: ScopedSession): string {",
+      "  return session.id;",
+      "}",
+      "",
+      "export function describeScopedSession(session: ScopedSession): string {",
+      "  return `session ${readScopedSession(session)}`;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  // SUBSTANCE — the one hunk that is not skip-safe.
+  writeRepoFile(
+    repository,
+    "src/timeout.ts",
+    [
+      "export function timeoutMs(): number {",
+      "  // Five seconds covers the slowest observed cold start.",
+      "  return 5_000;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return repository;
+}
+
+/** A signal-only change: substance, and nothing mechanically skippable beside it. */
+function seedSignalOnlyRepo(prefix: string): string {
+  const repository = makeTempDir(prefix);
+  initRepo(repository);
+  writeRepoFile(
+    repository,
+    "src/retry.ts",
+    ["export function attempts(): number {", "  return 1;", "}", ""].join("\n"),
+  );
+  git(repository, "add", ".");
+  git(repository, "commit", "-qm", "initial");
+  git(repository, "checkout", "-qb", "feature/retry-budget");
+  writeRepoFile(
+    repository,
+    "src/retry.ts",
+    [
+      "export function attempts(): number {",
+      "  // Three attempts covers a single transient failure without stacking latency.",
+      "  return 3;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return repository;
+}
+
+/** Every `code_ref` on a settled board, in board order. */
+function codeRefsOf(board: LensBoard): readonly {
+  readonly patchset_id: string;
+  readonly path: string;
+  readonly side: "base" | "head";
+  readonly start_line: number;
+  readonly end_line: number;
+}[] {
+  return board.elements.flatMap((element) =>
+    element.kind === "code_ref"
+      ? [
+          element.data as unknown as {
+            patchset_id: string;
+            path: string;
+            side: "base" | "head";
+            start_line: number;
+            end_line: number;
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * Prove a board's anchors NAVIGATE: every citation names the captured patchset, and
+ * hydrating it through `patchset.readSpan` returns the cited lines from that patchset's
+ * own patch text. A span outside the captured diff is refused by name, so a hydrated
+ * span IS the navigation the reviewer performs when they click the anchor.
+ */
+async function expectAnchorsNavigate(
+  bridge: WsRennetBridge,
+  board: LensBoard,
+  patchsetId: string,
+  label: string,
+): Promise<number> {
+  const refs = codeRefsOf(board);
+  expect(refs.length, `${label} cited no code, so it anchors nothing`).toBeGreaterThan(0);
+  for (const ref of refs) {
+    expect(ref.patchset_id, `${label} cited a foreign patchset`).toBe(patchsetId);
+    const span = await bridge.invoke("patchset.readSpan", {
+      patchsetId,
+      path: ref.path,
+      side: ref.side,
+      startLine: ref.start_line,
+      endLine: ref.end_line,
+    });
+    expect(
+      span.lines.length,
+      `${label} anchor ${ref.path}:${ref.start_line}-${ref.end_line} hydrated no lines`,
+    ).toBeGreaterThan(0);
+  }
+  return refs.length;
+}
+
+/** Capture one repository in a launched app and return every lens's terminal settlement. */
+async function settleLensesInLaunchedApp(
+  repository: string,
+  prefix: string,
+  inspect: (context: {
+    readonly bridge: WsRennetBridge;
+    readonly page: Page;
+    readonly reviewId: string;
+    readonly patchsetId: string;
+    readonly terminal: ReadonlyMap<LensKind, TerminalLensEvidence>;
+  }) => Promise<void>,
+): Promise<void> {
+  const userData = makeTempDir(`${prefix}-state-`);
+  const home = makeTempDir(`${prefix}-home-`);
+  const launched = await launchRennet({ repository, userData, home, env: liveEnv(false) });
+  let bridge: WsRennetBridge | undefined;
+  try {
+    const page = await launched.application.firstWindow();
+    page.on("console", (message) => {
+      if (message.type() === "error") console.log(`[renderer:error] ${message.text()}`);
+    });
+    await completeWelcome(page);
+    const reviewId = await openCapturedReview(page, repository);
+    await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 60_000 });
+    bridge = await connect(page);
+    const loaded = await bridge.invoke("review.load", {
+      commandId: crypto.randomUUID(),
+      reviewId,
+    });
+    const patchsetId = loaded.review.activePatchsetId;
+    const generation = generationIdForPatchset(patchsetId);
+    const terminal = await waitForTerminalLenses(bridge, reviewId, generation);
+    console.log(`${prefix} LENS TERMINALS:`, JSON.stringify([...terminal.entries()], null, 2));
+    await expectTerminalLensesRendered(page, terminal);
+    await inspect({ bridge, page, reviewId, patchsetId, terminal });
+  } finally {
+    bridge?.close();
+    await launched.application.close();
+  }
+}
+
+liveTest(
+  "LIVE: a representative branch draws Sequence and Decisions with navigating anchors (#548)",
+  async () => {
+    test.setTimeout(1_800_000);
+    await settleLensesInLaunchedApp(
+      seedRepresentativeRepo("board-live-representative-repo-"),
+      "board-live-representative",
+      async ({ bridge, patchsetId, terminal }) => {
+        for (const lens of ["sequence", "decisions"] as const) {
+          const evidence = terminal.get(lens);
+          expect(
+            evidence?.kind,
+            `${lens} settled ${evidence?.kind ?? "nothing"}: ${JSON.stringify(evidence)}`,
+          ).toBe("board");
+        }
+        const sequence = terminal.get("sequence");
+        const decisions = terminal.get("decisions");
+        if (sequence?.kind !== "board" || decisions?.kind !== "board") {
+          throw new Error("core boards did not settle as boards");
+        }
+        expect(hasReachableKind(sequence.board, "order_step")).toBe(true);
+        expect(hasReachableKind(decisions.board, "decision")).toBe(true);
+        // The anchors navigate into the CAPTURED patchset, not a working tree.
+        const anchored =
+          (await expectAnchorsNavigate(bridge, sequence.board, patchsetId, "Sequence")) +
+          (await expectAnchorsNavigate(bridge, decisions.board, patchsetId, "Decisions"));
+        console.log(`board-live-representative ANCHORS HYDRATED: ${anchored}`);
+        // Positive control: the same spans against a patchset that does not exist are
+        // refused BY NAME rather than hydrated from anywhere else — the message names the
+        // missing patchset, so this refusal cannot be confused with an uncaptured file, an
+        // uncaptured line, or a read that simply failed.
+        const ref = codeRefsOf(sequence.board)[0];
+        if (ref === undefined) throw new Error("Sequence cited no code to control against");
+        await expect(
+          bridge.invoke("patchset.readSpan", {
+            patchsetId: `${patchsetId}-absent-control`,
+            path: ref.path,
+            side: ref.side,
+            startLine: ref.start_line,
+            endLine: ref.end_line,
+          }),
+        ).rejects.toThrow(`patchset ${patchsetId}-absent-control`);
+      },
+    );
+  },
+);
+
+liveTest(
+  "LIVE: Noise settles a board on a noisy change and no-noise on a signal-only one (#549)",
+  async () => {
+    test.setTimeout(1_800_000);
+    await settleLensesInLaunchedApp(
+      seedNoisyRepo("board-live-noisy-repo-"),
+      "board-live-noisy",
+      ({ terminal }) => {
+        const noise = terminal.get("noise");
+        expect(
+          noise?.kind,
+          `Noise settled ${noise?.kind ?? "nothing"} on a mechanically noisy change: ${JSON.stringify(noise)}`,
+        ).toBe("board");
+        if (noise?.kind !== "board") throw new Error("Noise did not settle a board");
+        expect(
+          noise.board.elements.some((element) => element.kind === "noise_verdict"),
+          "Noise settled a board with no verdict on it",
+        ).toBe(true);
+        return Promise.resolve();
+      },
+    );
+
+    await settleLensesInLaunchedApp(
+      seedSignalOnlyRepo("board-live-signal-repo-"),
+      "board-live-signal",
+      async ({ terminal }) => {
+        const noise = terminal.get("noise");
+        // The absence is a SUCCESS, not a failure: the seat ran and honestly reported that
+        // every changed hunk is on the substantive reading path.
+        expect(
+          noise?.kind,
+          `Noise settled ${noise?.kind ?? "nothing"} on a signal-only change: ${JSON.stringify(noise)}`,
+        ).toBe("absence");
+        if (noise?.kind === "absence") expect(noise.reason).toBe("no-noise");
+      },
+    );
+  },
+);

@@ -1,0 +1,227 @@
+// The benchmark export aggregation (#731, design D8 consumer 3). Pure: runs in, the
+// committed docs artifact out. The ONE clock read on this path is the caller's provenance
+// stamp, which arrives as an argument — nothing in here calls `Date.now`, so the same
+// records and the same provenance produce byte-identical JSON on any machine, in any
+// record order.
+//
+// The aggregation splits by DERIVED mode AND by OUTCOME before it aggregates anything.
+// Averaging a Claude-only run together with a council run would produce a number
+// describing no configuration that exists, which is the failure the "never averaged
+// together silently" requirement names; averaging a stage from a run that fell over
+// together with the same stage from a run that finished is the same failure one level
+// down. Run-level latency is reported over COMPLETE runs only, with the failed and
+// aborted counted beside it.
+
+import {
+  BENCHMARK_RECORD_VERSION,
+  type BenchmarkExport,
+  type BenchmarkMode,
+  type BenchmarkOutcome,
+  type BenchmarkProvenance,
+  type BenchmarkRun,
+  type BenchmarkRunKind,
+  type BenchmarkStageName,
+  benchmarkExportSchema,
+  deriveBenchmarkMode,
+  GENERATION_STAGES,
+  LENS_KINDS,
+  type LensKind,
+  REPO_MAP_STAGES,
+} from "@rennet/protocol";
+
+/** Stable ordering keys — index in the declared list, so the output order is the
+ *  contract's order rather than whatever `sort` makes of two strings. */
+const KIND_ORDER: readonly BenchmarkRunKind[] = ["repo-map", "generation"];
+const MODE_ORDER: readonly BenchmarkMode[] = [
+  "dual-model",
+  "claude-only",
+  "codex-only",
+  "unattributed",
+];
+const STAGE_ORDER: readonly BenchmarkStageName[] = [...REPO_MAP_STAGES, ...GENERATION_STAGES];
+const OUTCOME_ORDER: readonly BenchmarkOutcome[] = ["complete", "failed", "aborted"];
+
+function orderOf<T>(list: readonly T[], value: T): number {
+  const index = list.indexOf(value);
+  return index < 0 ? list.length : index;
+}
+
+/** A run-wide stage carries no lens and sorts BEFORE the lens-scoped ones. */
+function lensOrder(lens: LensKind | undefined): number {
+  return lens === undefined ? -1 : LENS_KINDS.indexOf(lens);
+}
+
+/**
+ * The median: the middle value on an odd count, and the MIDPOINT OF THE TWO MIDDLES on an
+ * even one. Not a mean over the whole sample — one pathological run would drag it — and
+ * not the lower middle either, which is a different statistic wearing the name "median"
+ * and reports a two-sample pair of 100 ms and 900 ms as 100 ms.
+ *
+ * ROUNDING, stated so no reader has to derive it: the midpoint is `(a + b) / 2` under
+ * INTEGER division, i.e. truncated toward zero (`Math.floor` on non-negative durations).
+ * A millisecond aggregate has no use for a half, and truncation is one rule that every
+ * reader of this file can reproduce — the point is that the rule is written down, because
+ * an unstated rounding is how two builds disagree about the same input.
+ */
+function median(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const upper = sorted.length >> 1;
+  if (sorted.length % 2 === 1) return sorted[upper] ?? 0;
+  return Math.floor(((sorted[upper - 1] ?? 0) + (sorted[upper] ?? 0)) / 2);
+}
+
+function slowest(values: readonly number[]): number {
+  return values.reduce((max, value) => (value > max ? value : max), 0);
+}
+
+/**
+ * The aggregation bucket key. Lens is part of the identity: a `lens-draft` row for Flagged
+ * and one for Noise are different measurements, not two samples of one. So is OUTCOME — a
+ * stage record from a run that died measured a different thing than the same stage in a
+ * run that finished, and a median over both describes neither.
+ *
+ * The separator is a printable `|`, and every component is a closed enum or a lens id, so
+ * none of them can contain one. It used to be a literal NUL, which made git store this
+ * file as binary — no diff, no blame, no merge.
+ */
+function bucketKey(
+  kind: BenchmarkRunKind,
+  mode: BenchmarkMode,
+  outcome: BenchmarkOutcome,
+  stage: BenchmarkStageName,
+  lens: LensKind | undefined,
+): string {
+  return [kind, mode, outcome, stage, lens ?? ""].join("|");
+}
+
+export interface BenchmarkExportInput {
+  readonly runs: readonly BenchmarkRun[];
+  readonly provenance: BenchmarkProvenance;
+}
+
+/**
+ * Aggregate recorded runs into the committed docs artifact. Deterministic by
+ * construction: every list is sorted on declared order, every statistic is an integer
+ * selected from the input rather than computed with floating point, and the only
+ * timestamp is the caller's stamp.
+ *
+ * A run with no stages still counts in `runs` — a generation that died before its first
+ * phase is a recorded failure, and dropping it would make the failure rate look better
+ * than it is.
+ */
+export function buildBenchmarkExport(input: BenchmarkExportInput): BenchmarkExport {
+  const stageBuckets = new Map<
+    string,
+    {
+      kind: BenchmarkRunKind;
+      mode: BenchmarkMode;
+      outcome: BenchmarkOutcome;
+      stage: BenchmarkStageName;
+      lens?: LensKind;
+      durations: number[];
+    }
+  >();
+  const runBuckets = new Map<
+    string,
+    {
+      kind: BenchmarkRunKind;
+      mode: BenchmarkMode;
+      complete: number;
+      failed: number;
+      aborted: number;
+      producers: Set<string>;
+      /** COMPLETE runs only — the latency line must not mix a finished run with one that
+       *  fell over halfway, which measured half a pipeline. */
+      completeDurations: number[];
+    }
+  >();
+
+  for (const run of input.runs) {
+    const mode = deriveBenchmarkMode(run.stages);
+    const runKey = [run.kind, mode].join("|");
+    const runBucket = runBuckets.get(runKey) ?? {
+      kind: run.kind,
+      mode,
+      complete: 0,
+      failed: 0,
+      aborted: 0,
+      producers: new Set<string>(),
+      completeDurations: [],
+    };
+    runBucket[run.outcome] += 1;
+    runBucket.producers.add(run.producer ?? "unrecorded");
+    if (run.outcome === "complete") runBucket.completeDurations.push(run.durationMs);
+    runBuckets.set(runKey, runBucket);
+
+    for (const stage of run.stages) {
+      const key = bucketKey(run.kind, mode, run.outcome, stage.stage, stage.lens);
+      const bucket = stageBuckets.get(key) ?? {
+        kind: run.kind,
+        mode,
+        outcome: run.outcome,
+        stage: stage.stage,
+        ...(stage.lens === undefined ? {} : { lens: stage.lens }),
+        durations: [],
+      };
+      bucket.durations.push(stage.durationMs);
+      stageBuckets.set(key, bucket);
+    }
+  }
+
+  const stages = [...stageBuckets.values()]
+    .map((bucket) => ({
+      kind: bucket.kind,
+      mode: bucket.mode,
+      outcome: bucket.outcome,
+      stage: bucket.stage,
+      ...(bucket.lens === undefined ? {} : { lens: bucket.lens }),
+      samples: bucket.durations.length,
+      medianMs: median(bucket.durations),
+      slowestMs: slowest(bucket.durations),
+    }))
+    .sort(
+      (a, b) =>
+        orderOf(KIND_ORDER, a.kind) - orderOf(KIND_ORDER, b.kind) ||
+        orderOf(MODE_ORDER, a.mode) - orderOf(MODE_ORDER, b.mode) ||
+        orderOf(OUTCOME_ORDER, a.outcome) - orderOf(OUTCOME_ORDER, b.outcome) ||
+        orderOf(STAGE_ORDER, a.stage) - orderOf(STAGE_ORDER, b.stage) ||
+        lensOrder(a.lens) - lensOrder(b.lens),
+    );
+
+  const runs = [...runBuckets.values()]
+    .map((bucket) => ({
+      kind: bucket.kind,
+      mode: bucket.mode,
+      count: bucket.complete + bucket.failed + bucket.aborted,
+      complete: bucket.complete,
+      failed: bucket.failed,
+      aborted: bucket.aborted,
+      // Omitted rather than zeroed when nothing completed: `0` reads as an instant
+      // pipeline, and absence reads as "none of these runs finished", which is the fact.
+      ...(bucket.completeDurations.length === 0
+        ? {}
+        : { medianMs: median(bucket.completeDurations) }),
+      producers: [...bucket.producers].sort(),
+    }))
+    .sort(
+      (a, b) =>
+        orderOf(KIND_ORDER, a.kind) - orderOf(KIND_ORDER, b.kind) ||
+        orderOf(MODE_ORDER, a.mode) - orderOf(MODE_ORDER, b.mode),
+    );
+
+  // Parse on the way out: the export is a committed artifact, so a shape defect is caught
+  // where it is produced rather than in the docs build that has to render it.
+  return benchmarkExportSchema.parse({
+    version: BENCHMARK_RECORD_VERSION,
+    provenance: input.provenance,
+    stages,
+    runs,
+  });
+}
+
+/** The exact bytes the committed file holds: pretty JSON + trailing newline, so a
+ *  re-export with unchanged data produces an empty diff rather than a whitespace one. */
+export function benchmarkExportText(exported: BenchmarkExport): string {
+  return `${JSON.stringify(exported, null, 2)}\n`;
+}

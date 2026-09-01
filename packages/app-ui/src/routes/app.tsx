@@ -16,6 +16,7 @@ import { ArchivedView } from "../project/archived-view";
 import { BackgroundNarration } from "../project/indexing/background-narration";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
+import { coverageNote, coverageStatus } from "../rounds/round-machine";
 import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
 import { RunRoute, StatusIcon } from "../rounds/run-route";
 import {
@@ -229,6 +230,7 @@ function preparationLaneNote(
 
 function PreparationLanes({ preparation }: { readonly preparation: SessionPreparation }) {
   const lanes = "lanes" in preparation ? preparation.lanes : undefined;
+  const coverage = "coverage" in preparation ? preparation.coverage : undefined;
   if (lanes === undefined) return null;
   return (
     <div className="flex w-full flex-col divide-y divide-border/60 rounded-lg border border-border">
@@ -252,6 +254,18 @@ function PreparationLanes({ preparation }: { readonly preparation: SessionPrepar
           </span>
         </div>
       ))}
+      {coverage !== undefined && (
+        <div
+          data-row="coverage"
+          data-testid="cross-lens-coverage"
+          data-coverage={coverage.state}
+          data-status={coverageStatus(coverage)}
+          className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
+        >
+          <StatusIcon status={coverageStatus(coverage)} />
+          <span className="text-muted-foreground">{coverageNote(coverage)}</span>
+        </div>
+      )}
     </div>
   );
 }

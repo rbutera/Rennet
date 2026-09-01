@@ -1,5 +1,9 @@
 import { join } from "node:path";
-import { BOARD_WIRE_SCHEMA, type BoardEventFrame } from "@rennet/protocol";
+import {
+  APP_OWNED_BOARD_SEGMENTS,
+  BOARD_WIRE_SCHEMA,
+  type BoardEventFrame,
+} from "@rennet/protocol";
 import { BoardService, type BoardStore } from "@wboard/server";
 import { FileBoardStore } from "./file-board-store";
 
@@ -8,9 +12,16 @@ export type BoardEventsListener = (boardId: string, events: BoardEventFrame["eve
 
 /**
  * The boards runtime: one embedded {@link BoardService} over a
- * {@link FileBoardStore} rooted at `.rennet/boards/` under the review
- * project — local, never staged (`.rennet/` is ignored by default;
- * verified against the repo `.gitignore`).
+ * {@link FileBoardStore} rooted at `.rennet/boards/` under the review project —
+ * local, and never Rennet's to stage or commit.
+ *
+ * It is NOT kept out of reviews by an ignore rule. That claim used to stand here and
+ * it was false (#729): plenty of repositories do not ignore `.rennet/`, and in those
+ * the board this runtime wrote landed in the next capture and invalidated the very
+ * review it belonged to. What keeps it out is that capture, the repo watcher and
+ * freshness all exclude the prefix this store is rooted at, from the shared
+ * `APP_OWNED_BOARD_SEGMENTS` authority joined below — so the exclusion holds whatever
+ * the user's `.gitignore` says, and Rennet never writes an ignore rule into their repo.
  *
  * No freeze/generation policy lives here (append-then-freeze is #457
  * lifecycle, owned by B8/B9). Broadcast: `onEvents` observes the store's
@@ -31,7 +42,9 @@ export function createBoardsRuntime(
   projectRoot: string,
   onEvents?: BoardEventsListener,
 ): BoardsRuntime {
-  const store = new FileBoardStore(join(projectRoot, ".rennet", "boards"));
+  // The store's location comes from the shared app-owned-paths authority, not a literal:
+  // capture, the watcher and freshness exclude exactly what this joins (#729, D6).
+  const store = new FileBoardStore(join(projectRoot, ...APP_OWNED_BOARD_SEGMENTS));
   // Observe append rather than wrapping `BoardService.apply`: append returns the
   // events WITH their assigned seqs, and it is the one path every write takes.
   const observed: BoardStore = !onEvents

@@ -10,14 +10,19 @@ import type {
   LintTarget,
 } from "@rennet/core";
 import { findingDispositionMigrationEvents } from "@rennet/core";
+import type { BenchmarkRun } from "@rennet/protocol";
 import {
   type ComposedHandoffBundle,
   type DraftBoard,
   type FindingDisposition,
   findingRefKey,
   type Generation,
+  type GenerationCoverage,
+  type GenerationPhaseTiming,
+  GenerationSchema,
   generationIdForDispatch,
   LENS_KINDS,
+  lensAdmitsAbsence,
   ROUND_NO_REGEN,
   type RoundEvent,
   type RoundRunReceipt,
@@ -25,12 +30,15 @@ import {
 import { describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import {
   createRoundsRuntime,
   freezeGeneration,
   mintGeneration,
   type RoundInput,
   type RoundsRuntimeDeps,
+  revealFromGeneration,
+  sameDraftingAttempt,
   withLensBoards,
 } from "./rounds";
 
@@ -250,6 +258,77 @@ const DISPATCH_FIELDS = {
 
 // ── Pure state machine ──
 
+describe("durable reveal state (#725 7.2)", () => {
+  const attempt = (over: Partial<Generation> = {}): Generation => ({
+    ...mintGeneration("gen:ps-1", "ps-1"),
+    draftingBoardIds: {
+      design: "b:design",
+      sequence: "b:sequence",
+      decisions: "b:decisions",
+      flagged: "b:flagged",
+      noise: "b:noise",
+    },
+    draftingReportBoardId: "b:report",
+    ...over,
+  });
+
+  it("reconstructs which lanes settled and where coverage stands", () => {
+    const reveal = revealFromGeneration(
+      attempt({
+        lensBoards: { sequence: "b:sequence", decisions: "b:decisions" },
+        absentLenses: { noise: "no-noise" },
+        coverage: { state: "pending" },
+      }),
+    );
+    expect(Object.fromEntries(reveal.lanes.map((lane) => [lane.id, lane.status]))).toEqual({
+      design: "queued",
+      sequence: "drafted",
+      decisions: "drafted",
+      flagged: "queued",
+      noise: "absent",
+    });
+    // Pending coverage beside two settled lanes — the exact restart shape, and neither a
+    // reset nor an invented completion.
+    expect(reveal.coverage).toEqual({ state: "pending" });
+  });
+
+  it("reconstructs a RETRYABLE failure as pending, because the restart redraft re-runs it", () => {
+    const retryable = revealFromGeneration(
+      attempt({
+        failedLenses: { flagged: "the drafting turn emitted no board" },
+        failedLensAccounts: { flagged: { attempt: 0, classification: "retryable" } },
+      }),
+    );
+    expect(retryable.lanes.find(({ id }) => id === "flagged")?.status).toBe("queued");
+    // A TERMINAL failure has no redraft coming, so it reconstructs as settled-failed.
+    const terminal = revealFromGeneration(
+      attempt({
+        failedLenses: { flagged: "no parseable board across 1 attempt" },
+        failedLensAccounts: { flagged: { attempt: 1, classification: "terminal" } },
+      }),
+    );
+    expect(terminal.lanes.find(({ id }) => id === "flagged")?.status).toBe("failed");
+  });
+
+  it("identifies a drafting attempt by its reserved slots, so a later attempt is not the same one", () => {
+    const first = attempt();
+    expect(sameDraftingAttempt(first, { ...first })).toBe(true);
+    // A replacement attempt mints new slots.
+    expect(sameDraftingAttempt(first, attempt({ draftingReportBoardId: "b:report-2" }))).toBe(
+      false,
+    );
+    expect(
+      sameDraftingAttempt(first, {
+        ...first,
+        draftingBoardIds: { ...first.draftingBoardIds, noise: "b:noise-2" },
+      }),
+    ).toBe(false);
+    // A SETTLED generation has dropped its slots entirely — also not this attempt.
+    const settled = withLensBoards(first, { boards: [] });
+    expect(sameDraftingAttempt(first, settled)).toBe(false);
+  });
+});
+
 describe("generation lifecycle (append-then-freeze)", () => {
   it("mints a live generation and freezes immutably", () => {
     const gen = mintGeneration("gen:ps-1", "ps-1");
@@ -300,6 +379,61 @@ describe("generation lifecycle (append-then-freeze)", () => {
     });
     expect(gen.lensBoards).toEqual({});
     expect(gen.absentLenses).toEqual({ flagged: "no-findings" });
+  });
+
+  it("persists the typed failure ACCOUNT beside the drafter's words (#549)", () => {
+    const gen = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "noise",
+          failure: "noise lens: the drafting seat threw.",
+          failureAccount: { attempt: 2, classification: "retryable" },
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+        {
+          lens: "design",
+          failure: "design lens: no runnable seat.",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    expect(gen.failedLenses).toEqual({
+      noise: "noise lens: the drafting seat threw.",
+      design: "design lens: no runnable seat.",
+    });
+    // Only the lane that named an account carries one — an unaccounted failure stays
+    // unaccounted rather than being defaulted to a classification nobody determined.
+    expect(gen.failedLensAccounts).toEqual({
+      noise: { attempt: 2, classification: "retryable" },
+    });
+  });
+
+  it("refuses to persist an absence the lens does not admit, recording a failure (#549)", () => {
+    // `no-material` is Design's absence; Sequence admits none at all. A lens settling
+    // another lens's absence is a producer defect, and persisting it would make the wrong
+    // pairing indistinguishable from a real clean result forever after.
+    const gen = withLensBoards(mintGeneration("g", "ps"), {
+      boards: [
+        {
+          lens: "sequence",
+          absence: "no-material",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+        },
+      ],
+    });
+    expect(gen.absentLenses).toBeUndefined();
+    expect(gen.failedLenses?.sequence).toContain("does not admit");
+    // RETRYABLE, not terminal: `terminal` in this model means the retries are spent, and
+    // this lane has spent none — the attempt count beside it says so. A drafting attempt is
+    // exactly what answers a seat that settled an absence its row does not admit.
+    expect(gen.failedLensAccounts?.sequence).toEqual({ attempt: 0, classification: "retryable" });
+    expect(lensAdmitsAbsence("sequence", "no-material")).toBe(false);
   });
 
   it("clears a durable lens absence when that lens later produces a board", () => {
@@ -605,7 +739,7 @@ describe("createRoundsRuntime", () => {
           askId: "ask-one",
           status: "addressed",
           note: "The exact changed line now carries the requested value.",
-          evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+          evidenceIds: buildRoundEvidenceManifest(diff).map((unit) => unit.id),
         },
       ],
       beyond: [],
@@ -681,9 +815,260 @@ describe("createRoundsRuntime", () => {
 
     expect(retryCaptures.some(({ prompt }) => prompt?.includes("prompts/report.md"))).toBe(false);
     expect(retryCaptures.some(({ prompt }) => prompt?.includes("prompts/design.md"))).toBe(true);
-    expect(progress[0]?.type).toBe("report");
+    // #725 7.2 — a resumed attempt republishes the DURABLE reveal state before it clears
+    // and redrafts, so the reconnecting surface sees what already settled rather than a
+    // reset. The verified report handoff follows it.
+    expect(progress[0]?.type).toBe("lens");
+    expect(progress.find((event) => event.type === "report")).toBeDefined();
     expect(recovered.pipeline.report?.boardId).toBe(attempt.draftingReportBoardId);
     expect(recovered.record.reportBoard).toBe(attempt.draftingReportBoardId);
+  });
+
+  it("repeats the classifier call after a crash BETWEEN board apply and meta persistence", async () => {
+    // Retitled honestly (#727 fix round): this crashes in `persistBoardMeta`, which the
+    // pipeline calls AFTER `whiteboard.apply` — so the projection has already landed and
+    // what this covers is the apply-to-meta window, not "before projection". The crash
+    // BEFORE apply is the test immediately below.
+    //
+    // The classifier is side-effect-free before durable projection, so recovery MAY
+    // re-run the provider call. What must hold is the DURABLE side: exactly one report
+    // projection per round, never the first attempt's elements plus the second's.
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-report-crash-repo-"));
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-report-crash-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-report-crash-generation-")),
+    );
+    const boards = createBoardsRuntime(repoRoot);
+    const crashDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
+    const classification = {
+      outcomes: [
+        {
+          askId: "ask-one",
+          status: "addressed",
+          note: "The exact changed line now carries the requested value.",
+          evidenceIds: buildRoundEvidenceManifest(crashDiff).map((unit) => unit.id),
+        },
+      ],
+      beyond: [],
+    };
+    const boardIds = reservedBoardIds("report-crash");
+    const input = roundInput({
+      repoRoot,
+      asksDispatched: ["ask-one"],
+      draftPlan: { generation: "gen:ps-1", boardIds },
+      round: {
+        number: 1,
+        previousGeneration: PREV_GEN.id,
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Replace the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: crashDiff,
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "c0", to: "c1" },
+        },
+      },
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
+    });
+
+    let crashBeforeReportProjection = true;
+    const durableDeps = {
+      boardsRuntimeFor: () => boards,
+      persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) => {
+        if (record.lens === "report" && crashBeforeReportProjection) {
+          crashBeforeReportProjection = false;
+          // The provider already answered; the durable projection never lands.
+          throw new Error("crash before report projection");
+        }
+        meta.save(record);
+      },
+      loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+        meta.listForGeneration(sessionId, generation),
+      removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+      persistGeneration: (generation: Generation) => generations.save(generation),
+      loadGeneration: (id: string) => generations.load(id),
+    } satisfies Partial<RoundsRuntimeDeps>;
+    const withClassifier = (captures: { prompt?: string }[]) =>
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () =>
+          fakeClaudePort(captures, (prompt) =>
+            lensFromPrompt(prompt) === "report"
+              ? classification
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
+      });
+
+    const firstCaptures: { prompt?: string }[] = [];
+    await expect(
+      createRoundsRuntime(withClassifier(firstCaptures)).runRound(input),
+    ).rejects.toThrow("crash before report projection");
+    expect(
+      firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    expect(meta.load(boardIds.report)).toBeUndefined();
+
+    const secondCaptures: { prompt?: string }[] = [];
+    const recovered = await createRoundsRuntime(withClassifier(secondCaptures)).runRound(input);
+
+    // The provider call repeats — that is explicitly allowed, and NOT what is exactly-once.
+    expect(
+      secondCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    expect(recovered.pipeline.report?.boardId).toBe(boardIds.report);
+    expect(meta.load(boardIds.report)?.lens).toBe("report");
+    // Exactly one durable projection: one section and one outcome per dispatched ask,
+    // not the crashed attempt's elements plus the replacement's.
+    const persisted = [...(await boards.service.getState(boardIds.report)).values()] as {
+      readonly kind: string;
+    }[];
+    expect(persisted.filter(({ kind }) => kind === "section")).toHaveLength(1);
+    expect(persisted.filter(({ kind }) => kind === "round_outcome")).toHaveLength(1);
+  });
+
+  it("repeats the classifier call after a crash BEFORE the board apply and lands exactly one report", async () => {
+    // The window the spec's recovery scenario actually names: the provider answered and
+    // the process died before ANY durable projection. Crashing at `persistBoardMeta` (the
+    // test above) is a later window — the board ops are already committed by then, so it
+    // cannot see a report that half-projected. Here the seam sits in `service.apply`
+    // itself, which `WhiteboardClient.apply` delegates to, and refuses the report board's
+    // first write outright: zero report elements durable, then recovery.
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-report-preapply-repo-"));
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-report-preapply-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-report-preapply-generation-")),
+    );
+    const boards = createBoardsRuntime(repoRoot);
+    const crashDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
+    const classification = {
+      outcomes: [
+        {
+          askId: "ask-one",
+          status: "addressed",
+          note: "The exact changed line now carries the requested value.",
+          evidenceIds: buildRoundEvidenceManifest(crashDiff).map((unit) => unit.id),
+        },
+      ],
+      beyond: [],
+    };
+    const boardIds = reservedBoardIds("report-preapply");
+    const input = roundInput({
+      repoRoot,
+      asksDispatched: ["ask-one"],
+      draftPlan: { generation: "gen:ps-1", boardIds },
+      round: {
+        number: 1,
+        previousGeneration: PREV_GEN.id,
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Replace the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: crashDiff,
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "c0", to: "c1" },
+        },
+      },
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
+    });
+
+    let crashBeforeReportApply = true;
+    // The seam: the board service the pipeline's `WhiteboardClient` writes through. It
+    // throws for the report board's first apply, so nothing is appended at all.
+    const crashingBoards: BoardsRuntime = {
+      createRennetBoard: (boardId?: string) => boards.createRennetBoard(boardId),
+      service: new Proxy(boards.service, {
+        get(target, property, receiver) {
+          if (property === "apply") {
+            return (boardId: string, ...rest: unknown[]) => {
+              if (boardId === boardIds.report && crashBeforeReportApply) {
+                crashBeforeReportApply = false;
+                throw new Error("crash before report apply");
+              }
+              return (target.apply as (...args: unknown[]) => unknown)(boardId, ...rest);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+    };
+    const durableDeps = {
+      boardsRuntimeFor: () => crashingBoards,
+      persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) =>
+        meta.save(record),
+      loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+        meta.listForGeneration(sessionId, generation),
+      removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+      persistGeneration: (generation: Generation) => generations.save(generation),
+      loadGeneration: (id: string) => generations.load(id),
+    } satisfies Partial<RoundsRuntimeDeps>;
+    const withClassifier = (captures: { prompt?: string }[]) =>
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () =>
+          fakeClaudePort(captures, (prompt) =>
+            lensFromPrompt(prompt) === "report"
+              ? classification
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
+      });
+
+    const firstCaptures: { prompt?: string }[] = [];
+    await expect(
+      createRoundsRuntime(withClassifier(firstCaptures)).runRound(input),
+    ).rejects.toThrow("crash before report apply");
+    expect(
+      firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    // ZERO report elements durable — the crash landed before a single op was appended.
+    expect([...(await boards.service.getState(boardIds.report)).values()]).toHaveLength(0);
+    expect(meta.load(boardIds.report)).toBeUndefined();
+
+    const secondCaptures: { prompt?: string }[] = [];
+    const recovered = await createRoundsRuntime(withClassifier(secondCaptures)).runRound(input);
+
+    // Two provider calls across the two runs — explicitly allowed, and NOT what is
+    // exactly-once. Exactly one projection is.
+    expect(
+      secondCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    expect(recovered.pipeline.report?.boardId).toBe(boardIds.report);
+    expect(meta.load(boardIds.report)?.lens).toBe("report");
+    const persisted = [...(await boards.service.getState(boardIds.report)).values()] as {
+      readonly kind: string;
+    }[];
+    expect(persisted.filter(({ kind }) => kind === "section")).toHaveLength(1);
+    expect(persisted.filter(({ kind }) => kind === "round_outcome")).toHaveLength(1);
   });
 
   it("redrafts when every lens has exact metadata but the required report does not", async () => {
@@ -866,6 +1251,195 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards.design).toBeUndefined();
     expect(recovered.boardGeneration.lensBoards.decisions).toBeUndefined();
     expect(recovered.boardGeneration.lensBoards.flagged).toBeUndefined();
+  });
+
+  it("carries a failed lane's typed ACCOUNT across a restart, not just its words (#549)", async () => {
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-account-meta-")));
+    const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-account-gen-")));
+    const input = roundInput();
+    const first = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const lens = lensFromPrompt(prompt);
+            // The Noise seat completes every turn WITHOUT emitting — the production
+            // no-board shape, which spends the ladder and settles terminal.
+            return lens === "noise" ? undefined : cleanBody(lens);
+          }),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    const drafted = first.pipeline.boards.find((outcome) => outcome.lens === "noise");
+    expect(drafted?.failureAccount?.classification).toBe("terminal");
+    expect(first.boardGeneration.failedLenses?.noise).toBeDefined();
+    expect(first.boardGeneration.failedLensAccounts?.noise).toEqual(drafted?.failureAccount);
+
+    // A FRESH runtime over the same on-disk evidence: no model, nothing in memory.
+    const recovered = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () => {
+          throw new Error("complete evidence must reconstruct without a model");
+        },
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    const restored = recovered.pipeline.boards.find((outcome) => outcome.lens === "noise");
+    expect(restored?.failure).toBe(first.boardGeneration.failedLenses?.noise);
+    // The classification survives the restart. Before it was persisted, a reconstruction
+    // had only the message and every restored failure read as terminal by default.
+    expect(restored?.failureAccount).toEqual(drafted?.failureAccount);
+  });
+
+  it.each([
+    { classification: "terminal" as const, redrafts: false },
+    { classification: "retryable" as const, redrafts: true },
+  ])(
+    "re-drafts a $classification lens failure across a restart: $redrafts (#549)",
+    async ({ classification, redrafts }) => {
+      // The wedge this closes: every durable failure counted as complete lens evidence, so
+      // a fresh runtime reconstructed a RETRYABLE failure off disk and never re-asked the
+      // lens — a lane whose own account said it had attempts left could never spend one.
+      // Scope of the control, stated exactly: each leg builds its OWN durable state from
+      // the same script and then restamps one field, so within a leg the classification is
+      // the only thing that differs between what the run wrote and what the restart reads.
+      // The two legs are not compared byte-for-byte — nothing here asserts that — they are
+      // constructed identically, which is what leaves the classification as the variable.
+      const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-restart-meta-")));
+      const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-restart-gen-")));
+      const input = roundInput();
+      const first = await createRoundsRuntime(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt) => {
+              const lens = lensFromPrompt(prompt);
+              // The production no-board shape: the seat completes without emitting.
+              return lens === "noise" ? undefined : cleanBody(lens);
+            }),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ).runRound(input);
+
+      const settled = first.boardGeneration;
+      expect(settled.failedLenses?.noise).toBeDefined();
+      // Restamp the durable account, leaving the failure sentence and every BoardMeta
+      // record exactly as the run left them: the classification is the only variable.
+      generations.save({
+        ...settled,
+        failedLensAccounts: {
+          ...settled.failedLensAccounts,
+          noise: { attempt: 1, classification },
+        },
+      });
+
+      // A FRESH runtime over that on-disk evidence. Its Noise seat now draws a real board,
+      // so "did the lens re-draft?" is answered by whether a board arrives.
+      let noiseTurns = 0;
+      const recovered = await createRoundsRuntime(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt) => {
+              const lens = lensFromPrompt(prompt);
+              if (lens === "noise") noiseTurns += 1;
+              return cleanBody(lens);
+            }),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ).runRound(input);
+
+      const noise = recovered.pipeline.boards.find((outcome) => outcome.lens === "noise");
+      expect(noiseTurns > 0).toBe(redrafts);
+      if (redrafts) {
+        // It spent the attempt its account promised, and the lens now holds a board.
+        expect(noise?.failure).toBeUndefined();
+        expect(noise?.boardId).toBeDefined();
+        expect(recovered.boardGeneration.failedLenses?.noise).toBeUndefined();
+      } else {
+        // Retries spent: the reconstruction stands, and no model was asked.
+        expect(noise?.failure).toBe(settled.failedLenses?.noise);
+        expect(noise?.boardId).toBeUndefined();
+      }
+    },
+  );
+
+  it("clears a stale failure ACCOUNT with its failure when a partial attempt is persisted", async () => {
+    // The retry path deletes the previous attempt's absences and failure sentences before
+    // it writes the replacement attempt's identity — but it kept the ACCOUNTS. A crash
+    // between that write and the settle then left a durable generation carrying a
+    // classification for a failure that had already been cleared: an account about nothing,
+    // and one a restart would have read as this attempt's verdict.
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-stale-account-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-stale-account-gen-")),
+    );
+    const input = roundInput();
+    const first = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) =>
+            lensFromPrompt(prompt) === "noise" ? undefined : cleanBody(lensFromPrompt(prompt)),
+          ),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+    const settled = first.boardGeneration;
+    expect(settled.failedLensAccounts?.noise).toBeDefined();
+    // Retryable ⇒ the restart below takes the partial-evidence redraft path.
+    generations.save({
+      ...settled,
+      failedLensAccounts: {
+        ...settled.failedLensAccounts,
+        noise: { attempt: 1, classification: "retryable" },
+      },
+    });
+
+    // Every durable snapshot the redraft writes, in order — each one is a point a crash
+    // could freeze, and the state a later reader would find.
+    const snapshots: Generation[] = [];
+    await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => {
+          snapshots.push(generation);
+          generations.save(generation);
+        },
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    expect(snapshots.length).toBeGreaterThan(0);
+    for (const snapshot of snapshots) {
+      for (const lens of LENS_KINDS) {
+        // An account may only exist where its failure does — at every durable point, not
+        // merely at the end.
+        if (snapshot.failedLensAccounts?.[lens] !== undefined) {
+          expect(snapshot.failedLenses?.[lens]).toBeDefined();
+        }
+      }
+    }
+    // …and the attempt record written BEFORE any lens settled — the crash window this is
+    // about — carries neither half for the lane that had failed.
+    const attempt = snapshots[0];
+    expect(attempt?.failedLenses?.noise).toBeUndefined();
+    expect(attempt?.failedLensAccounts?.noise).toBeUndefined();
   });
 
   it.each(["sequence", "decisions", "flagged"] as const)(
@@ -1698,6 +2272,14 @@ describe("createRoundsRuntime", () => {
   });
 
   it("does not announce or start lenses until classified report progress settles", async () => {
+    const progressDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
     const round: NonNullable<RoundInput["round"]> = {
       number: 1,
       previousGeneration: PREV_GEN.id,
@@ -1713,21 +2295,21 @@ describe("createRoundsRuntime", () => {
       findingDispositions: {},
       worker: {
         outcome: "completed",
-        diff: [
-          "diff --git a/src/auth.ts b/src/auth.ts",
-          "--- a/src/auth.ts",
-          "+++ b/src/auth.ts",
-          "@@ -1 +1 @@",
-          "-old line",
-          "+new line",
-        ].join("\n"),
+        diff: progressDiff,
         changedPaths: ["src/auth.ts"],
         commitRange: { from: "c0", to: "c1" },
       },
     };
     const classification = {
-      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
-      beyond: [],
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence for this ask." }],
+      beyond: [
+        {
+          ref: "beyond:line",
+          text: "An unrequested line change.",
+          note: "The turn changed a line no ask asked for.",
+          evidenceIds: buildRoundEvidenceManifest(progressDiff).map((unit) => unit.id),
+        },
+      ],
     };
     const start = (onReportProgress: NonNullable<RoundInput["onReportProgress"]>) => {
       const captures: { prompt?: string }[] = [];
@@ -1907,9 +2489,315 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards).not.toHaveProperty("design");
   });
 
+  it("persists each lane's settlement, the coverage state and the per-phase timings as they land", async () => {
+    const writes: Generation[] = [];
+    // A real durable store, not just a write log: the claim being tested is about what a
+    // reader FINDS after the round, and a filtered write log answers a different question.
+    // The final settle overwrote the record for months while the log still showed the
+    // coverage and timings some earlier write had carried.
+    const store = new Map<string, Generation>();
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        persistGeneration: (generation) => {
+          const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+          writes.push(snapshot);
+          store.set(snapshot.id, snapshot);
+        },
+        loadGeneration: (id) => store.get(id),
+      }),
+    );
+    const outcome = await runtime.runRound(roundInput());
+
+    // Coverage is durable and generation-keyed, and it is PENDING while lanes are still
+    // settling — the state a reconnecting surface renders beside boards already revealed.
+    const pending = writes.filter(({ coverage }) => coverage?.state === "pending");
+    expect(pending.length).toBeGreaterThan(0);
+    const revealedWhilePending = pending.map(({ lensBoards }) => Object.keys(lensBoards).length);
+    expect(Math.max(...revealedWhilePending)).toBeGreaterThan(0);
+    expect(Math.min(...revealedWhilePending)).toBe(0);
+
+    // …and it completes, durably, with the violation count coverage produced.
+    const completed = writes.filter(({ coverage }) => coverage?.state === "complete");
+    expect(completed.length).toBeGreaterThan(0);
+    expect(completed.at(-1)?.coverage).toEqual({ state: "complete", violations: 0 });
+
+    // ── The DURABLE record, read back after the round settled ──
+    // Not `writes.filter(...).at(-1)`: that steps over the last write, which is the one
+    // that used to erase all of this. What a reconnecting client (or #726's benchmark
+    // reader) sees is `loadGeneration`, so that is what gets asserted.
+    const durable = runtime.generation(outcome.boardGeneration.id);
+    expect(durable).toBeDefined();
+    expect(durable?.coverage).toEqual({ state: "complete", violations: 0 });
+
+    // Per-phase timings ride the same durable record, versioned from day one.
+    const timed = durable?.timings;
+    expect(timed?.version).toBe(1);
+    const phases = new Set(timed?.phases.map(({ phase }) => phase));
+    expect(phases.has("report")).toBe(true);
+    expect(phases.has("lens-draft")).toBe(true);
+    expect(phases.has("lens-post-process")).toBe(true);
+    expect(phases.has("coverage")).toBe(true);
+    expect(phases.has("reveal")).toBe(true);
+    // Time-to-first-core-board is measured from the round's own start and names the lane
+    // that got there first — one of the three core lenses, never Design or Noise.
+    const firstCore = timed?.phases.find(({ phase }) => phase === "first-core-board");
+    expect(["sequence", "decisions", "flagged"]).toContain(firstCore?.lens);
+    expect(timed?.phases.filter(({ phase }) => phase === "first-core-board")).toHaveLength(1);
+    // Every durable record satisfies the wire contract, including the lens/phase
+    // discrimination — a lane record naming no lane would parse nowhere else.
+    expect(GenerationSchema.safeParse(durable).success).toBe(true);
+  });
+
+  it("carries the reveal's coverage and timings into the round's FAILURE writes too", async () => {
+    // The two error paths persist the generation before throwing. They take the same
+    // record the final settle does, so a round that dies still leaves behind what it
+    // measured — the failure is exactly when someone wants to read it.
+    const store = new Map<string, Generation>();
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        // Sequence admits no absence, so an empty Sequence board is a MISSING required core
+        // lens — one of the two paths that persists the generation and then throws.
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => {
+            const lens = lensFromPrompt(prompt);
+            return lens === "sequence" ? { elements: [], skippedHunks: [] } : cleanBody(lens);
+          }),
+        persistGeneration: (generation) => {
+          store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
+        },
+        loadGeneration: (id) => store.get(id),
+      }),
+    );
+    await expect(runtime.runRound(roundInput())).rejects.toThrow(
+      "The required core lens sequence did not produce review evidence",
+    );
+
+    // That path persists `withLensBoards(...)` and THEN throws — the same write the final
+    // settle makes. It carries what the run measured, because a round that died is exactly
+    // when someone reads the timings.
+    const durable = store.get("gen:ps-1");
+    expect(durable?.draftingBoardIds).toBeUndefined();
+    expect(durable?.coverage).toEqual({ state: "complete", violations: 0 });
+    expect(durable?.timings?.phases.some(({ phase }) => phase === "reveal")).toBe(true);
+  });
+
+  it("measures time-to-first-core-board from the CALLER's origin, not this runtime's entry", async () => {
+    const runWithOrigin = async (
+      firstBoardWaitOriginMs?: number,
+    ): Promise<GenerationPhaseTiming | undefined> => {
+      const store = new Map<string, Generation>();
+      // A scripted clock that only moves when the runtime asks it to, so the origin is the
+      // ONLY thing that can differ between the two runs below.
+      let ticks = 10_000;
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          now: () => {
+            ticks += 1;
+            return ticks;
+          },
+          persistGeneration: (generation) => {
+            store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
+          },
+          loadGeneration: (id) => store.get(id),
+        }),
+      );
+      await runtime.runRound(
+        roundInput(firstBoardWaitOriginMs === undefined ? {} : { firstBoardWaitOriginMs }),
+      );
+      return store
+        .get("gen:ps-1")
+        ?.timings?.phases.find(({ phase }) => phase === "first-core-board");
+    };
+
+    // The caller's origin is 9_000 ticks BEFORE the runtime's clock starts — the board
+    // minting, cleanup, attempt persistence and provider resolution the reviewer waits
+    // through before this runtime would have started counting.
+    const carried = await runWithOrigin(1_000);
+    expect(carried?.startedAtMs).toBe(1_000);
+    expect(carried?.durationMs).toBeGreaterThan(9_000);
+
+    // With no origin supplied the runtime falls back to its own start — honest about being
+    // a lower bound, and measurably a different number.
+    const fallback = await runWithOrigin();
+    expect(fallback?.startedAtMs).toBeGreaterThan(10_000);
+    expect(fallback?.durationMs).toBeLessThan(1_000);
+  });
+
+  it("refuses a superseded attempt the SCREEN as well as the disk", async () => {
+    // A rejected reveal write means a later attempt owns the generation. Announcing the
+    // board anyway put this dead attempt's work on every connected client, under the live
+    // generation's label — refused on disk, granted the screen.
+    const run = async (supersede: boolean) => {
+      const arrivals: string[] = [];
+      const laneFrames: string[][] = [];
+      let attemptRecord: Generation | undefined;
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          persistGeneration: (generation) => {
+            attemptRecord ??= JSON.parse(JSON.stringify(generation)) as Generation;
+          },
+          loadGeneration: () => {
+            if (attemptRecord === undefined) return undefined;
+            return supersede
+              ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+              : attemptRecord;
+          },
+          onBoardArrival: (event) => {
+            // The report's handoff is not a reveal write and takes its own branch; the
+            // supersession gate is about the five LENS settlements.
+            if (event.lens !== "report") arrivals.push(event.lens);
+          },
+        }),
+      );
+      await runtime.runRound(
+        roundInput({
+          onProgress: (event) => {
+            if (event.type === "lens") {
+              // `done` is the ARRIVAL's status (it carries the carried/reworked verdict).
+              // `drafted` comes from the BoardMeta write, which is a different seam and a
+              // different write — this test is about the arrival sink.
+              laneFrames.push(
+                event.lanes.filter((lane) => lane.status === "done").map(({ id }) => id),
+              );
+            }
+          },
+        }),
+      );
+      return { arrivals, laneFrames };
+    };
+
+    // Control: the attempt still owns the generation, so the sink fires and lanes settle.
+    const owned = await run(false);
+    expect(owned.arrivals.length).toBeGreaterThan(0);
+    expect(Math.max(...owned.laneFrames.map((frame) => frame.length))).toBeGreaterThan(0);
+
+    // Superseded: not one arrival reached the broadcast sink, and no lane frame ever
+    // claimed a settled board.
+    const dead = await run(true);
+    expect(dead.arrivals).toEqual([]);
+    expect(Math.max(...dead.laneFrames.map((frame) => frame.length), 0)).toBe(0);
+  });
+
+  it("clears a replaced attempt's coverage so no client sees `complete` beside queued lanes", async () => {
+    // The restart shape: a durable generation that got as far as ONE settled lens and a
+    // completed coverage state, with its attempt slots still reserved — so this round takes
+    // the partial-evidence redraft path. That coverage described five boards the redraft is
+    // about to delete.
+    const seeded: Generation = {
+      id: "gen:ps-1",
+      patchsetId: "ps-1",
+      lensBoards: { sequence: "b:stale-sequence" },
+      draftingBoardIds: {
+        design: "b:stale-design",
+        sequence: "b:stale-sequence",
+        decisions: "b:stale-decisions",
+        flagged: "b:stale-flagged",
+        noise: "b:stale-noise",
+      },
+      draftingReportBoardId: "b:stale-report",
+      coverage: { state: "complete", violations: 0 },
+      status: "live",
+    };
+    const store = new Map<string, Generation>([[seeded.id, seeded]]);
+    const writes: Generation[] = [];
+    const frames: { queued: number; coverage?: GenerationCoverage }[] = [];
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        loadGeneration: (id) => store.get(id),
+        loadDraftedBoards: () => [],
+        removeBoardMeta: () => undefined,
+        persistGeneration: (generation) => {
+          const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+          writes.push(snapshot);
+          store.set(snapshot.id, snapshot);
+        },
+      }),
+    );
+    await runtime.runRound(
+      roundInput({
+        onProgress: (event) => {
+          if (event.type !== "lens") return;
+          frames.push({
+            queued: event.lanes.filter(
+              (lane) => lane.status === "queued" || lane.status === "running",
+            ).length,
+            ...(event.coverage === undefined ? {} : { coverage: event.coverage }),
+          });
+        },
+      }),
+    );
+
+    // The FIRST frame — the resume republish, before any board is cleared — already says
+    // pending. It has to carry the state explicitly: the client's fold keeps the last known
+    // coverage when a frame carries none, so an omission would leave `complete` standing.
+    expect(frames[0]?.coverage).toEqual({ state: "pending" });
+    expect(frames[0]?.queued).toBeGreaterThan(0);
+
+    // And no frame ever shows a completed coverage beside a lane still to be drafted.
+    for (const frame of frames) {
+      if (frame.queued === 0) continue;
+      expect(frame.coverage?.state === "complete").toBe(false);
+    }
+
+    // Durably: the attempt write that reserves the new slots carries pending, not the
+    // replaced attempt's completion. (That write lands after the cleanup loop — this
+    // asserts the CONTENT of the write; ordering is documented at the write site.)
+    const attemptWrite = writes.find(({ draftingBoardIds }) => draftingBoardIds !== undefined);
+    expect(attemptWrite?.coverage).toEqual({ state: "pending" });
+    expect(attemptWrite?.lensBoards).toEqual({});
+  });
+
+  it("rejects a reveal write from a superseded generation attempt", async () => {
+    const runAndCollect = async (supersedeAfterAttempt: boolean): Promise<Generation[]> => {
+      const writes: Generation[] = [];
+      let attemptRecord: Generation | undefined;
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          persistGeneration: (generation) => {
+            const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+            writes.push(snapshot);
+            attemptRecord ??= snapshot;
+          },
+          loadGeneration: () => {
+            if (attemptRecord === undefined) return undefined;
+            return supersedeAfterAttempt
+              ? // A LATER attempt took the generation over: it minted its own report slot,
+                // so this run's remaining reveal writes belong to nobody.
+                { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+              : attemptRecord;
+          },
+        }),
+      );
+      await runtime.runRound(roundInput());
+      return writes;
+    };
+
+    // A REVEAL write is identified by the attempt identity it carries: the final settle
+    // runs through `withLensBoards`, which drops `draftingBoardIds`. Filtering on that is
+    // what keeps this test about supersession rather than about the settle, which is a
+    // different write on a different path.
+    const revealWrites = (writes: readonly Generation[]): readonly Generation[] =>
+      writes.filter(({ draftingBoardIds }) => draftingBoardIds !== undefined);
+
+    // Control first: with the durable record still naming THIS attempt, the reveal writes
+    // land — so the assertion below is about supersession, not about a missing seam.
+    const current = revealWrites(await runAndCollect(false));
+    expect(current.some(({ coverage }) => coverage !== undefined)).toBe(true);
+    expect(current.some(({ timings }) => timings !== undefined)).toBe(true);
+    expect(current.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(true);
+
+    const superseded = revealWrites(await runAndCollect(true));
+    // Every reveal write was dropped. What remains is the attempt write alone — the
+    // superseded attempt's settlements, coverage and timings were never folded into the
+    // generation a later attempt now owns.
+    expect(superseded.some(({ coverage }) => coverage !== undefined)).toBe(false);
+    expect(superseded.some(({ timings }) => timings !== undefined)).toBe(false);
+    expect(superseded.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
+  });
+
   it("serializes concurrent absence saves so a delayed partial snapshot cannot win", async () => {
     let durable: Generation | undefined;
-    let designOnlyWrites = 0;
+    let coverageCarryingDesignOnlyWrites = 0;
     let releaseDelayedSave = (): void => undefined;
     let announceDelayedSave = (): void => undefined;
     let announceFlaggedDraft = (): void => undefined;
@@ -1947,9 +2835,17 @@ describe("createRoundsRuntime", () => {
         persistGeneration: async (generation) => {
           const snapshot = copyGeneration(generation);
           const absent = Object.keys(snapshot.absentLenses ?? {});
+          // Three writes carry exactly the design absence, and only the LAST of them is
+          // the one this test delays:
+          //   1. the attempt write, before drafting starts — no coverage state yet;
+          //   2. the coverage-`pending` write the pipeline makes at lens kickoff (#725 D4),
+          //      which the lens seats wait behind and so cannot be delayed here;
+          //   3. design's own absence notification, which settles while the other four
+          //      lens seats are already running. That is the save under test.
+          // So: count the coverage-carrying design-only writes and delay the second.
           if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
-            designOnlyWrites += 1;
-            if (designOnlyWrites === 2) {
+            if (snapshot.coverage !== undefined) coverageCarryingDesignOnlyWrites += 1;
+            if (coverageCarryingDesignOnlyWrites === 2) {
               announceDelayedSave();
               await delayedSaveRelease;
             }
@@ -2093,5 +2989,126 @@ describe("createRoundsRuntime", () => {
     await Promise.all([pA, pB]);
     // A ran to completion before B began — never interleaved.
     expect(events).toEqual(["start:A", "end:A", "start:B", "end:B"]);
+  });
+});
+
+// ── The benchmark archive's terminal boundary (#731 N3/N4, O2) ──
+//
+// The archive used to be taken the moment the pipeline returned, which is several throws
+// too early: `runOnce` still has to find lens boards, verify the drafted report and check
+// the required core lenses. A generation rejected by any of those was archived as
+// `complete`, so the exported failure rate was the rate at which the PIPELINE threw rather
+// than the rate at which a round failed. These tests drive the real runtime and read what
+// it archived.
+
+describe("what a round archives, and when (#731 N3)", () => {
+  function archiving(over: Partial<RoundsRuntimeDeps> = {}): {
+    deps: RoundsRuntimeDeps;
+    recorded: BenchmarkRun[];
+  } {
+    const recorded: BenchmarkRun[] = [];
+    return { deps: baseDeps({ recordBenchmark: (run) => recorded.push(run), ...over }), recorded };
+  }
+
+  it("archives a COMPLETE run once, identified by generation and attempt", async () => {
+    const { deps, recorded } = archiving();
+    await createRoundsRuntime(deps).runRound(roundInput());
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("complete");
+    expect(recorded[0]?.kind).toBe("generation");
+    // Identity is (generation, attempt) — not a clock reading, which is what made two
+    // records of one generation indistinguishable.
+    expect(recorded[0]?.attempt).toBe(0);
+    expect(recorded[0]?.id).toBe(`${recorded[0]?.subject.generationId}:0`);
+    expect(recorded[0]?.producer).toBe("daemon");
+  });
+
+  it("archives a generation rejected by the required-core-lens check as FAILED", async () => {
+    // THE regression. The pipeline returned normally here — boards were drafted — and the
+    // round was then rejected downstream. Archiving at the pipeline's return filed this as
+    // a complete run.
+    const invalid = {
+      elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+      skippedHunks: [],
+    };
+    const { deps, recorded } = archiving({
+      resolveClaudePort: async () =>
+        fakeClaudePort([], (prompt) =>
+          lensFromPrompt(prompt) === "sequence" ? invalid : cleanBody(lensFromPrompt(prompt)),
+        ),
+    });
+    await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow(
+      "required core lens sequence",
+    );
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("failed");
+    expect(recorded[0]?.failure).toContain("required core lens sequence");
+  });
+
+  /** A drafting port whose turn dies, so `runLensPipeline` itself throws. */
+  function dyingPort(message: string): HarnessPort {
+    return {
+      createSession: async () => {
+        throw new Error(message);
+      },
+    } as unknown as HarnessPort;
+  }
+
+  it("archives ONE failed run when the pipeline itself throws (#731 O2)", async () => {
+    const { deps, recorded } = archiving({
+      resolveClaudePort: async () => dyingPort("the drafting turn fell over"),
+    });
+    await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow();
+    // One record, not one per lane and not none: the run is the unit, and its failure
+    // carries the runner's own words.
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("failed");
+    expect(recorded[0]?.failure).toEqual(expect.any(String));
+    expect(recorded[0]?.failure?.length).toBeGreaterThan(0);
+  });
+
+  it("calls a cancelled round ABORTED, not failed (#731 O2)", async () => {
+    // A reviewer who walked away is not a defect, and a pipeline whose cancellations were
+    // counted as failures would report a failure rate made of people changing their minds.
+    const { deps, recorded } = archiving({
+      resolveClaudePort: async () => dyingPort("cancelled"),
+    });
+    await expect(
+      createRoundsRuntime(deps).runRound(roundInput({ signal: AbortSignal.abort() })),
+    ).rejects.toThrow();
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("aborted");
+    // The control on the discrimination: the SAME failure with no aborted signal is
+    // `failed`, so this is reading the signal rather than the error.
+    const plain = archiving({ resolveClaudePort: async () => dyingPort("cancelled") });
+    await expect(createRoundsRuntime(plain.deps).runRound(roundInput())).rejects.toThrow();
+    expect(plain.recorded[0]?.outcome).toBe("failed");
+  });
+
+  it("archives NOTHING for an attempt a later one superseded", async () => {
+    // `persistReveal` refuses the durable write when another attempt owns the generation.
+    // Archiving anyway would file a dead attempt's latency under the live generation's id —
+    // the same wrong-content publish the durable check exists to prevent, one surface over.
+    const superseded: Generation = {
+      ...PREV_GEN,
+      id: "gen:ps-1",
+      draftingBoardIds: { design: "someone-elses-board" },
+      draftingReportBoardId: "someone-elses-report",
+    };
+    // The FIRST read is `runOnce` selecting the generation to draft; every later read is a
+    // reveal write checking whether it still owns it. The steal happens in between.
+    let reads = 0;
+    const { deps, recorded } = archiving({
+      persistGeneration: () => undefined,
+      loadGeneration: () => {
+        reads += 1;
+        return reads > 1 ? superseded : undefined;
+      },
+    });
+    await createRoundsRuntime(deps)
+      .runRound(roundInput())
+      .catch(() => undefined);
+    expect(reads).toBeGreaterThan(1);
+    expect(recorded).toEqual([]);
   });
 });
