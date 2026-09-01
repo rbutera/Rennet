@@ -31,7 +31,9 @@ import { type LintContext, lint, taughtHunkIds } from "./lint";
 
 /** The single repair rung: an element still invalid afterward is omitted. */
 export const LADDER_RUNGS = 1;
-/** The global model-repair cap after the initial draft. */
+/** The DEFAULT model-repair cap after the initial draft. The lens runtime overrides it
+ *  per lane and per whole-board attempt through {@link ValidateSeams.retryCap} (#725 D4);
+ *  callers that pass none get this. */
 export const RETRY_CAP = 1;
 
 // ── The seams the cluster-5 runtime injects ──────────────────────────────────
@@ -59,6 +61,14 @@ export interface RetryRequest {
 export interface ValidateSeams {
   /** The re-draft channel: the seat returns a patch (a raw structured board). */
   readonly runTurn: (request: RetryRequest) => Promise<unknown> | unknown;
+  /**
+   * This ladder's model-repair cap, replacing {@link RETRY_CAP} (#725 D4). The lens
+   * runtime supplies a per-lane, per-whole-board-attempt budget so a repeated whole-board
+   * attempt runs a REDUCED ladder rather than a silently refreshed full one. `0` is a
+   * legitimate budget: the initial draft still runs, and whatever it leaves unfixed ships
+   * as labeled blemishes exactly as exhaustion already does.
+   */
+  readonly retryCap?: number;
   /**
    * The cluster-5 board-post-process editor pass, run between the lint loop and
    * the immutability gate. Identity by default (cluster 3 has no editor); it may
@@ -387,6 +397,7 @@ export async function validateDraft(
   const omissionSkips: SkipEntry[] = [];
   let attempts = 0;
   let blemishes: Blemish[] = [];
+  const retryCap = seams.retryCap ?? RETRY_CAP;
 
   for (;;) {
     // If the last seat return failed to parse, that is this round's feedback.
@@ -424,7 +435,7 @@ export async function validateDraft(
     for (const el of current.elements) {
       if (offenders.has(el.id)) {
         const rung = rungByElement.get(el.id) ?? 0;
-        if (attempts >= RETRY_CAP || rung >= LADDER_RUNGS) primaryDrops.add(el.id);
+        if (attempts >= retryCap || rung >= LADDER_RUNGS) primaryDrops.add(el.id);
         else rungByElement.set(el.id, rung + 1);
       } else if (pendingParseIssues.length === 0) {
         // No violation this round ⇒ passing ⇒ freeze (never re-drafted).
@@ -545,7 +556,7 @@ export async function validateDraft(
       const id = offendingId(v.elementRef);
       return id === undefined || !dropped.has(id);
     });
-    if (attempts >= RETRY_CAP) {
+    if (attempts >= retryCap) {
       // Exhaustion: whatever still fails ships as labeled blemishes. Visible,
       // never blocking. A run stuck on parse issues labels those as blemishes,
       // never an empty `blemishes[]` hiding a broken run (finding 6).

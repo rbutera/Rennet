@@ -13,6 +13,8 @@ import {
   AUTHORED_BOARD_SCHEMA,
   type DraftBoard,
   findingRefKey,
+  type GenerationCoverage,
+  type GenerationPhaseTiming,
   type LensKind,
   lensAdmitsAbsence,
   ROUND_EVIDENCE_MANIFEST_MAX_BYTES,
@@ -33,6 +35,7 @@ import {
   type DesignCoverageMapper,
   designDraftOutputSchema,
   draftToOps,
+  lensRetryBudget,
   projectDesignTaskProgress,
   REPAIR_TARGET_KINDS,
   reconcileFlaggedBoards,
@@ -746,6 +749,60 @@ function fakeWhiteboard(applied: Applied[]) {
       return { response: { ok: true }, ops } as never;
     },
   };
+}
+
+/**
+ * The reveal assertion (#725 D4). `revealAfterEachRelease[n]` is what the reveal had
+ * published once the (n+1)-th lane in `releaseOrder` finished writing its board. A
+ * progressive reveal shows exactly the lanes released so far; a global all-lanes barrier
+ * shows nothing until the last one, which is the shape this throws on by name.
+ *
+ * Kept as a function rather than inline expectations so the control below can feed it a
+ * barriered stream and prove it rejects one — an assertion that cannot tell the two shapes
+ * apart would pass over a restored barrier.
+ */
+function assertProgressiveReveal(
+  revealAfterEachRelease: readonly (readonly LensKind[])[],
+  releaseOrder: readonly LensKind[],
+): void {
+  for (const [index, revealed] of revealAfterEachRelease.entries()) {
+    if (revealed.length === 0 && index < releaseOrder.length - 1) {
+      throw new Error(
+        `the reveal revealed nothing until lane ${index + 2} of ${releaseOrder.length} settled — a global barrier is holding settled boards`,
+      );
+    }
+    const expected = releaseOrder.slice(0, index + 1);
+    if (revealed.join(",") !== expected.join(",")) {
+      throw new Error(
+        `after releasing ${expected.join(", ")} the reveal held ${revealed.join(", ") || "nothing"}`,
+      );
+    }
+  }
+}
+
+/**
+ * The timing assertion (#725 7.4): the `report` phase record must cover the report turn
+ * and NOTHING else. A record whose span swallows the lens lanes that ran after it is the
+ * exact defect the durable per-phase timings exist to make impossible — one label
+ * absorbing another phase's time.
+ *
+ * A function, not inline expectations, so the control below can feed it a mislabeled
+ * stream and prove it rejects one.
+ */
+function assertReportLabelExcludesLensTime(timings: readonly GenerationPhaseTiming[]): void {
+  // EVERY report record, not the first: a regression that adds a second, wider `report`
+  // span beside an honest one is the same lie, and a `find` would read past it.
+  for (const report of timings.filter(({ phase }) => phase === "report")) {
+    const reportEnds = report.startedAtMs + report.durationMs;
+    for (const timing of timings) {
+      if (!timing.phase.startsWith("lens-")) continue;
+      if (timing.startedAtMs + timing.durationMs <= reportEnds) {
+        throw new Error(
+          `the report label absorbed ${timing.phase}${timing.lens === undefined ? "" : ` (${timing.lens})`}: a report record spans ${report.durationMs}ms to ${reportEnds}, past that lens phase's end`,
+        );
+      }
+    }
+  }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1535,6 +1592,44 @@ describe("admitBoardReferences — the write-boundary ref admission (#548 D1)", 
       board.elements[1] as DraftBoard["elements"][number],
     ]);
     expect(admitBoardReferences(drafted, "ps-1").unrepairable).toHaveLength(1);
+
+    // …and the author KIND alone does not buy the exemption. A seat can type
+    // `{kind: "orchestrator"}` into its own output; only the host composer's own id, or an
+    // element the host minted into its round-history namespace, is host-composed history.
+    const forgedAuthor = mkBoard([
+      {
+        ...board.elements[0],
+        id: "seat-invented-code-ref",
+        data: {
+          ...(board.elements[0]?.data as object),
+          author: { kind: "orchestrator", id: "sequence-seat" },
+        },
+      } as DraftBoard["elements"][number],
+      {
+        id: "seat-invented-annotation",
+        kind: "annotation",
+        data: {
+          author: { kind: "orchestrator", id: "sequence-seat" },
+          code_ref: "seat-invented-code-ref",
+          body: "Cites another patchset.",
+        },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(forgedAuthor, "ps-1").unrepairable).toHaveLength(1);
+
+    // The other half of the namespace clause: an element the HOST minted keeps the
+    // exemption even under an author id this predicate does not enumerate.
+    const hostNamespaced = mkBoard([
+      {
+        ...board.elements[0],
+        data: {
+          ...(board.elements[0]?.data as object),
+          author: { kind: "orchestrator", id: "rennet:some-later-host-writer" },
+        },
+      } as DraftBoard["elements"][number],
+      board.elements[1] as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(hostNamespaced, "ps-1").unrepairable).toEqual([]);
   });
 
   it("never folds two ids apart by a LETTER, ASCII or not", () => {
@@ -2033,7 +2128,7 @@ describe("composeReviewDraft — the authored composition write-through (C2)", (
 });
 
 describe("runLensPipeline — the real drafting path (fake harness, no live model)", () => {
-  it("drafts all five lenses, writes each board via whiteboard, and emits arrival on freeze", async () => {
+  it("drafts all five lenses, writes each board via whiteboard, and announces each lane as it settles", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
@@ -2067,7 +2162,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     for (const a of applied) {
       for (const op of a.ops as { op: string }[]) expect(op.op).toBe("create");
     }
-    expect(arrivals.map((a) => a.lens)).toEqual(lenses);
+    // #725 D4 — arrivals are published in SETTLEMENT order, not in a fixed lens order: the
+    // five lanes are independent and each announces the moment its own board is written.
+    // The set is what this test owns; the ORDERING property has its own test below
+    // ("reveals each lens board as its own lane settles"), which releases the lanes in a
+    // known order and asserts the reveal follows it.
+    expect([...arrivals.map((a) => a.lens)].sort()).toEqual([...lenses].sort());
     expect(captures.map(({ prompt }) => lensFromPrompt(prompt ?? "")).sort()).toEqual(
       [...lenses].sort(),
     );
@@ -2229,10 +2329,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // drives the real production path — `runLensPipeline` → `persistBoard` → the REAL
     // board service — over a reference the ladder cannot see.
     //
-    // The shape is a round carry-forward: a prior round's addressed chapter rides verbatim
-    // into this round's Sequence board (`composeFindingRound`), AFTER lint, and it cites its
-    // own code ref under the typography that round wrote. Nothing before the write boundary
-    // looks at it, and the board service rejects the whole batch for it.
+    // The shape is MODELLED on a round carry-forward — a prior round's addressed chapter
+    // riding verbatim into this round's Sequence board after lint — but the fixture builds
+    // the `previous` board by hand, with the mis-cased citation written in. It does not run
+    // `composeFindingRound`, so it proves nothing about whether that composer can produce
+    // this shape; what it proves is that when a board reaches the write boundary carrying
+    // one, the production path admits it instead of losing the board.
     const root = await mkdtemp(join(tmpdir(), "lens-admission-production-"));
     try {
       const runtime = createBoardsRuntime(root);
@@ -4081,7 +4183,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
     const diagnostics: RoundReportDiagnosticMilestone[] = [];
-    const diagnosticTimes = [100, 110, 105, 120, 115, 130, 125];
+    // The first entry is the pipeline's own report-PHASE start (#725 7.4): it reads the
+    // clock once before the report seat takes its baseline (100), so the six milestone
+    // reads that follow are unchanged and the assertion below still pins them exactly.
+    const diagnosticTimes = [90, 100, 110, 105, 120, 115, 130, 125];
     let reportTurns = 0;
     // Three hunks, so the round has three manifest entries and the classification can
     // partition them across an addressed ask, a partial ask, and one beyond entry.
@@ -4827,7 +4932,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     },
   );
 
-  it("starts every independent lens turn after the report and before any lens is released", async () => {
+  it("starts every independent lens turn after the report and reveals each lane as it settles", async () => {
     const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
     const started: LensKind[] = [];
     const applied: Applied[] = [];
@@ -4921,6 +5026,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       regressionFailure = error;
     }
 
+    // Release one lane at a time, newest lens first, recording what the reveal had
+    // published by the time each lane's board was written. #725 D4: a lane's settlement is
+    // visible the moment it lands, so the reveal must track the release order and must NOT
+    // wait for the four lanes still blocked below.
+    const revealAfterEachRelease: LensKind[][] = [];
     if (regressionFailure === undefined) {
       try {
         for (const lens of [...lenses].reverse()) {
@@ -4933,6 +5043,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
               setImmediate(() => reject(new Error(`${lens} did not persist after release`)));
             }),
           ]);
+          // Let the lane's own settlement publication run before sampling the reveal.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          revealAfterEachRelease.push([...arrivals]);
         }
       } catch (error) {
         regressionFailure = error;
@@ -4953,9 +5066,186 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(
       applied.map(({ boardId }) => boardId).filter((boardId) => boardId !== "board:report"),
     ).toEqual([...lenses].reverse().map((lens) => `board:${lens}`));
-    expect(arrivals).toEqual(lenses);
+    // The reveal followed the RELEASE order, not the lens order — each lane published on
+    // its own settlement.
+    // The progressive assertion first: it is the one that NAMES a restored barrier, and a
+    // plain order comparison would fail on the same run with a less useful message.
+    assertProgressiveReveal(revealAfterEachRelease, [...lenses].reverse());
+    expect(arrivals).toEqual([...lenses].reverse());
     expect(providerCalls).toEqual(["report", ...lenses]);
     expect(pipelineSettled).toBe(true);
+  });
+
+  it("records a distinct durable timing for every phase, and coverage moves pending → complete", async () => {
+    const applied: Applied[] = [];
+    const timings: GenerationPhaseTiming[] = [];
+    const coverageStates: GenerationCoverage[] = [];
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      onCoverageState: (coverage) => {
+        coverageStates.push(coverage);
+      },
+    });
+    expect(result.boards).toHaveLength(5);
+
+    // Coverage is explicitly pending from the moment the lanes start, and completes after
+    // them. It is a state the surface renders, never a gate on the reveal.
+    expect(coverageStates.map(({ state }) => state)).toEqual(["pending", "complete"]);
+    expect(coverageStates[1]).toEqual({ state: "complete", violations: 0 });
+
+    // Every lane has its own draft and post-process record; the cross-lens phases have one
+    // each. No report here (this generation drafts none), which is why `report` is absent
+    // rather than present-and-zero.
+    const phases = timings.map(
+      ({ phase, lens }) => `${phase}${lens === undefined ? "" : `:${lens}`}`,
+    );
+    for (const lens of ["design", "sequence", "decisions", "flagged", "noise"]) {
+      expect(phases).toContain(`lens-draft:${lens}`);
+      expect(phases).toContain(`lens-post-process:${lens}`);
+    }
+    expect(phases).toContain("coverage");
+    expect(phases).toContain("reveal");
+    expect(phases).not.toContain("report");
+    // Every record is a durable, non-negative integer span anchored to a wall clock.
+    for (const timing of timings) {
+      expect(Number.isInteger(timing.startedAtMs) && timing.startedAtMs > 0).toBe(true);
+      expect(Number.isInteger(timing.durationMs) && timing.durationMs >= 0).toBe(true);
+    }
+    // The single-seat lanes name the harness and model that actually ran them; the Flagged
+    // dual seat names none, because its span belongs to two of them.
+    const noiseDraft = timings.find((t) => t.phase === "lens-draft" && t.lens === "noise");
+    expect(noiseDraft?.harness).toBe("claude-code");
+    expect(noiseDraft?.model).toBeDefined();
+    expect(timings.find((t) => t.phase === "lens-draft" && t.lens === "flagged")?.harness).toBe(
+      undefined,
+    );
+  });
+
+  it("keeps the report phase's timing to the report, never absorbing the lens lanes", async () => {
+    const applied: Applied[] = [];
+    const timings: GenerationPhaseTiming[] = [];
+    // A scripted clock: the report seat costs 1 tick, each lens lane costs 100. A `report`
+    // record that had absorbed the lens fan-out would be enormous next to that.
+    let ticks = 1_000;
+    const advance = (by: number): void => {
+      ticks += by;
+    };
+
+    await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        advance(lens === "report" ? 1 : 100);
+        return lens === "report" ? cleanBody("report") : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: { ...PACKET, successorAccount: { asks: [], beyondAsks: [] } },
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      now: () => ticks,
+    });
+
+    // Not vacuous: the assertion returns early when no report phase was recorded, so the
+    // record it judges has to exist and the lens records have to be there to judge against.
+    expect(timings.some(({ phase }) => phase === "report")).toBe(true);
+    expect(timings.filter(({ phase }) => phase === "lens-draft")).toHaveLength(5);
+    assertReportLabelExcludesLensTime(timings);
+  });
+
+  it("positive control: lens time routed under the report label fails the timing assertion", () => {
+    const honest: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 1 },
+      { phase: "lens-draft", lens: "sequence", startedAtMs: 1_001, durationMs: 100 },
+      { phase: "lens-draft", lens: "noise", startedAtMs: 1_001, durationMs: 100 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(honest)).not.toThrow();
+    // The defect this replaces: one label spanning the report AND the lens fan-out, which
+    // is what a durable timing that started before the report and ended after the lanes
+    // looks like. The assertion above must reject it.
+    const mislabeled: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 201 },
+      { phase: "lens-draft", lens: "sequence", startedAtMs: 1_001, durationMs: 100 },
+      { phase: "lens-draft", lens: "noise", startedAtMs: 1_101, durationMs: 100 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(mislabeled)).toThrow(/absorbed/);
+  });
+
+  it("spends the per-lane repair budget on the first whole-board attempt and a reduced one on a repeat", async () => {
+    expect(lensRetryBudget("sequence", 0)).toBe(1);
+    expect(lensRetryBudget("sequence", 1)).toBe(0);
+    // Every repeat draws the same reduced entry — attempt 5 is no richer than attempt 1.
+    expect(lensRetryBudget("sequence", 5)).toBe(0);
+
+    const runWithAttempt = async (boardAttempt: number) => {
+      const sequenceTurns: string[] = [];
+      const applied: Applied[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens !== "sequence") return cleanBody(lens);
+          sequenceTurns.push(prompt);
+          // The first return never parses, so the ladder is what decides whether this lane
+          // gets a second chance. A budget of 0 means it does not.
+          return sequenceTurns.length === 1 ? { not: "a board" } : cleanBody("sequence");
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        boardAttempt,
+        hunks: [] as LintHunk[],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+      const sequence = result.boards.find(({ lens }) => lens === "sequence");
+      return { turns: sequenceTurns.length, sequence };
+    };
+
+    const first = await runWithAttempt(0);
+    expect(first.turns).toBe(2);
+    expect(first.sequence?.failure).toBeUndefined();
+    expect(first.sequence?.boardId).toBe("board:sequence");
+
+    const repeat = await runWithAttempt(1);
+    expect(repeat.turns).toBe(1);
+    expect(repeat.sequence?.boardId).toBeUndefined();
+    expect(repeat.sequence?.failure).toContain("no parseable board across 0 attempts");
+    expect(repeat.sequence?.failureAccount).toEqual({ attempt: 0, classification: "terminal" });
+  });
+
+  it("positive control: a global all-lanes barrier before reveal fails the reveal assertion", () => {
+    const releaseOrder: LensKind[] = ["noise", "flagged", "decisions", "sequence", "design"];
+    // What the progressive reveal produces: one more lane visible after each release.
+    const progressive = releaseOrder.map((_lens, index) => releaseOrder.slice(0, index + 1));
+    expect(() => assertProgressiveReveal(progressive, releaseOrder)).not.toThrow();
+    // What a REINTRODUCED global barrier produces: nothing visible until the last lane
+    // settles, then all five at once. The assertion the test above relies on must reject
+    // it — otherwise that test would pass over a restored barrier and prove nothing.
+    const barriered = releaseOrder.map((_lens, index) =>
+      index === releaseOrder.length - 1 ? [...releaseOrder] : [],
+    );
+    expect(() => assertProgressiveReveal(barriered, releaseOrder)).toThrow(
+      /revealed nothing until/,
+    );
   });
 
   it("waits for sibling lenses and continues absence notifications before rethrowing one callback", async () => {

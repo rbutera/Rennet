@@ -408,8 +408,11 @@ that host's repair.
    receipt and never re-dispatches. The first round pins one enabled installed
    Claude Code or Codex harness to the session; later rounds use that exact harness,
    and the run receipt names its version. The durable `report-drafting` phase is
-   currently coarse: it covers both the report classification and the whole lens
-   regeneration call. Operation-scoped progress refines that phase in the client.
+   coarse: it covers both the report classification and the whole lens
+   regeneration call. It is the report's durable **handoff** that tells the two
+   apart, so the phase projects as `handed-off` once that handoff exists and the
+   visible label stops naming report drafting while the lens lanes are what is
+   running. Operation-scoped progress refines that phase in the client.
    As soon as the host has read back and verified the durable report, the run route
    hands off to the report greeting while regeneration remains nonterminal. A cold
    reload on the board route reconstructs that greeting from the durable operation
@@ -666,9 +669,14 @@ The round report's **arrival** is live. After the report board and metadata have
 landed, the host reads them back, re-runs the exact evidence verification, and
 emits an operation-scoped event carrying the operation id, operation revision,
 report board id, and validated report projection. That event makes the greeting
-readable and starts the visible lane block while the coarse durable
-`report-drafting` phase continues. Lens-progress events carry the same operation
-identity. The client chooses the newest compatible operation revision before it
+readable, settles the report's own progress row, and starts the visible lane
+block while the coarse durable `report-drafting` phase continues. A client that
+reconnects mid-fan-out reaches the same place from the durable snapshot alone,
+because that phase projects its report as `handed-off`. Lens-progress events
+carry the same operation identity, and each carries the generation's cross-lens
+coverage state — `pending`, `complete`, or `failed` — on the same frame as its
+lane rows, so the surface can never show lanes from one moment and coverage from
+another. The client chooses the newest compatible operation revision before it
 compares event sequence numbers, because a restarted daemon can reset its
 transport sequence. Legacy unscoped report and lens events remain accepted only
 for callers without a durable operation.

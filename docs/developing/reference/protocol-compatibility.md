@@ -220,6 +220,20 @@ on `board.read`, each naming the attempt that failed and a `retryable` /
 message alone, and that absence means the classification is **unknown** — it is
 not a licence to present the lens as beyond another attempt.
 
+The generation's cross-lens **coverage state** and its per-phase **timings** follow
+the same rule. `coverage` is `pending`, `complete` (with a violation count), or
+`failed` (with a reason); it also rides the lens progress frame and the initial
+generation's session-preparation record. `timings` carries a `version` and one
+record per phase. A generation or a daemon without either field says nothing about
+coverage or duration: an absent coverage state means **unknown**, never "coverage
+passed", and the surfaces render no coverage line at all rather than a default one.
+
+The durable round operation's `report-drafting` phase gained a second projected
+report state, `handed-off`, beside `drafting`. It appears once the report's durable
+handoff exists — the boundary after which the lens drafters run — so a client can
+tell report time from lens time on a phase that covers both. A daemon that predates
+it projects `drafting` throughout, which older and newer clients both still parse.
+
 A client can also outrun the daemon it is connected to. An older daemon does not
 answer `session.rounds` or `session.roundEvents` at all, and the rounds surfaces
 say so in the daemon's own words rather than rendering the empty ledger that

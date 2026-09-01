@@ -41,12 +41,12 @@
 
 ## 7. Progressive reveal and honest timing, initial and post-round (#725)
 
-- [ ] 7.1 Start core lanes when their inputs are ready (initial: captured patchset; post-round: the #728-verified report); publish each lane's settlement immediately; remove `Promise.allSettled` and coverage completion from the reveal path in BOTH generation kinds (D4)
-- [ ] 7.2 Make reveal state durable and generation-keyed: per-lane settlements plus coverage `pending`/`complete`/`failed`; reconnect/daemon-restart reconstructs partial state; writes from superseded attempts rejected
-- [ ] 7.3 Render the explicit coverage state in the client; coverage annotates revealed boards, never rewrites them
-- [ ] 7.4 Record distinct durable timings per phase: report, each lane's draft/repair/post-process, coverage, reveal, time-to-first-core-board; fix phase labels to name the running phase
-- [ ] 7.5 Implement the per-lane, per-attempt retry budget table; second whole-board attempt gets an explicitly reduced ladder
-- [ ] 7.6 Positive controls: reintroduced global barrier fails the reveal assertion; lens time routed under the report label fails the timing assertion; late write from a superseded attempt is rejected
+- [x] 7.1 Start core lanes when their inputs are ready (initial: captured patchset; post-round: the #728-verified report); publish each lane's settlement immediately; remove `Promise.allSettled` and coverage completion from the reveal path in BOTH generation kinds (D4)
+- [x] 7.2 Make reveal state durable and generation-keyed: per-lane settlements plus coverage `pending`/`complete`/`failed`; reconnect/daemon-restart reconstructs partial state; writes from superseded attempts rejected
+- [x] 7.3 Render the explicit coverage state in the client; coverage annotates revealed boards, never rewrites them
+- [x] 7.4 Record distinct durable timings per phase: report, each lane's draft/repair/post-process, coverage, reveal, time-to-first-core-board; fix phase labels to name the running phase
+- [x] 7.5 Implement the per-lane, per-attempt retry budget table; second whole-board attempt gets an explicitly reduced ladder
+- [x] 7.6 Positive controls: reintroduced global barrier fails the reveal assertion; lens time routed under the report label fails the timing assertion; late write from a superseded attempt is rejected
 
 ## 8. Unbounded round loop
 

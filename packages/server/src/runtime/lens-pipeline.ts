@@ -57,6 +57,8 @@ import {
   type FindingAgreement,
   type FindingDisposition,
   type FindingElement,
+  type GenerationCoverage,
+  type GenerationPhaseTiming,
   generationIdForPatchset,
   LENS_ADMISSIBLE_ABSENCES,
   LENS_KINDS,
@@ -358,7 +360,32 @@ export interface RefAdmission {
  * and it is not an exception to the rule — a prior round's addressed chapter is ABOUT an
  * earlier generation, so its orchestrator-authored anchors cite that generation's patchset
  * by design, and every round after the first would otherwise lose its Sequence board.
+ *
+ * That exemption names the host composer EXACTLY ({@link isHostComposedHistory}): an
+ * `orchestrator` author alone is a claim any seat can type into its output, and a lens
+ * that stamped one on its own code_ref would have bought itself a licence to cite any
+ * patchset it liked. Only `composeFindingRound`'s own author id, or an element the host
+ * minted into its round-history namespace, clears the check.
  */
+/** `composeFindingRound`'s own author id — the ONE host composer that carries a prior
+ *  round's anchors forward. */
+const HOST_COMPOSER_AUTHOR_ID = "rennet:round-composition";
+/** The id namespace the host mints a carried round-history element into. */
+const HOST_ROUND_HISTORY_PREFIX = "rennet:host:round-addressed:";
+
+/**
+ * Was this element composed by the HOST's round-history writer, rather than merely
+ * labelled `orchestrator` by whoever produced it? The author kind is necessary and not
+ * sufficient: it has to be the composer's own id, or an element the host minted into its
+ * round-history namespace. A seat that forges `{kind: "orchestrator"}` onto a code_ref it
+ * authored fails both halves and stays subject to the patchset test.
+ */
+function isHostComposedHistory(element: DraftElement): boolean {
+  const author = (element.data as { author?: { kind?: unknown; id?: unknown } }).author;
+  if (author?.kind !== "orchestrator") return false;
+  return author.id === HOST_COMPOSER_AUTHOR_ID || element.id.startsWith(HOST_ROUND_HISTORY_PREFIX);
+}
+
 export function admitBoardReferences(board: DraftBoard, patchsetId: string): RefAdmission {
   const byId = new Map(board.elements.map((element) => [element.id, element]));
   const byIdentity = new Map<string, DraftElement[]>();
@@ -369,8 +396,8 @@ export function admitBoardReferences(board: DraftBoard, patchsetId: string): Ref
   /** Does this element's citation belong to the patchset the board is about? */
   const admissibleTarget = (element: DraftElement): boolean => {
     if (element.kind !== "code_ref") return true;
-    const data = element.data as { patchset_id?: unknown; author?: { kind?: unknown } };
-    return data.patchset_id === patchsetId || data.author?.kind === "orchestrator";
+    const data = element.data as { patchset_id?: unknown };
+    return data.patchset_id === patchsetId || isHostComposedHistory(element);
   };
 
   const repairs: RefRepair[] = [];
@@ -975,6 +1002,79 @@ export function createNodePromptReader(promptsSrcDir: string): PromptReader {
   };
 }
 
+// ── Per-lane, per-attempt retry budgets (#725 D4) ──
+
+/**
+ * How many MODEL REPAIR turns one lane may spend, indexed by whole-board attempt
+ * (`[first attempt, every repeat]`). A "whole-board attempt" is a fresh drafting run over
+ * the same generation — the initial draft, then the re-draft a restart's partial-state
+ * recovery starts (#549's retryable failures re-draft; `rounds.ts` calls that path
+ * `"partial"`). The repeat entry is DELIBERATELY smaller than the first: a lane that has
+ * already had a full ladder and still needs a whole new board must not silently get a
+ * refreshed one, because that is how one restart multiplies into an unbounded provider
+ * bill.
+ *
+ * The table is per lane so a lane's cost can be tuned where its cost differs — Flagged
+ * runs two seats, so each repair turn there costs two provider calls. The first-attempt
+ * numbers below are the ladder that shipped ({@link RETRY_CAP} = 1) stated explicitly
+ * rather than inherited, so changing one lane is one edit and not a global re-tune.
+ */
+export const LENS_RETRY_BUDGET: Readonly<Record<LintTarget, readonly [number, number]>> = {
+  report: [1, 0],
+  sequence: [1, 0],
+  decisions: [1, 0],
+  flagged: [1, 0],
+  design: [1, 0],
+  noise: [1, 0],
+};
+
+/**
+ * This lane's repair budget for `boardAttempt` (0 = the first whole-board attempt). Every
+ * repeat draws the reduced entry — attempt 5 is no richer than attempt 1.
+ */
+export function lensRetryBudget(lens: LintTarget, boardAttempt: number): number {
+  const [first, repeat] = LENS_RETRY_BUDGET[lens];
+  return boardAttempt <= 0 ? first : repeat;
+}
+
+// ── Per-phase timing (#725 D4 / #726 D8) ──
+
+/**
+ * Accumulate one lane's provider WALL-CLOCK spans, split into the drafting turn and the
+ * repair ladder. Wall clock, not summed turn time: the Flagged lane runs two seats in
+ * parallel, and a sum would report a latency no reviewer ever waited. `harness`/`model`
+ * therefore ride a record only when the lane ran ONE resolved seat — naming one harness
+ * for a two-seat span would be a claim about which one produced the number.
+ */
+function createSeatSpans(clock: () => number) {
+  const spans = new Map<"draft" | "repair", { from: number; to: number }>();
+  const note = (phase: "draft" | "repair", from: number, to: number): void => {
+    const held = spans.get(phase);
+    spans.set(
+      phase,
+      held === undefined
+        ? { from, to }
+        : { from: Math.min(held.from, from), to: Math.max(held.to, to) },
+    );
+  };
+  return {
+    /** Wrap a seat so every turn it runs lands in the right phase's span. */
+    wrap<T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(seat: T): T {
+      return (async (prompt: string, attempt: number) => {
+        const from = clock();
+        try {
+          return await seat(prompt, attempt);
+        } finally {
+          note(attempt === 0 ? "draft" : "repair", from, clock());
+        }
+      }) as T;
+    },
+    span(phase: "draft" | "repair"): { from: number; to: number } | undefined {
+      return spans.get(phase);
+    },
+  };
+}
+
 // ── The per-board arrival event (B04 broadcast; B09 R58 reveal consumes it) ──
 
 /** One board froze and was persisted — the event that powers the progressive reveal (R58). */
@@ -1158,8 +1258,23 @@ export interface LensPipelineDeps {
   readonly reusableRoundReport?: ReusableRoundReport;
   /** Remove stale report metadata before clearing a recovered report board. */
   readonly removeBoardMeta?: (boardId: string) => void | Promise<void>;
+  /**
+   * Which WHOLE-BOARD attempt this generation is on: `0` (or absent) is the first
+   * drafting run, `1`+ a re-draft after a restart recovered partial state. It selects the
+   * per-lane repair budget ({@link lensRetryBudget}); a repeat attempt draws the reduced
+   * ladder, so restart recovery cannot silently refresh a full one every time.
+   */
+  readonly boardAttempt?: number;
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void | Promise<void>;
+  /**
+   * The generation's cross-lens coverage state as it moves `pending` → `complete`/`failed`
+   * (#725 D4). Coverage does NOT gate the reveal: this callback is how the surface can say
+   * "coverage pending" beside boards that are already readable.
+   */
+  readonly onCoverageState?: (coverage: GenerationCoverage) => void | Promise<void>;
+  /** One phase's measured duration (#725 D4). The caller owns durability. */
+  readonly onPhaseTiming?: (record: GenerationPhaseTiming) => void | Promise<void>;
   /** Content-free timing checkpoints for a classified round report only. */
   readonly onReportDiagnostic?: (milestone: RoundReportDiagnosticMilestone) => void;
   /** A successful lens absence, emitted as soon as discovery settles it. */
@@ -1620,12 +1735,14 @@ function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
+  retryCap: number,
   transformOutput?: (output: unknown) => unknown,
 ): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
+  retryCap: number,
   transformOutput: (output: unknown) => unknown,
   initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }>;
@@ -1633,6 +1750,7 @@ async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
+  retryCap: number,
   transformOutput: (output: unknown) => unknown = (output) => output,
   initialAbsence?: (output: unknown) => { readonly absence: "no-material" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }> {
@@ -1665,6 +1783,9 @@ async function draftOneLens(
     let validated: Awaited<ReturnType<typeof validateDraft>>;
     try {
       validated = await validateDraft(transformedFirst, ctx, {
+        // The lane's budget for THIS whole-board attempt (#725 7.5). A repeat attempt
+        // draws a reduced ladder, so the seat is never handed a refreshed full one.
+        retryCap,
         runTurn: async (req) => {
           try {
             const retry = await seatTurn(
@@ -1777,13 +1898,23 @@ async function persistBoard(
 }
 
 /**
- * Run the lens drafting pipeline for one generation. Seeds the five lens
- * drafters, validates + writes each board, emits per-board
- * arrival on freeze, and runs the cross-lens coverage assert ONCE over the
- * frozen set. A required report is the one sequencing boundary: it must exist before fanout.
- * Individual lens failures remain recorded outcomes rather than throws.
+ * Run the lens drafting pipeline for one generation. Seeds the five lens drafters,
+ * validates + writes each board, and PUBLISHES EACH LANE'S SETTLEMENT THE MOMENT IT LANDS
+ * (#725 D4) — there is no global barrier over the five lanes, and cross-lens coverage does
+ * not gate a reveal. A required report is the one sequencing boundary: it must exist
+ * before fanout (#728). Individual lens failures remain recorded outcomes rather than
+ * throws.
+ *
+ * `Promise.allSettled` still gathers the run for BOOKKEEPING — the returned outcome array,
+ * the coverage assert over the frozen set, the composition write-through — because those
+ * are the run's completion, not its reveal. The settlement publications happen inside the
+ * lanes, before that gather ever resolves.
  */
 export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipelineResult> {
+  const clock = deps.now ?? Date.now;
+  const record = async (timing: GenerationPhaseTiming): Promise<void> => {
+    await deps.onPhaseTiming?.(timing);
+  };
   const council: CouncilResolveContext = deps.council ?? {
     availability: {
       installed: [
@@ -1796,7 +1927,18 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
   // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.
   const reportRequired = draftsRoundReport(deps);
+  const reportFrom = clock();
   const report = reportRequired ? await runRoundReport(deps, council) : undefined;
+  // The report phase is measured on its own, whether it produced a board or died: a
+  // classifier failure routes to the durable round-failure path and its time still
+  // belongs to `report` — a phase that only records its successes hides its slow half.
+  if (reportRequired) {
+    await record({
+      phase: "report",
+      startedAtMs: reportFrom,
+      durationMs: Math.max(0, clock() - reportFrom),
+    });
+  }
   if (reportRequired && report?.board === undefined) {
     throw new Error(
       report?.failure ??
@@ -1808,55 +1950,94 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
   deps.onLensDraftingStart?.();
+  // Coverage is EXPLICITLY pending from the moment the lanes start, so a surface showing
+  // settled boards can say where coverage stands instead of implying it passed.
+  await deps.onCoverageState?.({ state: "pending" });
+  const revealFrom = clock();
+  let lastSettlementAt: number | undefined;
 
   // Each lens owns a distinct seat, board id, and metadata record, so the five drafts can
-  // run independently once the report gate settles. Absence notifications are the one
-  // cumulative persistence seam: serialize them in settlement order, and keep the tail
-  // alive after a rejected callback so one failed save cannot suppress a later absence.
-  let absenceNotificationTail = Promise.resolve();
-  const notifyAbsence = (lens: LensKind, reason: LensAbsenceReason): Promise<void> => {
-    const notification = absenceNotificationTail.then(() => deps.onLensAbsence?.(lens, reason));
-    absenceNotificationTail = notification.then(
+  // run independently once the report gate settles. Settlement publication is the one
+  // cumulative persistence seam: serialize absences AND arrivals on ONE tail so their
+  // durable writes land in settlement order, and keep the tail alive after a rejected
+  // callback so one failed save cannot suppress a later settlement. Serialized is not
+  // barriered — a lane publishes as soon as the tail reaches it, never after a sibling
+  // lane's SEAT finishes.
+  let settlementTail = Promise.resolve();
+  const publish = (settle: () => void | Promise<void>): Promise<void> => {
+    const published = settlementTail.then(settle);
+    settlementTail = published.then(
       () => undefined,
       () => undefined,
     );
-    return notification;
+    return published;
   };
   const settledOutcomes = await Promise.allSettled(
     LENS_KINDS.map(async (lens) => {
       const outcome = await runLensBoard(lens, deps, council, reportBoard);
-      if (outcome.absence !== undefined) await notifyAbsence(lens, outcome.absence);
+      if (outcome.absence !== undefined) {
+        await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
+      }
+      // #725 D4 — the lane's settlement is published HERE, the moment this board is
+      // written and its metadata is durable. Nothing waits for a sibling lane and
+      // nothing waits for cross-lens coverage.
+      if (outcome.board !== undefined && outcome.boardId !== undefined) {
+        const board = outcome.board;
+        const boardId = outcome.boardId;
+        await publish(() =>
+          deps.onBoardArrival?.({
+            lens,
+            boardId,
+            elementCount: board.elements.length,
+            // C15 3.3: the carried signal rides the arrival so the live lane label is the
+            // SAME `stampDeltas` fact the section markers render — not a re-derivation.
+            carried: isCarriedForward(deps.previous?.get(lens), board),
+          }),
+        );
+      }
+      lastSettlementAt = clock();
       return outcome;
     }),
   );
   // Wait for every launched lane before propagating an unexpected infrastructure error.
-  // Array order remains LENS_KINDS even when persistence completed in another order.
+  // This is the run's COMPLETION bookkeeping, not its reveal — every settlement above has
+  // already been published. Array order remains LENS_KINDS even when persistence completed
+  // in another order.
   const outcomes = settledOutcomes.map((result) => {
     if (result.status === "rejected") throw result.reason;
     return result.value;
   });
+  await record({
+    phase: "reveal",
+    startedAtMs: revealFrom,
+    durationMs: Math.max(0, (lastSettlementAt ?? clock()) - revealFrom),
+  });
 
-  // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
-  // stays no-op per board — this is the cross-lens obligation). Runs BEFORE any lens
-  // arrival is announced (finding 3): a board's write is already accepted and its
-  // metadata durably stored inside `runLensBoard`; the announcement waits until
-  // cross-lens coverage is known, so a reader never sees a lens announced "ready"
-  // before the coverage picture that frames it.
+  // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam stays
+  // no-op per board — this is the cross-lens obligation). It runs AFTER the boards were
+  // revealed and it ANNOTATES them: `assertCoverage` returns violations and amends no
+  // board, so a revealed board is never rewritten by the state that lands beside it.
   const boards = outcomes.map((o) => o.board).filter((b): b is DraftBoard => b !== undefined);
-  const coverage = assertCoverage(boards, deps.hunks);
-
-  // Announce each accepted lens board now that coverage is known (finding 2/3).
-  for (const o of outcomes) {
-    if (o.board !== undefined && o.boardId !== undefined) {
-      await deps.onBoardArrival?.({
-        lens: o.lens,
-        boardId: o.boardId,
-        elementCount: o.board.elements.length,
-        // C15 3.3: the carried signal rides the arrival so the live lane label is the
-        // SAME `stampDeltas` fact the section markers render — not a re-derivation.
-        carried: isCarriedForward(deps.previous?.get(o.lens), o.board),
-      });
-    }
+  const coverageFrom = clock();
+  let coverage: readonly Violation[] | undefined;
+  try {
+    coverage = assertCoverage(boards, deps.hunks);
+  } catch (error) {
+    // A coverage assert that throws leaves the generation's coverage UNKNOWN, and says so.
+    // The boards it would have annotated are already read; withholding them now would be
+    // the barrier this change removed.
+    await deps.onCoverageState?.({
+      state: "failed",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+  await record({
+    phase: "coverage",
+    startedAtMs: coverageFrom,
+    durationMs: Math.max(0, clock() - coverageFrom),
+  });
+  if (coverage !== undefined) {
+    await deps.onCoverageState?.({ state: "complete", violations: coverage.length });
   }
 
   // C2 — the authored composition write-through, when the orchestrator supplied a
@@ -1882,7 +2063,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
 
   return {
     boards: outcomes,
-    coverage,
+    ...(coverage === undefined ? {} : { coverage }),
     ...(findingResolutions === undefined ? {} : { findingResolutions }),
     ...(report === undefined ? {} : { report }),
     ...(composition === undefined ? {} : { composition }),
@@ -2226,7 +2407,12 @@ async function runLegacyRoundReport(
     { omitTaskLayer: true, includeWorkerDiff: true },
   );
   const ctx = deps.lintContextFor("report");
-  const validated = await draftOneLens(basePrompt, seat, ctx);
+  const validated = await draftOneLens(
+    basePrompt,
+    seat,
+    ctx,
+    lensRetryBudget("report", deps.boardAttempt ?? 0),
+  );
   if ("failure" in validated) {
     return {
       lens: "report",
@@ -3081,6 +3267,10 @@ async function runFlaggedDual(
   deps: LensPipelineDeps,
   basePrompt: string,
   ctx: LintContext,
+  retryCap: number,
+  wrapSeat: <T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(
+    seat: T,
+  ) => T,
 ): Promise<DraftedLens | LensDraftFailure> {
   const claudeSeat = deps.claudePort
     ? resolveBoardSeat("lens-draft-flagged", deps, { availability: { installed: ["claude-code"] } })
@@ -3101,7 +3291,7 @@ async function runFlaggedDual(
       ? (claudeSeat as (p: string, a: number) => Promise<HarnessTurnResult>)
       : (codexSeat as (p: string, a: number) => Promise<HarnessTurnResult>);
     const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
-    const single = await draftOneLens(basePrompt, seat, ctx);
+    const single = await draftOneLens(basePrompt, wrapSeat(seat), ctx, retryCap);
     // Carry the account, not just the words: the sole seat's classification IS the lens's.
     if ("failure" in single) return single;
     return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
@@ -3111,13 +3301,15 @@ async function runFlaggedDual(
   const [a, b] = await Promise.all([
     draftOneLens(
       basePrompt,
-      claudeSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
+      wrapSeat(claudeSeat as (p: string, at: number) => Promise<HarnessTurnResult>),
       ctx,
+      retryCap,
     ),
     draftOneLens(
       basePrompt,
-      codexSeat as (p: string, at: number) => Promise<HarnessTurnResult>,
+      wrapSeat(codexSeat as (p: string, at: number) => Promise<HarnessTurnResult>),
       ctx,
+      retryCap,
     ),
   ]);
   const aOk = !("failure" in a);
@@ -3160,10 +3352,81 @@ async function runFlaggedDual(
   };
 }
 
+/**
+ * Run one lane and record its per-phase timings (#725 D4) — `lens-draft` (the drafting
+ * turn), `lens-repair` (the repair ladder) and `lens-post-process` (everything
+ * deterministic between the ladder and the accepted write). The records are emitted from a
+ * `finally`, so a lane that FAILED still reports how long it took to fail; a phase that
+ * only measures its successes reports the fast half of the truth.
+ */
 async function runLensBoard(
   lens: LensKind,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  reportBoard?: DraftBoard,
+): Promise<LensBoardOutcome> {
+  const clock = deps.now ?? Date.now;
+  const spans = createSeatSpans(clock);
+  /** The harness/model that actually ran this lane — left empty for the Flagged dual seat,
+   *  whose span belongs to two of them and would be misattributed by naming one. */
+  const provenance: { harness?: CouncilHarnessId; model?: string } = {};
+  let postProcessFrom: number | undefined;
+  try {
+    return await draftLensBoard(
+      lens,
+      deps,
+      council,
+      spans,
+      provenance,
+      () => {
+        postProcessFrom = clock();
+      },
+      reportBoard,
+    );
+  } finally {
+    const emit = deps.onPhaseTiming;
+    if (emit !== undefined) {
+      const draft = spans.span("draft");
+      if (draft !== undefined) {
+        await emit({
+          phase: "lens-draft",
+          lens,
+          startedAtMs: draft.from,
+          durationMs: Math.max(0, draft.to - draft.from),
+          ...provenance,
+        });
+      }
+      const repair = spans.span("repair");
+      if (repair !== undefined) {
+        await emit({
+          phase: "lens-repair",
+          lens,
+          startedAtMs: repair.from,
+          durationMs: Math.max(0, repair.to - repair.from),
+          ...provenance,
+        });
+      }
+      // Absent only when the lane never reached its post-process (a seat that failed to
+      // resolve, or a drafting ladder that produced nothing) — honestly no phase to time.
+      if (postProcessFrom !== undefined) {
+        await emit({
+          phase: "lens-post-process",
+          lens,
+          startedAtMs: postProcessFrom,
+          durationMs: Math.max(0, clock() - postProcessFrom),
+        });
+      }
+    }
+  }
+}
+
+async function draftLensBoard(
+  lens: LensKind,
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+  spans: ReturnType<typeof createSeatSpans>,
+  provenance: { harness?: CouncilHarnessId; model?: string },
+  markPostProcess: () => void,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
   if (lens === "design" && deps.designArtifactFailure !== undefined) {
@@ -3221,34 +3484,41 @@ async function runLensBoard(
       : withoutCoverage;
   };
 
+  // #725 D4 — this lane's repair budget for this whole-board attempt.
+  const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
+
   let validated: DraftedLens;
   if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
-    const dual = await runFlaggedDual(deps, basePrompt, ctx);
+    const dual = await runFlaggedDual(deps, basePrompt, ctx, retryCap, spans.wrap);
     if ("failure" in dual) {
       return failedLensOutcome(lens, dual);
     }
     validated = dual;
   } else {
     const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
-    const seat = resolveBoardSeat(
+    const resolved = resolveBoardSeatDetails(
       jobId,
       deps,
       council,
       semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
     );
-    if ("failure" in seat) {
-      return failedLensOutcome(lens, seat);
+    if ("failure" in resolved) {
+      return failedLensOutcome(lens, resolved);
     }
+    provenance.harness = resolved.harness;
+    provenance.model = resolved.model;
+    const seat = spans.wrap(resolved.runTurn);
     const drafted =
       semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
-        ? await draftOneLens(basePrompt, seat, ctx, transformDesignOutput, (output) =>
+        ? await draftOneLens(basePrompt, seat, ctx, retryCap, transformDesignOutput, (output) =>
             groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
           )
         : await draftOneLens(
             basePrompt,
             seat,
             ctx,
+            retryCap,
             lens === "design" ? transformDesignOutput : undefined,
           );
     if ("failure" in drafted) {
@@ -3259,6 +3529,9 @@ async function runLensBoard(
     }
     validated = drafted;
   }
+  // Everything from here to the accepted write is the lane's deterministic post-process:
+  // grounding, round composition, delta stamping, ref admission and the board write.
+  markPostProcess();
 
   if (!hasLensMaterial(lens, validated.board)) {
     const absence = validated.initialOutputWasEmpty ? EMPTY_LENS_ABSENCE[lens] : undefined;
@@ -3406,9 +3679,9 @@ async function runLensBoard(
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);
 
   // Write the board and INSPECT the response (finding 2): a rejected batch is a lens
-  // failure, never announced as arrived. On acceptance the coverage/validation
-  // metadata is durably stored (finding 3). Arrival is NOT emitted here — the pipeline
-  // announces lens arrivals only after cross-lens coverage runs over the frozen set.
+  // failure, never announced as arrived. On acceptance the coverage/validation metadata is
+  // durably stored (finding 3). Arrival is emitted by the lane in `runLensPipeline` the
+  // moment this returns — no sibling lane and no cross-lens coverage stands in between.
   const persisted = await persistBoard(deps, lens, boardId, stamped, validated, `lens:${lens}`);
   if (!persisted.ok) {
     return {

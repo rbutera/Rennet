@@ -1,4 +1,5 @@
 import type {
+  GenerationCoverage,
   LaneRow,
   LensLane,
   RoundEvent,
@@ -28,7 +29,14 @@ import { type Navigation, sessionPath } from "../routes/url";
 // round really runs and this reducer folds them, so one definition serves both ends and the
 // wire cannot drift from the machine. Re-exported here because every rounds surface reads
 // them through the machine.
-export type { LaneRow, LaneVerdict, LensLane, RoundEvent, RowStatus } from "@rennet/protocol";
+export type {
+  GenerationCoverage,
+  LaneRow,
+  LaneVerdict,
+  LensLane,
+  RoundEvent,
+  RowStatus,
+} from "@rennet/protocol";
 
 /**
  * The run machine's state — a discriminated union carrying ONLY what each phase
@@ -66,6 +74,10 @@ type LegacyRoundState =
       readonly phase: "composing";
       readonly reportBoardId: string;
       readonly lanes: readonly LensLane[];
+      /** The generation's cross-lens coverage state (#725 D4). It rides the same frame as
+       *  the lanes and is rendered explicitly: coverage never gates a board's reveal, so
+       *  the surface has to be able to say "pending" beside boards already on screen. */
+      readonly coverage?: GenerationCoverage;
       readonly report?: RoundReportBoard;
     }
   | {
@@ -83,6 +95,7 @@ type LegacyRoundState =
        *  same rows). Optional: a `composed` reached without a preceding `lens` event
        *  (a round that composed nothing per-lens) honestly carries no lanes. */
       readonly lanes?: readonly LensLane[];
+      readonly coverage?: GenerationCoverage;
     }
   | { readonly phase: "unchanged" }
   | { readonly phase: "failed"; readonly reason: string };
@@ -125,6 +138,7 @@ type DurableRoundState =
       readonly reportBoardId: string;
       readonly reportProgressRevision: number;
       readonly lanes: readonly LensLane[];
+      readonly coverage?: GenerationCoverage;
       readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & {
@@ -133,6 +147,7 @@ type DurableRoundState =
       readonly newGeneration: string;
       readonly reportProgressRevision?: number;
       readonly lanes?: readonly LensLane[];
+      readonly coverage?: GenerationCoverage;
       readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & {
@@ -141,6 +156,7 @@ type DurableRoundState =
       readonly newGeneration: string;
       readonly reportProgressRevision?: number;
       readonly lanes?: readonly LensLane[];
+      readonly coverage?: GenerationCoverage;
       readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & { readonly phase: "unchanged" })
@@ -305,10 +321,26 @@ type ReportProgress =
   | PropertyValues<ProgressFailure, "report">
   | PropertyValues<ChangedProgressResult, "report">;
 
+/** The report's SETTLED row. The round report is done the moment it is handed off (#728);
+ *  everything after that boundary is lens work and must not wear the report's label. */
+const DRAFTED_REPORT_ROW: LaneRow = {
+  id: "report",
+  label: "Drafted the round report",
+  status: "done",
+  detail: "handed off to the lens drafters",
+};
+
+/** Replace a running report row with its settled one, leaving every other row alone. */
+function withSettledReportRow(tail: readonly LaneRow[]): readonly LaneRow[] {
+  return tail.map((row) => (row.id === "report" ? DRAFTED_REPORT_ROW : row));
+}
+
 function reportRow(report: ReportProgress): LaneRow {
   switch (report.status) {
     case "drafting":
       return { id: "report", label: "Drafting the round report", status: "running" };
+    case "handed-off":
+      return DRAFTED_REPORT_ROW;
     case "verifying":
       return { id: "report", label: "Verifying the round report", status: "running" };
     case "verified":
@@ -400,18 +432,36 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         worker: [settledWorkerRow(state.worker.fileCount)],
         tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
       };
-    case "report-drafting":
+    case "report-drafting": {
+      const tail = [
+        settledGateRow(operation, state.gate),
+        commitRow(state.commits),
+        reportRow(state.report),
+      ];
+      // #725 7.4 — the durable operation has no phase of its own for the lens fan-out, so
+      // it stays in `report-drafting` throughout it. The handoff is what distinguishes
+      // them: before it, the report seat is running; after it, the lens drafters are, and
+      // a reconnecting client must land on the lens phase rather than on a report row that
+      // finished minutes ago.
+      if (state.report.status === "handed-off") {
+        return {
+          phase: "reporting",
+          operation,
+          prep: donePrep,
+          worker: [settledWorkerRow(state.worker.fileCount)],
+          tail,
+          reportBoardId: state.report.reportBoardId,
+          reportProgressRevision: operation.revision,
+        };
+      }
       return {
         phase: "drafting-report",
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [
-          settledGateRow(operation, state.gate),
-          commitRow(state.commits),
-          reportRow(state.report),
-        ],
+        tail,
       };
+    }
     case "report-verifying":
       if (!("reportBoardId" in state.report)) {
         return {
@@ -609,6 +659,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
           ? { reportProgressRevision: state.reportProgressRevision }
           : {}),
         ...(state.lanes === undefined ? {} : { lanes: state.lanes }),
+        ...(state.coverage === undefined ? {} : { coverage: state.coverage }),
         ...(state.report === undefined ? {} : { report: state.report }),
       };
     }
@@ -630,6 +681,10 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
       return {
         ...state,
         phase: "reporting",
+        // The report has landed and been handed off; the lens drafters are what runs from
+        // here. Leaving its row spinning would file the whole lens fan-out under the
+        // report's label (#725 7.4).
+        tail: withSettledReportRow(state.tail),
         reportBoardId: event.reportBoardId,
         reportProgressRevision: event.operationRevision,
         ...(event.report === undefined ? {} : { report: event.report }),
@@ -653,6 +708,17 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
     }
     if (
       event.type === "report" &&
+      state.phase === "reporting" &&
+      event.reportBoardId === state.reportBoardId &&
+      event.report !== undefined
+    ) {
+      // A client that reconnected mid-fan-out derived `reporting` from the durable
+      // snapshot, which carries the report's identity but not its content. The scoped
+      // event carries the projection; take it without re-opening the phase.
+      return { ...state, report: event.report, reportProgressRevision: event.operationRevision };
+    }
+    if (
+      event.type === "report" &&
       (state.phase === "verifying" || state.phase === "composed") &&
       event.reportBoardId === state.reportBoardId
     ) {
@@ -665,22 +731,28 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
           };
     }
     if (event.type === "lens") {
+      // The coverage state rides the lane frame. It is only ever REPLACED by a newer
+      // frame's state, never cleared by one that carries none: a daemon that emits no
+      // coverage (or an older one) leaves the last honest state standing rather than
+      // silently reverting the surface to "no coverage reported".
+      const coverage = event.coverage === undefined ? {} : { coverage: event.coverage };
       if (state.phase === "reporting" && event.operationRevision === state.reportProgressRevision) {
         return {
           ...state,
           phase: "composing",
           reportBoardId: state.reportBoardId,
           lanes: event.lanes,
+          ...coverage,
         };
       }
       if (state.phase === "composing" && event.operationRevision === state.reportProgressRevision) {
-        return { ...state, lanes: event.lanes };
+        return { ...state, lanes: event.lanes, ...coverage };
       }
       if (
         (state.phase === "verifying" || state.phase === "composed") &&
         state.reportProgressRevision === event.operationRevision
       ) {
-        return { ...state, lanes: event.lanes };
+        return { ...state, lanes: event.lanes, ...coverage };
       }
     }
     return state;
@@ -715,12 +787,14 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
     const reportBoardId = "reportBoardId" in state ? state.reportBoardId : undefined;
     const report = "report" in state ? state.report : undefined;
     const lanes = state.phase === "composing" ? state.lanes : undefined;
+    const coverage = "coverage" in state ? state.coverage : undefined;
     return {
       phase: "composed",
       newGeneration: event.generation,
       ...(reportBoardId === undefined ? {} : { reportBoardId }),
       ...(report === undefined ? {} : { report }),
       ...(lanes === undefined ? {} : { lanes }),
+      ...(coverage === undefined ? {} : { coverage }),
     };
   }
   switch (state.phase) {
@@ -756,11 +830,18 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
             phase: "composing",
             reportBoardId: state.reportBoardId,
             lanes: event.lanes,
+            ...(event.coverage === undefined ? {} : { coverage: event.coverage }),
             ...(state.report === undefined ? {} : { report: state.report }),
           }
         : state;
     case "composing":
-      return event.type === "lens" ? { ...state, lanes: event.lanes } : state;
+      return event.type === "lens"
+        ? {
+            ...state,
+            lanes: event.lanes,
+            ...(event.coverage === undefined ? {} : { coverage: event.coverage }),
+          }
+        : state;
     case "composed":
     case "unchanged":
     case "failed":

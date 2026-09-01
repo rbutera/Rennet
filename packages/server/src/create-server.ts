@@ -183,6 +183,7 @@ import type {
   FlaggedReview,
   ForgeRepoIdentity,
   Generation,
+  GenerationCoverage,
   GitHubAuthStatus,
   GitHubConnectPoll,
   LensBoard,
@@ -3739,6 +3740,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     let review: Review | null =
       request.reviewId === undefined ? null : service.reviewById(request.reviewId);
     let lanes = initialPreparationLanes();
+    let coverage: GenerationCoverage | undefined;
     try {
       if (review === null) {
         await waitForPreparationDelay(
@@ -3838,15 +3840,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           draftingReview,
           (event) => {
             if (!preparationIsCurrent(sessionId, controller)) return;
-            if (event.type === "lens") lanes = [...event.lanes];
             if (event.type === "failed") terminalReason = event.reason;
-            if (event.type === "lens") {
-              setCurrentPreparation(sessionId, controller, {
-                status: "drafting",
-                reviewId: draftingReview.id,
-                lanes,
-              });
-            }
+            if (event.type !== "lens") return;
+            lanes = [...event.lanes];
+            // #725 D4 — the initial generation's coverage state travels with its lanes, so
+            // the preparation screen says coverage is pending beside boards it is already
+            // revealing rather than implying coverage passed.
+            if (event.coverage !== undefined) coverage = event.coverage;
+            setCurrentPreparation(sessionId, controller, {
+              status: "drafting",
+              reviewId: draftingReview.id,
+              lanes,
+              ...(coverage === undefined ? {} : { coverage }),
+            });
           },
           controller.signal,
         );
@@ -3865,6 +3871,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         reason,
         ...(review === null ? {} : { reviewId: review.id }),
         ...(stage === "boards" ? { lanes } : {}),
+        ...(stage === "boards" && coverage !== undefined ? { coverage } : {}),
       });
     } finally {
       if (sessionPreparations.get(sessionId) === controller) {

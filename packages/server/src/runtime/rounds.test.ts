@@ -33,6 +33,8 @@ import {
   mintGeneration,
   type RoundInput,
   type RoundsRuntimeDeps,
+  revealFromGeneration,
+  sameDraftingAttempt,
   withLensBoards,
 } from "./rounds";
 
@@ -251,6 +253,77 @@ const DISPATCH_FIELDS = {
 } as const;
 
 // ── Pure state machine ──
+
+describe("durable reveal state (#725 7.2)", () => {
+  const attempt = (over: Partial<Generation> = {}): Generation => ({
+    ...mintGeneration("gen:ps-1", "ps-1"),
+    draftingBoardIds: {
+      design: "b:design",
+      sequence: "b:sequence",
+      decisions: "b:decisions",
+      flagged: "b:flagged",
+      noise: "b:noise",
+    },
+    draftingReportBoardId: "b:report",
+    ...over,
+  });
+
+  it("reconstructs which lanes settled and where coverage stands", () => {
+    const reveal = revealFromGeneration(
+      attempt({
+        lensBoards: { sequence: "b:sequence", decisions: "b:decisions" },
+        absentLenses: { noise: "no-noise" },
+        coverage: { state: "pending" },
+      }),
+    );
+    expect(Object.fromEntries(reveal.lanes.map((lane) => [lane.id, lane.status]))).toEqual({
+      design: "queued",
+      sequence: "drafted",
+      decisions: "drafted",
+      flagged: "queued",
+      noise: "absent",
+    });
+    // Pending coverage beside two settled lanes — the exact restart shape, and neither a
+    // reset nor an invented completion.
+    expect(reveal.coverage).toEqual({ state: "pending" });
+  });
+
+  it("reconstructs a RETRYABLE failure as pending, because the restart redraft re-runs it", () => {
+    const retryable = revealFromGeneration(
+      attempt({
+        failedLenses: { flagged: "the drafting turn emitted no board" },
+        failedLensAccounts: { flagged: { attempt: 0, classification: "retryable" } },
+      }),
+    );
+    expect(retryable.lanes.find(({ id }) => id === "flagged")?.status).toBe("queued");
+    // A TERMINAL failure has no redraft coming, so it reconstructs as settled-failed.
+    const terminal = revealFromGeneration(
+      attempt({
+        failedLenses: { flagged: "no parseable board across 1 attempt" },
+        failedLensAccounts: { flagged: { attempt: 1, classification: "terminal" } },
+      }),
+    );
+    expect(terminal.lanes.find(({ id }) => id === "flagged")?.status).toBe("failed");
+  });
+
+  it("identifies a drafting attempt by its reserved slots, so a later attempt is not the same one", () => {
+    const first = attempt();
+    expect(sameDraftingAttempt(first, { ...first })).toBe(true);
+    // A replacement attempt mints new slots.
+    expect(sameDraftingAttempt(first, attempt({ draftingReportBoardId: "b:report-2" }))).toBe(
+      false,
+    );
+    expect(
+      sameDraftingAttempt(first, {
+        ...first,
+        draftingBoardIds: { ...first.draftingBoardIds, noise: "b:noise-2" },
+      }),
+    ).toBe(false);
+    // A SETTLED generation has dropped its slots entirely — also not this attempt.
+    const settled = withLensBoards(first, { boards: [] });
+    expect(sameDraftingAttempt(first, settled)).toBe(false);
+  });
+});
 
 describe("generation lifecycle (append-then-freeze)", () => {
   it("mints a live generation and freezes immutably", () => {
@@ -738,7 +811,11 @@ describe("createRoundsRuntime", () => {
 
     expect(retryCaptures.some(({ prompt }) => prompt?.includes("prompts/report.md"))).toBe(false);
     expect(retryCaptures.some(({ prompt }) => prompt?.includes("prompts/design.md"))).toBe(true);
-    expect(progress[0]?.type).toBe("report");
+    // #725 7.2 — a resumed attempt republishes the DURABLE reveal state before it clears
+    // and redrafts, so the reconnecting surface sees what already settled rather than a
+    // reset. The verified report handoff follows it.
+    expect(progress[0]?.type).toBe("lens");
+    expect(progress.find((event) => event.type === "report")).toBeDefined();
     expect(recovered.pipeline.report?.boardId).toBe(attempt.draftingReportBoardId);
     expect(recovered.record.reportBoard).toBe(attempt.draftingReportBoardId);
   });
@@ -1225,7 +1302,11 @@ describe("createRoundsRuntime", () => {
       // The wedge this closes: every durable failure counted as complete lens evidence, so
       // a fresh runtime reconstructed a RETRYABLE failure off disk and never re-asked the
       // lens — a lane whose own account said it had attempts left could never spend one.
-      // The two legs share every byte of durable state except the classification.
+      // Scope of the control, stated exactly: each leg builds its OWN durable state from
+      // the same script and then restamps one field, so within a leg the classification is
+      // the only thing that differs between what the run wrote and what the restart reads.
+      // The two legs are not compared byte-for-byte — nothing here asserts that — they are
+      // constructed identically, which is what leaves the classification as the variable.
       const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-restart-meta-")));
       const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-restart-gen-")));
       const input = roundInput();
@@ -2404,9 +2485,88 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards).not.toHaveProperty("design");
   });
 
+  it("persists each lane's settlement, the coverage state and the per-phase timings as they land", async () => {
+    const writes: Generation[] = [];
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        persistGeneration: (generation) => {
+          writes.push(JSON.parse(JSON.stringify(generation)) as Generation);
+        },
+      }),
+    );
+    await runtime.runRound(roundInput());
+
+    // Coverage is durable and generation-keyed, and it is PENDING while lanes are still
+    // settling — the state a reconnecting surface renders beside boards already revealed.
+    const pending = writes.filter(({ coverage }) => coverage?.state === "pending");
+    expect(pending.length).toBeGreaterThan(0);
+    const revealedWhilePending = pending.map(({ lensBoards }) => Object.keys(lensBoards).length);
+    expect(Math.max(...revealedWhilePending)).toBeGreaterThan(0);
+    expect(Math.min(...revealedWhilePending)).toBe(0);
+
+    // …and it completes, durably, with the violation count coverage produced.
+    const completed = writes.filter(({ coverage }) => coverage?.state === "complete");
+    expect(completed.length).toBeGreaterThan(0);
+    expect(completed.at(-1)?.coverage).toEqual({ state: "complete", violations: 0 });
+
+    // Per-phase timings ride the same durable record, versioned from day one.
+    const timed = writes.filter(({ timings }) => timings !== undefined).at(-1)?.timings;
+    expect(timed?.version).toBe(1);
+    const phases = new Set(timed?.phases.map(({ phase }) => phase));
+    expect(phases.has("report")).toBe(true);
+    expect(phases.has("lens-draft")).toBe(true);
+    expect(phases.has("lens-post-process")).toBe(true);
+    expect(phases.has("coverage")).toBe(true);
+    expect(phases.has("reveal")).toBe(true);
+    // Time-to-first-core-board is measured from the round's own start and names the lane
+    // that got there first — one of the three core lenses, never Design or Noise.
+    const firstCore = timed?.phases.find(({ phase }) => phase === "first-core-board");
+    expect(["sequence", "decisions", "flagged"]).toContain(firstCore?.lens);
+    expect(timed?.phases.filter(({ phase }) => phase === "first-core-board")).toHaveLength(1);
+  });
+
+  it("rejects a reveal write from a superseded generation attempt", async () => {
+    const runAndCollect = async (supersedeAfterAttempt: boolean): Promise<Generation[]> => {
+      const writes: Generation[] = [];
+      let attemptRecord: Generation | undefined;
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          persistGeneration: (generation) => {
+            const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+            writes.push(snapshot);
+            attemptRecord ??= snapshot;
+          },
+          loadGeneration: () => {
+            if (attemptRecord === undefined) return undefined;
+            return supersedeAfterAttempt
+              ? // A LATER attempt took the generation over: it minted its own report slot,
+                // so this run's remaining reveal writes belong to nobody.
+                { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+              : attemptRecord;
+          },
+        }),
+      );
+      await runtime.runRound(roundInput());
+      return writes;
+    };
+
+    // Control first: with the durable record still naming THIS attempt, the reveal writes
+    // land — so the assertion below is about supersession, not about a missing seam.
+    const current = await runAndCollect(false);
+    expect(current.some(({ coverage }) => coverage !== undefined)).toBe(true);
+    expect(current.some(({ timings }) => timings !== undefined)).toBe(true);
+
+    const superseded = await runAndCollect(true);
+    // Every reveal write was dropped. What remains is the attempt write and the final
+    // settle, neither of which is a reveal write — the superseded attempt's settlements,
+    // coverage and timings were never folded into the generation.
+    expect(superseded.some(({ coverage }) => coverage !== undefined)).toBe(false);
+    expect(superseded.some(({ timings }) => timings !== undefined)).toBe(false);
+  });
+
   it("serializes concurrent absence saves so a delayed partial snapshot cannot win", async () => {
     let durable: Generation | undefined;
-    let designOnlyWrites = 0;
+    let coverageCarryingDesignOnlyWrites = 0;
     let releaseDelayedSave = (): void => undefined;
     let announceDelayedSave = (): void => undefined;
     let announceFlaggedDraft = (): void => undefined;
@@ -2444,9 +2604,17 @@ describe("createRoundsRuntime", () => {
         persistGeneration: async (generation) => {
           const snapshot = copyGeneration(generation);
           const absent = Object.keys(snapshot.absentLenses ?? {});
+          // Three writes carry exactly the design absence, and only the LAST of them is
+          // the one this test delays:
+          //   1. the attempt write, before drafting starts — no coverage state yet;
+          //   2. the coverage-`pending` write the pipeline makes at lens kickoff (#725 D4),
+          //      which the lens seats wait behind and so cannot be delayed here;
+          //   3. design's own absence notification, which settles while the other four
+          //      lens seats are already running. That is the save under test.
+          // So: count the coverage-carrying design-only writes and delay the second.
           if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
-            designOnlyWrites += 1;
-            if (designOnlyWrites === 2) {
+            if (snapshot.coverage !== undefined) coverageCarryingDesignOnlyWrites += 1;
+            if (coverageCarryingDesignOnlyWrites === 2) {
               announceDelayedSave();
               await delayedSaveRelease;
             }

@@ -55,7 +55,9 @@ the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
 `composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
 prompt reader — and drives a generation visit: the round-report seat settles its
 sequencing boundary first, then the five independent lens lanes draft concurrently.
-The per-board arrival events this scheduler emits order the progressive reveal, and a
+The per-board arrival events this scheduler emits drive the progressive reveal — each
+lane publishes its own settlement as it lands, so a slow Design or Noise lane never holds
+a finished core board back — and a
 `PipelineStartGuard` keyed on the session and
 exact generation visit makes a retry of that dispatch reattach rather than
 double-start. `create-server` owns the live trigger: the own-branch round loop
@@ -174,7 +176,7 @@ and calls board regeneration through this runtime.
      lenses, boards, agents, seats, or drafts.
 
    Cross-lens every-hunk coverage runs once over the frozen board set rather than
-   per draft. The core validator retains its typed-data immutability result for
+   per draft, and after the boards have been revealed rather than before. The core validator retains its typed-data immutability result for
    callers that provide a deterministic transform; the production lens scheduler
    supplies no model-backed post-process transform.
    The design target is "19 rules"; against the frozen 13-kind board schema the
@@ -243,14 +245,36 @@ and calls board regeneration through this runtime.
    (citations plus the machinery screen) — visible, never blocking.
 
 Each successful board persists its metadata as soon as its lane settles, so live
-progress follows completion order. Successful typed absences are reported in
-that same settlement order through a serialized callback, which keeps cumulative
-generation snapshots monotonic. Once every lane has settled, the scheduler runs
-the cross-lens coverage assertion and emits **per-board arrival events** in
-canonical Design, Sequence, Decisions, Flagged, Noise order. The returned
-outcomes use that same deterministic order regardless of which drafter finished
-first. The rounds machinery consumes these events to drive the reveal; the
-pipeline only emits them.
+progress follows completion order. Both successful typed absences and
+**per-board arrival events** are published in that same settlement order through
+one serialized callback, which keeps cumulative generation snapshots monotonic.
+A lane's arrival is emitted the moment its board is written — no global barrier
+over the five lanes, and cross-lens coverage does not gate it. The returned
+outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
+order regardless of which drafter finished first, because that array is
+completion bookkeeping rather than the reveal. The rounds machinery consumes the
+arrival events to drive the reveal; the pipeline only emits them.
+
+**Cross-lens coverage is a generation state, not a gate.** It runs once, after
+every lane has settled, and moves `pending` → `complete` (with the violation
+count) or `failed`. The state is durable on the generation and rendered
+explicitly beside boards that are already readable; because the coverage
+assertion returns violations without amending a board, coverage annotates a
+revealed board and never rewrites one.
+
+**Per-phase timings are durable and versioned.** One record per phase —
+`report`, each lane's `lens-draft` / `lens-repair` / `lens-post-process`,
+`coverage`, `reveal`, and `first-core-board` — carries the wall-clock start, the
+measured duration, and, for a lane that ran a single resolved seat, the harness
+and model that executed it. They live on the generation under a versioned
+`timings` record, so no label can absorb another phase's time and later
+benchmark work reads one spine rather than inventing a second.
+
+**Repair budgets are per lane and per whole-board attempt.** The first drafting
+run over a generation spends the lane's full ladder; a repeat whole-board
+attempt — the redraft a restart's partial-state recovery starts — draws an
+explicitly reduced one, so restart recovery cannot refresh a full ladder every
+time.
 
 The classified report path also emits content-free diagnostics. Its fixed
 milestones distinguish provider time from session cleanup, schema parsing,

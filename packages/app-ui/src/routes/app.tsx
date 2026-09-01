@@ -1,4 +1,5 @@
 import {
+  type GenerationCoverage,
   newCommandId,
   type RennetBridge,
   type SessionPreparation,
@@ -227,8 +228,28 @@ function preparationLaneNote(
   return lane.status;
 }
 
+/**
+ * The reviewer-facing sentence for one cross-lens coverage state (#725 D4). The initial
+ * generation reveals boards as their lanes settle, so the surface has to say where
+ * coverage stands beside them — coverage annotates the revealed boards, it never gates
+ * them and never rewrites one.
+ */
+function preparationCoverageNote(coverage: GenerationCoverage): string {
+  switch (coverage.state) {
+    case "pending":
+      return "Cross-lens coverage · still running";
+    case "complete":
+      return coverage.violations === 0
+        ? "Cross-lens coverage · every hunk covered"
+        : `Cross-lens coverage · ${coverage.violations} hunk${coverage.violations === 1 ? "" : "s"} uncovered`;
+    case "failed":
+      return `Cross-lens coverage · could not be computed — ${coverage.reason}`;
+  }
+}
+
 function PreparationLanes({ preparation }: { readonly preparation: SessionPreparation }) {
   const lanes = "lanes" in preparation ? preparation.lanes : undefined;
+  const coverage = "coverage" in preparation ? preparation.coverage : undefined;
   if (lanes === undefined) return null;
   return (
     <div className="flex w-full flex-col divide-y divide-border/60 rounded-lg border border-border">
@@ -252,6 +273,25 @@ function PreparationLanes({ preparation }: { readonly preparation: SessionPrepar
           </span>
         </div>
       ))}
+      {coverage !== undefined && (
+        <div
+          data-row="coverage"
+          data-testid="cross-lens-coverage"
+          data-coverage={coverage.state}
+          className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
+        >
+          <StatusIcon
+            status={
+              coverage.state === "pending"
+                ? "running"
+                : coverage.state === "failed"
+                  ? "failed"
+                  : "done"
+            }
+          />
+          <span className="text-muted-foreground">{preparationCoverageNote(coverage)}</span>
+        </div>
+      )}
     </div>
   );
 }

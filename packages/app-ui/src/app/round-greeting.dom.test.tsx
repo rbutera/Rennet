@@ -285,6 +285,60 @@ describe("regeneration lanes render every status honestly — no false green che
     );
   }
 
+  it("says cross-lens coverage is PENDING beside boards it has already revealed", () => {
+    const r = mount(
+      <RoundGreeting
+        board={reportBoardFixture}
+        state={{ ...composing, coverage: { state: "pending" } }}
+        onReveal={() => undefined}
+      />,
+    );
+    // The settled lanes are on screen — coverage is not withholding them.
+    expect(r.container.querySelector('[data-row="l-done"]')).not.toBeNull();
+    const coverage = r.container.querySelector('[data-testid="cross-lens-coverage"]');
+    expect(coverage?.getAttribute("data-coverage")).toBe("pending");
+    expect(coverage?.textContent).toContain("still running");
+    // …and it does not claim a coverage result it does not have.
+    expect(coverage?.textContent).not.toContain("every hunk covered");
+  });
+
+  it("reports a completed coverage result without touching the boards it annotates", () => {
+    const clean = mount(
+      <RoundGreeting
+        board={reportBoardFixture}
+        state={{ ...composing, coverage: { state: "complete", violations: 0 } }}
+        onReveal={() => undefined}
+      />,
+    );
+    expect(
+      clean.container.querySelector('[data-testid="cross-lens-coverage"]')?.textContent,
+    ).toContain("every hunk covered");
+    const dirty = mount(
+      <RoundGreeting
+        board={reportBoardFixture}
+        state={{ ...composing, coverage: { state: "complete", violations: 3 } }}
+        onReveal={() => undefined}
+      />,
+    );
+    expect(
+      dirty.container.querySelector('[data-testid="cross-lens-coverage"]')?.textContent,
+    ).toContain("3 hunks uncovered");
+    // The lane rows are identical either way: coverage annotates, it never rewrites a
+    // revealed board or the lane that announced it.
+    const laneText = (root: ParentNode): string =>
+      [...root.querySelectorAll("[data-row]")].map((row) => row.textContent).join("|");
+    expect(laneText(dirty.container)).toBe(laneText(clean.container));
+  });
+
+  it("renders no coverage line at all when the daemon reported no coverage state", () => {
+    const r = mount(
+      <RoundGreeting board={reportBoardFixture} state={composing} onReveal={() => undefined} />,
+    );
+    // Absent is UNKNOWN. Rendering a default "covered" here would be the claim this whole
+    // state exists to avoid making.
+    expect(r.container.querySelector('[data-testid="cross-lens-coverage"]')).toBeNull();
+  });
+
   it("a queued lane reads 'queued', never 'done'", () => {
     const r = renderGreeting();
     const row = r.container.querySelector('[data-row="l-queued"]');
