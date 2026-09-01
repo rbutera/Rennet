@@ -5,7 +5,7 @@ import { useRennetStore } from "../../store";
 
 /**
  * The app-level subscriber for background narration — the proactive rehydration
- * pass and the knowledge swarm that rides it (#592).
+ * pass (#592).
  *
  * It is mounted ABOVE the route switch on purpose. The indexing screen used to
  * own this subscription itself, which made a background failure visible only to

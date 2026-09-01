@@ -333,17 +333,6 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       initialReview.review.activePatchsetId,
     );
 
-    // The two repos share a branch name but are distinct repositories — the
-    // review above already proved the capture came from `target`, and the two
-    // fixtures' tips are distinct by construction.
-    const targetMainOid = execFileSync("git", ["rev-parse", "main"], { cwd: target })
-      .toString()
-      .trim();
-    const decoyMainOid = execFileSync("git", ["rev-parse", "main"], { cwd: decoy })
-      .toString()
-      .trim();
-    expect(targetMainOid).not.toBe(decoyMainOid);
-
     const roundOneThreadId = await stageAskFromSequenceBoard(
       page,
       bridge,

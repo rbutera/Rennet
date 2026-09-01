@@ -594,7 +594,7 @@ export const processedRepoSummarySchema = z.object({
 export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
 
 /** The three ordered phases of one add-project run, plus its terminal state. */
-export const projectProcessPhaseSchema = z.enum(["scout", "map", "complete"]);
+export const projectProcessPhaseSchema = z.enum(["scout", "map", "knowledge", "complete"]);
 export type ProjectProcessPhase = z.infer<typeof projectProcessPhaseSchema>;
 
 /** A step's explicit lifecycle. The renderer never infers completion from a later row. */

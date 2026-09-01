@@ -257,7 +257,6 @@ export interface ProjectPaths {
   /** `overlays/` — per-non-default-base overlays (LATER WAVE; dir home reserved). */
   readonly overlaysDir: string;
   /** `knowledge/` — learned statements (LATER WAVE; dir home reserved). */
-  readonly knowledgeDir: string;
 }
 
 export class ProjectSnapshotStore {
@@ -290,7 +289,6 @@ export class ProjectSnapshotStore {
       manifestsDir: join(mapDir, "manifests"),
       shardsDir: join(mapDir, "shards"),
       overlaysDir: join(projectDir, "overlays"),
-      knowledgeDir: join(projectDir, "knowledge"),
     };
   }
 

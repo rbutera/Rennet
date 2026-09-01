@@ -16,7 +16,7 @@
  * only, never agent context.
  *
  * DETECTED-LAYER PERSISTENCE (reconciliation 3, recorded): scout facts persist
- * as `~/.rennet/projects/<esc>/scout.json` (knowledge-store home pattern,
+ * as `~/.rennet/projects/<esc>/scout.json` (project-store home pattern,
  * atomic write). `scoutSettingsOffers` reads them back as the `detected`-layer
  * offers for core's settings resolver — the locus precedent, made durable
  * because scout answers are not free to recompute at every resolve.

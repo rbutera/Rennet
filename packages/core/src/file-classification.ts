@@ -6,8 +6,8 @@
  * snapshot view classify the same path the same way:
  *  - `decomposition.ts` stamps a CHANGED file's hunks with a mechanical class, so
  *    a lockfile churn lands in the appendix instead of the review body;
- *  - `knowledge/partition.ts` classifies the WHOLE snapshot inventory, so a
- *    checked-in `dist/` is not batched for mapping (context-map rebuild, W2).
+ *  - `project-snapshot.ts` classifies mapping eligibility for the WHOLE snapshot
+ *    inventory, so a checked-in `dist/` never earns a symbol shard.
  *
  * They do not see the same evidence, and this module does not pretend they do.
  * Path classification is a pure function of the path and is identical either

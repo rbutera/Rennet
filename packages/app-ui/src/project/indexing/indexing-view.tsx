@@ -292,7 +292,7 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
             ? "Reading the project"
             : phase === "map"
               ? "Building the structural map"
-              : "Building the knowledge map"
+              : "Finishing the project build"
         }
         status="running"
       />

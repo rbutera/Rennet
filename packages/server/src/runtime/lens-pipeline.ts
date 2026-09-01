@@ -80,7 +80,7 @@ import {
 /**
  * The lens drafting pipeline SCHEDULER (#464 + #493 + #486, B08 cluster 5): the
  * `server/runtime/` home the packet names, the direct sibling of B06's
- * `knowledge-swarm.ts`. It seeds one drafter harness session per lens IN THE PR
+ * `council-seat-turn.ts`. It seeds one drafter harness session per lens IN THE PR
  * WORKTREE with the inlined DeltaPacket (B5) + the lens prompt (`@rennet/prompts`)
  * + the host board schema (D1), validates each structured return through the
  * cluster-3 loop (`validateDraft` over `parseDraft`/`lint`), and — as the SOLE
@@ -639,6 +639,14 @@ export function renderDrafterPrompt(
   designArtifacts?: DesignArtifactSet,
   hostSchema: unknown = boardOutputSchema(),
   round?: RoundDraftContext,
+  options?: {
+    /**
+     * Drop the reviewed-range task layer. The legacy round-report seat verifies
+     * the exact TURN diff (`round.worker.diff`), and telling it to read the
+     * whole branch range would name a second, contradicting range.
+     */
+    readonly omitTaskLayer?: boolean;
+  },
 ): string {
   // The hunk INDEX travels (coverage is taught-or-skipped over these exact
   // ids); the verbatim bodies do not — the drafter reads content from the
@@ -668,15 +676,28 @@ export function renderDrafterPrompt(
         }),
   });
   const repo = packet.patchset?.repository;
+  // A local working-tree capture pins the reviewed bytes as `reviewedTreeOid` —
+  // `baseOid..headOid` there would show only the COMMITTED subset and silently
+  // omit uncommitted work (the flagship "review my agent's branch" flow). The
+  // diff command must name the pinned tree when one exists.
+  const diffCommand =
+    repo === undefined
+      ? "`git diff`"
+      : repo.reviewedTreeOid === undefined
+        ? `\`git diff ${repo.baseOid}..${repo.headOid}\``
+        : `\`git diff ${repo.baseOid} ${repo.reviewedTreeOid}\``;
   const task = [
     repo === undefined
       ? "Your working directory IS the reviewed checkout."
-      : `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}); your working directory IS the reviewed checkout at ${repo.headOid}.`,
+      : repo.reviewedTreeOid === undefined
+        ? `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}); your working directory IS the reviewed checkout at ${repo.headOid}.`
+        : `You are reviewing the working-tree change since ${repo.baseOid} (${repo.baseRef}), pinned as tree ${repo.reviewedTreeOid}; your working directory IS the reviewed checkout, including uncommitted work.`,
     "The context layer carries the change INVENTORY (file rows, hunk ids/headers/spans, derived signals) — not the diff content.",
-    `Read the change yourself with your own tools (${
-      repo === undefined ? "`git diff`" : `\`git diff ${repo.baseOid}..${repo.headOid}\``
-    }, \`git log\`, file reads, grep) and cite only what you actually read.`,
+    `Read the change yourself with your own tools (${diffCommand}, \`git log\`, file reads, grep) and cite only what you actually read.`,
   ].join("\n");
+  if (options?.omitTaskLayer === true) {
+    return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
+  }
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("task", task)}\n\n${renderLayer("context", context)}`;
 }
 
@@ -854,7 +875,7 @@ export interface LensPipelineDeps {
   readonly council?: CouncilResolveContext;
   /** The PR worktree the drafter sessions are rooted at (D1). */
   readonly repoRoot: string;
-  /** The lens drafters' entire input, inlined into every prompt (B5). */
+  /** The change inventory the drafter prompts carry (hunk bodies redacted at render). */
   readonly deltaPacket: DeltaPacket;
   /** Exact generation visit being drafted. Older direct callers fall back to the initial
    *  content-derived generation; the rounds runtime always supplies this. */
@@ -1784,6 +1805,9 @@ async function runLegacyRoundReport(
     undefined,
     boardOutputSchema(),
     deps.round,
+    // The report verifies the exact turn diff (`round.worker.diff`); the
+    // reviewed-range task line would name a second, contradicting range.
+    { omitTaskLayer: true },
   );
   const ctx = deps.lintContextFor("report");
   const validated = await draftOneLens(basePrompt, seat, ctx);

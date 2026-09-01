@@ -3,7 +3,7 @@
  *
  * The related-context dossier and its RAW payloads (full comment threads,
  * linked tickets — the depth behind the context tool, never in the dossier)
- * persist under the knowledge-store home pattern as ONE envelope:
+ * persist under the project-store home pattern as ONE envelope:
  *
  *   `~/.rennet/projects/<esc>/dossier/<escaped target@patchset-ref>/record.json`
  *

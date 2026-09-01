@@ -1,14 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The rounds loop state machine + the consuming turn (#486 R34/R57–R58, #457,
 // B09 cluster 6). The `server/runtime/` home B06 established, sibling to
-// `knowledge-swarm.ts` and `lens-pipeline.ts`.
+// `lens-pipeline.ts` and `project-scout.ts`.
 //
 // A ROUND takes the reviewer's dispatched asks, runs the worked change WATCHED
 // LIVE, and — on return — regenerates the boards over the moved code and pins a
 // `RoundRecord` accounting for what the round did. This is the composition root
 // B08 deliberately left unbuilt (B08 ledger A1): `runLensPipeline` gets its
 // first non-test caller here, its open seams supplied from `createRoundsRuntime`
-// following the `createKnowledgeSwarmRuntime`/`createProjectScoutRuntime`
+// following the `createProjectScoutRuntime`
 // precedent (reconciliation 3).
 //
 // What is Rennet's, not the pipeline's:
