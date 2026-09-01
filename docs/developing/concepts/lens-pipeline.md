@@ -99,12 +99,16 @@ and calls board regeneration through this runtime.
    greeting. Report arrival is an awaited handoff. The durable consumer must
    verify, read back, and record the report before the pipeline starts any lens
    seat; a rejected handoff ends the round with zero lens turns.
-   The five board-pipeline Council jobs run with job-scoped harness isolation:
-   Claude receives `ambientConfig: "isolated"` and Codex receives an explicit
-   empty MCP-server table. These seats use the inlined board context and native
-   repository tools, so they do not start ambient MCP, plugin, or hook
-   extensions. Unrelated Council work, including `project-scout`, keeps its
-   inherited harness configuration.
+   Every Council seat inherits the user's own harness configuration. Claude
+   seats always load the user's filesystem settings — authentication routing,
+   such as a settings-env `ANTHROPIC_BASE_URL` credential proxy, lives there,
+   and a seat that skipped user settings would reach the API on the wrong
+   credential. That inheritance includes the user's hooks, plugins, and
+   configured MCP servers, which start per seat. The one narrowing is on the
+   Codex side: the five board-pipeline jobs hand Codex an explicit empty
+   MCP-server table (which also disables Codex plugins), because Codex starts
+   configured MCP servers eagerly and these one-shot seats use only their
+   inlined board context and native repository tools.
    A clean generation makes one drafting turn for Design, Sequence, Decisions,
    and Noise, plus the two parallel Flagged seats. It does not run a separate
    board editor after those turns. Design may make one additional grounded

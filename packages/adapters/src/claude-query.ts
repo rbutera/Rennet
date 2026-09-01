@@ -191,10 +191,11 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
   if (options.disallowedTools !== undefined) {
     sdkOptions.disallowedTools = [...options.disallowedTools];
   }
-  if (options.ambientConfig === "isolated") {
-    sdkOptions.settingSources = [];
-    sdkOptions.strictMcpConfig = true;
-  }
+  // Never set settingSources or strictMcpConfig: every session loads the user's
+  // own filesystem settings. Auth routing lives there — a settings-env
+  // ANTHROPIC_BASE_URL (e.g. a tokenmaxx-style credential proxy) is the only
+  // thing keeping the spawned CLI on a live account, and skipping user settings
+  // sent every lens seat to the API on an exhausted credential (2026-09-01).
   if (options.appendSystemPrompt !== undefined) {
     // Second translation: the adapter's contract carries an "append" system
     // prompt, which the SDK expresses as the preset form with `append`. This
@@ -207,9 +208,8 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
     };
   }
   // W5: the adapter's `name → { url }` contract (shared with the Codex and OMP
-  // adapters) becomes the SDK's HTTP server config. Ordinary sessions add it to
-  // the user's configuration. An isolated internal session sets strict MCP above,
-  // so only this explicit table (and explicitly mounted SDK tools) remains.
+  // adapters) becomes the SDK's HTTP server config, added alongside the user's
+  // own configured servers.
   if (options.mcpServers !== undefined) {
     sdkOptions.mcpServers = Object.fromEntries(
       Object.entries(options.mcpServers).map(([name, server]) => [
