@@ -23,6 +23,17 @@ function write(root: string, relativePath: string, contents: string): void {
 }
 
 /**
+ * The review a dispatch returned. Checked rather than cast: a command that answered with
+ * a different shape (a typed failure, say) would otherwise reach the assertions as
+ * `undefined` and redden somewhere that names the wrong thing.
+ */
+function reviewOf(result: unknown): Review {
+  const review = (result as { review?: Review } | null)?.review;
+  if (review === undefined) throw new Error(`command did not return a review: ${String(result)}`);
+  return review;
+}
+
+/**
  * A committed repository that does NOT ignore `.rennet/`.
  *
  * That absence is the fixture. #729 only ever reproduced in a repository with no
@@ -66,14 +77,16 @@ async function restartAndRecheck(mutate?: (root: string) => void): Promise<Revie
   let root: string;
   try {
     await first.dispatch("repository.choose", { path: repo });
-    const captured = (await first.dispatch("review.capture", {
-      commandId: crypto.randomUUID(),
-      repoPath: repo,
-    })) as { review: Review };
-    expect(captured.review.status).toBe("current");
-    reviewId = captured.review.id;
+    const captured = reviewOf(
+      await first.dispatch("review.capture", {
+        commandId: crypto.randomUUID(),
+        repoPath: repo,
+      }),
+    );
+    expect(captured.status).toBe("current");
+    reviewId = captured.id;
     // The root the review is pinned to (macOS resolves the temp dir's symlink).
-    root = captured.review.repositoryRoot;
+    root = captured.repositoryRoot;
 
     // Rennet writes a board, through the real runtime and therefore into the real
     // location — so if the store ever moves, this stops proving anything and says so.
@@ -92,12 +105,13 @@ async function restartAndRecheck(mutate?: (root: string) => void): Promise<Revie
   try {
     await second.dispatch("repository.choose", { path: root });
     await second.dispatch("review.load", { commandId: crypto.randomUUID(), reviewId });
-    const rechecked = (await second.dispatch("review.checkFreshness", {
-      commandId: crypto.randomUUID(),
-      reviewId,
-      repoPath: root,
-    })) as { review: Review };
-    return rechecked.review;
+    return reviewOf(
+      await second.dispatch("review.checkFreshness", {
+        commandId: crypto.randomUUID(),
+        reviewId,
+        repoPath: root,
+      }),
+    );
   } finally {
     second.shutdown();
   }
@@ -111,6 +125,21 @@ it("keeps a review current across a restart after Rennet wrote its own boards", 
   // Not merely "not stale": nothing may be queued behind it either. A candidate
   // patchset whose only difference is app-owned board state is the same lie with a
   // quieter presentation.
+  expect(review.pendingPatchsetId).toBeUndefined();
+});
+
+it("keeps a review current when the reviewer commits ONLY the board Rennet wrote", {
+  timeout: 120_000,
+}, async () => {
+  // Staging is where the reviewer with no ignore rule starts; committing is where they
+  // end up. That moves HEAD — and on the base branch the merge-base with it — while the
+  // sanitized tree does not move at all. Capture used to hash both OIDs, so the review it
+  // was drafting invalidated itself one `git commit` later, through the same door
+  // sanitizing the tree had just closed.
+  const review = await restartAndRecheck((root) => {
+    git(root, "commit", "-q", "-m", "board only", "--", ".rennet/boards");
+  });
+  expect(review.status).toBe("current");
   expect(review.pendingPatchsetId).toBeUndefined();
 });
 

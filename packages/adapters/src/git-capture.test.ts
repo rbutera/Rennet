@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitCaptureAdapter } from "./git-capture";
-import { EXCLUDE_APP_OWNED_PATHSPEC, type GitExec } from "./git-range-diff";
+import { excludeAppOwnedPathspec, type GitExec } from "./git-range-diff";
 
 // win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
 // lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
@@ -56,18 +56,20 @@ describe("GitCaptureAdapter", () => {
       ) {
         return "";
       }
-      // Every whole-tree diff carries the app-owned exclusion (#729, D6). Spelling the
-      // commands out exactly is the point: a capture that quietly stopped passing it
-      // would fail here rather than in production.
+      // A distro filesystem distinguishes case, so this locus takes the plain spelling.
+      if (command === "config --type=bool --default=false --get core.ignoreCase") return "false\n";
+      // Every whole-tree diff AND the commit-subject log carry the app-owned exclusion
+      // (#729, D6). Spelling the commands out exactly is the point: a capture that
+      // quietly stopped passing it would fail here rather than in production.
+      const exclude = excludeAppOwnedPathspec(false);
       if (
-        command ===
-        `diff --binary --full-index --no-ext-diff --no-textconv base tree -- ${EXCLUDE_APP_OWNED_PATHSPEC}`
+        command === `diff --binary --full-index --no-ext-diff --no-textconv base tree -- ${exclude}`
       ) {
         return "";
       }
-      if (command === `diff --name-status -z base tree -- ${EXCLUDE_APP_OWNED_PATHSPEC}`) return "";
-      if (command === `diff --numstat -z base tree -- ${EXCLUDE_APP_OWNED_PATHSPEC}`) return "";
-      if (command === "log --format=%s base..head") return "";
+      if (command === `diff --name-status -z base tree -- ${exclude}`) return "";
+      if (command === `diff --numstat -z base tree -- ${exclude}`) return "";
+      if (command === `log --format=%s base..head -- ${exclude}`) return "";
       throw new Error(`unexpected git command: ${command}`);
     };
 
@@ -325,18 +327,33 @@ describe("GitCaptureAdapter", () => {
     writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine, edited\n");
 
     // Board artifacts in all three states a repository without an ignore rule reaches.
+    // The committed one is committed FIRST and the staged one staged afterwards: a
+    // single `git commit` at the end swept the staged artifact into the commit, so
+    // "staged" and "committed" were one state and nothing here was ever staged-only at
+    // capture time — the state the temporary-index `git rm --cached` actually operates on.
     mkdirSync(join(root, ".rennet", "boards", "gen-1"), { recursive: true });
-    writeFileSync(join(root, ".rennet", "boards", "untracked.jsonl"), '{"seq":1}\n');
-    writeFileSync(join(root, ".rennet", "boards", "gen-1", "staged.jsonl"), '{"seq":2}\n');
-    git(root, "add", join(".rennet", "boards", "gen-1", "staged.jsonl"));
     writeFileSync(join(root, ".rennet", "boards", "committed.jsonl"), '{"seq":3}\n');
     git(root, "add", "-f", join(".rennet", "boards", "committed.jsonl"));
     git(root, "commit", "-qm", "a board that got committed");
+    writeFileSync(join(root, ".rennet", "boards", "gen-1", "staged.jsonl"), '{"seq":2}\n');
+    git(root, "add", "-f", join(".rennet", "boards", "gen-1", "staged.jsonl"));
+    writeFileSync(join(root, ".rennet", "boards", "untracked.jsonl"), '{"seq":1}\n');
+
+    const stagedBefore = git(root, "status", "--porcelain=v1", "-z");
+    const boardFiles = [
+      join(".rennet", "boards", "committed.jsonl"),
+      join(".rennet", "boards", "gen-1", "staged.jsonl"),
+      join(".rennet", "boards", "untracked.jsonl"),
+    ];
+    const bytesBefore = boardFiles.map((file) => readFileSync(join(root, file)));
+    // The three states are distinct right now, which is what the capture below is
+    // exercising; `git status` says so in its own words rather than ours.
+    expect(stagedBefore).toContain("A  .rennet/boards/gen-1/staged.jsonl");
+    expect(stagedBefore).toContain("?? .rennet/boards/untracked.jsonl");
 
     const patchset = await new GitCaptureAdapter().capture(root);
     const paths = patchset.files.map((file) => file.path);
 
-    // No board artifact in the file list, in any state.
     expect(paths).toEqual([
       ".rennet/boards-extra/notes.md",
       ".rennet/conventions.json",
@@ -344,15 +361,26 @@ describe("GitCaptureAdapter", () => {
     ]);
     expect(patchset.rawDiff).not.toContain(".rennet/boards/");
     expect(patchset.rawDiff).not.toContain('{"seq":');
-    // …nor in the reviewed tree, which is where identity and every lens read come from.
+    // Identity and every lens read come from the reviewed tree, so the file list agreeing
+    // is not enough — the tree itself has to be clean.
     const reviewedTree = patchset.repository.reviewedTreeOid;
     if (reviewedTree === undefined) throw new Error("capture omitted reviewedTreeOid");
     const treePaths = git(root, "ls-tree", "-r", "--name-only", reviewedTree).trim().split("\n");
     expect(treePaths.filter((path) => path.startsWith(".rennet/boards/"))).toEqual([]);
-    // The user's content under `.rennet` is all still there — tracked means intentional.
+    // Excluding all of `.rennet` would satisfy every assertion above; these are what
+    // forbid it.
     expect(treePaths).toContain(".rennet/conventions.json");
     expect(treePaths).toContain(".rennet/boards-extra/notes.md");
     expect(patchset.rawDiff).toContain("boards-extra");
+
+    // The sanitization runs `git rm --cached` — index-only, and against a THROWAWAY
+    // index. Both halves are load-bearing and neither is visible in the patchset: the
+    // user's real index must still hold the staged board artifact, and the board files
+    // must still be on disk byte for byte.
+    expect(git(root, "status", "--porcelain=v1", "-z")).toBe(stagedBefore);
+    for (const [index, file] of boardFiles.entries()) {
+      expect(readFileSync(join(root, file))).toEqual(bytesBefore[index]);
+    }
   });
 
   it("keeps identity stable when Rennet writes a board, and moves it when the user edits", async () => {
@@ -390,6 +418,103 @@ describe("GitCaptureAdapter", () => {
     expect(afterConventionsEdit.files.map((file) => file.path)).toContain(
       ".rennet/conventions.json",
     );
+  });
+
+  it("keeps identity and intent unmoved when a commit contains only board state", async () => {
+    // Sanitizing the tree is not enough on its own. A reviewer with no ignore rule and a
+    // `git add -A && git commit` habit commits the board Rennet just wrote; the sanitized
+    // tree, the file list and the diff bytes are all byte-identical afterwards, yet the
+    // capture used to hash `headOid` (and, on the base branch, the merge-base moving with
+    // it) and to read every commit subject — so the review invalidated itself anyway, and
+    // "board only" turned up in the intent the lenses are given.
+    const root = repository();
+    git(root, "checkout", "-qb", "feature");
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    git(root, "commit", "-qam", "the change under review");
+    writeFileSync(join(root, "tracked.txt"), "after, uncommitted\n");
+
+    const adapter = new GitCaptureAdapter();
+    const pinned = await adapter.capture(root);
+    expect(pinned.intent?.commitSubjects).toEqual(["the change under review"]);
+
+    mkdirSync(join(root, ".rennet", "boards", "gen-1"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "boards", "gen-1", "events.jsonl"), '{"seq":1}\n');
+    // Only the board is staged, so the uncommitted reviewed edit stays in the worktree
+    // and this commit really does contain nothing but app-owned state.
+    git(root, "add", "-f", join(".rennet", "boards", "gen-1", "events.jsonl"));
+    git(root, "commit", "-qm", "board only");
+    const headMoved = git(root, "rev-parse", "HEAD").trim();
+
+    const afterBoardCommit = await adapter.capture(root);
+    expect(afterBoardCommit.repository.headOid).toBe(headMoved); // provenance still moves
+    expect(afterBoardCommit.repository.reviewedTreeOid).toBe(pinned.repository.reviewedTreeOid);
+    expect(afterBoardCommit.id).toBe(pinned.id);
+    expect(afterBoardCommit.intent).toEqual(pinned.intent);
+
+    // POSITIVE CONTROL — a commit that touches a reviewed file moves both, so neither
+    // assertion above is satisfied by a capture that simply stopped noticing commits.
+    writeFileSync(join(root, "tracked.txt"), "after, committed\n");
+    git(root, "commit", "-qam", "a real commit");
+    const afterRealCommit = await adapter.capture(root);
+    expect(afterRealCommit.id).not.toBe(pinned.id);
+    expect(afterRealCommit.intent?.commitSubjects).toEqual([
+      "a real commit",
+      "the change under review",
+    ]);
+  });
+
+  it("excludes a board directory reached through a case alias, where the filesystem has one", async () => {
+    // macOS and Windows fold case, so `.Rennet/Boards/` and `.rennet/boards/` are ONE
+    // directory: an alias that already exists absorbs the board writer's lowercase join,
+    // git records the on-disk spelling, and a case-sensitive `:(top).rennet/boards`
+    // matches nothing. This ran green on the platform it was broken on.
+    const root = repository();
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    // git decides this at `init` by probing the filesystem; the branch below follows it
+    // rather than the platform, and each side can fail on the machine it runs on.
+    const foldsCase =
+      git(root, "config", "--type=bool", "--default=false", "--get", "core.ignoreCase").trim() ===
+      "true";
+
+    const adapter = new GitCaptureAdapter();
+    const pinned = await adapter.capture(root);
+
+    mkdirSync(join(root, ".Rennet", "Boards"), { recursive: true });
+    writeFileSync(join(root, ".Rennet", "Boards", "b.jsonl"), '{"seq":1}\n');
+    const patchset = await adapter.capture(root);
+    const paths = patchset.files.map((file) => file.path);
+    const reviewedTree = patchset.repository.reviewedTreeOid;
+    if (reviewedTree === undefined) throw new Error("capture omitted reviewedTreeOid");
+    const treePaths = git(root, "ls-tree", "-r", "--name-only", reviewedTree).trim().split("\n");
+
+    if (foldsCase) {
+      // The reviewed TREE is the assertion that matters. The whole-tree diff pathspec can
+      // hide an aliased artifact from the file list while the sanitization that runs
+      // against the index has missed it — leaving the OID, and therefore identity,
+      // contaminated. Asking the file list alone let exactly that pass.
+      expect(treePaths).toEqual(["tracked.txt"]);
+      expect(paths).toEqual(["tracked.txt"]);
+      expect(patchset.rawDiff).not.toContain('{"seq":');
+      expect(patchset.id).toBe(pinned.id);
+    } else {
+      // A case-sensitive filesystem gives two genuinely different directories, and the
+      // second one is the user's: Rennet never wrote there, so it captures and it moves
+      // identity like any other new file.
+      expect(treePaths).toContain(".Rennet/Boards/b.jsonl");
+      expect(paths).toEqual([".Rennet/Boards/b.jsonl", "tracked.txt"]);
+      expect(patchset.id).not.toBe(pinned.id);
+      return;
+    }
+
+    // The base side, through the same alias. The sanitized tree no longer holds the
+    // artifact, so unless the whole-tree diff's EXCLUSION folds case too, an aliased
+    // board already committed at the base comes back as a deletion — app-owned content
+    // in the file list and the raw diff by the other door.
+    git(root, "add", "-f", join(".Rennet", "Boards", "b.jsonl"));
+    git(root, "commit", "-qm", "the aliased board got committed");
+    const afterCommit = await new GitCaptureAdapter().capture(root);
+    expect(afterCommit.files.map((file) => file.path)).toEqual(["tracked.txt"]);
+    expect(afterCommit.rawDiff).not.toContain("Boards");
   });
 
   it("does not render a board file committed at the BASE as a deletion", async () => {

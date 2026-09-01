@@ -1,5 +1,10 @@
+import { statSync } from "node:fs";
 import { HOST_LOCUS, type Locus } from "@rennet/core";
-import { isAppOwnedPath, toRepositoryRelativePath } from "@rennet/protocol";
+import {
+  isAppOwnedPath,
+  type RepositoryPathOptions,
+  toRepositoryRelativePath,
+} from "@rennet/protocol";
 import { type FSWatcher, watch } from "chokidar";
 
 /** True for a `\\wsl.localhost\…` / `\\wsl$\…` UNC view of a WSL filesystem. */
@@ -60,9 +65,42 @@ const IGNORED_SEGMENT = /[/\\](?:\.git|\.nx|node_modules)(?:[/\\]|$)/;
  * every path. What capture excludes cannot mark the tree dirty, and what capture keeps
  * — a tracked `.rennet/conventions.json` — invalidates like any other project file.
  */
-export function isIgnoredPath(repositoryRoot: string, path: string): boolean {
-  const relative = toRepositoryRelativePath(repositoryRoot, path);
-  return (relative !== undefined && isAppOwnedPath(relative)) || IGNORED_SEGMENT.test(path);
+export function isIgnoredPath(
+  repositoryRoot: string,
+  path: string,
+  options?: RepositoryPathOptions,
+): boolean {
+  const relative = toRepositoryRelativePath(repositoryRoot, path, options);
+  return (
+    (relative !== undefined && isAppOwnedPath(relative, options)) || IGNORED_SEGMENT.test(path)
+  );
+}
+
+/**
+ * Whether `root` sits on a filesystem that folds case — the same property git records as
+ * `core.ignoreCase`, probed the same way git probes it: ask the filesystem whether one
+ * directory answers to two spellings.
+ *
+ * The watcher must ask separately rather than read git's answer, because it addresses a
+ * different filesystem than git does for a WSL project (a `\\wsl.localhost\…` UNC view
+ * from Windows versus ext4 inside the distro) — and because `start` is synchronous, so
+ * there is no place to await a `git config`. One `stat` pair per watched root.
+ *
+ * A root with no ASCII letter (nothing to flip) reads as case-sensitive, which errs
+ * toward watching a path rather than silently dropping it.
+ */
+export function filesystemIgnoresCase(root: string): boolean {
+  const flipped = root.replace(/[a-z]/i, (letter) =>
+    letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase(),
+  );
+  if (flipped === root) return false;
+  try {
+    const original = statSync(root, { bigint: true });
+    const alias = statSync(flipped, { bigint: true });
+    return original.ino === alias.ino && original.dev === alias.dev;
+  } catch {
+    return false;
+  }
 }
 
 export class RepoWatcher {
@@ -107,9 +145,13 @@ export class RepoWatcher {
     // returns spurious lstat errors (EISDIR on plain files, observed live on the
     // lancelot test bed 2026-08-19), so native watching over it is wrong twice.
     const wslUncRoot = isWslUncPath(repositoryRoot);
+    // Probed once per root, not per event: `ignored` runs for every entry in the walk.
+    const pathOptions: RepositoryPathOptions = {
+      ignoreCase: filesystemIgnoresCase(repositoryRoot),
+    };
     this.watcher = watch(repositoryRoot, {
       ignoreInitial: true,
-      ignored: (path) => isIgnoredPath(repositoryRoot, path),
+      ignored: (path) => isIgnoredPath(repositoryRoot, path, pathOptions),
       ...(locus.kind === "wsl" || wslUncRoot ? { usePolling: true, interval: 500 } : {}),
     });
     this.watcher.on("ready", () => {

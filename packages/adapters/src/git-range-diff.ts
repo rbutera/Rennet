@@ -45,24 +45,53 @@ export interface Counts {
 export const DEFAULT_VISIBLE_BYTE_LIMIT = 2 * 1024 * 1024;
 export const FILE_VISIBLE_BYTE_LIMIT = 256 * 1024;
 
+const APP_OWNED_BOARD_PATH = APP_OWNED_BOARD_SEGMENTS.join("/");
+
 /**
  * The app-owned board store as a git pathspec, DERIVED from the shared authority
  * (#729, D6) rather than spelled out a second time. `:(top)` anchors it at the
  * repository root, matching `isAppOwnedPath`'s root-relative contract, so the same
  * directory is named however deep the git call's cwd sits.
+ *
+ * `icase` is added for a repository whose filesystem does not distinguish case, because
+ * git matches a pathspec against the spelling recorded in the index. On macOS an
+ * existing `.Rennet/Boards/` swallows the writer's lowercase join and git indexes
+ * `.Rennet/Boards/b.jsonl`, which `:(top).rennet/boards` does NOT match — the exclusion
+ * silently stopped applying on the platform Rennet is developed on. Ask
+ * {@link repositoryIgnoresCase} for the flag rather than the running platform: for a
+ * WSL project git answers for ext4 while the process runs on Windows.
  */
-export const APP_OWNED_PATHSPEC = `:(top)${APP_OWNED_BOARD_SEGMENTS.join("/")}`;
+export function appOwnedPathspec(ignoreCase: boolean): string {
+  return `:(top${ignoreCase ? ",icase" : ""})${APP_OWNED_BOARD_PATH}`;
+}
 
 /**
  * The subtractive form. Git treats a pathspec list containing only exclusions as
- * "everything else", so this can follow a bare `--` with no accompanying include.
+ * "everything else", so this can follow a bare `--` with no accompanying include —
+ * which is also how `git log` takes it, so the same exclusion filters commit subjects.
  *
  * It guards the BASE side of a working-tree diff. Sanitizing the reviewed tree alone
  * is enough for identity, but if a board file is already committed at the base, the
  * sanitized tree renders it as a DELETION — app-owned content back in the file list
  * and the raw diff by the other door.
  */
-export const EXCLUDE_APP_OWNED_PATHSPEC = `:(top,exclude)${APP_OWNED_BOARD_SEGMENTS.join("/")}`;
+export function excludeAppOwnedPathspec(ignoreCase: boolean): string {
+  return `:(top,exclude${ignoreCase ? ",icase" : ""})${APP_OWNED_BOARD_PATH}`;
+}
+
+/**
+ * Whether this repository's filesystem folds case, as git itself decided it: git probes
+ * at init/clone and records the answer in `core.ignoreCase`. `--default=false` makes the
+ * usual unset case exit 0 rather than 1.
+ */
+export async function repositoryIgnoresCase(run: GitExec, root: string): Promise<boolean> {
+  const value = await run(
+    root,
+    ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"],
+    { reject: false },
+  );
+  return value.trim() === "true";
+}
 
 /** A narrow git runner, injected so the range engine is testable against a real repo. */
 export type GitExec = (

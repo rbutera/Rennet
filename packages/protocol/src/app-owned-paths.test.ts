@@ -121,4 +121,46 @@ describe("toRepositoryRelativePath", () => {
     expect(toRepositoryRelativePath("/repo", "/repo-2/src/app.ts")).toBeUndefined();
     expect(toRepositoryRelativePath("/repo", "/other/src/app.ts")).toBeUndefined();
   });
+
+  it("treats the two separator spellings of one root as the same root", () => {
+    // Native Windows: the daemon holds `C:/dev/repo`, chokidar reports `C:\dev\repo\…`.
+    // A byte-for-byte prefix test put every such event outside the repository.
+    expect(toRepositoryRelativePath("C:/dev/repo", "C:\\dev\\repo\\src\\app.ts")).toBe(
+      "src\\app.ts",
+    );
+    expect(toRepositoryRelativePath("C:\\dev\\repo", "C:/dev/repo/src/app.ts")).toBe("src/app.ts");
+    // The returned text keeps the caller's own separators, and the sibling still refuses.
+    expect(toRepositoryRelativePath("C:/dev/repo", "C:\\dev\\repo-2\\src\\app.ts")).toBeUndefined();
+  });
+
+  it("folds the root's case only when told the filesystem does", () => {
+    expect(
+      toRepositoryRelativePath("c:/dev/repo", "C:\\dev\\repo\\src\\app.ts", { ignoreCase: true }),
+    ).toBe("src\\app.ts");
+    expect(toRepositoryRelativePath("c:/dev/repo", "C:\\dev\\repo\\src\\app.ts")).toBeUndefined();
+    // Folding case must not fold the sibling boundary away.
+    expect(
+      toRepositoryRelativePath("c:/dev/repo", "C:\\dev\\REPO-2\\src\\app.ts", { ignoreCase: true }),
+    ).toBeUndefined();
+  });
+});
+
+describe("app-owned paths on a case-insensitive filesystem", () => {
+  // macOS and Windows fold case, so `.Rennet/Boards/` IS `.rennet/boards/`: an alias that
+  // already exists absorbs the board writer's lowercase join, and git records the on-disk
+  // spelling. Ownership has to follow the filesystem, not the spelling Rennet asked for.
+  it("owns the alias spellings the filesystem cannot distinguish", () => {
+    expect(isAppOwnedPath(".Rennet/Boards/b.jsonl", { ignoreCase: true })).toBe(true);
+    expect(isAppOwnedPath(".RENNET\\BOARDS", { ignoreCase: true })).toBe(true);
+  });
+
+  it("leaves them the user's where the filesystem does distinguish them", () => {
+    // Two different directories on ext4, and Rennet never wrote to the second one.
+    expect(isAppOwnedPath(".Rennet/Boards/b.jsonl")).toBe(false);
+  });
+
+  it("keeps the prefix boundary and the root anchor through the fold", () => {
+    expect(isAppOwnedPath(".Rennet/Boards-extra/notes.md", { ignoreCase: true })).toBe(false);
+    expect(isAppOwnedPath("Vendor/Pkg/.Rennet/Boards/b.jsonl", { ignoreCase: true })).toBe(false);
+  });
 });

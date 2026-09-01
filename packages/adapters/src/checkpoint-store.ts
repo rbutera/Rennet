@@ -10,7 +10,7 @@ import {
   locusCommand,
 } from "@rennet/core";
 import { execa } from "execa";
-import { APP_OWNED_PATHSPEC } from "./git-range-diff";
+import { appOwnedPathspec } from "./git-range-diff";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The workspace checkpoint store — the CAPTURE side of the review→agent handoff
@@ -139,18 +139,43 @@ async function headOid(locus: Locus, root: string): Promise<string | null> {
  * Everything else under `.rennet/` stays. Tracked means intentional, so a
  * `.rennet/conventions.json` edit is captured like any other project file — and
  * `.rennet/boards-extra` is the user's, because the app never writes there.
+ *
+ * The pathspec folds case when the repository's filesystem does, because git matches it
+ * against the spelling in the index: a pre-existing `.Rennet/Boards/` alias absorbs the
+ * writer's lowercase join, and the case-sensitive spelling then removes nothing.
  */
 async function writeWorkingTree(locus: Locus, root: string, indexFile: string): Promise<string> {
   const indexTree = await git(locus, root, ["write-tree"]);
   await git(locus, root, ["read-tree", indexTree], indexFile);
   await git(locus, root, ["add", "-A"], indexFile);
+  const ignoreCase = await repositoryIgnoresCase(locus, root);
   await git(
     locus,
     root,
-    ["rm", "--cached", "-r", "-f", "--quiet", "--ignore-unmatch", "--", APP_OWNED_PATHSPEC],
+    [
+      "rm",
+      "--cached",
+      "-r",
+      "-f",
+      "--quiet",
+      "--ignore-unmatch",
+      "--",
+      appOwnedPathspec(ignoreCase),
+    ],
     indexFile,
   );
   return git(locus, root, ["write-tree"], indexFile);
+}
+
+/** git's own filesystem probe, recorded at init/clone; `--default` keeps unset at exit 0. */
+async function repositoryIgnoresCase(locus: Locus, root: string): Promise<boolean> {
+  const result = await runGit(
+    locus,
+    root,
+    ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"],
+    { reject: false },
+  );
+  return result.stdout.trim() === "true";
 }
 
 async function removeSnapshotIndex(locus: Locus, indexFile: string): Promise<void> {
