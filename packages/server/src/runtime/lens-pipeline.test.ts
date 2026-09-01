@@ -10,6 +10,7 @@ import {
 } from "@rennet/adapters";
 import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
 import {
+  AUTHORED_BOARD_SCHEMA,
   type DraftBoard,
   findingRefKey,
   type LensKind,
@@ -33,6 +34,7 @@ import {
   designDraftOutputSchema,
   draftToOps,
   projectDesignTaskProgress,
+  REPAIR_TARGET_KINDS,
   reconcileFlaggedBoards,
   renderDrafterPrompt,
   runLensPipeline,
@@ -1440,6 +1442,215 @@ describe("admitBoardReferences — the write-boundary ref admission (#548 D1)", 
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("refuses to repair a reference onto its OWN element (a self-citation is not a target)", () => {
+    // The production shape: a section whose `children` names a variant of the SECTION's
+    // own id. Folding, the only candidate is the citer itself — and a repair to it writes
+    // an element that cites itself, which the board service rejects. The pass would then
+    // have manufactured the very `bad-ref` it exists to prevent.
+    const board = mkBoard([
+      mkSection("sequence-root", "Reading order", ["Sequence_Root"]),
+      mkCodeRef("sequence-code", "src/auth.ts", 11, 12),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-root", field: "children", targetId: "Sequence_Root" },
+    ]);
+    expect(admitted.board).toBe(board);
+  });
+
+  it("refuses an EXACT id whose code_ref cites another patchset (the id is not a licence)", () => {
+    // The bypass this closes: the repair path already refuses a foreign-patchset candidate,
+    // so a drafter that spelled the id right got what a drafter that mistyped it could not.
+    const foreign = {
+      ...mkCodeRef("sequence-code", "src/auth.ts", 11, 12),
+      data: {
+        author: { kind: "lens-agent", id: "sequence-seat" },
+        patchset_id: "ps-other",
+        path: "src/auth.ts",
+        side: "head",
+        start_line: 11,
+        end_line: 12,
+      },
+    } as DraftBoard["elements"][number];
+    const board = mkBoard([
+      {
+        id: "sequence-step",
+        kind: "order_step",
+        data: {
+          author: { kind: "lens-agent", id: "sequence-seat" },
+          title: "Read the entry point",
+          span: "sequence-code",
+          children: [],
+        },
+      } as unknown as DraftBoard["elements"][number],
+      foreign,
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-step", field: "span", targetId: "sequence-code" },
+    ]);
+    // Control, same board and same spelling: when the code_ref is THIS patchset's, the
+    // exact reference is admitted untouched — the refusal is about the patchset, not the id.
+    expect(admitBoardReferences(board, "ps-other").unrepairable).toEqual([]);
+  });
+
+  it("keeps a carried round chapter's own generation anchor (host history is about it)", () => {
+    // A prior round's addressed chapter is host-authored and cites the patchset that round
+    // reviewed. It rides into every later board verbatim, so judging it against the current
+    // patchset would cost every round after the first its Sequence board.
+    const hostAuthor = { kind: "orchestrator" as const, id: "rennet:round-composition" };
+    const carried = "rennet:host:round-addressed:1:0:code-ref";
+    const board = mkBoard([
+      {
+        id: carried,
+        kind: "code_ref",
+        data: {
+          author: hostAuthor,
+          patchset_id: "ps-0",
+          path: "src/auth.ts",
+          side: "head",
+          start_line: 11,
+          end_line: 12,
+        },
+      } as unknown as DraftBoard["elements"][number],
+      {
+        id: "rennet:host:round-addressed:1:0:annotation",
+        kind: "annotation",
+        data: { author: hostAuthor, code_ref: carried, body: "Addressed in round 1." },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    expect(admitted.repairs).toEqual([]);
+    // Control: the same foreign-patchset code_ref authored by a LENS SEAT is refused —
+    // the exemption is the orchestrator's carried history, not "any old patchset id".
+    const drafted = mkBoard([
+      {
+        ...board.elements[0],
+        data: { ...(board.elements[0]?.data as object), author: flaggedAuthor },
+      } as DraftBoard["elements"][number],
+      board.elements[1] as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(drafted, "ps-1").unrepairable).toHaveLength(1);
+  });
+
+  it("never folds two ids apart by a LETTER, ASCII or not", () => {
+    // The fold used to strip every non-`[a-z0-9]` character, which deleted the letters
+    // themselves: `authé` and `authø` both became `auth`, so a board holding both offered
+    // a "unique" candidate for a reference meaning either.
+    // The discriminating shape is a FALSE UNIQUE: one dangling `authé`, one candidate
+    // `authø`, and a fold that deletes both accented letters makes the second the sole
+    // "provable" target of the first. They differ in a letter; neither is proof of the
+    // other, so this settles as unrepairable and the lane retries.
+    const falseUnique = mkBoard([
+      mkFinding("f1", "cites an id this board does not hold", ["authé"]),
+      mkCodeRef("authø", "src/authø.ts", 3, 4),
+    ]);
+    expect(admitBoardReferences(falseUnique, "ps-1").repairs).toEqual([]);
+    expect(admitBoardReferences(falseUnique, "ps-1").unrepairable).toEqual([
+      { elementId: "f1", field: "code", targetId: "authé" },
+    ]);
+
+    // Two accented ids that differ in a letter also stay two elements when BOTH are on the
+    // board and one is cited exactly — the citation resolves to the id it names.
+    const both = mkBoard([
+      mkFinding("f1", "cites the accented anchor", ["authé"]),
+      mkCodeRef("authé", "src/authé.ts", 1, 2),
+      mkCodeRef("authø", "src/authø.ts", 3, 4),
+    ]);
+    expect(admitBoardReferences(both, "ps-1")).toMatchObject({ repairs: [], unrepairable: [] });
+
+    // The other direction of the control: case and the separator set still fold, including
+    // on a non-ASCII id, so the fix narrowed the fold without disabling it.
+    const foldable = mkBoard([
+      mkFinding("f1", "cites the same anchor, typed differently", ["Auth_É.ref"]),
+      mkCodeRef("auth-éref", "src/authé.ts", 1, 2),
+    ]);
+    expect(admitBoardReferences(foldable, "ps-1").repairs).toEqual([
+      { elementId: "f1", field: "code", from: "Auth_É.ref", to: "auth-éref" },
+    ]);
+  });
+
+  it("refuses a sole folded candidate of the WRONG KIND for the field", () => {
+    // `order_step.span` is declared to hold a code_ref. A prose element that folds to the
+    // step's dangling span is a different element, not the code the step spans.
+    const board = mkBoard([
+      {
+        id: "sequence-step",
+        kind: "order_step",
+        data: {
+          author: { kind: "lens-agent", id: "sequence-seat" },
+          title: "Read the entry point",
+          span: "sequence_span",
+          children: [],
+        },
+      } as unknown as DraftBoard["elements"][number],
+      {
+        id: "sequence-span",
+        kind: "prose",
+        data: { author: { kind: "lens-agent", id: "sequence-seat" }, markdown: "The entry point." },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.repairs).toEqual([]);
+    expect(admitted.unrepairable).toEqual([
+      { elementId: "sequence-step", field: "span", targetId: "sequence_span" },
+    ]);
+
+    // Control: the same shape with the candidate as the declared kind repairs — the
+    // refusal above is about the kind and not about the fold failing.
+    const withCodeRef = mkBoard([
+      board.elements[0] as DraftBoard["elements"][number],
+      mkCodeRef("sequence-span", "src/auth.ts", 11, 12),
+    ]);
+    expect(admitBoardReferences(withCodeRef, "ps-1").repairs).toEqual([
+      { elementId: "sequence-step", field: "span", from: "sequence_span", to: "sequence-span" },
+    ]);
+
+    // A field the schema declares WITHOUT a target kind (`section.children`) still repairs
+    // onto any kind: nothing about its target's kind is provable, so nothing is enforced.
+    const children = mkBoard([
+      mkSection("sequence-root", "Reading order", ["sequence_span"]),
+      {
+        id: "sequence-span",
+        kind: "prose",
+        data: { author: { kind: "lens-agent", id: "sequence-seat" }, markdown: "The entry point." },
+      } as unknown as DraftBoard["elements"][number],
+    ]);
+    expect(admitBoardReferences(children, "ps-1").repairs).toHaveLength(1);
+  });
+
+  it("declares a target kind for every reference field the board schema says holds one", () => {
+    // The drift guard on the explicit map: the schema's own attribute descriptions name
+    // `code_ref` for exactly the fields that hold one, so a new such field (or a renamed
+    // one) fails here rather than silently repairing across kinds.
+    const declared = Object.entries(AUTHORED_BOARD_SCHEMA).flatMap(([kind, definition]) =>
+      Object.entries(definition.attributes).flatMap(([field, attribute]) =>
+        attribute.type === "element" && attribute.description.includes("code_ref")
+          ? [`${kind}.${field}`]
+          : [],
+      ),
+    );
+    expect(declared.length).toBeGreaterThan(0);
+    expect(Object.keys(REPAIR_TARGET_KINDS).sort()).toEqual(declared.sort());
+    for (const field of declared) expect(REPAIR_TARGET_KINDS[field]).toBe("code_ref");
+  });
+
+  it("deduplicates a `many` field whose entries repair onto the same element", () => {
+    // Two spellings of one id are one citation. Left as written, the finding lists the
+    // same code twice and the reader is shown a duplicate anchor.
+    const board = mkBoard([
+      mkFinding("f1", "cites one anchor, spelled twice", ["auth-code", "Auth_Code"]),
+      mkCodeRef("auth-code", "src/auth.ts", 1, 2),
+    ]);
+    const admitted = admitBoardReferences(board, "ps-1");
+    expect(admitted.unrepairable).toEqual([]);
+    const finding = admitted.board.elements.find(({ id }) => id === "f1");
+    expect((finding?.data as { code?: string[] } | undefined)?.code).toEqual(["auth-code"]);
+  });
 });
 
 describe("boardOutputSchema", () => {
@@ -2012,6 +2223,119 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     }
   });
 
+  it("writes a repair-requiring board ONLY because the production write path admitted it", async () => {
+    // The direct `admitBoardReferences` unit tests above prove the pass; they do not prove
+    // the pipeline calls it, so deleting the production call site left them green. This
+    // drives the real production path — `runLensPipeline` → `persistBoard` → the REAL
+    // board service — over a reference the ladder cannot see.
+    //
+    // The shape is a round carry-forward: a prior round's addressed chapter rides verbatim
+    // into this round's Sequence board (`composeFindingRound`), AFTER lint, and it cites its
+    // own code ref under the typography that round wrote. Nothing before the write boundary
+    // looks at it, and the board service rejects the whole batch for it.
+    const root = await mkdtemp(join(tmpdir(), "lens-admission-production-"));
+    try {
+      const runtime = createBoardsRuntime(root);
+      const client = new WhiteboardClient(runtime.service);
+      const hostAuthor = { kind: "orchestrator" as const, id: "rennet:round-composition" };
+      const carriedRef = "rennet:host:round-addressed:1:0:code-ref";
+      const citedAs = "rennet:host:round-addressed:1:0:code_ref";
+      const annotationId = "rennet:host:round-addressed:1:0:annotation";
+      const previousSequence = mkBoard([
+        {
+          id: carriedRef,
+          kind: "code_ref",
+          data: {
+            author: hostAuthor,
+            patchset_id: "ps-1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 11,
+            end_line: 12,
+          },
+        } as unknown as DraftBoard["elements"][number],
+        {
+          id: annotationId,
+          kind: "annotation",
+          data: { author: hostAuthor, code_ref: citedAs, body: "Addressed in round 1." },
+        } as unknown as DraftBoard["elements"][number],
+      ]);
+
+      const boardIds = new Map<LintTarget, string>();
+      for (const lens of ["design", "sequence", "decisions", "flagged", "noise"] as const) {
+        boardIds.set(lens, await runtime.createRennetBoard());
+      }
+      const metas: BoardMeta[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === "post-process") {
+            const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+            return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+          }
+          return cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        currentGeneration: "gen:ps-1",
+        // A same-generation round: it composes, and it drafts no report to verify.
+        round: {
+          number: 2,
+          previousGeneration: "gen:ps-1",
+          dispatchedAsks: [],
+          findingDispositions: {},
+        },
+        previous: new Map<LintTarget, DraftBoard>([["sequence", previousSequence]]),
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: client,
+        boardIdFor: (lens) => boardIds.get(lens) ?? "",
+        persistBoardMeta: (meta) => {
+          metas.push(meta);
+        },
+      });
+
+      const sequence = result.boards.find(({ lens }) => lens === "sequence");
+      expect(sequence?.failure).toBeUndefined();
+      // The repair landed in the SERVICE's state, not merely in the returned board.
+      const state = await runtime.service.getState(boardIds.get("sequence") ?? "");
+      expect(state.has(carriedRef)).toBe(true);
+      expect((state.get(annotationId)?.data as { code_ref?: string } | undefined)?.code_ref).toBe(
+        carriedRef,
+      );
+      // And it is ACCOUNTED FOR durably: a repair is recorded on the board's meta, never a
+      // silent rewrite of what the producer wrote.
+      const meta = metas.find(({ lens }) => lens === "sequence");
+      expect(meta?.refRepairs).toEqual([
+        { elementId: annotationId, field: "code_ref", from: citedAs, to: carriedRef },
+      ]);
+
+      // The control that makes the write load-bearing: put the reference back the way the
+      // composition produced it and hand the SAME board to the same service. It is refused
+      // wholesale, so the accepted write above happened only because production admitted it.
+      const written = sequence?.board;
+      if (written === undefined) throw new Error("Sequence settled without a board");
+      const bypassed = written.elements.map((element) =>
+        element.id === annotationId
+          ? ({
+              ...element,
+              data: { ...(element.data as object), code_ref: citedAs },
+            } as DraftBoard["elements"][number])
+          : element,
+      );
+      const rejected = await client.apply(
+        await runtime.createRennetBoard(),
+        draftToOps(mkBoard(bypassed)) as never,
+        "lens:sequence",
+      );
+      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("treats a deterministically empty Design artifact set as a successful absent lane", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
     const applied: Applied[] = [];
@@ -2212,10 +2536,21 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(noise?.failure).toBeUndefined();
     expect(noise?.absence).toBeUndefined();
     expect(noise?.board?.elements.length).toBeGreaterThan(0);
-    // The lane really was re-asked: two turns, the second one a re-ask carrying the
-    // ladder's pointers rather than a fresh copy of the base prompt.
+    // The lane really was re-asked, and the re-ask is the LADDER's: "not the same string"
+    // was satisfied by any second prompt at all, including one that re-asks for nothing.
     expect(noiseTurns).toHaveLength(2);
-    expect(noiseTurns[1]).not.toBe(noiseTurns[0]);
+    const reask = noiseTurns[1] ?? "";
+    // The base prompt is carried verbatim and the prior-failure layer is appended AFTER it,
+    // so the seat re-reads its instructions and then what went wrong — in that order.
+    expect(reask.startsWith(noiseTurns[0] ?? "")).toBe(true);
+    expect(reask.slice((noiseTurns[0] ?? "").length)).toContain(
+      "Your previous draft did not pass. Fix ONLY these issues and return the whole board:",
+    );
+    // The pointers are the PARSE issues the non-emission produced — `validateDraft` cannot
+    // coerce a turn that emitted nothing into a board, so the ladder's first rung is the
+    // schema itself rather than a lens rule about a board that does not exist.
+    expect(reask).toMatch(/- schema at \[[^\]]*\]: /);
+    expect(reask).toContain("Previous draft:");
   });
 
   it("settles TERMINAL only after the re-asks are spent, naming the non-emission (#549)", async () => {
@@ -5422,7 +5757,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     expect(applied).toEqual([]);
   });
 
-  it("preserves the harness failure account when an initial drafter emits no board", async () => {
+  it("keeps the harness's own words in the failure, under a spent-ladder terminal account", async () => {
     const failingPort = {
       createSession: async () => ({
         send: async () => undefined,
@@ -5447,7 +5782,13 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       boardIdFor: (l) => `board:${l}`,
     });
     for (const outcome of result.boards) {
+      // The harness's message survives into the lens failure verbatim…
       expect(outcome.failure).toContain("structured output exceeded the seat capability");
+      // …and the TYPED account beside it is the ladder's verdict, which the old name
+      // claimed and the old body never read: every re-ask was spent on a seat that never
+      // emitted, so it is terminal with a real attempt count, not `attempt: 0`.
+      expect(outcome.failureAccount?.classification).toBe("terminal");
+      expect(outcome.failureAccount?.attempt).toBeGreaterThan(0);
     }
   });
 });

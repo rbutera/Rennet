@@ -282,13 +282,46 @@ export interface RefRepair {
 
 /**
  * Fold an authored element id to its identity for provable-target comparison: case and
- * separators are the drafter's typography, not the id's identity, so `Decision_Code`,
- * `decision-code` and `decisionCode` fold together. Nothing else folds — two ids that
- * differ in a LETTER are two different ids, and guessing between them is not proof.
+ * the separator set below are the drafter's typography, not the id's identity, so
+ * `Decision_Code`, `decision-code`, `decision.code` and `decisionCode` fold together.
+ *
+ * LETTERS ARE NEVER DROPPED. An earlier fold stripped every character outside `[a-z0-9]`,
+ * which deleted the letters themselves out of a non-ASCII id: `authé` and `authø` both
+ * folded to `auth`, so two ids that differ in a LETTER became one "unique" candidate and
+ * the pass repaired a reference onto an element nobody meant. Two ids that differ in a
+ * letter are two different ids, and guessing between them is not proof.
  */
 function refIdentity(id: string): string {
-  return id.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return id.toLowerCase().replace(/[-_./\\ ]+/g, "");
 }
+
+/**
+ * The element kind a reference field is declared to hold, for the fields whose
+ * {@link AUTHORED_BOARD_SCHEMA} declaration names one. A field absent here (`children`,
+ * `scenarios`, `alternatives`, `reply_to`, `quote_target`, `covers`) holds any kind, and
+ * nothing about its target's kind is provable.
+ *
+ * This constrains REPAIRS only. A repair is a guess about what the producer meant, and a
+ * sole folded candidate of the wrong kind is a different element — an `order_step.span`
+ * folding onto a `prose` is not proof that the prose is the code the step spans. The pass
+ * does NOT re-judge a reference the producer spelled exactly: that element is in the
+ * document, the board service admits it, and refusing it would cost the reviewer the whole
+ * board over a kind the service and the lint layer both accept (prose spans ship today).
+ */
+const REPAIR_TARGET_KIND: Readonly<Record<string, DraftElement["kind"]>> = {
+  "annotation.code_ref": "code_ref",
+  "decision.evidence": "code_ref",
+  "finding.code": "code_ref",
+  "message.code_ref": "code_ref",
+  "noise_verdict.hunk": "code_ref",
+  "order_step.span": "code_ref",
+  "requirement.trace": "code_ref",
+  "review_comment.code_ref": "code_ref",
+  "round_outcome.code_ref": "code_ref",
+};
+
+/** Exposed for the drift test that keeps the map in step with the authored schema. */
+export const REPAIR_TARGET_KINDS = REPAIR_TARGET_KIND;
 
 export interface RefAdmission {
   /** The board with every provable repair applied; identical when there was nothing to repair. */
@@ -311,32 +344,50 @@ export interface RefAdmission {
  *
  * A dangling reference is REPAIRED only when its unique intended target is provable:
  * exactly one element of this document shares the reference's identity (see
- * {@link refIdentity}), and — when that element is a `code_ref` — it cites the captured
- * patchset this generation is reading, so the repair points into the patchset the board
- * is about. Ambiguity (two candidates) or absence (none) is not proof, and the lane
- * settles a typed failure instead. Dropping the citing element to make the rest of the
+ * {@link refIdentity}), it is not the citing element itself, it is the kind the field is
+ * declared to hold ({@link REPAIR_TARGET_KIND}), and — when it is a `code_ref` — it cites
+ * the captured patchset this generation is reading, so the repair points into the patchset
+ * the board is about. Ambiguity (two candidates) or absence (none) is not proof, and the
+ * lane settles a typed failure instead. Dropping the citing element to make the rest of the
  * board acceptable is FORBIDDEN: an accepted board that silently sheds produced material
  * is the quiet lie the complete-coverage ruling exists to prevent.
+ *
+ * The patchset test runs on a reference the producer spelled EXACTLY too: an id that
+ * happens to exist is not a licence to cite another patchset's code, and the repair path
+ * already refuses exactly that candidate. Host-carried round history is the one exception,
+ * and it is not an exception to the rule — a prior round's addressed chapter is ABOUT an
+ * earlier generation, so its orchestrator-authored anchors cite that generation's patchset
+ * by design, and every round after the first would otherwise lose its Sequence board.
  */
 export function admitBoardReferences(board: DraftBoard, patchsetId: string): RefAdmission {
-  const liveIds = new Set(board.elements.map((element) => element.id));
+  const byId = new Map(board.elements.map((element) => [element.id, element]));
   const byIdentity = new Map<string, DraftElement[]>();
   for (const element of board.elements) {
     const identity = refIdentity(element.id);
     byIdentity.set(identity, [...(byIdentity.get(identity) ?? []), element]);
   }
+  /** Does this element's citation belong to the patchset the board is about? */
+  const admissibleTarget = (element: DraftElement): boolean => {
+    if (element.kind !== "code_ref") return true;
+    const data = element.data as { patchset_id?: unknown; author?: { kind?: unknown } };
+    return data.patchset_id === patchsetId || data.author?.kind === "orchestrator";
+  };
 
   const repairs: RefRepair[] = [];
   const unrepairable: { elementId: string; field: string; targetId: string }[] = [];
   const elements = mapElementReferences(board.elements, ({ sourceId, field, targetId }) => {
-    if (liveIds.has(targetId)) return undefined;
-    const candidates = byIdentity.get(refIdentity(targetId)) ?? [];
+    const exact = byId.get(targetId);
+    // Spelled exactly and admissible: the document holds it, so it is written as authored.
+    if (exact !== undefined && admissibleTarget(exact)) return undefined;
+    const expectedKind = REPAIR_TARGET_KIND[`${byId.get(sourceId)?.kind ?? ""}.${field}`];
+    const candidates = (byIdentity.get(refIdentity(targetId)) ?? []).filter(
+      (candidate) =>
+        candidate.id !== sourceId &&
+        (expectedKind === undefined || candidate.kind === expectedKind) &&
+        admissibleTarget(candidate),
+    );
     const only = candidates.length === 1 ? candidates[0] : undefined;
-    const provable =
-      only !== undefined &&
-      (only.kind !== "code_ref" ||
-        (only.data as { patchset_id?: unknown }).patchset_id === patchsetId);
-    if (!provable || only === undefined) {
+    if (only === undefined) {
       unrepairable.push({ elementId: sourceId, field, targetId });
       return undefined;
     }
@@ -354,6 +405,10 @@ export function admitBoardReferences(board: DraftBoard, patchsetId: string): Ref
  * Element order, kinds and every non-reference field are untouched, and an element with
  * no rewritten reference is returned by identity — so a board with nothing to rewrite is
  * not silently rebuilt.
+ *
+ * A rewritten `many` field is DEDUPLICATED, first occurrence winning: two entries can
+ * resolve to the same target (`["c1", "C_1"]` both meaning `c1`, or two seat findings
+ * collapsing into one), and a list naming the same element twice renders it twice.
  */
 function mapElementReferences(
   elements: readonly DraftElement[],
@@ -375,9 +430,14 @@ function mapElementReferences(
       const value = data[field];
       if (typeof value === "string") data[field] = targets.get(value) ?? value;
       else if (Array.isArray(value)) {
-        data[field] = value.map((item) =>
-          typeof item === "string" ? (targets.get(item) ?? item) : item,
-        );
+        const seen = new Set<string>();
+        data[field] = value.flatMap((item) => {
+          if (typeof item !== "string") return [item];
+          const mapped = targets.get(item) ?? item;
+          if (seen.has(mapped)) return [];
+          seen.add(mapped);
+          return [mapped];
+        });
       }
     }
     return { ...element, data } as DraftElement;
