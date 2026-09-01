@@ -100,12 +100,24 @@ describe("the rounds ledger (C09 cluster 6)", () => {
     // rounds, each with its own run receipt and its own report board.
     const baseRun = completedRoundRecord.run;
     if (baseRun === undefined) throw new Error("completed round fixture is missing a run receipt");
+    // Each round's report carries its OWN visible text. Six identical reports would let every
+    // row open round 1's report and still satisfy "a report is showing".
+    const reportTitle = (ordinal: number) => `Round ${ordinal}: the refresh path`;
     const records: RoundLedgerRecord[] = Array.from({ length: 6 }, (_, index) => {
-      const boardId = `report-round-${index + 1}`;
+      const ordinal = index + 1;
+      const boardId = `report-round-${ordinal}`;
       return {
         ...completedRoundRecord,
         reportBoard: boardId,
-        report: { ...reportBoardFixture, boardId },
+        report: {
+          ...reportBoardFixture,
+          boardId,
+          document: {
+            ...reportBoardFixture.document,
+            title: reportTitle(ordinal),
+            introMarkdown: `What round ${ordinal} of the loop actually changed.`,
+          },
+        },
         run: { ...baseRun, startedAt: Date.UTC(2026, 7, 20 + index, 9, 0) },
       };
     });
@@ -136,13 +148,22 @@ describe("the rounds ledger (C09 cluster 6)", () => {
       "2026-08-21T09:00:00.000Z",
       "2026-08-20T09:00:00.000Z",
     ]);
-    // Every round — including the oldest, six deep — still opens its own report.
-    for (const ordinal of [6, 3, 1]) {
+    // EVERY round — oldest to newest, six deep — opens ITS OWN report: the rendered board is
+    // the clicked round's, and the only round title on the surface is that round's. "A report
+    // is showing" would pass with all six rows opening round 1.
+    for (const ordinal of [6, 5, 4, 3, 2, 1]) {
       await r.user.click(r.container.querySelector(`[data-round="${ordinal}"]`) as HTMLElement);
       expect(
         r.container.querySelector(`[data-round="${ordinal}"]`)?.getAttribute("aria-current"),
       ).toBe("true");
-      expect(r.container.querySelector('[data-kind="round-report"]')).not.toBeNull();
+      const report = r.container.querySelector('[data-kind="round-report"]');
+      expect(report).not.toBeNull();
+      expect(report?.getAttribute("data-board-id")).toBe(`report-round-${ordinal}`);
+      const shown = [1, 2, 3, 4, 5, 6]
+        .map(reportTitle)
+        .filter((title) => report?.textContent?.includes(title));
+      expect(shown).toEqual([reportTitle(ordinal)]);
+      expect(report?.textContent).toContain(`What round ${ordinal} of the loop actually changed.`);
     }
   });
 
