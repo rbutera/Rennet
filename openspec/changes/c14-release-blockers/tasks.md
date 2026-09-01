@@ -24,7 +24,7 @@
 ## 5. Harness dispatch residue (#681 — resolution landed via #692)
 
 - [x] 5.1 Verify the landed resolution against #681's acceptance (typed unavailable failure, no silent fallback, durable displayed provenance) and give the still-Claude-hardcoded coverage seat (`runLiveCoverage`) honest provenance or typed absence on non-Claude installs (D3)
-- [x] 5.2 Launched-app second-round proof in both resolution cases (Claude-only, Codex-only) plus positive control for missing/misresolved harness
+- [x] 5.2 Launched-app second-round proof in both resolution cases (Claude-only, Codex-only) plus positive control for missing/misresolved harness — **scope, stated exactly**: the HERMETIC launched-app proof (`apps/desktop/e2e/owner-loop-685.spec.ts`, scripted harness) covers both legs in full — two rounds each, plus the daemon-preserving app restart between them — and asserts displayed provenance, durable per-round provenance, and the executing session's own provider from the invocation ledger. The REAL-HARNESS leg was driven for round ONE only: round two is blocked by a pre-existing `verifyAskPath` defect in `packages/server/src/runtime/round-report-verification.ts`, control-proven identical at this branch's base commit and therefore not introduced here; its fix is owned elsewhere. The missing/misresolved positive controls are unit-level (`create-server.test.ts`: pinned misresolution, unpinned misresolution, no-harness dispatch) plus the composed Codex-only `openspec.coverage` server test, not launched-app.
 - [x] 5.3 Verify `docs/using/guides/install-a-coding-harness.md` claims against landed behavior; correct if needed
 
 ## 6. Classifier evidence contract (#727 + #726)
