@@ -6,7 +6,6 @@ import {
   baselineAdvanceDepsFor,
   execaGit,
   type GitExec,
-  type KnowledgeSwarmOutcome,
   type ProjectSnapshotGenerator,
   type ProjectSnapshotStore,
   resolveBaseRef,
@@ -22,9 +21,7 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  * branch moves, so a review opened at the new tip reads a fresh structural picture
  * (context.map / context.file) without an on-open rebuild.
  *
- * ⚠️ SCOPE: this makes the SNAPSHOT proactive. It does NOT keep the LLM knowledge
- * layer (context.knowledge) warm — that layer is not wired into desktop at all, so
- * there is no set to delta from. #143's knowledge half is untouched by this.
+ * ⚠️ SCOPE: this keeps the deterministic SNAPSHOT proactive — nothing model-backed.
  *
  * The delta-pass ENGINE (`BaselineAdvanceCoordinator` debounce+coalesce,
  * `startBaselineWatch` fs.watch over the ref tree, and the ProjectSnapshot regen
@@ -37,7 +34,7 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  * update" direction keeps the DETERMINISTIC snapshot rebuild warm and never yields a
  * WRONG review — every context read is gated on content-equality at the review's own
  * pinned base OID (`project-context-reader.ts`, R30) and returns a typed `stale`
- * refusal rather than serving a mismatched map. (The LLM knowledge layer is a separate,
+ * refusal rather than serving a mismatched map. (Novelty reclassification is a separate,
  * not-yet-wired composition; it is deliberately NOT triggered here.)
  *
  * ⚠️ KNOWN LIMITATION (#143, Codex review): the store holds ONE manifest per repo, so a
@@ -76,13 +73,6 @@ export interface ResolvedRepo {
   readonly gitCommonDir: string;
 }
 
-interface KnowledgeAdvance {
-  readonly projectId: string;
-  readonly repoKey: string;
-  readonly repoRoot: string;
-  readonly toOid: string;
-}
-
 /** The absolute git common dir for `root` (`rev-parse --git-common-dir`, path-resolved). */
 export async function resolveGitCommonDir(root: string, git: GitExec): Promise<string> {
   const raw = (await git(root, ["rev-parse", "--git-common-dir"], { reject: true })).trim();
@@ -115,18 +105,6 @@ export interface StartRepoRehydrationDeps {
   readonly narrate: (event: ProjectProcessEvent) => void;
   /** A resolve/build error — logged, never thrown into the watcher. */
   readonly onError?: (error: unknown) => void;
-  /**
-   * Background knowledge upkeep: fired once when the watcher starts (the initial
-   * run — the swarm itself no-ops when the set is already current) and again on
-   * each coalesced baseline advance. The swarm derives its own delta base from
-   * the prior set's identity, so the advance carries only the target OID.
-   */
-  readonly runKnowledgePass?: (advance: {
-    readonly projectId: string;
-    readonly repoKey: string;
-    readonly repoRoot: string;
-    readonly toOid: string;
-  }) => Promise<KnowledgeSwarmOutcome>;
   /** Deterministic in-flight novelty reclassification after the structural advance. */
   readonly runNoveltyPass?: (repoKey: string) => Promise<void>;
   readonly git?: GitExec;
@@ -161,43 +139,6 @@ export async function startRepoRehydration(
   if (!deps.store.loadManifest(resolved.repoKey)) return null;
 
   const repoLabel = basename(resolved.root) || resolved.root;
-  let pendingKnowledge: KnowledgeAdvance | undefined;
-  let knowledgeRunning = false;
-  // A pass that did not produce knowledge only re-runs when a NEWER target
-  // arrived while it ran. Re-running the SAME target is not a retry, it is the
-  // identical prompt against the identical inputs — which is exactly how a
-  // context-window failure burned forty minutes of subscription three times.
-  const restoreFailedKnowledge = (failed: KnowledgeAdvance): boolean => {
-    const queued: KnowledgeAdvance | undefined = pendingKnowledge;
-    // The swarm derives its own delta base from the stored prior set, so a
-    // failed pass needs no from-OID bookkeeping — just keep the newest target.
-    pendingKnowledge = queued ?? failed;
-    return queued !== undefined;
-  };
-  const scheduleKnowledge = (advance: KnowledgeAdvance): void => {
-    pendingKnowledge = advance;
-    if (knowledgeRunning || !deps.runKnowledgePass) return;
-    knowledgeRunning = true;
-    void (async () => {
-      while (pendingKnowledge) {
-        const next: KnowledgeAdvance = pendingKnowledge;
-        pendingKnowledge = undefined;
-        try {
-          const outcome = await deps.runKnowledgePass?.(next);
-          // `ok` and `skipped` both mean the store is current for this target.
-          // Everything else carries a reason the runtime has already narrated.
-          if (outcome && outcome.status !== "ok" && outcome.status !== "skipped") {
-            if (!restoreFailedKnowledge(next)) break;
-          }
-        } catch (error) {
-          const hasQueued = restoreFailedKnowledge(next);
-          deps.onError?.(error);
-          if (!hasQueued) break;
-        }
-      }
-      knowledgeRunning = false;
-    })();
-  };
 
   const base = baselineAdvanceDepsFor({
     repoRoot: resolved.root,
@@ -240,14 +181,6 @@ export async function startRepoRehydration(
         };
         await deps.runNoveltyPass?.(resolved.repoKey);
         deps.narrate({ kind: "repo-done", repo: repoLabel, summary });
-        if (deps.runKnowledgePass) {
-          scheduleKnowledge({
-            projectId: deps.projectId,
-            repoKey: resolved.repoKey,
-            repoRoot: resolved.root,
-            toOid: result.manifest.baseOid,
-          });
-        }
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         deps.narrate({ kind: "repo-error", repo: repoLabel, message });
@@ -265,19 +198,6 @@ export async function startRepoRehydration(
     coordinator,
     deps.watch ? { watch: deps.watch } : {},
   );
-  // The INITIAL knowledge run (task 5.2, review P1): a freshly-processed project
-  // gets its first swarm here, without waiting for a baseline advance. The swarm
-  // itself no-ops (`skipped`) when the stored set is already current, so this is
-  // idempotent across app launches.
-  const manifest = deps.store.loadManifest(resolved.repoKey);
-  if (manifest && deps.runKnowledgePass) {
-    scheduleKnowledge({
-      projectId: deps.projectId,
-      repoKey: resolved.repoKey,
-      repoRoot: resolved.root,
-      toOid: manifest.baseOid,
-    });
-  }
   let closed = false;
   return {
     repoKey: resolved.repoKey,
@@ -308,7 +228,6 @@ export interface ProactiveRehydrationDeps {
   readonly narrate: (projectId: string, event: ProjectProcessEvent) => void;
   readonly onError?: (error: unknown) => void;
   readonly git?: GitExec;
-  readonly runKnowledgePass?: StartRepoRehydrationDeps["runKnowledgePass"];
   readonly runNoveltyPass?: StartRepoRehydrationDeps["runNoveltyPass"];
   /** Test seam: the per-repo starter (defaults to `startRepoRehydration`). */
   readonly startRepo?: (deps: StartRepoRehydrationDeps) => Promise<RepoRehydrationHandle | null>;
@@ -358,7 +277,6 @@ export function createProactiveRehydration(deps: ProactiveRehydrationDeps): Proa
             narrate: (event) => deps.narrate(project.id, event),
             ...(deps.onError ? { onError: deps.onError } : {}),
             ...(deps.git ? { git: deps.git } : {}),
-            ...(deps.runKnowledgePass ? { runKnowledgePass: deps.runKnowledgePass } : {}),
             ...(deps.runNoveltyPass ? { runNoveltyPass: deps.runNoveltyPass } : {}),
           });
           // No snapshot yet — not cached, so a later ensure retries this path.

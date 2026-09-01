@@ -594,7 +594,7 @@ export const processedRepoSummarySchema = z.object({
 export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
 
 /** The three ordered phases of one add-project run, plus its terminal state. */
-export const projectProcessPhaseSchema = z.enum(["scout", "map", "knowledge", "complete"]);
+export const projectProcessPhaseSchema = z.enum(["scout", "map", "complete"]);
 export type ProjectProcessPhase = z.infer<typeof projectProcessPhaseSchema>;
 
 /** A step's explicit lifecycle. The renderer never infers completion from a later row. */
@@ -636,8 +636,6 @@ export const projectProcessTotalsSchema = z.object({
   repos: z.number().int().nonnegative(),
   files: z.number().int().nonnegative(),
   scopes: z.number().int().nonnegative(),
-  confirmed: z.number().int().nonnegative(),
-  rejected: z.number().int().nonnegative(),
 });
 export type ProjectProcessTotals = z.infer<typeof projectProcessTotalsSchema>;
 
@@ -661,7 +659,7 @@ export const projectProcessRunSchema = z.discriminatedUnion("status", [
   }),
   projectProcessRunBaseSchema.extend({
     status: z.literal("running"),
-    phase: z.enum(["scout", "map", "knowledge"]),
+    phase: z.enum(["scout", "map"]),
   }),
   projectProcessRunBaseSchema.extend({
     status: z.literal("done"),
@@ -670,7 +668,7 @@ export const projectProcessRunSchema = z.discriminatedUnion("status", [
   }),
   projectProcessRunBaseSchema.extend({
     status: z.literal("failed"),
-    phase: z.enum(["scout", "map", "knowledge"]),
+    phase: z.enum(["scout", "map"]),
     reason: z.string().min(1),
   }),
 ]);
@@ -979,170 +977,6 @@ export const projectDetailSchema = z.object({
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 
-// ── The Context Map surface (change add-context-map-view) ─────────────────────
-// The persisted Repo Map behind the typed boundary: the deterministic ProjectMap
-// (structure) plus the model-derived knowledge set (labelled hypotheses), read
-// from the local project store — no rebuild, no model spend on the read path.
-export const projectMapSchema = z.object({
-  baseRef: z.string().min(1),
-  baseRefResolution: z.enum([
-    "forge-metadata",
-    "symbolic-head",
-    "configured-upstream",
-    "explicit-setting",
-  ]),
-  baseOid: z.string().min(1),
-  fingerprint: z.string().min(1),
-  files: z.array(
-    z.object({
-      path: z.string(),
-      blobOid: z.string(),
-      size: z.number(),
-      mode: z.string(),
-    }),
-  ),
-  scopes: z.array(
-    z.object({
-      name: z.string(),
-      root: z.string(),
-      sourceRoot: z.string().optional(),
-      type: z.enum(["library", "application"]).optional(),
-      private: z.boolean(),
-      tags: z.array(z.string()),
-    }),
-  ),
-  edges: z.array(
-    z.object({ from: z.string(), to: z.string(), kind: z.enum(["manifest", "implicit"]) }),
-  ),
-  entryPoints: z.array(
-    z.object({
-      scope: z.string(),
-      main: z.string().optional(),
-      module: z.string().optional(),
-      types: z.string().optional(),
-      /** The `exports` field, canonicalized; opaque JSON preserved verbatim. */
-      exports: z.unknown().optional(),
-      bin: z.array(z.tuple([z.string(), z.string()])),
-    }),
-  ),
-  tests: z.array(
-    z.object({ path: z.string(), scope: z.string().nullable(), matchedBy: z.string() }),
-  ),
-  ownership: z.array(z.object({ pattern: z.string(), owners: z.array(z.string()) })),
-  conventions: z.array(
-    z.object({
-      path: z.string(),
-      digest: z.string(),
-      kind: z.enum([
-        "formatter",
-        "linter",
-        "typescript",
-        "workspace",
-        "nx",
-        "editorconfig",
-        "rennet",
-        "other",
-      ]),
-    }),
-  ),
-});
-export type ProjectMapPayload = z.infer<typeof projectMapSchema>;
-
-export const knowledgeAnchorSchema = z.object({
-  path: z.string().min(1),
-  blobOid: z.string().min(1),
-  symbol: z.string().optional(),
-  lines: z
-    .object({ startLine: z.number().min(1), endLine: z.number().min(1).optional() })
-    .optional(),
-});
-
-export const knowledgeStatementSchema = z.object({
-  id: z.string().min(1),
-  subject: z.string().min(1),
-  aspect: z.enum(["purpose", "convention", "why"]),
-  claim: z.string().min(1),
-  evidence: z.array(knowledgeAnchorSchema),
-  confidence: z.enum(["high", "medium", "low"]),
-  status: z.enum(["hypothesis", "confirmed", "rejected"]),
-  provenance: z.object({
-    generator: z.string(),
-    model: z.string().nullable(),
-    apiKeySource: z.string().nullable(),
-  }),
-  learnedAgainst: z.object({ baseOid: z.string(), snapshotFingerprint: z.string() }),
-});
-export type KnowledgeStatementPayload = z.infer<typeof knowledgeStatementSchema>;
-
-export const knowledgeCoverageFileSchema = z.object({
-  path: z.string().min(1),
-  blobOid: z.string().min(1),
-});
-
-const knowledgeMechanicalExclusionReasonSchema = z.enum([
-  "binary",
-  "lockfile",
-  "vendored",
-  "generated-path",
-  "generated-content",
-]);
-
-export const knowledgeCoverageGroupSchema = z.union([
-  z.object({
-    kind: z.literal("mapped"),
-    sliceId: z.string().min(1),
-    files: z.array(knowledgeCoverageFileSchema),
-  }),
-  z.object({
-    kind: z.literal("excluded"),
-    source: z.literal("scope"),
-    sliceId: z.string().min(1),
-    reason: z.string().min(1),
-    files: z.array(knowledgeCoverageFileSchema),
-  }),
-  z.object({
-    kind: z.literal("excluded"),
-    source: z.literal("mechanical"),
-    reason: knowledgeMechanicalExclusionReasonSchema,
-    files: z.array(knowledgeCoverageFileSchema),
-  }),
-]);
-
-export const knowledgeCoverageSchema = z.object({
-  schemaVersion: z.literal(1),
-  catalogueDigest: z.string().min(1),
-  selector: z.discriminatedUnion("kind", [
-    z.object({
-      kind: z.literal("below-cap"),
-      cap: z.number().int().positive(),
-      generator: z.string().min(1),
-    }),
-    z.object({
-      kind: z.literal("council"),
-      cap: z.number().int().positive(),
-      generator: z.string().min(1),
-      harness: z.enum(["claude-code", "codex"]),
-      assignedModel: z.string().min(1),
-      model: z.string().min(1),
-      effort: z.enum(["low", "medium", "high", "xhigh"]),
-      apiKeySource: z.string().nullable(),
-    }),
-  ]),
-  groups: z.array(knowledgeCoverageGroupSchema),
-});
-export type KnowledgeCoveragePayload = z.infer<typeof knowledgeCoverageSchema>;
-
-export const knowledgeSetSchema = z.object({
-  schemaVersion: z.number(),
-  repoKey: z.string(),
-  baseOid: z.string(),
-  snapshotFingerprint: z.string(),
-  generator: z.string(),
-  coverage: knowledgeCoverageSchema.optional(),
-  statements: z.array(knowledgeStatementSchema),
-});
-export type KnowledgeSetPayload = z.infer<typeof knowledgeSetSchema>;
-
 /** Wire-safe identity for one repository inside a workspace project. */
 export const projectRepositoryAddressSchema = z
   .object({
@@ -1154,69 +988,6 @@ export const projectRepositoryAddressSchema = z
     message: "forgeRepository must name the same owner/name as repository",
   });
 export type ProjectRepositoryAddress = z.infer<typeof projectRepositoryAddressSchema>;
-
-export const projectContextMapResultSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("ok"),
-    map: projectMapSchema,
-    knowledge: knowledgeSetSchema.nullable(),
-  }),
-  // No persisted snapshot (or it failed the freshness/integrity gate): a typed
-  // absent naming why — never a fabricated or partially-served map.
-  z.object({
-    status: z.literal("absent"),
-    reason: z.string().min(1),
-    /**
-     * The durable run that currently owns this project's map. Optional only for
-     * compatibility with older daemons; current servers expose it when a journal exists.
-     */
-    run: projectProcessRunSchema.optional(),
-  }),
-  z.object({
-    status: z.literal("members"),
-    members: z.array(projectRepositoryAddressSchema).min(2),
-  }),
-]);
-export type ProjectContextMapResult = z.infer<typeof projectContextMapResultSchema>;
-
-// The project-scoped context ask (the same engine `context.ask` runs for a
-// review, keyed by {repoKey, baseOid} at the persisted tip). Cost is ALWAYS
-// reported — a failed ask still spent (or honestly reports zero) turns.
-export const contextAskCostSchema = z.object({
-  turns: z.number(),
-  model: z.string().nullable(),
-  effort: z.string().nullable(),
-  budgetGranted: z.boolean(),
-  overage: z.boolean(),
-  /** The council's inspectable "why this model" trace; opaque JSON preserved verbatim. */
-  resolution: z.unknown(),
-});
-
-export const contextAnswerSchema = z.object({
-  answer: z.string(),
-  evidence: z.array(knowledgeAnchorSchema),
-  confidence: z.enum(["high", "medium", "low"]),
-  consulted: z.array(z.string()),
-  cost: contextAskCostSchema,
-  unanswered: z.object({ reason: z.string() }).optional(),
-});
-
-export const projectContextAskResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("answered"), answer: contextAnswerSchema }),
-  z.object({ status: z.literal("unanswered"), answer: contextAnswerSchema }),
-  z.object({
-    status: z.literal("failed"),
-    failureReason: z.string().min(1),
-    cost: contextAskCostSchema,
-  }),
-]);
-export type ProjectContextAskResult = z.infer<typeof projectContextAskResultSchema>;
-
-export const knowledgeDispositionResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("ok"), statement: knowledgeStatementSchema }),
-  z.object({ status: z.literal("not-found"), statementId: z.string().min(1) }),
-]);
-export type KnowledgeDispositionResult = z.infer<typeof knowledgeDispositionResultSchema>;
 
 // ── The Flagged lens: findings + dual-review agreement (issue #138) ───────────
 // The automated review layer's output for a review, delivered behind the typed

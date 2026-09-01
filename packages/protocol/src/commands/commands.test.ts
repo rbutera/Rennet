@@ -241,30 +241,15 @@ describe("command registry invariants (#465)", () => {
     expect(() => parseCommandOutput("patchset.readSpan", { lines: "not-an-array" })).toThrow();
   });
 
-  it("keeps Context Map repository addresses provider-qualified and non-contradictory", () => {
+  it("keeps session.mint repository addresses provider-qualified and non-contradictory", () => {
     const address = {
       projectId: "project-1",
       repository: "acme/repo-b",
       forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-b" },
     };
-    expect(parseCommandInput("project.contextMap", address)).toEqual(address);
-    expect(
-      parseCommandOutput("project.contextMap", {
-        status: "members",
-        members: [
-          {
-            repository: "acme/repo-a",
-            forgeRepository: { forge: "github", owner: "acme", name: "repo-a" },
-          },
-          {
-            repository: "acme/repo-b",
-            forgeRepository: address.forgeRepository,
-          },
-        ],
-      }),
-    ).toMatchObject({ status: "members" });
+    expect(parseCommandInput("session.mint", address)).toEqual(address);
     expect(() =>
-      parseCommandInput("project.contextMap", {
+      parseCommandInput("session.mint", {
         ...address,
         forgeRepository: { forge: "gitlab", owner: "acme", name: "repo-a" },
       }),

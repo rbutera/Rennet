@@ -29,7 +29,6 @@ import {
   captureRangePatchset,
   claudeHandoffRunPort,
   cleanupWorktree,
-  contextAskBackend,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
   createClientSettingsStore,
@@ -82,7 +81,6 @@ import {
   type GitLabPrSubmissionCommandRunner,
   gitForRepoFactory,
   isGitHubNetworkError,
-  KnowledgeStore,
   landRoundBranch,
   landRoundChanges,
   listDir,
@@ -164,7 +162,6 @@ import {
   mechanicalComposition,
   mintSession,
   planQuoteThreadReanchors,
-  queryKnowledge,
   queryProjectMap,
   ReviewService,
   recordSeatSend,
@@ -189,7 +186,6 @@ import type {
   Generation,
   GitHubAuthStatus,
   GitHubConnectPoll,
-  KnowledgeDispositionResult,
   LensBoard,
   LensKind,
   LensLane,
@@ -197,8 +193,6 @@ import type {
   OpenSpecCoverage,
   Patchset,
   Project,
-  ProjectContextAskResult,
-  ProjectContextMapResult,
   ProjectProcessEvent,
   ProjectSource,
   Review,
@@ -288,7 +282,6 @@ import {
   type RoundSourceLandingInjection,
   supportsNativeRoundSourceLanding,
 } from "./round-source-landing-native";
-import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
 import {
   projectLensBoard,
   projectRoundReportBoard,
@@ -885,21 +878,6 @@ export function createRoundRegenerationProgressQueue(handlers: {
       await tail;
       if (failure !== undefined) throw failure.error;
     },
-  };
-}
-
-export function projectContextUnavailableForProcess(
-  record: ProjectProcessJournalRecord | null,
-): ProjectContextMapResult | null {
-  if (record === null || record.status === "done") return null;
-  const run = projectProcessRunFromRecord(record);
-  return {
-    status: "absent",
-    reason:
-      run.status === "failed"
-        ? `Context Map ${run.phase} failed: ${run.reason}`
-        : `Context Map ${run.phase} is still running`,
-    run,
   };
 }
 
@@ -1737,7 +1715,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // its version, so a root may be added but never removed or swapped in place.
   const allowedRoots = new Set<string>();
   // Proactive Repo Map rehydration (#143/#243): keeps each built project's structural
-  // snapshot and model-backed knowledge warm as its reference branch advances.
+  // snapshot warm as its reference branch advances.
   // Assigned in `whenReady`, torn down on quit.
   let rehydration: ProactiveRehydration | null = null;
   // The loopback WS listener (#378), assigned once dispatch exists (below). The
@@ -2351,14 +2329,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const snapshotStore = liveSnapshotStore;
   const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore, gitForRepo });
   // Proactive rehydration (#143/#243): keep each already-built project's structural
-  // snapshot and knowledge warm as its reference branch advances. The background pass
+  // snapshot warm as its reference branch advances. The background pass
   // narrates on the SAME progress push the processing screen uses (now WS `progressEvent`
   // frames fanned to every client, #378), under a stable command id, so the mechanism is
   // visible-capable with no new protocol surface. It only warms repos that already have a
   // snapshot — it never cold-builds in the background.
-  // The knowledge-swarm scheduler (#460, B06): server/runtime/ is the wiring
-  // point (reconciliation 3). It shares the rehydration progress push, so the
-  // swarm's `knowledge`-stage lines land on the same screen as the build stages.
   // Fan ONE project's background narration to every connected client, on that
   // project's own channel. The optional caller hook stays for non-WS embedders;
   // the WS listener reaches the sockets that replaced the per-window
@@ -2373,12 +2348,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Bound after board drafting is composed below. Context production starts earlier in
   // the composition root, so its completion callbacks need a late-bound, synchronous kick.
   let refreshBoardsForProjectContext: (repoRoot: string) => void = () => undefined;
-  const knowledgeSwarmRuntime = createKnowledgeSwarmRuntime({
-    store: snapshotStore,
-    resolveClaudePort: claudeAdapterForRepo,
-    resolveCodexExecutor: codexExecutorForRepo,
-    narrate: narrateBackground,
-  });
   // The project-scout scheduler (#461 §4, B7 cluster 4): shares the processing
   // progress push; the deterministic pass runs even with no harness installed.
   const projectScoutRuntime = createProjectScoutRuntime({
@@ -2394,35 +2363,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     generator: snapshotGenerator,
     narrate: narrateBackground,
     // A background pass that throws is otherwise swallowed whole: with no
-    // `onError` the rehydration registry, the watcher start and the knowledge
-    // loop all had nowhere to put a failure.
+    // `onError` the rehydration registry and the watcher start had nowhere to
+    // put a failure.
     onError: (error) => console.error("Proactive rehydration failed", error),
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
-    // The knowledge pass is the council-routed partition swarm (#460, B06): the
-    // swarm picks skip vs incremental vs full itself from the stored prior set's
-    // identity, and its per-partition + verify lines ride the SAME rehydration
-    // progress push as the narrate above. The typed outcome reaches the caller
-    // INTACT — collapsing it to a boolean dropped every failure reason.
-    runKnowledgePass: async ({ projectId, repoKey, repoRoot, toOid }) => {
-      const outcome = await knowledgeSwarmRuntime.runForRepo({
-        projectId,
-        repoKey,
-        repoRoot,
-        toOid,
-      });
-      if (
-        outcome.status === "ok" ||
-        (outcome.status === "skipped" && new KnowledgeStore(snapshotStore).loadLocal(repoKey))
-      ) {
-        refreshBoardsForProjectContext(repoRoot);
-      }
-      return outcome;
-    },
   });
-  // One durable add-project run owns scout → structural map → knowledge. Its journal
-  // lives beside the map so a daemon restart replays completed steps and resumes the
+  // One durable add-project run owns scout → structural map. Its journal lives
+  // beside the map so a daemon restart replays completed steps and resumes the
   // first incomplete phase under the same stable command identity.
-  const projectProcessKnowledge = new KnowledgeStore(snapshotStore);
   const processProjectCore = createProcessProject({
     generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
     listProjects: () => projectStore.list(),
@@ -2439,24 +2387,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
       return result ? scoutQuestionnaire(basename(input.repoRoot), result) : null;
     },
-    runKnowledge: async (input) => {
-      const outcome = await knowledgeSwarmRuntime.runForRepo({
-        projectId: input.projectId,
-        repoKey: input.repoKey,
-        repoRoot: input.repoRoot,
-        toOid: input.toOid,
-        runId: input.runId,
-        narrate: input.narrate,
-      });
-      if (
-        outcome.status === "ok" ||
-        (outcome.status === "skipped" && projectProcessKnowledge.loadLocal(input.repoKey))
-      ) {
-        refreshBoardsForProjectContext(input.repoRoot);
-      }
-      return outcome;
-    },
-    loadKnowledge: (repoKey) => projectProcessKnowledge.loadLocal(repoKey),
   });
   // The app-side settings stores (B10 #476): viewer preferences (appearance,
   // keybindings) in `client-settings.json`, the host's global ladder rung (the
@@ -2784,9 +2714,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * The deps a generation's boards are drafted through, for ONE review's session.
    *
    * Shared by the two callers, because they differ in exactly ONE thing — whether a coding
-   * turn ran first. The knowledge set the drafters read, the whole-tree citation inventory
-   * lint resolves against, the prior generation carry is decided by, and the rounds runtime
-   * itself are identical either way, and were identical when they were written twice.
+   * turn ran first. The gated snapshot the packet fan-in reads, the whole-tree citation
+   * inventory lint resolves against, the prior generation carry is decided by, and the
+   * rounds runtime itself are identical either way, and were identical when they were
+   * written twice.
    */
   const projectContextForBoards = (review: Review, patchset: Patchset) => {
     const repoKey = repoKeyForRoot(review.repositoryRoot);
@@ -2798,17 +2729,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       repoKey,
       patchset.repository.baseOid,
     );
-    const set = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey) ?? null;
     const snapshot = gated.ok ? gated.snapshot : null;
     return {
-      set,
       snapshot,
-      revision: sha256Hex(
-        canonicalize({
-          snapshot: snapshot?.manifest.fingerprint ?? null,
-          knowledge: set,
-        }),
-      ),
+      revision: sha256Hex(canonicalize({ snapshot: snapshot?.manifest.fingerprint ?? null })),
     };
   };
 
@@ -2822,21 +2746,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): BoardRegenerationDeps => ({
     recapture,
     reviewNow,
-    // The drafters' knowledge is SELECTED, not dumped (context-map rebuild, W5b):
-    // this seam hands over the stored set plus the snapshot gated fresh at the
-    // patchset's own base OID, and `assembleRoundCollation` projects (invalidated
-    // disclosed, rejected dropped), scopes to the change's 1-hop import
-    // neighbourhood, and caps — disclosing all three in the packet. A gate refusal
-    // is a null snapshot, which degrades to the unprojected set and SAYS so; it is
-    // never a silently narrower one.
-    //
-    // The reader is the OVERLAY-MERGED one, the same shape the review's own
-    // `context.file`/`context.map` tools are built with: a review on a
-    // non-default base resolves through a warmed overlay, and a bare reader
-    // would refuse it as stale. Without this the packet could degrade to
-    // `unprojected` on a review whose context tools were answering fine —
-    // two readers disagreeing about the same review's snapshot.
-    knowledgeFor: (patchset: Patchset) => projectContextForBoards(review, patchset),
+    // The packet's fan-in reads the snapshot gated fresh at the patchset's own
+    // base OID. The reader is the OVERLAY-MERGED one: a review on a non-default
+    // base resolves through a warmed overlay, and a bare reader would refuse it
+    // as stale — two readers disagreeing about the same review's snapshot.
+    snapshotFor: (patchset: Patchset) => projectContextForBoards(review, patchset),
     // W5 — the WHOLE-TREE citation grounding. Drafters read past the diff, so
     // lint resolves citations against every text file at the reviewed head and
     // base, not only the changed ones. Two `git grep -c` passes over the repo's
@@ -3949,23 +3863,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   };
 
-  type ProjectContextAddressInput = Pick<
-    CommandInput<"project.contextMap">,
-    "projectId" | "repository" | "forgeRepository"
-  >;
-  const resolveProjectContext = async (input: ProjectContextAddressInput) => {
-    const project = projectStore.list().find((entry) => entry.id === input.projectId);
-    const selection = await resolveProjectContextRepository({
-      project,
-      target: {
-        ...(input.repository === undefined ? {} : { repository: input.repository }),
-        ...(input.forgeRepository === undefined ? {} : { forgeRepository: input.forgeRepository }),
-      },
-      identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
-    });
-    return { project, selection };
-  };
-
   dispatch = createDispatch({
     service,
     allowedRoots,
@@ -4359,8 +4256,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         projects: projectStore.list(),
       }),
     },
-    // The complete add-project run: persisted scout facts first, then structural
-    // map, then knowledge. The command does not resolve until that advertised run
+    // The complete add-project run: persisted scout facts first, then the
+    // structural map. The command does not resolve until that advertised run
     // is terminal, so the header, timeline, sidebar, and ready card share one fact.
     processProject: async (input, emit) => {
       const result = await processProjectCore(
@@ -4368,7 +4265,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         emit,
       );
       // Once the initial run is terminal, start the idempotent baseline watcher.
-      // Its first knowledge kick reads the just-written current set and skips.
       const processed = projectStore.list().find((entry) => entry.id === input.projectId);
       if (processed && result.run?.status === "done") {
         void rehydration?.ensureForProject(processed);
@@ -4459,144 +4355,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         { projectId, worktreeId },
       );
     },
-    // ── The Context Map surface (change add-context-map-view) ─────────────────
-    // Pure read of the persisted Repo Map: resolve the project's repoKey exactly as
-    // the store writes it, gate the stored tip fresh, then serve queryProjectMap +
-    // the local knowledge set verbatim. No rebuild, no model spend.
-    projectContextMap: async (input) => {
-      const { project, selection } = await resolveProjectContext(input);
-      if (selection.kind === "members") {
-        return { status: "members", members: [...selection.members] };
-      }
-      if (selection.kind === "missing") {
-        return {
-          status: "absent",
-          reason:
-            project === undefined
-              ? "unknown project"
-              : "the selected repository is not part of this project",
-        };
-      }
-      const projectRoot = selection.repositoryRoot;
-      const repoKey = repoKeyForRoot(projectRoot);
-      const primaryRoot = project ? project.openPath || project.path : projectRoot;
-      const processRecord = projectProcessJournal.load(repoKeyForRoot(primaryRoot));
-      const absent = (reason: string): ProjectContextMapResult => ({
-        status: "absent",
-        reason,
-        ...(processRecord ? { run: projectProcessRunFromRecord(processRecord) } : {}),
-      });
-      const processing = projectContextUnavailableForProcess(processRecord);
-      if (processing) return processing;
-      const manifest = liveSnapshotStore.loadManifest(repoKey);
-      if (!manifest) {
-        return absent(
-          "no repo map is persisted for this project yet — process the project or run `rennet map`",
-        );
-      }
-      const gated = new ProjectContextReader(liveSnapshotStore).loadFresh(
-        repoKey,
-        manifest.baseOid,
-      );
-      if (!gated.ok) return absent(gated.failure.reason);
-      // Project the stored knowledge through the gated snapshot: a statement whose
-      // cited bytes the current map changed is invalidated, and must NOT be served as
-      // an active/current claim (that would render stale knowledge as fresh). We serve
-      // only the resolving statements; the UI badge discloses when the set lags the map.
-      // ponytail: invalidatedPending is dropped from the view, not yet surfaced as a
-      // distinct "pending re-check" tier — add that when the protocol carries it.
-      const storedSet = new KnowledgeStore(liveSnapshotStore).loadLocal(repoKey);
-      let knowledge: typeof storedSet = null;
-      if (storedSet) {
-        const view = queryKnowledge(storedSet, gated.snapshot);
-        const checkedCoverage =
-          view.coverage.kind === "current" || view.coverage.kind === "stale"
-            ? { coverage: view.coverage.exact }
-            : {};
-        knowledge = {
-          schemaVersion: storedSet.schemaVersion,
-          repoKey: storedSet.repoKey,
-          baseOid: storedSet.baseOid,
-          snapshotFingerprint: storedSet.snapshotFingerprint,
-          generator: storedSet.generator,
-          ...checkedCoverage,
-          statements: [...view.statements],
-        };
-      }
-      return {
-        status: "ok",
-        map: queryProjectMap(gated.snapshot),
-        knowledge,
-      } as ProjectContextMapResult;
-    },
-    // Project-scoped context ask: the SAME engine context.ask runs for a review,
-    // keyed at the persisted tip. The backend owns every honest failure state
-    // (absent harness, snapshot refusal) — this wiring only supplies the project's
-    // resolve closure and the user's own harness port.
-    projectContextAsk: async (input) => {
-      const { project, selection } = await resolveProjectContext(input);
-      if (selection.kind !== "resolved") {
-        return {
-          status: "failed",
-          failureReason:
-            project === undefined
-              ? "unknown project"
-              : selection.kind === "members"
-                ? "select a repository before asking about this workspace"
-                : "the selected repository is not part of this project",
-          cost: {
-            turns: 0,
-            model: null,
-            effort: null,
-            budgetGranted: true,
-            overage: false,
-            resolution: null,
-          },
-        };
-      }
-      const projectRoot = selection.repositoryRoot;
-      const repoKey = repoKeyForRoot(projectRoot);
-      const backend = contextAskBackend({
-        reader: new ProjectContextReader(liveSnapshotStore),
-        knowledgeStore: new KnowledgeStore(liveSnapshotStore),
-        resolve: () => ({
-          repoKey,
-          baseOid: liveSnapshotStore.loadManifest(repoKey)?.baseOid ?? "",
-        }),
-        resolvePort: async () => {
-          const { locus, distroCwd } = locusContextForRepo(projectRoot);
-          return (await getClaudeHarness(locus, distroCwd)).adapter;
-        },
-        repoRoot: projectRoot,
-      });
-      return backend.ask({
-        question: input.question,
-        ...(input.scope === undefined ? {} : { scope: input.scope }),
-      }) as Promise<ProjectContextAskResult>;
-    },
-    // The human-confirm surface (R54): flip one statement's status by id and persist
-    // the whole set atomically. Map preserves the deterministic id order; the claim
-    // is never edited, so the content-hash id stays stable.
-    knowledgeDisposition: async (input) => {
-      const { selection } = await resolveProjectContext(input);
-      if (selection.kind !== "resolved") {
-        return { status: "not-found", statementId: input.statementId };
-      }
-      const projectRoot = selection.repositoryRoot;
-      const repoKey = repoKeyForRoot(projectRoot);
-      const knowledgeStore = new KnowledgeStore(liveSnapshotStore);
-      const set = knowledgeStore.loadLocal(repoKey);
-      const statement = set?.statements.find((entry) => entry.id === input.statementId);
-      if (!set || !statement) return { status: "not-found", statementId: input.statementId };
-      const updated = { ...statement, status: input.disposition };
-      knowledgeStore.save(repoKey, {
-        ...set,
-        statements: set.statements.map((entry) =>
-          entry.id === input.statementId ? updated : entry,
-        ),
-      });
-      return { status: "ok", statement: updated } as KnowledgeDispositionResult;
-    },
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
     // diff. Dual-review aggregation (#41) + per-finding verification (#179) run by
@@ -4653,10 +4411,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           budget: createInvocationBudget(0),
         });
         const live = await createDesktopReviewBackend(headReview, pipeline, {
-          resolveKnowledgePort: async (repoRoot) => {
-            const { locus, distroCwd } = locusContextForRepo(repoRoot);
-            return (await getClaudeHarness(locus, distroCwd)).adapter;
-          },
           noveltyLifecycle: liveNoveltyLifecycle,
         });
         return live.backend;

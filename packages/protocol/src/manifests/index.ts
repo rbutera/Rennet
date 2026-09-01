@@ -52,9 +52,6 @@ export const COUNCIL_JOB_IDS = [
   "lens-draft-noise",
   "board-post-process",
   "round-report",
-  "partition-worker",
-  "map-scope",
-  "map-verify",
   "project-scout",
   "related-context-retrieval",
 ] as const;

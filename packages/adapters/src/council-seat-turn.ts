@@ -239,9 +239,6 @@ export interface CouncilSeatDeps {
 }
 
 const ISOLATED_COUNCIL_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
-  "partition-worker",
-  "map-scope",
-  "map-verify",
   "lens-draft",
   "lens-draft-flagged",
   "lens-draft-noise",

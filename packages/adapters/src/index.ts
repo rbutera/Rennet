@@ -106,12 +106,6 @@ export {
   deriveCodexImplementedEvidence,
 } from "./codex-turn-transport";
 export {
-  type ContextAskBackendDeps,
-  type ContextAskBackendPart,
-  contextAskBackend,
-  createContextAskRunTurn,
-} from "./context-ask-backend";
-export {
   assembleContextForComposition,
   DEFAULT_CONTEXT_BYTE_BUDGET,
   gatherContextDocuments,
@@ -328,34 +322,6 @@ export {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
-export {
-  type KnowledgeBackendPart,
-  knowledgeBackend,
-} from "./knowledge-backend";
-export {
-  type JournalTarget,
-  journalKey,
-  KNOWLEDGE_JOURNAL_DIR,
-  KnowledgeJournal,
-  STALE_TARGET_AGE_MS,
-} from "./knowledge-journal";
-export {
-  committedKnowledgeDir,
-  type DiscoverKnowledgeResult,
-  KNOWLEDGE_FILE,
-  KnowledgeStore,
-  type PromoteKnowledgeResult,
-} from "./knowledge-store";
-export {
-  changedPathsBetween,
-  DEFAULT_SWARM_CONCURRENCY_BY_HARNESS,
-  FAILED_BATCH_RETRIES,
-  type KnowledgeSwarmDeps,
-  type KnowledgeSwarmOutcome,
-  type KnowledgeSwarmProgress,
-  runKnowledgeSwarmForRepo,
-  snapshotContextFromLoaded,
-} from "./knowledge-swarm";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,

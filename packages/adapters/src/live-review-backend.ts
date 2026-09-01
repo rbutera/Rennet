@@ -14,15 +14,11 @@ import type {
   Patchset,
   Review,
 } from "@rennet/protocol";
-import { type ContextAskBackendPart, contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
 import { councilSeatTurn } from "./council-seat-turn";
 import { DossierStore } from "./dossier-store";
 import { execaGit, type GitExec } from "./git-range-diff";
-import { type KnowledgeBackendPart, knowledgeBackend } from "./knowledge-backend";
-import { KnowledgeStore } from "./knowledge-store";
-import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import { resolveMapSource } from "./map-travel";
 import { NestedProjectContext } from "./nested-project-context";
 import {
@@ -272,15 +268,7 @@ export interface LiveBackendDeps {
    * degradation to a typed `absent`, lenses unaffected). Defaults to 20000.
    */
   readonly maxSnapshotFiles?: number;
-  /** Optional model port; when present, missing knowledge is enriched in the background. */
-  readonly knowledgePort?: HarnessPort;
-  /**
-   * Resolve the enrichment/answer harness for a repo. Receives the review's
-   * repository root (#334) so the composition root can resolve the project's locus
-   * per call — a WSL project's knowledge turn runs inside the distro, not host-side.
-   */
-  readonly resolveKnowledgePort?: (repoRoot: string) => Promise<HarnessPort | null>;
-  readonly onKnowledgeError?: (error: unknown) => void;
+  readonly onPersistError?: (error: unknown) => void;
   readonly noveltyLifecycle?: NoveltyLifecycleRegistry;
   readonly compositionStore?: RepoCompositionStore;
   /** Override the pipeline's shared per-review invocation meter (tests/composition only). */
@@ -401,14 +389,11 @@ export interface LiveSnapshotOutcome {
 
 /**
  * The live review context backend during the Board rebuild (B2): the surviving
- * model-free context / symbol / novelty / knowledge reads plus the one model-backed
- * `context.ask`. The canvas / diff / run accessors died with the canvas projection
- * (#489); the Board (B-series) re-homes the review surface.
+ * model-free context / symbol / novelty reads. The canvas / diff / run accessors
+ * died with the canvas projection (#489); the Board (B-series) re-homes the
+ * review surface, and a seat that wants more context reads the worktree itself.
  */
-export type LiveReviewContextBackend = ProjectContextBackendPart &
-  NoveltyBackendPart &
-  KnowledgeBackendPart &
-  ContextAskBackendPart;
+export type LiveReviewContextBackend = ProjectContextBackendPart & NoveltyBackendPart;
 
 /** The composed live backend plus the snapshot-on-open outcome. */
 export interface LiveReviewBackend {
@@ -453,7 +438,7 @@ export async function createLiveCanvasOpsBackend(
     review,
     git,
     ...(deps.compositionStore ? { compositionStore: deps.compositionStore } : {}),
-    ...(deps.onKnowledgeError ? { onPersistError: deps.onKnowledgeError } : {}),
+    ...(deps.onPersistError ? { onPersistError: deps.onPersistError } : {}),
   });
 
   // The fail-closed read gate is constructed regardless of the generation
@@ -508,61 +493,16 @@ export async function createLiveCanvasOpsBackend(
     );
   }
 
-  // Knowledge (layer c): seed a committed set into the local store if present (a
-  // committed set is never trusted blind — `discoverCommitted` validates first),
-  // then bind the model-free READ accessor against the same fail-closed gate. An
-  // absent set is an honest empty view; a review never blocks on knowledge.
-  const knowledgeStore = new KnowledgeStore(deps.store);
-  knowledgeStore.discoverCommitted(repoKey, review.repositoryRoot);
-  const currentBase = deps.store.loadManifest(repoKey);
-  if (!knowledgeStore.loadLocal(repoKey) && currentBase) {
-    void (async () => {
-      const port = deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot));
-      if (!port) return;
-      // The initial council-routed swarm run (#460). This seam resolves only a
-      // Claude port, so the council sees a claude-only availability — honest,
-      // not degraded silently.
-      await runKnowledgeSwarmForRepo({
-        reader: new ProjectContextReader(deps.store),
-        knowledgeStore,
-        claudePort: port,
-        codexExecutor: null,
-        repoKey,
-        repoRoot: review.repositoryRoot,
-        baseOid: currentBase.baseOid,
-      });
-    })().catch((error) => deps.onKnowledgeError?.(error));
-  }
-
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
   const noveltyPart = noveltyBackend(
     noveltyReader,
     resolveNoveltyFor(review, repoKey),
     () => liveNovelty,
   );
-  const knowledgePart = knowledgeBackend(
-    reader,
-    knowledgeStore,
-    resolveContextFor(review, repoKey),
-  );
-  // `context.ask` (issue #15): the one model-backed tool. Binds the pure runner to
-  // the same fail-closed reader + local knowledge store, resolving the answering
-  // harness lazily (the user's own `claude`), routed through the council seats.
-  const askPart = contextAskBackend({
-    reader,
-    knowledgeStore,
-    resolve: resolveContextFor(review, repoKey),
-    resolvePort: async () =>
-      deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot)) ?? null,
-    repoRoot: review.repositoryRoot,
-    budget: deps.budget ?? pipeline.invocationBudget,
-  });
 
   const backend: LiveReviewContextBackend = {
     ...contextPart,
     ...noveltyPart,
-    ...knowledgePart,
-    ...askPart,
   };
 
   return {

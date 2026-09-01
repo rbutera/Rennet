@@ -69,12 +69,6 @@ export const REVIEW_ROLE_CATALOGUE: readonly ReviewRoleDef[] = [
     jobId: "orchestrator-chat",
   },
   {
-    id: "map-workers",
-    label: "Context-Map Workers",
-    hint: "The light fan-out that maps the change's context, one turn per slice.",
-    jobId: "partition-worker",
-  },
-  {
     id: "confirmation",
     label: "Confirmation Worker",
     hint: "The self-consistency pass that re-runs on divergence to confirm findings.",
@@ -104,12 +98,6 @@ export const REVIEW_ROLE_CATALOGUE: readonly ReviewRoleDef[] = [
     label: "Post-Process",
     hint: "The light editor that cleans the board's prose after drafting.",
     jobId: "board-post-process",
-  },
-  {
-    id: "utility",
-    label: "Utility",
-    hint: "Light utility work — quick context fetches and formatting.",
-    jobId: "context-ask-fetch",
   },
 ];
 

@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  classifyInventory,
   isSnapshotFresh,
   materializeSnapshot,
-  partitionsFromSnapshot,
+  querySymbolIndex,
   serializeManifest,
   verifySnapshotIntegrity,
 } from "@rennet/core";
@@ -394,9 +395,13 @@ describe("ProjectSnapshotGenerator — rename & same-content copy through the re
     const materialized = materializeSnapshot(first.manifest, (d) => first.built.shards.get(d));
     expect(materialized.ok).toBe(true);
     if (!materialized.ok) return;
-    const mapped = partitionsFromSnapshot(materialized.snapshot).flatMap((slice) =>
-      slice.files.map((f) => f.path),
-    );
+    const symbols = querySymbolIndex(materialized.snapshot);
+    const mapped = classifyInventory(
+      materialized.snapshot.files,
+      symbols.ok ? symbols.index.generatedBlobs : new Set(),
+    )
+      .filter((entry) => entry.ineligible === null)
+      .map((entry) => entry.path);
     expect(mapped).toContain("packages/p/src/hand.py");
     expect(mapped).toContain("packages/p/src/keep.ts");
     expect(mapped).not.toContain("packages/p/src/schema_pb.py");
