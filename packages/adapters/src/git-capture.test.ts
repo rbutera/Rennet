@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitCaptureAdapter } from "./git-capture";
-import type { GitExec } from "./git-range-diff";
+import { EXCLUDE_APP_OWNED_PATHSPEC, type GitExec } from "./git-range-diff";
 
 // win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
 // lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
@@ -56,11 +56,17 @@ describe("GitCaptureAdapter", () => {
       ) {
         return "";
       }
-      if (command === "diff --binary --full-index --no-ext-diff --no-textconv base tree --") {
+      // Every whole-tree diff carries the app-owned exclusion (#729, D6). Spelling the
+      // commands out exactly is the point: a capture that quietly stopped passing it
+      // would fail here rather than in production.
+      if (
+        command ===
+        `diff --binary --full-index --no-ext-diff --no-textconv base tree -- ${EXCLUDE_APP_OWNED_PATHSPEC}`
+      ) {
         return "";
       }
-      if (command === "diff --name-status -z base tree --") return "";
-      if (command === "diff --numstat -z base tree --") return "";
+      if (command === `diff --name-status -z base tree -- ${EXCLUDE_APP_OWNED_PATHSPEC}`) return "";
+      if (command === `diff --numstat -z base tree -- ${EXCLUDE_APP_OWNED_PATHSPEC}`) return "";
       if (command === "log --format=%s base..head") return "";
       throw new Error(`unexpected git command: ${command}`);
     };
@@ -293,6 +299,113 @@ describe("GitCaptureAdapter", () => {
     expect(patchset.intent?.surface).toBe("working-tree");
     expect(patchset.intent?.prBodyAbsent).toBe(true);
     expect(patchset.intent?.commitSubjects).toBeUndefined();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // #729 / D6 — app-owned board artifacts never enter a working-tree capture.
+  //
+  // The fixture deliberately has NO `.rennet` ignore rule, because that is the
+  // repository the bug lived in: Rennet wrote a board, the next capture picked it up,
+  // and the review invalidated itself. Everything else under `.rennet` is the user's
+  // and still captures — that asymmetry is the requirement, not a side effect.
+  // ───────────────────────────────────────────────────────────────────────────
+  it("excludes app-owned board artifacts from files, raw diff and the reviewed tree", async () => {
+    const root = repository();
+    // Tracked project content under `.rennet`, plus the prefix-boundary directory.
+    mkdirSync(join(root, ".rennet", "boards-extra"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":[]}\n');
+    writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "project content under .rennet");
+    git(root, "checkout", "-qb", "feature");
+
+    // The change under review.
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":["one"]}\n');
+    writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine, edited\n");
+
+    // Board artifacts in all three states a repository without an ignore rule reaches.
+    mkdirSync(join(root, ".rennet", "boards", "gen-1"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "boards", "untracked.jsonl"), '{"seq":1}\n');
+    writeFileSync(join(root, ".rennet", "boards", "gen-1", "staged.jsonl"), '{"seq":2}\n');
+    git(root, "add", join(".rennet", "boards", "gen-1", "staged.jsonl"));
+    writeFileSync(join(root, ".rennet", "boards", "committed.jsonl"), '{"seq":3}\n');
+    git(root, "add", "-f", join(".rennet", "boards", "committed.jsonl"));
+    git(root, "commit", "-qm", "a board that got committed");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+    const paths = patchset.files.map((file) => file.path);
+
+    // No board artifact in the file list, in any state.
+    expect(paths).toEqual([
+      ".rennet/boards-extra/notes.md",
+      ".rennet/conventions.json",
+      "tracked.txt",
+    ]);
+    expect(patchset.rawDiff).not.toContain(".rennet/boards/");
+    expect(patchset.rawDiff).not.toContain('{"seq":');
+    // …nor in the reviewed tree, which is where identity and every lens read come from.
+    const reviewedTree = patchset.repository.reviewedTreeOid;
+    if (reviewedTree === undefined) throw new Error("capture omitted reviewedTreeOid");
+    const treePaths = git(root, "ls-tree", "-r", "--name-only", reviewedTree).trim().split("\n");
+    expect(treePaths.filter((path) => path.startsWith(".rennet/boards/"))).toEqual([]);
+    // The user's content under `.rennet` is all still there — tracked means intentional.
+    expect(treePaths).toContain(".rennet/conventions.json");
+    expect(treePaths).toContain(".rennet/boards-extra/notes.md");
+    expect(patchset.rawDiff).toContain("boards-extra");
+  });
+
+  it("keeps identity stable when Rennet writes a board, and moves it when the user edits", async () => {
+    const root = repository();
+    mkdirSync(join(root, ".rennet"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":[]}\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "house rules");
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+
+    const adapter = new GitCaptureAdapter();
+    const pinned = await adapter.capture(root);
+
+    // Rennet writes a board into the review's own repository. This is the #729 harm:
+    // the app invalidating the review it is drafting.
+    mkdirSync(join(root, ".rennet", "boards", "gen-1"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "boards", "gen-1", "events.jsonl"), '{"seq":1}\n');
+    const afterBoardWrite = await adapter.capture(root);
+    expect(afterBoardWrite.id).toBe(pinned.id);
+    expect(afterBoardWrite.repository.reviewedTreeOid).toBe(pinned.repository.reviewedTreeOid);
+
+    // POSITIVE CONTROL 1 — a reviewed source file changes, so identity must move.
+    writeFileSync(join(root, "tracked.txt"), "edited again\n");
+    const afterSourceEdit = await adapter.capture(root);
+    expect(afterSourceEdit.id).not.toBe(pinned.id);
+
+    // POSITIVE CONTROL 2 — a TRACKED `.rennet` project file changes, so identity must
+    // move too. Excluding all of `.rennet` would pass every assertion above and fail
+    // this one, which is exactly the shortcut D6 forbids.
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    expect((await adapter.capture(root)).id).toBe(pinned.id);
+    writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":["one"]}\n');
+    const afterConventionsEdit = await adapter.capture(root);
+    expect(afterConventionsEdit.id).not.toBe(pinned.id);
+    expect(afterConventionsEdit.files.map((file) => file.path)).toContain(
+      ".rennet/conventions.json",
+    );
+  });
+
+  it("does not render a board file committed at the BASE as a deletion", async () => {
+    const root = repository();
+    // The board landed on the base branch — a repository with no ignore rule and a
+    // `git add -A` habit. Sanitizing the reviewed tree alone would show it deleted.
+    mkdirSync(join(root, ".rennet", "boards"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "boards", "old.jsonl"), '{"seq":1}\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "board committed on main");
+    git(root, "checkout", "-qb", "feature");
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+    expect(patchset.files.map((file) => file.path)).toEqual(["tracked.txt"]);
+    expect(patchset.rawDiff).not.toContain("old.jsonl");
   });
 
   it("marks a visible diff as truncated without changing its content identity", async () => {

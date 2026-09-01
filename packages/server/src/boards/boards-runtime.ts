@@ -12,9 +12,16 @@ export type BoardEventsListener = (boardId: string, events: BoardEventFrame["eve
 
 /**
  * The boards runtime: one embedded {@link BoardService} over a
- * {@link FileBoardStore} rooted at `.rennet/boards/` under the review
- * project — local, never staged (`.rennet/` is ignored by default;
- * verified against the repo `.gitignore`).
+ * {@link FileBoardStore} rooted at `.rennet/boards/` under the review project —
+ * local, and never Rennet's to stage or commit.
+ *
+ * It is NOT kept out of reviews by an ignore rule. That claim used to stand here and
+ * it was false (#729): plenty of repositories do not ignore `.rennet/`, and in those
+ * the board this runtime wrote landed in the next capture and invalidated the very
+ * review it belonged to. What keeps it out is that capture, the repo watcher and
+ * freshness all exclude the prefix this store is rooted at, from the shared
+ * `APP_OWNED_BOARD_SEGMENTS` authority joined below — so the exclusion holds whatever
+ * the user's `.gitignore` says, and Rennet never writes an ignore rule into their repo.
  *
  * No freeze/generation policy lives here (append-then-freeze is #457
  * lifecycle, owned by B8/B9). Broadcast: `onEvents` observes the store's

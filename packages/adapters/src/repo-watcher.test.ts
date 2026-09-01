@@ -2,19 +2,51 @@ import { describe, expect, it, vi } from "vitest";
 import { isIgnoredPath } from "./repo-watcher";
 
 describe("isIgnoredPath (add-windows-support: both separator flavours)", () => {
-  it("ignores .git and .rennet on POSIX paths", () => {
+  it("ignores .git on POSIX paths", () => {
     expect(isIgnoredPath("/repo", "/repo/.git/HEAD")).toBe(true);
-    expect(isIgnoredPath("/repo", "/repo/.rennet/map/x")).toBe(true);
   });
 
-  it("ignores .git and .rennet on Windows/UNC paths (backslashes)", () => {
+  it("ignores .git on Windows/UNC paths (backslashes)", () => {
     expect(
       isIgnoredPath(
         "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
         "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git\\HEAD",
       ),
     ).toBe(true);
-    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\map\\x")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.git\\HEAD")).toBe(true);
+  });
+
+  // #729, D6: the watcher used to ignore ALL of `.rennet`, which is a superset of what
+  // capture excludes — so a tracked `.rennet/conventions.json` edit changed the captured
+  // patchset while the watcher stayed silent about it. Now the two agree exactly: the
+  // app-owned board prefix and nothing else.
+  it("ignores the app-owned board prefix, in either separator flavour", () => {
+    expect(isIgnoredPath("/repo", "/repo/.rennet/boards/board-1.jsonl")).toBe(true);
+    // The directory entry itself, so chokidar prunes before descending.
+    expect(isIgnoredPath("/repo", "/repo/.rennet/boards")).toBe(true);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\boards\\board-1.jsonl")).toBe(
+      true,
+    );
+    expect(
+      isIgnoredPath(
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.rennet\\boards\\board-1.jsonl",
+      ),
+    ).toBe(true);
+  });
+
+  it("watches the rest of .rennet — it is the user's project content, and it captures", () => {
+    // Tracked house rules: capture keeps them, so an edit has to invalidate.
+    expect(isIgnoredPath("/repo", "/repo/.rennet/conventions.json")).toBe(false);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\conventions.json")).toBe(false);
+    // The prefix boundary: a directory that merely starts with the same letters.
+    expect(isIgnoredPath("/repo", "/repo/.rennet/boards-extra/notes.md")).toBe(false);
+    expect(isIgnoredPath("C:\\dev\\repo", "C:\\dev\\repo\\.rennet\\boards-extra\\notes.md")).toBe(
+      false,
+    );
+    // Ownership is anchored at the ROOT: a vendored checkout's own board directory is
+    // the user's, because Rennet never writes there.
+    expect(isIgnoredPath("/repo", "/repo/vendor/pkg/.rennet/boards/b.jsonl")).toBe(false);
   });
 
   // `.nx` is gitignored, so it can never enter a capture, and on this repository it is
@@ -179,6 +211,54 @@ describe("RepoWatcher hardening", () => {
       // A later save — the ordinary, always-worked path — is still reported.
       writeFileSync(edited, "export const value = 1000;\n");
       await sleep(500);
+      expect(watcher.isDirty()).toBe(true);
+    } finally {
+      await watcher.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // #729 through the real chokidar: Rennet writing its own board must not mark the
+  // reviewer's tree dirty, and the same watcher must still report the file beside it.
+  // The two halves are one run on purpose — a watcher that reported nothing at all
+  // would satisfy the first assertion perfectly.
+  it("stays quiet for app-owned board writes and still reports the file beside them", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { setTimeout: sleep } = await import("node:timers/promises");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-app-owned-"));
+    // The project content that lives under `.rennet` and belongs to the user, present
+    // before the watch is armed so the writes below are modifications, not arrivals.
+    mkdirSync(join(root, ".rennet", "boards-extra"), { recursive: true });
+    writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":[]}\n');
+    writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine\n");
+    writeFileSync(join(root, "src.ts"), "export const value = 1;\n");
+    const watcher = new RepoWatcher();
+    try {
+      watcher.start(root);
+      // Wait for the initial walk, then clear — a clear only sticks once chokidar has
+      // finished looking (#601), so this is also what proves the walk is done.
+      await sleep(500);
+      watcher.setDirty(false);
+      expect(watcher.isDirty()).toBe(false);
+
+      // Rennet writes a board, exactly where `createBoardsRuntime` roots the store.
+      mkdirSync(join(root, ".rennet", "boards"), { recursive: true });
+      writeFileSync(join(root, ".rennet", "boards", "board-1.jsonl"), '{"seq":1}\n');
+      await sleep(700);
+      expect(watcher.isDirty()).toBe(false);
+
+      // The prefix boundary and the tracked house rules are the user's, and both are in
+      // the capture — so both have to be reported.
+      writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine, edited\n");
+      await sleep(700);
+      expect(watcher.isDirty()).toBe(true);
+
+      watcher.setDirty(false);
+      writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":["one"]}\n');
+      await sleep(700);
       expect(watcher.isDirty()).toBe(true);
     } finally {
       await watcher.close();

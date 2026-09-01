@@ -10,6 +10,7 @@ import {
   toWindowsView,
 } from "@rennet/core";
 import {
+  APP_OWNED_BOARD_SEGMENTS,
   DIFF_TRUNCATION_MARKER,
   type FileChangeStatus,
   type PatchFile,
@@ -43,6 +44,25 @@ export interface Counts {
 
 export const DEFAULT_VISIBLE_BYTE_LIMIT = 2 * 1024 * 1024;
 export const FILE_VISIBLE_BYTE_LIMIT = 256 * 1024;
+
+/**
+ * The app-owned board store as a git pathspec, DERIVED from the shared authority
+ * (#729, D6) rather than spelled out a second time. `:(top)` anchors it at the
+ * repository root, matching `isAppOwnedPath`'s root-relative contract, so the same
+ * directory is named however deep the git call's cwd sits.
+ */
+export const APP_OWNED_PATHSPEC = `:(top)${APP_OWNED_BOARD_SEGMENTS.join("/")}`;
+
+/**
+ * The subtractive form. Git treats a pathspec list containing only exclusions as
+ * "everything else", so this can follow a bare `--` with no accompanying include.
+ *
+ * It guards the BASE side of a working-tree diff. Sanitizing the reviewed tree alone
+ * is enough for identity, but if a board file is already committed at the base, the
+ * sanitized tree renders it as a DELETION — app-owned content back in the file list
+ * and the raw diff by the other door.
+ */
+export const EXCLUDE_APP_OWNED_PATHSPEC = `:(top,exclude)${APP_OWNED_BOARD_SEGMENTS.join("/")}`;
 
 /** A narrow git runner, injected so the range engine is testable against a real repo. */
 export type GitExec = (

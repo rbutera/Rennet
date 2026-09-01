@@ -8,10 +8,17 @@ export function isWslUncPath(path: string): boolean {
 }
 
 /**
- * Segments never worth watching for review freshness: VCS/internal state
- * (`.git`, `.rennet`), the build-tool cache (`.nx`), and — critically — the
- * dependency tree (`node_modules`). Every one of these is gitignored, so none
- * can ever appear in a capture; walking them is pure cost.
+ * Segments never worth watching for review freshness: VCS state (`.git`), the
+ * build-tool cache (`.nx`), and — critically — the dependency tree
+ * (`node_modules`). Every one of these is gitignored, so none can ever appear in
+ * a capture; walking them is pure cost.
+ *
+ * `.rennet` used to sit in this list and does not any more (#729, D6). It is not
+ * gitignored in every repository — that assumption is exactly what made this list
+ * wrong — and only `.rennet/boards/` is Rennet's. The app-owned prefix is pruned
+ * by the shared authority in `isIgnoredPath` below; the rest of `.rennet` is the
+ * user's project content, and a tracked `.rennet/conventions.json` edit has to
+ * invalidate a review like any other file.
  *
  * On a WSL-UNC (9P) root the watcher POLLS, so descending `node_modules` meant
  * stat-ing tens of thousands of files every interval, and the pnpm `.bin`
@@ -36,7 +43,7 @@ export function isWslUncPath(path: string): boolean {
  * Matches the segment itself or its contents, in either separator flavour
  * (backslashes on Windows/UNC).
  */
-const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
+const IGNORED_SEGMENT = /[/\\](?:\.git|\.nx|node_modules)(?:[/\\]|$)/;
 
 /**
  * True when a watched path is app-owned Rennet state, or inside an ignored segment.
@@ -47,10 +54,11 @@ const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
  * against that root before the shared authority can answer — otherwise a checkout living
  * under some ancestor `.rennet/boards` would report every one of its files as app-owned.
  *
- * A path outside the root is not the watcher's to own; the segment check below still
- * applies to it. That check currently ignores all of `.rennet`, which is a superset of
- * the app-owned prefix — #729's capture work narrows it so a tracked
- * `.rennet/conventions.json` edit invalidates like any other project file.
+ * A path outside the root is not the watcher's to own; the segment check still applies
+ * to it. That check no longer covers `.rennet` at all: the app-owned prefix is answered
+ * here, from the same authority capture uses, so the watcher and capture agree about
+ * every path. What capture excludes cannot mark the tree dirty, and what capture keeps
+ * — a tracked `.rennet/conventions.json` — invalidates like any other project file.
  */
 export function isIgnoredPath(repositoryRoot: string, path: string): boolean {
   const relative = toRepositoryRelativePath(repositoryRoot, path);
@@ -78,9 +86,9 @@ export class RepoWatcher {
    * `\\wsl.localhost\<distro>\…` UNC view, where inotify events do NOT propagate
    * across the 9P/UNC boundary (design decision 7) — so the WSL locus watches by
    * POLLING. Host projects keep native (event-driven) watching. The ignore set
-   * (`.git`/`.rennet`/`node_modules`) matches both path-separator flavours
-   * (backslashes on Windows/UNC); pruning `node_modules` is what keeps the poll
-   * from stat-storming the 9P bridge.
+   * (`.git`/`.nx`/`node_modules`, plus the app-owned `.rennet/boards/`) matches both
+   * path-separator flavours (backslashes on Windows/UNC); pruning `node_modules` is
+   * what keeps the poll from stat-storming the 9P bridge.
    */
   start(repositoryRoot: string, locus: Locus = HOST_LOCUS): void {
     // Re-`start` on the root already being watched is a NO-OP, and that is a correctness fix,

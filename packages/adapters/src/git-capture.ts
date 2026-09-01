@@ -17,6 +17,7 @@ import {
 } from "./checkpoint-store";
 import {
   DEFAULT_VISIBLE_BYTE_LIMIT,
+  EXCLUDE_APP_OWNED_PATHSPEC,
   execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
@@ -222,6 +223,11 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       reviewedTreeOid: baseReviewedTreeOid,
     });
 
+    // `baseReviewedTreeOid` is already sanitized of app-owned board state (#729, D6 —
+    // `writeWorkingTree` drops it before the tree is written), so every derivation
+    // below inherits that one decision. The exclusion rides the pathspec as well
+    // because only the reviewed side of this diff went through that tree: a board file
+    // committed at the BASE would otherwise reappear here as a deletion.
     const completeDiff = await git(run, gitRoot, [
       "diff",
       "--binary",
@@ -231,12 +237,29 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       baseOid,
       baseReviewedTreeOid,
       "--",
+      EXCLUDE_APP_OWNED_PATHSPEC,
     ]);
     const changedPaths = parseChangedPaths(
-      await git(run, gitRoot, ["diff", "--name-status", "-z", baseOid, baseReviewedTreeOid, "--"]),
+      await git(run, gitRoot, [
+        "diff",
+        "--name-status",
+        "-z",
+        baseOid,
+        baseReviewedTreeOid,
+        "--",
+        EXCLUDE_APP_OWNED_PATHSPEC,
+      ]),
     );
     const counts = parseCounts(
-      await git(run, gitRoot, ["diff", "--numstat", "-z", baseOid, baseReviewedTreeOid, "--"]),
+      await git(run, gitRoot, [
+        "diff",
+        "--numstat",
+        "-z",
+        baseOid,
+        baseReviewedTreeOid,
+        "--",
+        EXCLUDE_APP_OWNED_PATHSPEC,
+      ]),
     );
 
     const files: PatchFile[] = [];
