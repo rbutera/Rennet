@@ -31,10 +31,6 @@
       "dependsOn": ["build"],
       "inputs": ["default", "^production", { "input": "nativeArtifactStagingTest" }]
     },
-    "real-knowledge": {
-      "cache": false,
-      "command": "RENNET_C22_PROOF=1 pnpm exec vitest run packages/server/integration"
-    },
     "real-rounds": {
       "cache": false,
       "dependsOn": ["build"],

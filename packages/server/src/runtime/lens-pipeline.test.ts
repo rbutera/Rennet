@@ -28,6 +28,7 @@ import {
   draftToOps,
   projectDesignTaskProgress,
   reconcileFlaggedBoards,
+  renderDrafterPrompt,
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
@@ -4924,3 +4925,144 @@ describe("createNodePromptReader (perf audit §4 M)", () => {
     }
   });
 });
+
+describe("renderDrafterPrompt — the inventory travels, the diff content does not", () => {
+  const HUNK_BODY = "+const SECRET_BODY_LINE = 42;";
+  const RANGE_PACKET = {
+    patchset: {
+      id: "ps-r",
+      createdAt: "",
+      truncated: false,
+      repository: {
+        baseRef: "main",
+        baseOid: "b".repeat(40),
+        headOid: "h".repeat(40),
+      },
+      files: [],
+    },
+    hunks: {
+      hunks: [
+        {
+          id: "hunk-1",
+          path: "src/a.ts",
+          header: "@@ -1,1 +1,1 @@",
+          body: [HUNK_BODY],
+          spans: { old: { start: 1, lines: 1 }, new: { start: 1, lines: 1 } },
+          lossy: false,
+        },
+      ],
+      byId: new Map(),
+    },
+  } as unknown as DeltaPacket;
+
+  it("redacts hunk bodies while the hunk ids/headers/spans survive", () => {
+    const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET);
+    // Positive control: the body string IS in the packet — deleting the
+    // redaction in renderDrafterPrompt turns this assertion red.
+    expect(JSON.stringify(RANGE_PACKET.hunks.hunks)).toContain(SECRET(HUNK_BODY));
+    expect(prompt).not.toContain(SECRET(HUNK_BODY));
+    expect(prompt).toContain("hunk-1");
+    expect(prompt).toContain("@@ -1,1 +1,1 @@");
+  });
+
+  it("names the three-dot merge-base range on a range capture, never two-dot", () => {
+    const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET);
+    // Three-dot: an advanced base with two dots invents base-only deletions.
+    expect(prompt).toContain(`git diff ${"b".repeat(40)}...${"h".repeat(40)}`);
+    expect(prompt).not.toContain(`git diff ${"b".repeat(40)}..${"h".repeat(40)} `);
+    expect(prompt).toContain("reviewing the commits since");
+    // The prompt never claims the checkout IS the reviewed state; pinned reads instead.
+    expect(prompt).not.toContain("IS the reviewed checkout");
+    expect(prompt).toContain(`git show ${"h".repeat(40)}:<path>`);
+  });
+
+  it("names the pinned reviewed tree on a working-tree capture — never base..head", () => {
+    const tree = "c".repeat(40);
+    const packet = {
+      ...RANGE_PACKET,
+      patchset: {
+        ...RANGE_PACKET.patchset,
+        repository: { ...RANGE_PACKET.patchset.repository, reviewedTreeOid: tree },
+      },
+    } as unknown as DeltaPacket;
+    const prompt = renderDrafterPrompt("lens instructions", packet);
+    // The pinned tree is the reviewed delta; base..head would show only the
+    // committed subset and silently omit uncommitted work.
+    expect(prompt).toContain(`git diff ${"b".repeat(40)} ${tree}`);
+    expect(prompt).not.toContain(`git diff ${"b".repeat(40)}..${"h".repeat(40)}`);
+    expect(prompt).toContain("uncommitted work included");
+    expect(prompt).toContain(`git show ${tree}:<path>`);
+  });
+
+  it("still inlines design artifacts and round context beside the inventory", () => {
+    const prompt = renderDrafterPrompt(
+      "lens instructions",
+      RANGE_PACKET,
+      undefined,
+      DESIGN_ARTIFACTS,
+      undefined,
+      {
+        number: 2,
+        dispatchedAsks: [],
+      } as never,
+    );
+    expect(prompt).toContain("token-refresh");
+    expect(prompt).toContain('"number":2');
+  });
+
+  it("keeps the worker's verbatim turn diff out of ordinary lens prompts", () => {
+    const WORKER_DIFF = "+const WORKER_DIFF_SENTINEL = 7;";
+    const round = {
+      number: 2,
+      dispatchedAsks: [],
+      worker: {
+        outcome: "completed",
+        diff: WORKER_DIFF,
+        changedPaths: ["src/a.ts"],
+        commitRange: { from: "c0", to: "c1" },
+      },
+    } as never;
+    const lens = renderDrafterPrompt(
+      "lens instructions",
+      RANGE_PACKET,
+      undefined,
+      undefined,
+      undefined,
+      round,
+    );
+    expect(lens).not.toContain(SECRET(WORKER_DIFF));
+    expect(lens).toContain('"changedPaths":["src/a.ts"]');
+    const report = renderDrafterPrompt(
+      "report instructions",
+      RANGE_PACKET,
+      undefined,
+      undefined,
+      undefined,
+      round,
+      {
+        omitTaskLayer: true,
+        includeWorkerDiff: true,
+      },
+    );
+    expect(report).toContain(SECRET(WORKER_DIFF));
+  });
+
+  it("omits the task layer for the legacy report seat", () => {
+    const prompt = renderDrafterPrompt(
+      "report instructions",
+      RANGE_PACKET,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { omitTaskLayer: true },
+    );
+    expect(prompt).not.toContain("rennet:layer task");
+    expect(prompt).toContain("rennet:layer context");
+  });
+});
+
+/** Indirection so the control string never appears verbatim in this file's own text. */
+function SECRET(s: string): string {
+  return s;
+}

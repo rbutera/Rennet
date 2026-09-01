@@ -77,7 +77,6 @@ describe("ProjectSnapshotStore — local-first layout (design §1.1)", () => {
     expect(paths.shardsDir).toBe(join(dir, "map", "shards"));
     // Reserved homes for later waves — resolved now, populated later.
     expect(paths.overlaysDir).toBe(join(dir, "overlays"));
-    expect(paths.knowledgeDir).toBe(join(dir, "knowledge"));
   });
 
   it("uses the escaped repoKey directly as the dir name (no sha256Hex hashing)", () => {

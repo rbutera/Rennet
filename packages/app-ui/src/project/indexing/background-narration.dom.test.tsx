@@ -46,7 +46,7 @@ function project(id: string): Project {
 const knowledgeFailed: ProjectProcessEvent = {
   kind: "stage",
   repo: "rennet",
-  stage: "knowledge",
+  stage: "build",
   note: "Knowledge pass failed",
   detail: "Prompt is too long",
 };

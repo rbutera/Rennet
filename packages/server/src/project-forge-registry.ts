@@ -93,36 +93,6 @@ export function projectRepositoryRoots(project: Project): readonly string[] {
   return [...new Set(roots)].filter((root) => root.length > 0);
 }
 
-export type ProjectContextRepositorySelection =
-  | { readonly kind: "resolved"; readonly repositoryRoot: string }
-  | { readonly kind: "members"; readonly members: readonly ProjectRepositoryAddress[] }
-  | { readonly kind: "missing" };
-
-export async function resolveProjectContextRepository(input: {
-  readonly project: Project | undefined;
-  readonly target: RepositoryIdentity;
-  readonly identityForRoot: (root: string) => Promise<ProjectRepositoryAddress>;
-}): Promise<ProjectContextRepositorySelection> {
-  if (input.project === undefined) return { kind: "missing" };
-  const roots = projectRepositoryRoots(input.project);
-  const addressed =
-    input.target.repository !== undefined || input.target.forgeRepository !== undefined;
-  if (addressed) {
-    const repositoryRoot = await resolveProjectRepositoryRoot(input);
-    return repositoryRoot === undefined
-      ? { kind: "missing" }
-      : { kind: "resolved", repositoryRoot };
-  }
-  if (roots.length === 1 && roots[0] !== undefined) {
-    return { kind: "resolved", repositoryRoot: roots[0] };
-  }
-  if (roots.length < 2) return { kind: "missing" };
-  return {
-    kind: "members",
-    members: await Promise.all(roots.map((root) => input.identityForRoot(root))),
-  };
-}
-
 export interface ProjectPullRequestOpenInput {
   readonly commandId: string;
   readonly repository: ForgeRepoIdentity;

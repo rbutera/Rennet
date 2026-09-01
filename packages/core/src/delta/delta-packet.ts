@@ -30,9 +30,11 @@ export interface OpenSpecTouch {
 }
 
 /**
- * The lens drafters' entire input (#464: inlined into drafting prompts, not
- * tool-fetched), assembled from an immutable patchset and the supplied protocol
- * contracts. Every derived fact is typed data, never hand-retyped (#464 dec. 2).
+ * The change's derived INVENTORY, assembled from an immutable patchset and the
+ * supplied protocol contracts. Every derived fact is typed data, never
+ * hand-retyped (#464 dec. 2). Since the context-map kill this is no longer the
+ * drafters' entire input: the prompt carries this inventory with the hunk
+ * BODIES redacted, and the drafter reads content from the reviewed checkout.
  */
 export interface DeltaPacket {
   /** Patchset identity + file inventory — the meta, not the raw patches (those live in `hunks`). */
@@ -48,6 +50,13 @@ export interface DeltaPacket {
       readonly baseRef: Patchset["repository"]["baseRef"];
       readonly baseOid: Patchset["repository"]["baseOid"];
       readonly headOid: Patchset["repository"]["headOid"];
+      /**
+       * Present on a local working-tree capture: the durable tree object the
+       * reviewed bytes were pinned as. When set, the reviewed delta is
+       * `git diff <baseOid> <reviewedTreeOid>` — `baseOid..headOid` would show
+       * only the committed subset and silently omit uncommitted work.
+       */
+      readonly reviewedTreeOid?: Patchset["repository"]["reviewedTreeOid"];
     };
     readonly files: readonly DeltaPacketFile[];
   };
@@ -124,6 +133,9 @@ export function buildDeltaPacket(
         baseRef: patchset.repository.baseRef,
         baseOid: patchset.repository.baseOid,
         headOid: patchset.repository.headOid,
+        ...(patchset.repository.reviewedTreeOid === undefined
+          ? {}
+          : { reviewedTreeOid: patchset.repository.reviewedTreeOid }),
       },
       files: patchset.files.map((file) => {
         const modeChange =

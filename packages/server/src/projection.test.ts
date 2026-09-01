@@ -752,7 +752,6 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "projects.add.input.discovery.repos.path",
     "project.process.output.repos.path",
     "project.process.output.run.repos.path",
-    "project.contextMap.output.run.repos.path",
     "settings.get.output.projects.repoPath",
     "settings.guidance.input.repoPath",
     "settings.setRepoVisibility.input.repoPath",
@@ -817,17 +816,8 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // ask's quoted anchor text. Never a host-absolute path, so no remote projection
     // translates it — the same shape/handling as the handoff-compose bundle above.
     "round.dispatch.output.workOrder.tasks.asks.path",
-    // The Context Map surface (add-context-map-view): every path in the Repo Map, the
     // knowledge set, and a context-ask answer is a git-blob path relative to the repo
     // root — never a host-absolute path, so no remote projection translates them.
-    "project.contextMap.output.map.files.path",
-    "project.contextMap.output.map.scopes.root",
-    "project.contextMap.output.map.tests.path",
-    "project.contextMap.output.map.conventions.path",
-    "project.contextMap.output.knowledge.statements.evidence.path",
-    "project.contextMap.output.knowledge.coverage.groups.files.path",
-    "project.contextAsk.output.answer.evidence.path",
-    "project.knowledgeDisposition.output.statement.evidence.path",
     // Durable asks (B11): per-line comments and canonical CodeRefs point into the
     // reviewed repository, never the host filesystem. Every write echoes an
     // `AskEventBody`, so both path-bearing variants surface on every receipt schema.

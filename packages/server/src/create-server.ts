@@ -1777,6 +1777,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     index[reviewId] = { path };
     writeFileSync(prWorktreeIndexPath, JSON.stringify(index));
   }
+  /**
+   * The checkout board drafting roots its seats at. A PR review has a detached
+   * worktree pinned at the reviewed head — the seats must read THOSE bytes, not
+   * whatever ref the ambient clone happens to have checked out. Every other
+   * review shape drafts at the capture root (a working-tree review's root IS
+   * the reviewed checkout).
+   */
+  function draftingRootFor(review: Review): string {
+    const entry = readPrWorktreeIndex()[review.id];
+    return entry && existsSync(entry.path) ? entry.path : review.repositoryRoot;
+  }
 
   /**
    * The GitHub PR front door (issue #37/#20 flow, User Journey stage 2). Parse the
@@ -3512,7 +3523,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
       {
         session,
-        repoRoot: review.repositoryRoot,
+        repoRoot: draftingRootFor(review),
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,

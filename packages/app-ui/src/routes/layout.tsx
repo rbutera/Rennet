@@ -45,7 +45,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
   const setChatWidth = useRennetStore((s) => s.uiActions.setChatWidth);
 
   // The dock and the session top-bar show only on a review-session route; every
-  // other route is a takeover (settings, new chat, archived, map, indexing).
+  // other route is a takeover (settings, new chat, archived, indexing).
   const [onSession] = useRoute(ROUTES.session);
   const [onRun] = useRoute(ROUTES.sessionRun);
   const isSessionRoute = onSession || onRun;
@@ -224,7 +224,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
             collapsed and no chat dock open there is no pane header left to host the
             traffic-light inset and the sidebar toggle, so the slot floats over the
             main view. It belongs to the LAYOUT, not `TopBar`, because every takeover
-            route (settings, new chat, archived, map, indexing) has no top bar at all
+            route (settings, new chat, archived, indexing) has no top bar at all
             and would otherwise have no corner slot and no drag region. */}
             {owner === "floating" ? <CornerSlot owner="floating" /> : null}
 

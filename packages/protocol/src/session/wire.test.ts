@@ -229,8 +229,8 @@ describe("checkProtocolCompatibility", () => {
 
 describe("version constants", () => {
   it("exports the aggregate review-publish version window", () => {
-    expect(PROTOCOL_VERSION).toBe(2);
-    expect(MIN_COMPATIBLE_PROTOCOL_VERSION).toBe(2);
+    expect(PROTOCOL_VERSION).toBe(3);
+    expect(MIN_COMPATIBLE_PROTOCOL_VERSION).toBe(3);
   });
 });
 

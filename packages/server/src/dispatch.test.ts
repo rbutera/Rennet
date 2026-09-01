@@ -5746,8 +5746,6 @@ describe("createDispatch — device.registerPush + attention.acknowledge (#383 M
   });
 });
 
-// ── The Context Map surface (change add-context-map-view) ────────────────────
-
 describe("createDispatch — onReviewOpened (#461, B7)", () => {
   it("fires on capture, open-PR, and regenerate with each current review version", async () => {
     const opened: string[] = [];
