@@ -250,6 +250,7 @@ async function dispatchVisibleRound(
   page: Page,
   askBody: string,
   expectedExitCount: number,
+  expectedHarness: string,
 ): Promise<void> {
   await page
     .getByRole("button", { name: `Continue, ${expectedExitCount} staged`, exact: true })
@@ -258,6 +259,12 @@ async function dispatchVisibleRound(
   await expect(page.locator('[data-screen="session-run"]')).toBeVisible({ timeout: 30_000 });
   const greeting = page.locator('[data-screen="round-greeting"]');
   await expect(greeting).toBeVisible({ timeout: 180_000 });
+  // #681 acceptance: the DISPLAYED provenance names the harness that actually ran, with
+  // its live version. The Codex journey asserts the same locator says "Codex", so a
+  // hardcoded provider or an assumed default fails one of the two legs.
+  await expect(greeting.getByTestId("round-run-receipt")).toContainText(
+    `using ${expectedHarness} 685-scripted-v1`,
+  );
   await expect(greeting.getByTestId("round-run-receipt")).toContainText("Passed npm run check");
   await expect(greeting.locator('[data-kind="round-report"]')).toBeVisible();
   const outcome = greeting.locator('[data-kind="round_outcome"]');
@@ -268,13 +275,23 @@ async function dispatchVisibleRound(
   await expect(page.locator("article[data-lens]")).toBeVisible({ timeout: 30_000 });
 }
 
-test("#685: launched owner loop survives two rounds and a daemon-preserving app restart", async () => {
+/**
+ * The launched owner loop on ONE resolved harness. Parameterized for #681/C14 D3: the
+ * scripted plan declares the provider, the composition root routes the test port by its
+ * descriptor, and the OTHER provider is genuinely absent — so the Codex journey proves a
+ * Codex-resolved host end to end (round one, restart, round two) rather than a Claude
+ * round wearing a Codex label. `expectedHarness` is the displayed name in the receipt.
+ */
+async function runLaunchedOwnerLoop(
+  harness: "claude-code" | "codex",
+  expectedHarness: "Claude Code" | "Codex",
+): Promise<void> {
   test.setTimeout(600_000);
   assertProductionBundleBoundary();
   const { workspace, target, decoy } = seedWorkspace();
   const userData = makeTempDir("rennet-e2e-685-state-");
   const home = makeTempDir("rennet-e2e-685-home-");
-  const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(workspace);
+  const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(workspace, harness);
   const daemon = await startTestDaemon({ userData, home, planPath });
   let launched = await launchRennet({
     repository: workspace,
@@ -339,7 +356,7 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       reviewId,
       OWNER_LOOP_ROUND_ONE_BODY,
     );
-    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY, 1);
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_ONE_BODY, 1, expectedHarness);
     const afterRoundOne = await bridge.invoke("session.rounds", { reviewId });
     expect(afterRoundOne.records).toHaveLength(1);
     const roundOneGeneration = afterRoundOne.records[0]?.boardGeneration ?? "";
@@ -402,9 +419,15 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
       reviewId,
       OWNER_LOOP_ROUND_TWO_BODY,
     );
-    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY, 2);
+    await dispatchVisibleRound(page, OWNER_LOOP_ROUND_TWO_BODY, 2, expectedHarness);
     const finalRounds = await bridge.invoke("session.rounds", { reviewId });
     expect(finalRounds.records).toHaveLength(2);
+    // Durable half of the same acceptance: every round's receipt names the harness that
+    // ran it, and the session stayed pinned to it across the restart (no silent switch).
+    expect(finalRounds.records.map((record) => record.run?.harness)).toEqual([
+      { id: harness, version: "685-scripted-v1" },
+      { id: harness, version: "685-scripted-v1" },
+    ]);
     expect(finalRounds.records[1]?.frozenPredecessor).toBe(finalRounds.records[0]?.boardGeneration);
     const finalGeneration = finalRounds.records[1]?.boardGeneration ?? "";
     const finalPatchset = finalRounds.records[1]?.resultPatchsetId ?? "";
@@ -488,4 +511,10 @@ test("#685: launched owner loop survives two rounds and a daemon-preserving app 
     rmSync(userData, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
-});
+}
+
+test("#685: launched owner loop survives two rounds and a daemon-preserving app restart", () =>
+  runLaunchedOwnerLoop("claude-code", "Claude Code"));
+
+test("#681: the same launched owner loop runs both rounds on a Codex-only host", () =>
+  runLaunchedOwnerLoop("codex", "Codex"));

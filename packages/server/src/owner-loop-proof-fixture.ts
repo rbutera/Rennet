@@ -252,10 +252,14 @@ function reportClassification(value: string): unknown {
   };
 }
 
-export function ownerLoopScriptedHarnessPlan(invocationLog: string): ScriptedHarnessPlan {
+export function ownerLoopScriptedHarnessPlan(
+  invocationLog: string,
+  harness: ScriptedHarnessPlan["harness"] = "claude-code",
+): ScriptedHarnessPlan {
   return {
     schemaVersion: 1,
     lane: OWNER_LOOP_LANE,
+    harness,
     invocationLog,
     steps: [
       {
@@ -361,12 +365,18 @@ export function ownerLoopScriptedHarnessPlan(invocationLog: string): ScriptedHar
   };
 }
 
-export function writeOwnerLoopScriptedHarnessPlan(root: string): {
+export function writeOwnerLoopScriptedHarnessPlan(
+  root: string,
+  harness: ScriptedHarnessPlan["harness"] = "claude-code",
+): {
   readonly planPath: string;
   readonly invocationLog: string;
 } {
   const invocationLog = join(root, `${OWNER_LOOP_LANE}-invocations.jsonl`);
   const planPath = join(root, `${OWNER_LOOP_LANE}-plan.json`);
-  writeFileSync(planPath, `${JSON.stringify(ownerLoopScriptedHarnessPlan(invocationLog))}\n`);
+  writeFileSync(
+    planPath,
+    `${JSON.stringify(ownerLoopScriptedHarnessPlan(invocationLog, harness))}\n`,
+  );
   return { planPath, invocationLog };
 }

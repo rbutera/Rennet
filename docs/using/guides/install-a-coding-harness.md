@@ -65,6 +65,10 @@ rounds. To start a Codex-backed session on a machine with both installed, disabl
 Claude Code before dispatching its first round. Each round's history row names the
 exact harness and version that ran it.
 
+If the harness a session picked is later uninstalled or turned off, the round stops
+and says which harness it looked for and what it found. Rennet does not quietly run
+that round on the other provider.
+
 If `claude --version` or `codex --version` works in a terminal but Rennet still
 cannot detect it, fully quit and reopen Rennet so the desktop process receives
 your current executable paths.

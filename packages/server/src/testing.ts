@@ -13,6 +13,7 @@ export {
   writeOwnerLoopScriptedHarnessPlan,
 } from "./owner-loop-proof-fixture";
 export {
+  loadScriptedCodexExecutor,
   loadScriptedHarnessPlan,
   type ScriptedHarnessPlan,
   ScriptedHarnessPlanSchema,
