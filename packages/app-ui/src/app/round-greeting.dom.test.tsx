@@ -11,7 +11,7 @@
 //     lens board at the composed round's NEW generation (`gen2`);
 //   - with the greeting unarmed the surface is the plain board (no greeting).
 import type { Review } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import { RoundGreeting } from "../rounds/round-greeting";
@@ -20,7 +20,7 @@ import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, mount } from "../test/dom";
+import { act, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import {
   completedRoundRecord,
@@ -40,6 +40,7 @@ const review = {
   repositoryRoot: "/home/dev/rennet",
 } as unknown as Review;
 
+beforeEach(() => act(() => store().runActions.resetRun()));
 afterEach(() => act(() => store().runActions.resetRun()));
 
 // Timeline ticks (FIXTURE_ROUND_TIMELINE): 10 ⇒ reporting, 11/12 ⇒ composing (lens rows
@@ -65,6 +66,64 @@ function renderWorkspace(opts: { startTick: number; armed: boolean }) {
 }
 
 describe("the round report as greeting + progressive reveal (C09 cluster 5)", () => {
+  it("renders the verified live report before the completed ledger row exists", () => {
+    act(() => store().runActions.armGreeting(true));
+    const source: RoundsSource = {
+      roundState: () => ({
+        phase: "composing",
+        reportBoardId: reportBoardFixture.boardId,
+        report: reportBoardFixture,
+        lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+      }),
+      roundRecords: () => [],
+      reportBoard: () => undefined,
+    };
+    const r = mount(
+      <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+        <Router hook={memoryHistory("/s/s-1").hook}>
+          <RoundsSourceProvider value={source}>
+            <ReviewWorkspace review={review} />
+          </RoundsSourceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
+    expect(r.container.textContent).toContain("Token refresh exits are now observable");
+    expect(r.getByTestId("regeneration-progress").textContent).toContain("Sequence");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+  });
+
+  it("a cold board-route reattach shows and arms a nonterminal report greeting", async () => {
+    const source: RoundsSource = {
+      roundState: () => ({
+        phase: "composing",
+        reportBoardId: reportBoardFixture.boardId,
+        report: reportBoardFixture,
+        lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+      }),
+      roundRecords: () => [],
+      reportBoard: () => undefined,
+    };
+    const history = memoryHistory("/s/s-1");
+    expect(store().run.greetingArmed).toBe(false);
+    const r = mount(
+      <BridgeProvider bridge={new MemoryBridge({ "board.read": fixtureBoardRead })}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <RoundsSourceProvider value={source}>
+            <ReviewWorkspace review={review} />
+          </RoundsSourceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
+    expect(r.container.textContent).toContain("Token refresh exits are now observable");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+    expect(r.container.querySelector('[data-kind="lens-board-view"]')).toBeNull();
+    await waitFor(() => expect(store().run.greetingArmed).toBe(true));
+  });
+
   it("leads with the report, readable while regeneration still shows 're-drafting'", () => {
     const { r } = renderWorkspace({ startTick: COMPOSING_TICK, armed: true });
     // The report board fills the surface (the greeting leads, not the plain lens board).
@@ -140,6 +199,23 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
     // The surface returned to the lens board at the composed round's NEW generation (gen2).
     expect(r.container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull();
     expect(r.container.querySelector('[data-generation="gen2"]')).not.toBeNull();
+  });
+
+  it("restores an unconsumed completed report after reload, but never resurrects it after Reveal", async () => {
+    const first = renderWorkspace({ startTick: FIXTURE_ROUND_COMPLETE_TICK, armed: false });
+
+    expect(first.r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
+    await first.r.user.click(first.r.getByTestId("reveal-new-boards"));
+    expect(first.r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
+
+    first.r.unmount();
+    act(() => store().runActions.resetRun());
+    const reloaded = renderWorkspace({ startTick: FIXTURE_ROUND_COMPLETE_TICK, armed: false });
+
+    expect(reloaded.r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
+    await waitFor(() =>
+      expect(reloaded.r.container.querySelector('[data-generation="gen2"]')).not.toBeNull(),
+    );
   });
 
   it("shows the plain board (no greeting) when the greeting is unarmed", () => {

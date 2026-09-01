@@ -1,8 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lint } from "@rennet/core";
-import { DraftBoardSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   OWNER_LOOP_ROUND_ONE_ASK,
@@ -35,7 +33,7 @@ async function terminalOutcome(
 }
 
 describe("scripted harness JSON plan", () => {
-  it("keeps the owner-loop round report clean under the production report lint", () => {
+  it("keeps the owner-loop report fixture on the production classification envelope", () => {
     const patchsetId = "owner-loop-successor";
     const reportStep = ownerLoopScriptedHarnessPlan("/tmp/owner-loop-invocations.jsonl").steps.find(
       (step) => step.id === "report-round-one",
@@ -46,15 +44,22 @@ describe("scripted harness JSON plan", () => {
         .replaceAll(patchsetPlanValue, patchsetId)
         .replaceAll(askPlanValue, OWNER_LOOP_ROUND_ONE_ASK),
     );
-    const board = DraftBoardSchema.parse(output);
-    expect(
-      lint(board, {
-        lens: "report",
-        hunks: [],
-        files: new Map([[OWNER_LOOP_SOURCE, 1]]),
-        patchsetId,
-      }),
-    ).toEqual([]);
+    expect(output).toEqual({
+      outcomes: [
+        {
+          askId: OWNER_LOOP_ROUND_ONE_ASK,
+          status: "addressed",
+          note: "`src/owner.ts` now exports `round-one`.",
+          evidence: {
+            path: OWNER_LOOP_SOURCE,
+            side: "head",
+            startLine: 1,
+            endLine: 1,
+          },
+        },
+      ],
+      beyond: [],
+    });
   });
 
   it("applies each exact edit under SessionSpec.cwd once and resumes its JSONL ledger", async () => {

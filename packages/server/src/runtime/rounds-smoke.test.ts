@@ -13,6 +13,7 @@ import {
   assertCoverage,
   buildDeltaPacket,
   type CodexExecutor,
+  type HarnessPort,
   type LintContext,
   type LintHunk,
   type LintTarget,
@@ -21,6 +22,7 @@ import {
 import {
   type DossierItem,
   type DraftBoard,
+  type DraftElement,
   type Generation,
   type LensAbsenceReason,
   type Patchset,
@@ -132,9 +134,15 @@ const PREV_GEN: Generation = {
   status: "live",
 };
 
+interface TerminalElement {
+  readonly id: string;
+  readonly kind: DraftElement["kind"];
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
 interface TerminalLaneInput {
   readonly lens: LintTarget;
-  readonly board?: { readonly elements: readonly unknown[] };
+  readonly board?: { readonly elements: readonly TerminalElement[] };
   readonly absence?: LensAbsenceReason;
   readonly failure?: string;
 }
@@ -144,19 +152,31 @@ type TerminalLaneEvidence =
   | { readonly kind: "absence"; readonly reason: LensAbsenceReason }
   | { readonly kind: "failure"; readonly reason: string };
 
-type CodexCallEvidence =
-  | {
-      readonly status: "completed";
-      readonly requestedModel: string;
-      readonly effort: string;
-      readonly reportedModel?: string;
-    }
-  | {
-      readonly status: "failed";
-      readonly requestedModel: string;
-      readonly effort: string;
-      readonly reason: string;
-    };
+type ProviderCallLane = LintTarget | "post-process" | "unknown";
+
+interface ProviderCallEvidence {
+  readonly provider: "claude" | "codex";
+  readonly callId: string;
+  readonly lane: ProviderCallLane;
+  readonly status: "started" | "completed" | "failed";
+  readonly requestedModel?: string;
+  readonly effort?: string;
+  readonly reportedModel?: string;
+  readonly reason?: string;
+}
+
+type ProviderCallIdentity = Omit<ProviderCallEvidence, "status" | "reportedModel" | "reason">;
+type ProviderCallObserver = (evidence: ProviderCallEvidence) => void;
+
+const PROMPT_LANES: readonly [needle: string, lane: ProviderCallLane][] = [
+  ["# Post-process pass", "post-process"],
+  ["# Round report", "report"],
+  ["# Design lens", "design"],
+  ["# Sequence lens", "sequence"],
+  ["# Decisions lens", "decisions"],
+  ["# Flagged lens", "flagged"],
+  ["# Noise lens", "noise"],
+];
 
 const ABSENCE_BY_LENS: ReadonlyMap<LintTarget, LensAbsenceReason> = new Map([
   ["design", "no-material"],
@@ -195,37 +215,203 @@ function terminalLaneEvidence(outcome: TerminalLaneInput): TerminalLaneEvidence 
   return { kind: "failure", reason: outcome.failure };
 }
 
+function assertCoreReviewEvidence(outcomes: readonly TerminalLaneInput[]): void {
+  for (const outcome of outcomes) terminalLaneEvidence(outcome);
+  const byLens = new Map(outcomes.map((outcome) => [outcome.lens, outcome]));
+  const sequence = byLens.get("sequence");
+  if (!sequence?.board || !hasReachableKind(sequence.board.elements, "order_step")) {
+    throw new Error("Sequence must contain a real reading-order step, not filler prose");
+  }
+  for (const [lens, requiredKind] of [
+    ["decisions", "decision"],
+    ["flagged", "finding"],
+  ] as const) {
+    const outcome = byLens.get(lens);
+    if (outcome?.absence !== undefined) continue;
+    if (!outcome?.board || !hasReachableKind(outcome.board.elements, requiredKind)) {
+      throw new Error(`${lens} must contain a real ${requiredKind} or its typed empty state`);
+    }
+  }
+}
+
+function hasReachableKind(
+  elements: readonly TerminalElement[],
+  requiredKind: DraftElement["kind"],
+): boolean {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const nested = new Set<string>();
+  for (const element of elements) {
+    const children = element.data.children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
+  }
+  const visited = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (visited.has(id)) return false;
+    visited.add(id);
+    const element = byId.get(id);
+    if (element === undefined) return false;
+    if (element.kind === requiredKind) return true;
+    if (element.kind !== "section" && element.kind !== "order_step") return false;
+    const children = element.data.children;
+    return Array.isArray(children)
+      ? children.some((child) => typeof child === "string" && visit(child))
+      : false;
+  };
+  return elements.some(
+    (element) => element.kind === "section" && !nested.has(element.id) && visit(element.id),
+  );
+}
+
+function terminalBoard(
+  kind: DraftElement["kind"],
+  options: { readonly reachable?: boolean } = {},
+): NonNullable<TerminalLaneInput["board"]> {
+  const leaf: TerminalElement = { id: "leaf", kind, data: {} };
+  if (options.reachable === false) return { elements: [leaf] };
+  const root: TerminalElement = {
+    id: "root",
+    kind: "section",
+    data: { children: [leaf.id] },
+  };
+  return { elements: [root, leaf] };
+}
+
+function providerCallLane(prompt: string): ProviderCallLane {
+  return PROMPT_LANES.find(([needle]) => prompt.includes(needle))?.[1] ?? "unknown";
+}
+
+function failureReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logSmokeEvidence(kind: string, evidence: unknown): void {
+  console.log(`[smoke] ${new Date().toISOString()} ${kind}: ${JSON.stringify(evidence)}`);
+}
+
 function observeCodexExecutor(
   executor: CodexExecutor,
-  evidence: CodexCallEvidence[],
+  observe: ProviderCallObserver,
 ): CodexExecutor {
+  let callSequence = 0;
   return async (request) => {
+    const identity = {
+      provider: "codex",
+      callId: `codex-${++callSequence}`,
+      lane: providerCallLane(request.prompt),
+      requestedModel: request.model,
+      effort: request.effort,
+    } satisfies ProviderCallIdentity;
+    observe({ ...identity, status: "started" });
     try {
       const result = await executor(request);
-      evidence.push({
+      observe({
+        ...identity,
         status: "completed",
-        requestedModel: request.model,
-        effort: request.effort,
         ...(result.model === undefined ? {} : { reportedModel: result.model }),
       });
       return result;
     } catch (error) {
-      evidence.push({
+      observe({
+        ...identity,
         status: "failed",
-        requestedModel: request.model,
-        effort: request.effort,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: failureReason(error),
       });
       throw error;
     }
   };
 }
 
+function observeClaudePort(port: HarnessPort, observe: ProviderCallObserver): HarnessPort {
+  let callSequence = 0;
+  return {
+    descriptor: port.descriptor,
+    health: () => port.health(),
+    async createSession(spec) {
+      const session = await port.createSession(spec);
+      let identity: ProviderCallIdentity | undefined;
+      let reportedModel: string | undefined;
+      let settled = false;
+      const settle = (
+        terminal:
+          | { readonly status: "completed" }
+          | { readonly status: "failed"; readonly reason: string },
+      ): void => {
+        if (settled || identity === undefined) return;
+        settled = true;
+        if (terminal.status === "completed") {
+          observe({
+            ...identity,
+            status: "completed",
+            ...(reportedModel === undefined ? {} : { reportedModel }),
+          });
+          return;
+        }
+        observe({
+          ...identity,
+          status: "failed",
+          reason: terminal.reason,
+        });
+      };
+      const events = {
+        async *[Symbol.asyncIterator]() {
+          try {
+            for await (const event of session.events) {
+              if (event.kind === "session.started") reportedModel = event.model;
+              if (event.kind === "error") {
+                settle({ status: "failed", reason: event.error.message });
+              } else if (event.kind === "session.ended") {
+                if (event.outcome.status === "completed") settle({ status: "completed" });
+                else if (event.outcome.status === "failed") {
+                  settle({ status: "failed", reason: event.outcome.error.message });
+                } else {
+                  settle({ status: "failed", reason: "the Claude turn was cancelled" });
+                }
+              }
+              yield event;
+            }
+            settle({
+              status: "failed",
+              reason: "the Claude event stream ended without a terminal frame",
+            });
+          } catch (error) {
+            settle({ status: "failed", reason: failureReason(error) });
+            throw error;
+          }
+        },
+      };
+      return {
+        id: session.id,
+        harness: session.harness,
+        events,
+        async send(input) {
+          identity = {
+            provider: "claude",
+            callId: `claude-${++callSequence}`,
+            lane: providerCallLane(input.prompt),
+            ...(spec.model === undefined ? {} : { requestedModel: spec.model }),
+          };
+          observe({ ...identity, status: "started" });
+          try {
+            return await session.send(input);
+          } catch (error) {
+            settle({ status: "failed", reason: failureReason(error) });
+            throw error;
+          }
+        },
+        interrupt: () => session.interrupt(),
+        close: () => session.close(),
+      };
+    },
+  };
+}
+
 describe("rounds live-smoke terminal oracle", () => {
   it("accepts each honest terminal variant", () => {
-    expect(
-      terminalLaneEvidence({ lens: "sequence", board: { elements: [{ id: "step" }] } }),
-    ).toEqual({ kind: "board", elements: 1 });
+    expect(terminalLaneEvidence({ lens: "sequence", board: terminalBoard("order_step") })).toEqual({
+      kind: "board",
+      elements: 2,
+    });
     expect(terminalLaneEvidence({ lens: "decisions", absence: "no-decisions" })).toEqual({
       kind: "absence",
       reason: "no-decisions",
@@ -253,36 +439,121 @@ describe("rounds live-smoke terminal oracle", () => {
     );
   });
 
-  it("records completed and failed Codex calls without turning failures into success", async () => {
-    const evidence: CodexCallEvidence[] = [];
+  it("rejects noise-only generations and requires the three core review lenses", () => {
+    const noiseOnly: readonly TerminalLaneInput[] = [
+      { lens: "design", absence: "no-material" },
+      { lens: "sequence", board: terminalBoard("prose") },
+      { lens: "decisions", absence: "no-decisions" },
+      { lens: "flagged", absence: "no-findings" },
+      { lens: "noise", board: terminalBoard("prose") },
+    ];
+    expect(() => assertCoreReviewEvidence(noiseOnly)).toThrow(
+      "Sequence must contain a real reading-order step",
+    );
+
+    const coreUseful = noiseOnly.map((outcome) =>
+      outcome.lens === "sequence"
+        ? { lens: "sequence" as const, board: terminalBoard("order_step") }
+        : outcome,
+    );
+    expect(() => assertCoreReviewEvidence(coreUseful)).not.toThrow();
+
+    const paddedDecisions = coreUseful.map((outcome) =>
+      outcome.lens === "decisions"
+        ? { lens: "decisions" as const, board: terminalBoard("prose") }
+        : outcome,
+    );
+    expect(() => assertCoreReviewEvidence(paddedDecisions)).toThrow(
+      "decisions must contain a real decision",
+    );
+
+    const paddedFlagged = coreUseful.map((outcome) =>
+      outcome.lens === "flagged"
+        ? { lens: "flagged" as const, board: terminalBoard("prose") }
+        : outcome,
+    );
+    expect(() => assertCoreReviewEvidence(paddedFlagged)).toThrow(
+      "flagged must contain a real finding",
+    );
+
+    const failedDecisions = coreUseful.map((outcome) =>
+      outcome.lens === "decisions"
+        ? { lens: "decisions" as const, failure: "provider failed" }
+        : outcome,
+    );
+    expect(() => assertCoreReviewEvidence(failedDecisions)).toThrow(
+      "decisions must contain a real decision or its typed empty state",
+    );
+
+    const allCoreBoards = coreUseful.map((outcome) => {
+      if (outcome.lens === "decisions") {
+        return { lens: "decisions" as const, board: terminalBoard("decision") };
+      }
+      if (outcome.lens === "flagged") {
+        return { lens: "flagged" as const, board: terminalBoard("finding") };
+      }
+      return outcome;
+    });
+    expect(() => assertCoreReviewEvidence(allCoreBoards)).not.toThrow();
+
+    const orphanSequence = coreUseful.map((outcome) =>
+      outcome.lens === "sequence"
+        ? { lens: "sequence" as const, board: terminalBoard("order_step", { reachable: false }) }
+        : outcome,
+    );
+    expect(() => assertCoreReviewEvidence(orphanSequence)).toThrow(
+      "Sequence must contain a real reading-order step",
+    );
+  });
+
+  it("records Codex calls before execution and after success or failure", async () => {
+    const evidence: ProviderCallEvidence[] = [];
     const completed = observeCodexExecutor(
       async () => ({ output: { findings: [] }, model: "gpt-observed" }),
-      evidence,
+      (entry) => evidence.push(entry),
     );
     await expect(
-      completed({ model: "gpt-requested", effort: "medium", prompt: "review" }),
+      completed({ model: "gpt-requested", effort: "medium", prompt: "# Decisions lens" }),
     ).resolves.toMatchObject({ model: "gpt-observed" });
-    expect(evidence).toEqual([
-      {
-        status: "completed",
-        requestedModel: "gpt-requested",
-        effort: "medium",
-        reportedModel: "gpt-observed",
-      },
-    ]);
+    expect(evidence.map((entry) => entry.status)).toEqual(["started", "completed"]);
+    expect(evidence[0]).toMatchObject({
+      provider: "codex",
+      callId: "codex-1",
+      lane: "decisions",
+      status: "started",
+      requestedModel: "gpt-requested",
+      effort: "medium",
+    });
+    expect(evidence[1]).toMatchObject({
+      provider: "codex",
+      callId: "codex-1",
+      lane: "decisions",
+      status: "completed",
+      reportedModel: "gpt-observed",
+    });
 
-    const failed = observeCodexExecutor(async () => {
-      throw new Error("codex stopped");
-    }, evidence);
+    const failed = observeCodexExecutor(
+      async () => {
+        throw new Error("codex stopped");
+      },
+      (entry) => evidence.push(entry),
+    );
     await expect(
-      failed({ model: "gpt-requested", effort: "low", prompt: "review" }),
+      failed({ model: "gpt-requested", effort: "low", prompt: "# Flagged lens" }),
     ).rejects.toThrow("codex stopped");
-    expect(evidence.at(-1)).toEqual({
+    expect(evidence.at(-1)).toMatchObject({
+      provider: "codex",
+      callId: "codex-1",
+      lane: "flagged",
       status: "failed",
       requestedModel: "gpt-requested",
       effort: "low",
       reason: "codex stopped",
     });
+  });
+
+  it("classifies post-process before embedded board prose", () => {
+    expect(providerCallLane("# Post-process pass\n\n# Decisions lens")).toBe("post-process");
   });
 });
 
@@ -300,7 +571,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       const { adapter: claudePort, discovery } = await createClaudeHarness({
         env: process.env,
       });
-      console.log("[smoke] claude discovery:", JSON.stringify(discovery.health));
+      logSmokeEvidence("claude-discovery", discovery.health);
       const codexProbe = await discoverCodex(defaultCodexDiscoveryDeps(), {});
       if (codexProbe.chosen === null) {
         throw new Error(`no Codex harness resolved: ${JSON.stringify(codexProbe.health)}`);
@@ -313,9 +584,15 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
           : { runtimePath: codexProbe.chosen.runtimePath }),
         repoRoot,
       });
-      const codexCalls: CodexCallEvidence[] = [];
-      const codexExecutor = observeCodexExecutor(rawCodexExecutor, codexCalls);
-      console.log("[smoke] ports:", JSON.stringify({ claude: claudePort !== null, codex: true }));
+      const providerCalls: ProviderCallEvidence[] = [];
+      const recordProviderCall: ProviderCallObserver = (entry) => {
+        providerCalls.push(entry);
+        logSmokeEvidence("provider-call", entry);
+      };
+      const codexExecutor = observeCodexExecutor(rawCodexExecutor, recordProviderCall);
+      const observedClaudePort =
+        claudePort === null ? null : observeClaudePort(claudePort, recordProviderCall);
+      logSmokeEvidence("ports", { claude: observedClaudePort !== null, codex: true });
       expect(claudePort, "no claude harness resolved — cannot smoke the drafters").not.toBeNull();
 
       // REAL prompt files (packages/prompts/src) and a REAL file-backed boards runtime.
@@ -355,7 +632,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       } as unknown as SessionModel;
 
       const runtime = createRoundsRuntime({
-        resolveClaudePort: async () => claudePort,
+        resolveClaudePort: async () => observedClaudePort,
         resolveCodexExecutor: async () => codexExecutor,
         boardsRuntimeFor: () => ({
           service: boards.service,
@@ -365,20 +642,45 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       });
 
       const started = Date.now();
-      const outcome = await runtime.runRound({
-        session,
-        repoRoot,
-        previousGeneration: PREV_GEN,
-        asksDispatched: [],
-        runWorkers: async () => ({
-          commitRange: { from: "c0", to: "c1" },
-          patchsetId: "ps-c15-smoke",
-        }),
-        deltaPacket,
-        hunks,
-        lintContextFor,
-        reviewDraftLintCtx: { files: new Map([["src/greet.ts", 3]]) },
-      });
+      let latestProgress: unknown;
+      const abortController = new AbortController();
+      const abortAfterMs = 840_000;
+      const abortTimer = setTimeout(() => {
+        logSmokeEvidence("watchdog-abort", {
+          elapsedMs: Date.now() - started,
+          latestProgress,
+          providerCalls,
+        });
+        abortController.abort();
+      }, abortAfterMs);
+      const outcome = await (async () => {
+        try {
+          return await runtime.runRound({
+            session,
+            repoRoot,
+            previousGeneration: PREV_GEN,
+            asksDispatched: [],
+            runWorkers: async () => ({
+              commitRange: { from: "c0", to: "c1" },
+              patchsetId: "ps-c15-smoke",
+            }),
+            deltaPacket,
+            hunks,
+            lintContextFor,
+            reviewDraftLintCtx: { files: new Map([["src/greet.ts", 3]]) },
+            signal: abortController.signal,
+            onProgress: (event) => {
+              latestProgress = event;
+              logSmokeEvidence("round-progress", {
+                elapsedMs: Date.now() - started,
+                event,
+              });
+            },
+          });
+        } finally {
+          clearTimeout(abortTimer);
+        }
+      })();
       const elapsedMs = Date.now() - started;
 
       // ── EVIDENCE ─────────────────────────────────────────────────────────────
@@ -408,7 +710,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
                 }
               : null,
             lenses: lensRows,
-            codexCalls,
+            providerCalls,
             coverageViolations: outcome.pipeline.coverage?.length ?? "unknown",
           },
           null,
@@ -420,9 +722,10 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       // end to end, not that every model turn is perfect. Real drafters occasionally
       // emit a dangling-ref board or a flaky turn; demanding 6/6 on one live draw would
       // fight model nondeterminism and make the smoke itself flaky. The bar is: a real
-      // generation is minted, the report drafts, at least one lens board comes back VALID,
-      // and — crucially — any per-seat failure surfaces as a REAL error, never a swallowed
-      // empty or a fabricated board. (Observed failure modes, TRANSIENT/model-content, not
+      // generation is minted, the report drafts, Sequence comes back valid, Decisions and
+      // Flagged are useful or honestly empty, and — crucially — any other per-seat failure
+      // surfaces as a REAL error, never a swallowed empty or a fabricated board. (Observed
+      // failure modes, TRANSIENT/model-content, not
       // infra: a lens board rejected `bad-ref` for citing a non-existent element id; a lens
       // turn that did not emit. Both are the honest-degradation doctrine working. Per-seat
       // draft quality is a drafting-quality concern orthogonal to the collation bridge.) ──
@@ -432,10 +735,28 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       expect(outcome.boardGeneration.id).toBe("gen:ps-c15-smoke");
       expect(outcome.frozenPrevious?.id).toBe(PREV_GEN.id);
       expect(allOutcomes.length, "report seat did not run").toBe(6);
-      expect(
-        codexCalls.filter((call) => call.status === "completed").length,
-        `Codex resolved but completed no council call: ${JSON.stringify(codexCalls)}`,
-      ).toBeGreaterThan(0);
+      const statusesByCall = new Map<string, ProviderCallEvidence["status"][]>();
+      for (const call of providerCalls) {
+        const key = `${call.provider}:${call.callId}`;
+        statusesByCall.set(key, [...(statusesByCall.get(key) ?? []), call.status]);
+      }
+      for (const [call, statuses] of statusesByCall) {
+        expect(
+          statuses.filter((status) => status === "started"),
+          `${call} did not record exactly one start: ${JSON.stringify(statuses)}`,
+        ).toHaveLength(1);
+        expect(
+          statuses.filter((status) => status !== "started"),
+          `${call} did not record exactly one terminal result: ${JSON.stringify(statuses)}`,
+        ).toHaveLength(1);
+      }
+      for (const provider of ["claude", "codex"] as const) {
+        expect(
+          providerCalls.filter((call) => call.provider === provider && call.status === "completed")
+            .length,
+          `${provider} resolved but completed no call: ${JSON.stringify(providerCalls)}`,
+        ).toBeGreaterThan(0);
+      }
 
       // No swallowed empties: every seat has exactly one populated, absent, or failed
       // terminal result. The cheap oracle tests above are the positive controls for this
@@ -448,21 +769,20 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
           );
         }
       }
+      assertCoreReviewEvidence(outcome.pipeline.boards);
 
       // The report drafts (its own seat, first) and carries content — it is the reviewer's
       // greeting and the lens drafters' input.
       expect(report?.failure ?? null, `round-report seat failed: ${report?.failure}`).toBeNull();
       expect(report?.board?.elements.length ?? 0, "round-report board is empty").toBeGreaterThan(0);
 
-      // At least one LENS board came back valid + non-empty (the drafters produced real
-      // regeneration data, not just a report).
+      // Sequence is the load-bearing chronological review, while Decisions and Flagged
+      // must either carry useful content or say honestly that there is none. Noise alone
+      // and an empty Design board are not evidence that the review experience works.
       const validLensBoards = outcome.pipeline.boards.filter(
         (o) => o.board !== undefined && o.board.elements.length > 0 && parseDraft(o.board).ok,
       );
-      expect(
-        validLensBoards.length,
-        "no lens board came back valid — the drafters produced no regeneration data",
-      ).toBeGreaterThan(0);
+      expect(validLensBoards.some((outcome) => outcome.lens === "sequence")).toBe(true);
 
       // POSITIVE CONTROL: coverage is not a swallow, asserted on the ROUND's own verdict.
       // The unteachable hunk went into the round's hunk universe above, so this reads what

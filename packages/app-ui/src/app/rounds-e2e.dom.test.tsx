@@ -15,7 +15,7 @@
 // `RoundsSourceProvider` cluster 7 wired. So this proves the CHAIN, not the transport.
 // No `setTimeout` drives anything: a tick + a re-render is the injected input, standing
 // in for what `useCommandStream` delivers in the live source.
-import type { RennetBridge, Review } from "@rennet/protocol";
+import type { RennetBridge, Review, RoundEvent } from "@rennet/protocol";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
@@ -33,6 +33,7 @@ import {
   createTimelineRoundsSource,
   FIXTURE_ROUND_COMPLETE_TICK,
   fixtureCompletedRoundsSource,
+  reportBoardFixture,
 } from "../test/fixtures/rounds";
 import { MemoryBridge } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
@@ -129,18 +130,17 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     );
     expect(r.container.querySelector('[data-row="w-record"]')?.textContent).toContain("running");
 
-    // ── 3 · REPORT VERIFICATION HOLDS THE RUN ROUTE ───────────────────────────────
+    // ── 3 · THE READABLE REPORT RETURNS WHILE LENSES REGENERATE ──────────────────
     pump(COMPOSING_TICK);
-    expect(history.history.at(-1)).toBe("/s/s-1/run");
-    expect(r.container.querySelector('[data-phase="composing"]')).not.toBeNull();
-    expect(r.container.querySelector('[data-screen="round-greeting"]')).toBeNull();
-    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
-
-    // ── 4 · RETURN AND REVEAL AT VERIFIED COMPOSITION ────────────────────────────
-    pump(FIXTURE_ROUND_COMPLETE_TICK);
     await waitFor(() => expect(history.history.at(-1)).toBe("/s/s-1"));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.getByTestId("report-tally").textContent).toContain("addressed");
+    expect(r.getByTestId("regeneration-progress").textContent).toContain("re-drafting");
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+
+    // ── 4 · REVEAL APPEARS ONLY AT VERIFIED COMPOSITION ──────────────────────────
+    pump(FIXTURE_ROUND_COMPLETE_TICK);
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     const reveal = r.getByTestId("reveal-new-boards");
     expect(reveal.hasAttribute("disabled")).toBe(false);
 
@@ -181,6 +181,114 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     );
     expect(led.container.querySelector('[data-kind="generation-switcher"]')).toBeNull();
     led.unmount();
+  });
+
+  it("returns a post-report failure to the run screen, then disarms a clean board return", async () => {
+    const settled = {
+      workspace: { status: "done" },
+      worker: { status: "done", fileCount: 1 },
+      gate: { status: "skipped", reason: "not-configured" },
+      commits: { status: "done", count: 1 },
+    } as const;
+    const operation = {
+      operationId: "operation-fails-after-report",
+      createdAt: 1_000,
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "feat/report-handoff" },
+      askCount: 1,
+      gatePlan: { kind: "absent" },
+    } as const;
+    const failedAfterReport: readonly RoundEvent[] = [
+      {
+        type: "operation",
+        snapshot: {
+          ...operation,
+          revision: 6,
+          state: {
+            phase: "report-drafting",
+            ...settled,
+            report: { status: "drafting" },
+          },
+        },
+      },
+      {
+        type: "report",
+        operationId: operation.operationId,
+        operationRevision: 6,
+        reportBoardId: "report-round-1",
+        report: reportBoardFixture,
+      },
+      {
+        type: "lens",
+        operationId: operation.operationId,
+        operationRevision: 6,
+        lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+      },
+      {
+        type: "operation",
+        snapshot: {
+          ...operation,
+          revision: 7,
+          state: {
+            phase: "failed",
+            failure: {
+              at: "report-drafting",
+              ...settled,
+              report: {
+                status: "failed",
+                step: "drafting",
+                reason: "lens regeneration failed",
+              },
+            },
+          },
+        },
+      },
+    ];
+    const timeline = createTimelineRoundsSource({
+      timeline: failedAfterReport,
+      startTick: failedAfterReport.length - 1,
+    });
+    const { r, history, pump } = mountApp(timeline, "/s/s-1/run");
+
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/s-1"));
+    expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
+    expect(r.queryByTestId("reveal-new-boards")).toBeNull();
+
+    pump(failedAfterReport.length);
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/s-1/run"));
+    expect(
+      r.container.querySelector('[data-screen="session-run"][data-phase="failed"]'),
+    ).not.toBeNull();
+    expect(r.getByText("lens regeneration failed")).toBeTruthy();
+
+    // A renderer restart loses the transient greeting arm. The durable failed operation and
+    // its readable report still return a cold board-route attach to the failure account.
+    r.unmount();
+    act(() => store().runActions.resetRun());
+    const restartedTimeline = createTimelineRoundsSource({
+      timeline: failedAfterReport,
+      startTick: failedAfterReport.length,
+    });
+    const restarted = mountApp(restartedTimeline, "/s/s-1");
+    expect(store().run.greetingArmed).toBe(false);
+    await waitFor(() => expect(restarted.history.history.at(-1)).toBe("/s/s-1/run"));
+    expect(
+      restarted.r.container.querySelector('[data-screen="session-run"][data-phase="failed"]'),
+    ).not.toBeNull();
+
+    await restarted.r.user.click(restarted.r.getByRole("button", { name: "Return to Review" }));
+    await waitFor(() => expect(restarted.history.history.at(-1)).toBe("/s/s-1"));
+    expect(store().run.greetingArmed).toBe(false);
+    expect(restarted.r.container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull();
+
+    // Return is an explicit consume too. Reloading the still-failed durable operation must
+    // stay on the review instead of trapping the reviewer in a failure redirect loop.
+    restarted.r.unmount();
+    act(() => store().runActions.resetRun());
+    const returned = mountApp(restartedTimeline, "/s/s-1");
+    await act(async () => Promise.resolve());
+    expect(returned.history.history.at(-1)).toBe("/s/s-1");
+    expect(returned.r.container.querySelector('[data-kind="lens-board-view"]')).not.toBeNull();
   });
 
   it("a cold deep-link to /s/:slug/run mid-round reattaches with dispatchCount stable (zero)", () => {

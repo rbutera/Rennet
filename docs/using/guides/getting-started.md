@@ -381,17 +381,21 @@ flowchart LR
   gen --> stage
 ```
 
-An accepted dispatch moves you to the run, live: the detached worktree created, the
-round's asks applied, the worker's activity as a table of steps, your project's
-gate command running and resolving, the commits, and finally the round report
-being drafted and verified. Closing and reopening the run, or following its
-direct link on another launch, reattaches to the latest saved receipt without
-dispatching the work again. The run stays put through report verification and
-returns to the boards only after verified completion; a failed round remains on
-the run with its failure. The session row then reads *Round N is back*, using
-the completed round's saved ledger number.
+An accepted dispatch moves you to the live run: the detached worktree being
+created, the round's asks being applied, the worker's activity as a table of
+steps, your project's gate command running and resolving, the commits, and the
+round report being drafted and checked. Closing and reopening the run, or
+following its direct link on another launch, resumes from the latest saved step
+without dispatching the work again.
 
-The **round report** is what greets you when the round returns. It states what
+As soon as Rennet has saved and checked the report, it takes you back to the
+review and shows that report. It does not wait for every board to finish. If you
+close or reload the app there, the same report and current regeneration progress
+come back. If the remaining work later fails, Rennet returns you to the run's
+failure screen and keeps the incomplete boards hidden. The session row reads
+*Round N is back* only after the round finishes, using its saved ledger number.
+
+The **round report** is what greets you while the boards regenerate. It states what
 the round did, where it ran, and how the gate came back, then lists one item per
 ask: **Addressed**, **Partial**, **Untouched**, or **Beyond the Asks** for work
 the round did that you never requested. Every outcome is verified against the
@@ -401,13 +405,14 @@ ask it traces to and reveals the code where one applies.
 You read the report while the boards regenerate live beneath it, one lane per
 lens. Every lens drafts again each round; a lane reads **carrying forward** when
 that lens came back with nothing changed, **reworked** when it moved, and
-**failed** with the reason when that drafter produced no board at all. In
+**failed** with the reason when it produced neither a board nor a trustworthy
+empty result. In
 between it reads **drafted** — the board is written, the comparison not yet run.
 The lane and the board agree by construction — both read the same comparison —
 so a lane never claims a lens carried while its sections changed, or while a
-section it used to have went away. The surface never
-locks, and **View the New Boards** appears when the new generation is composed —
-never as a disabled button waiting to light up.
+section it used to have went away. The surface never locks. **View the New
+Boards** appears only after regeneration has finished and the whole new
+generation is ready, never as a disabled button waiting to light up.
 
 The new generation shows you the delta by its own shape. Sections the round
 touched open expanded with a small gold dot; sections that carried forward stay

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { GenerationStore } from "@rennet/adapters";
 import type { LensBoard, Review } from "@rennet/protocol";
 import { parseCommandOutput } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -5,8 +9,9 @@ import { boardHandlers } from "./board";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 
 // The `board.read` handler (C05 cluster 8, bound in C18). Positive controls: a pair the
-// host drafted a board for serves that board, a pair it did not is honest MISSING (`null`,
-// never a fabricated board), and an unknown review is a genuine error like every review read.
+// host drafted a board for serves that board, a durable terminal failure stays distinguishable
+// from honest MISSING (`null`, never a fabricated board), and an unknown review is a genuine
+// error like every review read.
 
 const REVIEW_ID = "review-1";
 const REVIEW = {
@@ -80,6 +85,41 @@ describe("board.read — the lens-board read", () => {
       lens: "noise",
     });
     expect(out).toEqual({ board: null, absence: "no-material" });
+  });
+
+  it("projects a durably loaded lens failure through the board.read wire", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rennet-board-read-failure-"));
+    const failure = "The Flagged council did not return a valid board.";
+    try {
+      new GenerationStore(dir).save({
+        id: "gen-failed",
+        patchsetId: "ps-1",
+        lensBoards: {},
+        failedLenses: { flagged: failure },
+        status: "live",
+      });
+      const restored = new GenerationStore(dir);
+      const lensFailureForReview: DispatchDeps["lensFailureForReview"] = (
+        _reviewId,
+        generation,
+        lens,
+      ) => Promise.resolve(restored.load(generation)?.failedLenses?.[lens]);
+      const handler = harness({ lensFailureForReview })["board.read"];
+
+      const failed = parseCommandOutput(
+        "board.read",
+        await handler({ reviewId: REVIEW_ID, generation: "gen-failed", lens: "flagged" }),
+      );
+      expect(failed).toEqual({ board: null, failure });
+
+      const missing = parseCommandOutput(
+        "board.read",
+        await handler({ reviewId: REVIEW_ID, generation: "gen-failed", lens: "design" }),
+      );
+      expect(missing).toEqual({ board: null });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("answers honest-MISSING when no board substrate is wired at all", async () => {

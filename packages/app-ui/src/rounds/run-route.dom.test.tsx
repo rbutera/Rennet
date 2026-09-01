@@ -5,11 +5,7 @@ import { Router } from "wouter";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, fireEvent, mount, waitFor } from "../test/dom";
-import {
-  createTimelineRoundsSource,
-  FIXTURE_ROUND_COMPLETE_TICK,
-  type TimelineRoundsSource,
-} from "../test/fixtures/rounds";
+import { createTimelineRoundsSource, type TimelineRoundsSource } from "../test/fixtures/rounds";
 import {
   advance,
   initialRoundState,
@@ -139,9 +135,8 @@ describe("RunRoute — the live round takeover", () => {
     expect(handle.timeline.dispatchCount()).toBe(0);
   });
 
-  it("redirects to the board when the run reaches a report phase (composed)", async () => {
-    const handle = renderRun({ startTick: FIXTURE_ROUND_COMPLETE_TICK }); // composed
-    // runNavigation(composed) ⇒ replace to the board surface (the greeting lives there).
+  it("redirects to the board as soon as the report is readable", async () => {
+    const handle = renderRun({ startTick: 10 }); // reporting; lenses have not started
     await waitFor(() => expect(handle.history.history.at(-1)).toBe("/s/s-1"));
     // Once — the redirect replaced the run entry, it did not loop.
     expect(handle.history.history).toEqual(["/s/s-1"]);
@@ -153,18 +148,18 @@ describe("RunRoute — the live round takeover", () => {
     expect(handle.timeline.dispatchCount()).toBe(0); // absent never dispatches either
   });
 
-  it("arms the greeting on verified terminal completion, and only then (§3.2 continuity)", () => {
-    // In-flight: the greeting is NOT armed yet.
+  it("arms the greeting when the report is readable, never during the worker (§3.2 continuity)", () => {
+    // Before the report exists, the greeting is NOT armed yet.
     renderRun({ startTick: 5 });
     expect(useRennetStore.getState().run.greetingArmed).toBe(false);
 
-    // Reaching composed hands off to the board — the greeting arms for cluster 5.
+    // The verified report hands off immediately; lens regeneration continues on its surface.
     act(() => useRennetStore.getState().runActions.resetRun());
-    renderRun({ startTick: FIXTURE_ROUND_COMPLETE_TICK });
+    renderRun({ startTick: 10 });
     expect(useRennetStore.getState().run.greetingArmed).toBe(true);
   });
 
-  it("renders durable report verification receipts and stays on the run route", () => {
+  it("hands a readable durable report to the board while verification finishes", async () => {
     const event: Extract<RoundEvent, { type: "operation" }> = {
       type: "operation",
       snapshot: {
@@ -181,31 +176,18 @@ describe("RunRoute — the live round takeover", () => {
           worker: { status: "done", fileCount: 4 },
           gate: { status: "passed", durationMs: 2_500, projectCount: 14 },
           commits: { status: "done", count: 2 },
-          report: { status: "verifying" },
+          report: {
+            status: "verifying",
+            reportBoardId: "report-2",
+            generation: "generation-2",
+          },
         },
       },
     };
     const handle = renderFixedState(advance(initialRoundState, event));
 
-    expect(handle.history.history.at(-1)).toBe("/s/s-1/run");
-    expect(handle.getByText("Round 2 · feat/truthful-round")).toBeTruthy();
-    expect(handle.container.querySelector('[data-row="worktree"]')?.textContent).toContain(
-      "feat/truthful-round @ round-2",
-    );
-    expect(handle.container.querySelector('[data-row="asks"]')?.textContent).toContain("3 asks");
-    expect(handle.container.querySelector('[data-row="worker"]')?.textContent).toContain(
-      "4 files changed",
-    );
-    expect(handle.container.querySelector('[data-row="gate"]')?.textContent).toContain(
-      "pnpm check · 14 projects green · 2.5 s",
-    );
-    expect(handle.container.querySelector('[data-row="commit"]')?.textContent).toContain(
-      "2 commits",
-    );
-    expect(handle.container.querySelector('[data-row="report"]')?.textContent).toContain(
-      "Verifying the round report",
-    );
-    expect(useRennetStore.getState().run.greetingArmed).toBe(false);
+    await waitFor(() => expect(handle.history.history.at(-1)).toBe("/s/s-1"));
+    expect(useRennetStore.getState().run.greetingArmed).toBe(true);
   });
 
   it.each([

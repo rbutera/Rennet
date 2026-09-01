@@ -38,7 +38,7 @@
     "real-rounds": {
       "cache": false,
       "dependsOn": ["build"],
-      "command": "RENNET_SMOKE=1 pnpm exec vitest run packages/server/src/runtime/rounds-smoke.test.ts"
+      "command": "RENNET_SMOKE=1 pnpm exec vitest run packages/server/src/runtime/rounds-smoke.test.ts --disableConsoleIntercept"
     }
   }
 }

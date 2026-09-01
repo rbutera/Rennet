@@ -21,8 +21,9 @@ When a completed frozen generation has no Flagged board, the client selects its
 first present lens and replaces the URL with that canonical address. A live
 generation drafts progressively: it may show the first board that arrives, but
 it keeps the requested address so a later Flagged arrival restores that reading.
-A lens durably settled without a board produces no segment rather than a
-disabled one. A board that is merely missing can still be in flight.
+A typed absence or explicit failure remains selectable and renders its terminal
+state. Only a lens with no durable terminal evidence has no segment; that lens
+can still be in flight.
 
 New Chat persists a session before it captures the selected target and navigates
 to that session immediately. The session's durable preparation snapshot records
@@ -32,11 +33,11 @@ generation. Completion clears the snapshot and reveals the review workspace;
 failure, cancellation, and daemon interruption remain explicit, retryable session
 states.
 
-The prompts live in `packages/prompts` (`@rennet/prompts`),
-one markdown file per lens plus the post-process editor pass, the
-reviewer-voice file, and the round-report prompt. The package exports a
-typed manifest; the pipeline reads the files and supplies the board schema
-separately, so instructions and schema cannot drift apart.
+The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
+per lens plus the post-process editor pass, the reviewer-voice file, and the
+round-report classifier prompt. The package exports a typed manifest. Lens
+drafters receive the board schema separately; the landed-round report seat
+receives a much smaller classification schema instead.
 
 ## The drafting flow
 
@@ -52,31 +53,53 @@ with no live model call.
 composition root that supplies the scheduler's open seams — `onBoardArrival` to
 the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
 `composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
-prompt reader — and drives a generation visit: the round-report seat drafts first and
-gates the regeneration, the per-board arrival events this scheduler emits order
-the progressive reveal, and a `PipelineStartGuard` keyed on the session and
+prompt reader — and drives a generation visit: the round-report seat settles its
+sequencing boundary first, then the five independent lens lanes draft concurrently.
+The per-board arrival events this scheduler emits order the progressive reveal, and a
+`PipelineStartGuard` keyed on the session and
 exact generation visit makes a retry of that dispatch reattach rather than
 double-start. `create-server` owns the live trigger: the own-branch round loop
 dispatches the coding turn, captures its result against the active patchset,
 and calls board regeneration through this runtime.
 
-0. **Round-report first** (on rounds only). When a review re-runs into a new
-   generation visit, the `round-report` drafter runs *before* the lens
-   drafters. Its board is both the reviewer's greeting and the lens drafters'
-   input — it is threaded into every lens prompt. It funnels through the same
-   validation and post-process passes, but it is not a lens: it carries no
-   hunk-coverage obligation and is excluded from the coverage assertion.
+0. **Round-report first** (on landed rounds only). When a coding round returns
+   with its exact worker receipt, the `round-report` seat makes one structured
+   semantic-classification turn before any lens drafter starts. Its context is
+   only the successor patchset id, the durable dispatched asks, and the exact
+   coding-turn receipt: diff, changed paths, and observed commit range. It does
+   not receive the full DeltaPacket or the all-kind board schema. The host copies
+   the durable ask text, sorts the outcomes, builds the document, section,
+   outcomes, and code refs deterministically, then verifies every claimed anchor
+   against an exact changed line on the durable ask's path (including a measured
+   rename alias) before persistence. Readback also requires the exact ask text and
+   forbids change evidence on an `untouched` outcome. There is no model retry or
+   generic post-process turn on this path. The resulting board is both the
+   reviewer's greeting and the lens drafters' input. Here, **legacy caller** means
+   an injected pipeline caller that supplies the older round context without an
+   exact worker receipt. It retains the generic drafting path for compatibility.
+   A live durable coding round always carries the receipt and never selects that
+   path.
 1. **Draft.** One agent per lens receives the delta context and its lens
    prompt, plus the host board schema derived once from the frozen
    `DraftBoardSchema`, and returns a structured board. Each drafting instruction
    requires a document envelope with an authored title, a short Markdown
    introduction, and a measure. The target owns the final measure: Design is
-   `structured`; Sequence, Decisions, Flagged, Noise, and the round report are
-   `reading`.
+   `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host
+   constructs the landed-round report document with the `reading` measure.
    The host, never the drafter, writes the board ops through
    `whiteboard-client` (the sole op writer); drafters never call whiteboard
    tools. The Flagged lens runs two independent seats (Claude and Codex) on the
-   same instructions.
+   same instructions. The report attempt settles before any lens turn starts.
+   After that boundary all five lens lanes run independently rather than waiting
+   for the preceding display-order lens. A failed or unavailable report does not
+   prevent the lanes from starting. They proceed without report context and keep
+   the report failure explicit.
+   The five board-pipeline Council jobs run with job-scoped harness isolation:
+   Claude receives `ambientConfig: "isolated"` and Codex receives an explicit
+   empty MCP-server table. These seats use the inlined board context and native
+   repository tools, so they do not start ambient MCP, plugin, or hook
+   extensions. Unrelated Council work, including `project-scout`, keeps its
+   inherited harness configuration.
 2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
    location: a matched pair collapses to the clearer finding carrying both
    models' concurrence, a solo finding carries only the raising model's. The
@@ -89,7 +112,7 @@ and calls board regeneration through this runtime.
    With only one harness available the lens degrades to a single seat, stamped
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
-3. **Validate.** A deterministic loop guarantees every draft before a human
+3. **Validate.** A deterministic loop guarantees every lens draft before a human
    sees it, through **three gates in order**: **lint** (before post-process),
    then an **immutability check** (typed data is untouched across the editor
    pass), then the cross-lens **every-hunk composition check**. A lint failure
@@ -130,7 +153,7 @@ and calls board regeneration through this runtime.
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
-4. **Post-process.** Every draft board passes through an editor agent running
+4. **Post-process.** Every lens draft board passes through an editor agent running
    the post-process pass (`src/prompts/post-process.md`): a break-it-down step
    that reshapes dense prose into terse, scannable chunks, then the unslop
    skill verbatim, then the humanizer additions (patterns from the MIT
@@ -140,7 +163,9 @@ and calls board regeneration through this runtime.
    pipeline enforces both constraints after the editor returns. Typed data such
    as paths, line numbers, counts, severities, and concurrence flags is
    untouched, and the immutability gate proves it. When no editor seat resolves,
-   the pass is identity: prose is left as drafted, never blocked.
+   the pass is identity: prose is left as drafted, never blocked. The host-built
+   landed-round report skips this editor; its only model-authored fields are the
+   classification notes.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
    part lives in `core/board/`: the coverage assertion (every patchset hunk is
@@ -167,9 +192,24 @@ and calls board regeneration through this runtime.
    authoring turn. The authored prose is screened by a narrower register lint
    (citations plus the machinery screen) — visible, never blocking.
 
-As each board freezes and is persisted, the scheduler emits a **per-board
-arrival event** over the existing board-event broadcast. The rounds machinery
-consumes these to drive the progressive reveal; the pipeline only emits them.
+Each successful board persists its metadata as soon as its lane settles, so live
+progress follows completion order. Successful typed absences are reported in
+that same settlement order through a serialized callback, which keeps cumulative
+generation snapshots monotonic. Once every lane has settled, the scheduler runs
+the cross-lens coverage assertion and emits **per-board arrival events** in
+canonical Design, Sequence, Decisions, Flagged, Noise order. The returned
+outcomes use that same deterministic order regardless of which drafter finished
+first. The rounds machinery consumes these events to drive the reveal; the
+pipeline only emits them.
+
+A retry after process loss reserves the same board identities. The runtime
+reconstructs an exact landed-round report only when its metadata and element log
+agree, then re-runs the same changed-line verification before reuse. That path
+makes no second classifier call. It replaces every other partial board as one
+attempt: remove its metadata first, clear its board state second, then draft. The
+order is repeatable after a crash and prevents stale metadata from presenting a
+partially cleared board as complete. A malformed or semantically invalid report
+is scrubbed the same way before one fresh classification turn.
 
 ## Reading a board back
 
@@ -189,12 +229,19 @@ one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-material`,
 Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
-`no-noise`. The client treats that result as settled, keeps its segment
-selectable with explicit empty-state copy, and stops polling. Sequence and the
-round report require a reading result; an empty return gets one explicit retry,
-then becomes a retryable lens failure rather than an arrival. A plain `null`
-remains missing because the board may still be in flight. No board is assembled
-from another generation's elements.
+`no-noise`. For the three core review lenses, material follows the topology the
+client serves, not the flat element pool. Sequence needs a reachable
+`order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
+Prose-only boards, empty sections, and detached typed elements do not satisfy
+those core lenses. Flagged persists any round finding-resolution migration before settling
+that typed absence. The client treats the absence as settled, keeps its segment
+selectable with explicit empty-state copy, and stops polling. Sequence requires
+a reading result; a semantically empty return gets one explicit retry, then
+becomes a retryable lens failure rather than an arrival. A landed-round report
+gets exactly one classification turn and fails honestly when that classification
+omits an ask or cites evidence outside the measured coding-turn diff. A plain
+`null` remains missing because the board may still be in flight. No board is
+assembled from another generation's elements.
 
 The client addresses a frozen board with `?generation=<id>` and treats an
 absent generation parameter as the live generation. Both the generation and
@@ -227,10 +274,11 @@ patchset generation by a light-tier Model Council seat
 (`related-context-retrieval`) after a deterministic pass extracts issue refs
 from the branch name, commit messages, and PR body. GitHub is first-class via
 `gh`; JIRA and Linear work from per-project config (base URL plus a token
-environment variable). The bounded dossier is inlined verbatim into every
-drafting prompt — the orchestrator, round workers, and the round-report
-drafter receive the same dossier — while full raw payloads stay behind a
-context tool. Items are structured (id, tracker, title, state, bounded body,
+environment variable). The bounded dossier is inlined verbatim into lens
+drafting prompts, and the orchestrator and round workers can receive it too.
+The landed-round report classifier intentionally receives only the successor
+patchset id, durable asks, and exact worker receipt; full raw payloads stay
+behind a context tool. Items are structured (id, tracker, title, state, bounded body,
 acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
 how ticket citations reach boards. Standing tracker knowledge enters the
 context map through the knowledge swarm instead; cosmetic

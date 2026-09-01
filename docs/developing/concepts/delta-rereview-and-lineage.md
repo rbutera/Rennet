@@ -3,14 +3,16 @@ title: Delta and generations
 description: How Rennet compares patchset generations, what carries from one generation of boards to the next, and how the successor account bridges them.
 ---
 
-A review does not sit still: the branch moves, a work-order round lands
-commits, and the code under the boards changes. This page describes the two
-things Rennet keeps straight when that happens — **Delta**, the change-versus-
-baseline context the drafting agents read, and the **successor account**, the
-deterministic comparison of one generation of boards with the next.
+A review does not sit still. The branch moves, a work-order round lands commits,
+and the code under the boards changes. This page describes the two deterministic
+records Rennet keeps straight when that happens: **Delta**, the change-versus-
+baseline context the lens drafters read, and the **successor account**, the
+comparison of one generation with the next.
 
-The two used to share a name. They do not any more: Delta is context handed to
-agents, and the successor account is an accounting handed to the reviewer.
+Neither is the reviewer-facing round report. A landed coding round builds that
+report from a separate classification of the exact worker receipt and dispatched
+asks. Keeping those artifacts distinct matters because they answer different
+questions with different inputs.
 
 ## Patchsets stay immutable
 
@@ -132,25 +134,35 @@ deterministically. It records:
 - new hunks outside the asked spans;
 - handoff task attribution when present.
 
-The account is raw material, not the artifact the reviewer reads. The
-round-report seat drafts the round report from it, verifying each ask against
-the round's diff, and that drafted report is the greeting the reviewer reads
-while the lens drafters regenerate — and the delta context the drafters
-receive, which is why it drafts before they start.
+The account feeds the deterministic successor and Delta machinery. It does not
+become the artifact the reviewer reads. A landed-round report uses one separate,
+Council-routed classification turn over the successor patchset id, durable
+dispatched asks, and exact coding-turn receipt. The host copies the durable ask
+identity and text into a report board, then verifies every claimed evidence
+anchor against the measured worker diff. That verified report greets the reviewer
+while the boards regenerate and becomes additional round context for each lens
+drafter.
 
 ```mermaid
 sequenceDiagram
   participant Capture
   participant Fold as Review fold
   participant Account as Successor account
+  participant Receipt as Worker receipt
+  participant Classifier as Report classifier
+  participant Host
   participant Drafters as Lens drafters
   participant UI
 
   Capture->>Fold: Activate successor patchset
   Fold->>Fold: Carry, redraft, or orphan board content
   Fold->>Account: Prior asks, carry result, patchsets, and rename data
-  Account-->>UI: Round report, anchored per ask
-  Account-->>Drafters: The same account as delta context
+  Account-->>Drafters: Deterministic successor and Delta facts
+  Receipt->>Classifier: Exact diff, paths, commits, patchset id, and asks
+  Classifier-->>Host: Ask classifications and evidence
+  Host->>Host: Build report and verify changed-line anchors
+  Host-->>UI: Verified round-report greeting
+  Host-->>Drafters: Verified report as additional round context
   Drafters-->>UI: The next generation of lens boards
 ```
 
@@ -171,8 +183,8 @@ a particular hunk.
 On re-review rounds the account also feeds `buildDeltaPacket()` in
 `packages/core/src/delta/` — the folder that owns the hunk index with stable
 content-derived ids and the element differ, and assembles the lens drafters'
-input from them. Drafters see the same deterministic delta facts the account
-records.
+input from them. Drafters receive those deterministic facts plus the separately
+verified report when the round produced one.
 
 ## Delta marks
 

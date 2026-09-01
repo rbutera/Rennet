@@ -25,6 +25,11 @@ another lens's material; the call is yours. Each board stands alone.
 
 ## Shape of the board
 
+Every non-empty result has at least one top-level `section`. Put each
+`decision` under a served root through `section.data.children`; a top-level or
+orphaned `decision` in the flat element pool is invisible to the reader and the
+host correctly records it as no-decisions.
+
 Each decision block carries:
 
 - **Statement** — the call that was made, one sentence, concrete.
@@ -50,6 +55,12 @@ Give each section a one-line folded gist with counts.
   evidence is the code alone.
 - Do not pad with micro-decisions (variable names, import order) unless one
   genuinely changes how the reader must think about the code.
+
+If no call passes the viable-alternative test, return an empty `elements` list.
+Keep `skippedHunks` as the complete honest coverage account; it may contain
+every hunk. Do not emit a prose-only summary, an empty section, or a "no
+decisions" placeholder. Those shapes look like a board but contain no decision
+for the reader.
 
 ## Lanes (all lenses)
 

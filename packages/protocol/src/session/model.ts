@@ -1116,7 +1116,15 @@ const failedCommits = z.object({
 });
 
 const draftingReport = z.object({ status: z.literal("drafting") });
-const verifyingReport = z.object({ status: z.literal("verifying") });
+const verifyingReport = z.union([
+  z.object({
+    status: z.literal("verifying"),
+    reportBoardId: id,
+    generation: id,
+  }),
+  /** Backward-compatible progress from daemons that did not project report identity yet. */
+  z.object({ status: z.literal("verifying") }),
+]);
 const verifiedReport = z.object({
   status: z.literal("verified"),
   reportBoardId: id,
@@ -1450,7 +1458,11 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         worker: doneWorkerProgress(state.worker),
         gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
-        report: { status: "verifying" },
+        report: {
+          status: "verifying",
+          reportBoardId: state.report.reportBoardId,
+          generation: state.report.generation,
+        },
       };
     case "completed":
       return {
@@ -1696,7 +1708,42 @@ const seq = z.number().int().nonnegative().optional();
  * terminal arm: a crashed worker or a broken regeneration emits it, so a stalled round
  * surfaces as a failure rather than silence.
  */
-export const RoundEventSchema = z.discriminatedUnion("type", [
+const LegacyRoundReportEventSchema = z.object({
+  type: z.literal("report"),
+  reportBoardId: id,
+  operationId: z.never().optional(),
+  operationRevision: z.never().optional(),
+  report: z.never().optional(),
+  seq,
+});
+
+const ScopedRoundReportEventSchema = z.object({
+  type: z.literal("report"),
+  reportBoardId: id,
+  operationId: id,
+  operationRevision: z.number().int().nonnegative(),
+  /** The already-validated report projection, readable before lens drafting settles. */
+  report: RoundReportBoardSchema,
+  seq,
+});
+
+const LegacyRoundLensEventSchema = z.object({
+  type: z.literal("lens"),
+  lanes: z.array(LensLaneSchema),
+  operationId: z.never().optional(),
+  operationRevision: z.never().optional(),
+  seq,
+});
+
+const ScopedRoundLensEventSchema = z.object({
+  type: z.literal("lens"),
+  lanes: z.array(LensLaneSchema),
+  operationId: id,
+  operationRevision: z.number().int().nonnegative(),
+  seq,
+});
+
+const BasicRoundEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("operation"),
     snapshot: RoundOperationProgressSnapshotSchema,
@@ -1707,12 +1754,17 @@ export const RoundEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("worker"), rows: z.array(LaneRowSchema), seq }),
   z.object({ type: z.literal("gate"), seq }),
   z.object({ type: z.literal("committed"), seq }),
-  z.object({ type: z.literal("report"), reportBoardId: id, seq }),
-  z.object({ type: z.literal("lens"), lanes: z.array(LensLaneSchema), seq }),
   z.object({ type: z.literal("composed"), generation: id, seq }),
   /** The worker completed but its checkpoint was empty, so no generation was regenerated. */
   z.object({ type: z.literal("unchanged"), seq }),
   z.object({ type: z.literal("failed"), reason: z.string(), seq }),
+]);
+export const RoundEventSchema = z.union([
+  BasicRoundEventSchema,
+  LegacyRoundReportEventSchema,
+  ScopedRoundReportEventSchema,
+  LegacyRoundLensEventSchema,
+  ScopedRoundLensEventSchema,
 ]);
 export type RoundEvent = z.infer<typeof RoundEventSchema>;
 

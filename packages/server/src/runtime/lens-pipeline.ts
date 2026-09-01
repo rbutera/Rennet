@@ -24,6 +24,7 @@ import {
   type LintContext,
   type LintHunk,
   type LintTarget,
+  lint,
   lintReviewDraft,
   NO_CONCERN_ANSWER,
   type Omission,
@@ -63,6 +64,15 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import { projectRoundReportBoard } from "./lens-board-read";
+import {
+  CLASSIFIED_ROUND_REPORT_AUTHOR,
+  CLASSIFIED_ROUND_REPORT_SECTION_ID,
+  CLASSIFIED_ROUND_REPORT_SECTION_TITLE,
+  CLASSIFIED_ROUND_REPORT_STATUS_ORDER,
+  classifiedRoundReportIntro,
+  verifyRoundReportEvidence,
+} from "./round-report-verification";
 
 /**
  * The lens drafting pipeline SCHEDULER (#464 + #493 + #486, B08 cluster 5): the
@@ -93,6 +103,60 @@ import { z } from "zod";
 // ── The board output schema (the host schema the drafter's session is constrained to) ──
 
 let cachedBoardSchema: unknown;
+const RoundReportEvidenceSchema = z
+  .object({
+    path: z.string().min(1),
+    side: z.enum(["base", "head"]),
+    startLine: z.number().int().positive(),
+    endLine: z.number().int().positive(),
+  })
+  .strict()
+  .refine((evidence) => evidence.startLine === evidence.endLine, {
+    message: "evidence must cite one exact changed line",
+  });
+const RoundReportClassificationSchema = z
+  .object({
+    outcomes: z.array(
+      z.discriminatedUnion("status", [
+        z
+          .object({
+            askId: z.string().min(1),
+            status: z.literal("addressed"),
+            note: z.string().trim().min(1),
+            evidence: RoundReportEvidenceSchema,
+          })
+          .strict(),
+        z
+          .object({
+            askId: z.string().min(1),
+            status: z.literal("partial"),
+            note: z.string().trim().min(1),
+            evidence: RoundReportEvidenceSchema,
+          })
+          .strict(),
+        z
+          .object({
+            askId: z.string().min(1),
+            status: z.literal("untouched"),
+            note: z.string().trim().min(1),
+          })
+          .strict(),
+      ]),
+    ),
+    beyond: z.array(
+      z
+        .object({
+          ref: z.string().min(1),
+          text: z.string().trim().min(1),
+          note: z.string().trim().min(1),
+          evidence: RoundReportEvidenceSchema,
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+type RoundReportClassification = z.infer<typeof RoundReportClassificationSchema>;
+let cachedRoundReportClassificationSchema: unknown;
 const DesignNoMaterialSchema = z.object({
   absence: z.literal("no-material"),
   candidates: z.array(
@@ -120,6 +184,27 @@ export function boardOutputSchema(): unknown {
     cachedBoardSchema = { type: "object", properties: { elements: { type: "array" } } };
   }
   return cachedBoardSchema;
+}
+
+function roundReportClassificationOutputSchema(): unknown {
+  if (cachedRoundReportClassificationSchema !== undefined) {
+    return cachedRoundReportClassificationSchema;
+  }
+  try {
+    cachedRoundReportClassificationSchema = z.toJSONSchema(RoundReportClassificationSchema, {
+      io: "output",
+    });
+  } catch {
+    cachedRoundReportClassificationSchema = {
+      type: "object",
+      required: ["outcomes", "beyond"],
+      properties: {
+        outcomes: { type: "array" },
+        beyond: { type: "array" },
+      },
+    };
+  }
+  return cachedRoundReportClassificationSchema;
 }
 
 export function designDraftOutputSchema(): unknown {
@@ -171,6 +256,23 @@ export function draftToOps(
   };
   for (const el of board.elements) visit(el);
   return ordered.map((element) => ({ op: "create", element }));
+}
+
+/** Keep recovery deletes behind the same sole board-op writer as normal draft writes. */
+export async function deleteBoardElements(
+  whiteboard: Pick<WhiteboardClient, "apply">,
+  boardId: string,
+  elementIds: readonly string[],
+  actor: string,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }> {
+  const result = await whiteboard.apply(
+    boardId,
+    elementIds.map((id) => ({ op: "delete" as const, id })),
+    actor,
+  );
+  return result.response.ok
+    ? { ok: true }
+    : { ok: false, code: (result.response as { code?: string }).code ?? "rejected" };
 }
 
 // ── Flagged dual seat: reconcile two boards' findings (J1/J2, cluster 5.2) ──
@@ -296,26 +398,27 @@ function finalizedFlaggedDocument(
   return { ...authored, introMarkdown, measure: "reading" };
 }
 
-/** The findings the served board can reach from its top-level section roots. */
-function reachableFindingElements(elements: readonly DraftElement[]): DraftElement[] {
+/** Domain elements the served board can reach from its top-level section roots. */
+function reachableElementsOfKind(
+  elements: readonly DraftElement[],
+  kind: DraftElement["kind"],
+): DraftElement[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const nested = new Set<string>();
   for (const element of elements) {
-    if (element.kind !== "section" && element.kind !== "order_step") continue;
-    for (const child of element.data.children) nested.add(child);
+    const children = element.data.children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
   }
 
-  const findings: DraftElement[] = [];
+  const matches: DraftElement[] = [];
   const visited = new Set<string>();
   const visit = (id: string): void => {
     if (visited.has(id)) return;
     visited.add(id);
     const element = byId.get(id);
     if (element === undefined) return;
-    if (element.kind === "finding") {
-      findings.push(element);
-      return;
-    }
+    if (element.kind === kind) matches.push(element);
     if (element.kind !== "section" && element.kind !== "order_step") return;
     for (const child of element.data.children) visit(child);
   };
@@ -323,7 +426,21 @@ function reachableFindingElements(elements: readonly DraftElement[]): DraftEleme
   for (const element of elements) {
     if (element.kind === "section" && !nested.has(element.id)) visit(element.id);
   }
-  return findings;
+  return matches;
+}
+
+const MATERIAL_KIND_BY_LENS: Partial<Record<LensKind, DraftElement["kind"]>> = {
+  sequence: "order_step",
+  decisions: "decision",
+  flagged: "finding",
+};
+
+/** Whether a lens produced content the served board can actually render as its result. */
+function hasLensMaterial(lens: LensKind, board: DraftBoard): boolean {
+  const kind = MATERIAL_KIND_BY_LENS[lens];
+  return kind === undefined
+    ? board.elements.length > 0
+    : reachableElementsOfKind(board.elements, kind).length > 0;
 }
 
 /**
@@ -647,6 +764,15 @@ export interface LensBoardOutcome {
   readonly absence?: LensAbsenceReason;
 }
 
+/** A report already durably written under this drafting attempt's reserved identity. */
+export interface ReusableRoundReport {
+  readonly boardId: string;
+  readonly board: DraftBoard;
+  readonly omissions: readonly Omission[];
+  readonly blemishes: readonly Violation[];
+  readonly immutability: readonly Violation[];
+}
+
 export interface DesignCoverageRequest {
   readonly patchsetId: string;
   readonly requirements: readonly CoverageRequirementInput[];
@@ -722,6 +848,12 @@ export interface LensPipelineDeps {
   readonly whiteboard: Pick<WhiteboardClient, "apply">;
   /** The board id one lens's ops land on (caller mints via `createRennetBoard`). */
   readonly boardIdFor: (lens: LintTarget) => string;
+  /** Exact report state recovered from this attempt's reserved board after a restart.
+   *  The pipeline re-verifies it against the worker receipt before announcing or reusing
+   *  it, and never opens another report provider turn when this candidate is present. */
+  readonly reusableRoundReport?: ReusableRoundReport;
+  /** Remove stale report metadata before clearing a recovered report board. */
+  readonly removeBoardMeta?: (boardId: string) => void | Promise<void>;
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
   /** A successful lens absence, emitted as soon as discovery settles it. */
@@ -793,6 +925,165 @@ export interface RoundDraftContext {
   };
 }
 
+type LandedRoundDraftContext = RoundDraftContext & {
+  readonly worker: NonNullable<RoundDraftContext["worker"]>;
+};
+
+/**
+ * The report classifier receives only the identity and evidence needed to judge this
+ * coding turn. The full DeltaPacket and all-kind board schema belong to lens drafting,
+ * not to the per-ask classification boundary.
+ */
+export function renderRoundReportClassifierPrompt(
+  promptText: string,
+  patchsetId: string,
+  round: LandedRoundDraftContext,
+): string {
+  const context = JSON.stringify({
+    patchsetId,
+    dispatchedAsks: round.dispatchedAsks,
+    worker: round.worker,
+  });
+  return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
+}
+
+type ClassifiedRoundOutcome =
+  | {
+      readonly status: "addressed" | "partial" | "untouched";
+      readonly ref: string;
+      readonly text: string;
+      readonly note: string;
+      readonly evidence?: z.infer<typeof RoundReportEvidenceSchema>;
+    }
+  | {
+      readonly status: "beyond";
+      readonly ref: string;
+      readonly text: string;
+      readonly note: string;
+      readonly evidence: z.infer<typeof RoundReportEvidenceSchema>;
+    };
+
+function classifiedRoundOutcomes(
+  classification: RoundReportClassification,
+  asks: readonly ComposableAsk[],
+): ClassifiedRoundOutcome[] {
+  const known = new Set(asks.map((ask) => ask.id));
+  const byAsk = new Map<string, RoundReportClassification["outcomes"][number]>();
+  for (const outcome of classification.outcomes) {
+    if (!known.has(outcome.askId)) {
+      throw new Error(`contains unknown dispatched ask ${outcome.askId}`);
+    }
+    if (byAsk.has(outcome.askId)) {
+      throw new Error(`repeats dispatched ask ${outcome.askId}`);
+    }
+    if (outcome.status !== "untouched" && outcome.evidence.endLine < outcome.evidence.startLine) {
+      throw new Error(`outcome for ${outcome.askId} has an inverted diff evidence range`);
+    }
+    byAsk.set(outcome.askId, outcome);
+  }
+
+  for (const outcome of classification.beyond) {
+    if (outcome.evidence.endLine < outcome.evidence.startLine) {
+      throw new Error(`beyond outcome ${outcome.ref} has an inverted diff evidence range`);
+    }
+  }
+
+  const missing = asks.filter((ask) => !byAsk.has(ask.id)).map((ask) => ask.id);
+  if (missing.length > 0) throw new Error(`omitted dispatched asks: ${missing.join(", ")}`);
+
+  const outcomes: ClassifiedRoundOutcome[] = asks.map((ask) => {
+    const classified = byAsk.get(ask.id);
+    if (classified === undefined) throw new Error(`omitted dispatched ask ${ask.id}`);
+    return classified.status === "untouched"
+      ? {
+          status: classified.status,
+          ref: ask.id,
+          text: ask.instruction,
+          note: classified.note,
+        }
+      : {
+          status: classified.status,
+          ref: ask.id,
+          text: ask.instruction,
+          note: classified.note,
+          evidence: classified.evidence,
+        };
+  });
+  outcomes.sort(
+    (left, right) =>
+      CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(left.status) -
+      CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(right.status),
+  );
+  const beyond: ClassifiedRoundOutcome[] = classification.beyond
+    .map((outcome) => ({
+      status: "beyond" as const,
+      ref: outcome.ref,
+      text: outcome.text,
+      note: outcome.note,
+      evidence: outcome.evidence,
+    }))
+    .sort((left, right) => left.ref.localeCompare(right.ref));
+  return [...outcomes, ...beyond];
+}
+
+function buildClassifiedRoundReport(
+  classification: RoundReportClassification,
+  round: LandedRoundDraftContext,
+  patchsetId: string,
+): DraftBoard {
+  const outcomes = classifiedRoundOutcomes(classification, round.dispatchedAsks);
+  const elements: DraftElement[] = [];
+  const outcomeIds: string[] = [];
+  for (const [index, outcome] of outcomes.entries()) {
+    const outcomeId = `rennet:host:round-report:${index}:outcome`;
+    const codeRefId = `rennet:host:round-report:${index}:code`;
+    outcomeIds.push(outcomeId);
+    if (outcome.evidence !== undefined) {
+      elements.push({
+        id: codeRefId,
+        kind: "code_ref",
+        data: {
+          author: CLASSIFIED_ROUND_REPORT_AUTHOR,
+          patchset_id: patchsetId,
+          path: outcome.evidence.path,
+          side: outcome.evidence.side,
+          start_line: outcome.evidence.startLine,
+          end_line: outcome.evidence.endLine,
+        },
+      });
+    }
+    elements.push({
+      id: outcomeId,
+      kind: "round_outcome",
+      data: {
+        author: CLASSIFIED_ROUND_REPORT_AUTHOR,
+        status: outcome.status,
+        ask: { ref: outcome.ref, text: outcome.text },
+        note: outcome.note,
+        ...(outcome.evidence === undefined ? {} : { code_ref: codeRefId }),
+      },
+    });
+  }
+  elements.unshift({
+    id: CLASSIFIED_ROUND_REPORT_SECTION_ID,
+    kind: "section",
+    data: {
+      author: CLASSIFIED_ROUND_REPORT_AUTHOR,
+      title: CLASSIFIED_ROUND_REPORT_SECTION_TITLE,
+      children: outcomeIds,
+    },
+  });
+  return {
+    document: {
+      title: "Round report",
+      introMarkdown: classifiedRoundReportIntro(outcomes.map((outcome) => outcome.status)),
+      measure: "reading",
+    },
+    elements,
+    skippedHunks: [],
+  } as DraftBoard;
+}
+
 export interface LensPipelineResult {
   readonly boards: readonly LensBoardOutcome[];
   /** The Flagged board's reattachment/detachment facts, when this was a round. */
@@ -828,13 +1119,9 @@ function pipelineGenerationId(
  * Whether this run drafts a ROUND REPORT ahead of the lens boards — see the R58/D3 note
  * at the call site for why the two shapes differ.
  *
- * Exported because the report is also what promotes the live lens lanes' first drafter:
- * the arrival of the report calls `lanes.start()`. A run that drafts no report has to
- * start them at kickoff instead, and the caller can only know which it is by asking the
- * same question the pipeline asks. Copying the predicate over there would let the two
- * drift into a run that starts its lanes twice (the first lane reads "running" while the
- * report is still drafting) or never (the first lens reads "queued" for its whole run,
- * which is the bug this was extracted for).
+ * The predicate stays with the pipeline. Callers do not mirror it: `onLensDraftingStart`
+ * fires exactly once after the report has settled or been skipped, and promotes all five
+ * independent lanes from that real kickoff boundary.
  */
 export function draftsRoundReport(
   deps: Pick<LensPipelineDeps, "currentGeneration" | "deltaPacket" | "round">,
@@ -894,7 +1181,17 @@ const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = {
 
 function requiredBoardRetryPrompt(basePrompt: string, lens: LintTarget): string {
   const name = lens === "report" ? "round report" : `${lens} lens`;
-  return `${basePrompt}\n\nRETRY: The ${name} response validated but contained zero elements. This lane requires a visible reading result. Return a populated board grounded in the supplied change; do not return an empty elements array.`;
+  const missing =
+    lens === "sequence"
+      ? "contained no reachable `order_step` under a top-level section"
+      : "contained zero elements";
+  return `${basePrompt}\n\nRETRY: The ${name} response validated but ${missing}. This lane requires a visible reading result. Return a populated board grounded in the supplied change; prose, detached elements, and empty sections do not count.`;
+}
+
+function requiredBoardFailure(lens: LensKind): string {
+  return lens === "sequence"
+    ? "sequence lens: produced no reachable `order_step` after one explicit retry; retry the generation to draft this required board."
+    : `${lens} lens: produced zero elements after one explicit retry; retry the generation to draft this required board.`;
 }
 
 /**
@@ -1189,12 +1486,32 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // report's arrival, never before, so the report's announce-first contract still holds.
   deps.onLensDraftingStart?.();
 
-  const outcomes: LensBoardOutcome[] = [];
-  for (const lens of LENS_KINDS) {
-    const outcome = await runLensBoard(lens, deps, council, postProcess, reportBoard);
-    outcomes.push(outcome);
-    if (outcome.absence !== undefined) await deps.onLensAbsence?.(lens, outcome.absence);
-  }
+  // Each lens owns a distinct seat, board id, and metadata record, so the five drafts can
+  // run independently once the report gate settles. Absence notifications are the one
+  // cumulative persistence seam: serialize them in settlement order, and keep the tail
+  // alive after a rejected callback so one failed save cannot suppress a later absence.
+  let absenceNotificationTail = Promise.resolve();
+  const notifyAbsence = (lens: LensKind, reason: LensAbsenceReason): Promise<void> => {
+    const notification = absenceNotificationTail.then(() => deps.onLensAbsence?.(lens, reason));
+    absenceNotificationTail = notification.then(
+      () => undefined,
+      () => undefined,
+    );
+    return notification;
+  };
+  const settledOutcomes = await Promise.allSettled(
+    LENS_KINDS.map(async (lens) => {
+      const outcome = await runLensBoard(lens, deps, council, postProcess, reportBoard);
+      if (outcome.absence !== undefined) await notifyAbsence(lens, outcome.absence);
+      return outcome;
+    }),
+  );
+  // Wait for every launched lane before propagating an unexpected infrastructure error.
+  // Array order remains LENS_KINDS even when persistence completed in another order.
+  const outcomes = settledOutcomes.map((result) => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
+  });
 
   // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam
   // stays no-op per board — this is the cross-lens obligation). Runs BEFORE any lens
@@ -1249,14 +1566,218 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   };
 }
 
-/**
- * The round-report drafter (D3, R58): resolves the `round-report` seat, drafts
- * with the report lint register (`ctx.lens === "report"` ⇒ `REPORT_RULES`, no
- * hunk-coverage obligation), funnels through the SAME post-process pass, writes
- * to the report board, and announces its arrival. Honest degradation: no seat ⇒
- * `undefined`, and the lens drafters simply proceed without a report.
- */
-async function runRoundReport(
+/** The production round report: one semantic classification turn, deterministic shape. */
+function verifyClassifiedRoundReport(
+  deps: LensPipelineDeps,
+  round: LandedRoundDraftContext,
+  boardId: string,
+  board: DraftBoard,
+): void {
+  const projected = projectRoundReportBoard(board.elements, {
+    lens: "report",
+    generation: pipelineGenerationId(deps),
+    boardId,
+    document: board.document,
+    skippedHunks: boardSkippedHunks(board),
+  });
+  verifyRoundReportEvidence({
+    board: projected,
+    dispatchedAsks: round.dispatchedAsks,
+    expectedPatchsetId: deps.deltaPacket.patchset.id,
+    diff: round.worker.diff,
+    changedPaths: round.worker.changedPaths,
+  });
+}
+
+async function reuseClassifiedRoundReport(
+  deps: LensPipelineDeps,
+  round: LandedRoundDraftContext,
+  report: ReusableRoundReport,
+): Promise<LensBoardOutcome | undefined> {
+  const boardId = deps.boardIdFor("report");
+  if (report.boardId !== boardId) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: reusable report ${report.boardId} does not match reserved board ${boardId}.`,
+    };
+  }
+  try {
+    verifyClassifiedRoundReport(deps, round, boardId, report.board);
+  } catch (error) {
+    try {
+      await deps.removeBoardMeta?.(boardId);
+    } catch (removeError) {
+      return {
+        lens: "report",
+        omissions: report.omissions,
+        blemishes: report.blemishes,
+        immutability: report.immutability,
+        failure: `round-report seat: reusable report failed verification and its metadata could not be removed — ${
+          removeError instanceof Error ? removeError.message : String(removeError)
+        }`,
+      };
+    }
+    const elementIds = draftToOps(report.board)
+      .reverse()
+      .map(({ element }) => element.id);
+    const cleared = await deleteBoardElements(
+      deps.whiteboard,
+      boardId,
+      elementIds,
+      "host:round-report-recovery",
+    );
+    if (!cleared.ok) {
+      return {
+        lens: "report",
+        omissions: report.omissions,
+        blemishes: report.blemishes,
+        immutability: report.immutability,
+        failure: `round-report seat: reusable report failed verification and its reserved board could not be cleared (${cleared.code}) — ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+    // A stale or corrupt candidate must not poison every retry. Once its reserved board
+    // is empty, fall through to the same single classification turn as a fresh attempt;
+    // the new metadata overwrites the stale record after the replacement board lands.
+    return undefined;
+  }
+  deps.onBoardArrival?.({
+    lens: "report",
+    boardId,
+    elementCount: report.board.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), report.board),
+  });
+  return {
+    lens: "report",
+    boardId,
+    board: report.board,
+    omissions: report.omissions,
+    blemishes: report.blemishes,
+    immutability: report.immutability,
+  };
+}
+
+async function runClassifiedRoundReport(
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+  round: LandedRoundDraftContext,
+): Promise<LensBoardOutcome | undefined> {
+  const seat = resolveBoardSeat(
+    "round-report",
+    deps,
+    council,
+    roundReportClassificationOutputSchema(),
+  );
+  if ("failure" in seat) return undefined;
+
+  const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
+  const prompt = renderRoundReportClassifierPrompt(promptText, deps.deltaPacket.patchset.id, round);
+  let turn: HarnessTurnResult;
+  try {
+    turn = await seat(prompt, 0);
+  } catch (error) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification turn threw — ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+    };
+  }
+  if (turn.status !== "emitted") {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification turn did not emit (${turn.status}: ${turn.message}).`,
+    };
+  }
+  const parsed = RoundReportClassificationSchema.safeParse(turn.body);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "output"}: ${issue.message}`)
+      .join("; ");
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification output was invalid — ${issues}.`,
+    };
+  }
+
+  let board: DraftBoard;
+  try {
+    board = buildClassifiedRoundReport(parsed.data, round, deps.deltaPacket.patchset.id);
+  } catch (error) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: classification ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+    };
+  }
+
+  const stamped = stampDeltas(deps.previous?.get("report"), board);
+  const boardId = deps.boardIdFor("report");
+  try {
+    verifyClassifiedRoundReport(deps, round, boardId, stamped);
+  } catch (error) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: deterministic verification failed — ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+
+  const validated: ValidatedLike = {
+    board: stamped,
+    omissions: [],
+    blemishes: lint(stamped, deps.lintContextFor("report")),
+    immutability: [],
+  };
+  const persisted = await persistBoard(deps, "report", boardId, stamped, validated, "seat:report");
+  if (!persisted.ok) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: validated.blemishes,
+      immutability: [],
+      failure: persisted.reason,
+    };
+  }
+  deps.onBoardArrival?.({
+    lens: "report",
+    boardId,
+    elementCount: stamped.elements.length,
+    carried: isCarriedForward(deps.previous?.get("report"), stamped),
+  });
+  return {
+    lens: "report",
+    boardId,
+    board: stamped,
+    omissions: [],
+    blemishes: validated.blemishes,
+    immutability: [],
+  };
+}
+
+/** Legacy callers without an exact worker receipt keep the old generic board path. */
+async function runLegacyRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
@@ -1324,8 +1845,6 @@ async function runRoundReport(
       failure: persisted.reason,
     };
   }
-  // The report is the reviewer's greeting (R58) — it announces its arrival inline,
-  // ahead of the lens boards, once its write is accepted and its metadata is durable.
   deps.onBoardArrival?.({
     lens: "report",
     boardId,
@@ -1341,6 +1860,26 @@ async function runRoundReport(
     blemishes: validated.blemishes,
     immutability: validated.immutability,
   };
+}
+
+/**
+ * Draft the report before lens fanout. Landed production rounds use the compact
+ * classifier; only legacy callers without exact worker evidence use generic board drafting.
+ */
+async function runRoundReport(
+  deps: LensPipelineDeps,
+  council: CouncilResolveContext,
+  postProcess: ((board: DraftBoard) => Promise<unknown>) | undefined,
+): Promise<LensBoardOutcome | undefined> {
+  if (deps.round?.worker !== undefined) {
+    const round = deps.round as LandedRoundDraftContext;
+    if (deps.reusableRoundReport !== undefined) {
+      const reused = await reuseClassifiedRoundReport(deps, round, deps.reusableRoundReport);
+      if (reused !== undefined) return reused;
+    }
+    return runClassifiedRoundReport(deps, council, round);
+  }
+  return runLegacyRoundReport(deps, council, postProcess);
 }
 
 /** Draft, validate, post-process, write, and announce one lens board. */
@@ -2270,7 +2809,7 @@ async function runLensBoard(
     if (
       !("failure" in drafted) &&
       !("absence" in drafted) &&
-      drafted.board.elements.length === 0 &&
+      !hasLensMaterial(lens, drafted.board) &&
       (lens === "design" || lens === "sequence")
     ) {
       const retryPrompt = requiredBoardRetryPrompt(basePrompt, lens);
@@ -2349,7 +2888,7 @@ async function runLensBoard(
   }
 
   if (lens === "flagged") {
-    const visibleElements = reachableFindingElements(validated.board.elements);
+    const visibleElements = reachableElementsOfKind(validated.board.elements, "finding");
     validated = {
       ...validated,
       board: {
@@ -2359,30 +2898,19 @@ async function runLensBoard(
     };
   }
 
-  if (validated.board.elements.length === 0) {
-    const absence = EMPTY_LENS_ABSENCE[lens];
-    if (absence !== undefined) {
-      return {
-        lens,
-        omissions: validated.omissions,
-        blemishes: validated.blemishes,
-        immutability: validated.immutability,
-        absence,
-      };
-    }
-    return {
-      lens,
-      omissions: validated.omissions,
-      blemishes: validated.blemishes,
-      immutability: validated.immutability,
-      failure: `${lens} lens: produced zero elements after one explicit retry; retry the generation to draft this required board.`,
-    };
-  }
-
-  const boardId = deps.boardIdFor(lens);
-
-  if (
+  const migratesFindingResolutions =
     lens === "flagged" &&
+    findingResolutions !== undefined &&
+    findingDispositions !== undefined &&
+    deps.persistFindingResolutions !== undefined;
+  const flaggedBoardId = migratesFindingResolutions ? deps.boardIdFor(lens) : undefined;
+
+  // A Flagged round can consume the last reachable finding while retaining its flat-pool
+  // history. Migrate the reviewer-owned resolution before returning typed absence so the
+  // next round does not lose the disposition merely because there is no board to serve.
+  if (
+    migratesFindingResolutions &&
+    flaggedBoardId !== undefined &&
     findingResolutions !== undefined &&
     findingDispositions !== undefined &&
     deps.persistFindingResolutions !== undefined
@@ -2390,7 +2918,7 @@ async function runLensBoard(
     try {
       await deps.persistFindingResolutions(
         pipelineGenerationId(deps),
-        boardId,
+        flaggedBoardId,
         findingResolutions,
         findingDispositions,
       );
@@ -2405,6 +2933,29 @@ async function runLensBoard(
       };
     }
   }
+
+  if (!hasLensMaterial(lens, validated.board)) {
+    const absence = EMPTY_LENS_ABSENCE[lens];
+    if (absence !== undefined) {
+      return {
+        lens,
+        omissions: validated.omissions,
+        blemishes: validated.blemishes,
+        immutability: validated.immutability,
+        ...(findingResolutions === undefined ? {} : { findingResolutions }),
+        absence,
+      };
+    }
+    return {
+      lens,
+      omissions: validated.omissions,
+      blemishes: validated.blemishes,
+      immutability: validated.immutability,
+      failure: requiredBoardFailure(lens),
+    };
+  }
+
+  const boardId = flaggedBoardId ?? deps.boardIdFor(lens);
 
   // R58 delta stamps against the prior generation's board (cluster 4).
   const stamped = stampDeltas(deps.previous?.get(lens), validated.board);

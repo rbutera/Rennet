@@ -1,12 +1,13 @@
 /**
  * Lens-agent drafting instructions for the murder-board redesign (#452, #464).
  *
- * Each lens is drafted by a review agent on a fixed prompt; every draft then
- * passes through the unslop editor before the orchestrator composes the Board.
+ * Each lens is drafted by a review agent on a fixed prompt, then passes through
+ * the unslop editor before the orchestrator composes the Board. A landed round's
+ * report uses a narrow classifier prompt and host-owned board structure instead.
  * The prompts live as markdown files in ./prompts so they are authored and
- * reviewed as prose; this module is the typed manifest over them. The package
- * is node-free — a caller with filesystem access resolves the file names
- * against its own copy of the package.
+ * reviewed as prose; this module is the typed manifest over them. The package is
+ * node-free — a caller with filesystem access resolves the file names against
+ * its own copy of the package.
  */
 
 // The RSP prompt contracts, prompt-layer assembly, and verification/ci prompt
@@ -29,19 +30,18 @@ export const LENS_PROMPT_FILES: Record<LensKind, string> = {
 };
 
 /**
- * Prompt file for the round-report drafter — the per-round seat that accounts
- * for what a work-order round did with the reviewer's asks (the successor
- * account, R34). It drafts FIRST when a round returns: the report is both the
- * reviewer's greeting and the lens drafters' input, so it gates the
- * regeneration. Not a lens (LENS_KINDS is the five boards); it funnels through
- * the same post-process pass.
+ * Prompt file for the round-report classifier — the per-round seat that verifies
+ * what the exact coding-turn diff did with the reviewer's durable asks. It runs
+ * FIRST when a landed round returns; the host turns its narrow classification
+ * into the deterministic report board that greets the reviewer and feeds the
+ * lens drafters. It is not a lens and does not use generic board post-processing.
  */
 export const ROUND_REPORT_FILE = "prompts/report.md";
 
 /**
- * Prompt file for the post-processing editor agent every draft board funnels
- * through: break-it-down structure rules, the unslop skill verbatim, and the
- * humanizer additions — prose fields only, typed data untouched.
+ * Prompt file for the post-processing editor agent lens drafts and legacy report
+ * drafts funnel through: break-it-down structure rules, the unslop skill
+ * verbatim, and the humanizer additions — prose fields only, typed data untouched.
  */
 export const POST_PROCESS_FILE = "prompts/post-process.md";
 

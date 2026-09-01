@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import {
+  fallbackBoardDocument,
   generationIdForPatchset,
   LENS_KINDS,
   type LensAbsenceReason,
   type LensBoard,
   type LensKind,
+  type RoundEvent,
+  type RoundOperationProgressState,
 } from "@rennet/protocol";
 import { findHealthyDaemon, readDaemonFile } from "@rennet/server";
 import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./harness";
@@ -32,9 +35,10 @@ import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./ha
 // This drives both at once against the real installed harness. It captures over the app's
 // daemon socket, waits for every lens to reach one durable terminal result, opens each result
 // in the real window, then restarts the app and daemon over the same data directory. After the
-// restart it dispatches one real request-change round and requires a changed successor patchset
-// plus a new populated board generation. A green run closes the owner's read -> ask -> round ->
-// reread loop without substituting a mock for the daemon, coding worker, or lens pipeline.
+// restart it dispatches one real request-change round, stops the daemon as soon as the verified
+// report becomes readable while lenses are still running, and requires the same report plus the
+// eventual successor generation after recovery. A green run closes the owner's read -> ask ->
+// round -> reread loop without substituting a mock for the daemon, worker, or lens pipeline.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Deterministic, zero-spend specs use `modelFreeEnv`; this runs a REAL `claude` turn on the
@@ -59,10 +63,6 @@ type TerminalLensEvidence =
   | { readonly kind: "absence"; readonly reason: LensAbsenceReason }
   | { readonly kind: "failure"; readonly reason: string };
 
-interface TerminalKindEvidence {
-  readonly kind: TerminalLensEvidence["kind"];
-}
-
 const ABSENCE_BY_LENS: ReadonlyMap<LensKind, LensAbsenceReason> = new Map([
   ["design", "no-material"],
   ["decisions", "no-decisions"],
@@ -75,6 +75,14 @@ const ABSENCE_TITLE: Readonly<Record<LensAbsenceReason, string>> = {
   "no-decisions": "No material engineering decisions were found.",
   "no-findings": "No review findings were found.",
   "no-noise": "No safely skippable noise was found.",
+};
+
+const CORE_KIND_BY_LENS: Partial<
+  Readonly<Record<LensKind, LensBoard["elements"][number]["kind"]>>
+> = {
+  sequence: "order_step",
+  decisions: "decision",
+  flagged: "finding",
 };
 
 function liveEnv(disableHarness: boolean): NodeJS.ProcessEnv {
@@ -90,6 +98,90 @@ async function connect(page: Page): Promise<WsRennetBridge> {
     (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
   );
   return new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
+}
+
+interface PageExitDiagnostic {
+  readonly label: string;
+  readonly kind: "close" | "crash";
+}
+
+interface PageDiagnostics {
+  readonly exit: () => PageExitDiagnostic | undefined;
+}
+
+interface ObservedRoundEvent {
+  readonly event: RoundEvent;
+  readonly observedAt: number;
+}
+
+function rememberRoundEvents(
+  observations: ObservedRoundEvent[],
+  events: readonly RoundEvent[],
+): void {
+  const observedAt = Date.now();
+  for (const event of events) observations.push({ event, observedAt });
+}
+
+function observeRoundEvents(
+  bridge: WsRennetBridge,
+  reviewId: string,
+  observations: ObservedRoundEvent[],
+): () => void {
+  return bridge.onRoundProgress(reviewId, (event) => {
+    observations.push({ event, observedAt: Date.now() });
+  });
+}
+
+function firstObservedOperationPhase(
+  observations: readonly ObservedRoundEvent[],
+  operationId: string,
+  phase: RoundOperationProgressState["phase"],
+): number | undefined {
+  return observations.find(
+    ({ event }) =>
+      event.type === "operation" &&
+      event.snapshot.operationId === operationId &&
+      event.snapshot.state.phase === phase,
+  )?.observedAt;
+}
+
+function firstObservedTerminalLenses(
+  observations: readonly ObservedRoundEvent[],
+  operationId: string,
+): number | undefined {
+  return observations.find(
+    ({ event }) =>
+      event.type === "lens" &&
+      event.operationId === operationId &&
+      event.lanes.every(
+        (lane) => lane.status === "done" || lane.status === "absent" || lane.status === "failed",
+      ),
+  )?.observedAt;
+}
+
+function elapsedMs(startedAt: number, observedAt: number | undefined): number | null {
+  return observedAt === undefined ? null : observedAt - startedAt;
+}
+
+function attachPageDiagnostics(page: Page, label: string): PageDiagnostics {
+  let observedExit: PageExitDiagnostic | undefined;
+  const reportExit = (kind: PageExitDiagnostic["kind"]): void => {
+    if (observedExit !== undefined) return;
+    observedExit = { label, kind };
+    console.log(`[page:${label}:${kind}] ${page.url()}`);
+  };
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      console.log(`[renderer:${label}:error] ${message.text()}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    console.log(`[renderer:${label}:pageerror] ${error.message}`);
+  });
+  page.on("crash", () => reportExit("crash"));
+  page.on("close", () => reportExit("close"));
+  if (page.isClosed()) reportExit("close");
+  return { exit: () => observedExit };
 }
 
 function terminalLensEvidence(
@@ -173,6 +265,22 @@ async function expectTerminalLensesRendered(
       await expect(board).toBeVisible();
       await expect(board).toHaveAttribute("data-generation", evidence.board.generation);
       await expect(board).toContainText(evidence.board.document.title);
+      const requiredKind = CORE_KIND_BY_LENS[lens];
+      if (requiredKind !== undefined) {
+        const rendered = board.locator(`[data-kind="${requiredKind}"]`);
+        const sections = board.locator('[data-kind="board-section"]');
+        for (let index = 0; index < (await sections.count()); index += 1) {
+          if ((await rendered.count()) > 0 && (await rendered.first().isVisible())) break;
+          const section = sections.nth(index);
+          if ((await section.getAttribute("data-open")) === "false") {
+            await section.locator('button[aria-expanded="false"]').first().click();
+          }
+        }
+        await expect(
+          rendered.first(),
+          `${lens} must visibly render a reachable ${requiredKind}`,
+        ).toBeVisible();
+      }
     } else if (evidence.kind === "absence") {
       await expect(tab).toHaveAttribute("data-absent", evidence.reason);
       await expect(page.locator('[data-kind="board-absent"]')).toContainText(
@@ -187,39 +295,167 @@ async function expectTerminalLensesRendered(
   }
 }
 
-function expectOptionalEmptyLensesHonest(
-  terminal: ReadonlyMap<LensKind, TerminalLensEvidence>,
-): void {
-  const requiredProof: readonly LensKind[] = ["decisions", "flagged"];
-  for (const lens of requiredProof) {
+function hasReachableKind(
+  board: LensBoard,
+  requiredKind: LensBoard["elements"][number]["kind"],
+): boolean {
+  const byId = new Map(board.elements.map((element) => [element.id, element]));
+  const visited = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (visited.has(id)) return false;
+    visited.add(id);
+    const element = byId.get(id);
+    if (element === undefined) return false;
+    if (element.kind === requiredKind) return true;
+    if (element.kind !== "section" && element.kind !== "order_step") return false;
+    return element.data.children.some(visit);
+  };
+  return board.sections.some((section) => visit(section.ref));
+}
+
+function expectCoreUsefulGeneration(terminal: ReadonlyMap<LensKind, TerminalLensEvidence>): void {
+  const sequence = terminal.get("sequence");
+  expect(sequence?.kind, "Sequence must be a populated board").toBe("board");
+  if (sequence?.kind === "board") {
     expect(
-      terminal.get(lens)?.kind,
-      `${lens} must render a populated board or its typed empty state`,
-    ).toMatch(/^(board|absence)$/);
+      hasReachableKind(sequence.board, "order_step"),
+      "Sequence must contain a real reading-order step, not filler prose",
+    ).toBe(true);
+  }
+
+  const optionalCoreLenses = [
+    ["decisions", "no-decisions", "decision"],
+    ["flagged", "no-findings", "finding"],
+  ] as const satisfies readonly (readonly [
+    LensKind,
+    LensAbsenceReason,
+    LensBoard["elements"][number]["kind"],
+  ])[];
+  for (const [lens, expectedAbsence, requiredKind] of optionalCoreLenses) {
+    const evidence = terminal.get(lens);
+    if (evidence?.kind === "absence") {
+      expect(evidence.reason, `${lens} must use its typed empty state`).toBe(expectedAbsence);
+      continue;
+    }
+    expect(evidence?.kind, `${lens} must be a populated board or its typed empty state`).toBe(
+      "board",
+    );
+    if (evidence?.kind === "board") {
+      expect(
+        hasReachableKind(evidence.board, requiredKind),
+        `${lens} must contain a real ${requiredKind}, not filler prose`,
+      ).toBe(true);
+    }
   }
 }
 
-function expectPopulatedBoard(terminal: ReadonlyMap<LensKind, TerminalKindEvidence>): void {
-  const populated = [...terminal.values()].filter((evidence) => evidence.kind === "board");
-  expect(
-    populated.length,
-    "the terminal lens set must contain at least one populated board",
-  ).toBeGreaterThan(0);
+function populatedBoardEvidence(
+  lens: LensKind,
+  options: { readonly semantic?: boolean; readonly reachable?: boolean } = {},
+): TerminalLensEvidence {
+  const semantic = options.semantic ?? true;
+  const reachable = options.reachable ?? true;
+  const author = { kind: "lens-agent" as const, id: "oracle-control" };
+  let leaf: LensBoard["elements"][number];
+  if (!semantic || lens === "design" || lens === "noise") {
+    leaf = {
+      id: `${lens}-content`,
+      kind: "prose",
+      data: { author, markdown: `${lens} content` },
+    };
+  } else if (lens === "sequence") {
+    leaf = {
+      id: "sequence-step",
+      kind: "order_step",
+      data: { author, title: "Read the changed path", span: "control-span", children: [] },
+    };
+  } else if (lens === "decisions") {
+    leaf = {
+      id: "decision",
+      kind: "decision",
+      data: {
+        author,
+        statement: "Keep the operation durable",
+        evidence: [],
+        alternatives: ["Keep it process-local"],
+        why: "The result must survive restart.",
+      },
+    };
+  } else {
+    leaf = {
+      id: "finding",
+      kind: "finding",
+      data: {
+        author,
+        severity: "high",
+        concern: "The result disappears after restart.",
+        code: [],
+        concurrence: [],
+        status: "open",
+      },
+    };
+  }
+  const root: LensBoard["elements"][number] = {
+    id: `${lens}-root`,
+    kind: "section",
+    data: { author, title: "Review", children: [leaf.id] },
+  };
+  const elements: LensBoard["elements"] = reachable ? [root, leaf] : [leaf];
+  const sections: LensBoard["sections"] = reachable
+    ? [{ ref: root.id, gist: "Review", counts: {} }]
+    : [];
+  return {
+    kind: "board",
+    board: {
+      lens,
+      generation: "gen:oracle-control",
+      boardId: `board-${lens}`,
+      document: fallbackBoardDocument(lens),
+      sections,
+      elements,
+      skippedHunks: [],
+    },
+  };
 }
 
-test("terminal lens oracle rejects an all-empty or failed result", () => {
-  const noBoards: ReadonlyMap<LensKind, TerminalKindEvidence> = new Map([
-    ["design", { kind: "absence" }],
-    ["sequence", { kind: "failure" }],
-    ["decisions", { kind: "absence" }],
-    ["flagged", { kind: "absence" }],
-    ["noise", { kind: "absence" }],
+test("core lens oracle rejects noise-only results and accepts useful core boards", () => {
+  const noiseOnly: ReadonlyMap<LensKind, TerminalLensEvidence> = new Map([
+    ["design", { kind: "absence", reason: "no-material" }],
+    ["sequence", populatedBoardEvidence("sequence", { semantic: false })],
+    ["decisions", { kind: "absence", reason: "no-decisions" }],
+    ["flagged", { kind: "absence", reason: "no-findings" }],
+    ["noise", populatedBoardEvidence("noise")],
   ]);
-  expect(() => expectPopulatedBoard(noBoards)).toThrow("at least one populated board");
+  expect(() => expectCoreUsefulGeneration(noiseOnly)).toThrow(
+    "Sequence must contain a real reading-order step",
+  );
 
-  const oneBoard = new Map(noBoards);
-  oneBoard.set("sequence", { kind: "board" });
-  expect(() => expectPopulatedBoard(oneBoard)).not.toThrow();
+  const coreUseful = new Map(noiseOnly);
+  coreUseful.set("sequence", populatedBoardEvidence("sequence"));
+  expect(() => expectCoreUsefulGeneration(coreUseful)).not.toThrow();
+
+  const paddedDecisions = new Map(coreUseful);
+  paddedDecisions.set("decisions", populatedBoardEvidence("decisions", { semantic: false }));
+  expect(() => expectCoreUsefulGeneration(paddedDecisions)).toThrow(
+    "decisions must contain a real decision",
+  );
+
+  const paddedFlagged = new Map(coreUseful);
+  paddedFlagged.set("flagged", populatedBoardEvidence("flagged", { semantic: false }));
+  expect(() => expectCoreUsefulGeneration(paddedFlagged)).toThrow(
+    "flagged must contain a real finding",
+  );
+
+  const allCoreBoards = new Map(coreUseful);
+  allCoreBoards.set("decisions", populatedBoardEvidence("decisions"));
+  allCoreBoards.set("flagged", populatedBoardEvidence("flagged"));
+  expect(() => expectCoreUsefulGeneration(allCoreBoards)).not.toThrow();
+
+  const orphanSequence = new Map(coreUseful);
+  orphanSequence.set("sequence", populatedBoardEvidence("sequence", { reachable: false }));
+  expect(() => expectCoreUsefulGeneration(orphanSequence)).toThrow(
+    "Sequence must contain a real reading-order step",
+  );
 });
 
 async function healthyDaemonPid(userData: string): Promise<number> {
@@ -257,11 +493,24 @@ async function waitForReturnedRound(
   bridge: WsRennetBridge,
   reviewId: string,
   operationId: string,
+  pageDiagnostics: PageDiagnostics,
+  observations: ObservedRoundEvent[],
 ): Promise<void> {
+  const assertPageStayedOpen = (): void => {
+    const exit = pageDiagnostics.exit();
+    if (exit !== undefined) {
+      throw new Error(
+        `${exit.label} page emitted ${exit.kind} while the successor round was running`,
+      );
+    }
+  };
   await expect
     .poll(
       async () => {
+        assertPageStayedOpen();
         const { events } = await bridge.invoke("session.roundEvents", { reviewId });
+        rememberRoundEvents(observations, events);
+        assertPageStayedOpen();
         const current = events.findLast(
           (event) => event.type === "operation" && event.snapshot.operationId === operationId,
         );
@@ -303,17 +552,19 @@ async function openCapturedReview(page: Page, repository: string): Promise<strin
   }
 }
 
-liveTest("LIVE: boards survive restart and a real round produces successor boards", async () => {
+liveTest("LIVE: verified report and successor core boards survive daemon restarts", async () => {
   test.setTimeout(1_800_000);
   const repository = seedReviewRepo("board-live-repo-");
   const userData = makeTempDir("board-live-state-");
   const home = makeTempDir("board-live-home-");
   let launched = await launchRennet({ repository, userData, home, env: liveEnv(false) });
   let bridge: WsRennetBridge | undefined;
+  let stopRoundObservation: (() => void) | undefined;
+  let activeDaemonPid: number | undefined;
   try {
     let page = await launched.application.firstWindow();
-    page.on("console", (m) => {
-      if (m.type() === "error") console.log(`[renderer:error] ${m.text()}`);
+    page.on("console", (message) => {
+      if (message.type() === "error") console.log(`[renderer:error] ${message.text()}`);
     });
     // The first-run welcome is a full-screen gate; clear it or the route never mounts.
     await completeWelcome(page);
@@ -335,8 +586,7 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
     const generation = generationIdForPatchset(loaded.review.activePatchsetId);
     const terminal = await waitForTerminalLenses(bridge, reviewId, generation);
     console.log("LENS TERMINALS:", JSON.stringify([...terminal.entries()], null, 2));
-    expectPopulatedBoard(terminal);
-    expectOptionalEmptyLensesHonest(terminal);
+    expectCoreUsefulGeneration(terminal);
     await expectTerminalLensesRendered(page, terminal);
 
     // Positive control: the same review at a stale generation has no terminal result.
@@ -351,6 +601,7 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
     ).toEqual({ board: null });
 
     const firstDaemonPid = await healthyDaemonPid(userData);
+    activeDaemonPid = firstDaemonPid;
     bridge.close();
     bridge = undefined;
     await launched.application.close();
@@ -363,10 +614,13 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
         intervals: [50, 100, 250],
       })
       .toBe(false);
+    activeDaemonPid = undefined;
 
     launched = await launchRennet({ repository, userData, home, env: liveEnv(false) });
     page = await launched.application.firstWindow();
+    attachPageDiagnostics(page, "replacement");
     const replacementDaemonPid = await healthyDaemonPid(userData);
+    activeDaemonPid = replacementDaemonPid;
     expect(replacementDaemonPid).not.toBe(firstDaemonPid);
     await page.evaluate((id) => {
       location.hash = `#/s/${id}`;
@@ -376,13 +630,13 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
     const reconstructed = await waitForTerminalLenses(bridge, reviewId, generation);
 
     expect([...reconstructed.entries()]).toEqual([...terminal.entries()]);
-    expectPopulatedBoard(reconstructed);
-    expectOptionalEmptyLensesHonest(reconstructed);
+    expectCoreUsefulGeneration(reconstructed);
     await expectTerminalLensesRendered(page, reconstructed);
 
     const beforeRoundDiff = gitOutput(repository, "diff", "--", REVIEWED_PATH);
     expect(beforeRoundDiff).toContain("+export const widget = 2;");
-    await bridge.invoke("ask.stage", {
+    const roundBridge = bridge;
+    await roundBridge.invoke("ask.stage", {
       sessionId: reviewId,
       ask: {
         id: ROUND_ASK_ID,
@@ -391,16 +645,264 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
         body: `Replace the entire contents of ${REVIEWED_PATH} with exactly \`export const widget = 3;\` followed by one newline. Do not change any other file.`,
       },
     });
-    const dispatched = await bridge.invoke("round.dispatch", { reviewId });
+    const roundObservations: ObservedRoundEvent[] = [];
+    stopRoundObservation = observeRoundEvents(roundBridge, reviewId, roundObservations);
+    const dispatchedAt = Date.now();
+    const dispatched = await roundBridge.invoke("round.dispatch", { reviewId });
     expect(dispatched.dispatched).toBe(true);
     expect(dispatched.acceptedOperation).toBeDefined();
     const operationId = dispatched.acceptedOperation?.operationId;
     if (operationId === undefined) throw new Error("round dispatch returned no operation identity");
-    await waitForReturnedRound(bridge, reviewId, operationId);
 
-    const asks = await bridge.invoke("ask.read", { sessionId: reviewId });
+    await page.evaluate((id) => {
+      location.hash = `#/s/${id}/run`;
+    }, reviewId);
+    const run = page.locator('[data-screen="session-run"]');
+    await expect(run).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(
+        async () => {
+          const { events } = await roundBridge.invoke("session.roundEvents", { reviewId });
+          rememberRoundEvents(roundObservations, events);
+          const report = events.findLast(
+            (event) => event.type === "report" && event.operationId === operationId,
+          );
+          return report?.type === "report" &&
+            report.operationId === operationId &&
+            report.operationRevision !== undefined &&
+            report.report !== undefined
+            ? "verified"
+            : "missing";
+        },
+        { timeout: 900_000, intervals: [250, 500, 1_000, 2_000] },
+      )
+      .toBe("verified");
+    const reportEvents = await roundBridge.invoke("session.roundEvents", { reviewId });
+    rememberRoundEvents(roundObservations, reportEvents.events);
+    const verifiedReportEvent = reportEvents.events.findLast(
+      (event) => event.type === "report" && event.operationId === operationId,
+    );
+    if (
+      verifiedReportEvent?.type !== "report" ||
+      verifiedReportEvent.operationId !== operationId ||
+      verifiedReportEvent.operationRevision === undefined ||
+      verifiedReportEvent.report === undefined
+    ) {
+      throw new Error("round did not expose its operation-scoped verified report");
+    }
+    const greeting = page.locator('[data-screen="round-greeting"]');
+    await expect(greeting).toBeVisible({ timeout: 60_000 });
+    const reportVisibleAt = Date.now();
+    await expect(
+      greeting.getByRole("button", { name: "View the New Boards", exact: true }),
+    ).toHaveCount(0);
+    const inFlightEvents = await roundBridge.invoke("session.roundEvents", { reviewId });
+    rememberRoundEvents(roundObservations, inFlightEvents.events);
+    expect(
+      inFlightEvents.events.some(
+        (event) =>
+          event.type === "report" &&
+          event.operationId === operationId &&
+          event.reportBoardId === verifiedReportEvent.reportBoardId,
+      ),
+      "round greeting lost its operation-scoped verified report",
+    ).toBe(true);
+    expect(verifiedReportEvent.report.boardId).toBe(verifiedReportEvent.reportBoardId);
+    await expect(greeting.locator('[data-kind="round-report"]')).toContainText(
+      verifiedReportEvent.report.document.title,
+    );
+    const reportBoardId = verifiedReportEvent.reportBoardId;
+    const reportOperationRevision = verifiedReportEvent.operationRevision;
+    const newestInFlightLens = inFlightEvents.events.findLast(
+      (event) => event.type === "lens" && event.operationId === operationId,
+    );
+    if (newestInFlightLens !== undefined) {
+      if (newestInFlightLens.type !== "lens" || newestInFlightLens.operationId !== operationId) {
+        throw new Error("latest same-attempt lens snapshot lost its operation identity");
+      }
+      expect(
+        newestInFlightLens.lanes.some(
+          (lane) =>
+            lane.status === "queued" || lane.status === "running" || lane.status === "drafted",
+        ),
+        "the verified report must become visible before every lens reaches a terminal state",
+      ).toBe(true);
+    }
+    const inFlightOperation = inFlightEvents.events.findLast(
+      (event) => event.type === "operation" && event.snapshot.operationId === operationId,
+    );
+    if (inFlightOperation?.type !== "operation") {
+      throw new Error("round greeting appeared without its durable operation snapshot");
+    }
+    expect(["report-drafting", "report-verifying"]).toContain(
+      inFlightOperation.snapshot.state.phase,
+    );
+
+    const workerSettledAt = firstObservedOperationPhase(
+      roundObservations,
+      operationId,
+      "worker-settled",
+    );
+    const reportEventObservedAt = roundObservations.find(
+      ({ event }) =>
+        event.type === "report" &&
+        event.operationId === operationId &&
+        event.reportBoardId === reportBoardId,
+    )?.observedAt;
+    expect(reportEventObservedAt).toBeDefined();
+    expect(reportEventObservedAt).toBeLessThanOrEqual(reportVisibleAt);
+    console.log(
+      "ROUND TIMINGS (REPORT VISIBLE):",
+      JSON.stringify({
+        dispatchedAt,
+        workerSettledAt: workerSettledAt ?? null,
+        verifiedReportEventAt: reportEventObservedAt ?? null,
+        reportVisibleAt,
+        dispatchToWorkerSettledMs: elapsedMs(dispatchedAt, workerSettledAt),
+        dispatchToVerifiedReportEventMs: elapsedMs(dispatchedAt, reportEventObservedAt),
+        dispatchToReportVisibleMs: reportVisibleAt - dispatchedAt,
+      }),
+    );
+
+    const preRestartEvents = await roundBridge.invoke("session.roundEvents", { reviewId });
+    rememberRoundEvents(roundObservations, preRestartEvents.events);
+    const newestPreRestartLens = preRestartEvents.events.findLast(
+      (event) => event.type === "lens" && event.operationId === operationId,
+    );
+    if (newestPreRestartLens !== undefined) {
+      if (
+        newestPreRestartLens.type !== "lens" ||
+        newestPreRestartLens.operationId !== operationId
+      ) {
+        throw new Error("pre-restart lens snapshot lost its operation identity");
+      }
+      expect(
+        newestPreRestartLens.lanes.some(
+          (lane) =>
+            lane.status === "queued" || lane.status === "running" || lane.status === "drafted",
+        ),
+        "the daemon restart must interrupt lens regeneration before its terminal snapshot",
+      ).toBe(true);
+    }
+    expect(firstObservedTerminalLenses(roundObservations, operationId)).toBeUndefined();
+
+    stopRoundObservation();
+    stopRoundObservation = undefined;
+    roundBridge.close();
+    bridge = undefined;
+    await launched.application.close();
+    await expect
+      .poll(() => readDaemonFile(userData), { timeout: 30_000, intervals: [50, 100, 250] })
+      .toBeNull();
+    await expect
+      .poll(() => processIsAlive(replacementDaemonPid), {
+        timeout: 30_000,
+        intervals: [50, 100, 250],
+      })
+      .toBe(false);
+    activeDaemonPid = undefined;
+
+    launched = await launchRennet({ repository, userData, home, env: liveEnv(false) });
+    page = await launched.application.firstWindow();
+    const resumedPageDiagnostics = attachPageDiagnostics(page, "resumed");
+    const resumedDaemonPid = await healthyDaemonPid(userData);
+    activeDaemonPid = resumedDaemonPid;
+    expect(resumedDaemonPid).not.toBe(replacementDaemonPid);
+    await page.evaluate((id) => {
+      location.hash = `#/s/${id}`;
+    }, reviewId);
+    const resumedBridge = await connect(page);
+    bridge = resumedBridge;
+    stopRoundObservation = observeRoundEvents(resumedBridge, reviewId, roundObservations);
+    await expect
+      .poll(
+        async () => {
+          const { events } = await resumedBridge.invoke("session.roundEvents", { reviewId });
+          rememberRoundEvents(roundObservations, events);
+          const report = events.findLast(
+            (event) => event.type === "report" && event.operationId === operationId,
+          );
+          return report?.type === "report" &&
+            report.operationId === operationId &&
+            report.operationRevision !== undefined &&
+            report.report !== undefined
+            ? report.reportBoardId
+            : "missing";
+        },
+        { timeout: 120_000, intervals: [100, 250, 500, 1_000] },
+      )
+      .toBe(reportBoardId);
+    const recoveredEvents = await resumedBridge.invoke("session.roundEvents", { reviewId });
+    rememberRoundEvents(roundObservations, recoveredEvents.events);
+    const recoveredReportEvent = recoveredEvents.events.findLast(
+      (event) => event.type === "report" && event.operationId === operationId,
+    );
+    if (
+      recoveredReportEvent?.type !== "report" ||
+      recoveredReportEvent.operationId !== operationId ||
+      recoveredReportEvent.operationRevision === undefined ||
+      recoveredReportEvent.report === undefined
+    ) {
+      throw new Error("daemon restart lost the operation-scoped verified report");
+    }
+    expect(recoveredReportEvent.reportBoardId).toBe(reportBoardId);
+    expect(recoveredReportEvent.operationRevision).toBeGreaterThanOrEqual(reportOperationRevision);
+    expect(recoveredReportEvent.report).toEqual(verifiedReportEvent.report);
+    const recoveredOperation = recoveredEvents.events.findLast(
+      (event) => event.type === "operation" && event.snapshot.operationId === operationId,
+    );
+    if (recoveredOperation?.type !== "operation") {
+      throw new Error("daemon restart lost the durable operation snapshot");
+    }
+    expect(["report-drafting", "report-verifying"]).toContain(
+      recoveredOperation.snapshot.state.phase,
+    );
+    const resumedGreeting = page.locator('[data-screen="round-greeting"]');
+    await expect(resumedGreeting).toBeVisible({ timeout: 60_000 });
+    await expect(resumedGreeting.locator('[data-kind="round-report"]')).toContainText(
+      recoveredReportEvent.report.document.title,
+    );
+    await expect(
+      resumedGreeting.getByRole("button", { name: "View the New Boards", exact: true }),
+    ).toHaveCount(0);
+    await waitForReturnedRound(
+      resumedBridge,
+      reviewId,
+      operationId,
+      resumedPageDiagnostics,
+      roundObservations,
+    );
+    await expect
+      .poll(() => page.evaluate(() => location.hash), {
+        timeout: 30_000,
+        intervals: [50, 100, 250],
+      })
+      .toBe(`#/s/${reviewId}`);
+    await expect(page.locator('[data-screen="session-run"]')).toHaveCount(0);
+    await expect(resumedGreeting).toBeVisible({ timeout: 30_000 });
+
+    const allLensesTerminalAt = firstObservedTerminalLenses(roundObservations, operationId);
+    if (allLensesTerminalAt === undefined) {
+      throw new Error("returned round has no operation-scoped terminal lens snapshot");
+    }
+    expect(reportVisibleAt).toBeLessThan(allLensesTerminalAt);
+    console.log(
+      "ROUND TIMINGS (TERMINAL):",
+      JSON.stringify({
+        dispatchedAt,
+        workerSettledAt: workerSettledAt ?? null,
+        reportVisibleAt,
+        allLensesTerminalAt,
+        dispatchToWorkerSettledMs: elapsedMs(dispatchedAt, workerSettledAt),
+        dispatchToReportVisibleMs: reportVisibleAt - dispatchedAt,
+        dispatchToAllLensesTerminalMs: allLensesTerminalAt - dispatchedAt,
+        reportVisibleToAllLensesTerminalMs: allLensesTerminalAt - reportVisibleAt,
+      }),
+    );
+
+    const asks = await resumedBridge.invoke("ask.read", { sessionId: reviewId });
     expect(asks.projection.stagedAsks[ROUND_ASK_ID]).toBeUndefined();
-    const rounds = await bridge.invoke("session.rounds", { reviewId });
+    const rounds = await resumedBridge.invoke("session.rounds", { reviewId });
     const successor = rounds.records.findLast((record) =>
       record.asksDispatched.includes(ROUND_ASK_ID),
     );
@@ -414,6 +916,8 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
     expect(successor.resultPatchsetId).not.toBe(loaded.review.activePatchsetId);
     expect(successor.boardGeneration).not.toBe(generation);
     expect(successor.mintedPatchsetGeneration).toBe(successor.boardGeneration);
+    expect(successor.reportBoard).toBe(reportBoardId);
+    expect(successor.report).toEqual(verifiedReportEvent.report);
 
     expect(readFileSync(join(repository, REVIEWED_PATH), "utf8")).toBe(
       "export const widget = 3;\n",
@@ -421,7 +925,7 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
     const afterRoundDiff = gitOutput(repository, "diff", "--", REVIEWED_PATH);
     expect(afterRoundDiff).toContain("+export const widget = 3;");
 
-    const reloaded = await bridge.invoke("review.load", {
+    const reloaded = await resumedBridge.invoke("review.load", {
       commandId: crypto.randomUUID(),
       reviewId,
     });
@@ -430,18 +934,55 @@ liveTest("LIVE: boards survive restart and a real round produces successor board
       reloaded.review.patchsets.some((patchset) => patchset.id === successor.resultPatchsetId),
     ).toBe(true);
     const successorTerminal = await waitForTerminalLenses(
-      bridge,
+      resumedBridge,
       reviewId,
       successor.boardGeneration,
     );
-    expectPopulatedBoard(successorTerminal);
+    expectCoreUsefulGeneration(successorTerminal);
 
     await page.reload();
+    await expect(resumedGreeting).toBeVisible({ timeout: 60_000 });
+    await expect(resumedGreeting.locator('[data-kind="round-report"]')).toContainText(
+      recoveredReportEvent.report.document.title,
+    );
+    const reveal = resumedGreeting.getByRole("button", {
+      name: "View the New Boards",
+      exact: true,
+    });
+    await expect(reveal).toBeVisible();
+    await reveal.click();
+    await expect(resumedGreeting).toHaveCount(0);
     await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 60_000 });
+    await expect(
+      page.locator(`article[data-generation="${successor.boardGeneration}"]`),
+    ).toBeVisible({ timeout: 60_000 });
+
+    await page.reload();
+    await expect(resumedGreeting).toHaveCount(0);
+    await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible({ timeout: 60_000 });
+    await expect(
+      page.locator(`article[data-generation="${successor.boardGeneration}"]`),
+    ).toBeVisible({ timeout: 60_000 });
     await expectTerminalLensesRendered(page, successorTerminal);
   } finally {
+    stopRoundObservation?.();
     bridge?.close();
     await launched.application.close().catch(() => undefined);
+    await expect
+      .poll(() => readDaemonFile(userData), {
+        timeout: 30_000,
+        intervals: [50, 100, 250],
+      })
+      .toBeNull();
+    if (activeDaemonPid !== undefined) {
+      const daemonPid = activeDaemonPid;
+      await expect
+        .poll(() => processIsAlive(daemonPid), {
+          timeout: 30_000,
+          intervals: [50, 100, 250],
+        })
+        .toBe(false);
+    }
     rmSync(userData, { recursive: true, force: true });
     rmSync(repository, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

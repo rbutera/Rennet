@@ -6,10 +6,10 @@ Packet: `context.md` (scope authority). Plan row B8 — the largest engine chang
 
 The drafting pipeline: harness sessions draft one board per lens, a deterministic validation loop guarantees each draft before a human sees it, and the orchestrator composes across the boards. It lands in `server/src/runtime/` (the scheduler home B06 created) over a NEW pure `core/board/` layer, consuming the seam B03 froze in `protocol/src/board/` and the prompts in `@rennet/prompts` verbatim.
 
-- **Drafters** are harness sessions in the PR worktree, seeded with the inlined DeltaPacket (B5) + the lens prompt from `packages/prompts` + the host board schema. Returns are **structured**, validated by `DraftBoardSchema` (`protocol/src/board/schema.ts` — consumed, never re-modeled); the host writes board ops on the drafter's behalf through `whiteboard-client` (the sole op writer, B04) — whiteboard tools stay orchestrator + human only. The **round-report** drafter runs FIRST on rounds (R58: it is both the reviewer's greeting and the lens drafters' input); per-board arrival emits the events that power the R58 reveal.
+- **Drafters** are harness sessions in the PR worktree, seeded with the inlined DeltaPacket (B5) + the lens prompt from `packages/prompts` + the host board schema. Returns are **structured**, validated by `DraftBoardSchema` (`protocol/src/board/schema.ts` — consumed, never re-modeled); the host writes board ops on the drafter's behalf through `whiteboard-client` (the sole op writer, B04) — whiteboard tools stay orchestrator + human only. A landed-round **report classifier** has a different input set: successor patchset id, durable asks, and the exact worker receipt. It receives a classification schema rather than the DeltaPacket or host board schema. The host builds and verifies its report board. That one attempt settles before the lens drafters start, and per-board arrival emits the events that power the R58 reveal.
 - **Validation loop** (#493): 19 lint rules + schema constraints run as `lint(draft) => Violation[]` (`ViolationSchema`, B03-frozen). Failures return to the drafter as ZodError-shaped JSON pointers on one retry channel; the drafter returns a patch and passing elements freeze. A 4-rung escalation ends in an honest-omission exit (drop the element; its hunks move to `skippedHunks` with a reason). Retry cap 10; exhaustion ships the draft with labeled `blemishes[]` (`BlemishSchema`, B03-frozen) — visible, never blocking. Three gates in order: **lint** (pre-post-process) → **immutability** check → **composition** every-hunk check.
 - **Composition** is split: mechanical parts live in `core/board/` (the coverage assertion — every patchset hunk taught-or-skipped across all lenses; verbatim carry on stable element ids; delta stamps), while the authored connective prose is the orchestrator's, write-through on the versioned composition prompt (`review-draft-voice.md`, B02). Curation feedback enters the next generation's packet. The lens boards ARE the reading surface — there is no sixth composed board.
-- **Council rows.** The five job ids `lens-draft`, `lens-draft-flagged` (dual seat + `agreement` routing), `lens-draft-noise`, `board-post-process`, `round-report` are already frozen in `protocol` `COUNCIL_JOB_IDS` (B03); B08 adds only their CORE `JOB_CATALOGUE` entries + assignment-table rows in `core/model-council.ts` (no protocol edit, exactly the B06 pattern). The Flagged dual-seat merge keeps `finding-reconcile` (`core/finding-reconcile.ts`, landed).
+- **Council rows.** The five job ids `lens-draft`, `lens-draft-flagged` (dual seat + `agreement` routing), `lens-draft-noise`, `board-post-process`, `round-report` are already frozen in `protocol` `COUNCIL_JOB_IDS` (B03); B08 adds only their CORE `JOB_CATALOGUE` entries + assignment-table rows in `core/model-council.ts` (no protocol edit, exactly the B06 pattern). `round-report` is now a narrow classification job. It defaults to Sonnet at low effort in both-provider and Claude-only scenarios, and Terra at low effort in Codex-only; the normal task and tier overrides still win. The Flagged dual-seat merge keeps `finding-reconcile` (`core/finding-reconcile.ts`, landed).
 - **#493's seven flagged conflicts are pre-resolved — applied, not re-opened:** R17 (no code bytes — enforced at parse time via the derived draft schema, reinforced by lint), R20 (backtick + patchset-identifier exemption in the code-bytes screen), `review-draft-voice.md` gets lint coverage (the process-vocabulary screen applies to the write-through authoring register too), and spike drift must not propagate into the schema (the schema is B03's derivation; B08 never hand-edits it).
 - **Concurrency measurement.** The warm-session concurrency cost (engine asset risk 3) is measured against real harness sessions before cap 10 is trusted; the measurement is recorded in this change (§Concurrency measurement below).
 
@@ -54,12 +54,11 @@ Client rendering of the boards (C5). Exits (B11). The rounds machinery that cons
 
 ## Concurrency measurement (engine asset risk 3 — packet-required, cluster 6)
 
-**Method.** A warm harness session in Rennet is a spawned `claude` node process:
+**Method.** A warm harness session in Rennet includes a spawned `claude` node process:
 the SDK's `query()` launches the user's own `claude` via
 `pathToClaudeCodeExecutable` in stream-json in/out mode and keeps it resident
-(`packages/adapters/src/claude-query.ts`). So the warm-session concurrency cost
-IS that process's resident memory, and it is measured directly: spawn *N* real
-`claude` processes with the exact args the SDK warms them under
+(`packages/adapters/src/claude-query.ts`). The original measurement sampled that
+direct process only: spawn *N* real `claude` processes with the exact args the SDK warms them under
 (`--output-format stream-json --input-format stream-json --verbose`), parked idle
 on stdin — no complete message is ever written, so no API call is made and no
 tokens are spent — then sample RSS via `ps` 6 s after spawn (fully loaded, at the
@@ -67,35 +66,110 @@ idle read state), and kill. Host: 16 GB, node v24.18, `claude` 2.1.246,
 `@anthropic-ai/claude-agent-sdk` 0.3.223. (Measurement harness:
 `scratchpad/measure.mjs`; outside the gate — the gate makes no live spawn.)
 
-**Numbers (real, this host).**
+**Direct-process numbers (real, this host; descendants excluded).**
 
 | Concurrent warm sessions | Total RSS | Per session | Range |
 | --- | --- | --- | --- |
 | 1 | 218 MB | 218 MB | — |
 | 10 | 1 885 MB | 189 MB | 146–235 MB |
 
-A warm session costs **~190–220 MB RSS**. Ten concurrent ≈ **1.9 GB — ~12 % of a
-16 GB host**, comfortable headroom.
+The sampled direct process costs **~190–220 MB RSS**. Ten direct processes total
+approximately **1.9 GB**, but those figures exclude ambient MCP descendants and
+therefore do not establish whole-seat headroom.
 
-**Finding — the packet's "cap-10 fan-out" does not exist in the shipped runtime.**
-`runLensPipeline` drafts the five lenses **serially** (the `for (const lens of
-LENS_KINDS)` loop awaits each board before the next); the *only* concurrency is
-the Flagged dual seat's `Promise.all` over its two seats — a **max of 2**
-concurrent warm sessions at any instant. `RETRY_CAP = 10`
-(`core/board/validate.ts`) is a **sequential** retry bound: one lens's single
-session is re-prompted up to 10 times, never 10 sessions at once. Warm-session
-memory is therefore irrelevant to the retry cap.
+**Current runtime.** For a landed coding round, `runLensPipeline` awaits one
+Council-routed semantic-classification turn as a report sequencing boundary.
+The turn receives only the successor patchset id, durable asks, and exact worker
+receipt; the host builds and verifies the report without the generic retry
+ladder or post-process editor. A failed or unavailable report still settles this
+boundary, so it does not prevent lens drafting. The pipeline then starts the five
+independent lens lanes concurrently. Flagged
+owns two seats, so the peak is **6 concurrent warm sessions**: four single-seat
+lanes plus the two Flagged seats. The report never overlaps them. `RETRY_CAP = 10`
+(`core/board/validate.ts`) remains a **sequential per-lane** retry bound; it does
+not multiply a lane into ten simultaneous sessions.
 
-**Verdict — keep 10; no runtime concurrency change.** The retry cap of 10 stands
-(it is a sequential correctness bound, not a memory knob). No fan-out cap is
-distrusted because none exists: shipped peak concurrency is 2 (~0.4 GB). Even a
-hypothetical worst case — all five lenses + round-report + the Flagged second
-seat drafting at once (~7 sessions ≈ 1.3 GB), or a naive fan-out to the full 10
-(~1.9 GB) — fits a 16 GB host with room to spare. Engine-asset-risk-3 cleared: no
-cluster-5 change made. **Guidance for any future concurrent fan-out:** budget
-~200 MB/session and cap concurrency at ~10 to stay under ~2 GB (the
-worktree-per-agent daemon accumulation in `CLAUDE.md`'s cleanup note — ~7.8 GB of
-stale swap — is the real memory risk on this host, not a single pipeline run).
+The generic report-board drafter remains only for compatibility with injected
+callers that provide the older round context without an exact worker receipt. A
+live durable coding round always has that receipt and takes the classifier path.
+
+The descendant-inclusive proofs below predate this classifier replacement; they
+prove the isolated six-seat lens fan-out and semantic board oracle, not the new
+single-turn report latency.
+
+**Restart and retry.** A partial retry reconstructs the exact reserved report
+from its board metadata and element log, then repeats the changed-line evidence
+verification. A passing report is reused without a second classifier turn. Every
+other partial reserved board is replaced as one attempt. Recovery removes its
+metadata before clearing its board state, so a crash leaves the cleanup safe to
+repeat and cannot promote elements that are about to be replaced. A malformed or
+semantically invalid report follows the same metadata-first scrub before one
+fresh classification attempt.
+
+**Descendant-inclusive server proof (2026-09-01).** A guard wrapper sampled the
+complete command descendant tree once per second while running the authenticated
+`NX_DAEMON=false pnpm nx run rennet-server:real-rounds` target. It tracked exact
+PID plus process-start identities, aggregate RSS, process and provider counts,
+memory pressure, swap, page-outs, and survivors. The first run inherited ambient
+harness configuration and was intentionally interrupted when pressure rose. The
+same proof then ran to completion after every board-pipeline Council job received
+job-scoped isolation: Claude sessions set `ambientConfig: "isolated"` and Codex
+turns pass `mcpServers: {}`.
+
+| Run | Result | Peak descendant RSS | Peak processes | Peak MCP-classified | Pressure | Swap growth | Page-outs | Survivors |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Ambient inheritance | interrupted at 216 s, exit 130 | 8,816,208 KiB (8.6 GiB) | 119 | 72 | 2 | 4,893,890 KiB | 1,420 | 4 at wrapper exit |
+| Job-scoped isolation, count-only oracle | passed in 459 s, exit 0 | 2,467,136 KiB (2,409.3 MiB) | 19 | 9 | 1 | 0 KiB | 887 | 0 |
+| Job-scoped isolation, server semantic oracle | 7/7 tests passed in 417,424 ms, target and observer exit 0 | 2,718,752 KiB (2,655.0 MiB) | 29 | 11 | 2 | 290,058 KiB | 1,014 | 0 |
+
+The count-only passing run's minimum system-free reading was 43%. Every provider
+call recorded exactly one start and one terminal result, and the exact identity
+cleanup found no descendants after exit. This is capacity evidence only. Its
+count-only oracle called every non-empty element pool populated, but Flagged's
+single element was clean-result prose with no reachable finding. That exposed
+the semantic-empty defect; this run is not owner-journey board proof.
+
+The strengthened authenticated run replaced the count check with the topology
+that `board.read` and the client serve. Sequence had 4 elements with a reachable
+`order_step`. Decisions returned the exact typed absence `no-decisions`; Flagged
+returned `no-findings`. As diagnostic-only counts, the report had 2 elements,
+Design had 1, and Noise had 2. The provider audit accounted for 46 Claude and 29
+Codex call IDs. The audit recorded exactly one start and one terminal result for
+each call ID. The single coverage violation was the deliberately unteachable
+`smoke-uncovered` hunk. The test requires that violation and proves the same
+boards report no coverage violations over an empty hunk set. The resource
+observer ran for 437 seconds. Its minimum system-free reading was 30%, and it
+found no surviving descendant identity.
+This proves the server-side semantic pipeline run. It does not prove the
+launched desktop owner journey.
+
+**Launched-desktop owner-journey proof (2026-09-01).** The guarded
+`rennet-desktop:e2e --args=board-drafting-live` run passed 2/2 Playwright tests.
+The named live test took 15.4 minutes, the Nx target took 15 minutes 31 seconds,
+and both the child command and observer exited 0. The initial generation exposed
+a reachable Sequence `order_step`, with the exact typed absences `no-decisions`
+and `no-findings` for Decisions and Flagged. After the intentional restart, the
+replacement renderer stayed alive while the client reconstructed the boards,
+ran a real coding round, rendered `/run`, followed the durable Return
+auto-navigation, exposed `View the New Boards`, and verified the successor
+ledger, diff, patchset, generation, and strict semantic oracle. The only logged
+replacement-page close occurred during normal cleanup after both tests passed.
+
+The resource observer ran for 933 seconds. Descendant RSS peaked at 2,693.0 MiB
+across 30 processes, with peaks of 3 Claude, 6 Codex, and 11 MCP-classified
+processes. System-free memory reached a minimum of 35% at pressure level 2;
+swap did not grow, page-outs grew by 1,883, and no descendant identity survived.
+
+**Capacity verdict — keep the six-seat fan-out.** The first isolated passing run
+peaked at 2.41 GiB with no swap growth and no elevated pressure on this host.
+The semantic run peaked at 2.59 GiB and completed with pressure level 2 and
+290,058 KiB of swap growth. The current four single-seat lanes plus Flagged's
+dual seat completed under both isolated proofs; neither run supports a wider
+fan-out. The retry cap stays 10 because retries remain sequential inside each
+lane. Returned outcomes and post-coverage arrivals remain in canonical lens
+order even when drafting and persistence complete in another order.
+`project-scout` and unrelated Council jobs retain inherited harness
+configuration.
 
 ## Verification (packet)
 

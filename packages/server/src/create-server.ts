@@ -288,7 +288,11 @@ import {
   supportsNativeRoundSourceLanding,
 } from "./round-source-landing-native";
 import { createKnowledgeSwarmRuntime } from "./runtime/knowledge-swarm";
-import { projectLensBoard, readRoundReportBoardForRecord } from "./runtime/lens-board-read";
+import {
+  projectLensBoard,
+  projectRoundReportBoard,
+  readRoundReportBoardForRecord,
+} from "./runtime/lens-board-read";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime, scoutQuestionnaire } from "./runtime/project-scout";
 import {
@@ -2677,6 +2681,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
+    removeBoardMeta: (_repoRoot: string, boardId: string) => boardMetaStore.remove(boardId),
     persistGeneration: (gen) => generationStore.save(gen),
     recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
     readRounds: (sessionId) => roundRecordStore.read(sessionId),
@@ -3054,6 +3059,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...(await boardsRuntimeFor(repoRoot).service.getState(boardId)).values(),
     ],
     loadBoardMeta: (boardId: string) => boardMetaStore.load(boardId),
+    loadDispatchedAsks: (operation: RoundOperation) =>
+      exactWorkOrderFor(operation).tasks.flatMap((task) => task.asks),
   };
 
   const coordinator = createRoundExecutionCoordinator({
@@ -3217,13 +3224,60 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           roundRecordStore.read(session.id),
           operation.sourcePatchsetId,
         );
+        let progressFailure: { readonly error: unknown } | undefined;
+        let progressTail = Promise.resolve();
+        const emitRegenerationProgress = (event: RoundEvent): void => {
+          if (event.type !== "report" && event.type !== "lens") return;
+          progressTail = progressTail.then(async () => {
+            if (progressFailure !== undefined) return;
+            try {
+              if (event.type === "report") {
+                await verifyStoredRoundReport(storedRoundReportVerification, operation, {
+                  point: "precommit",
+                  reportBoardId: event.reportBoardId,
+                  generation: attempt.generation,
+                  expectedPatchsetId: review.activePatchsetId,
+                });
+                const meta = boardMetaStore.load(event.reportBoardId);
+                if (
+                  meta === undefined ||
+                  meta.boardId !== event.reportBoardId ||
+                  meta.lens !== "report" ||
+                  meta.session !== operation.sessionId ||
+                  meta.generation !== attempt.generation
+                ) {
+                  throw new Error("Round report progress lost its durable board identity.");
+                }
+                const reportElements = await boardsRuntimeFor(operation.repoRoot).service.getState(
+                  event.reportBoardId,
+                );
+                const report = projectRoundReportBoard([...reportElements.values()], {
+                  lens: "report",
+                  generation: attempt.generation,
+                  boardId: event.reportBoardId,
+                  document: meta.document,
+                  skippedHunks: meta.skippedHunks,
+                });
+                roundProgress.emit(operation.reviewId, {
+                  ...event,
+                  operationId: operation.operationId,
+                  operationRevision: operation.revision,
+                  report,
+                });
+                return;
+              }
+              roundProgress.emit(operation.reviewId, {
+                ...event,
+                operationId: operation.operationId,
+                operationRevision: operation.revision,
+              });
+            } catch (error) {
+              progressFailure = { error };
+            }
+          });
+        };
         const regenerated = await runBoardRegeneration(
-          boardDraftingDeps(
-            review,
-            session,
-            async () => undefined,
-            () => undefined,
-          ),
+          boardDraftingDeps(review, session, async () => undefined, emitRegenerationProgress),
           {
             session,
             repoRoot: operation.repoRoot,
@@ -3261,6 +3315,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             recaptured: true,
           },
         );
+        await progressTail;
+        if (progressFailure !== undefined) throw progressFailure.error;
         const record = roundRecordStore
           .read(session.id)
           .findLast((candidate) => candidate.dispatchId === operation.dispatchId);
@@ -3941,16 +3997,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (!review) return [];
       return transcriptStore.read(sessionIdForReview(review));
     },
-    // The live round-progress catch-up read (C15 3.1). Keyed by review id — the same id the
-    // run route's slug carries — so a cold `/s/:slug/run` mount folds the round already in
-    // flight instead of showing an absent one. Honest-empty until a round dispatches.
+    // The live round-progress catch-up read (C15 3.1). The durable operation remains the
+    // authority; its operation-scoped report/lens log stays beside the drafting, verification,
+    // and terminal snapshots so the client can select the latest attempt, read the verified
+    // report while lenses run, and keep their settled account at completion.
     roundEventsForReview: (reviewId: string) => {
       const review = service.reviewById(reviewId);
       if (review === null) return [];
       const operation = roundOperationStore.read(sessionIdForReview(review));
       return operation === undefined
         ? roundProgress.read(reviewId)
-        : [{ type: "operation", snapshot: roundOperationProgressSnapshot(operation) }];
+        : [
+            { type: "operation", snapshot: roundOperationProgressSnapshot(operation) } as const,
+            ...roundProgress
+              .read(reviewId)
+              .filter(
+                (event) =>
+                  (event.type === "report" || event.type === "lens") &&
+                  event.operationId === operation.operationId,
+              ),
+          ];
     },
     // The sidebar's sessions (C03 cluster 2, bound in C18), served from the SAME durable
     // session store the round dispatch mints into — so a session the reviewer worked in is

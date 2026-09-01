@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -126,6 +127,11 @@ export class BoardMetaStore {
       closeSync(fd);
     }
     renameSync(tmp, path);
+  }
+
+  /** Remove one board's metadata. Missing is already the desired state. */
+  remove(boardId: string): void {
+    rmSync(this.pathFor(boardId), { force: true });
   }
 
   /** Load one board's meta, WITH schema validation. Missing/malformed ⇒ `undefined` (fail-safe). */

@@ -72,6 +72,16 @@ const mkFinding = (
     kind: "finding",
     data: { author: flaggedAuthor, severity, concern, code, concurrence: [], status: "open" },
   }) as unknown as DraftBoard["elements"][number];
+const mkSection = (
+  id: string,
+  title: string,
+  children: string[],
+  author = flaggedAuthor,
+): DraftBoard["elements"][number] => ({
+  id,
+  kind: "section",
+  data: { author, title, children },
+});
 const mkBoard = (elements: DraftBoard["elements"], skippedHunks: unknown[] = []): DraftBoard =>
   ({ elements, skippedHunks }) as unknown as DraftBoard;
 const concurrenceOf = (board: DraftBoard, id: string): { model: string; agree: number }[] =>
@@ -124,27 +134,161 @@ const DESIGN_ARTIFACTS: DesignArtifactSet = {
   limits: DESIGN_ARTIFACT_LIMITS,
 };
 
-/** The per-lens lint context: empty hunks/files ⇒ a single innocent prose element is clean. */
+/** The per-lens lint context: empty hunks/files keep the shared fixtures citation-free. */
 const lintContextFor = (lens: LintTarget): LintContext => ({
   lens,
   hunks: [],
   files: new Map(),
 });
 
-/** One innocent prose element per lens — a Tier-B authoring kind admitted on every lens board. */
-const cleanBody = (lens: string): DraftBoard =>
-  ({
+const meaningfulSequenceBody = (): DraftBoard => ({
+  elements: [
+    {
+      id: "sequence-root",
+      kind: "section",
+      data: {
+        author: { kind: "lens-agent", id: "sequence-seat" },
+        title: "Reading order",
+        children: ["sequence-step"],
+      },
+    },
+    {
+      id: "sequence-step",
+      kind: "order_step",
+      data: {
+        author: { kind: "lens-agent", id: "sequence-seat" },
+        title: "Read the entry point",
+        span: "sequence-span",
+        children: [],
+      },
+    },
+    {
+      id: "sequence-span",
+      kind: "prose",
+      data: {
+        author: { kind: "lens-agent", id: "sequence-seat" },
+        markdown: "The entry point starts the read.",
+      },
+    },
+  ],
+  skippedHunks: [],
+});
+
+const meaningfulDecisionBody = (): DraftBoard => ({
+  elements: [
+    {
+      id: "decisions-root",
+      kind: "section",
+      data: {
+        author: { kind: "lens-agent", id: "decisions-seat" },
+        title: "Implementation decisions",
+        children: ["decision"],
+      },
+    },
+    {
+      id: "decision-evidence",
+      kind: "prose",
+      data: {
+        author: { kind: "lens-agent", id: "decisions-seat" },
+        markdown: "The write path commits one complete batch.",
+      },
+    },
+    {
+      id: "decision-alternative",
+      kind: "prose",
+      data: {
+        author: { kind: "lens-agent", id: "decisions-seat" },
+        markdown: "Write each event independently.",
+      },
+    },
+    {
+      id: "decision",
+      kind: "decision",
+      data: {
+        author: { kind: "lens-agent", id: "decisions-seat" },
+        statement: "Commit the event batch atomically.",
+        evidence: ["decision-evidence"],
+        alternatives: ["decision-alternative"],
+        why: "Readers never observe a partial batch.",
+      },
+    },
+  ],
+  skippedHunks: [],
+});
+
+const withoutRootSections = (board: DraftBoard): DraftBoard => ({
+  ...board,
+  elements: board.elements.filter((element) => element.kind !== "section"),
+});
+
+const hideRootSectionFromProjection = (board: DraftBoard): DraftBoard => {
+  const root = board.elements.find((element) => element.kind === "section");
+  if (root === undefined) return board;
+  return {
+    ...board,
     elements: [
       {
-        id: `${lens}-p1`,
+        id: "projection-parent",
         kind: "prose",
         data: {
-          author: { kind: "lens-agent", id: `${lens}-seat` },
-          markdown: "This change reads cleanly.",
+          author: { kind: "lens-agent", id: "projection-seat" },
+          markdown: "This loose field hides the apparent root from the served projection.",
+          children: [root.id],
         },
       },
+      ...board.elements,
     ],
-  }) as unknown as DraftBoard;
+  };
+};
+
+const meaningfulFlaggedBody = (): DraftBoard => ({
+  elements: [
+    {
+      id: "flagged-root",
+      kind: "section",
+      data: {
+        author: flaggedAuthor,
+        title: "Findings",
+        children: ["flagged-finding"],
+      },
+    },
+    {
+      id: "flagged-finding",
+      kind: "finding",
+      data: {
+        author: flaggedAuthor,
+        severity: "medium",
+        concern: "A partial write leaves the event batch inconsistent.",
+        code: [],
+        concurrence: [],
+        status: "open",
+      },
+    },
+  ],
+  skippedHunks: [],
+});
+
+const proseOnlyBody = (lens: string, markdown = "This change reads cleanly."): DraftBoard => ({
+  elements: [
+    {
+      id: `${lens}-p1`,
+      kind: "prose",
+      data: {
+        author: { kind: "lens-agent", id: `${lens}-seat` },
+        markdown,
+      },
+    },
+  ],
+  skippedHunks: [],
+});
+
+/** A semantically populated board for load-bearing lanes, ordinary prose elsewhere. */
+const cleanBody = (lens: string): DraftBoard => {
+  if (lens === "sequence") return meaningfulSequenceBody();
+  if (lens === "decisions") return meaningfulDecisionBody();
+  if (lens === "flagged") return meaningfulFlaggedBody();
+  return proseOnlyBody(lens);
+};
 
 const DESIGN_SOURCE = "openspec/changes/token-refresh/specs/auth/spec.md";
 const DESIGN_HUNKS = [
@@ -496,14 +640,23 @@ function superpowersBoard(firstStep = "- [ ] **Step 1: Write the failing test**"
   } as unknown as DraftBoard;
 }
 
-/** A fake Claude port: captures the resolved model per session and answers a lens-appropriate board. */
+interface HarnessCapture {
+  model?: string;
+  prompt?: string;
+  outputSchema?: unknown;
+}
+
+/** A fake Claude port: captures the resolved session and answers a lens-appropriate board. */
 function fakeClaudePort(
-  captures: { model?: string; prompt?: string }[],
+  captures: HarnessCapture[],
   bodyFor: (prompt: string) => unknown,
 ): HarnessPort {
   return {
-    createSession: async (options: { model?: string }) => {
-      const capture: { model?: string; prompt?: string } = { model: options.model };
+    createSession: async (options: { model?: string; outputSchema?: unknown }) => {
+      const capture: HarnessCapture = {
+        model: options.model,
+        outputSchema: options.outputSchema,
+      };
       captures.push(capture);
       return {
         send: async (input: { prompt: string }) => {
@@ -1516,7 +1669,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       expect(outcome.failure).toBeUndefined();
       expect(outcome.board?.elements.length).toBeGreaterThan(0);
     }
-    expect(applied.map((a) => a.boardId)).toEqual(lenses.map((l) => `board:${l}`));
+    expect(applied.map((a) => a.boardId).sort()).toEqual(lenses.map((l) => `board:${l}`).sort());
     // Every op is a create — the host writes the drafter's board on its behalf.
     for (const a of applied) {
       for (const op of a.ops as { op: string }[]) expect(op.op).toBe("create");
@@ -1555,6 +1708,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
               },
             },
             ...(span === "sequence-code" ? [lensCodeRef("sequence", "sequence-code")] : []),
+            mkSection("sequence-root", "Reading order", ["sequence-step"], lensAuthor("sequence")),
           ],
           skippedHunks: [],
         }) as unknown as DraftBoard;
@@ -1581,6 +1735,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
               },
             },
             ...(evidence === "decision-code" ? [lensCodeRef("decisions", "decision-code")] : []),
+            mkSection(
+              "decisions-root",
+              "Implementation decisions",
+              ["decision"],
+              lensAuthor("decisions"),
+            ),
           ],
           skippedHunks: [],
         }) as unknown as DraftBoard;
@@ -1666,14 +1826,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const captures: { model?: string; prompt?: string }[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
-    const timeline: string[] = [];
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt) => {
-        const lens = lensFromPrompt(prompt);
-        if (lens !== "post-process") timeline.push(`draft:${lens}`);
-        return cleanBody(lens);
-      }),
+      claudePort: fakeClaudePort(captures, (prompt) => cleanBody(lensFromPrompt(prompt))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -1684,9 +1839,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
       onBoardArrival: (event) => arrivals.push(event),
-      onLensAbsence: (lens) => {
-        timeline.push(`absent:${lens}`);
-      },
     });
 
     const design = result.boards.find((outcome) => outcome.lens === "design");
@@ -1697,7 +1849,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(arrivals.map(({ lens }) => lens)).not.toContain("design");
     expect(captures.some(({ prompt }) => prompt?.includes("prompts/design.md"))).toBe(false);
     expect(result.boards.filter(({ board }) => board !== undefined)).toHaveLength(4);
-    expect(timeline.indexOf("absent:design")).toBeLessThan(timeline.indexOf("draft:sequence"));
   });
 
   it("isolates unavailable pinned Design discovery to the Design lane", async () => {
@@ -1805,6 +1956,125 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     },
   );
 
+  it.each([
+    ["decisions", "no-decisions", () => proseOnlyBody("decisions", "No choices found.")],
+    ["decisions", "no-decisions", () => withoutRootSections(meaningfulDecisionBody())],
+    ["decisions", "no-decisions", () => hideRootSectionFromProjection(meaningfulDecisionBody())],
+    ["flagged", "no-findings", () => proseOnlyBody("flagged", "No defect found.")],
+    [
+      "flagged",
+      "no-findings",
+      () => mkBoard([mkFinding("detached-finding", "A detached finding is not served.", [])]),
+    ],
+  ] as const)(
+    "records a semantically empty %s result as typed %s absence",
+    async (emptyLens, absence, emptyBody) => {
+      const applied: Applied[] = [];
+      const arrivals: BoardArrivalEvent[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === "post-process") {
+            const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+            return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+          }
+          return lens === emptyLens ? emptyBody() : cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+        onBoardArrival: (event) => arrivals.push(event),
+      });
+
+      expect(result.boards.find(({ lens }) => lens === emptyLens)).toMatchObject({ absence });
+      expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${emptyLens}`);
+      expect(arrivals.map(({ lens }) => lens)).not.toContain(emptyLens);
+    },
+  );
+
+  it.each([
+    ["prose-only", () => proseOnlyBody("sequence", "Read the change in dependency order.")],
+    ["orphan order_step", () => withoutRootSections(meaningfulSequenceBody())],
+  ] as const)(
+    "retries a %s Sequence result once before recording a precise failure",
+    async (_shape, sequenceBody) => {
+      let sequenceTurns = 0;
+      const captures: { model?: string; prompt?: string }[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort(captures, (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === "sequence") {
+            sequenceTurns += 1;
+            return sequenceBody();
+          }
+          if (lens === "post-process") {
+            const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+            return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+          }
+          return cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+
+      expect(sequenceTurns).toBe(2);
+      expect(
+        captures.filter(({ prompt }) => prompt?.includes("prompts/sequence.md"))[1]?.prompt,
+      ).toContain("`order_step`");
+      expect(result.boards.find(({ lens }) => lens === "sequence")?.failure).toContain(
+        "no reachable `order_step` after one explicit retry",
+      );
+    },
+  );
+
+  it.each([
+    ["sequence", "order_step", "sequence-root", meaningfulSequenceBody],
+    ["decisions", "decision", "decisions-root", meaningfulDecisionBody],
+    ["flagged", "finding", "flagged-root", meaningfulFlaggedBody],
+  ] as const)(
+    "keeps a %s board whose served root reaches a real %s element",
+    async (lensUnderTest, kind, rootId, body) => {
+      const applied: Applied[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === "post-process") {
+            const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+            return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+          }
+          return lens === lensUnderTest ? body() : cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+
+      const outcome = result.boards.find(({ lens }) => lens === lensUnderTest);
+      const material = outcome?.board?.elements.find((element) => element.kind === kind);
+      const root = outcome?.board?.elements.find((element) => element.id === rootId);
+      expect(outcome?.absence).toBeUndefined();
+      expect(material).toBeDefined();
+      expect(root?.kind === "section" ? root.data.children : []).toContain(material?.id);
+      expect(applied.map(({ boardId }) => boardId)).toContain(`board:${lensUnderTest}`);
+    },
+  );
+
   it.each(["design", "sequence"] as const)(
     "retries a required %s lane once and records a precise failure when it stays empty",
     async (requiredLens) => {
@@ -1835,7 +2105,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
       expect(requiredTurns).toBe(2);
       expect(result.boards.find(({ lens }) => lens === requiredLens)?.failure).toContain(
-        "produced zero elements after one explicit retry",
+        requiredLens === "sequence"
+          ? "no reachable `order_step` after one explicit retry"
+          : "produced zero elements after one explicit retry",
       );
       expect(arrivals.map(({ lens }) => lens)).not.toContain(requiredLens);
     },
@@ -2924,6 +3196,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             "c1",
           ]),
           mkCodeRef("c1", "src/auth.ts", 11, 12),
+          mkSection("findings", "Findings", ["f1"]),
         ],
         [{ hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." }],
       );
@@ -3020,6 +3293,770 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(lensPrompts.every((c) => c.prompt?.includes("roundReport"))).toBe(true);
   });
 
+  it("drafts a landed round report from one compact classification turn and host-owned structure", async () => {
+    const captures: HarnessCapture[] = [];
+    const applied: Applied[] = [];
+    const arrivals: BoardArrivalEvent[] = [];
+    let reportTurns = 0;
+    const workerDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1,2 +1,2 @@",
+      "-old first line",
+      "-old second line",
+      "+new first line",
+      "+new second line",
+    ].join("\n");
+    const round = {
+      number: 2,
+      previousGeneration: "gen:ps-0",
+      dispatchedAsks: [
+        {
+          id: "ask-first",
+          path: "src/auth.ts",
+          type: "request-change" as const,
+          instruction: "Replace the first line.",
+          context: "Keep the exact durable ask text.",
+        },
+        {
+          id: "ask-second",
+          path: "src/auth.ts",
+          type: "request-change" as const,
+          instruction: "Replace the second line.",
+          context: "",
+        },
+      ],
+      findingDispositions: {},
+      worker: {
+        outcome: "completed" as const,
+        diff: workerDiff,
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "before", to: "after" },
+      },
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "report") {
+          reportTurns += 1;
+          return {
+            outcomes: [
+              {
+                askId: "ask-second",
+                status: "partial",
+                note: "The second line moved, but its follow-up remains.",
+                evidence: {
+                  path: "src/auth.ts",
+                  side: "head",
+                  startLine: 2,
+                  endLine: 2,
+                },
+              },
+              {
+                askId: "ask-first",
+                status: "addressed",
+                note: "The first line now carries the requested value.",
+                evidence: {
+                  path: "src/auth.ts",
+                  side: "head",
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+            ],
+            beyond: [
+              {
+                ref: "beyond:first-line-cleanup",
+                text: "Tighten the neighboring first-line wording.",
+                note: "The same changed line includes a small neighboring cleanup.",
+                evidence: {
+                  path: "src/auth.ts",
+                  side: "head",
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+            ],
+          };
+        }
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: {
+        ...PACKET,
+        knowledge: { privatePacketSentinel: "MUST_NOT_REACH_REPORT" },
+      } as unknown as DeltaPacket,
+      currentGeneration: "gen:ps-1:dispatch:round-2",
+      round,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => arrivals.push(event),
+    });
+
+    const reportCaptures = captures.filter(({ prompt }) => prompt?.includes("prompts/report.md"));
+    expect(reportTurns).toBe(1);
+    expect(reportCaptures).toHaveLength(1);
+    expect(reportCaptures[0]?.model).toBe("sonnet-5");
+    const outputSchema = reportCaptures[0]?.outputSchema;
+    const reportSchema = JSON.stringify(outputSchema);
+    expect(reportSchema).toContain('"askId"');
+    expect(reportSchema).toContain('"evidence"');
+    expect(reportSchema).toContain('"beyond"');
+    expect(reportSchema).not.toContain('"elements"');
+    expect(reportSchema).not.toContain('"document"');
+    expect(reportSchema).not.toContain('"round_outcome"');
+    const schemaNodes: Record<string, unknown>[] = [];
+    const collectSchemaNodes = (value: unknown): void => {
+      if (value === null || typeof value !== "object") return;
+      const node = value as Record<string, unknown>;
+      schemaNodes.push(node);
+      for (const child of Object.values(node)) {
+        if (Array.isArray(child)) {
+          for (const item of child) collectSchemaNodes(item);
+        } else {
+          collectSchemaNodes(child);
+        }
+      }
+    };
+    collectSchemaNodes(outputSchema);
+    const branchFor = (status: string): Record<string, unknown> | undefined =>
+      schemaNodes.find((node) => {
+        const properties = node.properties as Record<string, unknown> | undefined;
+        const statusSchema = properties?.status as Record<string, unknown> | undefined;
+        return statusSchema?.const === status;
+      });
+    const addressedSchema = branchFor("addressed");
+    const untouchedSchema = branchFor("untouched");
+    expect(addressedSchema).toBeDefined();
+    expect(untouchedSchema).toBeDefined();
+    expect(addressedSchema?.required).toContain("evidence");
+    expect(untouchedSchema?.required).not.toContain("evidence");
+    expect(untouchedSchema?.properties).not.toHaveProperty("evidence");
+    expect(untouchedSchema?.additionalProperties).toBe(false);
+    const reportPrompt = reportCaptures[0]?.prompt ?? "";
+    const reportContext = /rennet:layer context>>>\n(\{.*)/s.exec(reportPrompt);
+    expect(reportContext).not.toBeNull();
+    expect(JSON.parse(reportContext?.[1] ?? "{}")).toEqual({
+      patchsetId: "ps-1",
+      dispatchedAsks: round.dispatchedAsks,
+      worker: round.worker,
+    });
+    expect(reportPrompt).not.toContain("hostSchema");
+    expect(reportPrompt).not.toContain("deltaPacket");
+    expect(reportPrompt).not.toContain("MUST_NOT_REACH_REPORT");
+    expect(
+      captures.filter(
+        ({ prompt }) =>
+          prompt?.includes("prompts/post-process.md") && prompt.includes('"kind":"round_outcome"'),
+      ),
+    ).toHaveLength(0);
+
+    expect(applied[0]?.boardId).toBe("board:report");
+    expect(arrivals[0]?.lens).toBe("report");
+    const report = result.report?.board;
+    expect(report?.document).toEqual({
+      title: "Round report",
+      introMarkdown: "Verified against the coding turn: 1 addressed, 1 partial, 1 beyond.",
+      measure: "reading",
+    });
+    const outcomes = report?.elements.filter((element) => element.kind === "round_outcome") ?? [];
+    expect(
+      outcomes.map((element) => [element.data.status, element.data.ask.ref, element.data.ask.text]),
+    ).toEqual([
+      ["addressed", "ask-first", "Replace the first line."],
+      ["partial", "ask-second", "Replace the second line."],
+      ["beyond", "beyond:first-line-cleanup", "Tighten the neighboring first-line wording."],
+    ]);
+    const addressed = outcomes[0];
+    const addressedCodeRef =
+      addressed?.kind === "round_outcome"
+        ? report?.elements.find((element) => element.id === addressed.data.code_ref)
+        : undefined;
+    expect(addressedCodeRef).toMatchObject({
+      kind: "code_ref",
+      data: {
+        patchset_id: "ps-1",
+        path: "src/auth.ts",
+        side: "head",
+        start_line: 1,
+        end_line: 1,
+      },
+    });
+    const section = report?.elements.find((element) => element.kind === "section");
+    expect(section?.kind === "section" ? section.data.children : []).toEqual(
+      outcomes.map((element) => element.id),
+    );
+    expect(
+      captures
+        .filter(({ prompt }) => prompt?.includes("prompts/design.md"))
+        .every(({ prompt }) => prompt?.includes('"roundReport"')),
+    ).toBe(true);
+  });
+
+  it("accepts a verified one-line coding turn after one classification turn", async () => {
+    let reportTurns = 0;
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "report") {
+          reportTurns += 1;
+          return {
+            outcomes: [
+              {
+                askId: "ask-one",
+                status: "addressed",
+                note: "The exact changed line now carries the requested value.",
+                evidence: {
+                  path: "src/auth.ts",
+                  side: "head",
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+            ],
+            beyond: [],
+          };
+        }
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:one-line-positive",
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-0",
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Replace the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: [
+            "diff --git a/src/auth.ts b/src/auth.ts",
+            "--- a/src/auth.ts",
+            "+++ b/src/auth.ts",
+            "@@ -1 +1 @@",
+            "-old line",
+            "+new line",
+          ].join("\n"),
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "before", to: "after" },
+        },
+      },
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    expect(reportTurns).toBe(1);
+    expect(result.report?.failure).toBeUndefined();
+    expect(
+      result.report?.board?.elements.find((element) => element.kind === "round_outcome"),
+    ).toMatchObject({
+      data: {
+        status: "addressed",
+        ask: { ref: "ask-one", text: "Replace the line." },
+      },
+    });
+    expect(applied[0]?.boardId).toBe("board:report");
+  });
+
+  it("removes metadata before replacing a semantically invalid reusable report", async () => {
+    const order: string[] = [];
+    let reportTurns = 0;
+    const round = {
+      number: 1,
+      previousGeneration: "gen:ps-0",
+      dispatchedAsks: [
+        {
+          id: "ask-one",
+          path: "src/auth.ts",
+          type: "request-change" as const,
+          instruction: "Replace the line.",
+          context: "",
+        },
+      ],
+      findingDispositions: {},
+      worker: {
+        outcome: "completed" as const,
+        diff: [
+          "diff --git a/src/auth.ts b/src/auth.ts",
+          "--- a/src/auth.ts",
+          "+++ b/src/auth.ts",
+          "@@ -1 +1 @@",
+          "-old line",
+          "+new line",
+        ].join("\n"),
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "before", to: "after" },
+      },
+    };
+    const reusable: DraftBoard = {
+      elements: [
+        {
+          id: "report-root",
+          kind: "section",
+          data: {
+            author: { kind: "lens-agent", id: "round-report" },
+            title: "Round outcomes",
+            children: ["report-outcome"],
+          },
+        },
+        {
+          id: "report-code",
+          kind: "code_ref",
+          data: {
+            author: { kind: "lens-agent", id: "round-report" },
+            patchset_id: "ps-1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 99,
+            end_line: 99,
+          },
+        },
+        {
+          id: "report-outcome",
+          kind: "round_outcome",
+          data: {
+            author: { kind: "lens-agent", id: "round-report" },
+            status: "addressed",
+            ask: { ref: "ask-one", text: "Replace the line." },
+            note: "The requested line changed.",
+            code_ref: "report-code",
+          },
+        },
+      ],
+      skippedHunks: [],
+    };
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "report") {
+          reportTurns += 1;
+          return {
+            outcomes: [
+              {
+                askId: "ask-one",
+                status: "addressed",
+                note: "The exact changed line now carries the requested value.",
+                evidence: {
+                  path: "src/auth.ts",
+                  side: "head",
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+            ],
+            beyond: [],
+          };
+        }
+        if (lens === "post-process") {
+          const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+          return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:recovered",
+      round,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: {
+        apply: async (boardId, ops, actor) => {
+          if (boardId === "board:report") order.push(`apply:${actor}`);
+          return { response: { ok: true }, ops } as never;
+        },
+      },
+      boardIdFor: (lens) => `board:${lens}`,
+      reusableRoundReport: {
+        boardId: "board:report",
+        board: reusable,
+        omissions: [],
+        blemishes: [],
+        immutability: [],
+      },
+      removeBoardMeta: (boardId) => {
+        order.push(`remove:${boardId}`);
+      },
+    });
+
+    expect(reportTurns).toBe(1);
+    expect(order.slice(0, 3)).toEqual([
+      "remove:board:report",
+      "apply:host:round-report-recovery",
+      "apply:seat:report",
+    ]);
+    expect(result.report?.failure).toBeUndefined();
+    expect(result.report?.boardId).toBe("board:report");
+  });
+
+  it.each([
+    ["missing durable ask", { outcomes: [], beyond: [] }, "omitted dispatched asks: ask-one"],
+    [
+      "anchor outside the measured diff",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "addressed",
+            note: "The ask changed elsewhere.",
+            evidence: { path: "src/auth.ts", side: "head", startLine: 99, endLine: 99 },
+          },
+        ],
+        beyond: [],
+      },
+      "outside the changed lines",
+    ],
+    [
+      "range that only happens to span a changed line",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "addressed",
+            note: "The range includes the changed line and unrelated context.",
+            evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 2 },
+          },
+        ],
+        beyond: [],
+      },
+      "classification output was invalid",
+    ],
+    [
+      "addressed ask without required evidence",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "addressed",
+            note: "The ask changed, but this claim has no anchor.",
+          },
+        ],
+        beyond: [],
+      },
+      "classification output was invalid",
+    ],
+    [
+      "untouched ask with forbidden evidence",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "untouched",
+            note: "The exact diff does not establish the request.",
+            evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+          },
+        ],
+        beyond: [],
+      },
+      "classification output was invalid",
+    ],
+  ] as const)(
+    "fails one %s classification honestly before report persistence",
+    async (_case, classification, failure) => {
+      let reportTurns = 0;
+      const applied: Applied[] = [];
+      const result = await runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          const lens = lensFromPrompt(prompt);
+          if (lens === "report") {
+            reportTurns += 1;
+            return classification;
+          }
+          if (lens === "post-process") {
+            const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+            return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+          }
+          return cleanBody(lens);
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        currentGeneration: "gen:ps-1:dispatch:one-line",
+        round: {
+          number: 1,
+          previousGeneration: "gen:ps-0",
+          dispatchedAsks: [
+            {
+              id: "ask-one",
+              path: "src/auth.ts",
+              type: "request-change",
+              instruction: "Replace the line.",
+              context: "",
+            },
+          ],
+          findingDispositions: {},
+          worker: {
+            outcome: "completed",
+            diff: [
+              "diff --git a/src/auth.ts b/src/auth.ts",
+              "--- a/src/auth.ts",
+              "+++ b/src/auth.ts",
+              "@@ -1 +1 @@",
+              "-old line",
+              "+new line",
+            ].join("\n"),
+            changedPaths: ["src/auth.ts"],
+            commitRange: { from: "before", to: "after" },
+          },
+        },
+        hunks: [],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+      });
+
+      expect(reportTurns).toBe(1);
+      expect(result.report?.failure).toContain(failure);
+      expect(applied.map(({ boardId }) => boardId)).not.toContain("board:report");
+    },
+  );
+
+  it("starts every independent lens turn after the report and before any lens is released", async () => {
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+    const started: LensKind[] = [];
+    const applied: Applied[] = [];
+    const arrivals: LensKind[] = [];
+    let reportArrived = false;
+    let pipelineSettled = false;
+    let announceFirstLensStart = (): void => undefined;
+    const firstLensStarted = new Promise<void>((resolve) => {
+      announceFirstLensStart = resolve;
+    });
+    const releases = new Map<LensKind, () => void>();
+    const lensBarriers = new Map<LensKind, Promise<void>>(
+      lenses.map((lens) => [
+        lens,
+        new Promise<void>((resolve) => {
+          releases.set(lens, resolve);
+        }),
+      ]),
+    );
+    const persisted = new Map<LensKind, Promise<void>>();
+    const markPersisted = new Map<LensKind, () => void>();
+    for (const lens of lenses) {
+      persisted.set(
+        lens,
+        new Promise<void>((resolve) => {
+          markPersisted.set(lens, resolve);
+        }),
+      );
+    }
+
+    const codexExecutor = async (req: { prompt: string }) => {
+      const lens = lensFromPrompt(req.prompt);
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(req.prompt);
+        return {
+          output: context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] },
+        };
+      }
+      if (lens !== "report" && lenses.includes(lens as LensKind)) {
+        const lensKind = lens as LensKind;
+        if (!started.includes(lensKind)) {
+          started.push(lensKind);
+          announceFirstLensStart();
+        }
+        await lensBarriers.get(lensKind);
+      }
+      return { output: cleanBody(lens) };
+    };
+
+    const whiteboard = {
+      apply: async (boardId: string, ops: readonly unknown[], actor: string) => {
+        applied.push({ boardId, ops, actor });
+        const lens = lenses.find((candidate) => boardId === `board:${candidate}`);
+        if (lens !== undefined) markPersisted.get(lens)?.();
+        return { response: { ok: true }, ops } as never;
+      },
+    };
+
+    const pipeline = runLensPipeline({
+      claudePort: null,
+      codexExecutor: codexExecutor as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: {
+        ...PACKET,
+        successorAccount: { asks: [], beyondAsks: [] },
+      },
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard,
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: ({ lens }) => {
+        if (lens === "report") reportArrived = true;
+        else arrivals.push(lens);
+      },
+    });
+    void pipeline.then(
+      () => {
+        pipelineSettled = true;
+      },
+      () => {
+        pipelineSettled = true;
+      },
+    );
+
+    await firstLensStarted;
+    await Promise.resolve();
+    let regressionFailure: unknown;
+    try {
+      expect(reportArrived).toBe(true);
+      expect([...started]).toEqual(lenses);
+      // Positive control: the release barrier is load-bearing, not a decorative fixture.
+      expect(pipelineSettled).toBe(false);
+    } catch (error) {
+      regressionFailure = error;
+    }
+
+    if (regressionFailure === undefined) {
+      try {
+        for (const lens of [...lenses].reverse()) {
+          releases.get(lens)?.();
+          const lensPersisted = persisted.get(lens);
+          if (lensPersisted === undefined) throw new Error(`missing ${lens} persistence control`);
+          await Promise.race([
+            lensPersisted,
+            new Promise<never>((_resolve, reject) => {
+              setImmediate(() => reject(new Error(`${lens} did not persist after release`)));
+            }),
+          ]);
+        }
+      } catch (error) {
+        regressionFailure = error;
+      }
+    }
+    for (const release of releases.values()) release();
+
+    let result: Awaited<ReturnType<typeof runLensPipeline>> | undefined;
+    try {
+      result = await pipeline;
+    } catch (error) {
+      regressionFailure ??= error;
+    }
+    if (regressionFailure !== undefined) throw regressionFailure;
+    if (result === undefined) throw new Error("lens pipeline settled without a result");
+
+    expect(result.boards.map(({ lens }) => lens)).toEqual(lenses);
+    expect(
+      applied.map(({ boardId }) => boardId).filter((boardId) => boardId !== "board:report"),
+    ).toEqual([...lenses].reverse().map((lens) => `board:${lens}`));
+    expect(arrivals).toEqual(lenses);
+    expect(pipelineSettled).toBe(true);
+  });
+
+  it("waits for sibling lenses and continues absence notifications before rethrowing one callback", async () => {
+    const modelLenses: LensKind[] = ["sequence", "decisions", "flagged", "noise"];
+    const started: LensKind[] = [];
+    const absences: LensKind[] = [];
+    const applied: Applied[] = [];
+    let pipelineSettled = false;
+    let releaseLensTurns = (): void => undefined;
+    let announceFirstLensStart = (): void => undefined;
+    const lensRelease = new Promise<void>((resolve) => {
+      releaseLensTurns = resolve;
+    });
+    const firstLensStarted = new Promise<void>((resolve) => {
+      announceFirstLensStart = resolve;
+    });
+
+    const codexExecutor = async (req: { prompt: string }) => {
+      const lens = lensFromPrompt(req.prompt);
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(req.prompt);
+        return {
+          output: context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] },
+        };
+      }
+      if (modelLenses.includes(lens as LensKind)) {
+        const lensKind = lens as LensKind;
+        if (!started.includes(lensKind)) {
+          started.push(lensKind);
+          announceFirstLensStart();
+        }
+        await lensRelease;
+      }
+      return {
+        output: lens === "decisions" ? { elements: [], skippedHunks: [] } : cleanBody(lens),
+      };
+    };
+
+    const pipeline = runLensPipeline({
+      claudePort: null,
+      codexExecutor: codexExecutor as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [],
+      lintContextFor,
+      designArtifacts: null,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onLensAbsence: async (lens) => {
+        absences.push(lens);
+        if (lens === "design") throw new Error("absence store failed");
+      },
+    });
+    void pipeline.then(
+      () => {
+        pipelineSettled = true;
+      },
+      () => {
+        pipelineSettled = true;
+      },
+    );
+
+    await firstLensStarted;
+    await Promise.resolve();
+    let preReleaseFailure: unknown;
+    try {
+      expect(started).toEqual(modelLenses);
+      expect(pipelineSettled).toBe(false);
+    } catch (error) {
+      preReleaseFailure = error;
+    } finally {
+      releaseLensTurns();
+    }
+    await expect(pipeline).rejects.toThrow("absence store failed");
+    if (preReleaseFailure !== undefined) throw preReleaseFailure;
+
+    expect(absences).toEqual(["design", "decisions"]);
+    expect(applied.map(({ boardId }) => boardId).sort()).toEqual(
+      ["board:sequence", "board:flagged", "board:noise"].sort(),
+    );
+    expect(pipelineSettled).toBe(true);
+  });
+
   it("retries an empty round report once instead of announcing a silent arrival", async () => {
     let reportTurns = 0;
     const applied: Applied[] = [];
@@ -3076,19 +4113,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         data: { author: hostAuthor, markdown: "**First ask**\n\nFixed." },
       } as DraftBoard["elements"][number],
     ]);
-    const report = mkBoard([
-      {
-        id: "outcome-2",
-        kind: "round_outcome",
-        data: {
-          author: { kind: "lens-agent", id: "report-seat" },
-          status: "addressed",
-          ask: { ref: "ask-2", text: "Second ask" },
-          note: "The retry boundary now owns the refresh.",
-        },
-      } as DraftBoard["elements"][number],
-    ]);
-
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => {
         const lens = lensFromPrompt(prompt);
@@ -3096,7 +4120,24 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
           return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
         }
-        if (lens === "report") return report;
+        if (lens === "report") {
+          return {
+            outcomes: [
+              {
+                askId: "ask-2",
+                status: "addressed",
+                note: "The retry boundary now owns the refresh.",
+                evidence: {
+                  path: "src/auth.ts",
+                  side: "head",
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+            ],
+            beyond: [],
+          };
+        }
         return cleanBody(lens);
       }),
       codexExecutor: null,
@@ -3119,7 +4160,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         findingDispositions: {},
         worker: {
           outcome: "completed",
-          diff: "WORKER_ONLY_DIFF",
+          diff: [
+            "diff --git a/src/auth.ts b/src/auth.ts",
+            "--- a/src/auth.ts",
+            "+++ b/src/auth.ts",
+            "@@ -1 +1 @@",
+            "-outsideRetry();",
+            "+insideRetry();",
+          ].join("\n"),
           changedPaths: ["src/auth.ts"],
           commitRange: { from: "same-head", to: "same-head" },
         },
@@ -3143,7 +4191,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(JSON.stringify(persistedSequence?.ops)).toContain("Round 2 · Addressed");
   });
 
-  it("uses one live disposition snapshot for Flagged composition and persistence", async () => {
+  it("persists Flagged resolution migration before returning typed absence", async () => {
     const applied: Applied[] = [];
     const persistedResolutionBatches: {
       readonly currentGeneration: string;
@@ -3184,6 +4232,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         ]),
         mkCodeRef("orphan-code", "src/auth.ts", 80, 81),
       ],
+      skippedHunks: [],
     };
 
     const result = await runLensPipeline({
@@ -3245,11 +4294,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const flagged = result.boards.find((outcome) => outcome.lens === "flagged");
     expect(flagged?.findingResolutions).toEqual([expectedResolution]);
     expect(result.findingResolutions).toEqual([expectedResolution]);
-    expect(flagged?.board?.elements.some((element) => element.id === "new-finding")).toBe(true);
-    expect(flagged?.board?.elements.some((element) => element.id === "orphan-finding")).toBe(true);
-    const flaggedSection = flagged?.board?.elements.find((element) => element.id === "new-section");
-    expect(flaggedSection?.kind === "section" ? flaggedSection.data.children : []).toEqual([]);
-    expect(flagged?.board?.document?.introMarkdown).toBe("No findings require attention.");
+    expect(flagged).toMatchObject({ absence: "no-findings" });
+    expect(flagged?.board).toBeUndefined();
+    expect(applied.some(({ boardId }) => boardId === "board:flagged")).toBe(false);
     expect(persistedResolutionBatches).toEqual([
       {
         currentGeneration: "gen:ps-1",
@@ -3293,12 +4340,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const flagged = result.boards.find((outcome) => outcome.lens === "flagged");
     expect(flagged?.failure).toContain("ask log read unavailable");
     expect(flagged?.board).toBeUndefined();
-    expect(applied.map(({ boardId }) => boardId)).toEqual([
-      "board:design",
-      "board:sequence",
-      "board:decisions",
-      "board:noise",
-    ]);
+    expect(applied.map(({ boardId }) => boardId).sort()).toEqual(
+      ["board:design", "board:sequence", "board:decisions", "board:noise"].sort(),
+    );
     expect(
       result.boards
         .filter((outcome) => outcome.lens !== "flagged")
@@ -3456,6 +4500,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
           "c1",
         ]),
         mkCodeRef("c1", "src/auth.ts", 11, 12),
+        mkSection("findings", "Findings", ["f1"]),
       ],
       [{ hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." }],
     );

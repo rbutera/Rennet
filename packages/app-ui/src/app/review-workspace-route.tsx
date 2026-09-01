@@ -5,7 +5,7 @@ import {
   newCommandId,
   type Review,
 } from "@rennet/protocol";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { useCommand, useMutation } from "../data";
@@ -19,6 +19,11 @@ import { DiffViewContainer } from "../review";
 import { useAskLog } from "../review/ask-log";
 import { RoundGreeting } from "../rounds/round-greeting";
 import {
+  acknowledgeRoundReport,
+  hasAcknowledgedRoundReport,
+} from "../rounds/round-report-acknowledgement";
+import {
+  resolveReportBoard,
   useReportBoard,
   useRoundDispatch,
   useRoundRecords,
@@ -110,10 +115,9 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // armed `greetingArmed` and redirected here; while a round is in a report phase and its
   // board resolves valid, the board surface LEADS with the greeting (the report readable
   // at once, regeneration streaming beneath) instead of the plain lens board. The reveal
-  // is the single consume: `armGreeting(false)` disarms it, and the surface returns to
+  // is the single consume: its report id is acknowledged before the surface returns to
   // `LensBoardView` at the composed round's NEW generation (derived off the machine's
-  // `composed` state, never a stored navigation target — the S9 fence). Stable store
-  // reads only (a primitive + a stable action ref) — no fresh-object selector.
+  // `composed` state, never a stored navigation target — the S9 fence).
   const roundState = useRoundState(slug);
   // The rounds ledger (C09 §6.2). `?view=rounds` shows the ledger EXACTLY when a round
   // has completed — the derived-presence C5 uses for the lens switcher, and what the
@@ -131,8 +135,47 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const roundRecordsPending = useRoundRecordsPending(slug);
   const greetingArmed = useRennetStore((s) => s.run.greetingArmed);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
-  const reportBoardId = ("reportBoardId" in roundState ? roundState.reportBoardId : "") ?? "";
-  const report = useReportBoard(reportBoardId);
+  const failedReportHandoff =
+    roundState.phase === "failed" && "operation" in roundState
+      ? roundState.reportHandoff
+      : undefined;
+  const reportBoardId =
+    failedReportHandoff?.reportBoardId ??
+    ("reportBoardId" in roundState ? roundState.reportBoardId : "") ??
+    "";
+  const persistedReportAcknowledgement = useMemo(
+    () => hasAcknowledgedRoundReport(reportBoardId),
+    [reportBoardId],
+  );
+  const [acknowledgedReportBoardId, setAcknowledgedReportBoardId] = useState<string>();
+  const reportAcknowledged =
+    reportBoardId !== "" &&
+    (persistedReportAcknowledgement || acknowledgedReportBoardId === reportBoardId);
+  const liveReportPhase =
+    reportBoardId !== "" &&
+    (roundState.phase === "reporting" ||
+      roundState.phase === "composing" ||
+      roundState.phase === "verifying");
+  const storedReport = useReportBoard(reportBoardId);
+  const liveReport =
+    failedReportHandoff?.report ?? ("report" in roundState ? roundState.report : undefined);
+  const report =
+    liveReport === undefined ? storedReport : resolveReportBoard(liveReport, reportBoardId);
+  // A report can hand off before regeneration settles. If that durable operation later
+  // fails, its exact report identity and readable projection return to the run failure
+  // surface. The local acknowledgement records the reviewer's explicit Return or Reveal,
+  // so a reload cannot create either a missed failure or a redirect loop.
+  useEffect(() => {
+    if (
+      roundState.phase !== "failed" ||
+      failedReportHandoff === undefined ||
+      report.status !== "valid" ||
+      reportAcknowledged
+    ) {
+      return;
+    }
+    navigate(sessionRunPath(slug), { replace: true });
+  }, [failedReportHandoff, navigate, report.status, reportAcknowledged, roundState.phase, slug]);
   const greetingRecordIndex = roundRecords.findLastIndex(
     (record) => record.reportBoard === reportBoardId,
   );
@@ -152,16 +195,34 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // name a report which fails to resolve still routes to `ReportUnavailable` — that report
   // exists and the reveal is genuinely owed.
   const inReportPhase =
-    reportBoardId !== "" &&
-    (roundState.phase === "reporting" ||
-      roundState.phase === "composing" ||
-      roundState.phase === "composed");
-  // A composed round names the generation its reveal lands on; otherwise the live boards are
-  // the ones drafted over the review's active patchset. Both are real ids the daemon stamped.
+    liveReportPhase || (reportBoardId !== "" && roundState.phase === "composed");
+  // A cold board-route reload can reattach directly to a nonterminal report phase without
+  // visiting RunRoute's arming effect. Keep the in-memory arm in sync for existing callers;
+  // the report id's durable acknowledgement is the source of truth for consumption.
+  useEffect(() => {
+    if (!liveReportPhase || greetingArmed) return;
+    armGreeting(true);
+  }, [armGreeting, greetingArmed, liveReportPhase]);
+  const showRoundGreeting = inReportPhase && !reportAcknowledged;
+  const consumeRoundReport = useCallback(() => {
+    acknowledgeRoundReport(reportBoardId);
+    setAcknowledgedReportBoardId(reportBoardId);
+    armGreeting(false);
+  }, [armGreeting, reportBoardId]);
+  // The report names the successor generation before its ledger row exists. A cold board-route
+  // attach can therefore be in `reporting`/`composing`/`verifying` without the greeting armed;
+  // resolve that exact generation instead of falling back to the active patchset's initial id.
+  // Once complete, `newGeneration` is the same durable identity and remains authoritative.
+  const liveRoundGeneration =
+    roundState.phase === "failed"
+      ? undefined
+      : "newGeneration" in roundState
+        ? roundState.newGeneration
+        : "report" in roundState
+          ? roundState.report?.generation
+          : undefined;
   const boardGeneration =
-    roundState.phase === "composed"
-      ? roundState.newGeneration
-      : currentGenerationId(roundRecords, review.activePatchsetId);
+    liveRoundGeneration ?? currentGenerationId(roundRecords, review.activePatchsetId);
   const boardGenerations = [...new Set([...generationLine(roundRecords), boardGeneration])];
 
   // Freshness applies to a WORKING-TREE capture and to nothing else. `review.openPr` states the
@@ -302,7 +363,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
             <RoundsUnavailable reason={roundsUnavailable} />
           ) : view === "rounds" && roundRecords.length > 0 ? (
             <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
-          ) : greetingArmed && inReportPhase ? (
+          ) : showRoundGreeting ? (
             // Report phase with the greeting armed: the report GATES the reveal. A valid report
             // leads the surface (regeneration streaming beneath); a missing or invalid report is
             // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
@@ -312,7 +373,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
               <RoundGreeting
                 board={report.board}
                 state={roundState}
-                onReveal={() => armGreeting(false)}
+                onReveal={consumeRoundReport}
                 {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
               />
             ) : (

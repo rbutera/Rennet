@@ -21,6 +21,7 @@ import {
   partitionsFromSnapshot,
 } from "@rennet/core";
 import type {
+  BoardCouncilJobId,
   CouncilEffort,
   KnowledgeCoverage,
   KnowledgeSet,
@@ -678,20 +679,77 @@ describe("knowledge swarm — council-routed contract (no live model)", () => {
     expect(claudeCaptures.every((capture) => capture.ambientConfig === "isolated")).toBe(true);
   });
 
-  it("keeps non-map Claude council seats on inherited ambient config", async () => {
+  const boardPipelineJobs = [
+    "lens-draft",
+    "lens-draft-flagged",
+    "lens-draft-noise",
+    "board-post-process",
+    "round-report",
+  ] satisfies readonly BoardCouncilJobId[];
+
+  it.each(boardPipelineJobs)("isolates the Claude harness for board job %s", async (jobId) => {
     const captures: ClaudeCapture[] = [];
     const turn = councilSeatTurn(
-      "project-scout",
+      jobId,
       { type: "object" },
       { claudePort: fakeClaudePort(captures, () => ({})), repoRoot: "/repo" },
       { availability: { installed: ["claude-code"] } },
     );
     if ("failure" in turn) throw new Error(turn.failure);
 
-    await turn.runTurn("scout", 1);
+    await turn.runTurn("board", 1);
 
     expect(captures).toHaveLength(1);
-    expect(captures[0]?.ambientConfig).toBeUndefined();
+    expect(captures[0]?.ambientConfig).toBe("isolated");
+  });
+
+  it.each(boardPipelineJobs)("removes Codex MCP servers for board job %s", async (jobId) => {
+    const captures: CodexExecRequest[] = [];
+    const turn = councilSeatTurn(
+      jobId,
+      { type: "object" },
+      {
+        codexExecutor: fakeCodexExecutor(captures, () => ({})),
+        repoRoot: "/repo",
+      },
+      { availability: { installed: ["codex"] } },
+    );
+    if ("failure" in turn) throw new Error(turn.failure);
+
+    await turn.runTurn("board", 1);
+
+    expect(captures).toHaveLength(1);
+    expect(captures[0]?.mcpServers).toEqual({});
+  });
+
+  it("keeps non-board Council seats on inherited Claude and Codex config", async () => {
+    const claudeCaptures: ClaudeCapture[] = [];
+    const claudeTurn = councilSeatTurn(
+      "project-scout",
+      { type: "object" },
+      { claudePort: fakeClaudePort(claudeCaptures, () => ({})), repoRoot: "/repo" },
+      { availability: { installed: ["claude-code"] } },
+    );
+    if ("failure" in claudeTurn) throw new Error(claudeTurn.failure);
+
+    const codexCaptures: CodexExecRequest[] = [];
+    const codexTurn = councilSeatTurn(
+      "project-scout",
+      { type: "object" },
+      {
+        codexExecutor: fakeCodexExecutor(codexCaptures, () => ({})),
+        repoRoot: "/repo",
+      },
+      { availability: { installed: ["codex"] } },
+    );
+    if ("failure" in codexTurn) throw new Error(codexTurn.failure);
+
+    await Promise.all([claudeTurn.runTurn("scout", 1), codexTurn.runTurn("scout", 1)]);
+
+    expect(claudeCaptures).toHaveLength(1);
+    expect(claudeCaptures[0]?.ambientConfig).toBeUndefined();
+    expect(codexCaptures).toHaveLength(1);
+    expect(codexCaptures[0]?.mcpServers).toBeUndefined();
   });
 
   it("a partially-failed swarm keeps the prior store (all-or-keep-prior)", async () => {

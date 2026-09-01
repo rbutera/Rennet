@@ -137,6 +137,19 @@ const operationBoardIds = {
   noise: "noise-1",
   report: "report-1",
 } as const;
+const operationReportBoard = {
+  lens: "report",
+  generation: "gen-2",
+  boardId: "report-1",
+  document: {
+    title: "Round report",
+    introMarkdown: "The requested change landed.",
+    measure: "reading",
+  },
+  sections: [],
+  elements: [],
+  skippedHunks: [],
+} as const;
 
 describe("session/ durable shapes (#466/#457)", () => {
   it("parses a harness cursor and rejects a negative turn count", () => {
@@ -838,6 +851,81 @@ describe("session/ durable shapes (#466/#457)", () => {
         state: { ...completed.state, returnedAt: 179 },
       }).success,
     ).toBe(false);
+  });
+
+  it("exposes the readable report identity while durable verification is still running", () => {
+    const verifying = RoundOperationSchema.parse({
+      ...operationBase,
+      revision: 7,
+      updatedAt: 175,
+      state: {
+        phase: "report-verifying",
+        workspace: operationWorkspace,
+        worker: operationWorker,
+        gate: operationGate,
+        commits: operationCommits,
+        landing: operationLanding,
+        recording: operationRecording,
+        report: {
+          executionId: "report-draft-1",
+          reportBoardId: "report-1",
+          generation: "gen-2",
+          boardIds: operationBoardIds,
+          startedAt: 165,
+          draftedAt: 170,
+        },
+        verification: { executionId: "report-verify-1", startedAt: 175 },
+      },
+    });
+
+    expect(roundOperationProgressSnapshot(verifying).state).toMatchObject({
+      phase: "report-verifying",
+      report: {
+        status: "verifying",
+        reportBoardId: "report-1",
+        generation: "gen-2",
+      },
+    });
+    expect(
+      RoundEventSchema.parse({
+        type: "report",
+        operationId: "op-1",
+        operationRevision: 6,
+        reportBoardId: "report-1",
+        report: operationReportBoard,
+        seq: 4,
+      }),
+    ).toMatchObject({
+      operationId: "op-1",
+      operationRevision: 6,
+      reportBoardId: "report-1",
+    });
+    expect(
+      RoundEventSchema.safeParse({
+        type: "report",
+        operationId: "op-1",
+        reportBoardId: "report-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundEventSchema.safeParse({
+        type: "report",
+        operationId: "op-1",
+        operationRevision: 6,
+        reportBoardId: "report-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundEventSchema.safeParse({
+        type: "lens",
+        operationRevision: 6,
+        lanes: [],
+      }).success,
+    ).toBe(false);
+    expect(RoundEventSchema.parse({ type: "report", reportBoardId: "legacy-report" })).toEqual({
+      type: "report",
+      reportBoardId: "legacy-report",
+    });
   });
 
   it("coarsens landing and recording without advancing visible commit progress early", () => {

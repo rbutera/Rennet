@@ -3,6 +3,7 @@ import type {
   LensLane,
   RoundEvent,
   RoundOperationProgressSnapshot,
+  RoundReportBoard,
 } from "@rennet/protocol";
 import { type Navigation, sessionPath } from "../routes/url";
 
@@ -56,11 +57,16 @@ type LegacyRoundState =
       readonly prep: readonly LaneRow[];
       readonly worker: readonly LaneRow[];
     }
-  | { readonly phase: "reporting"; readonly reportBoardId: string }
+  | {
+      readonly phase: "reporting";
+      readonly reportBoardId: string;
+      readonly report?: RoundReportBoard;
+    }
   | {
       readonly phase: "composing";
       readonly reportBoardId: string;
       readonly lanes: readonly LensLane[];
+      readonly report?: RoundReportBoard;
     }
   | {
       readonly phase: "composed";
@@ -69,6 +75,7 @@ type LegacyRoundState =
        *  coding checkpoint takes the separate `unchanged` terminal and never claims a
        *  composed generation. */
       readonly reportBoardId?: string;
+      readonly report?: RoundReportBoard;
       readonly newGeneration: string;
       /** The lanes that were still on screen when the generation composed — carried
        *  through so the settled regeneration block does not blink out at the moment it
@@ -90,6 +97,12 @@ interface DurableRoundRows {
   readonly tail: readonly LaneRow[];
 }
 
+interface DurableReportHandoff {
+  readonly reportBoardId: string;
+  readonly reportProgressRevision: number;
+  readonly report?: RoundReportBoard;
+}
+
 type DurableRoundState =
   | (DurableRoundRows & {
       readonly phase:
@@ -98,17 +111,47 @@ type DurableRoundState =
         | "working"
         | "gating"
         | "committing"
-        | "reporting"
-        | "verifying";
+        | "drafting-report"
+        | "verifying-report";
+    })
+  | (DurableRoundRows & {
+      readonly phase: "reporting";
+      readonly reportBoardId: string;
+      readonly reportProgressRevision: number;
+      readonly report?: RoundReportBoard;
+    })
+  | (DurableRoundRows & {
+      readonly phase: "composing";
+      readonly reportBoardId: string;
+      readonly reportProgressRevision: number;
+      readonly lanes: readonly LensLane[];
+      readonly report?: RoundReportBoard;
+    })
+  | (DurableRoundRows & {
+      readonly phase: "verifying";
+      readonly reportBoardId: string;
+      readonly newGeneration: string;
+      readonly reportProgressRevision?: number;
+      readonly lanes?: readonly LensLane[];
+      readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & {
       readonly phase: "composed";
       readonly reportBoardId: string;
       readonly newGeneration: string;
+      readonly reportProgressRevision?: number;
       readonly lanes?: readonly LensLane[];
+      readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & { readonly phase: "unchanged" })
-  | (DurableRoundRows & { readonly phase: "failed"; readonly reason: string });
+  | (DurableRoundRows & {
+      readonly phase: "failed";
+      readonly reason: string;
+      /** The report-drafting revision this failure can accept a scoped report from. */
+      readonly reportAttemptRevision?: number;
+      /** The verified report already handed to the board route before this failure. */
+      readonly reportHandoff?: DurableReportHandoff;
+    });
 
 export type RoundState = LegacyRoundState | DurableRoundState;
 
@@ -358,7 +401,7 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
       };
     case "report-drafting":
       return {
-        phase: "reporting",
+        phase: "drafting-report",
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
@@ -369,6 +412,19 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         ],
       };
     case "report-verifying":
+      if (!("reportBoardId" in state.report)) {
+        return {
+          phase: "verifying-report",
+          operation,
+          prep: donePrep,
+          worker: [settledWorkerRow(state.worker.fileCount)],
+          tail: [
+            settledGateRow(operation, state.gate),
+            commitRow(state.commits),
+            reportRow(state.report),
+          ],
+        };
+      }
       return {
         phase: "verifying",
         operation,
@@ -379,6 +435,8 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
           commitRow(state.commits),
           reportRow(state.report),
         ],
+        reportBoardId: state.report.reportBoardId,
+        newGeneration: state.report.generation,
       };
     case "completed": {
       if (snapshot.rerunRequested === true) {
@@ -396,6 +454,8 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
           phase: "verifying",
           ...rows,
           tail: [...rows.tail, reportRow(state.result.report)],
+          reportBoardId: state.result.report.reportBoardId,
+          newGeneration: state.result.report.generation,
         };
       }
       if (state.result.kind === "unchanged") return { phase: "unchanged", ...rows };
@@ -490,6 +550,27 @@ function isNewerOperation(
   return candidate.revision > current.revision;
 }
 
+function reportHandoffFromState(state: RoundState): DurableReportHandoff | undefined {
+  if (!("operation" in state)) return undefined;
+  if (state.phase === "failed") return state.reportHandoff;
+  if (!("reportBoardId" in state) || state.reportBoardId === undefined) return undefined;
+  if (!("reportProgressRevision" in state) || state.reportProgressRevision === undefined) {
+    return undefined;
+  }
+  return {
+    reportBoardId: state.reportBoardId,
+    reportProgressRevision: state.reportProgressRevision,
+    ...(state.report === undefined ? {} : { report: state.report }),
+  };
+}
+
+function reportAttemptRevisionFromState(state: RoundState): number | undefined {
+  if (!("operation" in state)) return undefined;
+  if (state.phase === "failed") return state.reportAttemptRevision;
+  if (state.phase === "drafting-report") return state.operation.revision;
+  return "reportProgressRevision" in state ? state.reportProgressRevision : undefined;
+}
+
 /**
  * The pure transition. Forward-only and tolerant: an event that does not apply to the
  * current phase returns the state unchanged (progress channels can duplicate or
@@ -501,10 +582,106 @@ function isNewerOperation(
 export function advance(state: RoundState, event: RoundEvent): RoundState {
   if (event.type === "operation") {
     if ("operation" in state && !isNewerOperation(event.snapshot, state.operation)) return state;
-    return durableState(event.snapshot);
+    const next = durableState(event.snapshot);
+    if (
+      next.phase === "failed" &&
+      "operation" in state &&
+      state.operation.operationId === event.snapshot.operationId
+    ) {
+      const reportHandoff = reportHandoffFromState(state);
+      const reportAttemptRevision = reportAttemptRevisionFromState(state);
+      return {
+        ...next,
+        ...(reportAttemptRevision === undefined ? {} : { reportAttemptRevision }),
+        ...(reportHandoff === undefined ? {} : { reportHandoff }),
+      };
+    }
+    if (
+      "operation" in state &&
+      state.operation.operationId === event.snapshot.operationId &&
+      (next.phase === "verifying" || next.phase === "composed") &&
+      (state.phase === "composing" || state.phase === "verifying")
+    ) {
+      return {
+        ...next,
+        ...("reportProgressRevision" in state && state.reportProgressRevision !== undefined
+          ? { reportProgressRevision: state.reportProgressRevision }
+          : {}),
+        ...(state.lanes === undefined ? {} : { lanes: state.lanes }),
+        ...(state.report === undefined ? {} : { report: state.report }),
+      };
+    }
+    return next;
   }
-  // Once the durable stream is present, only a newer durable snapshot may change it.
-  if ("operation" in state) return state;
+  // A durable operation owns its report/lens progress. These two scoped snapshots are
+  // allowed to refine `report-drafting`; every unscoped legacy delta remains ignored.
+  if ("operation" in state) {
+    if (event.type !== "report" && event.type !== "lens") return state;
+    if (event.operationId !== state.operation.operationId) return state;
+    if (event.operationRevision === undefined) return state;
+    if (
+      event.type === "report" &&
+      state.phase === "drafting-report" &&
+      event.operationRevision === state.operation.revision
+    ) {
+      return {
+        ...state,
+        phase: "reporting",
+        reportBoardId: event.reportBoardId,
+        reportProgressRevision: event.operationRevision,
+        ...(event.report === undefined ? {} : { report: event.report }),
+      };
+    }
+    if (
+      event.type === "report" &&
+      state.phase === "failed" &&
+      event.operationRevision === state.reportAttemptRevision &&
+      (state.reportHandoff === undefined ||
+        state.reportHandoff.reportBoardId === event.reportBoardId)
+    ) {
+      return {
+        ...state,
+        reportHandoff: {
+          reportBoardId: event.reportBoardId,
+          reportProgressRevision: event.operationRevision,
+          ...(event.report === undefined ? {} : { report: event.report }),
+        },
+      };
+    }
+    if (
+      event.type === "report" &&
+      (state.phase === "verifying" || state.phase === "composed") &&
+      event.reportBoardId === state.reportBoardId
+    ) {
+      return event.report === undefined
+        ? state
+        : {
+            ...state,
+            report: event.report,
+            reportProgressRevision: event.operationRevision,
+          };
+    }
+    if (event.type === "lens") {
+      if (state.phase === "reporting" && event.operationRevision === state.reportProgressRevision) {
+        return {
+          ...state,
+          phase: "composing",
+          reportBoardId: state.reportBoardId,
+          lanes: event.lanes,
+        };
+      }
+      if (state.phase === "composing" && event.operationRevision === state.reportProgressRevision) {
+        return { ...state, lanes: event.lanes };
+      }
+      if (
+        (state.phase === "verifying" || state.phase === "composed") &&
+        state.reportProgressRevision === event.operationRevision
+      ) {
+        return { ...state, lanes: event.lanes };
+      }
+    }
+    return state;
+  }
   if (event.type === "unchanged") {
     return state.phase === "absent" ||
       state.phase === "composed" ||
@@ -533,11 +710,13 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
       return state;
     }
     const reportBoardId = "reportBoardId" in state ? state.reportBoardId : undefined;
+    const report = "report" in state ? state.report : undefined;
     const lanes = state.phase === "composing" ? state.lanes : undefined;
     return {
       phase: "composed",
       newGeneration: event.generation,
       ...(reportBoardId === undefined ? {} : { reportBoardId }),
+      ...(report === undefined ? {} : { report }),
       ...(lanes === undefined ? {} : { lanes }),
     };
   }
@@ -562,21 +741,55 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
         : state;
     case "committing":
       return event.type === "report"
-        ? { phase: "reporting", reportBoardId: event.reportBoardId }
+        ? {
+            phase: "reporting",
+            reportBoardId: event.reportBoardId,
+            ...(event.report === undefined ? {} : { report: event.report }),
+          }
         : state;
     case "reporting":
       return event.type === "lens"
-        ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
+        ? {
+            phase: "composing",
+            reportBoardId: state.reportBoardId,
+            lanes: event.lanes,
+            ...(state.report === undefined ? {} : { report: state.report }),
+          }
         : state;
     case "composing":
-      return event.type === "lens"
-        ? { phase: "composing", reportBoardId: state.reportBoardId, lanes: event.lanes }
-        : state;
+      return event.type === "lens" ? { ...state, lanes: event.lanes } : state;
     case "composed":
     case "unchanged":
     case "failed":
       return state; // terminal
   }
+}
+
+function latestScopedEvent<T extends { readonly seq?: number }>(
+  events: readonly T[],
+): T | undefined {
+  let latest: T | undefined;
+  for (const event of events) {
+    if (event.seq === undefined) continue;
+    if (latest?.seq === undefined || event.seq > latest.seq) latest = event;
+  }
+  // A legacy daemon gives every candidate no sequence. Only then is transport arrival
+  // order the best available account; mixed logs prefer the monotonic server sequence.
+  return latest ?? events.at(-1);
+}
+
+function latestScopedAttemptEvent<
+  T extends { readonly operationRevision?: number; readonly seq?: number },
+>(events: readonly T[]): T | undefined {
+  let latestRevision: number | undefined;
+  for (const event of events) {
+    if (event.operationRevision === undefined) continue;
+    if (latestRevision === undefined || event.operationRevision > latestRevision) {
+      latestRevision = event.operationRevision;
+    }
+  }
+  if (latestRevision === undefined) return undefined;
+  return latestScopedEvent(events.filter((event) => event.operationRevision === latestRevision));
 }
 
 /**
@@ -614,9 +827,70 @@ export function mergeRoundEvents(
       latestOperation = event;
     }
   }
-  // A durable event is a complete snapshot. Folding legacy deltas beside it could move
-  // the UI past report verification, and a daemon restart can reuse the legacy `seq`.
-  if (latestOperation !== undefined) return [latestOperation];
+  // The operation snapshot stays authoritative. Once report drafting begins, retain the
+  // latest operation-scoped report and lens snapshots beside it: they expose a report only
+  // after the server verified its durable read-back, and can never mark completion.
+  if (latestOperation !== undefined) {
+    const state = latestOperation.snapshot.state;
+    const carriesReportProgress =
+      state.phase === "report-drafting" ||
+      state.phase === "report-verifying" ||
+      (state.phase === "failed" &&
+        (state.failure.at === "report-drafting" || state.failure.at === "report-verifying")) ||
+      (state.phase === "completed" && state.result.kind === "changed");
+    if (!carriesReportProgress) return [latestOperation];
+    const operationId = latestOperation.snapshot.operationId;
+    if (state.phase === "failed") {
+      let reportAttempt: Extract<RoundEvent, { type: "operation" }> | undefined;
+      for (const event of all) {
+        if (
+          event.type !== "operation" ||
+          event.snapshot.operationId !== operationId ||
+          event.snapshot.revision > latestOperation.snapshot.revision ||
+          event.snapshot.state.phase !== "report-drafting"
+        ) {
+          continue;
+        }
+        if (
+          reportAttempt === undefined ||
+          event.snapshot.revision > reportAttempt.snapshot.revision
+        ) {
+          reportAttempt = event;
+        }
+      }
+      if (reportAttempt === undefined) return [latestOperation];
+      const report = latestScopedEvent(
+        all.filter(
+          (event): event is Extract<RoundEvent, { type: "report" }> =>
+            event.type === "report" &&
+            event.operationId === operationId &&
+            event.operationRevision === reportAttempt.snapshot.revision,
+        ),
+      );
+      return report === undefined ? [latestOperation] : [reportAttempt, latestOperation, report];
+    }
+    const report = latestScopedAttemptEvent(
+      all.filter(
+        (event): event is Extract<RoundEvent, { type: "report" }> =>
+          event.type === "report" &&
+          event.operationId === operationId &&
+          event.operationRevision !== undefined &&
+          event.operationRevision <= latestOperation.snapshot.revision &&
+          (state.phase !== "report-drafting" ||
+            event.operationRevision === latestOperation.snapshot.revision),
+      ),
+    );
+    if (report === undefined) return [latestOperation];
+    const lens = latestScopedEvent(
+      all.filter(
+        (event): event is Extract<RoundEvent, { type: "lens" }> =>
+          event.type === "lens" &&
+          event.operationId === operationId &&
+          event.operationRevision === report.operationRevision,
+      ),
+    );
+    return lens === undefined ? [latestOperation, report] : [latestOperation, report, lens];
+  }
 
   const bySeq = new Map<number, RoundEvent>();
   const unsequenced: RoundEvent[] = [];
@@ -651,9 +925,11 @@ const PHASE_ORDER: readonly RoundPhase[] = [
   "working",
   "gating",
   "committing",
+  "drafting-report",
   "reporting",
-  "verifying",
   "composing",
+  "verifying-report",
+  "verifying",
   "composed",
 ];
 
@@ -672,16 +948,23 @@ export function runProgressFraction(state: RoundState): number {
  *
  * - `absent` (a cold `/s/:slug/run` deep-link with no live round) ⇒ redirect to the
  *   session board (replace — the run route leaves no back-stack entry).
- * - `composed` / `unchanged` ⇒ leave only after the durable operation says the report
- *   verification settled, or says no report was needed.
- * - every in-flight phase and `failed` ⇒ `null`: stay on the run route.
+ * - a report-bearing `reporting` / `composing` / `verifying` state ⇒ hand the readable
+ *   report to the board surface while regeneration/final verification continues;
+ * - `composed` / `unchanged` ⇒ the terminal handoff (Reveal still requires `composed`);
+ * - every earlier in-flight phase and `failed` ⇒ `null`: stay on the run route.
  */
 export function runNavigation(state: RoundState, slug: string): Navigation | null {
   switch (state.phase) {
     case "absent":
+    case "composing":
+    case "verifying":
     case "composed":
     case "unchanged":
       return { path: sessionPath(slug, { view: "board" }), replace: true };
+    case "reporting":
+      return state.reportBoardId === undefined
+        ? null
+        : { path: sessionPath(slug, { view: "board" }), replace: true };
     default:
       return null;
   }

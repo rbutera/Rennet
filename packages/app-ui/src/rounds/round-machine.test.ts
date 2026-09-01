@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   FIXTURE_ROUND_COMPLETE_TICK,
   FIXTURE_ROUND_TIMELINE,
+  reportBoardFixture,
   roundStateAtTick,
 } from "../test/fixtures/rounds";
 import {
@@ -99,7 +100,7 @@ describe("round-machine — the pure run state machine", () => {
     expect(canRevealNewBoards(roundStateAtTick(FIXTURE_ROUND_COMPLETE_TICK))).toBe(true);
   });
 
-  it("runNavigation stays null while the round is in flight, then hands off to the board surface", () => {
+  it("hands off when the report is readable, before board regeneration finishes", () => {
     // Watching phases keep the reviewer on the run route (no effect-driven redirect).
     for (const phase of ["dispatching", "preparing", "working", "gating", "committing"] as const) {
       const at = FIXTURE_ROUND_TIMELINE.findIndex(
@@ -107,13 +108,17 @@ describe("round-machine — the pure run state machine", () => {
       );
       expect(runNavigation(roundStateAtTick(at + 1), SLUG)).toBeNull();
     }
-    // Drafting and lens composition are still in flight. Only the terminal composed
-    // receipt leaves the run takeover.
+    // The report already exists in both phases. It leads the board surface while lens
+    // composition remains in flight; the reveal itself stays completed-only.
     for (const phase of ["reporting", "composing"] as const) {
       const at = FIXTURE_ROUND_TIMELINE.findIndex(
         (_e, i) => roundStateAtTick(i + 1).phase === phase,
       );
-      expect(runNavigation(roundStateAtTick(at + 1), SLUG)).toBeNull();
+      expect(runNavigation(roundStateAtTick(at + 1), SLUG)).toEqual({
+        path: "/s/s-1",
+        replace: true,
+      });
+      expect(canRevealNewBoards(roundStateAtTick(at + 1))).toBe(false);
     }
     expect(runNavigation(roundStateAtTick(FIXTURE_ROUND_COMPLETE_TICK), SLUG)).toEqual({
       path: "/s/s-1",
@@ -201,7 +206,11 @@ describe("round-machine — the pure run state machine", () => {
         worker: WORKER,
         gate: GATE,
         commits: { status: "done", count: 2 },
-        report: { status: "verifying" },
+        report: {
+          status: "verifying",
+          reportBoardId: "report-2",
+          generation: "generation-2",
+        },
       },
       { seq: 0 },
     );
@@ -211,6 +220,366 @@ describe("round-machine — the pure run state machine", () => {
     const reattached = merged.reduce(advance, initialRoundState);
     expect(reattached.phase).toBe("verifying");
     expect(advance(reattached, stale)).toBe(reattached);
+  });
+
+  it("keeps operation-scoped report and lens progress beside the durable drafting snapshot", () => {
+    const drafting = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-2",
+      report: { ...reportBoardFixture, boardId: "report-2" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const lens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [
+        { id: "sequence", label: "Sequence", status: "running" },
+        { id: "decisions", label: "Decisions", status: "queued" },
+      ],
+      seq: 12,
+    } satisfies RoundEvent;
+
+    const merged = mergeRoundEvents([drafting], [report, lens]);
+    expect(merged).toEqual([drafting, report, lens]);
+    const state = merged.reduce(advance, initialRoundState);
+
+    expect(state).toMatchObject({
+      phase: "composing",
+      reportBoardId: "report-2",
+      report: report.report,
+      lanes: lens.lanes,
+      operation: { operationId: OPERATION_BASE.operationId, revision: 8 },
+    });
+    expect(runNavigation(state, SLUG)).toEqual({ path: "/s/s-1", replace: true });
+    expect(canRevealNewBoards(state)).toBe(false);
+  });
+
+  it("refuses report progress from a different durable operation", () => {
+    const drafting = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
+    const foreign = {
+      type: "report",
+      operationId: "operation-foreign",
+      operationRevision: 8,
+      reportBoardId: "report-foreign",
+      report: { ...reportBoardFixture, boardId: "report-foreign" },
+      seq: 11,
+    } satisfies RoundEvent;
+
+    const merged = mergeRoundEvents([drafting], [foreign]);
+    expect(merged).toEqual([drafting]);
+    expect(merged.reduce(advance, initialRoundState).phase).toBe("drafting-report");
+  });
+
+  it("keeps the readable report attached when the durable phase advances to verification", () => {
+    const verifying = operationEvent(
+      9,
+      {
+        phase: "report-verifying",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: {
+          status: "verifying",
+          reportBoardId: "report-2",
+          generation: "generation-2",
+        },
+      },
+      { seq: 13 },
+    );
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-2",
+      report: { ...reportBoardFixture, boardId: "report-2" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const lens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [{ id: "sequence", label: "Sequence", status: "done", verdict: "reworked" }],
+      seq: 12,
+    } satisfies RoundEvent;
+
+    const merged = mergeRoundEvents([verifying, report, lens], []);
+    expect(merged).toEqual([verifying, report, lens]);
+    const state = merged.reduce(advance, initialRoundState);
+    expect(state).toMatchObject({
+      phase: "verifying",
+      reportBoardId: "report-2",
+      report: report.report,
+      lanes: lens.lanes,
+    });
+    expect(canRevealNewBoards(state)).toBe(false);
+  });
+
+  it("keeps a readable report attached when the same durable operation later fails", () => {
+    const drafting = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-2",
+      report: { ...reportBoardFixture, boardId: "report-2" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const failed = operationEvent(
+      9,
+      {
+        phase: "failed",
+        failure: {
+          at: "report-drafting",
+          workspace: WORKSPACE,
+          worker: WORKER,
+          gate: GATE,
+          commits: { status: "done", count: 2 },
+          report: {
+            status: "failed",
+            step: "drafting",
+            reason: "lens regeneration failed",
+          },
+        },
+      },
+      { seq: 12 },
+    );
+
+    const merged = mergeRoundEvents([drafting, report], [failed]);
+    expect(merged).toEqual([drafting, failed, report]);
+    expect(merged.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "failed",
+      reason: "lens regeneration failed",
+      reportAttemptRevision: 8,
+      reportHandoff: {
+        reportBoardId: "report-2",
+        report: report.report,
+      },
+      operation: { operationId: OPERATION_BASE.operationId, revision: 9 },
+    });
+  });
+
+  it("does not attach a previous attempt's report when a same-operation retry fails", () => {
+    const priorReport = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-prior-attempt",
+      report: { ...reportBoardFixture, boardId: "report-prior-attempt" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const retryDrafting = operationEvent(
+      10,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 20 },
+    );
+    const failedRetry = operationEvent(
+      11,
+      {
+        phase: "failed",
+        failure: {
+          at: "report-drafting",
+          workspace: WORKSPACE,
+          worker: WORKER,
+          gate: GATE,
+          commits: { status: "done", count: 2 },
+          report: {
+            status: "failed",
+            step: "drafting",
+            reason: "retry regeneration failed",
+          },
+        },
+      },
+      { seq: 21 },
+    );
+
+    const merged = mergeRoundEvents([priorReport, retryDrafting], [failedRetry]);
+    expect(merged).toEqual([failedRetry]);
+    expect(merged.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "failed",
+      reason: "retry regeneration failed",
+    });
+    expect("reportHandoff" in merged.reduce(advance, initialRoundState)).toBe(false);
+  });
+
+  it("chooses the newest retry attempt before seq after a daemon restart", () => {
+    const verifying = operationEvent(
+      11,
+      {
+        phase: "report-verifying",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: {
+          status: "verifying",
+          reportBoardId: "report-current-attempt",
+          generation: "generation-current-attempt",
+        },
+      },
+      { seq: 0 },
+    );
+    const oldReport = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-old-attempt",
+      report: { ...reportBoardFixture, boardId: "report-old-attempt" },
+      seq: 100,
+    } satisfies RoundEvent;
+    const oldLens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+      seq: 101,
+    } satisfies RoundEvent;
+    const currentReport = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 10,
+      reportBoardId: "report-current-attempt",
+      report: { ...reportBoardFixture, boardId: "report-current-attempt" },
+      seq: 1,
+    } satisfies RoundEvent;
+    const currentLens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 10,
+      lanes: [{ id: "sequence", label: "Sequence", status: "done", verdict: "reworked" }],
+      seq: 2,
+    } satisfies RoundEvent;
+
+    const merged = mergeRoundEvents([oldReport, oldLens, verifying], [currentReport, currentLens]);
+    expect(merged).toEqual([verifying, currentReport, currentLens]);
+    expect(merged.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "verifying",
+      reportBoardId: "report-current-attempt",
+      report: currentReport.report,
+      lanes: currentLens.lanes,
+    });
+  });
+
+  it("keeps read seq 12 over a later-arriving streamed seq 11 lens snapshot", () => {
+    const drafting = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-2",
+      report: { ...reportBoardFixture, boardId: "report-2" },
+      seq: 10,
+    } satisfies RoundEvent;
+    const readLens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [{ id: "sequence", label: "Sequence", status: "done", verdict: "reworked" }],
+      seq: 12,
+    } satisfies RoundEvent;
+    const streamedLens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
+      seq: 11,
+    } satisfies RoundEvent;
+
+    const merged = mergeRoundEvents([drafting, report, readLens], [streamedLens]);
+    expect(merged).toEqual([drafting, report, readLens]);
+    expect(merged.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "composing",
+      lanes: readLens.lanes,
+    });
+  });
+
+  it("does not replay a failed attempt's report and lenses into the same operation retry", () => {
+    const retryDrafting = operationEvent(
+      10,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 20 },
+    );
+    const priorReport = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-prior-attempt",
+      report: { ...reportBoardFixture, boardId: "report-prior-attempt" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const priorLens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [{ id: "sequence", label: "Sequence", status: "done", verdict: "reworked" }],
+      seq: 12,
+    } satisfies RoundEvent;
+
+    const merged = mergeRoundEvents([priorReport, priorLens], [retryDrafting]);
+    expect(merged).toEqual([retryDrafting]);
+    expect(merged.reduce(advance, initialRoundState).phase).toBe("drafting-report");
   });
 
   it("prefers a newer operation over an older terminal snapshot", () => {
@@ -321,7 +690,7 @@ describe("round-machine — the pure run state machine", () => {
     });
   });
 
-  it("does not navigate until the durable report is verified", () => {
+  it("keeps reveal terminal-only while a readable report is being verified", () => {
     const drafting = advance(
       initialRoundState,
       operationEvent(8, {
@@ -341,7 +710,11 @@ describe("round-machine — the pure run state machine", () => {
         worker: WORKER,
         gate: GATE,
         commits: { status: "done", count: 2 },
-        report: { status: "verifying" },
+        report: {
+          status: "verifying",
+          reportBoardId: "report-2",
+          generation: "generation-2",
+        },
       }),
     );
     const legacyEarlyTerminal = advance(verifying, { type: "composed", generation: "too-early" });
@@ -365,12 +738,13 @@ describe("round-machine — the pure run state machine", () => {
     );
 
     expect(runNavigation(drafting, SLUG)).toBeNull();
-    expect(runNavigation(verifying, SLUG)).toBeNull();
+    expect(runNavigation(verifying, SLUG)).toEqual({ path: "/s/s-1", replace: true });
+    expect(canRevealNewBoards(verifying)).toBe(false);
     expect(legacyEarlyTerminal).toBe(verifying);
     expect(runNavigation(completed, SLUG)).toEqual({ path: "/s/s-1", replace: true });
   });
 
-  it("keeps a completed operation on the run route until its Return handback is durable", () => {
+  it("keeps Reveal gated while Return drains after the report handoff", () => {
     const completedState: RoundOperationProgressSnapshot["state"] = {
       phase: "completed",
       workspace: WORKSPACE,
@@ -392,11 +766,13 @@ describe("round-machine — the pure run state machine", () => {
     );
 
     expect(draining.phase).toBe("verifying");
-    expect(runNavigation(draining, SLUG)).toBeNull();
+    expect(runNavigation(draining, SLUG)).toEqual({ path: "/s/s-1", replace: true });
+    expect(canRevealNewBoards(draining)).toBe(false);
 
     const returned = advance(draining, operationEvent(11, completedState, { draining: false }));
     expect(returned.phase).toBe("composed");
     expect(runNavigation(returned, SLUG)).toEqual({ path: "/s/s-1", replace: true });
+    expect(canRevealNewBoards(returned)).toBe(true);
   });
 
   it("treats a queued rerun receipt as the next dispatch instead of round-one completion", () => {

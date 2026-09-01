@@ -5,6 +5,7 @@ import {
   commands,
   projectProcessEventSchema,
   type ReviewAskStreamEvent,
+  RoundEventSchema,
   reviewAskStreamEventSchema,
 } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +23,7 @@ import {
   projectProgressEvent,
   redactAbsolutePaths,
   resolveCommandInput,
+  scrubProjectedValue,
   scrubRoots,
   toRepoReference,
 } from "./projection";
@@ -382,6 +384,46 @@ describe("outbound structural projection", () => {
     ) as unknown as { summary: { path: { repoKey: string } } };
     expect(event.summary.path.repoKey).toBeTruthy();
   });
+
+  it("scrubs host paths from a scoped round-report progress frame", () => {
+    const event = RoundEventSchema.parse({
+      type: "report",
+      reportBoardId: "report-1",
+      operationId: "operation-1",
+      operationRevision: 3,
+      report: {
+        lens: "report",
+        generation: "generation-1",
+        boardId: "report-1",
+        document: {
+          title: "Round report",
+          introMarkdown: `Changed ${REPO}/src/auth.ts.`,
+          measure: "reading",
+          sources: [{ path: `${REPO}/src/auth.ts`, label: "auth" }],
+        },
+        sections: [],
+        elements: [
+          {
+            id: "code-1",
+            kind: "code_ref",
+            data: {
+              author: { kind: "lens-agent", id: "round-report" },
+              patchset_id: "patchset-1",
+              path: `${REPO}/src/auth.ts`,
+              side: "head",
+              start_line: 1,
+              end_line: 1,
+            },
+          },
+        ],
+        skippedHunks: [],
+      },
+    });
+
+    const projected = JSON.stringify(scrubProjectedValue(event, ctx));
+    expect(projected).not.toContain(REPO);
+    expect(projected).toContain("<rennet>/src/auth.ts");
+  });
 });
 
 // B4: the packet's positive control — a board payload carrying an absolute host
@@ -734,6 +776,14 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "fs.listDir.output.result.entries.path",
   ]),
   ...classified("repo-relative", [
+    "progressEvent.report.elements.data.path",
+    "progressEvent.report.document.sources.path",
+    "progressEvent.report.elements.data.source.path",
+    "progressEvent.report.elements.data.sources.path",
+    "session.roundEvents.output.events.report.elements.data.path",
+    "session.roundEvents.output.events.report.document.sources.path",
+    "session.roundEvents.output.events.report.elements.data.source.path",
+    "session.roundEvents.output.events.report.elements.data.sources.path",
     // The span-read row (B3, #489): a CodeRef citation's path is repo-relative
     // within the captured patchset.
     "patchset.readSpan.input.path",
@@ -869,6 +919,7 @@ describe("recursive path-field coverage guard", () => {
       collectPathFields(definition.output, `${command}.output`, found);
     }
     collectPathFields(projectProcessEventSchema, "progressEvent", found);
+    collectPathFields(RoundEventSchema, "progressEvent", found);
     collectPathFields(reviewAskStreamEventSchema, "askStreamEvent", found);
 
     expect(found).toContain("projects.add.input.discovery.repos.path");

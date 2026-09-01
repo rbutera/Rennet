@@ -239,7 +239,14 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
           "Board post-process editor (B08)",
           35,
         ),
-        job("round-report", "heavy", "per-call", false, "Round-report draft (B08 R58)", 36),
+        job(
+          "round-report",
+          "heavy",
+          "per-call",
+          false,
+          "Round-report classification (B08 R58)",
+          36,
+        ),
         // ── Deterministic floor (§2.1) — no model, ever ──
         job("diff-ingest", "deterministic", "none", false, "Diff ingest + lineage (D1)"),
         job("patchset-immutability", "deterministic", "none", false, "Patchset immutability (D2)"),
@@ -387,8 +394,9 @@ const TABLE_BOTH: AssignmentTable = {
   "map-verify": pick("sonnet-5", "medium"), // #460 point 4 verbatim (Claude sonnet-5); packet fixes medium
   "map-scope": pick("sonnet-5", "medium"),
   "project-scout": pick("sonnet-5", "medium"), // #461 names medium (the model class); effort [extrapolated]
-  // ── Board-rebuild seats (#489 B08). Heavy drafting stays on Claude (R39);
-  // the two light seats (noise draft, post-process editor) cross to Codex.
+  // ── Board-rebuild seats (#489 B08). Heavy lens drafting stays on Claude (R39);
+  // the noise draft and post-process editor cross to Codex. The narrow report
+  // classifier stays on Claude but no longer pays medium reasoning latency.
   // Effort [extrapolated] — the rulings fix the routing, not the knob.
   "lens-draft": pick("opus-4.8", "high"), // the reading surface: the deep review draft
   // Primary seat only; the Flagged dual SECOND seat pairs Codex via dual-seat.ts
@@ -396,7 +404,7 @@ const TABLE_BOTH: AssignmentTable = {
   "lens-draft-flagged": pick("sonnet-5", "medium"),
   "lens-draft-noise": pick("gpt-5.6-luna", "low"), // mirrors noise-narration (cheap Codex)
   "board-post-process": pick("gpt-5.6-terra", "medium"), // mirrors comment-refinement (prose editor)
-  "round-report": pick("sonnet-5", "medium"),
+  "round-report": pick("sonnet-5", "low"),
 };
 
 /** Table 2 — Claude-only (Haiku / Sonnet 5 / Opus 4.8). */
@@ -443,7 +451,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "lens-draft-flagged": pick("sonnet-5", "medium"),
   "lens-draft-noise": pick("haiku", "low"), // [extrapolated] house light model, mirrors noise-narration
   "board-post-process": pick("sonnet-5", "medium"),
-  "round-report": pick("sonnet-5", "medium"),
+  "round-report": pick("sonnet-5", "low"),
 };
 
 /** Table 3 — Codex-only (Sol / Terra / Luna). */
@@ -491,7 +499,7 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "lens-draft-flagged": pick("gpt-5.6-sol", "high"),
   "lens-draft-noise": pick("gpt-5.6-luna", "low"),
   "board-post-process": pick("gpt-5.6-terra", "medium"),
-  "round-report": pick("gpt-5.6-sol", "medium"),
+  "round-report": pick("gpt-5.6-terra", "low"),
 };
 
 export const ASSIGNMENT_TABLES: Readonly<Record<CouncilScenario, AssignmentTable>> = {

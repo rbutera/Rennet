@@ -111,12 +111,13 @@ The fuzzy lineage matcher can describe a successor relationship, but similarity
 never authorizes carry. This prevents a plausible match from impersonating
 reviewed identity.
 
-The **successor account** bridges the two generations: it compares generation N
-with N+1 and classifies every prior ask against the successor patchset's diff —
-addressed, partial, untouched, or work beyond the asks — each item anchored. It
-is a deterministic account of what changed, not a model's summary of it; the
-round-report seat drafts the reviewer-facing round report from it. See
-[Delta and generations](./delta-rereview-and-lineage.md).
+The **successor account** bridges the two generations. It deterministically
+compares generation N with N+1 using the prior asks, carry result, patchsets, and
+rename evidence. It is not the reviewer-facing round report. A landed coding
+round produces that report through one separate classification turn over the
+durable dispatched asks and exact worker receipt, then the host verifies every
+claimed anchor against the measured diff. See [Delta and
+generations](./delta-rereview-and-lineage.md).
 
 ## Review state and command persistence
 
@@ -140,6 +141,13 @@ envelope, coverage, and validation results persist separately in the daemon's
 board-meta store before the board is announced. `board.read` joins those two
 durable halves. All element writes route through the adapters
 `whiteboard-client`, the only writer of board ops.
+
+A restarted round reuses a reserved report only when the exact report metadata
+and board state reconstruct and pass the same changed-line verification again.
+Partial lens boards are replaced as one attempt, not resumed element by element.
+Recovery removes a partial board's metadata before clearing its element log. A
+crash at either point therefore leaves the next retry able to repeat the cleanup;
+it cannot treat elements scheduled for replacement as a completed board.
 
 ## Harness boundary
 
@@ -194,6 +202,14 @@ projected connections receive frames passed through the projection seam, which
 scrubs known-root and home-directory prefixes from every string the same way
 it scrubs other free text. Board prose attributes are model-authored and get
 only that blanket pass.
+
+Live round report and lens-progress events have two protocol forms. Legacy
+unscoped events remain readable for older callers. Current durable events carry
+the operation id and operation revision together; a report event also carries
+the already-validated report projection. The client first selects the newest
+compatible operation revision, then the greatest sequence number inside that
+revision. A daemon restart may reset the transport sequence, so sequence alone
+cannot decide which attempt owns the screen.
 
 ## Outbound forge actions
 

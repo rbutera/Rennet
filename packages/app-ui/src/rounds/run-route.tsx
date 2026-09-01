@@ -12,6 +12,7 @@ import {
   roundTargetLabel,
   runNavigation,
 } from "./round-machine";
+import { acknowledgeRoundReport } from "./round-report-acknowledgement";
 import {
   useRoundPending,
   useRoundRetry,
@@ -133,8 +134,15 @@ function LaneList({ title, rows }: { readonly title: string; readonly rows: read
   );
 }
 
-function FailureActions({ slug }: { readonly slug: string }) {
+function FailureActions({
+  slug,
+  reportBoardId,
+}: {
+  readonly slug: string;
+  readonly reportBoardId?: string;
+}) {
   const [, navigate] = useLocation();
+  const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
   const retry = useRoundRetry();
   const pending = useRoundRetryPending(slug);
   const error = useRoundRetryError(slug);
@@ -142,7 +150,14 @@ function FailureActions({ slug }: { readonly slug: string }) {
   return (
     <div className="flex flex-col items-center gap-2">
       <div className="flex items-center gap-2">
-        <Button variant="outline" onClick={() => navigate(sessionPath(slug))}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (reportBoardId !== undefined) acknowledgeRoundReport(reportBoardId);
+            armGreeting(false);
+            navigate(sessionPath(slug));
+          }}
+        >
           Return to Review
         </Button>
         <Button disabled={retry === undefined || pending} onClick={() => retry?.(slug)}>
@@ -218,7 +233,12 @@ function LiveRun({ state, slug }: { readonly state: RoundState; readonly slug: s
             <p role="alert" className="text-sm text-destructive">
               {state.reason}
             </p>
-            <FailureActions slug={slug} />
+            <FailureActions
+              slug={slug}
+              {...("reportHandoff" in state && state.reportHandoff !== undefined
+                ? { reportBoardId: state.reportHandoff.reportBoardId }
+                : {})}
+            />
           </div>
         )}
       </div>
@@ -240,9 +260,16 @@ export function RunRoute({ slug }: { readonly slug: string }) {
   const nav = runNavigation(state, slug);
   const armGreeting = useRennetStore((s) => s.runActions.armGreeting);
 
-  // The greeting arms only when the durable operation reports terminal completion. A
-  // drafted report is still being verified and keeps ownership of the run route.
-  const entersGreeting = state.phase === "composed";
+  // The report owns the surface as soon as the daemon has read it back and attached its
+  // projection to progress. Lens regeneration keeps running there; Reveal remains gated
+  // by `composed`, after Return and exact ask consumption settle durably.
+  const entersGreeting =
+    "reportBoardId" in state &&
+    state.reportBoardId !== undefined &&
+    (state.phase === "reporting" ||
+      state.phase === "composing" ||
+      state.phase === "verifying" ||
+      state.phase === "composed");
   useEffect(() => {
     if (entersGreeting) armGreeting(true);
   }, [entersGreeting, armGreeting]);

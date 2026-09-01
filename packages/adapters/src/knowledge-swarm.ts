@@ -36,6 +36,7 @@ import {
   structuralChanges,
 } from "@rennet/core";
 import type {
+  BoardCouncilJobId,
   CouncilEffort,
   CouncilHarnessId,
   CouncilJobId,
@@ -458,8 +459,19 @@ export interface CouncilSeatDeps {
   readonly label?: string;
 }
 
-function isContextMapJob(jobId: CouncilJobId): boolean {
-  return jobId === "partition-worker" || jobId === "map-scope" || jobId === "map-verify";
+const ISOLATED_COUNCIL_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
+  "partition-worker",
+  "map-scope",
+  "map-verify",
+  "lens-draft",
+  "lens-draft-flagged",
+  "lens-draft-noise",
+  "board-post-process",
+  "round-report",
+] satisfies readonly BoardCouncilJobId[]);
+
+function usesIsolatedHarnessConfig(jobId: CouncilJobId): boolean {
+  return ISOLATED_COUNCIL_JOB_IDS.has(jobId);
 }
 
 /**
@@ -494,11 +506,10 @@ export function councilSeatTurn(
         schema,
         {
           cwd: deps.repoRoot,
-          // Mapping fans out many light workers. Codex starts every configured MCP
-          // server eagerly, even though these workers read the repository through
-          // native tools. Keep the empty table job-scoped: every other Codex council
-          // job inherits the executor's table as before.
-          ...(isContextMapJob(jobId) ? { mcpServers: {} } : {}),
+          // Context-map and board-pipeline jobs use only their inlined prompt and
+          // native repository tools. Codex starts configured MCP servers eagerly,
+          // so suppress them for those jobs while unrelated Council work inherits.
+          ...(usesIsolatedHarnessConfig(jobId) ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         },
       ),
@@ -513,7 +524,8 @@ export function councilSeatTurn(
     effort: resolution.effort,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
-      ...(isContextMapJob(jobId) ? { ambientConfig: "isolated" } : {}),
+      // These same jobs do not consume project MCP, plugin, or hook extensions.
+      ...(usesIsolatedHarnessConfig(jobId) ? { ambientConfig: "isolated" } : {}),
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),

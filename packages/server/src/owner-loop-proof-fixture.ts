@@ -180,18 +180,21 @@ function flaggedBoard(): DraftBoard {
     elements: [
       codeRef("flagged-code"),
       {
-        id: "flagged-note",
-        kind: "annotation",
+        id: "flagged-finding",
+        kind: "finding",
         data: {
           author,
-          code_ref: "flagged-code",
-          body: "No failure scenario is supported by this one-line change.",
+          severity: "medium",
+          concern: "The exported review value has no validation at its use boundary.",
+          code: ["flagged-code"],
+          concurrence: [],
+          status: "open",
         },
       },
       {
         id: "flagged-section",
         kind: "section",
-        data: { author, title: "Observed behavior", children: ["flagged-note"] },
+        data: { author, title: "Observed behavior", children: ["flagged-finding"] },
       },
     ],
     skippedHunks: [],
@@ -232,39 +235,22 @@ function noiseBoard(): DraftBoard {
   };
 }
 
-function reportBoard(askText: string, value: string): DraftBoard {
-  const codeRefId = `report-code-${value}`;
-  const outcomeId = `report-outcome-${value}`;
+function reportClassification(value: string): unknown {
   return {
-    document: {
-      title: `Owner value changed to ${value}`,
-      introMarkdown: `The requested value is now \`${value}\` at the cited source line.`,
-      measure: "reading",
-    },
-    elements: [
-      codeRef(codeRefId),
+    outcomes: [
       {
-        id: outcomeId,
-        kind: "round_outcome",
-        data: {
-          author,
-          status: "addressed",
-          ask: { ref: askPlanValue, text: askText },
-          note: `\`${OWNER_LOOP_SOURCE}\` now exports \`${value}\`.`,
-          code_ref: codeRefId,
-        },
-      },
-      {
-        id: `report-section-${value}`,
-        kind: "section",
-        data: {
-          author,
-          title: "Addressed ask",
-          children: [outcomeId, codeRefId],
+        askId: askPlanValue,
+        status: "addressed",
+        note: `\`${OWNER_LOOP_SOURCE}\` now exports \`${value}\`.`,
+        evidence: {
+          path: OWNER_LOOP_SOURCE,
+          side: "head",
+          startLine: 1,
+          endLine: 1,
         },
       },
     ],
-    skippedHunks: [],
+    beyond: [],
   };
 }
 
@@ -336,16 +322,16 @@ export function ownerLoopScriptedHarnessPlan(invocationLog: string): ScriptedHar
       {
         id: "report-round-one",
         kind: "structured",
-        promptIncludes: ["# Round report — drafting instructions", OWNER_LOOP_ROUND_ONE_BODY],
+        promptIncludes: ["# Round report — classification instructions", OWNER_LOOP_ROUND_ONE_BODY],
         promptExcludes: [OWNER_LOOP_ROUND_TWO_BODY, "# Post-process pass — board prose editor"],
-        output: reportBoard(OWNER_LOOP_ROUND_ONE_BODY, "round-one"),
+        output: reportClassification("round-one"),
       },
       {
         id: "report-round-two",
         kind: "structured",
-        promptIncludes: ["# Round report — drafting instructions", OWNER_LOOP_ROUND_TWO_BODY],
+        promptIncludes: ["# Round report — classification instructions", OWNER_LOOP_ROUND_TWO_BODY],
         promptExcludes: "# Post-process pass — board prose editor",
-        output: reportBoard(OWNER_LOOP_ROUND_TWO_BODY, "round-two"),
+        output: reportClassification("round-two"),
       },
       {
         id: "round-one-edit",

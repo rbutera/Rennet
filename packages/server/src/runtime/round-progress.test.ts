@@ -55,6 +55,12 @@ function verdictOf(lanes: readonly LensLane[], id: string): string | undefined {
 }
 
 const PATCH = ["@@ -1,2 +1,2 @@", " const a = 1;", "-const b = 2;", "+const b = 3;"].join("\n");
+const WORKER_DIFF = [
+  "diff --git a/src/a.ts b/src/a.ts",
+  "--- a/src/a.ts",
+  "+++ b/src/a.ts",
+  PATCH,
+].join("\n");
 
 function patchset(): Patchset {
   const file: PatchFile = {
@@ -124,14 +130,63 @@ const NO_MATERIAL_DESIGN_ARTIFACTS: DesignArtifactSet = {
 
 const author = { kind: "lens-agent", id: "seat" };
 
-/** A schema-valid board carrying ONE section whose child prose says `body`. Two boards
- *  built with the same `body` have an identical section subtree ⇒ the section carries;
- *  a different `body` reworks it. This is the lever the 3.3 control pulls. */
-function sectioned(body: string): DraftBoard {
+/** A schema-valid board with one served root and lens-specific semantic material. Two
+ *  boards built with the same body have an identical root subtree; a changed body reworks it. */
+function sectioned(lens: string, body: string): DraftBoard {
+  const material =
+    lens === "sequence"
+      ? [
+          {
+            id: "material",
+            kind: "order_step",
+            data: { author, title: "Read the changed assignment", span: "detail", children: [] },
+          },
+          { id: "detail", kind: "prose", data: { author, markdown: body } },
+        ]
+      : lens === "decisions"
+        ? [
+            {
+              id: "material",
+              kind: "decision",
+              data: {
+                author,
+                statement: body,
+                evidence: ["detail"],
+                alternatives: ["alternative"],
+                why: "The changed assignment is deliberate.",
+              },
+            },
+            { id: "detail", kind: "prose", data: { author, markdown: body } },
+            {
+              id: "alternative",
+              kind: "prose",
+              data: { author, markdown: "Keep the prior assignment." },
+            },
+          ]
+        : lens === "flagged"
+          ? [
+              {
+                id: "material",
+                kind: "finding",
+                data: {
+                  author,
+                  severity: "medium",
+                  concern: body,
+                  code: [],
+                  concurrence: [],
+                  status: "open",
+                },
+              },
+            ]
+          : [{ id: "material", kind: "prose", data: { author, markdown: body } }];
   const parsed = parseDraft({
     elements: [
-      { id: "s1", kind: "section", data: { author, title: "Findings", children: ["p1"] } },
-      { id: "p1", kind: "prose", data: { author, markdown: body } },
+      {
+        id: "s1",
+        kind: "section",
+        data: { author, title: `${lens} fixture`, children: ["material"] },
+      },
+      ...material,
     ],
   });
   if (!parsed.ok) throw new Error(`fixture not schema-valid: ${JSON.stringify(parsed.issues)}`);
@@ -141,19 +196,19 @@ function sectioned(body: string): DraftBoard {
 /**
  * A claude port that answers each DRAFTING turn with `outputFor(lens)`. The pipeline funnels
  * every drafted board through a post-process turn (`prompts/post-process.md`) on the same
- * seat; that turn must hand back the board it was given, so the fake replays the last
- * drafted board for it. (Answering post-process with a fresh board silently replaced a
- * lens's re-draft — which is exactly what the 3.3 control caught.)
+ * seat; that turn must hand back the board in its own prompt. Reading that per-session
+ * input keeps concurrent lens turns isolated instead of sharing one "last draft" slot.
  */
 function fakeClaudePort(outputFor: (lens: string) => unknown): HarnessPort {
   const lensFromPrompt = (p: string): string =>
     /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
-  let lastDrafted: unknown;
   const answer = (prompt: string): unknown => {
     const lens = lensFromPrompt(prompt);
-    if (lens === "post-process" && lastDrafted !== undefined) return lastDrafted;
-    lastDrafted = outputFor(lens);
-    return lastDrafted;
+    if (lens === "post-process") {
+      const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+      return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+    }
+    return outputFor(lens);
   };
   return {
     createSession: async () => {
@@ -261,7 +316,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
   it("walks report → lens lanes → composed, with the generation the reveal lands on", async () => {
     const events: RoundEvent[] = [];
-    const outcome = await runtimeWith(() => sectioned("same")).runRound({
+    const outcome = await runtimeWith((lens) => sectioned(lens, "same")).runRound({
       session,
       repoRoot: root,
       previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
@@ -292,7 +347,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     ]);
   });
 
-  it("starts the first lane at kickoff when no report gates the run", async () => {
+  it("starts all independent lanes at kickoff when no report gates the run", async () => {
     // THE BUG: the lanes' first drafter was promoted ONLY by the round report's arrival.
     // The INITIAL drafting path has no round and drafts no report, so nothing promoted it
     // — Design read "queued" for its whole run while it was the one lens working, and the
@@ -301,7 +356,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     // No successor account and no round ⇒ no report (`draftsRoundReport`), which is what
     // makes this the initial-drafting shape rather than a copy of the round test above.
     const events: RoundEvent[] = [];
-    await runtimeWith(() => sectioned("same")).runRound({
+    await runtimeWith((lens) => sectioned(lens, "same")).runRound({
       session: { ...session, id: "initial-draft-session" } as SessionModel,
       repoRoot: root,
       asksDispatched: [],
@@ -313,18 +368,17 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     // No report announced — the premise, asserted rather than assumed.
     expect(events.some((e) => e.type === "report")).toBe(false);
 
-    // The FIRST lens frame is the kickoff one, and it says Design is running while every
-    // lens behind it is still queued. Asserting the first frame (not "some frame ever")
-    // is the load-bearing part: `drafted()` promotes lanes as boards land, so a later
-    // frame shows Design running-or-past no matter when the run started saying so.
+    // The FIRST lens frame is the kickoff one, and every independent lane is running.
+    // Asserting the first frame (not "some frame ever") is load-bearing: later drafted
+    // frames cannot prove the scheduler represented concurrent work while it was live.
     const first = events.find((e) => e.type === "lens");
     if (first?.type !== "lens") throw new Error("no lens lanes were emitted");
     expect(first.lanes.map((lane) => [lane.id, lane.status])).toEqual([
       ["design", "running"],
-      ["sequence", "queued"],
-      ["decisions", "queued"],
-      ["flagged", "queued"],
-      ["noise", "queued"],
+      ["sequence", "running"],
+      ["decisions", "running"],
+      ["flagged", "running"],
+      ["noise", "running"],
     ]);
     // ...and it arrives before any board has landed: nothing is drafted yet in that frame.
     expect(first.lanes.some((lane) => lane.status === "drafted")).toBe(false);
@@ -341,7 +395,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     await runtimeWith((lens) =>
       lens === "report"
         ? ({ elements: [{ id: "x", kind: "not-a-kind", data: {} }] } as unknown as DraftBoard)
-        : sectioned("fine"),
+        : sectioned(lens, "fine"),
     ).runRound({
       session: { ...session, id: "report-failed-session" } as SessionModel,
       repoRoot: root,
@@ -359,17 +413,16 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     // a successor account) and none arrived.
     expect(events.some((e) => e.type === "report")).toBe(false);
 
-    // The FIRST lens frame is the kickoff one. Asserting the first frame, not "some frame
-    // ever", is what makes this fail on the bug: `drafted()` promotes lanes as boards land,
-    // so a later frame reads Design running-or-past however late the run started saying so.
+    // The FIRST lens frame is the kickoff one. It must represent all five independent
+    // drafter turns even though the report failed before producing an arrival.
     const first = events.find((e) => e.type === "lens");
     if (first?.type !== "lens") throw new Error("no lens lanes were emitted");
     expect(first.lanes.map((lane) => [lane.id, lane.status])).toEqual([
       ["design", "running"],
-      ["sequence", "queued"],
-      ["decisions", "queued"],
-      ["flagged", "queued"],
-      ["noise", "queued"],
+      ["sequence", "running"],
+      ["decisions", "running"],
+      ["flagged", "running"],
+      ["noise", "running"],
     ]);
     expect(first.lanes.some((lane) => lane.status === "drafted")).toBe(false);
     // The lenses did their work and the round composed — a failed report costs the greeting,
@@ -380,7 +433,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   it("emits a TERMINAL failed event when the regeneration throws — never silence", async () => {
     const events: RoundEvent[] = [];
     await expect(
-      runtimeWith(() => sectioned("same")).runRound({
+      runtimeWith((lens) => sectioned(lens, "same")).runRound({
         session: { ...session, id: "failing-session" } as SessionModel,
         repoRoot: root,
         previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
@@ -403,15 +456,28 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   // The lane labels must follow that same fact — and only that fact.
   it("a lens whose sections changed does NOT read 'carrying forward'", async () => {
     const events: RoundEvent[] = [];
-    const previous = new Map<LintTarget, DraftBoard>(
-      (["design", "sequence", "decisions", "flagged", "noise", "report"] as LintTarget[]).map(
-        (lens) => [lens, sectioned("generation one")],
-      ),
+    const baseline = await runtimeWith((lens) => sectioned(lens, "generation one")).runRound({
+      session: { ...session, id: "carry-baseline-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-baseline-prior", "ps-baseline-prior"),
+      asksDispatched: [],
+      runWorkers: async () => ({
+        commitRange: { from: "c0", to: "c1" },
+        patchsetId: "ps-baseline",
+      }),
+      ...collationFor(),
+    });
+    const previous = new Map<LintTarget, DraftBoard>();
+    for (const outcome of [...baseline.pipeline.boards, baseline.pipeline.report]) {
+      if (outcome?.board !== undefined) previous.set(outcome.lens, outcome.board);
+    }
+    expect([...previous.keys()].sort()).toEqual(
+      (["design", "sequence", "decisions", "flagged", "noise", "report"] as LintTarget[]).sort(),
     );
 
     await runtimeWith((lens) =>
       // Only `design` moved this generation; the rest are byte-identical carries.
-      sectioned(lens === "design" ? "generation two" : "generation one"),
+      sectioned(lens, lens === "design" ? "generation two" : "generation one"),
     ).runRound({
       session: { ...session, id: "carry-session" } as SessionModel,
       repoRoot: root,
@@ -505,7 +571,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     await runtimeWith((lens) =>
       lens === "design"
         ? ({ elements: [{ id: "x", kind: "not-a-kind", data: {} }] } as unknown as DraftBoard)
-        : sectioned("fine"),
+        : sectioned(lens, "fine"),
     ).runRound({
       session: { ...session, id: "one-failed-session" } as SessionModel,
       repoRoot: root,
@@ -539,7 +605,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
               reason: "This specification describes a different feature than the reviewed change.",
             })),
           }
-        : sectioned("fine"),
+        : sectioned(lens, "fine"),
     ).runRound({
       session: { ...session, id: "design-absent-session" } as SessionModel,
       repoRoot: root,
@@ -571,7 +637,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
         event.lanes.some((lane) => lane.id === "sequence" && lane.status === "done"),
     );
     expect(absentAt).toBeGreaterThanOrEqual(0);
-    expect(absentAt).toBeLessThan(sequenceDoneAt);
+    expect(sequenceDoneAt).toBeGreaterThanOrEqual(0);
     expect(outcome.boardGeneration.lensBoards).not.toHaveProperty("design");
     expect(Object.keys(outcome.boardGeneration.lensBoards)).toHaveLength(4);
     expect(outcome.boardGeneration.absentLenses).toEqual({ design: "no-material" });
@@ -595,7 +661,9 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     let moved = "";
     const runtime = createRoundsRuntime({
       resolveClaudePort: async () =>
-        fakeClaudePort((lens) => sectioned(lens === moved ? "generation two" : "generation one")),
+        fakeClaudePort((lens) =>
+          sectioned(lens, lens === moved ? "generation two" : "generation one"),
+        ),
       resolveCodexExecutor: async () => null as CodexExecutor | null,
       boardsRuntimeFor: () => ({
         service: boards.service,
@@ -656,7 +724,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
           asksDispatched: [],
           worked: {
             commitRange: { from: "c0", to: "c0" },
-            diff: "diff --git a/src/a.ts b/src/a.ts",
+            diff: WORKER_DIFF,
             changedPaths: ["src/a.ts"],
           },
         },
@@ -712,25 +780,25 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
       context: "",
     };
     const asks = [firstAsk, secondAsk] as const;
-    const reportFor = (round: number): DraftBoard => {
+    const reportFor = (round: number): unknown => {
       const ask = asks[round - 1];
       if (ask === undefined) throw new Error(`no ask fixture for round ${round}`);
-      const parsed = parseDraft({
-        elements: [
+      return {
+        outcomes: [
           {
-            id: `outcome-${round}`,
-            kind: "round_outcome",
-            data: {
-              author,
-              status: "addressed",
-              ask: { ref: ask.id, text: ask.instruction },
-              note: `Verified round ${round}.`,
+            askId: ask.id,
+            status: "addressed",
+            note: `Verified round ${round}.`,
+            evidence: {
+              path: "src/a.ts",
+              side: "head",
+              startLine: 2,
+              endLine: 2,
             },
           },
         ],
-      });
-      if (!parsed.ok) throw new Error(`report fixture invalid: ${JSON.stringify(parsed.issues)}`);
-      return parsed.value;
+        beyond: [],
+      };
     };
 
     let activeVisit = 0;
@@ -738,7 +806,9 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     const runtime = createRoundsRuntime({
       resolveClaudePort: async () =>
         fakeClaudePort((lens) =>
-          lens === "report" ? reportFor(draftingRound) : sectioned(`${lens} visit ${activeVisit}`),
+          lens === "report"
+            ? reportFor(draftingRound)
+            : sectioned(lens, `${lens} visit ${activeVisit}`),
         ),
       resolveCodexExecutor: async () => null as CodexExecutor | null,
       boardsRuntimeFor: () => ({
@@ -821,7 +891,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
               }),
           worked: {
             commitRange: { from: "same-head", to: "same-head" },
-            diff: input.changed ? "diff --git a/src/a.ts b/src/a.ts" : "",
+            diff: input.changed ? WORKER_DIFF : "",
             changedPaths: input.changed ? ["src/a.ts"] : [],
           },
         },
@@ -914,7 +984,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
   it("a FIRST generation carries nothing forward (no prior to carry from)", async () => {
     const events: RoundEvent[] = [];
-    await runtimeWith(() => sectioned("only generation")).runRound({
+    await runtimeWith((lens) => sectioned(lens, "only generation")).runRound({
       session: { ...session, id: "first-gen-session" } as SessionModel,
       repoRoot: root,
       previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
