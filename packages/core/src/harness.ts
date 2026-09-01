@@ -339,6 +339,14 @@ export interface SessionSpec {
    * Absent ⇒ no cap (the ordinary agentic session).
    */
   readonly outputByteCap?: number;
+  /**
+   * The turn's provider-side output-TOKEN cap, told to the provider so it stops at the
+   * source rather than emitting bytes nobody will accept. Advisory where a transport
+   * can carry it and ABSENT where one cannot — the Claude harness takes it through the
+   * child environment, `codex` exposes no model-output-token knob — so
+   * `outputByteCap` remains the enforced backstop on both legs. Absent ⇒ no cap.
+   */
+  readonly outputTokenCap?: number;
   readonly signal?: AbortSignal;
   /**
    * Resume a prior harness conversation (B09 cursor-resume, #466 res. 3). When

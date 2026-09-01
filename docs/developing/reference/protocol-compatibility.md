@@ -7,7 +7,11 @@ The desktop, mobile client, CLI, and daemon can run builds from different
 commits. `packages/protocol/src/session/wire.ts` defines their shared wire
 vocabulary and compatibility rules. It is one of the package's five contract
 folders — `board/`, `commands/`, `session/`, `delta/`, and `manifests/` — each
-exporting through a single seam that the root `index.ts` re-exports.
+exporting through a single seam that the root `index.ts` re-exports. Beside them
+the root carries declared contract modules that own one boundary each and have no
+folder to sit in — `app-owned-paths.ts`, `round-evidence.ts`, `forge.ts` — plus the
+parked legacy residue (`domain.ts`, `wire.ts`, `sha256.ts`) that migrates with the
+changes reworking it. A root module is not automatically residue.
 
 ## Evolve schemas append-only
 

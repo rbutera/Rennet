@@ -82,6 +82,51 @@ describe("normalizeClaudeFrame: raw output cap", () => {
     expect(JSON.stringify(events)).not.toContain('"structuredOutput"');
   });
 
+  it("fails when the DECODED structured output is over cap even though `result` is tiny", () => {
+    // The two fields are separate carriers and can diverge — the SDK hands
+    // `structured_output` back already decoded, so a small `result` beside a large
+    // decoded object is exactly the shape a single-field check waves through. Nothing
+    // in the fixtures above could see this: they built both fields from one payload.
+    const frame: Record<string, unknown> = {
+      type: "result",
+      subtype: "success",
+      result: "{}",
+      structured_output: { note: "x".repeat(5_000) },
+      session_id: "abc",
+    };
+    const events = normalizeClaudeFrame(frame, context(), 64);
+    const ended = events.find((event) => event.kind === "session.ended");
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("failed");
+    expect(
+      ended?.kind === "session.ended" && ended.outcome.status === "failed"
+        ? ended.outcome.error.message
+        : "",
+    ).toContain("output cap");
+    // No DECODED value is surfaced on any lane — `outcome.structuredOutput` never
+    // exists on a failed outcome, and no event carries the key.
+    expect(JSON.stringify(events)).not.toContain('"structuredOutput"');
+    // What this CANNOT catch, stated rather than implied: every event's `native`
+    // envelope still carries the raw frame verbatim, over-cap payload included. That
+    // is the envelope's provenance field, identical on every frame this adapter maps,
+    // and it is not a decoded surfacing — the cap bounds what is decoded and consumed,
+    // not what the transport echoes back as the thing it just refused.
+  });
+
+  it("passes when `result` is over cap but the decoded structured output is small", () => {
+    // The mirror case, so the check is `max`, not "measure the structured one instead":
+    // a long `result` with a compact decoded object must still fail.
+    const frame: Record<string, unknown> = {
+      type: "result",
+      subtype: "success",
+      result: "y".repeat(5_000),
+      structured_output: { ok: true },
+      session_id: "abc",
+    };
+    const events = normalizeClaudeFrame(frame, context(), 64);
+    const ended = events.find((event) => event.kind === "session.ended");
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("failed");
+  });
+
   it("leaves an uncapped turn measured by nothing", () => {
     const payload = { note: "x".repeat(10_000) };
     const events = normalizeClaudeFrame(resultFrame(payload), context());
@@ -488,6 +533,26 @@ describe("ClaudeAdapter session", () => {
     expect(options.env.RENNET_HARNESS_SESSION).toBeDefined();
     // No API key was injected: a metered key is detected, never forced.
     expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it("carries the provider-side output-token cap into the child env, and omits it otherwise", async () => {
+    // The SDK has no option field for the cap; the harness reads it from the child env,
+    // so the env IS the parameter. Advisory — `outputByteCap` is what fails a turn.
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+      env: { PATH: "/usr/bin" },
+    });
+    const capped = await adapter.createSession({ cwd: "/repo", outputTokenCap: 32_768 });
+    await capped.send({ prompt: "act" });
+    expect(capturedArgs[0]?.options.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("32768");
+
+    const uncapped = await adapter.createSession({ cwd: "/repo" });
+    await uncapped.send({ prompt: "act" });
+    expect(capturedArgs[1]?.options.env).not.toHaveProperty("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
   });
 
   // W5: the MCP surface. Configured on the adapter (as the Codex adapter carries it), so

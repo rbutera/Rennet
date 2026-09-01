@@ -530,15 +530,18 @@ export function normalizeClaudeFrame(
     // the completed outcome carries real counts through to the runner's provenance.
     const usage = extractResultUsage(record);
     const finalText = stringField(record, "result") ?? "";
-    // The raw-size cap (#727). The SDK hands this adapter the model's emission —
-    // the assistant text under an output schema IS the JSON — so this is the last
-    // point that can see how much arrived. Over the cap the turn FAILS here; it is
-    // never decoded, never surfaced, and never retried by the cap itself.
+    // The raw-size cap (#727). The SDK hands `structured_output` back ALREADY
+    // DECODED, so no point in this process sees the bytes on the wire; this frame is
+    // the strongest boundary available — the last point before any decoded value is
+    // SURFACED. Measure BOTH carriers and take the larger: `result` and
+    // `structured_output` are separate fields, and a small (or empty) `result`
+    // alongside a large decoded object is precisely the shape a single-field check
+    // waves through. Over the cap the turn FAILS here; nothing decoded is surfaced on
+    // any event, and the cap never spawns a retry.
     if (outputByteCap !== undefined) {
-      const rawBytes = utf8ByteLength(
-        finalText.length > 0 || structuredOutput === undefined
-          ? finalText
-          : JSON.stringify(structuredOutput),
+      const rawBytes = Math.max(
+        utf8ByteLength(finalText),
+        structuredOutput === undefined ? 0 : utf8ByteLength(JSON.stringify(structuredOutput)),
       );
       if (rawBytes > outputByteCap) {
         const error = mapClaudeError(
@@ -748,7 +751,17 @@ export class ClaudeAdapter implements HarnessPort {
     // The SDK replaces the child env wholesale, so spread the base and add only
     // the scoped session marker. We never inject an API key: the assertion path
     // detects a metered key rather than forcing one.
-    const env: Record<string, string | undefined> = { ...baseEnv, [SESSION_ENV_MARKER]: sessionId };
+    const env: Record<string, string | undefined> = {
+      ...baseEnv,
+      [SESSION_ENV_MARKER]: sessionId,
+      // The provider-side output-token cap (#727). The SDK has no option field for it;
+      // the harness reads `CLAUDE_CODE_MAX_OUTPUT_TOKENS` from the child env it is
+      // handed, so the env IS the parameter here. Advisory — `outputByteCap` is what
+      // fails the turn.
+      ...(spec.outputTokenCap === undefined
+        ? {}
+        : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(spec.outputTokenCap) }),
+    };
     // Capable by default: one session shape with the full toolset. An explicit
     // `spec.allowedTools` still narrows it (configuration, not a gate).
     const allowedTools = spec.allowedTools ?? SESSION_ALLOWED_TOOLS;
