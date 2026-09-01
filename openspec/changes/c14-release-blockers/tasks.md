@@ -5,9 +5,9 @@
 
 ## 2. Capture excludes app-owned artifacts (#729)
 
-- [ ] 2.1 Sanitize the temporary reviewed tree of app-owned paths BEFORE deriving anything, so OID, diff, file list, byte counts, intent, and patchset identity all come from the one sanitized tree; preserve tracked `.rennet` content (D6)
-- [ ] 2.2 Narrow the watcher's blanket `.rennet` ignore to the app-owned prefix and align freshness evaluation: unchanged source tree after restart stays current, no app-artifact candidate becomes pending
-- [ ] 2.3 Real-repository test: capture → write board state → restart/rearm freshness → review stays current; positive controls: an edited reviewed source file invalidates, AND a tracked `.rennet/` project-file edit invalidates; fixture shapes include `.rennet/boards-extra` (prefix boundary), separator variants, staged and untracked board artifacts
+- [x] 2.1 Sanitize the temporary reviewed tree of app-owned paths BEFORE deriving anything, so OID, diff, file list, byte counts, intent, and patchset identity all come from the one sanitized tree; preserve tracked `.rennet` content (D6)
+- [x] 2.2 Narrow the watcher's blanket `.rennet` ignore to the app-owned prefix and align freshness evaluation: unchanged source tree after restart stays current, no app-artifact candidate becomes pending
+- [x] 2.3 Real-repository test: capture → write board state → restart/rearm freshness → review stays current; positive controls: an edited reviewed source file invalidates, AND a tracked `.rennet/` project-file edit invalidates; fixture shapes include `.rennet/boards-extra` (prefix boundary), separator variants, staged and untracked board artifacts
 
 ## 3. Lens ref admission (#548)
 

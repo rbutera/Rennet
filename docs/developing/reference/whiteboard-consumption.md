@@ -131,7 +131,9 @@ append twice.
 
 The board service's element state is a projection of an append-only attributed
 event log. Rennet persists that log through a `FileBoardStore` rooted at
-`.rennet/boards/` under the review project, local and ignored by default. Each
+`.rennet/boards/` under the review project — local, and excluded from capture and
+freshness by the shared app-owned-paths authority rather than by an ignore rule,
+so writing a board never invalidates the review it belongs to. Each
 board is a `schema.json` written once at creation plus an append-only `log.jsonl`
 with contiguous sequence numbers. Restart is replay: a fresh process over the
 same directory serves the identical element state. See

@@ -380,9 +380,15 @@ every platform, and `RENNET_USER_DATA` or `--data-dir` moves the whole of it.
 
 <repo>/.rennet/
 ├── .gitignore
+├── boards/
 ├── conventions.json
 └── map/
 ```
+
+`boards/` is app-owned: capture, the repository watcher, and freshness exclude
+it by name, so board writes never change what a review is pinned to. The other
+entries are the user's, and a change to one of them invalidates a review like any
+other file.
 
 The project-store key is the escaped real path of the checkout. Relocation
 records and aliases can move local state when a checkout moves. A worktree has
