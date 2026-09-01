@@ -576,11 +576,22 @@ that host's repair.
 ### The loop is unbounded; the submit is what ends it
 
 The count of rounds is display and ledger data. It is never a terminator and
-never a precondition. The loop's only preconditions are the ones step 2
-already states — the reviewer's own current-branch review, with at least one
-staged coding ask — and its only refusal is an exhausted ask queue, which
-reads identically before the first round and after the fiftieth. A teammate PR
-and a retrospective review correctly have no round lane at all.
+never a precondition. A dispatch needs exactly three things, none of which is
+an ordinal: the review is the reviewer's **own** current-branch review, it is
+**not retrospective**, and at least one staged ask is a **coding** ask
+(`request-change` or `comment`).
+
+So the loop refuses in exactly three shapes, all depth-blind:
+
+- **A teammate PR or a retrospective review.** There is no round lane at all —
+  a teammate PR's exit is *Post review*, and a retrospective review has no
+  exits. The dispatch answers an empty work order and kicks nothing.
+- **An exhausted ask queue.** Nothing staged, nothing to compose — and it
+  reads identically before the first round and after the fiftieth.
+- **A queue holding only non-coding asks.** A question is answered in
+  conversation and an approval asks the worker to leave the code alone, so a
+  queue of only those composes no task. The queue is not empty and the loop
+  still declines; the asks stay staged rather than being consumed.
 
 Two consequences are easy to get backwards.
 
@@ -594,9 +605,26 @@ Two consequences are easy to get backwards.
   it.
 
 Nothing — server dispatch, the prompts, client state, or UI copy — imposes or
-implies a maximum. The guarantee is held by an arbitrary-N machine test on
-both halves of the loop rather than by a fixed-depth journey, because a
-three-round journey only ever disproves a cap of two.
+implies a maximum. The guarantee is held by arbitrary-N machine tests rather
+than by a fixed-depth journey, because a three-round journey only ever
+disproves a cap of two. What those tests actually execute is worth stating
+exactly, since the loop's landing step is external:
+
+- **Dispatch and the submit exit are executed.** The tests drive the real
+  `round.dispatch`, `publish.compose`, and `publish.submitPr` handlers over a
+  real durable ask log, and prove every cycle emits the same *ordered*
+  transitions — the ledger read, the compose, the worker kick, the ask drain —
+  with the ordinal present only as data. The submit exit is composed and
+  submitted at zero rounds and again on the Nth successor, and its bytes match.
+- **Landing is fabricated.** A real coding agent commits and the runtime mints
+  the successor patchset in another process; the test writes that round record
+  and successor itself. That step is labelled as fixture-authored and excluded
+  from the ordered proof, so the proof covers what the server emits, not what
+  the fixture narrates. What ties them together is that each cycle's kick is
+  asserted to walk from the previous cycle's successor.
+- **The client half is a DOM test**, not the same machine: six rounds render
+  as six rows, and each row opens its own report board rather than a shared
+  one.
 
 ### Carry-forward is a verdict, not a skip
 

@@ -66,7 +66,14 @@
     `gate exited with code 1`, stderr `.../asdf/plugins/nodejs/shims/npm: line 14: cd: <tmp>/home/.asdf:
     No such file or directory`. Prepending the test Node's bin dir to PATH does not help (the login
     shell discards it). Unbounded depth is meanwhile proven by executing arbitrary-N machine tests
-    on both halves of the loop (8.2), each control-proven against a cap introduced in production code.
+    on both halves of the loop (8.2/8.3). The COMMITTED positive controls substitute a capped and a
+    round-two-special-cased handler at the TEST's dispatch seam (the handler the driver calls) —
+    production code is not modified by them. Production was additionally mutated BY HAND during
+    development, each mutation reverted and none committed: an ordinal cap in `round.dispatch`, the
+    ask drain moved ahead of the worker kick (which reddens the ordered-transition assertion while
+    leaving the step SET identical), the staged-ask refusals removed from `publish.compose` and
+    `publish.submitPr`, and the ledger's report lookup pinned to round one. Every one reddened the
+    assertion it was aimed at.
 
 ## 9. Benchmark telemetry
 
