@@ -11,7 +11,12 @@ Every lens seat (Sequence, Decisions, Flagged, Noise, Design) SHALL settle in ex
 #### Scenario: Drafting turn emits no board
 
 - **WHEN** a lens seat's drafting turn completes without emitting a board
-- **THEN** the seat records a typed retryable failure naming the lens and attempt — not a terminal failure and not a silent gap — and the run surface reports that exact state
+- **THEN** the non-emission seeds the lint ladder exactly as an unparseable return does and the seat is re-asked, so a later turn's board settles the lens
+
+#### Scenario: No turn in the ladder emits a board
+
+- **WHEN** no turn of a lens seat's ladder — the initial turn or any re-ask — emits a board
+- **THEN** the seat records a typed terminal failure naming the lens, the spent attempt count and the original non-emission — not a silent gap, and not a retryable classification for a ladder that has no attempts left — and the run surface reports that exact state
 
 #### Scenario: Signal-only change reaches the Noise seat
 

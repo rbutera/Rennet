@@ -116,14 +116,19 @@ and calls board regeneration through this runtime.
    coverage call when the board contains requirements, eligible hunks exist,
    and the caller supplied a coverage mapper.
 2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
-   location: a matched pair collapses to the clearer finding carrying both
-   models' concurrence, a solo finding carries only the raising model's. The
-   result is folded into each finding's board-native `concurrence` tally
-   (`{ model, agree, total }` per seat), alongside an `accord` stamp naming how
-   the seats landed: `concur`, `split` (one seat answered "no concern"), or
-   `conflict` (both raised it at materially different severities). The stamp is
-   load-bearing, because a concurrence and a conflict fold to the identical
-   tally pair — without it a reader cannot tell agreement from disagreement.
+   location: a matched pair collapses to ONE row carrying both models'
+   concurrence — the clearer of the two summaries when the seats concur, seat
+   A's when they conflict, with both seats' verbatim answers riding along in the
+   agreement — and a solo finding carries only the raising model's. Whichever id
+   the surviving row keeps, the consumed one is gone from the board, so the merge
+   repoints its citers rather than leaving them naming an element the write no
+   longer holds. The result is folded into each finding's board-native
+   `concurrence` tally (`{ model, agree, total }` per seat), alongside an
+   `accord` stamp naming how the seats landed: `concur`, `split` (one seat
+   answered "no concern"), or `conflict` (both raised it at materially different
+   severities). The stamp is load-bearing, because a concurrence and a conflict
+   fold to the identical tally pair — without it a reader cannot tell agreement
+   from disagreement.
    With only one harness available the lens degrades to a single seat, stamped
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
@@ -193,11 +198,19 @@ and calls board regeneration through this runtime.
    written, because the board service validates references in batch order and
    rejects the whole write as `bad-ref` when one names an element the document
    does not contain. An inadmissible reference is repaired only when its unique
-   intended target is provable — exactly one element of that document shares the
-   reference's identity (case and separators are typography, not identity), and
-   a `code_ref` target must cite the captured patchset. Every repair is recorded
-   on the board's durable metadata. An ambiguous or absent target is not proof:
-   the lane settles a typed failure instead. An element is **never** dropped to
+   intended target is provable: exactly one element of that document shares the
+   reference's identity, it is not the citing element itself, and it is the kind
+   the field is declared to hold — an `order_step.span` may only land on a
+   `code_ref`. Identity folds case and the separator set (`-_./\` and space) and
+   nothing else; two ids that differ in a letter, ASCII or not, are two ids. A
+   `code_ref` must cite the captured patchset this generation reads, and that test
+   applies to a reference spelled exactly as much as to a repaired one, because an
+   id that happens to exist is not a licence to cite another patchset's code. The
+   one exception is host-carried round history: a prior round's addressed chapter
+   is *about* an earlier generation, so its orchestrator-authored anchors keep that
+   generation's patchset. Every repair is recorded on the board's durable metadata.
+   An ambiguous or absent target is not proof: the lane settles a typed failure
+   instead. An element is **never** dropped to
    make the rest of a board acceptable — an accepted board that silently sheds
    produced material is the quiet lie the complete-coverage ruling forbids. The
    board service stays authoritative and keeps rejecting; repairs happen
@@ -365,7 +378,9 @@ becomes a retryable lens failure rather than an arrival.
 Which absence each lens may settle with is the protocol's `LENS_ADMISSIBLE_ABSENCES`
 table, and it is enforced where an outcome becomes durable rather than merely
 advised: a lens settling an absence its own row does not admit is a producer
-defect that persists as a typed failure, never as a clean result. The durable
+defect that persists as a typed failure, never as a clean result. That failure is
+`retryable` at attempt zero — nothing has been retried, and another drafting
+attempt is exactly what answers it. The durable
 `GenerationSchema` stays permissive on purpose — sessions written before a field
 existed must keep parsing — so the boundary that refuses a wrong pairing is the
 write, never the read.
@@ -377,7 +392,11 @@ daemon restart, and rides `board.read` to the client, so a lens whose seat simpl
 did not draw is not presented as beyond another attempt. A failure with no
 account means the classification is unknown — which is not the same as terminal.
 For a multi-seat lens the account aggregates: retryable if **any** seat is, since
-the lens needs only one seat to draw a board. A landed-round report
+the lens needs only one seat to draw a board. The account also decides what a
+RESTART does with the failure: a retryable one is not complete evidence for its
+lens, so a fresh runtime over that durable state redrafts the generation instead
+of reconstructing the same failure forever. A terminal one is settled, and its
+generation reconstructs without a model. A landed-round report
 gets exactly one classification turn and fails honestly when that classification
 omits an ask, cites evidence outside the measured coding-turn diff, or fails to
 partition that evidence exactly once. A plain
