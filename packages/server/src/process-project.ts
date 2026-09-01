@@ -255,6 +255,49 @@ export function createProcessProject(deps: ProcessProjectDeps) {
       timers.set(path, created);
       return created;
     };
+    /**
+     * Archive one repository's map attempt. Shared by every exit — a failed scout, a
+     * sibling's failed scout, a map that died before its first progress event, and a build
+     * that finished — because each of those used to leave NO record at all. A scout that
+     * threw returned before anything was archived, and a build that died pre-stage was
+     * dropped for having no `total`, so the archive's failure rate was a rate over the
+     * runs that got far enough to be counted.
+     *
+     * `startedAtMs` falls back to the caller's stamp when no stage was measured; the run's
+     * `durationMs` is the sum of THIS repo's stages (see `createStageTimer`), never a wall
+     * clock across the passes, because the scout pass and the map pass are separated by
+     * every sibling repository's work.
+     */
+    const archiveMapRun = (
+      checkpoint: ProjectProcessJournalRecord["repos"][number],
+      timer: ReturnType<typeof createStageTimer>,
+      outcome: "complete" | "failed" | "aborted",
+      options: { readonly failure?: string; readonly revision?: string; readonly from?: number },
+    ): void => {
+      const stages = timer.finish();
+      const total = stages.find((stage) => stage.stage === "total");
+      const startedAtMs = total?.startedAtMs ?? options.from ?? Math.floor(clock());
+      deps.recordBenchmark?.({
+        version: 1,
+        id: `${checkpoint.path}:${startedAtMs}`,
+        kind: "repo-map",
+        producer: "daemon",
+        subject: {
+          label: checkpoint.repo,
+          repoKey: deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path,
+          ...(options.revision === undefined ? {} : { revision: options.revision }),
+        },
+        startedAtMs,
+        durationMs: total?.durationMs ?? 0,
+        outcome,
+        ...(options.failure === undefined ? {} : { failure: options.failure }),
+        stages,
+      });
+    };
+    /** Why a repo's scout failed, keyed by path — the scout loop records nothing itself,
+     *  because a scout failure ends the whole project process a few lines later and the
+     *  archive is taken there for every repository at once. */
+    const scoutFailures = new Map<string, string>();
     const scoutPending = deps.runScout
       ? record.repos.some((checkpoint) => !checkpoint.scout)
       : false;
@@ -282,11 +325,13 @@ export function createProcessProject(deps: ProcessProjectDeps) {
             narrate,
           });
         } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          scoutFailures.set(checkpoint.path, reason);
           fail({
             repo: checkpoint.repo,
             path: checkpoint.path,
             phase: "scout",
-            reason: error instanceof Error ? error.message : String(error),
+            reason,
           });
           continue;
         } finally {
@@ -295,6 +340,7 @@ export function createProcessProject(deps: ProcessProjectDeps) {
           scoutTimer.leave();
         }
         if (!questionnaire) {
+          scoutFailures.set(checkpoint.path, "the scout did not return persisted facts");
           fail({
             repo: checkpoint.repo,
             path: checkpoint.path,
@@ -307,6 +353,19 @@ export function createProcessProject(deps: ProcessProjectDeps) {
       }
     }
     if (record.failures.some((failure) => failure.phase === "scout")) {
+      // The project ends here, so every timer that opened is a terminal measurement. The
+      // repos that failed scouting say so; the ones that scouted cleanly were ABORTED by a
+      // sibling's failure and never reached a map — recording nothing for either meant the
+      // archive only ever held the repositories that got as far as a map build.
+      for (const checkpoint of record.repos) {
+        const timer = timers.get(checkpoint.path);
+        if (timer === undefined) continue;
+        const reason = scoutFailures.get(checkpoint.path);
+        archiveMapRun(checkpoint, timer, reason === undefined ? "aborted" : "failed", {
+          failure:
+            reason ?? "another repository's scout failed, so this project process ended first",
+        });
+      }
       setState("failed", "scout");
       const run = projectProcessRunFromRecord(record);
       return { repos: run.repos, run };
@@ -333,7 +392,10 @@ export function createProcessProject(deps: ProcessProjectDeps) {
       const timer = timerFor(checkpoint.path);
       // The archive is taken from a `finally`, so a build that DIED is recorded as a
       // failed run carrying the stages it reached. A record that only survived success
-      // would make the slowest builds — the ones that fall over — invisible.
+      // would make the slowest builds — the ones that fall over — invisible. `mapFrom`
+      // is the fallback origin for a build that died before its FIRST progress event and
+      // therefore has no stage to take a start from; such a run used to be dropped.
+      const mapFrom = Math.floor(clock());
       let mapOutcome: "complete" | "failed" = "complete";
       let mapFailure: string | undefined;
       let mapRevision: string | undefined;
@@ -395,28 +457,16 @@ export function createProcessProject(deps: ProcessProjectDeps) {
         fail({ repo: checkpoint.repo, path: checkpoint.path, phase: "map", reason, summary });
         narrate({ kind: "repo-error", repo: checkpoint.repo, message: reason });
       } finally {
-        const stages = timer.finish();
-        const total = stages.find((stage) => stage.stage === "total");
-        // No `total` means the build emitted no stage at all (it died before the first
-        // progress line) — there is nothing measured to record, and a zero-length run
-        // would read as an instantaneous map.
-        if (total !== undefined) {
-          deps.recordBenchmark?.({
-            version: 1,
-            id: `${checkpoint.path}:${total.startedAtMs}`,
-            kind: "repo-map",
-            subject: {
-              label: checkpoint.repo,
-              repoKey: deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path,
-              ...(mapRevision === undefined ? {} : { revision: mapRevision }),
-            },
-            startedAtMs: total.startedAtMs,
-            durationMs: total.durationMs,
-            outcome: mapOutcome,
-            ...(mapFailure === undefined ? {} : { failure: mapFailure }),
-            stages,
-          });
-        }
+        // Recorded even with NO stage at all. A build that died before its first progress
+        // line used to be dropped for having no `total`, on the reasoning that a
+        // zero-length run reads as an instantaneous map — but the stage list is empty and
+        // says so, while the missing record made the earliest failures invisible, which is
+        // the failure mode that actually matters.
+        archiveMapRun(checkpoint, timer, mapOutcome, {
+          from: mapFrom,
+          ...(mapFailure === undefined ? {} : { failure: mapFailure }),
+          ...(mapRevision === undefined ? {} : { revision: mapRevision }),
+        });
       }
     }
 

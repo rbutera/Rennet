@@ -18,7 +18,8 @@ function run(id: string): BenchmarkRun {
     version: 1,
     id,
     kind: "repo-map",
-    subject: { label: "rennet", repoKey: "rennet" },
+    producer: "daemon",
+    subject: { label: "rennet", repoKey: "rennet", revision: "deadbeef" },
     startedAtMs: 1000,
     durationMs: 50,
     outcome: "complete",
@@ -49,6 +50,99 @@ describe("the benchmark archive", () => {
 
   it("reads an absent archive as no runs", () => {
     expect(createBenchmarkStore(join(dataDir(), "nothing.jsonl")).list(10)).toEqual([]);
+  });
+
+  it("says how many runs the archive HOLDS when the limit hid some (#731 N10)", () => {
+    const store = createBenchmarkStore(join(dataDir(), BENCHMARK_ARCHIVE_FILE));
+    for (const id of ["a", "b", "c", "d"]) store.record(run(id));
+    const read = store.read(2);
+    expect(read.runs.map((entry) => entry.id)).toEqual(["d", "c"]);
+    // A cap is a loss, and a list that just came back shorter announces nothing.
+    expect(read.total).toBe(4);
+    expect(read.skipped).toEqual([]);
+  });
+});
+
+describe("one generation, two attempts (#731 N4)", () => {
+  /** What a restart redraft archives: the SAME generation, a later attempt. */
+  function generationRun(generationId: string, attempt: number, durationMs: number): BenchmarkRun {
+    return {
+      version: 1,
+      id: `${generationId}:${attempt}`,
+      kind: "generation",
+      producer: "daemon",
+      attempt,
+      subject: { label: "s1", sessionId: "s1", generationId },
+      startedAtMs: 1000,
+      durationMs,
+      outcome: "complete",
+      stages: [],
+    };
+  }
+
+  it("keeps a fresh draft and its redraft as two honest, distinguishable records", () => {
+    const store = createBenchmarkStore(join(dataDir(), BENCHMARK_ARCHIVE_FILE));
+    store.record(generationRun("g1", 0, 40_000));
+    store.record(generationRun("g1", 1, 25_000));
+    const read = store.read(10);
+    // Two records, and each says which attempt it is. The timestamped id they used to
+    // carry made these two indistinguishable rows both claiming to be generation g1.
+    expect(read.total).toBe(2);
+    expect(read.runs.map((entry) => entry.attempt)).toEqual([1, 0]);
+    expect(read.runs.map((entry) => entry.durationMs)).toEqual([25_000, 40_000]);
+  });
+
+  it("replaces an attempt re-archived under the same identity, newest append winning", () => {
+    const store = createBenchmarkStore(join(dataDir(), BENCHMARK_ARCHIVE_FILE));
+    store.record(generationRun("g1", 1, 25_000));
+    store.record(generationRun("g1", 1, 31_000));
+    const read = store.read(10);
+    expect(read.total).toBe(1);
+    expect(read.runs[0]?.durationMs).toBe(31_000);
+  });
+});
+
+describe("the archive's version dispatch (#731 N11)", () => {
+  it("REPORTS an unreadable interior line instead of quietly serving a shorter history", () => {
+    const path = join(dataDir(), BENCHMARK_ARCHIVE_FILE);
+    const store = createBenchmarkStore(path);
+    store.record(run("a"));
+    // An interior line of garbage, then a good one after it — so the damage is genuinely
+    // interior rather than the torn tail a crash leaves.
+    writeFileSync(path, `${readFileSync(path, "utf8")}{ not json\n`, "utf8");
+    store.record(run("b"));
+
+    const read = store.read(10);
+    expect(read.runs.map((entry) => entry.id)).toEqual(["b", "a"]);
+    expect(read.total).toBe(2);
+    expect(read.skipped).toHaveLength(1);
+    expect(read.skipped[0]).toContain("line 2");
+  });
+
+  it("reports a record version this build does not read, naming the versions it does", () => {
+    const path = join(dataDir(), BENCHMARK_ARCHIVE_FILE);
+    const store = createBenchmarkStore(path);
+    store.record(run("a"));
+    writeFileSync(
+      path,
+      `${readFileSync(path, "utf8")}${JSON.stringify({ ...run("future"), version: 9 })}\n`,
+      "utf8",
+    );
+    const read = store.read(10);
+    expect(read.runs.map((entry) => entry.id)).toEqual(["a"]);
+    expect(read.skipped[0]).toContain("version 9");
+    expect(read.skipped[0]).toContain("1");
+  });
+
+  it("still says NOTHING about a torn final line — the one loss that is expected", () => {
+    const path = join(dataDir(), BENCHMARK_ARCHIVE_FILE);
+    const store = createBenchmarkStore(path);
+    store.record(run("a"));
+    writeFileSync(path, `${readFileSync(path, "utf8")}{"version":1,"id":"tor`, "utf8");
+    const read = store.read(10);
+    expect(read.runs.map((entry) => entry.id)).toEqual(["a"]);
+    // The positive control on the silence: the same damage one line EARLIER is reported.
+    expect(read.skipped).toEqual([]);
   });
 });
 

@@ -69,7 +69,7 @@ const HELP = [
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
   "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--data-dir <dir>]   build & store the repo map",
-  "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>]   write the docs benchmark data",
+  "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>] [--timestamp <iso>]   write the docs benchmark data",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
@@ -176,7 +176,13 @@ export async function runCli(
     }
     case "benchmarks": {
       let parsed: {
-        values: { out?: string; "data-dir"?: string; revision?: string; machine?: string };
+        values: {
+          out?: string;
+          "data-dir"?: string;
+          revision?: string;
+          machine?: string;
+          timestamp?: string;
+        };
         positionals: string[];
       };
       try {
@@ -189,6 +195,7 @@ export async function runCli(
             "data-dir": { type: "string" },
             revision: { type: "string" },
             machine: { type: "string" },
+            timestamp: { type: "string" },
           },
         });
       } catch (error) {
@@ -207,6 +214,7 @@ export async function runCli(
           out: parsed.values.out ?? join(process.cwd(), "docs", "data", "benchmarks.json"),
           revision: parsed.values.revision,
           machine: parsed.values.machine,
+          timestamp: parsed.values.timestamp,
         },
         io,
       );
@@ -496,6 +504,7 @@ async function buildMap(
   // itself. Gated by the same default-on setting as every other producer.
   const benchmarks = createBenchmarkRecording(opts.dataDir ?? defaultDataDir());
   const timer = createStageTimer(Date.now);
+  const mapFrom = Date.now();
   let generated: {
     readonly manifest: ProjectSnapshotManifest;
     readonly fileCount: number;
@@ -522,7 +531,16 @@ async function buildMap(
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    recordMapBenchmark(benchmarks.record, timer, basename(root) || root, root, "failed", reason);
+    recordMapBenchmark(
+      benchmarks.record,
+      timer,
+      basename(root) || root,
+      root,
+      "failed",
+      reason,
+      undefined,
+      mapFrom,
+    );
     io.err(`rennet map: ${reason}`);
     return 1;
   }
@@ -586,11 +604,17 @@ async function buildMap(
  * against his own dogfood data and reviews the diff before committing — the export writes
  * a file, it does not publish anything.
  *
- * DETERMINISTIC by construction: the aggregation is pure (`buildBenchmarkExport`), every
- * list is sorted on declared order, and the only clock read anywhere on this path is the
- * provenance stamp taken here and passed IN. Re-running with the same archive and the same
- * `--revision`/`--machine` produces byte-identical output, so an unchanged measurement is
- * an empty diff rather than a timestamp churn.
+ * DETERMINISTIC, and the claim is now exactly true rather than nearly: the aggregation is
+ * pure (`buildBenchmarkExport`), every list is sorted on declared order, and the export's
+ * stamp is DERIVED FROM THE ARCHIVE — the end of its newest run — rather than read off the
+ * wall clock. Re-running over an unchanged archive therefore produces byte-identical
+ * output and an empty diff. It used to call `new Date()` here, which meant every re-export
+ * differed in its `exportedAt` no matter what the measurements said; the file claimed
+ * byte-identity while the one field that could not be identical sat at the top of it.
+ *
+ * `--timestamp <iso>` overrides, for a caller who wants to state the stamp explicitly. The
+ * fresh clock survives only as the last fallback, for an archive whose newest run predates
+ * nothing — and it is the only branch on this path that is not reproducible.
  */
 async function exportBenchmarks(
   opts: {
@@ -598,6 +622,7 @@ async function exportBenchmarks(
     readonly out: string;
     readonly revision?: string;
     readonly machine?: string;
+    readonly timestamp?: string;
   },
   io: CliIo,
 ): Promise<number> {
@@ -619,10 +644,27 @@ async function exportBenchmarks(
       return 1;
     }
   }
+  let exportedAt: string;
+  if (opts.timestamp !== undefined) {
+    const stated = new Date(opts.timestamp);
+    if (Number.isNaN(stated.getTime())) {
+      io.err(`rennet benchmarks: --timestamp '${opts.timestamp}' is not a date`);
+      return 2;
+    }
+    exportedAt = stated.toISOString();
+  } else {
+    // The end of the newest recorded run: a real instant, taken from the data being
+    // exported, and the same one on every re-export of that data.
+    const newest = runs.reduce(
+      (latest, run) => Math.max(latest, run.startedAtMs + run.durationMs),
+      0,
+    );
+    exportedAt = newest > 0 ? new Date(newest).toISOString() : new Date().toISOString();
+  }
   const exported = buildBenchmarkExport({
     runs,
     provenance: {
-      exportedAt: new Date().toISOString(),
+      exportedAt,
       machine: opts.machine ?? `${platform()} ${arch()}, ${cpus().length} cores`,
       revision,
     },
@@ -642,6 +684,12 @@ async function exportBenchmarks(
  * DIED is recorded as a failed run carrying the stages it reached — a map path that only
  * archived its successes would hide the builds that take longest, which are the ones that
  * fall over.
+ *
+ * `producer: "cli-map"` is the stage-set identity, and it is load-bearing rather than
+ * bookkeeping: `rennet map` HAS NO SCOUT PASS. Without the label, a `resolve` row with no
+ * `scout` row beside it reads as a lost measurement, when here it means there was never
+ * one — and the docs page, which aggregates, cannot tell those apart from the stage list.
+ * The honest answer is to say which pipeline recorded the run, not to invent a scout row.
  */
 function recordMapBenchmark(
   record: (run: BenchmarkRun) => void,
@@ -651,19 +699,22 @@ function recordMapBenchmark(
   outcome: "complete" | "failed",
   failure?: string,
   revision?: string,
+  from?: number,
 ): void {
   const stages = timer.finish();
   const total = stages.find((stage) => stage.stage === "total");
-  // No total means no stage was ever entered — the build died before its first measured
-  // boundary, and a zero-length run would read as an instantaneous map.
-  if (total === undefined) return;
+  // Recorded even with no stage at all: a build that died before its first measured
+  // boundary is a failed run with an empty stage list, which says so. Dropping it made
+  // the earliest failures — the ones that never got going — invisible.
+  const startedAtMs = total?.startedAtMs ?? from ?? Date.now();
   record({
     version: 1,
-    id: `${repoKey}:${total.startedAtMs}`,
+    id: `${repoKey}:${startedAtMs}`,
     kind: "repo-map",
+    producer: "cli-map",
     subject: { label, repoKey, ...(revision === undefined ? {} : { revision }) },
-    startedAtMs: total.startedAtMs,
-    durationMs: total.durationMs,
+    startedAtMs,
+    durationMs: total?.durationMs ?? 0,
     outcome,
     ...(failure === undefined ? {} : { failure }),
     stages,

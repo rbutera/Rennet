@@ -10,6 +10,7 @@ import type {
   LintTarget,
 } from "@rennet/core";
 import { findingDispositionMigrationEvents } from "@rennet/core";
+import type { BenchmarkRun } from "@rennet/protocol";
 import {
   type ComposedHandoffBundle,
   type DraftBoard,
@@ -2988,5 +2989,126 @@ describe("createRoundsRuntime", () => {
     await Promise.all([pA, pB]);
     // A ran to completion before B began — never interleaved.
     expect(events).toEqual(["start:A", "end:A", "start:B", "end:B"]);
+  });
+});
+
+// ── The benchmark archive's terminal boundary (#731 N3/N4, O2) ──
+//
+// The archive used to be taken the moment the pipeline returned, which is several throws
+// too early: `runOnce` still has to find lens boards, verify the drafted report and check
+// the required core lenses. A generation rejected by any of those was archived as
+// `complete`, so the exported failure rate was the rate at which the PIPELINE threw rather
+// than the rate at which a round failed. These tests drive the real runtime and read what
+// it archived.
+
+describe("what a round archives, and when (#731 N3)", () => {
+  function archiving(over: Partial<RoundsRuntimeDeps> = {}): {
+    deps: RoundsRuntimeDeps;
+    recorded: BenchmarkRun[];
+  } {
+    const recorded: BenchmarkRun[] = [];
+    return { deps: baseDeps({ recordBenchmark: (run) => recorded.push(run), ...over }), recorded };
+  }
+
+  it("archives a COMPLETE run once, identified by generation and attempt", async () => {
+    const { deps, recorded } = archiving();
+    await createRoundsRuntime(deps).runRound(roundInput());
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("complete");
+    expect(recorded[0]?.kind).toBe("generation");
+    // Identity is (generation, attempt) — not a clock reading, which is what made two
+    // records of one generation indistinguishable.
+    expect(recorded[0]?.attempt).toBe(0);
+    expect(recorded[0]?.id).toBe(`${recorded[0]?.subject.generationId}:0`);
+    expect(recorded[0]?.producer).toBe("daemon");
+  });
+
+  it("archives a generation rejected by the required-core-lens check as FAILED", async () => {
+    // THE regression. The pipeline returned normally here — boards were drafted — and the
+    // round was then rejected downstream. Archiving at the pipeline's return filed this as
+    // a complete run.
+    const invalid = {
+      elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+      skippedHunks: [],
+    };
+    const { deps, recorded } = archiving({
+      resolveClaudePort: async () =>
+        fakeClaudePort([], (prompt) =>
+          lensFromPrompt(prompt) === "sequence" ? invalid : cleanBody(lensFromPrompt(prompt)),
+        ),
+    });
+    await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow(
+      "required core lens sequence",
+    );
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("failed");
+    expect(recorded[0]?.failure).toContain("required core lens sequence");
+  });
+
+  /** A drafting port whose turn dies, so `runLensPipeline` itself throws. */
+  function dyingPort(message: string): HarnessPort {
+    return {
+      createSession: async () => {
+        throw new Error(message);
+      },
+    } as unknown as HarnessPort;
+  }
+
+  it("archives ONE failed run when the pipeline itself throws (#731 O2)", async () => {
+    const { deps, recorded } = archiving({
+      resolveClaudePort: async () => dyingPort("the drafting turn fell over"),
+    });
+    await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow();
+    // One record, not one per lane and not none: the run is the unit, and its failure
+    // carries the runner's own words.
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("failed");
+    expect(recorded[0]?.failure).toEqual(expect.any(String));
+    expect(recorded[0]?.failure?.length).toBeGreaterThan(0);
+  });
+
+  it("calls a cancelled round ABORTED, not failed (#731 O2)", async () => {
+    // A reviewer who walked away is not a defect, and a pipeline whose cancellations were
+    // counted as failures would report a failure rate made of people changing their minds.
+    const { deps, recorded } = archiving({
+      resolveClaudePort: async () => dyingPort("cancelled"),
+    });
+    await expect(
+      createRoundsRuntime(deps).runRound(roundInput({ signal: AbortSignal.abort() })),
+    ).rejects.toThrow();
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.outcome).toBe("aborted");
+    // The control on the discrimination: the SAME failure with no aborted signal is
+    // `failed`, so this is reading the signal rather than the error.
+    const plain = archiving({ resolveClaudePort: async () => dyingPort("cancelled") });
+    await expect(createRoundsRuntime(plain.deps).runRound(roundInput())).rejects.toThrow();
+    expect(plain.recorded[0]?.outcome).toBe("failed");
+  });
+
+  it("archives NOTHING for an attempt a later one superseded", async () => {
+    // `persistReveal` refuses the durable write when another attempt owns the generation.
+    // Archiving anyway would file a dead attempt's latency under the live generation's id —
+    // the same wrong-content publish the durable check exists to prevent, one surface over.
+    const superseded: Generation = {
+      ...PREV_GEN,
+      id: "gen:ps-1",
+      draftingBoardIds: { design: "someone-elses-board" },
+      draftingReportBoardId: "someone-elses-report",
+    };
+    // The FIRST read is `runOnce` selecting the generation to draft; every later read is a
+    // reveal write checking whether it still owns it. The steal happens in between.
+    let reads = 0;
+    const { deps, recorded } = archiving({
+      persistGeneration: () => undefined,
+      loadGeneration: () => {
+        reads += 1;
+        return reads > 1 ? superseded : undefined;
+      },
+    });
+    await createRoundsRuntime(deps)
+      .runRound(roundInput())
+      .catch(() => undefined);
+    expect(reads).toBeGreaterThan(1);
+    expect(recorded).toEqual([]);
   });
 });

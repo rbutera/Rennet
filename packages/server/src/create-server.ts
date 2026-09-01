@@ -4697,7 +4697,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // workspace rediscovery, the two stores, the guidance reader, and the real
     // visibility switch. The malformed refusals live in the stores themselves.
     // The benchmarks panel's read side (#731 9.6) — newest runs, capped by the caller.
-    listBenchmarks: (limit) => benchmarkStore.list(limit),
+    listBenchmarks: (limit) => benchmarkStore.read(limit),
     settings: createSettingsComposition({
       listProjects: () => projectStore.list(),
       loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),

@@ -877,7 +877,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     input: RoundInput,
     boardGeneration: Generation,
     start: "fresh" | "partial",
-  ): Promise<{ readonly generation: Generation; readonly pipeline: LensPipelineResult }> {
+  ): Promise<{
+    readonly generation: Generation;
+    readonly pipeline: LensPipelineResult;
+    /** Take the benchmark archive for this attempt. Called by `runOnce` at the attempt's
+     *  TERMINAL boundary — after the last check that can reclassify the outcome — and a
+     *  no-op once the attempt has already been archived or found superseded. */
+    readonly archiveBenchmark: (
+      outcome: "complete" | "failed" | "aborted",
+      failure?: string,
+    ) => void;
+  }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const whiteboard = new WhiteboardClient(boards.service);
     const boardIds = new Map<LintTarget, string>();
@@ -1242,31 +1252,48 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // the required report has been verified and persisted; a failed report exits earlier.
 
     // The benchmark archive's producer (#731 D8). It rides the SAME records the reveal
-    // block already wrote, so nothing here measures anything twice, and the `finally`
+    // block already wrote, so nothing here measures anything twice, and the `catch` below
     // means a generation that threw is archived as `failed` rather than vanishing — a
     // pipeline that only archived its successes would report the fast half of its own
     // latency. `aborted` is the caller's cancellation, told apart from a real failure by
     // the signal, because a reviewer who walked away is not a defect.
+    //
+    // The archive is NOT taken here on the success path. This function returns before the
+    // attempt is terminal: `runOnce` still has to find lens boards, verify the drafted
+    // report and check the required core lenses, and each of those can throw — so an
+    // archive taken at the end of the pipeline filed as `complete` a generation that was
+    // about to be rejected. The closure returned below is called at that true boundary,
+    // and it records at most once whoever calls it first.
+    //
+    // A SUPERSEDED attempt archives nothing at all. When `persistReveal` refuses the write
+    // because a later attempt owns the generation, this attempt's numbers are not this
+    // generation's, and filing them under its id would put a dead attempt's latency on the
+    // live generation's row.
     const benchmarkFrom = Math.floor(clock());
-    let benchmarkOutcome: "complete" | "failed" | "aborted" = "complete";
-    let benchmarkFailure: string | undefined;
-    const archiveBenchmark = (): void => {
+    const benchmarkAttempt = start === "partial" ? 1 : 0;
+    let benchmarkArchived = false;
+    let benchmarkSuperseded = false;
+    const archiveBenchmark = (
+      outcome: "complete" | "failed" | "aborted",
+      failure?: string,
+    ): void => {
       const record = deps.recordBenchmark;
-      if (record === undefined) return;
+      if (record === undefined || benchmarkArchived || benchmarkSuperseded) return;
+      benchmarkArchived = true;
       record(
         generationBenchmarkRun({
-          id: `${attemptGeneration.id}:${benchmarkFrom}`,
           subject: {
             label: input.session.id,
             sessionId: input.session.id,
             generationId: attemptGeneration.id,
             ...(input.dispatchId === undefined ? {} : { roundId: input.dispatchId }),
           },
+          attempt: benchmarkAttempt,
           phases: reveal.timings,
           startedAtMs: benchmarkFrom,
           endedAtMs: Math.floor(clock()),
-          outcome: benchmarkOutcome,
-          ...(benchmarkFailure === undefined ? {} : { failure: benchmarkFailure }),
+          outcome,
+          ...(failure === undefined ? {} : { failure }),
         }),
       );
     };
@@ -1275,9 +1302,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     try {
       pipeline = await runLensPipeline(pipelineInput);
     } catch (error) {
-      benchmarkOutcome = input.signal?.aborted === true ? "aborted" : "failed";
-      benchmarkFailure = error instanceof Error ? error.message : String(error);
-      archiveBenchmark();
+      archiveBenchmark(
+        input.signal?.aborted === true ? "aborted" : "failed",
+        error instanceof Error ? error.message : String(error),
+      );
       throw error;
     }
     // A drafter that produced no board settles its lane as failed. Without this the lane
@@ -1289,11 +1317,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
     }
     // One last write so the timings recorded after the final settlement (coverage, reveal,
-    // the lens post-process tails) reach durable state too.
-    await persistReveal();
-    // …and only now is the archive taken, so it carries the same phases the durable
-    // generation does rather than a snapshot from before the tail records landed.
-    archiveBenchmark();
+    // the lens post-process tails) reach durable state too. A REFUSED write means a later
+    // attempt owns this generation, and this attempt archives nothing.
+    if (!(await persistReveal())) benchmarkSuperseded = true;
     // …and the generation handed back carries them, because that record is what the final
     // settle and BOTH failure paths persist. `withLensBoards` spreads the generation it is
     // given and deletes only the attempt-scoped drafting fields, so coverage and timings
@@ -1308,6 +1334,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           : { timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] } }),
       },
       pipeline,
+      archiveBenchmark,
     };
   }
 
@@ -1432,6 +1459,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       ? {
           generation: boardGeneration,
           pipeline: reconstructFromMeta(durableEvidence, boardGeneration),
+          // Reconstructed from durable metadata: no pipeline ran, so there is nothing to
+          // time. An archive here would file a cache hit as a very fast generation.
+          archiveBenchmark: undefined,
         }
       : hasPartialDurableState
         ? await draft(draftingInput, boardGeneration, "partial")
@@ -1457,28 +1487,46 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // generation without its load-bearing core review evidence would turn a failed retry
     // into durable success and consume its asks. Persist the partial attempt but keep the
     // completed placeholder pending; the next regeneration call takes the cleanup path.
-    const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
-    if (draftedLensBoards.length === 0) {
-      await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
-      throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
-    }
-    if (input.verifyDraftedReport !== undefined) {
-      if (reportBoard === ROUND_NO_REGEN) {
-        throw new Error("The regeneration drafted no round report to verify.");
+    // ── The attempt's TERMINAL boundary (#731 D8) ──
+    // Everything that can still reclassify the outcome lives inside this block: a
+    // generation with no lens boards, a round report that fails verification, a missing
+    // required core lens. The archive used to be taken when the PIPELINE returned, which
+    // is several throws too early — a generation rejected here was filed as `complete`,
+    // and the export's failure rate was the rate at which the pipeline itself threw rather
+    // than the rate at which a round failed. `archiveBenchmark` is absent when the
+    // generation was reconstructed from durable metadata: nothing ran, so nothing is timed.
+    const archiveBenchmark = restoredOrDrafted.archiveBenchmark;
+    try {
+      const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
+      if (draftedLensBoards.length === 0) {
+        await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+        throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
       }
-      await input.verifyDraftedReport({
-        reportBoardId: reportBoard,
-        generation: boardGeneration.id,
-        patchsetId: boardGeneration.patchsetId,
-      });
-    }
-    const missingCoreLens = missingRequiredCoreLens(pipeline.boards);
-    if (missingCoreLens !== undefined) {
-      await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
-      throw new Error(
-        `The required core lens ${missingCoreLens} did not produce review evidence: ${failureReasons(pipeline)}`,
+      if (input.verifyDraftedReport !== undefined) {
+        if (reportBoard === ROUND_NO_REGEN) {
+          throw new Error("The regeneration drafted no round report to verify.");
+        }
+        await input.verifyDraftedReport({
+          reportBoardId: reportBoard,
+          generation: boardGeneration.id,
+          patchsetId: boardGeneration.patchsetId,
+        });
+      }
+      const missingCoreLens = missingRequiredCoreLens(pipeline.boards);
+      if (missingCoreLens !== undefined) {
+        await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+        throw new Error(
+          `The required core lens ${missingCoreLens} did not produce review evidence: ${failureReasons(pipeline)}`,
+        );
+      }
+    } catch (error) {
+      archiveBenchmark?.(
+        input.signal?.aborted === true ? "aborted" : "failed",
+        error instanceof Error ? error.message : String(error),
       );
+      throw error;
     }
+    archiveBenchmark?.("complete");
     // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
     // prior generation exists, it freezes and its id is the earlier generation the ledger's
     // switcher drills back to. Absent on a no-move round and on a first generation —

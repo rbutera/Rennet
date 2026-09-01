@@ -6523,3 +6523,100 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
 function SECRET(s: string): string {
   return s;
 }
+
+describe("the report gate times a turn that DIED (#731 O4)", () => {
+  // The `finally` on the classification turn exists so a turn that did not produce a board
+  // still reports how long it took to fail and still names the harness that failed it. That
+  // is a control-flow claim, so it gets executed rather than reasoned about: a seat whose
+  // session cannot start, and the timing read back.
+  //
+  // What this CANNOT show, stated rather than implied: the seat wrapper converts an adapter
+  // throw into a `failed` turn result, so the observable shape of a dying turn here is
+  // `status: "failed"` and not a rejected promise. The `finally` covers both — it runs after
+  // the `catch` and after a non-emitting return — and only the second is reachable through
+  // the real harness path, which is the one this test drives.
+  const round = {
+    number: 1,
+    previousGeneration: "gen:ps-0",
+    dispatchedAsks: [
+      {
+        id: "ask-one",
+        path: "src/auth.ts",
+        type: "request-change" as const,
+        instruction: "Replace the line.",
+        context: "",
+      },
+    ],
+    findingDispositions: {},
+    worker: {
+      outcome: "completed" as const,
+      diff: ONE_LINE_DIFF,
+      changedPaths: ["src/auth.ts"],
+      commitRange: { from: "before", to: "after" },
+    },
+  };
+
+  it("still emits report-classification, with its harness, when runTurn rejects", async () => {
+    const timings: GenerationPhaseTiming[] = [];
+    let failure: unknown;
+    // The classification seat is the only one that caps its raw response, so this throws
+    // for THAT session and no other. The failure message asserted below is what proves it:
+    // a different session dying reports a different sentence.
+    const port = {
+      createSession: async (options: { outputByteCap?: number }) => {
+        if (options.outputByteCap !== undefined) {
+          throw new Error("the classification session could not start");
+        }
+        return {
+          send: async () => undefined,
+          close: async () => undefined,
+          events: (async function* () {
+            yield {
+              kind: "session.ended",
+              native: {},
+              outcome: { status: "completed", structuredOutput: cleanBody("design") },
+            };
+          })(),
+        };
+      },
+    } as unknown as HarnessPort;
+
+    await runLensPipeline({
+      claudePort: port,
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:o4",
+      round,
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      now: () => Date.now(),
+    }).catch((error: unknown) => {
+      failure = error;
+    });
+
+    // The TURN really died, and died for the reason this test arranged — not the manifest
+    // measure, not the seat resolution, not the schema check, each of which returns BEFORE
+    // the timed block and would leave the assertion below passing vacuously.
+    expect(String(failure)).toContain("classification turn did not emit");
+    expect(String(failure)).toContain("the classification session could not start");
+
+    const classification = timings.find(({ phase }) => phase === "report-classification");
+    expect(classification).toBeDefined();
+    // The whole point: a failure that named no executor would leave the slowest, most
+    // interesting turns unattributed in the archive.
+    expect(classification?.harness).toBe("claude-code");
+    expect(classification?.model).toBeDefined();
+    expect(classification?.durationMs).toBeGreaterThanOrEqual(0);
+    // Attribution is one fact, not two — the benchmark schema refuses a half of it.
+    expect((classification?.harness === undefined) === (classification?.model === undefined)).toBe(
+      true,
+    );
+  });
+});

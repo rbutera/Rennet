@@ -1115,9 +1115,21 @@ const definitions = {
   // records; the run-level mode is DERIVED from them by every reader
   // (`deriveBenchmarkMode`), never stored, so no two surfaces can label one run
   // differently. Fail-safe: an absent or unreadable archive reads as no runs.
+  //
+  // `total` and `skipped` exist because a CAP IS A LOSS AND SO IS DAMAGE, and neither
+  // announces itself: a list that came back with 200 rows when the archive holds 900
+  // looks exactly like an archive holding 200. The panel states both, so history the
+  // reviewer cannot see is history the reviewer is TOLD about.
   "benchmarks.list": {
     input: z.object({ limit: z.number().int().positive().max(2000).optional() }),
-    output: z.object({ runs: z.array(benchmarkRunSchema) }),
+    output: z.object({
+      runs: z.array(benchmarkRunSchema),
+      /** How many distinct runs the archive holds, before the limit. */
+      total: z.number().int().nonnegative(),
+      /** Interior archive lines that could not be read, in the store's own words. A torn
+       *  FINAL line — what a crash mid-append leaves — is not reported here. */
+      skipped: z.array(z.string()),
+    }),
   },
   // ── Settings: set (or reset) a review role's model assignment (C16 · #485) ──
   // The Environments → Review mappings dialog's cell edit. A personal, app-side

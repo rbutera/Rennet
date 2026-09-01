@@ -29,10 +29,17 @@ export interface BenchmarkRecorder {
  * A generation that FAILED still produces a record: its outcome says so, and its phases
  * are the ones it managed to complete. A pipeline whose failures vanished would report
  * only the half of its latency that worked.
+ *
+ * The id is `(generationId, attempt)` and NOT a clock reading. A restart redrafts the same
+ * generation, so a timestamped id appended two records that no reader could tell apart —
+ * two rows for one generation, both claiming to be it. Attempt 0 is the fresh draft and
+ * attempt 1 the redraft, so both are honest and reconcilable; a re-archive of ONE attempt
+ * carries the same id and replaces its predecessor in the store, because it is the same
+ * attempt measured again rather than a second one.
  */
 export function generationBenchmarkRun(input: {
-  readonly id: string;
-  readonly subject: BenchmarkSubject;
+  readonly subject: BenchmarkSubject & { readonly generationId: string };
+  readonly attempt: number;
   readonly phases: readonly GenerationPhaseTiming[];
   readonly startedAtMs: number;
   readonly endedAtMs: number;
@@ -49,8 +56,10 @@ export function generationBenchmarkRun(input: {
   }));
   return {
     version: 1,
-    id: input.id,
+    id: `${input.subject.generationId}:${input.attempt}`,
     kind: "generation",
+    producer: "daemon",
+    attempt: input.attempt,
     subject: input.subject,
     startedAtMs: input.startedAtMs,
     durationMs: Math.max(0, input.endedAtMs - input.startedAtMs),
@@ -65,10 +74,29 @@ type MapStage = Exclude<(typeof REPO_MAP_STAGES)[number], "total">;
 
 const MAP_STAGES = new Set<string>(REPO_MAP_STAGES);
 
-/** Whether a snapshot-generator progress stage is one this contract names. Guards the
- *  seam where a future generator stage would otherwise be silently dropped. */
+/** Stages this predicate has already complained about, so a build with a hundred progress
+ *  events for one unknown stage warns once rather than a hundred times. */
+const unnamedStages = new Set<string>();
+
+/**
+ * Whether a snapshot-generator progress stage is one this contract names.
+ *
+ * This IS the drop — a `false` means the stage is not recorded — so it warns rather than
+ * returning quietly. The comment here used to claim it "guards the seam where a stage
+ * would otherwise be silently dropped", which described the opposite of what the code did:
+ * a generator stage added later would vanish from every benchmark with nothing said. One
+ * `console.warn` is the whole fix, and the archive stays a projection of what the pipeline
+ * measured rather than a contract that silently narrows it.
+ */
 export function isMapBenchmarkStage(stage: string): stage is MapStage {
-  return MAP_STAGES.has(stage) && stage !== "total";
+  if (MAP_STAGES.has(stage)) return stage !== "total";
+  if (!unnamedStages.has(stage)) {
+    unnamedStages.add(stage);
+    console.warn(
+      `benchmarks: the snapshot generator emitted an unnamed stage '${stage}'; it is not being timed. Add it to REPO_MAP_STAGES.`,
+    );
+  }
+  return false;
 }
 
 /**
@@ -77,8 +105,18 @@ export function isMapBenchmarkStage(stage: string): stage is MapStage {
  * ignored, because the generator emits the same stage twice (once opening, once with its
  * detail) and treating that as two stages would halve the reported duration of every one.
  *
- * The `total` stage spans the first `enter` to `finish`, so it covers the gaps between
- * stages too — a total that only summed its parts would hide any wait between them.
+ * `total` IS THE SUM of this timer's own stage durations, starting at its first `enter`.
+ * It used to be the wall clock from the first `enter` to `finish`, and that was wrong the
+ * moment a project processed more than one repository: the daemon scouts EVERY repo in one
+ * pass and maps them in a LATER one, so a repo's timer opens at its scout and closes after
+ * its map — and a wall-clock span charged it for every sibling scouted or mapped in
+ * between. Repo A's `total` grew with the size of the project rather than with its own
+ * work.
+ *
+ * The sum hides nothing that belongs to this repo: within a pass the timer never closes a
+ * stage until the next one opens, so any wait between two stages is already inside a
+ * stage's duration. The only thing it excludes is other repositories' work, which is the
+ * point. A whole-project wall time is a different measurement and is not invented here.
  */
 export function createStageTimer(now: () => number) {
   const stages: BenchmarkStage[] = [];
@@ -109,14 +147,15 @@ export function createStageTimer(now: () => number) {
     leave(): void {
       close();
     },
-    /** Close the pipeline and stamp its end-to-end total. Returns every stage recorded. */
+    /** Close the pipeline and stamp its total — the SUM of this timer's own stages, from
+     *  the first one's start. Returns every stage recorded. */
     finish(): BenchmarkStage[] {
       close();
       if (firstFrom !== undefined) {
         stages.push({
           stage: "total",
           startedAtMs: firstFrom,
-          durationMs: Math.max(0, Math.floor(now()) - firstFrom),
+          durationMs: stages.reduce((sum, stage) => sum + stage.durationMs, 0),
         });
       }
       return stages;

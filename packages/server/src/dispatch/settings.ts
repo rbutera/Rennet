@@ -154,9 +154,10 @@ export function settingsHandlers(rt: DispatchRuntime) {
       // recorded yet) reads as no runs, never a throw — an empty benchmarks panel is
       // the honest answer for a fresh install.
       const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(name, {
-        runs: deps.listBenchmarks?.(input.limit ?? 200) ?? [],
-      });
+      return parseCommandOutput(
+        name,
+        deps.listBenchmarks?.(input.limit ?? 200) ?? { runs: [], total: 0, skipped: [] },
+      );
     },
     "settings.setRoleAssignment": async (rawInput) => {
       const name = "settings.setRoleAssignment" as const;

@@ -16,23 +16,57 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createClientSettingsStore } from "@rennet/adapters";
-import { type BenchmarkRun, benchmarkRecordingEnabled, benchmarkRunSchema } from "@rennet/protocol";
+import {
+  BENCHMARK_RECORD_VERSION,
+  type BenchmarkRun,
+  benchmarkRecordingEnabled,
+  benchmarkRunSchema,
+} from "@rennet/protocol";
 
 /** The archive's file name inside the user data dir. One constant, because the daemon and
  *  the CLI export must address the same file or the export reads an empty history. */
 export const BENCHMARK_ARCHIVE_FILE = "benchmarks.jsonl";
 
+/** What one read of the archive found. `total` and `skipped` exist because a cap and a
+ *  corrupt line are both losses, and a list that just came back shorter says neither. */
+export interface BenchmarkListing {
+  /** The most recent runs, newest first, capped at the requested limit. */
+  readonly runs: BenchmarkRun[];
+  /** How many distinct runs the archive holds — so a capped read can say it capped. */
+  readonly total: number;
+  /** Interior lines that could not be read as a run, and why. NOT counted here: a torn
+   *  FINAL line, which is what a crash mid-append leaves and is expected. */
+  readonly skipped: readonly string[];
+}
+
 export interface BenchmarkStore {
   /** Append one completed (or failed, or aborted) run. */
   record(run: BenchmarkRun): void;
+  /** The most recent runs, newest first, capped at `limit`, with the counts that say what
+   *  the cap and any damage cost. */
+  read(limit: number): BenchmarkListing;
   /** The most recent runs, newest first, capped at `limit`. */
   list(limit: number): BenchmarkRun[];
 }
 
+/**
+ * Which record versions this build can read, and what to do with the rest.
+ *
+ * Dispatch is EXPLICIT rather than "parse and shrug": a line that fails to parse used to be
+ * skipped in silence, so a future record version, a schema tightening, or a genuinely
+ * corrupt interior line all looked identical to an archive that simply held fewer runs.
+ * The panel showed a shorter history and said nothing, which is the silent-drop failure
+ * this codebase keeps re-learning.
+ *
+ * The one loss that stays silent is a TORN FINAL LINE — an append interrupted by a crash.
+ * That is the expected shape of an interrupted write, not damage worth reporting.
+ */
+const SUPPORTED_VERSIONS: readonly number[] = [BENCHMARK_RECORD_VERSION];
+
 // ponytail: the archive grows unbounded — one line (~1 KB) per measured run, so a heavy
 // dogfood year is single-digit MB. Rotate when that stops being true.
 export function createBenchmarkStore(filePath: string): BenchmarkStore {
-  return {
+  const store: BenchmarkStore = {
     record(run) {
       // Parse before writing: a malformed record in the archive would fail the export
       // build later, far from the code that produced it.
@@ -40,32 +74,74 @@ export function createBenchmarkStore(filePath: string): BenchmarkStore {
       mkdirSync(dirname(filePath), { recursive: true });
       appendFileSync(filePath, `${JSON.stringify(parsed)}\n`, "utf8");
     },
-    list(limit) {
-      if (!existsSync(filePath)) return [];
+    read(limit) {
+      if (!existsSync(filePath)) return { runs: [], total: 0, skipped: [] };
       let raw: string;
       try {
         raw = readFileSync(filePath, "utf8");
-      } catch {
-        return [];
+      } catch (error) {
+        return {
+          runs: [],
+          total: 0,
+          skipped: [`the archive could not be read: ${message(error)}`],
+        };
       }
       const runs: BenchmarkRun[] = [];
-      // Walk backwards so a large archive costs only the lines the caller asked for.
+      const skipped: string[] = [];
+      // Every id already returned. A restart redrafts the SAME generation, so the archive
+      // can hold two appends of one attempt identity; the LATER one wins, because it is
+      // the same attempt measured again rather than a second attempt. Walking backwards
+      // means the later one is the one already in hand.
+      const seen = new Set<string>();
+      let total = 0;
+      // Walk backwards so a large archive costs only the lines the caller asked for —
+      // except the id/total accounting, which has to see every line to be a count.
       const lines = raw.split("\n");
-      for (let index = lines.length - 1; index >= 0 && runs.length < limit; index -= 1) {
+      // A file ending in the newline `record` writes leaves an empty last element. Anything
+      // else there is a torn append, and it is the ONE loss that stays silent.
+      const lastIndex = lines.length - 1;
+      for (let index = lastIndex; index >= 0; index -= 1) {
         const line = lines[index]?.trim();
         if (!line) continue;
         let value: unknown;
         try {
           value = JSON.parse(line);
-        } catch {
+        } catch (error) {
+          if (index !== lastIndex) skipped.push(`line ${index + 1}: not JSON (${message(error)})`);
+          continue;
+        }
+        const version = (value as { version?: unknown })?.version;
+        if (typeof version !== "number" || !SUPPORTED_VERSIONS.includes(version)) {
+          skipped.push(
+            `line ${index + 1}: record version ${String(version)} is not one this build reads (${SUPPORTED_VERSIONS.join(", ")})`,
+          );
           continue;
         }
         const parsed = benchmarkRunSchema.safeParse(value);
-        if (parsed.success) runs.push(parsed.data);
+        if (!parsed.success) {
+          if (index !== lastIndex) {
+            skipped.push(
+              `line ${index + 1}: ${parsed.error.issues[0]?.message ?? "invalid record"}`,
+            );
+          }
+          continue;
+        }
+        if (seen.has(parsed.data.id)) continue;
+        seen.add(parsed.data.id);
+        total += 1;
+        if (runs.length < limit) runs.push(parsed.data);
       }
-      return runs;
+      return { runs, total, skipped };
+    },
+    list(limit) {
+      return store.read(limit).runs;
     },
   };
+  return store;
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
