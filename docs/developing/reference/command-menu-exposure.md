@@ -137,6 +137,7 @@ still goes through the one seam; only the label is hand-written.
 | `fs.listDir` | Directory-browser read; its listing must be displayed. |
 | `patchset.readSpan` | Needs the citation, and its lines must be displayed. |
 | `board.read` | Read the board surface drives. |
+| `benchmarks.list` | Read the Settings benchmarks panel drives; its runs must be displayed. |
 
 ### flagged, noise, openspec
 
@@ -157,6 +158,7 @@ still goes through the one seam; only the label is hand-written.
 | `settings.setAppearance` | Needs the scheme being set. |
 | `settings.setKeybinding` | Needs the command id and the chord. |
 | `settings.setCoachmarks` | Needs the coach-mark state being written. |
+| `settings.setBenchmarkRecording` | Needs the on/off state being written; the toggle owns it. |
 | `settings.setRoleAssignment` | Needs the role and its assignment. |
 | `settings.setRepoVisibility` | Needs the repository and the visibility. |
 | `settings.resetRepoValue` | Needs the repository and the key. |

@@ -23,6 +23,7 @@
       "inputs": [
         "default",
         "^production",
+        "{workspaceRoot}/docs/data/benchmarks.json",
         "{workspaceRoot}/scripts/check-docs.mjs",
         "{workspaceRoot}/scripts/check-docs.test.mjs",
         "{workspaceRoot}/apps/**/project.json",
@@ -30,7 +31,7 @@
         "{workspaceRoot}/packages/**/project.json",
         "{workspaceRoot}/packages/**/package.json"
       ],
-      "command": "pnpm exec vitest run apps/docs/src/plugins/docs-projection.test.ts apps/docs/src/plugins/remark-canonical-links.test.ts && node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs ."
+      "command": "pnpm exec vitest run apps/docs/src/plugins/docs-projection.test.ts apps/docs/src/plugins/remark-canonical-links.test.ts apps/docs/src/plugins/remark-benchmarks.test.ts && node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs ."
     },
     "typecheck": {
       "dependsOn": ["build"],

@@ -55,7 +55,8 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [protocol compatibility](./developing/reference/protocol-compatibility.md),
   [Codex app-server integration](./developing/reference/codex-app-server.md),
   [command menu exposure](./developing/reference/command-menu-exposure.md),
-  and [reactive streams](./developing/reference/reactive-streams.md)
+  [reactive streams](./developing/reference/reactive-streams.md),
+  and [benchmarks](./developing/reference/benchmarks.md)
 - Spec formats (survey for the Design lens):
   [OpenSpec](./developing/reference/spec-formats/openspec.md),
   [Kiro](./developing/reference/spec-formats/kiro.md),

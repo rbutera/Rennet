@@ -487,6 +487,9 @@ pages:
 - **Appearance** — light / dark / system, the interface theme pack, and a
   separate code theme that applies to every code surface including the diff.
 - **Keyboard Shortcuts** — every named command and its binding.
+- **Benchmarks** — a switch for benchmark recording (on by default) and the local
+  history of recorded runs, each broken down by stage and grouped by the harness
+  mode its stages actually name. Nothing here leaves your machine.
 - **Projects** — scoped to one project: its name and mark, worktree location
   and naming pattern, review context, issue tracker, and the guidance rules the
   review agents read. The name is live — renaming here renames the sidebar row,

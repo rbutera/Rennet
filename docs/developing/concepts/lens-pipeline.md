@@ -263,13 +263,14 @@ assertion returns violations without amending a board, coverage annotates a
 revealed board and never rewrites one.
 
 **Per-phase timings are durable and versioned.** One record per phase —
-`report`, each lane's `lens-draft` / `lens-repair` / `lens-post-process`,
+`report` (the whole report gate) and `report-classification` (the provider turn
+inside it), each lane's `lens-draft` / `lens-repair` / `lens-post-process`, plus
 `coverage`, `reveal`, and `first-core-board` — carries the wall-clock start and
 the measured duration. They live on the generation under a versioned `timings`
-record, so no label can absorb another phase's time and later benchmark work
-reads one spine rather than inventing a second. `lens` is discriminated on the
-record: the four lane-scoped phases require it, the three generation-wide ones
-forbid it.
+record, so no label can absorb another phase's time and the
+[benchmark archive](../reference/benchmarks.md) reads this one spine rather than
+measuring anything a second time. `lens` is discriminated on the record: the four
+lane-scoped phases require it, the generation-wide ones forbid it.
 
 Two of those records are measured from a boundary the pipeline does not own.
 `first-core-board` starts from the moment the **reviewer's** wait began — the

@@ -56,6 +56,7 @@ Read these pages in order when you need the whole system:
 | Repository discovery or settings | [Repository bootstrap](./guides/repository-bootstrap.md) and [settings and setup](./guides/settings-and-setup.md) |
 | Interface behavior | [Design doctrine](./concepts/design-doctrine.md) and [the lens pipeline](./concepts/lens-pipeline.md) |
 | Dependencies or build configuration | [Dependency standard](./reference/dependency-standard.md) and [monorepo map](./reference/monorepo-map.md) |
+| How long a stage takes, and on which harness | [Benchmarks](./reference/benchmarks.md) |
 
 ## Source and authority
 
