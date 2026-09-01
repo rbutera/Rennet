@@ -2,14 +2,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  OWNER_LOOP_ROUND_ONE_ASK,
-  OWNER_LOOP_SOURCE,
-  ownerLoopScriptedHarnessPlan,
-} from "./owner-loop-proof-fixture";
+import { OWNER_LOOP_ROUND_ONE_ASK, ownerLoopScriptedHarnessPlan } from "./owner-loop-proof-fixture";
 import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
 
 const askPlanValue = `\${askId}`;
+const evidenceIdsPlanValue = `\${evidenceIds}`;
 const patchsetPlanValue = `\${patchsetId}`;
 
 function writePlan(root: string, plan: unknown): string {
@@ -50,12 +47,9 @@ describe("scripted harness JSON plan", () => {
           askId: OWNER_LOOP_ROUND_ONE_ASK,
           status: "addressed",
           note: "`src/owner.ts` now exports `round-one`.",
-          evidence: {
-            path: OWNER_LOOP_SOURCE,
-            side: "head",
-            startLine: 1,
-            endLine: 1,
-          },
+          // The fixture asks for the round's MEASURED evidence ids rather than naming
+          // a line: content-derived ids cannot be hard-coded in a scripted plan.
+          evidenceIds: evidenceIdsPlanValue,
         },
       ],
       beyond: [],

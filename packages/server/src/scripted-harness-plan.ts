@@ -16,6 +16,10 @@ import { z } from "zod";
 const PATCHSET_PLAN_VALUE = `\${patchsetId}`;
 const CANDIDATE_PLAN_VALUE = `\${candidateId}`;
 const ASK_PLAN_VALUE = `\${askId}`;
+/** Whole-string placeholder: becomes the round's ACTUAL evidence-manifest ids (#727).
+ *  The ids are content-derived from the coding turn's diff, so a scripted plan cannot
+ *  hard-code them — it asks for whatever the host measured. */
+const EVIDENCE_IDS_PLAN_VALUE = `\${evidenceIds}`;
 
 const relativeRepoPath = z
   .string()
@@ -217,14 +221,36 @@ function findDispatchedAskId(value: unknown): string | undefined {
   return undefined;
 }
 
+/** The classifier context's evidence manifest ids, in canonical order. */
+function findEvidenceIds(value: unknown): readonly string[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if ("evidence" in value && Array.isArray(value.evidence)) {
+    const ids = value.evidence.flatMap((unit) =>
+      typeof unit === "object" && unit !== null && "id" in unit && typeof unit.id === "string"
+        ? [unit.id]
+        : [],
+    );
+    if (ids.length > 0) return ids;
+  }
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findEvidenceIds(nested);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function substitutePlanValues(
   value: unknown,
   values: {
     readonly patchsetId: string;
     readonly candidateId?: string;
     readonly askId?: string;
+    readonly evidenceIds?: readonly string[];
   },
 ): unknown {
+  if (value === EVIDENCE_IDS_PLAN_VALUE && values.evidenceIds !== undefined) {
+    return [...values.evidenceIds];
+  }
   if (typeof value === "string") {
     return value
       .replaceAll(PATCHSET_PLAN_VALUE, values.patchsetId)
@@ -379,8 +405,11 @@ function completedOutcome(
   const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
   const needsCandidate = containsPlanValue(step.output, CANDIDATE_PLAN_VALUE);
   const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
+  const needsEvidence = containsPlanValue(step.output, EVIDENCE_IDS_PLAN_VALUE);
   const context =
-    needsPatchset || needsCandidate || needsAsk ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
+    needsPatchset || needsCandidate || needsAsk || needsEvidence
+      ? jsonLayer(prompt, CONTEXT_PREFIX)
+      : undefined;
   const patchsetId = context === undefined ? "" : findPatchsetId(context);
   if (needsPatchset && patchsetId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current patchset id`);
@@ -393,6 +422,10 @@ function completedOutcome(
   if (needsAsk && askId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the dispatched ask id`);
   }
+  const evidenceIds = context === undefined ? undefined : findEvidenceIds(context);
+  if (needsEvidence && evidenceIds === undefined) {
+    throw new Error(`scripted harness step ${step.id} could not resolve the round evidence ids`);
+  }
   return {
     outcome: {
       status: "completed",
@@ -401,6 +434,7 @@ function completedOutcome(
         patchsetId: patchsetId ?? "",
         ...(candidateId === undefined ? {} : { candidateId }),
         ...(askId === undefined ? {} : { askId }),
+        ...(evidenceIds === undefined ? {} : { evidenceIds }),
       }),
     },
     recovered: false,

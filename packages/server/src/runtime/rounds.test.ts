@@ -25,6 +25,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import {
   createRoundsRuntime,
   freezeGeneration,
@@ -605,7 +606,7 @@ describe("createRoundsRuntime", () => {
           askId: "ask-one",
           status: "addressed",
           note: "The exact changed line now carries the requested value.",
-          evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+          evidenceIds: buildRoundEvidenceManifest(diff).map((unit) => unit.id),
         },
       ],
       beyond: [],
@@ -684,6 +685,118 @@ describe("createRoundsRuntime", () => {
     expect(progress[0]?.type).toBe("report");
     expect(recovered.pipeline.report?.boardId).toBe(attempt.draftingReportBoardId);
     expect(recovered.record.reportBoard).toBe(attempt.draftingReportBoardId);
+  });
+
+  it("repeats the classifier call after a crash before projection and lands exactly one report", async () => {
+    // The classifier is side-effect-free before durable projection, so recovery MAY
+    // re-run the provider call. What must hold is the DURABLE side: exactly one report
+    // projection per round, never the first attempt's elements plus the second's.
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-report-crash-repo-"));
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-report-crash-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-report-crash-generation-")),
+    );
+    const boards = createBoardsRuntime(repoRoot);
+    const crashDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
+    const classification = {
+      outcomes: [
+        {
+          askId: "ask-one",
+          status: "addressed",
+          note: "The exact changed line now carries the requested value.",
+          evidenceIds: buildRoundEvidenceManifest(crashDiff).map((unit) => unit.id),
+        },
+      ],
+      beyond: [],
+    };
+    const boardIds = reservedBoardIds("report-crash");
+    const input = roundInput({
+      repoRoot,
+      asksDispatched: ["ask-one"],
+      draftPlan: { generation: "gen:ps-1", boardIds },
+      round: {
+        number: 1,
+        previousGeneration: PREV_GEN.id,
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Replace the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: crashDiff,
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "c0", to: "c1" },
+        },
+      },
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
+    });
+
+    let crashBeforeReportProjection = true;
+    const durableDeps = {
+      boardsRuntimeFor: () => boards,
+      persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) => {
+        if (record.lens === "report" && crashBeforeReportProjection) {
+          crashBeforeReportProjection = false;
+          // The provider already answered; the durable projection never lands.
+          throw new Error("crash before report projection");
+        }
+        meta.save(record);
+      },
+      loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+        meta.listForGeneration(sessionId, generation),
+      removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+      persistGeneration: (generation: Generation) => generations.save(generation),
+      loadGeneration: (id: string) => generations.load(id),
+    } satisfies Partial<RoundsRuntimeDeps>;
+    const withClassifier = (captures: { prompt?: string }[]) =>
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () =>
+          fakeClaudePort(captures, (prompt) =>
+            lensFromPrompt(prompt) === "report"
+              ? classification
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
+      });
+
+    const firstCaptures: { prompt?: string }[] = [];
+    await expect(
+      createRoundsRuntime(withClassifier(firstCaptures)).runRound(input),
+    ).rejects.toThrow("crash before report projection");
+    expect(
+      firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    expect(meta.load(boardIds.report)).toBeUndefined();
+
+    const secondCaptures: { prompt?: string }[] = [];
+    const recovered = await createRoundsRuntime(withClassifier(secondCaptures)).runRound(input);
+
+    // The provider call repeats — that is explicitly allowed, and NOT what is exactly-once.
+    expect(
+      secondCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    expect(recovered.pipeline.report?.boardId).toBe(boardIds.report);
+    expect(meta.load(boardIds.report)?.lens).toBe("report");
+    // Exactly one durable projection: one section and one outcome per dispatched ask,
+    // not the crashed attempt's elements plus the replacement's.
+    const persisted = [...(await boards.service.getState(boardIds.report)).values()] as {
+      readonly kind: string;
+    }[];
+    expect(persisted.filter(({ kind }) => kind === "section")).toHaveLength(1);
+    expect(persisted.filter(({ kind }) => kind === "round_outcome")).toHaveLength(1);
   });
 
   it("redrafts when every lens has exact metadata but the required report does not", async () => {
@@ -1698,6 +1811,14 @@ describe("createRoundsRuntime", () => {
   });
 
   it("does not announce or start lenses until classified report progress settles", async () => {
+    const progressDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
     const round: NonNullable<RoundInput["round"]> = {
       number: 1,
       previousGeneration: PREV_GEN.id,
@@ -1713,21 +1834,21 @@ describe("createRoundsRuntime", () => {
       findingDispositions: {},
       worker: {
         outcome: "completed",
-        diff: [
-          "diff --git a/src/auth.ts b/src/auth.ts",
-          "--- a/src/auth.ts",
-          "+++ b/src/auth.ts",
-          "@@ -1 +1 @@",
-          "-old line",
-          "+new line",
-        ].join("\n"),
+        diff: progressDiff,
         changedPaths: ["src/auth.ts"],
         commitRange: { from: "c0", to: "c1" },
       },
     };
     const classification = {
-      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
-      beyond: [],
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence for this ask." }],
+      beyond: [
+        {
+          ref: "beyond:line",
+          text: "An unrequested line change.",
+          note: "The turn changed a line no ask asked for.",
+          evidenceIds: buildRoundEvidenceManifest(progressDiff).map((unit) => unit.id),
+        },
+      ],
     };
     const start = (onReportProgress: NonNullable<RoundInput["onReportProgress"]>) => {
       const captures: { prompt?: string }[] = [];

@@ -16,6 +16,7 @@ const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
 const patchsetPlanValue = `\${patchsetId}`;
 const candidatePlanValue = `\${candidateId}`;
 const askPlanValue = `\${askId}`;
+const evidenceIdsPlanValue = `\${evidenceIds}`;
 
 function codeRef(id: string): DraftBoard["elements"][number] {
   return {
@@ -242,12 +243,9 @@ function reportClassification(value: string): unknown {
         askId: askPlanValue,
         status: "addressed",
         note: `\`${OWNER_LOOP_SOURCE}\` now exports \`${value}\`.`,
-        evidence: {
-          path: OWNER_LOOP_SOURCE,
-          side: "head",
-          startLine: 1,
-          endLine: 1,
-        },
+        // The whole round is this one ask's work, so the ask owns every measured
+        // evidence id and the `beyond` bucket stays empty (#726).
+        evidenceIds: evidenceIdsPlanValue,
       },
     ],
     beyond: [],

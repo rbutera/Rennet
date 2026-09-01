@@ -86,21 +86,19 @@ describe("lens prompt manifest", () => {
     expect(text.length).toBeGreaterThan(500);
     expect(text).toMatch(/^# /);
     expect(text).toContain("Ground rules");
-    expect(text).toContain("`worker.diff`");
     expect(text).toMatch(/[Nn]ever launder/);
     expect(text).toContain("`outcomes`");
     expect(text).toContain("`beyond`");
-    expect(text).toContain("Never add the unified diff's `a/` or `b/` prefix");
+    // The manifest contract (#727 + #726): cite ids, never coordinates, and place
+    // every id exactly once. The old prompt taught diff line arithmetic; the host
+    // derives every anchor now, so instructions to compute one would be a lie.
+    expect(text).toContain("`evidenceIds`");
     expect(normalized).toContain(
-      "source path from the diff, which on a rename or deletion can differ",
+      "Every manifest id must appear in exactly one place — one ask outcome or one `beyond` entry",
     );
-    expect(normalized).toContain(
-      'Use `side: "head"` for a `+` line and its number in the hunk\'s `+start,count` range',
-    );
-    expect(normalized).toContain(
-      'Use `side: "base"` for a `-` line and its number in the `-start,count` range',
-    );
-    expect(text).toContain("Context lines are not evidence");
+    expect(normalized).toContain("Never write a line number, a range, a path, or a side");
+    expect(text).not.toContain("Never add the unified diff's `a/` or `b/` prefix");
+    expect(text).not.toContain("+start,count");
     expect(text).toContain("Do not emit a document");
     expect(text).not.toContain("Set `document.measure`");
   });

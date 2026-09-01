@@ -1,5 +1,6 @@
 import type { ComposableAsk, HostElement, RoundReportBoard } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import { verifyRoundReportEvidence } from "./round-report-verification";
 
 const author = { kind: "lens-agent" as const, id: "round-report" };
@@ -24,6 +25,16 @@ const diff = [
   "",
 ].join("\n");
 
+/** The manifest ids the host would mint for `diff`, by path — the classifier cites
+ *  these, so the fixtures must too. */
+const evidenceIdFor = (source: string, path: string): string => {
+  const unit = buildRoundEvidenceManifest(source).find((current) => current.path === path);
+  if (unit === undefined) throw new Error(`no manifest evidence for ${path}`);
+  return unit.id;
+};
+const authEvidence = evidenceIdFor(diff, "src/auth.ts");
+const cacheEvidence = evidenceIdFor(diff, "src/cache.ts");
+
 function codeRef(id: string, path: string, start: number): HostElement {
   return {
     id,
@@ -43,7 +54,7 @@ function outcome(
   id: string,
   status: "addressed" | "partial" | "untouched" | "beyond",
   askRef: string,
-  ref?: string,
+  options: { readonly ref?: string; readonly evidenceIds?: readonly string[] } = {},
 ): HostElement {
   return {
     id,
@@ -53,7 +64,8 @@ function outcome(
       status,
       ask: { ref: askRef, text: askRef },
       note: `${status} evidence`,
-      ...(ref === undefined ? {} : { code_ref: ref }),
+      ...(options.evidenceIds === undefined ? {} : { evidence_ids: [...options.evidenceIds] }),
+      ...(options.ref === undefined ? {} : { code_ref: options.ref }),
     },
   };
 }
@@ -142,68 +154,155 @@ function verify(elements: readonly HostElement[], asks: readonly ComposableAsk[]
   });
 }
 
+/** The whole-diff partition the two-hunk `diff` demands: the ask owns its hunk, a
+ *  beyond entry owns the other. Every case below starts from this and breaks one thing. */
+const wholePartition = (): HostElement[] => [
+  codeRef("auth-ref", "src/auth.ts", 9),
+  outcome("auth-outcome", "addressed", "ask-auth", {
+    ref: "auth-ref",
+    evidenceIds: [authEvidence],
+  }),
+  codeRef("cache-ref", "src/cache.ts", 21),
+  outcome("cache-outcome", "beyond", "beyond:cache", {
+    ref: "cache-ref",
+    evidenceIds: [cacheEvidence],
+  }),
+];
+
 describe("verifyRoundReportEvidence", () => {
   it("accepts one evidence-backed outcome per ask plus uniquely identified beyond work", () => {
+    expect(() => verify(wholePartition())).not.toThrow();
+  });
+
+  it("rejects an evidence partition that is not exactly once over the round", () => {
     expect(() =>
       verify([
         codeRef("auth-ref", "src/auth.ts", 9),
-        outcome("auth-outcome", "addressed", "ask-auth", "auth-ref"),
-        codeRef("cache-ref", "src/cache.ts", 21),
-        outcome("cache-outcome", "beyond", "beyond:cache", "cache-ref"),
+        outcome("auth-outcome", "addressed", "ask-auth", {
+          ref: "auth-ref",
+          evidenceIds: [authEvidence],
+        }),
       ]),
-    ).not.toThrow();
+    ).toThrow(`leaves evidence unplaced: ${cacheEvidence}`);
+
+    expect(() =>
+      verify([
+        codeRef("auth-ref", "src/auth.ts", 9),
+        outcome("auth-outcome", "addressed", "ask-auth", {
+          ref: "auth-ref",
+          evidenceIds: [authEvidence],
+        }),
+        codeRef("cache-ref", "src/cache.ts", 21),
+        outcome("cache-outcome", "beyond", "beyond:cache", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence, authEvidence],
+        }),
+      ]),
+    ).toThrow(`places evidence id ${authEvidence} in more than one bucket`);
+
+    expect(() =>
+      verify([
+        codeRef("auth-ref", "src/auth.ts", 9),
+        outcome("auth-outcome", "addressed", "ask-auth", {
+          ref: "auth-ref",
+          evidenceIds: [authEvidence, "ev-invented"],
+        }),
+        codeRef("cache-ref", "src/cache.ts", 21),
+        outcome("cache-outcome", "beyond", "beyond:cache", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence],
+        }),
+      ]),
+    ).toThrow("cites unknown evidence id ev-invented");
   });
 
   it("rejects omitted, duplicate, and invented dispatched ask accounts", () => {
-    expect(() => verify([])).toThrow("omitted dispatched asks: ask-auth");
+    expect(() => verify([])).toThrow(`leaves evidence unplaced: ${authEvidence}`);
     expect(() =>
-      verify([outcome("one", "untouched", "ask-auth"), outcome("two", "untouched", "ask-auth")]),
+      verify([
+        outcome("one", "untouched", "ask-auth"),
+        outcome("two", "untouched", "ask-auth"),
+        codeRef("all", "src/auth.ts", 9),
+        outcome("beyond-all", "beyond", "beyond:all", {
+          ref: "all",
+          evidenceIds: [authEvidence, cacheEvidence],
+        }),
+      ]),
     ).toThrow("repeats dispatched asks: ask-auth");
-    expect(() => verify([outcome("invented", "untouched", "ask-other")])).toThrow(
-      "unknown dispatched ask ask-other",
-    );
+    expect(() =>
+      verify([
+        outcome("invented", "untouched", "ask-other"),
+        outcome("kept", "untouched", "ask-auth"),
+        codeRef("all", "src/auth.ts", 9),
+        outcome("beyond-all", "beyond", "beyond:all", {
+          ref: "all",
+          evidenceIds: [authEvidence, cacheEvidence],
+        }),
+      ]),
+    ).toThrow("unknown dispatched ask ask-other");
   });
 
-  it("rejects a claimed change without a code_ref or with a missing reference", () => {
-    expect(() => verify([outcome("no-ref", "addressed", "ask-auth")])).toThrow(
-      "has no diff evidence anchor",
-    );
-    expect(() => verify([outcome("bad-ref", "partial", "ask-auth", "absent")])).toThrow(
-      "cites missing code_ref absent",
-    );
+  it("rejects a claimed change with no evidence ids or a missing code_ref reference", () => {
+    expect(() =>
+      verify([
+        outcome("no-ids", "addressed", "ask-auth"),
+        codeRef("all", "src/auth.ts", 9),
+        outcome("beyond-all", "beyond", "beyond:all", {
+          ref: "all",
+          evidenceIds: [authEvidence, cacheEvidence],
+        }),
+      ]),
+    ).toThrow("cites no round evidence");
+
+    expect(() =>
+      verify([
+        outcome("bad-ref", "partial", "ask-auth", { ref: "absent", evidenceIds: [authEvidence] }),
+        codeRef("cache-ref", "src/cache.ts", 21),
+        outcome("cache-outcome", "beyond", "beyond:cache", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence],
+        }),
+      ]),
+    ).toThrow("cites missing code_ref absent");
   });
 
-  it("rejects an anchor outside the worker diff path or changed lines", () => {
+  it("rejects an anchor that is not the one the host derives from the cited evidence", () => {
+    const drifted = (mutate: (ref: Extract<HostElement, { kind: "code_ref" }>) => void) => {
+      const anchor = codeRef("auth-ref", "src/auth.ts", 9);
+      if (anchor.kind !== "code_ref") throw new Error("expected code_ref fixture");
+      mutate(anchor);
+      return [
+        anchor,
+        outcome("auth-outcome", "addressed", "ask-auth", {
+          ref: "auth-ref",
+          evidenceIds: [authEvidence],
+        }),
+        codeRef("cache-ref", "src/cache.ts", 21),
+        outcome("cache-outcome", "beyond", "beyond:cache", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence],
+        }),
+      ];
+    };
+
+    // An unchanged context line, a line outside the hunk, a spanning range, and the
+    // wrong side are all the same defect now: not the derived anchor.
     expect(() =>
-      verify([
-        codeRef("other", "src/other.ts", 9),
-        outcome("wrong-path", "addressed", "ask-auth", "other"),
-      ]),
-    ).toThrow("src/other.ts, which is absent from the round diff");
+      verify(drifted((ref) => Object.assign(ref.data, { start_line: 8, end_line: 8 }))),
+    ).toThrow("not the derived head src/auth.ts:9");
     expect(() =>
-      verify([
-        codeRef("outside", "src/auth.ts", 90),
-        outcome("wrong-line", "addressed", "ask-auth", "outside"),
-      ]),
-    ).toThrow("outside the changed lines in the round diff");
-    expect(() =>
-      verify([
-        codeRef("context", "src/auth.ts", 8),
-        outcome("unchanged-context", "addressed", "ask-auth", "context"),
-      ]),
-    ).toThrow("outside the changed lines in the round diff");
-    const spanning = codeRef("spanning", "src/auth.ts", 8);
-    spanning.data.end_line = 9;
-    expect(() =>
-      verify([spanning, outcome("spanning-outcome", "addressed", "ask-auth", "spanning")]),
-    ).toThrow("must cite one exact changed line");
+      verify(drifted((ref) => Object.assign(ref.data, { start_line: 90, end_line: 90 }))),
+    ).toThrow("not the derived head src/auth.ts:9");
+    expect(() => verify(drifted((ref) => Object.assign(ref.data, { end_line: 10 })))).toThrow(
+      "not the derived head src/auth.ts:9",
+    );
+    expect(() => verify(drifted((ref) => Object.assign(ref.data, { side: "base" })))).toThrow(
+      "not the derived head src/auth.ts:9",
+    );
   });
 
   it("rejects any report vocabulary or topology the deterministic host builder cannot emit", () => {
-    const valid = board([
-      codeRef("auth-ref", "src/auth.ts", 9),
-      outcome("auth-outcome", "addressed", "ask-auth", "auth-ref"),
-    ]);
+    const valid = board(wholePartition());
     const section = valid.elements[0];
     const code = valid.elements[1];
     const reportOutcome = valid.elements[2];
@@ -234,8 +333,7 @@ describe("verifyRoundReportEvidence", () => {
       verifyRoundReportEvidence({
         board: rawBoard([
           { ...section, data: { ...section.data, children: [reportOutcome.id, reportOutcome.id] } },
-          code,
-          reportOutcome,
+          ...valid.elements.slice(1),
         ]),
         dispatchedAsks: [ask()],
         expectedPatchsetId: "ps-successor",
@@ -246,7 +344,7 @@ describe("verifyRoundReportEvidence", () => {
 
     expect(() =>
       verifyRoundReportEvidence({
-        board: rawBoard([section, code, reportOutcome, { ...code, id: "uncited-code" }]),
+        board: rawBoard([...valid.elements, { ...code, id: "uncited-code" }]),
         dispatchedAsks: [ask()],
         expectedPatchsetId: "ps-successor",
         diff,
@@ -256,13 +354,8 @@ describe("verifyRoundReportEvidence", () => {
   });
 
   it("rejects drift from deterministic ids, authors, document, and tally", () => {
-    const valid = board([
-      codeRef("auth-ref", "src/auth.ts", 9),
-      outcome("auth-outcome", "addressed", "ask-auth", "auth-ref"),
-    ]);
-    const section = valid.elements[0];
-    const code = valid.elements[1];
-    const reportOutcome = valid.elements[2];
+    const valid = board(wholePartition());
+    const [section, code, reportOutcome] = valid.elements;
     const projectedSection = valid.sections[0];
     if (
       section?.kind !== "section" ||
@@ -287,6 +380,7 @@ describe("verifyRoundReportEvidence", () => {
             section,
             { ...code, id: "renamed-code" },
             { ...reportOutcome, data: { ...reportOutcome.data, code_ref: "renamed-code" } },
+            ...valid.elements.slice(3),
           ]),
         ),
       ),
@@ -298,7 +392,7 @@ describe("verifyRoundReportEvidence", () => {
           rawBoard([
             section,
             { ...code, data: { ...code.data, author: { kind: "lens-agent", id: "other" } } },
-            reportOutcome,
+            ...valid.elements.slice(2),
           ]),
         ),
       ),
@@ -307,7 +401,9 @@ describe("verifyRoundReportEvidence", () => {
     // Whiteboard persistence topologically creates references before their owners, so
     // durable Map order differs from the builder array. Section children own reading order.
     expect(() =>
-      verifyRoundReportEvidence(input(rawBoard([code, reportOutcome, section]))),
+      verifyRoundReportEvidence(
+        input(rawBoard([...valid.elements.slice(1), section], valid.document)),
+      ),
     ).not.toThrow();
 
     expect(() =>
@@ -318,16 +414,27 @@ describe("verifyRoundReportEvidence", () => {
 
     expect(() =>
       verifyRoundReportEvidence(
-        input({ ...valid, sections: [{ ...projectedSection, counts: { outcomes: 2 } }] }),
+        input({ ...valid, sections: [{ ...projectedSection, counts: { outcomes: 5 } }] }),
       ),
     ).toThrow("deterministic section tally");
   });
 
-  it("rejects a stale patchset identity even when the path and changed line match", () => {
-    const stale = codeRef("stale", "src/auth.ts", 9);
+  it("rejects a stale patchset identity even when the derived anchor matches", () => {
+    const stale = codeRef("auth-ref", "src/auth.ts", 9);
     stale.data.patchset_id = "ps-before";
     expect(() =>
-      verify([stale, outcome("stale-outcome", "addressed", "ask-auth", "stale")]),
+      verify([
+        stale,
+        outcome("auth-outcome", "addressed", "ask-auth", {
+          ref: "auth-ref",
+          evidenceIds: [authEvidence],
+        }),
+        codeRef("cache-ref", "src/cache.ts", 21),
+        outcome("cache-outcome", "beyond", "beyond:cache", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence],
+        }),
+      ]),
     ).toThrow("cites patchset ps-before, not ps-successor");
   });
 
@@ -335,43 +442,82 @@ describe("verifyRoundReportEvidence", () => {
     const rewritten = outcome("rewritten", "untouched", "ask-auth");
     if (rewritten.kind !== "round_outcome") throw new Error("expected round outcome fixture");
     rewritten.data.ask.text = "A rewritten instruction";
-    expect(() => verify([rewritten])).toThrow("rewrites dispatched ask ask-auth");
+    expect(() =>
+      verify([
+        rewritten,
+        codeRef("all", "src/auth.ts", 9),
+        outcome("beyond-all", "beyond", "beyond:all", {
+          ref: "all",
+          evidenceIds: [authEvidence, cacheEvidence],
+        }),
+      ]),
+    ).toThrow("rewrites dispatched ask ask-auth");
 
     expect(() =>
       verify([
         codeRef("cache-ref", "src/cache.ts", 21),
-        outcome("wrong-file", "addressed", "ask-auth", "cache-ref"),
+        outcome("wrong-file", "addressed", "ask-auth", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence],
+        }),
+        codeRef("auth-ref", "src/auth.ts", 9),
+        outcome("beyond-auth", "beyond", "beyond:auth", {
+          ref: "auth-ref",
+          evidenceIds: [authEvidence],
+        }),
       ]),
-    ).toThrow("cites src/cache.ts, not the asked path src/auth.ts");
+    ).toThrow("cites no evidence on the asked path src/auth.ts");
   });
 
   it("rejects change evidence on an untouched ask", () => {
     expect(() =>
       verify([
-        codeRef("auth-ref", "src/auth.ts", 9),
-        outcome("untouched-with-ref", "untouched", "ask-auth", "auth-ref"),
+        outcome("untouched-with-ids", "untouched", "ask-auth", { evidenceIds: [authEvidence] }),
+        codeRef("cache-ref", "src/cache.ts", 21),
+        outcome("cache-outcome", "beyond", "beyond:cache", {
+          ref: "cache-ref",
+          evidenceIds: [cacheEvidence],
+        }),
       ]),
     ).toThrow("marks untouched ask ask-auth with change evidence");
   });
 
-  it("rejects binary and no-hunk file paths as line evidence", () => {
+  it("accepts binary and mode-only evidence with no anchor, and rejects one that invents a line", () => {
     const binaryDiff = [
       "diff --git a/image.png b/image.png",
       "index 1111111..2222222 100644",
       "Binary files a/image.png and b/image.png differ",
       "",
     ].join("\n");
+    const binaryEvidence = evidenceIdFor(binaryDiff, "image.png");
+    const binaryInput = (elements: readonly HostElement[]) => ({
+      board: board(elements),
+      dispatchedAsks: [ask("ask-auth", "image.png")],
+      expectedPatchsetId: "ps-successor",
+      diff: binaryDiff,
+      changedPaths: ["image.png"],
+    });
+
+    // The change is real and the ask is addressed by it; there is simply no line to
+    // cite. The old contract could not express this and rejected the round.
     expect(() =>
-      verifyRoundReportEvidence({
-        board: board([
-          codeRef("binary", "image.png", 1),
-          outcome("binary-outcome", "addressed", "ask-auth", "binary"),
+      verifyRoundReportEvidence(
+        binaryInput([
+          outcome("binary-outcome", "addressed", "ask-auth", { evidenceIds: [binaryEvidence] }),
         ]),
-        dispatchedAsks: [ask("ask-auth", "image.png")],
-        expectedPatchsetId: "ps-successor",
-        diff: binaryDiff,
-        changedPaths: ["image.png"],
-      }),
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      verifyRoundReportEvidence(
+        binaryInput([
+          codeRef("binary", "image.png", 1),
+          outcome("binary-outcome", "addressed", "ask-auth", {
+            ref: "binary",
+            evidenceIds: [binaryEvidence],
+          }),
+        ]),
+      ),
     ).toThrow("has no line-addressable change");
 
     const modeOnlyDiff = [
@@ -380,21 +526,21 @@ describe("verifyRoundReportEvidence", () => {
       "new mode 100755",
       "",
     ].join("\n");
+    const modeEvidence = evidenceIdFor(modeOnlyDiff, "script.sh");
     expect(() =>
       verifyRoundReportEvidence({
         board: board([
-          codeRef("mode", "script.sh", 1),
-          outcome("mode-outcome", "addressed", "ask-auth", "mode"),
+          outcome("mode-outcome", "addressed", "ask-auth", { evidenceIds: [modeEvidence] }),
         ]),
         dispatchedAsks: [ask("ask-auth", "script.sh")],
         expectedPatchsetId: "ps-successor",
         diff: modeOnlyDiff,
         changedPaths: ["script.sh"],
       }),
-    ).toThrow("has no line-addressable change");
+    ).not.toThrow();
   });
 
-  it("accepts exact changed-line evidence through a rename alias", () => {
+  it("accepts a derived anchor through a rename alias", () => {
     const renameDiff = [
       "diff --git a/src/old.ts b/src/new.ts",
       "similarity index 80%",
@@ -408,10 +554,21 @@ describe("verifyRoundReportEvidence", () => {
       " keep",
       "",
     ].join("\n");
-    const renamed = codeRef("renamed", "src/new.ts", 4);
+    const units = buildRoundEvidenceManifest(renameDiff);
+    const renameUnit = units.find((unit) => unit.kind === "rename");
+    const hunkUnit = units.find((unit) => unit.kind === "text-hunk");
+    if (renameUnit === undefined || hunkUnit === undefined) {
+      throw new Error("expected a rename and a hunk in the rename fixture");
+    }
     expect(() =>
       verifyRoundReportEvidence({
-        board: board([renamed, outcome("renamed-outcome", "addressed", "ask-auth", "renamed")]),
+        board: board([
+          codeRef("renamed", "src/new.ts", 4),
+          outcome("renamed-outcome", "addressed", "ask-auth", {
+            ref: "renamed",
+            evidenceIds: [renameUnit.id, hunkUnit.id],
+          }),
+        ]),
         dispatchedAsks: [ask("ask-auth", "src/old.ts")],
         expectedPatchsetId: "ps-successor",
         diff: renameDiff,
@@ -436,7 +593,10 @@ describe("verifyRoundReportEvidence", () => {
       verifyRoundReportEvidence({
         board: board([
           codeRef("large", "src/large.ts", 2),
-          outcome("large-outcome", "addressed", "ask-auth", "large"),
+          outcome("large-outcome", "addressed", "ask-auth", {
+            ref: "large",
+            evidenceIds: [evidenceIdFor(largeDiff, "src/large.ts")],
+          }),
         ]),
         dispatchedAsks: [ask("ask-auth", "src/large.ts")],
         expectedPatchsetId: "ps-successor",
@@ -451,15 +611,21 @@ describe("verifyRoundReportEvidence", () => {
       verify([
         outcome("ask", "untouched", "ask-auth"),
         codeRef("cache", "src/cache.ts", 21),
-        outcome("beyond-one", "beyond", "beyond:cache", "cache"),
-        outcome("beyond-two", "beyond", "beyond:cache", "cache"),
+        outcome("beyond-one", "beyond", "beyond:cache", {
+          ref: "cache",
+          evidenceIds: [cacheEvidence],
+        }),
+        outcome("beyond-two", "beyond", "beyond:cache", { evidenceIds: [authEvidence] }),
       ]),
     ).toThrow("repeats beyond-ask reference beyond:cache");
     expect(() =>
       verify([
         outcome("ask", "untouched", "ask-auth"),
         codeRef("auth", "src/auth.ts", 9),
-        outcome("mislabelled", "beyond", "ask-auth", "auth"),
+        outcome("mislabelled", "beyond", "ask-auth", {
+          ref: "auth",
+          evidenceIds: [authEvidence, cacheEvidence],
+        }),
       ]),
     ).toThrow("marks dispatched ask ask-auth as beyond");
   });

@@ -65,22 +65,23 @@ and calls board regeneration through this runtime.
 0. **Round-report first** (on landed rounds only). When a coding round returns
    with its exact worker receipt, the `round-report` seat makes one structured
    semantic-classification turn before any lens drafter starts. Its context is
-   only the successor patchset id, the durable dispatched asks, and the exact
-   coding-turn receipt: diff, changed paths, and observed commit range. It does
-   not receive the full DeltaPacket or the all-kind board schema. Each ask is
+   only the successor patchset id, the durable dispatched asks, the worker's
+   changed paths and observed commit range, and the round's **evidence manifest**
+   (see the classifier evidence contract below). It does not receive the full
+   DeltaPacket, the all-kind board schema, or the verbatim diff. Each ask is
    reduced to its durable id, path, instruction, and optional source anchor, so
-   stale prior-diff context cannot compete with the coding turn's measured diff.
-   The host sorts the outcomes and builds the document, section,
-   outcomes, and code refs deterministically, then verifies every claimed anchor
-   against an exact changed line on the durable ask's path (including a measured
-   rename alias) before persistence. Readback also requires the exact ask text and
-   forbids change evidence on an `untouched` outcome. There is no model retry or
-   generic post-process turn on this path. The resulting board is both the
-   reviewer's greeting and the lens drafters' input. Here, **legacy caller** means
-   an injected pipeline caller that supplies the older round context without an
-   exact worker receipt. It retains the generic drafting path for compatibility.
-   A live durable coding round always carries the receipt and never selects that
-   path.
+   stale prior-diff context cannot compete with the coding turn's measured
+   evidence. The host sorts the outcomes and builds the document, section,
+   outcomes, and code refs deterministically — including every line anchor, which
+   it derives from the cited evidence rather than reading from the model. It then
+   verifies the whole partition and every derived anchor before persistence.
+   Readback also requires the exact ask text and forbids change evidence on an
+   `untouched` outcome. There is no model retry or generic post-process turn on
+   this path. The resulting board is both the reviewer's greeting and the lens
+   drafters' input. Here, **legacy caller** means an injected pipeline caller that
+   supplies the older round context without an exact worker receipt. It retains
+   the generic drafting path (and the verbatim diff) for compatibility. A live
+   durable coding round always carries the receipt and never selects that path.
 1. **Draft.** One agent per lens receives the delta context and its lens
    prompt, plus the host board schema derived once from the frozen
    `DraftBoardSchema`, and returns a structured board. Each drafting instruction
@@ -231,6 +232,62 @@ order is repeatable after a crash and prevents stale metadata from presenting a
 partially cleared board as complete. A malformed or semantically invalid report
 is scrubbed the same way before one fresh classification turn.
 
+## The classifier evidence contract
+
+The round-report classification turn is bounded on both sides, locally, with the
+limits declared once in `@rennet/protocol`'s `round-evidence` module. The numbers
+below are those constants; if they disagree with the code, the code is right and
+this page is a bug.
+
+**What goes in.** The host parses the coding turn's measured diff into a
+canonically ordered **evidence manifest**. Each unit carries a stable
+content-derived id (`ev-` plus 16 hex characters of a SHA-256 over the unit's kind,
+path, and identity — hunk text, mode pair, previous path, or change status), so the
+same change yields the same id on every build and unrelated units appearing or
+disappearing never renumber a surviving one. The order is path (compared by code
+unit, never a locale-dependent comparator), then kind (`rename`, `mode-change`,
+`binary`, `text-hunk`), then position within the file.
+
+Evidence is a discriminated union, and **no variant invents a line anchor**:
+
+| Variant | Carries | Anchor |
+| --- | --- | --- |
+| `text-hunk` | The verbatim `@@` header and body | The hunk's first added line, or its first deleted line when it only removes |
+| `rename` | The head path and the previous path | None |
+| `mode-change` | The old and new file modes | None |
+| `binary` | The path and the change status | None |
+
+A file that both moved and changed contributes a `rename` unit *and* its
+`text-hunk` units, so a mixed change stays lossless across variants.
+
+**The input budget.** The complete serialized manifest is measured in UTF-8 bytes
+by one serializer: at or under **262,144 bytes** and **400 entries** it is sent
+intact; over either limit produces a typed local failure with **zero provider
+calls**, routed to the durable round-failure path. Nothing is truncated, split, or
+summarized to fit — a manifest that fits by omission would classify a change that
+did not happen.
+
+**What comes back.** The classifier returns outcomes and `beyond` entries that cite
+manifest ids in `evidenceIds`; it never writes a path, a side, or a line number.
+The provider's raw response is capped at **131,072 UTF-8 bytes**, enforced at the
+harness transport boundary in both the Claude and the Codex adapter *before*
+structured-output decoding — core only ever sees decoded values, so a core-side
+check would already be too late. Decoded cardinality limits then apply before
+persistence: at most **100** `beyond` entries, and exactly one outcome per
+dispatched ask.
+
+**The partition.** Every manifest id appears in exactly one ask outcome or the
+`beyond asks` bucket. Unknown, duplicated, and omitted ids are all rejected before
+anything is persisted, and the accepted ids are stored on the board's
+`round_outcome` elements, so a recovered report is re-verified against the measured
+diff rather than trusted.
+
+**When it fails.** Every limit above fails typed to the durable round-failure path
+and spawns no further turn — a cap failure never becomes another classification
+attempt. Because the classifier is side-effect-free before durable projection,
+recovery after a crash MAY repeat the provider call; what is guaranteed is exactly
+one durable report projection per round, not exactly-once remote invocation.
+
 ## Reading a board back
 
 A drafted board lands in two durable places. Its elements go to the whiteboard
@@ -259,7 +316,8 @@ selectable with explicit empty-state copy, and stops polling. Sequence requires
 a reading result; a semantically empty return gets one explicit retry, then
 becomes a retryable lens failure rather than an arrival. A landed-round report
 gets exactly one classification turn and fails honestly when that classification
-omits an ask or cites evidence outside the measured coding-turn diff. A plain
+omits an ask, cites evidence outside the measured coding-turn diff, or fails to
+partition that evidence exactly once. A plain
 `null` remains missing because the board may still be in flight. No board is
 assembled from another generation's elements.
 
@@ -297,8 +355,8 @@ from the branch name, commit messages, and PR body. GitHub is first-class via
 environment variable). The bounded dossier is inlined verbatim into lens
 drafting prompts, and the orchestrator and round workers can receive it too.
 The landed-round report classifier intentionally receives only the successor
-patchset id, durable asks, and exact worker receipt; full raw payloads stay
-behind a context tool. Items are structured (id, tracker, title, state, bounded body,
+patchset id, durable asks, the worker's identity, and the round's evidence
+manifest; full raw payloads stay behind a context tool. Items are structured (id, tracker, title, state, bounded body,
 acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
 how ticket citations reach boards. Standing project background is not fetched
 for the drafter: a drafter that wants it reads the repository it is standing in.

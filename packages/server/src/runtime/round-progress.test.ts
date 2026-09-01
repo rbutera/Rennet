@@ -34,6 +34,7 @@ import {
   readPriorGeneration,
   runBoardRegeneration,
 } from "./round-collation";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import { RoundProgressHub, roundEventsForDurableOperation } from "./round-progress";
 import { createRoundsRuntime, mintGeneration, type RoundOutcome } from "./rounds";
 
@@ -1120,12 +1121,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
             askId: ask.id,
             status: "addressed",
             note: `Verified round ${round}.`,
-            evidence: {
-              path: "src/a.ts",
-              side: "head",
-              startLine: 2,
-              endLine: 2,
-            },
+            evidenceIds: buildRoundEvidenceManifest(WORKER_DIFF).map((unit) => unit.id),
           },
         ],
         beyond: [],

@@ -14,6 +14,8 @@ import {
   findingRefKey,
   type LensKind,
   lensAdmitsAbsence,
+  ROUND_EVIDENCE_MANIFEST_MAX_BYTES,
+  ROUND_REPORT_OUTPUT_MAX_BYTES,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -33,6 +35,26 @@ import {
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
+import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
+
+// ── Round-report classifier fixtures (#727) ────────────────────────────────────
+
+/** The manifest ids the host mints for a fixture diff. Classification fixtures cite
+ *  these exactly as a live classifier does — the ids are content-derived, so a fixture
+ *  cannot hard-code one and drift from the diff beside it. */
+const manifestIds = (diff: string): string[] =>
+  buildRoundEvidenceManifest(diff).map((unit) => unit.id);
+
+/** One changed line in `src/auth.ts` — one manifest entry. */
+const ONE_LINE_DIFF = [
+  "diff --git a/src/auth.ts b/src/auth.ts",
+  "--- a/src/auth.ts",
+  "+++ b/src/auth.ts",
+  "@@ -1 +1 @@",
+  "-old line",
+  "+new line",
+].join("\n");
+const [ONE_LINE_EVIDENCE] = manifestIds(ONE_LINE_DIFF);
 
 // ── Flagged-board fixtures (5.2) ────────────────────────────────────────────────
 
@@ -638,6 +660,7 @@ interface HarnessCapture {
   model?: string;
   prompt?: string;
   outputSchema?: unknown;
+  outputByteCap?: number;
 }
 
 /** A fake Claude port: captures the resolved session and answers a lens-appropriate board. */
@@ -646,10 +669,15 @@ function fakeClaudePort(
   bodyFor: (prompt: string) => unknown,
 ): HarnessPort {
   return {
-    createSession: async (options: { model?: string; outputSchema?: unknown }) => {
+    createSession: async (options: {
+      model?: string;
+      outputSchema?: unknown;
+      outputByteCap?: number;
+    }) => {
       const capture: HarnessCapture = {
         model: options.model,
         outputSchema: options.outputSchema,
+        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
       };
       captures.push(capture);
       return {
@@ -3320,16 +3348,23 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const diagnostics: RoundReportDiagnosticMilestone[] = [];
     const diagnosticTimes = [100, 110, 105, 120, 115, 130, 125];
     let reportTurns = 0;
+    // Three hunks, so the round has three manifest entries and the classification can
+    // partition them across an addressed ask, a partial ask, and one beyond entry.
     const workerDiff = [
       "diff --git a/src/auth.ts b/src/auth.ts",
       "--- a/src/auth.ts",
       "+++ b/src/auth.ts",
-      "@@ -1,2 +1,2 @@",
+      "@@ -1 +1 @@",
       "-old first line",
-      "-old second line",
       "+new first line",
+      "@@ -10 +10 @@",
+      "-old second line",
       "+new second line",
+      "@@ -20 +20 @@",
+      "-old neighbor line",
+      "+new neighbor line",
     ].join("\n");
+    const [firstEvidence, secondEvidence, neighborEvidence] = manifestIds(workerDiff);
     const round = {
       number: 2,
       previousGeneration: "gen:ps-0",
@@ -3371,36 +3406,21 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-second",
                 status: "partial",
                 note: "The second line moved, but its follow-up remains.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 2,
-                  endLine: 2,
-                },
+                evidenceIds: [secondEvidence],
               },
               {
                 askId: "ask-first",
                 status: "addressed",
                 note: "The first line now carries the requested value.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: [firstEvidence],
               },
             ],
             beyond: [
               {
                 ref: "beyond:first-line-cleanup",
                 text: "Tighten the neighboring first-line wording.",
-                note: "The same changed line includes a small neighboring cleanup.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                note: "A neighboring line the asks never mentioned also changed.",
+                evidenceIds: [neighborEvidence],
               },
             ],
           };
@@ -3435,11 +3455,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(reportTurns).toBe(1);
     expect(reportCaptures).toHaveLength(1);
     expect(reportCaptures[0]?.model).toBe("sonnet-5");
+    // The classifier's raw-response cap rides the session spec into the adapter (#727).
+    expect(reportCaptures[0]?.outputByteCap).toBe(ROUND_REPORT_OUTPUT_MAX_BYTES);
     const outputSchema = reportCaptures[0]?.outputSchema;
     const reportSchema = JSON.stringify(outputSchema);
     expect(reportSchema).toContain('"askId"');
-    expect(reportSchema).toContain('"evidence"');
+    expect(reportSchema).toContain('"evidenceIds"');
     expect(reportSchema).toContain('"beyond"');
+    // No output shape can carry a line number: the host derives every anchor.
+    expect(reportSchema).not.toContain('"startLine"');
     expect(reportSchema).not.toContain('"elements"');
     expect(reportSchema).not.toContain('"document"');
     expect(reportSchema).not.toContain('"round_outcome"');
@@ -3467,9 +3491,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const untouchedSchema = branchFor("untouched");
     expect(addressedSchema).toBeDefined();
     expect(untouchedSchema).toBeDefined();
-    expect(addressedSchema?.required).toContain("evidence");
-    expect(untouchedSchema?.required).not.toContain("evidence");
-    expect(untouchedSchema?.properties).not.toHaveProperty("evidence");
+    expect(addressedSchema?.required).toContain("evidenceIds");
+    expect(untouchedSchema?.required).not.toContain("evidenceIds");
+    expect(untouchedSchema?.properties).not.toHaveProperty("evidenceIds");
     expect(untouchedSchema?.additionalProperties).toBe(false);
     const reportPrompt = reportCaptures[0]?.prompt ?? "";
     const reportContext = /rennet:layer context>>>\n(\{.*)/s.exec(reportPrompt);
@@ -3486,7 +3510,13 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         },
         { id: "ask-second", path: "src/auth.ts", instruction: "Replace the second line." },
       ],
-      worker: round.worker,
+      // The verbatim diff no longer crosses this boundary; the measured manifest does.
+      worker: {
+        outcome: "completed",
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "before", to: "after" },
+      },
+      evidence: buildRoundEvidenceManifest(workerDiff),
     });
     expect(reportPrompt).not.toContain("hostSchema");
     expect(reportPrompt).not.toContain("deltaPacket");
@@ -3528,6 +3558,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       ["partial", "ask-second", "Replace the second line."],
       ["beyond", "beyond:first-line-cleanup", "Tighten the neighboring first-line wording."],
     ]);
+    // Every manifest id lands in exactly one outcome (#726), durably on the board.
+    expect(outcomes.flatMap((element) => element.data.evidence_ids ?? []).sort()).toEqual(
+      [firstEvidence, secondEvidence, neighborEvidence].sort(),
+    );
     const addressed = outcomes[0];
     const addressedCodeRef =
       addressed?.kind === "round_outcome"
@@ -3556,8 +3590,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
   it("awaits classified report handoff before starting any lens and aborts on rejection", async () => {
     const classification = {
-      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
-      beyond: [],
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence for this ask." }],
+      beyond: [
+        {
+          ref: "beyond:line",
+          text: "An unrequested line change.",
+          note: "The turn changed a line no ask asked for.",
+          evidenceIds: [ONE_LINE_EVIDENCE],
+        },
+      ],
     };
     const round = {
       number: 1,
@@ -3574,14 +3615,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       findingDispositions: {},
       worker: {
         outcome: "completed" as const,
-        diff: [
-          "diff --git a/src/auth.ts b/src/auth.ts",
-          "--- a/src/auth.ts",
-          "+++ b/src/auth.ts",
-          "@@ -1 +1 @@",
-          "-old line",
-          "+new line",
-        ].join("\n"),
+        diff: ONE_LINE_DIFF,
         changedPaths: ["src/auth.ts"],
         commitRange: { from: "before", to: "after" },
       },
@@ -3650,7 +3684,70 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(rejected.lensTurns()).toBe(0);
   });
 
+  it("fails an over-budget evidence manifest with zero provider calls and no truncation", async () => {
+    const applied: Applied[] = [];
+    const captures: HarnessCapture[] = [];
+    // One hunk whose body alone exceeds the manifest budget: the round is honestly too
+    // big to classify, which is a typed local failure, never a shortened manifest.
+    const hugeDiff = [
+      "diff --git a/src/huge.ts b/src/huge.ts",
+      "--- a/src/huge.ts",
+      "+++ b/src/huge.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      `+${"x".repeat(ROUND_EVIDENCE_MANIFEST_MAX_BYTES)}`,
+    ].join("\n");
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:oversized",
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-0",
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/huge.ts",
+            type: "request-change",
+            instruction: "Rewrite the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: hugeDiff,
+          changedPaths: ["src/huge.ts"],
+          commitRange: { from: "before", to: "after" },
+        },
+      },
+      hunks: [],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    }).catch((error: unknown) => error as Error);
+
+    const failure = result instanceof Error ? result.message : result.report?.failure;
+    expect(failure).toContain(`over the ${ROUND_EVIDENCE_MANIFEST_MAX_BYTES}-byte limit`);
+    expect(failure).toContain("classification was not attempted");
+    // Zero provider calls: not one session was opened for any seat.
+    expect(captures).toHaveLength(0);
+    expect(applied).toHaveLength(0);
+  });
+
   it("accepts the guarded one-line widget turn after one classification turn", async () => {
+    const widgetDiff = [
+      "diff --git a/src/widget.ts b/src/widget.ts",
+      "--- a/src/widget.ts",
+      "+++ b/src/widget.ts",
+      "@@ -1 +1 @@",
+      "-export const widget = 2;",
+      "+export const widget = 3;",
+    ].join("\n");
     let reportTurns = 0;
     const applied: Applied[] = [];
     const result = await runLensPipeline({
@@ -3664,12 +3761,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-one",
                 status: "addressed",
                 note: "The exact changed line now carries the requested value.",
-                evidence: {
-                  path: "src/widget.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: manifestIds(widgetDiff),
               },
             ],
             beyond: [],
@@ -3701,14 +3793,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         findingDispositions: {},
         worker: {
           outcome: "completed",
-          diff: [
-            "diff --git a/src/widget.ts b/src/widget.ts",
-            "--- a/src/widget.ts",
-            "+++ b/src/widget.ts",
-            "@@ -1 +1 @@",
-            "-export const widget = 2;",
-            "+export const widget = 3;",
-          ].join("\n"),
+          diff: widgetDiff,
           changedPaths: ["src/widget.ts"],
           commitRange: { from: "before", to: "after" },
         },
@@ -3754,14 +3839,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       findingDispositions: {},
       worker: {
         outcome: "completed" as const,
-        diff: [
-          "diff --git a/src/auth.ts b/src/auth.ts",
-          "--- a/src/auth.ts",
-          "+++ b/src/auth.ts",
-          "@@ -1 +1 @@",
-          "-old line",
-          "+new line",
-        ].join("\n"),
+        diff: ONE_LINE_DIFF,
         changedPaths: ["src/auth.ts"],
         commitRange: { from: "before", to: "after" },
       },
@@ -3815,12 +3893,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-one",
                 status: "addressed",
                 note: "The exact changed line now carries the requested value.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: [ONE_LINE_EVIDENCE],
               },
             ],
             beyond: [],
@@ -3872,49 +3945,55 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it.each([
     ["missing durable ask", { outcomes: [], beyond: [] }, "omitted dispatched asks: ask-one"],
     [
-      "unified-diff-prefixed path",
+      "invented evidence id",
       {
         outcomes: [
           {
             askId: "ask-one",
             status: "addressed",
             note: "The exact changed line carries the request.",
-            evidence: { path: "b/src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+            evidenceIds: ["ev-not-in-this-round"],
           },
         ],
         beyond: [],
       },
-      "absent from the round diff",
+      "cites unknown evidence id ev-not-in-this-round",
     ],
     [
-      "anchor outside the measured diff",
+      "unplaced evidence",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "untouched",
+            note: "The turn changed something, but not this ask.",
+          },
+        ],
+        beyond: [],
+      },
+      "leaves evidence unplaced",
+    ],
+    [
+      "evidence claimed twice",
       {
         outcomes: [
           {
             askId: "ask-one",
             status: "addressed",
-            note: "The ask changed elsewhere.",
-            evidence: { path: "src/auth.ts", side: "head", startLine: 99, endLine: 99 },
+            note: "The changed line carries the request.",
+            evidenceIds: [ONE_LINE_EVIDENCE],
           },
         ],
-        beyond: [],
-      },
-      "outside the changed lines",
-    ],
-    [
-      "range that only happens to span a changed line",
-      {
-        outcomes: [
+        beyond: [
           {
-            askId: "ask-one",
-            status: "addressed",
-            note: "The range includes the changed line and unrelated context.",
-            evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 2 },
+            ref: "beyond:same-line",
+            text: "The same line, claimed again.",
+            note: "Double-counting the one change the turn made.",
+            evidenceIds: [ONE_LINE_EVIDENCE],
           },
         ],
-        beyond: [],
       },
-      "classification output was invalid",
+      "in more than one bucket",
     ],
     [
       "addressed ask without required evidence",
@@ -3923,7 +4002,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           {
             askId: "ask-one",
             status: "addressed",
-            note: "The ask changed, but this claim has no anchor.",
+            note: "The ask changed, but this claim cites nothing.",
           },
         ],
         beyond: [],
@@ -3938,7 +4017,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             askId: "ask-one",
             status: "untouched",
             note: "The exact diff does not establish the request.",
-            evidence: { path: "src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+            evidenceIds: [ONE_LINE_EVIDENCE],
           },
         ],
         beyond: [],
@@ -3985,14 +4064,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           findingDispositions: {},
           worker: {
             outcome: "completed",
-            diff: [
-              "diff --git a/src/auth.ts b/src/auth.ts",
-              "--- a/src/auth.ts",
-              "+++ b/src/auth.ts",
-              "@@ -1 +1 @@",
-              "-old line",
-              "+new line",
-            ].join("\n"),
+            diff: ONE_LINE_DIFF,
             changedPaths: ["src/auth.ts"],
             commitRange: { from: "before", to: "after" },
           },
@@ -4294,6 +4366,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         data: { author: hostAuthor, markdown: "**First ask**\n\nFixed." },
       } as DraftBoard["elements"][number],
     ]);
+    const retryDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-outsideRetry();",
+      "+insideRetry();",
+    ].join("\n");
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => {
         const lens = lensFromPrompt(prompt);
@@ -4308,12 +4388,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 askId: "ask-2",
                 status: "addressed",
                 note: "The retry boundary now owns the refresh.",
-                evidence: {
-                  path: "src/auth.ts",
-                  side: "head",
-                  startLine: 1,
-                  endLine: 1,
-                },
+                evidenceIds: manifestIds(retryDiff),
               },
             ],
             beyond: [],
@@ -4341,14 +4416,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         findingDispositions: {},
         worker: {
           outcome: "completed",
-          diff: [
-            "diff --git a/src/auth.ts b/src/auth.ts",
-            "--- a/src/auth.ts",
-            "+++ b/src/auth.ts",
-            "@@ -1 +1 @@",
-            "-outsideRetry();",
-            "+insideRetry();",
-          ].join("\n"),
+          diff: retryDiff,
           changedPaths: ["src/auth.ts"],
           commitRange: { from: "same-head", to: "same-head" },
         },

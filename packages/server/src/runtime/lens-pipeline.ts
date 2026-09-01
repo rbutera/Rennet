@@ -62,6 +62,10 @@ import {
   type LensFailureClassification,
   type LensKind,
   parseDraft,
+  ROUND_REPORT_MAX_BEYOND_ENTRIES,
+  ROUND_REPORT_OUTPUT_MAX_BYTES,
+  type RoundEvidenceAnchor,
+  type RoundEvidenceUnit,
   type RoundReportDiagnosticMilestone,
   resolveBoardDocument,
   SEVERITY_LEVELS,
@@ -69,6 +73,11 @@ import {
 } from "@rennet/protocol";
 import { z } from "zod";
 import { projectRoundReportBoard } from "./lens-board-read";
+import {
+  buildRoundEvidenceManifest,
+  measureRoundEvidenceManifest,
+  verifyRoundEvidencePartition,
+} from "./round-evidence-manifest";
 import {
   CLASSIFIED_ROUND_REPORT_AUTHOR,
   CLASSIFIED_ROUND_REPORT_SECTION_ID,
@@ -106,17 +115,13 @@ import {
 // ── The board output schema (the host schema the drafter's session is constrained to) ──
 
 let cachedBoardSchema: unknown;
-const RoundReportEvidenceSchema = z
-  .object({
-    path: z.string().min(1),
-    side: z.enum(["base", "head"]),
-    startLine: z.number().int().positive(),
-    endLine: z.number().int().positive(),
-  })
-  .strict()
-  .refine((evidence) => evidence.startLine === evidence.endLine, {
-    message: "evidence must cite one exact changed line",
-  });
+/**
+ * The classifier cites MANIFEST IDS, never coordinates (#727). Every id the host put
+ * in the manifest lands in exactly one bucket, and the host derives the displayed line
+ * anchor from the hunk it parsed itself — so no output shape can invent a line number
+ * for a rename, a mode change, or a binary file.
+ */
+const RoundReportEvidenceIdsSchema = z.array(z.string().min(1)).min(1);
 const RoundReportClassificationSchema = z
   .object({
     outcomes: z.array(
@@ -126,7 +131,7 @@ const RoundReportClassificationSchema = z
             askId: z.string().min(1),
             status: z.literal("addressed"),
             note: z.string().trim().min(1),
-            evidence: RoundReportEvidenceSchema,
+            evidenceIds: RoundReportEvidenceIdsSchema,
           })
           .strict(),
         z
@@ -134,7 +139,7 @@ const RoundReportClassificationSchema = z
             askId: z.string().min(1),
             status: z.literal("partial"),
             note: z.string().trim().min(1),
-            evidence: RoundReportEvidenceSchema,
+            evidenceIds: RoundReportEvidenceIdsSchema,
           })
           .strict(),
         z
@@ -152,7 +157,7 @@ const RoundReportClassificationSchema = z
           ref: z.string().min(1),
           text: z.string().trim().min(1),
           note: z.string().trim().min(1),
-          evidence: RoundReportEvidenceSchema,
+          evidenceIds: RoundReportEvidenceIdsSchema,
         })
         .strict(),
     ),
@@ -1033,11 +1038,16 @@ type LandedRoundDraftContext = RoundDraftContext & {
  * The report classifier receives only the identity and evidence needed to judge this
  * coding turn. The full DeltaPacket and all-kind board schema belong to lens drafting,
  * not to the per-ask classification boundary.
+ *
+ * `evidence` is the measured manifest, which REPLACES the verbatim `worker.diff` that
+ * used to ride here uncapped (#727). The worker's own account (paths, commit range)
+ * still travels as identity; it was never authority.
  */
 export function renderRoundReportClassifierPrompt(
   promptText: string,
   patchsetId: string,
   round: LandedRoundDraftContext,
+  evidence: readonly RoundEvidenceUnit[],
 ): string {
   const context = JSON.stringify({
     patchsetId,
@@ -1048,31 +1058,60 @@ export function renderRoundReportClassifierPrompt(
       ...(span === undefined ? {} : { span }),
       ...(side === undefined ? {} : { side }),
     })),
-    worker: round.worker,
+    worker: {
+      outcome: round.worker.outcome,
+      changedPaths: round.worker.changedPaths,
+      commitRange: round.worker.commitRange,
+    },
+    evidence,
   });
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
 }
 
-type ClassifiedRoundOutcome =
-  | {
-      readonly status: "addressed" | "partial" | "untouched";
-      readonly ref: string;
-      readonly text: string;
-      readonly note: string;
-      readonly evidence?: z.infer<typeof RoundReportEvidenceSchema>;
-    }
-  | {
-      readonly status: "beyond";
-      readonly ref: string;
-      readonly text: string;
-      readonly note: string;
-      readonly evidence: z.infer<typeof RoundReportEvidenceSchema>;
-    };
+interface ClassifiedRoundOutcome {
+  readonly status: "addressed" | "partial" | "untouched" | "beyond";
+  readonly ref: string;
+  readonly text: string;
+  readonly note: string;
+  /** The manifest ids this bucket owns. Empty only for `untouched`. */
+  readonly evidenceIds: readonly string[];
+  /** Host-DERIVED from the first cited text hunk; absent when every cited unit is a
+   *  rename, a mode change, or a binary file, which have no line to anchor to. */
+  readonly anchor?: RoundEvidenceAnchor;
+}
+
+/**
+ * The displayed anchor for one bucket: the first cited TEXT HUNK in canonical manifest
+ * order, preferring one on the ask's own path. Derived, never model-supplied — the
+ * classifier's job is which evidence, not which line.
+ */
+function deriveAnchor(
+  evidenceIds: readonly string[],
+  manifest: readonly RoundEvidenceUnit[],
+  preferredPath?: string,
+): RoundEvidenceAnchor | undefined {
+  const cited = new Set(evidenceIds);
+  const hunks = manifest.filter(
+    (unit): unit is Extract<RoundEvidenceUnit, { kind: "text-hunk" }> =>
+      unit.kind === "text-hunk" && cited.has(unit.id),
+  );
+  const preferred =
+    preferredPath === undefined
+      ? undefined
+      : hunks.find((unit) => unit.path === preferredPath || unit.anchor.path === preferredPath);
+  return (preferred ?? hunks[0])?.anchor;
+}
 
 function classifiedRoundOutcomes(
   classification: RoundReportClassification,
   asks: readonly ComposableAsk[],
+  manifest: readonly RoundEvidenceUnit[],
 ): ClassifiedRoundOutcome[] {
+  if (classification.beyond.length > ROUND_REPORT_MAX_BEYOND_ENTRIES) {
+    throw new Error(
+      `reports ${classification.beyond.length} beyond-ask entries, over the ${ROUND_REPORT_MAX_BEYOND_ENTRIES}-entry limit`,
+    );
+  }
   const known = new Set(asks.map((ask) => ask.id));
   const byAsk = new Map<string, RoundReportClassification["outcomes"][number]>();
   for (const outcome of classification.outcomes) {
@@ -1082,38 +1121,49 @@ function classifiedRoundOutcomes(
     if (byAsk.has(outcome.askId)) {
       throw new Error(`repeats dispatched ask ${outcome.askId}`);
     }
-    if (outcome.status !== "untouched" && outcome.evidence.endLine < outcome.evidence.startLine) {
-      throw new Error(`outcome for ${outcome.askId} has an inverted diff evidence range`);
-    }
     byAsk.set(outcome.askId, outcome);
-  }
-
-  for (const outcome of classification.beyond) {
-    if (outcome.evidence.endLine < outcome.evidence.startLine) {
-      throw new Error(`beyond outcome ${outcome.ref} has an inverted diff evidence range`);
-    }
   }
 
   const missing = asks.filter((ask) => !byAsk.has(ask.id)).map((ask) => ask.id);
   if (missing.length > 0) throw new Error(`omitted dispatched asks: ${missing.join(", ")}`);
 
+  // #726 — every manifest id lands in exactly one ask bucket or the beyond bucket,
+  // BEFORE anything is built or persisted.
+  verifyRoundEvidencePartition(
+    [
+      ...classification.outcomes.map((outcome) => ({
+        bucket: `the outcome for ${outcome.askId}`,
+        evidenceIds: outcome.status === "untouched" ? [] : outcome.evidenceIds,
+      })),
+      ...classification.beyond.map((outcome) => ({
+        bucket: `the beyond-ask entry ${outcome.ref}`,
+        evidenceIds: outcome.evidenceIds,
+      })),
+    ],
+    manifest,
+  );
+
   const outcomes: ClassifiedRoundOutcome[] = asks.map((ask) => {
     const classified = byAsk.get(ask.id);
     if (classified === undefined) throw new Error(`omitted dispatched ask ${ask.id}`);
-    return classified.status === "untouched"
-      ? {
-          status: classified.status,
-          ref: ask.id,
-          text: ask.instruction,
-          note: classified.note,
-        }
-      : {
-          status: classified.status,
-          ref: ask.id,
-          text: ask.instruction,
-          note: classified.note,
-          evidence: classified.evidence,
-        };
+    if (classified.status === "untouched") {
+      return {
+        status: classified.status,
+        ref: ask.id,
+        text: ask.instruction,
+        note: classified.note,
+        evidenceIds: [],
+      };
+    }
+    const anchor = deriveAnchor(classified.evidenceIds, manifest, ask.path);
+    return {
+      status: classified.status,
+      ref: ask.id,
+      text: ask.instruction,
+      note: classified.note,
+      evidenceIds: classified.evidenceIds,
+      ...(anchor === undefined ? {} : { anchor }),
+    };
   });
   outcomes.sort(
     (left, right) =>
@@ -1121,13 +1171,17 @@ function classifiedRoundOutcomes(
       CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(right.status),
   );
   const beyond: ClassifiedRoundOutcome[] = classification.beyond
-    .map((outcome) => ({
-      status: "beyond" as const,
-      ref: outcome.ref,
-      text: outcome.text,
-      note: outcome.note,
-      evidence: outcome.evidence,
-    }))
+    .map((outcome) => {
+      const anchor = deriveAnchor(outcome.evidenceIds, manifest);
+      return {
+        status: "beyond" as const,
+        ref: outcome.ref,
+        text: outcome.text,
+        note: outcome.note,
+        evidenceIds: outcome.evidenceIds,
+        ...(anchor === undefined ? {} : { anchor }),
+      };
+    })
     .sort((left, right) => left.ref.localeCompare(right.ref));
   return [...outcomes, ...beyond];
 }
@@ -1136,25 +1190,26 @@ function buildClassifiedRoundReport(
   classification: RoundReportClassification,
   round: LandedRoundDraftContext,
   patchsetId: string,
+  manifest: readonly RoundEvidenceUnit[],
 ): DraftBoard {
-  const outcomes = classifiedRoundOutcomes(classification, round.dispatchedAsks);
+  const outcomes = classifiedRoundOutcomes(classification, round.dispatchedAsks, manifest);
   const elements: DraftElement[] = [];
   const outcomeIds: string[] = [];
   for (const [index, outcome] of outcomes.entries()) {
     const outcomeId = `rennet:host:round-report:${index}:outcome`;
     const codeRefId = `rennet:host:round-report:${index}:code`;
     outcomeIds.push(outcomeId);
-    if (outcome.evidence !== undefined) {
+    if (outcome.anchor !== undefined) {
       elements.push({
         id: codeRefId,
         kind: "code_ref",
         data: {
           author: CLASSIFIED_ROUND_REPORT_AUTHOR,
           patchset_id: patchsetId,
-          path: outcome.evidence.path,
-          side: outcome.evidence.side,
-          start_line: outcome.evidence.startLine,
-          end_line: outcome.evidence.endLine,
+          path: outcome.anchor.path,
+          side: outcome.anchor.side,
+          start_line: outcome.anchor.line,
+          end_line: outcome.anchor.line,
         },
       });
     }
@@ -1166,7 +1221,8 @@ function buildClassifiedRoundReport(
         status: outcome.status,
         ask: { ref: outcome.ref, text: outcome.text },
         note: outcome.note,
-        ...(outcome.evidence === undefined ? {} : { code_ref: codeRefId }),
+        ...(outcome.evidenceIds.length === 0 ? {} : { evidence_ids: [...outcome.evidenceIds] }),
+        ...(outcome.anchor === undefined ? {} : { code_ref: codeRefId }),
       },
     });
   }
@@ -1271,6 +1327,10 @@ function resolveBoardSeatDetails(
       codexExecutor: deps.codexExecutor,
       repoRoot: deps.repoRoot,
       label: `board.${jobId}`,
+      // The classifier's raw response cap rides the session spec, so the adapter
+      // rejects an oversized response at the transport boundary — core only ever
+      // sees decoded values, so a core-side check would already be too late.
+      ...(jobId === "round-report" ? { outputByteCap: ROUND_REPORT_OUTPUT_MAX_BYTES } : {}),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
       ...(onProviderSettled === undefined ? {} : { onProviderSettled }),
     },
@@ -1715,6 +1775,19 @@ async function runClassifiedRoundReport(
       // Report-only diagnostics never change the classified result they describe.
     }
   };
+  // The manifest is measured BEFORE any seat exists, so an overflow costs zero
+  // provider calls (#727). It is never truncated, split, or summarized to fit.
+  const manifest = buildRoundEvidenceManifest(round.worker.diff);
+  const measured = measureRoundEvidenceManifest(manifest);
+  if (!measured.ok) {
+    return {
+      lens: "report",
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      failure: `round-report seat: ${measured.reason} — classification was not attempted.`,
+    };
+  }
   const seat = resolveBoardSeatDetails(
     "round-report",
     deps,
@@ -1733,7 +1806,12 @@ async function runClassifiedRoundReport(
   }
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
-  const prompt = renderRoundReportClassifierPrompt(promptText, deps.deltaPacket.patchset.id, round);
+  const prompt = renderRoundReportClassifierPrompt(
+    promptText,
+    deps.deltaPacket.patchset.id,
+    round,
+    manifest,
+  );
   const turnStarted = roundReportTurnStartedMilestone(seat, elapsedMs());
   if (turnStarted !== undefined) emitDiagnostic(turnStarted);
   let turn: HarnessTurnResult;
@@ -1778,7 +1856,7 @@ async function runClassifiedRoundReport(
 
   let board: DraftBoard;
   try {
-    board = buildClassifiedRoundReport(parsed.data, round, deps.deltaPacket.patchset.id);
+    board = buildClassifiedRoundReport(parsed.data, round, deps.deltaPacket.patchset.id, manifest);
   } catch (error) {
     return {
       lens: "report",

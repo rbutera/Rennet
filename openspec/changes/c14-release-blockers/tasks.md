@@ -29,13 +29,13 @@
 
 ## 6. Classifier evidence contract (#727 + #726)
 
-- [ ] 6.1 Build the canonically ordered evidence manifest with stable ids and the discriminated evidence union (text-hunk, binary, mode-change, rename; no invented line anchors); ordering algorithm and id derivation defined per D5
-- [ ] 6.2 Declare the byte/entry limits as named constants in one protocol-level module; enforce the UTF-8 byte budget on the complete serialized manifest: intact at/under limit, typed local failure over limit with zero provider calls, never truncate/split/summarize
-- [ ] 6.3 Extend the session-spec contract with an output cap and enforce raw-size rejection at the transport boundary in BOTH the Claude and Codex adapters before structured-output decoding; decoded entry/cardinality limits before persistence; cap failure routes to the durable round-failure path, never spawns another turn
-- [ ] 6.4 Enforce exactly-once evidence partition (#726): every manifest id in exactly one ask or the `beyond asks` bucket; reject unknown, missing, or duplicate ids before persistence
-- [ ] 6.5 Boundary controls: multibyte UTF-8 at exact limit and one byte over, deterministic ordering, zero-provider-calls-on-overflow, every non-text variant, raw/schema output caps, omitted and duplicated evidence ids
-- [ ] 6.6 Crash-semantics test: repeat provider call after crash-before-projection yields exactly one durable report projection
-- [ ] 6.7 Update the classifier contract documentation with the declared limits, partition rule, and failure behavior
+- [x] 6.1 Build the canonically ordered evidence manifest with stable ids and the discriminated evidence union (text-hunk, binary, mode-change, rename; no invented line anchors); ordering algorithm and id derivation defined per D5
+- [x] 6.2 Declare the byte/entry limits as named constants in one protocol-level module; enforce the UTF-8 byte budget on the complete serialized manifest: intact at/under limit, typed local failure over limit with zero provider calls, never truncate/split/summarize
+- [x] 6.3 Extend the session-spec contract with an output cap and enforce raw-size rejection at the transport boundary in BOTH the Claude and Codex adapters before structured-output decoding; decoded entry/cardinality limits before persistence; cap failure routes to the durable round-failure path, never spawns another turn
+- [x] 6.4 Enforce exactly-once evidence partition (#726): every manifest id in exactly one ask or the `beyond asks` bucket; reject unknown, missing, or duplicate ids before persistence
+- [x] 6.5 Boundary controls: multibyte UTF-8 at exact limit and one byte over, deterministic ordering, zero-provider-calls-on-overflow, every non-text variant, raw/schema output caps, omitted and duplicated evidence ids
+- [x] 6.6 Crash-semantics test: repeat provider call after crash-before-projection yields exactly one durable report projection
+- [x] 6.7 Update the classifier contract documentation with the declared limits, partition rule, and failure behavior
 
 ## 7. Progressive reveal and honest timing, initial and post-round (#725)
 
