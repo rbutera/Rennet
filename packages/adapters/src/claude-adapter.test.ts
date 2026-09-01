@@ -112,7 +112,7 @@ describe("normalizeClaudeFrame: raw output cap", () => {
     // not what the transport echoes back as the thing it just refused.
   });
 
-  it("passes when `result` is over cap but the decoded structured output is small", () => {
+  it("fails when `result` alone is over cap even though the decoded structured output is small", () => {
     // The mirror case, so the check is `max`, not "measure the structured one instead":
     // a long `result` with a compact decoded object must still fail.
     const frame: Record<string, unknown> = {
