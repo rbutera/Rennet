@@ -28,7 +28,7 @@ import { Trail, type TrailProps } from "./trail";
 // 6). A three-column grid: LEFT slot (back arrow exactly when `?view` is not the
 // board; then the app's ONE chat open/close toggle; then the two-line trail —
 // only while the chat dock is SHUT, since the open dock's header carries it), a
-// CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Map · Diff
+// CENTERED lens-switcher slot C5 fills, and the RIGHT slot's History · Diff
 // pills — a C2 `ToggleGroup` over `?view`, selection DERIVED from the URL, toggling
 // navigating with `viewToggle` (replace).
 //
@@ -186,7 +186,7 @@ export function TopBar() {
   // The History (rounds) toggle is present EXACTLY when a round has completed (C09 §6.2) —
   // the derived-presence url.ts gates `?view=rounds` on, never a disabled tab. With no
   // completed round it drops from the pill entirely (honest-absent by default, since no
-  // rounds runtime is bound yet — Reconciliation 1). Map · Diff are always present.
+  // rounds runtime is bound yet — Reconciliation 1). Diff is always present.
   // …and ALSO present when the rounds cannot be read at all (review finding 9): dropping the
   // toggle then would hide the disclosure behind an absence that reads as "no rounds", and
   // the reviewer would have no way to reach the reason. Presence still tracks the truth —
@@ -308,7 +308,7 @@ export function TopBar() {
         />
       </div>
 
-      {/* RIGHT slot: the History · Map · Diff pills. ONE group for the semantics
+      {/* RIGHT slot: the History · Diff pills. ONE group for the semantics
           (label, roving focus, selection), TWO outlines for the look — History is a
           ledger and joins only once a round has completed, so it carries its own
           round outline; Map and Diff share one, split by a hairline. The wrapping

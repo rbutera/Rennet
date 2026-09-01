@@ -167,7 +167,7 @@ export function failedSummaryLine(
 export function doneSummaryLine(repos: readonly ProcessedRepoSummary[], project: Project): string {
   const ok = repos.filter((repo) => repo.ok);
   const failed = repos.length - ok.length;
-  if (repos.length === 0) return "The context map is ready.";
+  if (repos.length === 0) return "The project is ready.";
   const files = ok.reduce((sum, repo) => sum + (repo.files ?? 0), 0);
   const symbols = ok.reduce((sum, repo) => sum + (repo.symbols ?? 0), 0);
   const repoWord = project.kind === "workspace" ? `${ok.length} repos · ` : "";

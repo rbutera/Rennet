@@ -128,12 +128,14 @@ table also stops before spawn because Codex retains nested transport and header
 fields while merging. When Rennet supplies no policy, it skips discovery and the
 child inherits the user's configured MCP servers and plugin behavior.
 
-Context Map `partition-worker` turns are the narrow exception: they request an
-explicitly empty policy because they read and inspect the repository through
-Codex's native tools and do not call MCP tools. The rendered table disables all
-ambient entries without removing repository or shell capability. Other Codex
-utility jobs keep inheriting the user table. The app-server command does not
-accept `--ignore-user-config`.
+The board-pipeline seats are the narrow exception: `lens-draft`,
+`lens-draft-flagged`, `lens-draft-noise`, `board-post-process`, and
+`round-report` request an explicitly empty policy, because they read and inspect
+the reviewed checkout through Codex's native tools and call no MCP tool. The
+rendered table disables all ambient entries without removing repository or shell
+capability — which is what those seats need, since investigating the change is
+the whole job. Other Codex utility jobs keep inheriting the user table. The
+app-server command does not accept `--ignore-user-config`.
 
 The installed-CLI control reads the current configured inventory and proves both
 the empty and loopback-only policies without starting a model turn:

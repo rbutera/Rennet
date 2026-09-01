@@ -281,7 +281,7 @@ export function councilSeatTurn(
         schema,
         {
           cwd: deps.repoRoot,
-          // Context-map and board-pipeline jobs use only their inlined prompt and
+          // Board-pipeline jobs use only their inlined prompt and
           // native repository tools. Codex starts configured MCP servers eagerly,
           // so suppress them for those jobs while unrelated Council work inherits.
           ...(usesIsolatedHarnessConfig(jobId) ? { mcpServers: {} } : {}),

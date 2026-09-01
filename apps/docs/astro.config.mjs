@@ -57,7 +57,6 @@ export default defineConfig({
                     label: "Reviewing a GitHub PR",
                     link: "/using/guides/reviewing-a-github-pr/",
                   },
-                  { label: "The Context Map", link: "/using/guides/context-map/" },
                   { label: "Remote access", link: "/using/guides/remote-access/" },
                   { label: "Rennet in a browser", link: "/using/guides/browser-rennet/" },
                   { label: "Rennet on your phone (planned)", link: "/using/guides/mobile/" },
@@ -134,10 +133,6 @@ export default defineConfig({
                   {
                     label: "Board rebuild plan",
                     link: "/developing/plans/board-rebuild-plan/",
-                  },
-                  {
-                    label: "Context map rebuild plan",
-                    link: "/developing/plans/context-map-rebuild-plan/",
                   },
                   {
                     label: "Performance audit (2026-08-31)",

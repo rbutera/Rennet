@@ -39,14 +39,6 @@ export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
     codexOnly: { model: "gpt-5.6-sol", effort: "high" },
   },
   {
-    id: "map-workers",
-    label: "Context-Map Workers",
-    hint: "Cheap partition workers, one per scope of the structural map.",
-    dual: { model: "gpt-5.6-luna", effort: "low" },
-    claudeOnly: { model: "haiku", effort: "low" },
-    codexOnly: { model: "gpt-5.6-luna", effort: "low" },
-  },
-  {
     id: "confirmation",
     label: "Confirmation Worker",
     hint: "The verify/synthesis seat — re-reads cited evidence, settles hypotheses.",
@@ -85,14 +77,6 @@ export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
     dual: { model: "gpt-5.6-terra", effort: "medium" },
     claudeOnly: { model: "sonnet-5", effort: "medium" },
     codexOnly: { model: "gpt-5.6-terra", effort: "medium" },
-  },
-  {
-    id: "utility",
-    label: "Utility",
-    hint: "The light tier — titles, narration, dedupe, everything with enumerable input.",
-    dual: { model: "gpt-5.6-luna", effort: "low" },
-    claudeOnly: { model: "haiku", effort: "low" },
-    codexOnly: { model: "gpt-5.6-luna", effort: "low" },
   },
 ];
 

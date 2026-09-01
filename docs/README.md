@@ -18,7 +18,6 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [the onboarding tour](./using/guides/onboarding-tour.md),
   [connecting to GitHub](./using/guides/github-auth.md),
   [reviewing a GitHub PR](./using/guides/reviewing-a-github-pr.md),
-  [the Context Map](./using/guides/context-map.md),
   [remote access](./using/guides/remote-access.md),
   [browser use](./using/guides/browser-rennet.md),
   [planned mobile use](./using/guides/mobile.md), and
@@ -41,8 +40,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
   and [design doctrine](./developing/concepts/design-doctrine.md)
 - Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md)
   and [settings and setup](./developing/guides/settings-and-setup.md)
-- Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md),
-  [context map rebuild plan](./developing/plans/context-map-rebuild-plan.md),
+- Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md)
   and [performance audit (2026-08-31)](./developing/plans/perf-audit-2026-08-31.md)
 - [Decisions](./developing/decisions/contracts-and-rulings.md): the cross-cutting
   decision register

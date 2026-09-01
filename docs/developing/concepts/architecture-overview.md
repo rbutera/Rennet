@@ -216,11 +216,11 @@ Rennet stores different kinds of state at their natural scopes:
 | Daemon data directory (`~/.rennet`) | `rennet.sqlite`, project registry, daemon claim, and every other daemon-owned store |
 | `<data dir>/client-settings.json` | Viewer preferences (appearance, keybindings) — the client rung |
 | `<data dir>/daemon-settings.json` | This host's global settings rung (listener bind, tracker) |
-| `~/.rennet/projects/<escaped-path>/` | Project snapshot, Repo Map shards and manifests, overlays, knowledge, and context manifests |
+| `~/.rennet/projects/<escaped-path>/` | Project snapshot, Repo Map shards and manifests, overlays, and context manifests |
 | `~/.rennet/threads/<reviewId>.json` | Durable review conversation |
-| Project `.rennet/map/` and `.rennet/knowledge/` | Optional promoted context mirrors |
+| Project `.rennet/map/` | Optional promoted context mirror |
 
-Promotion writes the optional project mirrors but does not stage or commit them.
+Promotion writes the optional project mirror but does not stage or commit it.
 The project's `.rennet/` directory remains local and ignored by default.
 
 The SQLite review store persists commands and events transactionally. Reading a

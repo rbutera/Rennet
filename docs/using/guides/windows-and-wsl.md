@@ -104,8 +104,8 @@ Because the daemon runs inside the distro, everything happens on native Linux:
 - Project discovery, project detail, snapshot generation, and Git-backed
   visibility settings.
 - Claude coding-agent turns, including commands that edit, test, or push.
-- Review model turns for lens board drafting, findings, knowledge enrichment,
-  symbol lookup, pull request drafting, round reports, and board composition.
+- Review model turns for lens board drafting, findings, symbol lookup, pull
+  request drafting, round reports, and board composition.
 - Codex app-server turns when Codex is installed inside the distro. An agentic
   Codex turn connects to Rennet over the distro's own loopback, so no
   cross-boundary networking is involved.

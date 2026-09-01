@@ -156,7 +156,7 @@ do not.
 
 | ID | Current ruling |
 |---|---|
-| **R54** | Repo Map means a deterministic project snapshot and evidence-backed knowledge. Maps compose by reference and update incrementally. |
+| **R54** | Repo Map means a deterministic project snapshot — what reading the tree at a pinned OID proves, and nothing a model asserted about the repository. Maps compose by reference and update incrementally. |
 | **R55** | Derived maps are local-first under `~/.rennet/projects/<escaped-absolute-path>/`, with one entry per checkout or worktree. A deliberate promotion mirrors a validated map into `.rennet/`. |
 
 Local state wins when both local and promoted maps exist. Rennet changes its own
