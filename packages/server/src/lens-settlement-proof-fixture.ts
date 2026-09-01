@@ -19,10 +19,17 @@ import type { ScriptedHarnessPlan } from "./scripted-harness-plan";
  *   merge repointed the citer at the surviving finding.
  * - Noise's seat either draws a real skip-safe group or emits the empty board that is its
  *   honest "nothing here is skippable" — the two settlements #549's launched proof needs.
+ *   The two legs run over DIFFERENT repositories, because a `no-noise` settlement over a
+ *   change that does contain generated churn proves only that the script said so: the
+ *   signal-only leg seeds a source-only repository, and the populated leg keeps the
+ *   generated file as the control that must still produce a verdict board.
  */
 export const LENS_SETTLEMENT_LANE = "lens-settlement-548";
 export const LENS_SETTLEMENT_SOURCE = "src/settlement.ts";
 export const LENS_SETTLEMENT_GENERATED = "generated/table.json";
+/** The path-unique sentinel each fixture file carries, so a hydrated span names its file. */
+export const LENS_SETTLEMENT_SOURCE_SENTINEL = "settlementSourceSentinel";
+export const LENS_SETTLEMENT_GENERATED_SENTINEL = "settlement-generated-sentinel";
 /** The step title the launched proof reads back off the settled Sequence board. */
 export const LENS_SETTLEMENT_SEQUENCE_STEP = "Read `src/settlement.ts` first.";
 /** The one finding both Flagged seats raise, and the section that cites it. */
@@ -30,6 +37,8 @@ export const LENS_SETTLEMENT_FLAGGED_FINDING = "flag-finding";
 export const LENS_SETTLEMENT_FLAGGED_SECTION = "flag-section";
 
 const author: Author = { kind: "lens-agent", id: LENS_SETTLEMENT_LANE };
+/** Neutral in both legs: the signal-only repository has no generated table to name. */
+const OTHER_LANE_SKIP = "The rest of this change belongs to another lens.";
 const patchsetPlanValue = `\${patchsetId}`;
 
 function codeRef(id: string, path: string): DraftBoard["elements"][number] {
@@ -72,7 +81,7 @@ function sequenceBoard(): DraftBoard {
         data: { author, title: "Settlement", children: ["seq-step"] },
       },
     ],
-    skippedHunks: [{ hunk: "*", reason: "The generated table is the Noise lane's to teach." }],
+    skippedHunks: [{ hunk: "*", reason: OTHER_LANE_SKIP }],
   };
 }
 
@@ -108,7 +117,7 @@ function decisionsBoard(): DraftBoard {
         data: { author, title: "Source-controlled value", children: ["dec-choice"] },
       },
     ],
-    skippedHunks: [{ hunk: "*", reason: "The generated table is the Noise lane's to teach." }],
+    skippedHunks: [{ hunk: "*", reason: OTHER_LANE_SKIP }],
   };
 }
 
@@ -143,7 +152,7 @@ function flaggedBoard(): DraftBoard {
         },
       },
     ],
-    skippedHunks: [{ hunk: "*", reason: "The generated table is the Noise lane's to teach." }],
+    skippedHunks: [{ hunk: "*", reason: OTHER_LANE_SKIP }],
   };
 }
 

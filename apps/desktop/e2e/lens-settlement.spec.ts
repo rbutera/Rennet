@@ -1,4 +1,5 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import {
@@ -11,8 +12,10 @@ import {
   LENS_SETTLEMENT_FLAGGED_FINDING,
   LENS_SETTLEMENT_FLAGGED_SECTION,
   LENS_SETTLEMENT_GENERATED,
+  LENS_SETTLEMENT_GENERATED_SENTINEL,
   LENS_SETTLEMENT_SEQUENCE_STEP,
   LENS_SETTLEMENT_SOURCE,
+  LENS_SETTLEMENT_SOURCE_SENTINEL,
   type ScriptedNoiseSettlement,
   writeLensSettlementScriptedHarnessPlan,
 } from "@rennet/server/testing";
@@ -60,20 +63,35 @@ import { startTestDaemon } from "./scripted-daemon";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A repository whose captured change has both halves the proof needs: a substantive edit
- * to the reviewed source, and generated output beside it for the Noise lane to own.
+ * The reviewed repository for one leg.
+ *
+ * `populated` has both halves the noisy proof needs: a substantive edit to the reviewed
+ * source, and generated output beside it for the Noise lane to own. `no-noise` is SOURCE
+ * ONLY — no generated file was ever committed, so the change genuinely contains nothing
+ * skip-safe. Running the signal-only leg over the noisy repository proved only that the
+ * script had been told to answer empty; the absence has to be true of the change.
+ *
+ * Each file carries its own sentinel on the cited line, so a hydrated span names WHICH
+ * file it came from rather than matching a word both files share.
  */
-function seedSettlementRepo(): string {
+function seedSettlementRepo(noise: ScriptedNoiseSettlement): string {
   const repository = makeTempDir("rennet-e2e-settlement-repo-");
+  const source = (value: string) =>
+    `export const ${LENS_SETTLEMENT_SOURCE_SENTINEL} = '${value}';\n`;
+  const generated = (value: string) => `{ "${LENS_SETTLEMENT_GENERATED_SENTINEL}": "${value}" }\n`;
   initRepo(repository);
   writeRepoFile(repository, ".gitignore", ".rennet/\n");
-  writeRepoFile(repository, LENS_SETTLEMENT_SOURCE, "export const settlement = 'base';\n");
-  writeRepoFile(repository, LENS_SETTLEMENT_GENERATED, '{ "settlement": "base" }\n');
+  writeRepoFile(repository, LENS_SETTLEMENT_SOURCE, source("base"));
+  if (noise === "populated") {
+    writeRepoFile(repository, LENS_SETTLEMENT_GENERATED, generated("base"));
+  }
   git(repository, "add", ".");
   git(repository, "commit", "-qm", "initial");
   git(repository, "checkout", "-qb", "feature/settlement");
-  writeRepoFile(repository, LENS_SETTLEMENT_SOURCE, "export const settlement = 'reviewed';\n");
-  writeRepoFile(repository, LENS_SETTLEMENT_GENERATED, '{ "settlement": "reviewed" }\n');
+  writeRepoFile(repository, LENS_SETTLEMENT_SOURCE, source("reviewed"));
+  if (noise === "populated") {
+    writeRepoFile(repository, LENS_SETTLEMENT_GENERATED, generated("reviewed"));
+  }
   return repository;
 }
 
@@ -147,7 +165,12 @@ async function runSettlement(
   noise: ScriptedNoiseSettlement,
   inspect: (run: SettlementRun) => Promise<void>,
 ): Promise<void> {
-  const repository = seedSettlementRepo();
+  const repository = seedSettlementRepo(noise);
+  // The fixture, not the script, decides whether this change has churn to skip.
+  expect(
+    existsSync(join(repository, LENS_SETTLEMENT_GENERATED)),
+    "the signal-only leg must review a source-only change",
+  ).toBe(noise === "populated");
   const userData = makeTempDir("rennet-e2e-settlement-state-");
   const home = makeTempDir("rennet-e2e-settlement-home-");
   const { planPath } = writeLensSettlementScriptedHarnessPlan(userData, noise);
@@ -213,10 +236,29 @@ test("Sequence and Decisions settle with anchors into the captured patchset (#54
       startLine: cited.data.start_line,
       endLine: cited.data.end_line,
     });
-    expect(hydrated.lines.join("\n")).toContain("settlement");
+    // The SOURCE file's own sentinel, which appears in no other file of this fixture —
+    // "settlement" alone is in the path, the generated table and the branch name, so it
+    // would pass on content served from the wrong file.
+    expect(cited.data.path).toBe(LENS_SETTLEMENT_SOURCE);
+    expect(hydrated.lines.join("\n")).toContain(LENS_SETTLEMENT_SOURCE_SENTINEL);
+    expect(hydrated.lines.join("\n")).not.toContain(LENS_SETTLEMENT_GENERATED_SENTINEL);
+
+    // Wrong-span control, INSIDE the same held patchset: the other changed file of this
+    // very capture serves its own line, so the assertion above is about the span that was
+    // cited and not about "this patchset returns something".
+    const otherFile = await bridge.invoke("patchset.readSpan", {
+      patchsetId,
+      path: LENS_SETTLEMENT_GENERATED,
+      side: "head",
+      startLine: 1,
+      endLine: 1,
+    });
+    expect(otherFile.lines.join("\n")).toContain(LENS_SETTLEMENT_GENERATED_SENTINEL);
+    expect(otherFile.lines.join("\n")).not.toContain(LENS_SETTLEMENT_SOURCE_SENTINEL);
 
     // Positive control: the same span against a patchset the daemon does not hold is
-    // refused BY NAME rather than served from anywhere else.
+    // refused BY NAME — the message names the missing patchset, so a reader can tell this
+    // refusal from "that file is not in the capture" or a generic read failure.
     await expect(
       bridge.invoke("patchset.readSpan", {
         patchsetId: `${patchsetId}-absent-control`,
@@ -225,7 +267,7 @@ test("Sequence and Decisions settle with anchors into the captured patchset (#54
         startLine: cited.data.start_line,
         endLine: cited.data.end_line,
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(`patchset ${patchsetId}-absent-control`);
 
     // Decisions settles its own board on the same generation — the second core reading
     // surface #548's acceptance names.
@@ -276,16 +318,20 @@ test("the dual-seat merge's collapsed finding is repointed, so Flagged is writab
 
 test("Noise settles a board on skip-safe churn and no-noise on a signal-only change (#549)", async () => {
   test.setTimeout(300_000);
+  // The CONTROL for the signal-only leg below: the same seat, over a change that really
+  // does carry generated churn, must draw a verdict board. Without it, "no board" would
+  // read as a settlement in both directions.
   await runSettlement("populated", async ({ bridge, reviewId, generation }) => {
     const noise = await settledLens(bridge, reviewId, generation, "noise");
     expect(noise.failure, "Noise failed on a change with skip-safe churn").toBeUndefined();
     expect(noise.absence).toBeUndefined();
-    expect(
-      noise.board?.elements.some((element) => element.kind === "noise_verdict"),
-      "Noise settled a board with no verdict on it",
-    ).toBe(true);
+    const verdicts = noise.board?.elements.filter((element) => element.kind === "noise_verdict");
+    expect(verdicts?.length, "Noise settled a board with no verdict on it").toBeGreaterThan(0);
   });
 
+  // The signal-only leg reviews a SOURCE-ONLY repository (see `seedSettlementRepo`): the
+  // change contains nothing skip-safe, so the empty board the seat returns is a true
+  // report about this change rather than the script answering empty over generated churn.
   await runSettlement("no-noise", async ({ page, bridge, reviewId, generation }) => {
     const noise = await settledLens(bridge, reviewId, generation, "noise");
     // A SUCCESS, not a failure and not an eternal "no board yet": the seat ran and

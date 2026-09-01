@@ -1335,7 +1335,9 @@ liveTest(
           (await expectAnchorsNavigate(bridge, decisions.board, patchsetId, "Decisions"));
         console.log(`board-live-representative ANCHORS HYDRATED: ${anchored}`);
         // Positive control: the same spans against a patchset that does not exist are
-        // refused by name rather than hydrated from anywhere else.
+        // refused BY NAME rather than hydrated from anywhere else — the message names the
+        // missing patchset, so this refusal cannot be confused with an uncaptured file, an
+        // uncaptured line, or a read that simply failed.
         const ref = codeRefsOf(sequence.board)[0];
         if (ref === undefined) throw new Error("Sequence cited no code to control against");
         await expect(
@@ -1346,7 +1348,7 @@ liveTest(
             startLine: ref.start_line,
             endLine: ref.end_line,
           }),
-        ).rejects.toThrow();
+        ).rejects.toThrow(`patchset ${patchsetId}-absent-control`);
       },
     );
   },
