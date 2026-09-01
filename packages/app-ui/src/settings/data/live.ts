@@ -1,4 +1,4 @@
-import type { SettingsGuidance, SettingsView } from "@rennet/protocol";
+import type { BenchmarkRun, SettingsGuidance, SettingsView } from "@rennet/protocol";
 import { type CommandResult, type MutationResult, useCommand, useMutation } from "../../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,6 +26,19 @@ export function useGuidance(
   options?: { readonly enabled?: boolean },
 ): CommandResult<SettingsGuidance> {
   return useCommand("settings.guidance", { projectId, repoPath }, options);
+}
+
+/** The recorded benchmark runs, newest first (#731). Capped at the wire: the panel's
+ *  responsiveness on a long history is decided by how much it is handed as much as by how
+ *  it renders, so the limit lives on the read rather than in a client-side slice. */
+export function useBenchmarks(limit = 200): CommandResult<{ runs: BenchmarkRun[] }> {
+  return useCommand("benchmarks.list", { limit });
+}
+
+/** Turn benchmark recording on or off. Stales `settings.get`, which carries the resolved
+ *  state the toggle renders. */
+export function useSetBenchmarkRecording(): MutationResult<"settings.setBenchmarkRecording"> {
+  return useMutation("settings.setBenchmarkRecording", { invalidates: ["settings.get"] });
 }
 
 /** Set (or reset with `scheme: null`) the global appearance scheme. */

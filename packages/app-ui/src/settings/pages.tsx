@@ -1,4 +1,4 @@
-import { Keyboard, Layers, type LucideIcon, Monitor, Palette } from "lucide-react";
+import { Gauge, Keyboard, Layers, type LucideIcon, Monitor, Palette } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The four settings pages (C10 §1.1–1.2, claim 577). Settings is a ROUTE, not a
@@ -16,7 +16,12 @@ import { Keyboard, Layers, type LucideIcon, Monitor, Palette } from "lucide-reac
 // `appearance` — the page the sidebar's Settings control opens by default.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type SettingsPageId = "environments" | "appearance" | "keybindings" | "projects";
+export type SettingsPageId =
+  | "environments"
+  | "appearance"
+  | "keybindings"
+  | "projects"
+  | "benchmarks";
 
 export interface SettingsPageMeta {
   readonly id: SettingsPageId;
@@ -26,12 +31,15 @@ export interface SettingsPageMeta {
   readonly icon: LucideIcon;
 }
 
-/** The four pages, in nav order (Environments, Appearance, Keyboard Shortcuts, Projects). */
+/** The pages, in nav order. Benchmarks (#731) sits last: it reports on what the other
+ *  pages configure, and it is the only page that reads a durable archive rather than a
+ *  setting. */
 export const SETTINGS_PAGES: readonly SettingsPageMeta[] = [
   { id: "environments", slug: "environments", label: "Environments", icon: Monitor },
   { id: "appearance", slug: "appearance", label: "Appearance", icon: Palette },
   { id: "keybindings", slug: "keybindings", label: "Keyboard Shortcuts", icon: Keyboard },
   { id: "projects", slug: "projects", label: "Projects", icon: Layers },
+  { id: "benchmarks", slug: "benchmarks", label: "Benchmarks", icon: Gauge },
 ];
 
 /** The pages keyed by id — a total lookup for the screen (no `find` undefined). */
@@ -50,6 +58,7 @@ const SLUG_TO_ID: Record<string, SettingsPageId> = {
   keybindings: "keybindings",
   shortcuts: "keybindings", // packet/#476 deep-link alias
   projects: "projects",
+  benchmarks: "benchmarks",
 };
 
 /**

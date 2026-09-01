@@ -1,5 +1,6 @@
 import type {
   AppearanceScheme,
+  BenchmarkRun,
   CoachMarks,
   ResolvedProvenance,
   SettingsGuidance,
@@ -51,6 +52,10 @@ export interface SettingsFixtureSeed {
   readonly themePack?: ThemePack;
   readonly welcome?: SettingsView["welcome"];
   readonly navigation?: SettingsView["navigation"];
+  /** Whether benchmark recording resolves ON (#731). Absent ⇒ on, the real default. */
+  readonly benchmarkRecording?: boolean;
+  /** The archive `benchmarks.list` serves, newest first. */
+  readonly benchmarks?: readonly BenchmarkRun[];
 }
 
 const EMPTY_GUIDANCE: SettingsGuidance = { rules: [], reason: "absent", dropped: 0 };
@@ -71,6 +76,8 @@ export class SettingsStore {
   #themePack: ThemePack | undefined;
   #welcome: SettingsView["welcome"];
   #navigation: SettingsView["navigation"];
+  #benchmarkRecording: boolean;
+  readonly #benchmarks: BenchmarkRun[];
 
   constructor(seed: SettingsFixtureSeed = {}) {
     this.#scheme = seed.scheme ?? "system";
@@ -82,6 +89,8 @@ export class SettingsStore {
     this.#themePack = seed.themePack;
     this.#welcome = seed.welcome ?? { completedAt: "2026-08-28T00:00:00.000Z" };
     this.#navigation = seed.navigation;
+    this.#benchmarkRecording = seed.benchmarkRecording ?? true;
+    this.#benchmarks = [...(seed.benchmarks ?? [])];
   }
 
   #view(): SettingsView {
@@ -100,6 +109,7 @@ export class SettingsStore {
       themePack: this.#themePack,
       welcome: this.#welcome,
       navigation: this.#navigation,
+      benchmarkRecording: this.#benchmarkRecording,
     };
   }
 
@@ -146,6 +156,14 @@ export class SettingsStore {
         this.#coachmarks = { ...input };
         return { ...input };
       },
+      "settings.setBenchmarkRecording": ({ enabled }) => {
+        this.#benchmarkRecording = enabled;
+        return { enabled };
+      },
+      // The panel's read honours its own `limit`, exactly as the real command does — the
+      // cap is what keeps a long history off the wire, so a fixture that ignored it would
+      // make the perf property untestable.
+      "benchmarks.list": ({ limit }) => ({ runs: this.#benchmarks.slice(0, limit ?? 200) }),
     };
   }
 }

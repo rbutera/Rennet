@@ -7,11 +7,13 @@
 // projection provider, never an importable fixture module.
 
 export {
+  useBenchmarks,
   useGuidance,
   usePinRepoValue,
   useResetRepoValue,
   useResetWelcome,
   useSetAppearance,
+  useSetBenchmarkRecording,
   useSetKeybinding,
   useSetRepoVisibility,
   useSettingsView,
