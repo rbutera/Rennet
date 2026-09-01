@@ -56,7 +56,7 @@
 ## 9. Benchmark telemetry
 
 - [ ] 9.1 Define the versioned benchmark record schema on the #725 timing spine; one recorder, durable storage, bound to round/map revision; every STAGE record carries its actually resolved harness and model; run-level mode (dual-model, Claude-only, Codex-only) derived from stages; failed/aborted runs recorded as such
-- [ ] 9.2 Instrument context-map generation: one timing per deterministic layer, one per non-deterministic layer, plus end-to-end total
+- [ ] 9.2 Instrument project processing: one timing per deterministic Repo Map build stage (resolve, tree, workspace, conventions, symbols, build, verify, store) plus the scout and the end-to-end total — there are no model-backed layers to time since the context-map kill
 - [ ] 9.3 Instrument lens drafting: per-lens draft, dual-review, repair/post-process, per-lens total, and whole-process timing
 - [ ] 9.4 Instrument the post-round report: classification-turn and report-gate timings bound to the round
 - [ ] 9.5 Add the default-on benchmark-recording setting to `client-settings.json` resolution and a Settings toggle; disabled means zero new records, identical pipeline behavior
