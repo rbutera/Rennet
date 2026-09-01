@@ -25,14 +25,25 @@ import { useBenchmarks, useSetBenchmarkRecording, useSettingsView } from "./data
 // a field. Runs are split into a section per mode: averaging a Claude-only run together
 // with a council run would state a number describing no configuration that exists.
 //
-// Staying smooth on a long history is two things, neither of them a virtualization
-// library. The served list is CAPPED (`benchmarks.list` takes a limit), and a run's stage
-// rows — the bulk of the DOM, dozens per run — exist only while that run is expanded,
-// because `Collapse` unmounts closed children. The summary rows that remain also carry
-// `content-visibility: auto`, so the browser skips layout and paint for the ones scrolled
-// out of view. The perf check in `benchmarks.dom.test.tsx` asserts the mounted stage-row
-// count stays flat as the history grows, which is the property that actually decides it.
+// Staying smooth on a long history is a PAGE, and it is worth being exact about why the
+// previous answer was not one. `content-visibility: auto` is a paint optimisation: every
+// summary row is still mounted, still reconciled by React on every render, still in the
+// DOM. It is not virtualization, and calling it that meant 200 rows were being diffed to
+// save painting the ones off screen. So the list is paged — {@link PAGE_SIZE} runs at a
+// time, "Show more" for the next — which is the smallest mechanism that genuinely renders
+// fewer rows than were served. A run's stage rows remain a second, independent saving:
+// they exist only while that run is expanded, because `Collapse` unmounts closed children.
+//
+// Both losses are STATED. The wire cap (`benchmarks.list` takes a limit) and the page both
+// hide history, and a shorter list announces neither — so the footer says how many runs
+// are shown, how many the archive holds, and names any archive line the store could not
+// read. `benchmarks.dom.test.tsx` asserts the rendered row count is below the served count
+// on a long history, which is the property that decides it.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Runs rendered per page. Enough that a normal history needs no click at all, small
+ *  enough that a thousand-run archive costs one page of reconciliation. */
+export const PAGE_SIZE = 25;
 
 /** Section order: the configurations first, the honest "no provider stage" bucket last. */
 const MODE_ORDER: readonly BenchmarkMode[] = [
@@ -159,9 +170,8 @@ function RunRow({ run }: { readonly run: BenchmarkRun }) {
     <div
       data-slot="benchmark-run"
       data-outcome={run.outcome}
-      // Native rendering virtualization: the browser skips layout and paint for rows
-      // outside the viewport, and the intrinsic size keeps the scrollbar honest while
-      // they are skipped. No library, no windowing maths, no scroll listener.
+      // Paint-level help ON TOP of the page above — the browser skips layout and paint for
+      // rows scrolled out of view. This is not what keeps the list cheap; the page is.
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 44px" }}
       className="py-1"
     >
@@ -177,7 +187,7 @@ function RunRow({ run }: { readonly run: BenchmarkRun }) {
         />
         <span className="min-w-0 flex-1 truncate text-13 text-ink">{run.subject.label}</span>
         {run.outcome === "complete" ? null : (
-          <span className="shrink-0 text-2xs text-accent">{run.outcome}</span>
+          <span className="shrink-0 text-2xs text-destructive">{run.outcome}</span>
         )}
         <span className="shrink-0 text-2xs text-ink-faint">{formatStarted(run.startedAtMs)}</span>
         <span className="shrink-0 tabular-nums text-13 text-ink">{formatMs(run.durationMs)}</span>
@@ -198,8 +208,16 @@ export function BenchmarksPage() {
   const { mutate, pending: writing } = useSetBenchmarkRecording();
   const [writeError, setWriteError] = useState<string>();
 
+  const [shown, setShown] = useState(PAGE_SIZE);
+
   const recording = view?.benchmarkRecording ?? true;
-  const runs = data?.runs ?? [];
+  const served = data?.runs ?? [];
+  // How many runs the ARCHIVE holds, which the wire cap can be well below.
+  const total = data?.total ?? served.length;
+  const skipped = data?.skipped ?? [];
+  // The page. Sliced BEFORE grouping so the sections stay a consistent view of the newest
+  // runs rather than a per-mode page each.
+  const runs = served.slice(0, shown);
 
   async function toggle(next: boolean) {
     if (writing || next === recording) return;
@@ -238,7 +256,7 @@ export function BenchmarksPage() {
         </Row>
         {writeError ? (
           <Row label="Write failed" hint={writeError}>
-            <span className="text-xs text-accent">not saved</span>
+            <span className="text-xs text-destructive">not saved</span>
           </Row>
         ) : null}
       </Section>
@@ -250,7 +268,7 @@ export function BenchmarksPage() {
           </Row>
         ) : error ? (
           <Row label="History" hint={errorText(error)}>
-            <span className="text-xs text-accent">unavailable</span>
+            <span className="text-xs text-destructive">unavailable</span>
           </Row>
         ) : runs.length === 0 ? (
           <Row
@@ -282,6 +300,38 @@ export function BenchmarksPage() {
                 </section>
               );
             })}
+            {/* Both losses, stated. A shorter list announces neither the page nor the
+                wire cap, and history nobody can see should be history somebody is told
+                about. */}
+            <Row
+              label={`Showing ${runs.length} of ${total} recorded ${total === 1 ? "run" : "runs"}`}
+              hint={
+                served.length < total
+                  ? `The archive holds ${total}; the newest ${served.length} were served to this panel.`
+                  : "The whole local archive is loaded."
+              }
+            >
+              {runs.length < served.length ? (
+                <button
+                  type="button"
+                  data-slot="benchmark-show-more"
+                  onClick={() => setShown((current) => current + PAGE_SIZE)}
+                  className="rounded-md px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-raised/60 hover:text-ink"
+                >
+                  Show {Math.min(PAGE_SIZE, served.length - runs.length)} more
+                </button>
+              ) : (
+                <span className="text-xs text-ink-faint">—</span>
+              )}
+            </Row>
+            {skipped.length === 0 ? null : (
+              <Row
+                label={`${skipped.length} archive ${skipped.length === 1 ? "line" : "lines"} could not be read`}
+                hint={skipped.slice(0, 3).join("; ")}
+              >
+                <span className="text-xs text-destructive">skipped</span>
+              </Row>
+            )}
           </div>
         )}
       </Section>

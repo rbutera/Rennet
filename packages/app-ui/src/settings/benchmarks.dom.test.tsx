@@ -6,10 +6,12 @@
 //  1. The run's mode is DERIVED from its stage records. The fixture serves runs whose
 //     harnesses disagree with any imaginable setting, and the panel still sorts them
 //     correctly — which it could not do if it were reading a label.
-//  2. The panel stays cheap on a long history. The assertion is on the MOUNTED stage-row
-//     count, not on a wall-clock threshold: a timing assertion on CI is a coin toss, while
-//     the DOM count is the actual mechanism (`Collapse` unmounts closed children) and
-//     reddens the moment someone renders the breakdowns eagerly.
+//  2. The panel stays cheap on a long history, and the assertion is on the two DOM counts
+//     that decide it rather than on a wall-clock threshold (a timing assertion on CI is a
+//     coin toss). RENDERED RUN ROWS must be fewer than the runs served — that is the page,
+//     and `content-visibility` never satisfied it because every row stayed mounted — and
+//     mounted stage rows must stay at zero until a run is opened, which is `Collapse`
+//     unmounting closed children.
 //  3. The recording toggle writes and the panel adopts the resolved state.
 import type { BenchmarkRun } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -17,6 +19,7 @@ import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { cleanup, mount, waitFor } from "../test/dom";
 import { settingsBridge } from "../test/fixtures/settings";
+import { PAGE_SIZE } from "./benchmarks";
 
 function generation(
   id: string,
@@ -96,7 +99,7 @@ describe("BenchmarksPage — modes are derived, not read", () => {
 });
 
 describe("BenchmarksPage — a long history stays cheap", () => {
-  it("mounts no stage row for a collapsed run, however long the history", async () => {
+  it("renders FEWER rows than it was served, and states both losses", async () => {
     const many = Array.from({ length: 400 }, (_, index) =>
       generation(`run-${index}`, index % 2 === 0 ? ["claude-code"] : ["claude-code", "codex"]),
     );
@@ -107,18 +110,49 @@ describe("BenchmarksPage — a long history stays cheap", () => {
       />,
     );
     await findByText("Recorded runs");
-    // The wire cap is the first lever and it is load-bearing: 400 recorded, 200 served.
-    expect(document.querySelectorAll("[data-slot='benchmark-run']")).toHaveLength(200);
-    // 200 runs × ~4 stages each would be ~800 stage rows if the breakdowns rendered
-    // eagerly. The count is FLAT at zero until a run is opened.
-    expect(stageRows()).toBe(0);
+    // THE assertion. 400 recorded, 200 served past the wire cap, one page rendered — the
+    // rendered count is below the served count, which is what "the list is windowed"
+    // means and what `content-visibility` never did: it left all 200 rows mounted and
+    // reconciled, and only skipped painting them.
+    const rendered = document.querySelectorAll("[data-slot='benchmark-run']").length;
+    expect(rendered).toBe(PAGE_SIZE);
+    expect(rendered).toBeLessThan(200);
+    // Neither loss is silent: the page states what it is showing out of what exists, and
+    // that the wire cap hid the rest.
+    await findByText(`Showing ${PAGE_SIZE} of 400 recorded runs`);
+    await findByText("The archive holds 400; the newest 200 were served to this panel.");
 
+    // The page ADVANCES rather than merely being small — a panel hard-capped at 25 rows
+    // would pass every assertion above while making 375 runs unreachable.
+    await user.click(getByText(`Show ${PAGE_SIZE} more`));
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-slot='benchmark-run']")).toHaveLength(PAGE_SIZE * 2),
+    );
+
+    // …and no stage row is mounted for any collapsed run.
+    expect(stageRows()).toBe(0);
     // The positive control: opening ONE run must mount stage rows — otherwise "zero rows"
     // would also pass for a panel that never renders a breakdown at all. Opening one run
     // costs one run's worth of rows, not the history's.
     await user.click(getByText("run-0"));
     await waitFor(() => expect(stageRows()).toBeGreaterThan(0));
     expect(stageRows()).toBeLessThan(12);
+    cleanup();
+  });
+
+  it("names the archive lines it could not read rather than serving a shorter history", async () => {
+    const { findByText } = mount(
+      <RennetRouterApp
+        bridge={settingsBridge({
+          benchmarks: [generation("kept", ["claude-code"])],
+          benchmarkSkipped: ["line 4: record version 9 is not one this build reads (1)"],
+        })}
+        history={memoryHistory("/settings/benchmarks")}
+      />,
+    );
+    await findByText("Recorded runs");
+    await findByText("1 archive line could not be read");
+    await findByText("line 4: record version 9 is not one this build reads (1)");
     cleanup();
   });
 });

@@ -56,6 +56,9 @@ export interface SettingsFixtureSeed {
   readonly benchmarkRecording?: boolean;
   /** The archive `benchmarks.list` serves, newest first. */
   readonly benchmarks?: readonly BenchmarkRun[];
+  /** Archive lines the store could not read, which the panel must surface rather than
+   *  quietly serve a shorter history. */
+  readonly benchmarkSkipped?: readonly string[];
 }
 
 const EMPTY_GUIDANCE: SettingsGuidance = { rules: [], reason: "absent", dropped: 0 };
@@ -78,6 +81,7 @@ export class SettingsStore {
   #navigation: SettingsView["navigation"];
   #benchmarkRecording: boolean;
   readonly #benchmarks: BenchmarkRun[];
+  readonly #benchmarkSkipped: string[];
 
   constructor(seed: SettingsFixtureSeed = {}) {
     this.#scheme = seed.scheme ?? "system";
@@ -91,6 +95,7 @@ export class SettingsStore {
     this.#navigation = seed.navigation;
     this.#benchmarkRecording = seed.benchmarkRecording ?? true;
     this.#benchmarks = [...(seed.benchmarks ?? [])];
+    this.#benchmarkSkipped = [...(seed.benchmarkSkipped ?? [])];
   }
 
   #view(): SettingsView {
@@ -163,7 +168,11 @@ export class SettingsStore {
       // The panel's read honours its own `limit`, exactly as the real command does — the
       // cap is what keeps a long history off the wire, so a fixture that ignored it would
       // make the perf property untestable.
-      "benchmarks.list": ({ limit }) => ({ runs: this.#benchmarks.slice(0, limit ?? 200) }),
+      "benchmarks.list": ({ limit }) => ({
+        runs: this.#benchmarks.slice(0, limit ?? 200),
+        total: this.#benchmarks.length,
+        skipped: [...this.#benchmarkSkipped],
+      }),
     };
   }
 }
