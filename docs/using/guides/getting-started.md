@@ -161,6 +161,12 @@ standing on.
 
 That difference matters once you are reading. A working-tree capture is watched:
 edit the repository and the review says it went stale, and offers to regenerate.
+Only *your* edits count. Rennet keeps each board's own storage under
+`.rennet/boards/` in the repository, and that storage is excluded from what a
+review captures and from what the watcher compares, so a board Rennet writes
+never makes the review it belongs to look out of date — including after quitting
+and reopening. Anything else you keep under `.rennet/` is your project's content
+and is reviewed like any other file.
 A branch or pull-request review is a snapshot of fixed commits, so it is not
 watched and never claims to have gone stale — there is nothing for it to drift
 against.
@@ -403,6 +409,12 @@ the round did that you never requested. Every outcome is verified against the
 round's diff rather than taken from the worker's word, and each item names the
 ask it traces to and reveals the code where one applies.
 
+The report is measured before it is drafted, and a round whose diff is larger than
+the report can honestly carry stops there rather than classifying part of it. The
+failure names the measurement and the limit it passed, and no model is asked
+anything — Rennet does not summarise a change down to a size that fits and then
+describe the smaller change as if it were yours. Split the work across rounds.
+
 You read the report while the boards regenerate live beneath it, one lane per
 lens. Every lens drafts again each round; a lane reads **carrying forward** when
 that lens came back with nothing changed, **reworked** when it moved, and
@@ -411,7 +423,16 @@ empty result. In
 between it reads **drafted** — the board is written, the comparison not yet run.
 The lane and the board agree by construction — both read the same comparison —
 so a lane never claims a lens carried while its sections changed, or while a
-section it used to have went away. The surface never locks. **View the New
+section it used to have went away. Each lane settles on its own — nothing waits for
+the slowest lens — so the lanes finish in the order the work actually finished.
+
+Beneath the lanes sits one **Cross-lens coverage** row. It runs once, after every
+lane has settled, and reads *still running*, *every hunk covered*, *N hunks
+uncovered*, or *could not be computed* with the reason. Uncovered hunks wear a
+caution mark, never a green check: coverage is a note beside boards you can already
+read, and it never rewrites one of them.
+
+The surface never locks. **View the New
 Boards** appears only after regeneration has finished and the whole new
 generation is ready, never as a disabled button waiting to light up.
 
