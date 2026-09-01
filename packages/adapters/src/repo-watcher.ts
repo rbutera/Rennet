@@ -44,7 +44,7 @@ const IGNORED_SEGMENT = /[/\\](?:\.git|\.rennet|\.nx|node_modules)(?:[/\\]|$)/;
  * The app-owned check comes from the shared authority the board-store writer places
  * itself by (#729, D6): board artifacts Rennet writes into the reviewed repository must
  * never mark that repository dirty. It currently sits INSIDE the blanket `.rennet`
- * segment below, which #729's capture work narrows to exactly this prefix so a tracked
+ * segment above, which #729's capture work narrows to exactly this prefix so a tracked
  * `.rennet/conventions.json` edit invalidates like any other project file.
  */
 export function isIgnoredPath(path: string): boolean {

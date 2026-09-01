@@ -295,12 +295,12 @@ function failureReasons(pipeline: LensPipelineResult): string {
   return reasons.length > 0 ? reasons.join("; ") : "no drafter reported a reason";
 }
 
+const REQUIRED_CORE_LENSES = ["sequence", "decisions", "flagged"] as const;
+
 /** The review cannot advance without its three load-bearing reading surfaces. Sequence
  * must always contain a real board; Decisions and Flagged may instead settle with their
  * explicit typed clean result. A drafter failure is never equivalent to either clean
  * result, even when Design or Noise happened to produce useful boards beside it. */
-const REQUIRED_CORE_LENSES = ["sequence", "decisions", "flagged"] as const;
-
 function missingRequiredCoreLens(
   outcomes: readonly LensBoardOutcome[],
 ): (typeof REQUIRED_CORE_LENSES)[number] | undefined {

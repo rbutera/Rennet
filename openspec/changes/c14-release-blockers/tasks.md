@@ -1,7 +1,7 @@
 ## 1. Shared foundations
 
-- [ ] 1.1 Create the shared app-owned-paths authority module (declares the `.rennet/boards/` prefix) and consume it from `repo-watcher.ts` AND the board-store writer in `boards-runtime.ts` (D6)
-- [ ] 1.2 Extend the canonical lens settlement domain (`LensBoardOutcome` + absence reasons in protocol `session/model.ts`): retryable classification for the no-board path, lens-specific admissible absences (Sequence admits none, Noise admits `no-noise`) — no parallel union (D2)
+- [x] 1.1 Create the shared app-owned-paths authority module (declares the `.rennet/boards/` prefix) and consume it from `repo-watcher.ts` AND the board-store writer in `boards-runtime.ts` (D6)
+- [x] 1.2 Extend the canonical lens settlement domain (`LensBoardOutcome` + absence reasons in protocol `session/model.ts`): retryable classification for the no-board path, lens-specific admissible absences (Sequence admits none, Noise admits `no-noise`) — no parallel union (D2)
 
 ## 2. Capture excludes app-owned artifacts (#729)
 
