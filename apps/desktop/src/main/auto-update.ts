@@ -254,6 +254,25 @@ export function startAutoUpdate(
   // respawning the Squirrel stub - which always launches the newest staged
   // version - and quitting.
   let liveDownloadSeen = false;
+  // A later check that answers "no update" CLEARS the native downloaded flag
+  // (auto_updater_mac.mm keeps one `g_update_available`, set false in the
+  // not-available branch of every check), and update-electron-app re-checks
+  // every 5 minutes forever. So one stale update.electronjs.org answer between
+  // the download and the user's restart click makes quitAndInstall refuse with
+  // "No update available, can't quit and install" while the badge still says
+  // ready (observed 2026-09-01). Once a download is staged, further checks buy
+  // nothing and can only un-stage it — skip them. A failed apply re-arms them
+  // (and asks immediately) so Squirrel restages and repairs its own state.
+  const nativeCheckForUpdates =
+    typeof autoUpdater.checkForUpdates === "function"
+      ? autoUpdater.checkForUpdates.bind(autoUpdater)
+      : undefined;
+  let checksSuppressed = false;
+  if (nativeCheckForUpdates) {
+    autoUpdater.checkForUpdates = () => {
+      if (!checksSuppressed) nativeCheckForUpdates();
+    };
+  }
   const readiness = createUpdateReadiness((info) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.webContents.isDestroyed()) window.webContents.send(UPDATE_READY_CHANNEL, info);
@@ -267,6 +286,11 @@ export function startAutoUpdate(
       phase = readiness.ready ? "ready" : "idle";
       cancelRelaunchAfterApply?.();
       cancelRelaunchAfterApply = null;
+      // The native install state may be the thing that failed (see the
+      // suppression note above) — resume checking and ask right away, so the
+      // updater restages and the standing badge becomes installable again.
+      checksSuppressed = false;
+      nativeCheckForUpdates?.();
       try {
         await recoverAfterApplyFailure();
       } catch (recoveryError) {
@@ -348,6 +372,7 @@ export function startAutoUpdate(
 
   autoUpdater.on("update-downloaded", (_event, _notes, releaseName) => {
     liveDownloadSeen = true;
+    checksSuppressed = true;
     phase = "ready";
     logger.error("[auto-update] update-downloaded:", releaseName);
     readiness.markDownloaded(releaseName);

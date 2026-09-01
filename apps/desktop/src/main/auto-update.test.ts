@@ -4,6 +4,7 @@ const harness = vi.hoisted(() => {
   const { EventEmitter: Emitter } = require("node:events") as typeof import("node:events");
   const autoUpdaterMock = new Emitter() as InstanceType<typeof Emitter> & {
     quitAndInstall: ReturnType<typeof vi.fn>;
+    checkForUpdates: () => void;
   };
   autoUpdaterMock.quitAndInstall = vi.fn();
   return {
@@ -65,6 +66,9 @@ beforeEach(() => {
   windowSends.length = 0;
   harness.windows.length = 0;
   autoUpdaterMock.removeAllListeners();
+  // Fresh per test: startAutoUpdate wraps this in place, so a stale wrapper
+  // from a previous test must never be the thing the next test wraps.
+  autoUpdaterMock.checkForUpdates = vi.fn();
   vi.clearAllMocks();
 });
 
@@ -298,6 +302,44 @@ describe("startAutoUpdate wiring", () => {
     );
     expect(recoverAfterApplyFailure).not.toHaveBeenCalled();
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("stops asking for updates once one is downloaded — a later no-update answer clears Squirrel's install flag", () => {
+    // Electron's mac updater keeps ONE `g_update_available` flag; any later check
+    // that completes "not available" (a stale update.electronjs.org answer) sets it
+    // false, and quitAndInstall then refuses with "No update available, can't quit
+    // and install" while the badge still says ready (observed 2026-09-01).
+    const native = vi.fn();
+    autoUpdaterMock.checkForUpdates = native;
+    startAutoUpdate(isTrusted, quietLogger);
+    autoUpdaterMock.checkForUpdates();
+    expect(native).toHaveBeenCalledTimes(1);
+    autoUpdaterMock.emit("update-downloaded", {}, "notes", "1.0.0");
+    autoUpdaterMock.checkForUpdates();
+    autoUpdaterMock.checkForUpdates();
+    expect(native).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes checking immediately after a failed install handoff so the update restages", async () => {
+    const native = vi.fn();
+    autoUpdaterMock.checkForUpdates = native;
+    const reportApplyFailure = vi.fn();
+    const handle = startAutoUpdate(isTrusted, quietLogger, {
+      prepareToApply: async () => undefined,
+      reportApplyFailure,
+    });
+    autoUpdaterMock.emit("update-downloaded", {}, "notes", "1.0.0");
+    await handle.applyUpdate();
+    autoUpdaterMock.emit("error", new Error("No update available, can't quit and install"));
+    await vi.waitFor(() =>
+      expect(reportApplyFailure).toHaveBeenCalledWith(
+        "No update available, can't quit and install",
+      ),
+    );
+    // One immediate re-ask on failure, then periodic checks flow through again.
+    expect(native).toHaveBeenCalledTimes(1);
+    autoUpdaterMock.checkForUpdates();
+    expect(native).toHaveBeenCalledTimes(2);
   });
 
   it("degrades to a silent no-op when the update client throws (unsigned macOS)", () => {
