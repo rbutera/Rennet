@@ -45,6 +45,7 @@ import {
   createCompositionBoardsForReview,
   createGitLabPrSubmissionResolver,
   createRennetServer,
+  createRoundRegenerationProgressQueue,
   createRoundSourceLandingPorts,
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
@@ -447,6 +448,43 @@ describe("publish board-drafting coordination", () => {
     });
 
     await expect(source(advanced.id, "gen:patch-1")).resolves.toEqual({ status: "drafting" });
+  });
+});
+
+describe("round regeneration progress coordination", () => {
+  it("keeps a throwing diagnostic sink outside the awaited report handoff queue", async () => {
+    const order: string[] = [];
+    let releaseReport!: () => void;
+    const reportGate = new Promise<void>((resolve) => {
+      releaseReport = resolve;
+    });
+    const progress = createRoundRegenerationProgressQueue({
+      onDiagnostic: () => {
+        throw new Error("console sink failed");
+      },
+      onReport: async () => {
+        order.push("report-started");
+        await reportGate;
+        order.push("report-recorded");
+      },
+      onLens: () => order.push("lens-started"),
+    });
+
+    await expect(
+      progress.emit({
+        type: "report-diagnostic",
+        milestone: { stage: "schema-parsed", elapsedMs: 7 },
+      }),
+    ).resolves.toBeUndefined();
+    const report = progress.emit({ type: "report", reportBoardId: "report-board" });
+    const lens = progress.emit({ type: "lens", lanes: [] });
+    await vi.waitFor(() => expect(order).toEqual(["report-started"]));
+
+    releaseReport();
+    await expect(report).resolves.toBeUndefined();
+    await expect(lens).resolves.toBeUndefined();
+    await expect(progress.settle()).resolves.toBeUndefined();
+    expect(order).toEqual(["report-started", "report-recorded", "lens-started"]);
   });
 });
 

@@ -349,9 +349,9 @@ describe("regeneration lanes render every status honestly — no false green che
 // 4.1 is Rai's VERBATIM ruling (C14 verifies the exact strings): the regeneration
 // kicker reads "Regenerating the Boards" while it runs and "Regenerated the Boards"
 // when it finishes; the old "Re-drafting the boards" is gone from the surface.
-// 4.2's two steps are DERIVED from the real phase — the post-process pass is the window
-// between the last lens landing and the generation composing, and the composed line is
-// the `composed` event itself. Neither is pre-rendered.
+// 4.2's two steps are derived from the real phase. Once the last lens lands, cross-lens
+// coverage is already complete and the runtime finalizes the generation. The composed
+// line comes from the `composed` event itself. Neither is pre-rendered.
 describe("the regeneration kicker + tail steps (C15 4.1, 4.2)", () => {
   const settledLanes: readonly LensLane[] = [
     { id: "design", label: "Design", status: "done", verdict: "carrying-forward" },
@@ -397,14 +397,14 @@ describe("the regeneration kicker + tail steps (C15 4.1, 4.2)", () => {
 
   it("holds both tail steps back until their phase — nothing is pre-rendered", () => {
     const r = render(running); // a drafter still running: neither step has happened
-    expect(r.container.querySelector('[data-step="post-process"]')).toBeNull();
+    expect(r.container.querySelector('[data-step="finalizing"]')).toBeNull();
     expect(r.container.querySelector('[data-step="composed"]')).toBeNull();
   });
 
-  it("shows the post-process pass once every lane settles, still before composition", () => {
+  it("shows generation finalization once every lane settles, still before composition", () => {
     const r = render(settled);
-    const step = r.container.querySelector('[data-step="post-process"]');
-    expect(step?.textContent).toContain("Cleaning up drafts · post-process pass");
+    const step = r.container.querySelector('[data-step="finalizing"]');
+    expect(step?.textContent).toContain("Finalizing generation");
     expect(step?.getAttribute("data-status")).toBe("running");
     // The generation has not composed, so its line is still absent.
     expect(r.container.querySelector('[data-step="composed"]')).toBeNull();
@@ -412,9 +412,12 @@ describe("the regeneration kicker + tail steps (C15 4.1, 4.2)", () => {
 
   it("shows both steps settled at composition, the composed line naming the real generation", () => {
     const r = render(composed);
-    expect(
-      r.container.querySelector('[data-step="post-process"]')?.getAttribute("data-status"),
-    ).toBe("done");
+    expect(r.container.querySelector('[data-step="finalizing"]')?.getAttribute("data-status")).toBe(
+      "done",
+    );
+    expect(r.container.querySelector('[data-step="finalizing"]')?.textContent).toContain(
+      "Generation finalized",
+    );
     const composedStep = r.container.querySelector('[data-step="composed"]');
     expect(composedStep?.textContent).toContain("Composed generation gen2");
     expect(composedStep?.getAttribute("data-status")).toBe("done");

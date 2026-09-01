@@ -11,10 +11,10 @@
  * The channel (#493): a lint (or parse) failure returns the draft to its seat as
  * ZodError-shaped JSON pointers on ONE channel; the seat returns a patch; passing
  * elements FREEZE (a frozen element is never re-linted's-fault nor re-drafted). A
- * 4-rung escalation ends in an HONEST-OMISSION exit — the offending element is
- * dropped and the hunks it taught move to `skippedHunks` with a reason. Retry cap
- * 10; on exhaustion the board ships with labeled `blemishes[]` (`Violation` +
- * `attempts`) — visible, never blocking (Rule Zero: no gate).
+ * one repair turn ends in an HONEST-OMISSION exit for an offending element: the
+ * element is dropped and the hunks it taught move to `skippedHunks` with a reason.
+ * Unresolved board or schema violations ship as labeled `blemishes[]`
+ * (`Violation` + `attempts`) — visible, never blocking (Rule Zero: no gate).
  *
  * Three gates, in order: **lint** (the loop above, plus a reference check after
  * post-process) → **immutability** (typed lens-output data is byte-identical
@@ -29,10 +29,10 @@ import { type LintContext, lint, taughtHunkIds } from "./lint";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
-/** The escalation ladder: an element is asked this many times, then omitted. */
-export const LADDER_RUNGS = 4;
-/** The global retry cap; on exhaustion, leftovers ship as `blemishes` (#493). */
-export const RETRY_CAP = 10;
+/** The single repair rung: an element still invalid afterward is omitted. */
+export const LADDER_RUNGS = 1;
+/** The global model-repair cap after the initial draft. */
+export const RETRY_CAP = 1;
 
 // ── The seams the cluster-5 runtime injects ──────────────────────────────────
 
@@ -94,7 +94,7 @@ export interface ValidateResult {
   readonly immutability: readonly Violation[];
   /** Gate 3 — composition every-hunk coverage (cluster-4 seam; empty by default). */
   readonly composition: readonly Violation[];
-  /** How many retry turns were spent. */
+  /** How many model repair turns were spent. */
   readonly attempts: number;
   /**
    * Whether ANY drafter return parsed. `false` means every turn (initial + retries)
@@ -409,22 +409,6 @@ export async function validateDraft(
       if (violations.length === 0) break; // clean
     }
 
-    if (attempts >= RETRY_CAP) {
-      // Exhaustion: whatever still fails ships as labeled blemishes. Visible, never
-      // blocking. A run stuck on PARSE issues (the seat never returned a valid board)
-      // labels those as blemishes — never an empty `blemishes[]` hiding a broken run (finding 6).
-      const unresolved: Violation[] =
-        pendingParseIssues.length > 0
-          ? pendingParseIssues.map((i) => ({
-              ruleId: "schema-invalid",
-              elementRef: `/${i.path.join("/")}`,
-              message: i.message,
-            }))
-          : violations;
-      blemishes = unresolved.map((v) => ({ ...v, attempts }));
-      break;
-    }
-
     // Freeze every element with no violation this round; escalate the offenders.
     const offenders = new Set<string>();
     for (const v of violations) {
@@ -434,12 +418,13 @@ export async function validateDraft(
     const codeRefIds = new Set(
       current.elements.filter((el) => el.kind === "code_ref").map((el) => el.id),
     );
-    // First pass: rung-4 offenders drop; the rest escalate a rung or freeze.
+    // First pass: an offender that survived the repair turn drops; before the
+    // repair it advances onto the single rung. Passing elements freeze.
     const primaryDrops = new Set<string>();
     for (const el of current.elements) {
       if (offenders.has(el.id)) {
         const rung = rungByElement.get(el.id) ?? 0;
-        if (rung >= LADDER_RUNGS) primaryDrops.add(el.id);
+        if (attempts >= RETRY_CAP || rung >= LADDER_RUNGS) primaryDrops.add(el.id);
         else rungByElement.set(el.id, rung + 1);
       } else if (pendingParseIssues.length === 0) {
         // No violation this round ⇒ passing ⇒ freeze (never re-drafted).
@@ -448,15 +433,15 @@ export async function validateDraft(
     }
 
     // Second pass: the honest-omission exit + incoming-reference closure (finding 5).
-    // Drop each rung-4 element; resolve the closure so NO surviving element dangles
+    // Drop each post-repair offender; resolve the closure so NO surviving element dangles
     // a reference to a dropped one; shed the hunks nothing on the board still teaches.
     const dropped = new Set<string>(primaryDrops);
     if (primaryDrops.size > 0) {
       const pre = current.elements;
       const omitReason = (el: DraftElement): string =>
         OMISSION_REASON_KINDS.has(el.kind)
-          ? `The ${ctx.lens} ${ctx.lens === "report" ? "seat" : "lens"} could not teach \`${el.id}\` in ${LADDER_RUNGS} attempts; left to another lens.`
-          : `\`${el.id}\` could not be made valid in ${LADDER_RUNGS} attempts; omitted honestly.`;
+          ? `The ${ctx.lens} ${ctx.lens === "report" ? "seat" : "lens"} could not teach \`${el.id}\` after one repair turn; left to another lens.`
+          : `\`${el.id}\` could not be made valid after one repair turn; omitted honestly.`;
       // Ordered reason per dropped element (primary first, cascades appended).
       const reasonById = new Map<string, string>();
       for (const el of pre) if (primaryDrops.has(el.id)) reasonById.set(el.id, omitReason(el));
@@ -548,16 +533,32 @@ export async function validateDraft(
       );
     }
 
-    // Ask the seat to re-draft the still-offending (non-dropped) elements.
+    // Re-lint after an omission. This is deterministic work and does not spend
+    // another model turn.
+    if (primaryDrops.size > 0) {
+      pendingParseIssues = [];
+      continue;
+    }
+
+    // Ask the seat to re-draft the still-offending elements.
     const askable = violations.filter((v) => {
       const id = offendingId(v.elementRef);
       return id === undefined || !dropped.has(id);
     });
-    if (parsePointers.length === 0 && askable.length === 0) {
-      // Everything remaining was dropped this round; re-lint the smaller board.
-      pendingParseIssues = [];
-      attempts += 1;
-      continue;
+    if (attempts >= RETRY_CAP) {
+      // Exhaustion: whatever still fails ships as labeled blemishes. Visible,
+      // never blocking. A run stuck on parse issues labels those as blemishes,
+      // never an empty `blemishes[]` hiding a broken run (finding 6).
+      const unresolved: Violation[] =
+        pendingParseIssues.length > 0
+          ? pendingParseIssues.map((i) => ({
+              ruleId: "schema-invalid",
+              elementRef: `/${i.path.join("/")}`,
+              message: i.message,
+            }))
+          : askable;
+      blemishes = unresolved.map((v) => ({ ...v, attempts }));
+      break;
     }
 
     const pointers: RetryPointer[] =

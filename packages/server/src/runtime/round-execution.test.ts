@@ -8,6 +8,7 @@ import {
   type RoundOperation,
   type RoundOperationFailure,
   type RoundOperationState,
+  type RoundReportBoard,
   type RoundReportReceipt,
   type RoundSourceLandingAttempt,
   type RoundSourceLandingReceipt,
@@ -22,6 +23,19 @@ import { createRoundExecutionCoordinator, type RoundExecutionPorts } from "./rou
 
 const TRANSACTIONAL_UNIT_A_ID = "a".repeat(64);
 const TRANSACTIONAL_UNIT_B_ID = "b".repeat(64);
+const reportBoard = {
+  lens: "report",
+  generation: "generation-1",
+  boardId: "report-board-1",
+  document: {
+    title: "Round report",
+    introMarkdown: "The requested change landed.",
+    measure: "reading",
+  },
+  sections: [],
+  elements: [],
+  skippedHunks: [],
+} satisfies RoundReportBoard;
 
 function transactionalLandingAttempt(): RoundSourceLandingAttempt {
   return {
@@ -1710,6 +1724,155 @@ describe("createRoundExecutionCoordinator", () => {
     }
     expect(completed.state.result.report.reportBoardId).toBe(reserved.reportBoardId);
     expect(completed.state.result.report.generation).toBe(reserved.generation);
+  });
+
+  it("persists the verified report handoff when later lens regeneration fails", async () => {
+    const test = scenario();
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ attempt, recordReportHandoff }) {
+          const handoff = recordReportHandoff({
+            reportBoardId: attempt.reportBoardId,
+            generation: attempt.generation,
+            report: reportBoard,
+          });
+          const persisted = test.store.read("session-1");
+          expect(persisted?.revision).toBe(handoff.operationRevision);
+          expect(persisted?.state.phase).toBe("report-drafting");
+          throw new Error("core lens regeneration failed");
+        },
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const failed = await coordinator.submit(operation());
+
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed" || failed.state.failure.at !== "report-drafting") {
+      throw new Error("expected a report-drafting failure");
+    }
+    expect(failed.state.failure.reason).toBe("core lens regeneration failed");
+    expect(failed.state.failure.report.handoff).toMatchObject({
+      operationId: failed.operationId,
+      operationRevision: failed.revision - 1,
+      reportBoardId: "report-board-1",
+      generation: "generation-1",
+      report: reportBoard,
+    });
+  });
+
+  it("mints a fresh report epoch before retrying regeneration with a queued rerun", async () => {
+    const test = scenario();
+    const handoffRevisions: number[] = [];
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ attempt, recordReportHandoff }) {
+          const handoff = recordReportHandoff({
+            reportBoardId: attempt.reportBoardId,
+            generation: attempt.generation,
+            report: reportBoard,
+          });
+          handoffRevisions.push(handoff.operationRevision);
+          throw new Error("core lens regeneration failed");
+        },
+        async drainTerminal({ operation: current }) {
+          return current.rerunRequested ? { kind: "clear-queued" } : { kind: "retain" };
+        },
+      },
+    });
+
+    const firstFailure = await coordinator.submit(operation());
+    if (
+      firstFailure.state.phase !== "failed" ||
+      firstFailure.state.failure.at !== "report-drafting"
+    ) {
+      throw new Error("expected the first report attempt to fail");
+    }
+    const firstHandoff = firstFailure.state.failure.report.handoff;
+    if (firstHandoff === undefined) throw new Error("expected the first verified handoff");
+    const queued = test.store.requestRerun(storeExpectation(firstFailure));
+
+    const secondFailure = await coordinator.retry("session-1");
+
+    expect(secondFailure?.state.phase).toBe("failed");
+    expect(handoffRevisions).toEqual([
+      firstHandoff.operationRevision,
+      firstHandoff.operationRevision + 4,
+    ]);
+    expect(
+      test.published
+        .filter((entry) => entry.revision > queued.revision)
+        .map((entry) => [
+          entry.revision,
+          entry.state.phase,
+          entry.state.phase === "report-drafting"
+            ? entry.state.report.handoff?.operationRevision
+            : entry.state.phase === "failed" && entry.state.failure.at === "report-drafting"
+              ? entry.state.failure.report.handoff?.operationRevision
+              : undefined,
+        ]),
+    ).toEqual([
+      [firstHandoff.operationRevision + 3, "report-drafting", firstHandoff.operationRevision],
+      [firstHandoff.operationRevision + 4, "report-drafting", firstHandoff.operationRevision + 4],
+      [firstHandoff.operationRevision + 5, "failed", firstHandoff.operationRevision + 4],
+    ]);
+  });
+
+  it("mints a higher durable report epoch before replaying after daemon recovery", async () => {
+    const test = scenario();
+    const handoffReady = deferred<number>();
+    const first = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ attempt, recordReportHandoff }) {
+          const handoff = recordReportHandoff({
+            reportBoardId: attempt.reportBoardId,
+            generation: attempt.generation,
+            report: reportBoard,
+          });
+          handoffReady.resolve(handoff.operationRevision);
+          return new Promise<never>(() => undefined);
+        },
+      },
+    });
+    void first.submit(operation());
+    const priorRevision = await handoffReady.promise;
+    const replayedRevisions: number[] = [];
+    const recoveredCoordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ operation: recovered, attempt, recordReportHandoff }) {
+          const handoff = recordReportHandoff({
+            reportBoardId: attempt.reportBoardId,
+            generation: attempt.generation,
+            report: reportBoard,
+          });
+          replayedRevisions.push(handoff.operationRevision);
+          expect(handoff.operationRevision).toBe(recovered.revision);
+          throw new Error("replayed lens regeneration failed");
+        },
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const [failed] = await recoveredCoordinator.recover();
+
+    expect(replayedRevisions).toEqual([priorRevision + 1]);
+    expect(failed?.state.phase).toBe("failed");
+    if (failed?.state.phase !== "failed" || failed.state.failure.at !== "report-drafting") {
+      throw new Error("expected the recovered report attempt to fail");
+    }
+    expect(failed.state.failure.report.handoff?.operationRevision).toBe(priorRevision + 1);
   });
 
   it("retries a failed terminal drain before a fresh dispatch can replace its receipt", async () => {

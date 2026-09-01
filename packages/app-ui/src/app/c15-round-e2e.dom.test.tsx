@@ -408,9 +408,9 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
       "carrying forward",
     );
     expect(r.container.querySelector('[data-row="sequence"]')?.textContent).toContain("reworked");
-    // 4.2's post-process and composed receipts are present on the returned surface.
-    expect(r.container.querySelector('[data-step="post-process"]')?.textContent).toContain(
-      "Cleaning up drafts · post-process pass",
+    // 4.2's finalization and composed receipts are present on the returned surface.
+    expect(r.container.querySelector('[data-step="finalizing"]')?.textContent).toContain(
+      "Generation finalized",
     );
     expect(r.container.querySelector('[data-step="composed"]')?.textContent).toContain(
       "Composed generation gen2",

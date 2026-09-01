@@ -165,6 +165,7 @@ function operationIdentity(snapshot: RoundOperationProgressSnapshot): RoundRunId
   return {
     operationId: snapshot.operationId,
     revision: snapshot.revision,
+    ...(snapshot.rerunRequested === undefined ? {} : { rerunRequested: snapshot.rerunRequested }),
     createdAt: snapshot.createdAt,
     roundNumber: snapshot.roundNumber,
     sourceTarget: snapshot.sourceTarget,
@@ -622,7 +623,9 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
     if (
       event.type === "report" &&
       state.phase === "drafting-report" &&
-      event.operationRevision === state.operation.revision
+      (event.operationRevision === state.operation.revision ||
+        (state.operation.rerunRequested === true &&
+          event.operationRevision < state.operation.revision))
     ) {
       return {
         ...state,
@@ -841,6 +844,44 @@ export function mergeRoundEvents(
     if (!carriesReportProgress) return [latestOperation];
     const operationId = latestOperation.snapshot.operationId;
     if (state.phase === "failed") {
+      // Queueing the next round advances the operation CAS revision without changing this
+      // round's durable handoff. In that one case, the report's paired drafting revision
+      // identifies the attempt; a real retry still requires the newest drafting revision.
+      if (latestOperation.snapshot.rerunRequested === true) {
+        const reportRevisions = new Set<number>();
+        for (const event of all) {
+          if (
+            event.type === "report" &&
+            event.operationId === operationId &&
+            event.operationRevision !== undefined &&
+            event.operationRevision <= latestOperation.snapshot.revision
+          ) {
+            reportRevisions.add(event.operationRevision);
+          }
+        }
+        for (const reportRevision of [...reportRevisions].sort((a, b) => b - a)) {
+          const reportAttempt = latestScopedEvent(
+            all.filter(
+              (event): event is Extract<RoundEvent, { type: "operation" }> =>
+                event.type === "operation" &&
+                event.snapshot.operationId === operationId &&
+                event.snapshot.revision === reportRevision &&
+                event.snapshot.state.phase === "report-drafting",
+            ),
+          );
+          if (reportAttempt === undefined) continue;
+          const report = latestScopedEvent(
+            all.filter(
+              (event): event is Extract<RoundEvent, { type: "report" }> =>
+                event.type === "report" &&
+                event.operationId === operationId &&
+                event.operationRevision === reportRevision,
+            ),
+          );
+          if (report !== undefined) return [reportAttempt, latestOperation, report];
+        }
+        return [latestOperation];
+      }
       let reportAttempt: Extract<RoundEvent, { type: "operation" }> | undefined;
       for (const event of all) {
         if (
@@ -877,19 +918,45 @@ export function mergeRoundEvents(
           event.operationRevision !== undefined &&
           event.operationRevision <= latestOperation.snapshot.revision &&
           (state.phase !== "report-drafting" ||
-            event.operationRevision === latestOperation.snapshot.revision),
+            event.operationRevision === latestOperation.snapshot.revision ||
+            latestOperation.snapshot.rerunRequested === true),
       ),
     );
     if (report === undefined) return [latestOperation];
-    const lens = latestScopedEvent(
-      all.filter(
-        (event): event is Extract<RoundEvent, { type: "lens" }> =>
-          event.type === "lens" &&
-          event.operationId === operationId &&
-          event.operationRevision === report.operationRevision,
-      ),
-    );
-    return lens === undefined ? [latestOperation, report] : [latestOperation, report, lens];
+    const reportRevision = report.operationRevision;
+    const retainedReportAttempt =
+      state.phase === "report-drafting" &&
+      latestOperation.snapshot.rerunRequested === true &&
+      reportRevision !== undefined &&
+      reportRevision < latestOperation.snapshot.revision
+        ? latestScopedEvent(
+            all.filter(
+              (event): event is Extract<RoundEvent, { type: "operation" }> =>
+                event.type === "operation" &&
+                event.snapshot.operationId === operationId &&
+                event.snapshot.revision === reportRevision &&
+                event.snapshot.state.phase === "report-drafting",
+            ),
+          )
+        : undefined;
+    const acceptsLensRevision =
+      state.phase !== "report-drafting" ||
+      reportRevision === latestOperation.snapshot.revision ||
+      (latestOperation.snapshot.rerunRequested === true &&
+        reportRevision === latestOperation.snapshot.revision - 1);
+    const lens = acceptsLensRevision
+      ? latestScopedEvent(
+          all.filter(
+            (event): event is Extract<RoundEvent, { type: "lens" }> =>
+              event.type === "lens" &&
+              event.operationId === operationId &&
+              event.operationRevision === report.operationRevision,
+          ),
+        )
+      : undefined;
+    const progress =
+      lens === undefined ? [latestOperation, report] : [latestOperation, report, lens];
+    return retainedReportAttempt === undefined ? progress : [retainedReportAttempt, ...progress];
   }
 
   const bySeq = new Map<number, RoundEvent>();

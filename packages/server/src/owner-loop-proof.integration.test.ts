@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { GenerationStore, RoundOperationStore } from "@rennet/adapters";
+import { BoardMetaStore, GenerationStore, RoundOperationStore } from "@rennet/adapters";
 import {
   type CommandOutput,
   commandIdFor,
@@ -391,6 +391,45 @@ describe("#685 owner loop through a real server", () => {
     });
     expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne[0]?.frozenPredecessor).toBe(initialGeneration);
+    const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+    const completedRoundOne = operationStore.read(sessionId);
+    operationStore.close();
+    if (
+      completedRoundOne?.state.phase !== "completed" ||
+      completedRoundOne.state.result.kind !== "changed"
+    ) {
+      throw new Error("round one completed without its changed-operation receipt");
+    }
+    const reportHandoff = completedRoundOne.state.result.report.handoff;
+    if (reportHandoff === undefined) {
+      throw new Error("round one completed without its durable report handoff");
+    }
+    const reportMeta = new BoardMetaStore(join(dataDir, "board-meta")).load(
+      reportHandoff.reportBoardId,
+    );
+    expect(reportMeta).toMatchObject({
+      lens: "report",
+      boardId: reportHandoff.reportBoardId,
+      session: sessionId,
+      generation: reportHandoff.generation,
+      document: reportHandoff.report.document,
+    });
+    const hotRoundEvents = parseCommandOutput(
+      "session.roundEvents",
+      await first.dispatch("session.roundEvents", { reviewId }),
+    );
+    expect(
+      hotRoundEvents.events.find(
+        (event) =>
+          event.type === "report" &&
+          event.operationId === completedRoundOne.operationId &&
+          event.reportBoardId === reportHandoff.reportBoardId,
+      ),
+    ).toMatchObject({
+      type: "report",
+      operationRevision: reportHandoff.operationRevision,
+      report: reportHandoff.report,
+    });
     const roundOneBoardIds = await waitForFiveBoards(
       first,
       reviewId,
@@ -426,6 +465,22 @@ describe("#685 owner loop through a real server", () => {
       await restarted.dispatch("session.rounds", { reviewId }),
     );
     expect(durableRounds.records).toHaveLength(1);
+    const coldRoundEvents = parseCommandOutput(
+      "session.roundEvents",
+      await restarted.dispatch("session.roundEvents", { reviewId }),
+    );
+    expect(
+      coldRoundEvents.events.find(
+        (event) =>
+          event.type === "report" &&
+          event.operationId === completedRoundOne.operationId &&
+          event.reportBoardId === reportHandoff.reportBoardId,
+      ),
+    ).toMatchObject({
+      type: "report",
+      operationRevision: reportHandoff.operationRevision,
+      report: reportHandoff.report,
+    });
     expect(
       invocationRecords(invocationLog).filter((record) => record.kind === "edit"),
     ).toHaveLength(1);

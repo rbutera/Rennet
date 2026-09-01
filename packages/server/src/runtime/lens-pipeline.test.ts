@@ -21,6 +21,7 @@ import {
   findingRefKey,
   type KnowledgeStatement,
   type LensKind,
+  type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
@@ -1639,15 +1640,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
 
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
-      // The post-process editor pass is identity here — echo whatever board it is handed.
-      if (lens === "post-process") {
-        const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-        return ctx ? (JSON.parse(ctx[1] as string).board as unknown) : { elements: [] };
-      }
-      return cleanBody(lens);
-    };
+    const bodyFor = (prompt: string): unknown => cleanBody(lensFromPrompt(prompt));
 
     const result = await runLensPipeline({
       claudePort: fakeClaudePort(captures, bodyFor),
@@ -1659,7 +1652,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
+      onBoardArrival: (event) => {
+        arrivals.push(event);
+      },
     });
 
     // Five lens boards, each written once, each announced on freeze.
@@ -1675,6 +1670,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       for (const op of a.ops as { op: string }[]) expect(op.op).toBe("create");
     }
     expect(arrivals.map((a) => a.lens)).toEqual(lenses);
+    expect(captures.map(({ prompt }) => lensFromPrompt(prompt ?? "")).sort()).toEqual(
+      [...lenses].sort(),
+    );
+    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "post-process")).toBe(
+      false,
+    );
     // Coverage: no hunks ⇒ nothing uncovered.
     expect(result.coverage).toEqual([]);
   });
@@ -1788,7 +1789,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         readPrompt,
         whiteboard: client,
         boardIdFor: (lens) => boardIds.get(lens) ?? "",
-        onBoardArrival: (event) => arrivals.push(event),
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
       });
 
       for (const lens of ["sequence", "decisions"] as const) {
@@ -1838,7 +1841,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
+      onBoardArrival: (event) => {
+        arrivals.push(event);
+      },
     });
 
     const design = result.boards.find((outcome) => outcome.lens === "design");
@@ -1926,12 +1931,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   ] as const)(
     "records a zero-element %s lane as a typed absence instead of a successful arrival",
     async (emptyLens, absence) => {
+      let emptyLensTurns = 0;
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
         claudePort: fakeClaudePort([], (prompt) => {
           const lens = lensFromPrompt(prompt);
           if (lens === emptyLens) {
+            emptyLensTurns += 1;
             return { elements: [], skippedHunks: [] };
           }
           if (lens === "post-process" && prompt.includes('"elements":[]')) {
@@ -1947,9 +1954,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
         boardIdFor: (lens) => `board:${lens}`,
-        onBoardArrival: (event) => arrivals.push(event),
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
       });
 
+      expect(emptyLensTurns).toBe(1);
       expect(result.boards.find(({ lens }) => lens === emptyLens)).toMatchObject({ absence });
       expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${emptyLens}`);
       expect(arrivals.map(({ lens }) => lens)).not.toContain(emptyLens);
@@ -1957,28 +1967,38 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   );
 
   it.each([
-    ["decisions", "no-decisions", () => proseOnlyBody("decisions", "No choices found.")],
-    ["decisions", "no-decisions", () => withoutRootSections(meaningfulDecisionBody())],
-    ["decisions", "no-decisions", () => hideRootSectionFromProjection(meaningfulDecisionBody())],
-    ["flagged", "no-findings", () => proseOnlyBody("flagged", "No defect found.")],
+    ["decisions", "prose-only", () => proseOnlyBody("decisions", "No choices found.")],
+    ["decisions", "orphan decision", () => withoutRootSections(meaningfulDecisionBody())],
+    [
+      "decisions",
+      "hidden decision root",
+      () => hideRootSectionFromProjection(meaningfulDecisionBody()),
+    ],
+    ["flagged", "prose-only", () => proseOnlyBody("flagged", "No defect found.")],
     [
       "flagged",
-      "no-findings",
+      "orphan finding",
       () => mkBoard([mkFinding("detached-finding", "A detached finding is not served.", [])]),
     ],
   ] as const)(
-    "records a semantically empty %s result as typed %s absence",
-    async (emptyLens, absence, emptyBody) => {
+    "records a non-empty %s %s result as a precise failure without restarting the drafter",
+    async (malformedLens, _shape, malformedBody) => {
+      let malformedLensTurns = 0;
+      const captures: { model?: string; prompt?: string }[] = [];
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
+        claudePort: fakeClaudePort(captures, (prompt) => {
           const lens = lensFromPrompt(prompt);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
             return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
           }
-          return lens === emptyLens ? emptyBody() : cleanBody(lens);
+          if (lens === malformedLens) {
+            malformedLensTurns += 1;
+            return malformedBody();
+          }
+          return cleanBody(lens);
         }),
         codexExecutor: null,
         repoRoot: "/pr-worktree",
@@ -1988,12 +2008,24 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
         boardIdFor: (lens) => `board:${lens}`,
-        onBoardArrival: (event) => arrivals.push(event),
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
       });
 
-      expect(result.boards.find(({ lens }) => lens === emptyLens)).toMatchObject({ absence });
-      expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${emptyLens}`);
-      expect(arrivals.map(({ lens }) => lens)).not.toContain(emptyLens);
+      const outcome = result.boards.find(({ lens }) => lens === malformedLens);
+      expect(malformedLensTurns).toBe(1);
+      expect(
+        captures.filter(({ prompt }) => prompt?.includes(`prompts/${malformedLens}.md`)),
+      ).toHaveLength(1);
+      expect(outcome?.absence).toBeUndefined();
+      expect(outcome?.failure).toContain(
+        malformedLens === "decisions"
+          ? "no reachable `decision` in the emitted board"
+          : "no reachable `finding` in the emitted board",
+      );
+      expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${malformedLens}`);
+      expect(arrivals.map(({ lens }) => lens)).not.toContain(malformedLens);
     },
   );
 
@@ -2001,7 +2033,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ["prose-only", () => proseOnlyBody("sequence", "Read the change in dependency order.")],
     ["orphan order_step", () => withoutRootSections(meaningfulSequenceBody())],
   ] as const)(
-    "retries a %s Sequence result once before recording a precise failure",
+    "records a %s Sequence result as a precise failure without restarting the drafter",
     async (_shape, sequenceBody) => {
       let sequenceTurns = 0;
       const captures: { model?: string; prompt?: string }[] = [];
@@ -2028,12 +2060,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         boardIdFor: (lens) => `board:${lens}`,
       });
 
-      expect(sequenceTurns).toBe(2);
-      expect(
-        captures.filter(({ prompt }) => prompt?.includes("prompts/sequence.md"))[1]?.prompt,
-      ).toContain("`order_step`");
+      expect(sequenceTurns).toBe(1);
+      expect(captures.filter(({ prompt }) => prompt?.includes("prompts/sequence.md"))).toHaveLength(
+        1,
+      );
       expect(result.boards.find(({ lens }) => lens === "sequence")?.failure).toContain(
-        "no reachable `order_step` after one explicit retry",
+        "no reachable `order_step` in the emitted board",
       );
     },
   );
@@ -2076,7 +2108,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   );
 
   it.each(["design", "sequence"] as const)(
-    "retries a required %s lane once and records a precise failure when it stays empty",
+    "records an empty required %s lane as a precise failure without restarting the drafter",
     async (requiredLens) => {
       let requiredTurns = 0;
       const arrivals: BoardArrivalEvent[] = [];
@@ -2100,14 +2132,16 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         readPrompt,
         whiteboard: fakeWhiteboard([]),
         boardIdFor: (lens) => `board:${lens}`,
-        onBoardArrival: (event) => arrivals.push(event),
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
       });
 
-      expect(requiredTurns).toBe(2);
+      expect(requiredTurns).toBe(1);
       expect(result.boards.find(({ lens }) => lens === requiredLens)?.failure).toContain(
         requiredLens === "sequence"
-          ? "no reachable `order_step` after one explicit retry"
-          : "produced zero elements after one explicit retry",
+          ? "no reachable `order_step` in the emitted board"
+          : "produced zero elements in the emitted board",
       );
       expect(arrivals.map(({ lens }) => lens)).not.toContain(requiredLens);
     },
@@ -2794,7 +2828,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     }
   });
 
-  it("keeps Design title, source navigation, stats, and verbatim scenarios across post-process", async () => {
+  it("keeps Design title, source navigation, stats, and verbatim scenarios without a rewrite turn", async () => {
     const bodyFor = (prompt: string): unknown => {
       const lens = lensFromPrompt(prompt);
       if (lens === "design") {
@@ -2958,7 +2992,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
   });
 
-  it("keeps source-backed typed roots in source order when the editor reverses them", async () => {
+  it("keeps source-backed typed roots in drafter order without a rewrite turn", async () => {
     const bodyFor = (prompt: string): unknown => {
       const lens = lensFromPrompt(prompt);
       if (lens === "design") {
@@ -3049,7 +3083,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
   });
 
-  it("drops typed elements invented by the Design editor while keeping connective prose", async () => {
+  it("never runs the poisoned Design rewrite turn", async () => {
+    const captures: HarnessCapture[] = [];
     const bodyFor = (prompt: string): unknown => {
       const lens = lensFromPrompt(prompt);
       if (lens === "design") {
@@ -3103,7 +3138,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], bodyFor),
+      claudePort: fakeClaudePort(captures, bodyFor),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
@@ -3132,10 +3167,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       children: [],
     });
     expect(
-      design?.board?.elements.find(({ id }) => id === "editor-connective-prose")?.data,
-    ).toMatchObject({
-      markdown: "The implementation follows the source-defined refresh sequence.",
-    });
+      design?.board?.elements.find(({ id }) => id === "editor-connective-prose"),
+    ).toBeUndefined();
+    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "post-process")).toBe(
+      false,
+    );
     expect(design?.immutability).toEqual([]);
   });
 
@@ -3257,6 +3293,19 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(
       codexCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "gpt-5.6-sol"),
     ).toBe(true);
+    const providerCalls = [...claudeCaptures, ...codexCaptures].map(({ prompt }) =>
+      lensFromPrompt(prompt ?? ""),
+    );
+    expect(providerCalls).toHaveLength(6);
+    expect(
+      Object.fromEntries(
+        ["design", "sequence", "decisions", "flagged", "noise"].map((lens) => [
+          lens,
+          providerCalls.filter((calledLens) => calledLens === lens).length,
+        ]),
+      ),
+    ).toEqual({ design: 1, sequence: 1, decisions: 1, flagged: 2, noise: 1 });
+    expect(providerCalls).not.toContain("post-process");
   });
 
   it("runs the round-report FIRST on a round and threads it into the lens drafters (D3/R58)", async () => {
@@ -3280,7 +3329,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
+      onBoardArrival: (event) => {
+        arrivals.push(event);
+      },
     });
 
     // The report board is written and announced BEFORE any lens board.
@@ -3297,6 +3348,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const captures: HarnessCapture[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
+    const diagnostics: RoundReportDiagnosticMilestone[] = [];
+    const diagnosticTimes = [100, 110, 105, 120, 115, 130, 125];
     let reportTurns = 0;
     const workerDiff = [
       "diff --git a/src/auth.ts b/src/auth.ts",
@@ -3317,7 +3370,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           path: "src/auth.ts",
           type: "request-change" as const,
           instruction: "Replace the first line.",
-          context: "Keep the exact durable ask text.",
+          span: { startLine: 1, endLine: 1 },
+          side: "additions" as const,
+          context: "SECRET_STALE_PRIOR_DIFF_CONTEXT",
         },
         {
           id: "ask-second",
@@ -3400,7 +3455,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
+      onBoardArrival: (event) => {
+        arrivals.push(event);
+      },
+      onReportDiagnostic: (milestone) => diagnostics.push(milestone),
+      now: () => diagnosticTimes.shift() ?? 125,
     });
 
     const reportCaptures = captures.filter(({ prompt }) => prompt?.includes("prompts/report.md"));
@@ -3448,12 +3507,35 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(reportContext).not.toBeNull();
     expect(JSON.parse(reportContext?.[1] ?? "{}")).toEqual({
       patchsetId: "ps-1",
-      dispatchedAsks: round.dispatchedAsks,
+      dispatchedAsks: [
+        {
+          id: "ask-first",
+          path: "src/auth.ts",
+          instruction: "Replace the first line.",
+          span: { startLine: 1, endLine: 1 },
+          side: "additions",
+        },
+        { id: "ask-second", path: "src/auth.ts", instruction: "Replace the second line." },
+      ],
       worker: round.worker,
     });
     expect(reportPrompt).not.toContain("hostSchema");
     expect(reportPrompt).not.toContain("deltaPacket");
     expect(reportPrompt).not.toContain("MUST_NOT_REACH_REPORT");
+    expect(reportPrompt).not.toContain("SECRET_STALE_PRIOR_DIFF_CONTEXT");
+    expect(diagnostics.map(({ stage }) => stage)).toEqual([
+      "turn-started",
+      "provider-settled",
+      "turn-settled",
+      "schema-parsed",
+      "evidence-verified",
+      "persisted",
+    ]);
+    expect(
+      diagnostics.every(({ elapsedMs }) => Number.isInteger(elapsedMs) && elapsedMs >= 0),
+    ).toBe(true);
+    expect(diagnostics.map(({ elapsedMs }) => elapsedMs)).toEqual([10, 10, 20, 20, 30, 30]);
+    expect(JSON.stringify(diagnostics)).not.toContain("SECRET_");
     expect(
       captures.filter(
         ({ prompt }) =>
@@ -3503,7 +3585,103 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ).toBe(true);
   });
 
-  it("accepts a verified one-line coding turn after one classification turn", async () => {
+  it("awaits classified report handoff before starting any lens and aborts on rejection", async () => {
+    const classification = {
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
+      beyond: [],
+    };
+    const round = {
+      number: 1,
+      previousGeneration: "gen:ps-0",
+      dispatchedAsks: [
+        {
+          id: "ask-one",
+          path: "src/auth.ts",
+          type: "request-change" as const,
+          instruction: "Replace the line.",
+          context: "",
+        },
+      ],
+      findingDispositions: {},
+      worker: {
+        outcome: "completed" as const,
+        diff: [
+          "diff --git a/src/auth.ts b/src/auth.ts",
+          "--- a/src/auth.ts",
+          "+++ b/src/auth.ts",
+          "@@ -1 +1 @@",
+          "-old line",
+          "+new line",
+        ].join("\n"),
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "before", to: "after" },
+      },
+    };
+    const start = (
+      reportArrival: () => void | Promise<void>,
+    ): {
+      readonly run: Promise<Awaited<ReturnType<typeof runLensPipeline>>>;
+      readonly lensTurns: () => number;
+      readonly lensStarts: () => number;
+    } => {
+      let lensTurns = 0;
+      let lensStarts = 0;
+      return {
+        run: runLensPipeline({
+          claudePort: fakeClaudePort([], (prompt) => {
+            if (lensFromPrompt(prompt) === "report") return classification;
+            lensTurns += 1;
+            return cleanBody(lensFromPrompt(prompt));
+          }),
+          codexExecutor: null,
+          repoRoot: "/pr-worktree",
+          deltaPacket: PACKET,
+          currentGeneration: "gen:ps-1:dispatch:handoff",
+          round,
+          hunks: [],
+          lintContextFor,
+          readPrompt,
+          whiteboard: fakeWhiteboard([]),
+          boardIdFor: (lens) => `board:${lens}`,
+          onBoardArrival: (event) => (event.lens === "report" ? reportArrival() : undefined),
+          onLensDraftingStart: () => {
+            lensStarts += 1;
+          },
+        }),
+        lensTurns: () => lensTurns,
+        lensStarts: () => lensStarts,
+      };
+    };
+
+    let releaseHandoff: () => void = () => undefined;
+    const handoffGate = new Promise<void>((resolve) => {
+      releaseHandoff = resolve;
+    });
+    let announceHandoff: () => void = () => undefined;
+    const handoffStarted = new Promise<void>((resolve) => {
+      announceHandoff = resolve;
+    });
+    const deferred = start(() => {
+      announceHandoff();
+      return handoffGate;
+    });
+    await handoffStarted;
+    expect(deferred.lensStarts()).toBe(0);
+    expect(deferred.lensTurns()).toBe(0);
+    releaseHandoff();
+    await deferred.run;
+    expect(deferred.lensStarts()).toBe(1);
+    expect(deferred.lensTurns()).toBeGreaterThan(0);
+
+    const rejected = start(() => {
+      throw new Error("report handoff rejected");
+    });
+    await expect(rejected.run).rejects.toThrow("report handoff rejected");
+    expect(rejected.lensStarts()).toBe(0);
+    expect(rejected.lensTurns()).toBe(0);
+  });
+
+  it("accepts the guarded one-line widget turn after one classification turn", async () => {
     let reportTurns = 0;
     const applied: Applied[] = [];
     const result = await runLensPipeline({
@@ -3518,7 +3696,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
                 status: "addressed",
                 note: "The exact changed line now carries the requested value.",
                 evidence: {
-                  path: "src/auth.ts",
+                  path: "src/widget.ts",
                   side: "head",
                   startLine: 1,
                   endLine: 1,
@@ -3544,9 +3722,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         dispatchedAsks: [
           {
             id: "ask-one",
-            path: "src/auth.ts",
+            path: "src/widget.ts",
             type: "request-change",
-            instruction: "Replace the line.",
+            instruction:
+              "Replace entire src/widget.ts with export const widget = 3; newline, no other file.",
             context: "",
           },
         ],
@@ -3554,14 +3733,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         worker: {
           outcome: "completed",
           diff: [
-            "diff --git a/src/auth.ts b/src/auth.ts",
-            "--- a/src/auth.ts",
-            "+++ b/src/auth.ts",
+            "diff --git a/src/widget.ts b/src/widget.ts",
+            "--- a/src/widget.ts",
+            "+++ b/src/widget.ts",
             "@@ -1 +1 @@",
-            "-old line",
-            "+new line",
+            "-export const widget = 2;",
+            "+export const widget = 3;",
           ].join("\n"),
-          changedPaths: ["src/auth.ts"],
+          changedPaths: ["src/widget.ts"],
           commitRange: { from: "before", to: "after" },
         },
       },
@@ -3579,7 +3758,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ).toMatchObject({
       data: {
         status: "addressed",
-        ask: { ref: "ask-one", text: "Replace the line." },
+        ask: {
+          ref: "ask-one",
+          text: "Replace entire src/widget.ts with export const widget = 3; newline, no other file.",
+        },
       },
     });
     expect(applied[0]?.boardId).toBe("board:report");
@@ -3721,6 +3903,21 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it.each([
     ["missing durable ask", { outcomes: [], beyond: [] }, "omitted dispatched asks: ask-one"],
     [
+      "unified-diff-prefixed path",
+      {
+        outcomes: [
+          {
+            askId: "ask-one",
+            status: "addressed",
+            note: "The exact changed line carries the request.",
+            evidence: { path: "b/src/auth.ts", side: "head", startLine: 1, endLine: 1 },
+          },
+        ],
+        beyond: [],
+      },
+      "absent from the round diff",
+    ],
+    [
       "anchor outside the measured diff",
       {
         outcomes: [
@@ -3780,11 +3977,13 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       "classification output was invalid",
     ],
   ] as const)(
-    "fails one %s classification honestly before report persistence",
+    "fails one %s classification before report persistence or lens fanout",
     async (_case, classification, failure) => {
       let reportTurns = 0;
+      let lensTurns = 0;
+      let lensDraftingStarts = 0;
       const applied: Applied[] = [];
-      const result = await runLensPipeline({
+      const run = runLensPipeline({
         claudePort: fakeClaudePort([], (prompt) => {
           const lens = lensFromPrompt(prompt);
           if (lens === "report") {
@@ -3795,6 +3994,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
             return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
           }
+          lensTurns += 1;
           return cleanBody(lens);
         }),
         codexExecutor: null,
@@ -3833,10 +4033,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
         boardIdFor: (lens) => `board:${lens}`,
+        onLensDraftingStart: () => {
+          lensDraftingStarts += 1;
+        },
       });
 
+      await expect(run).rejects.toThrow(failure);
       expect(reportTurns).toBe(1);
-      expect(result.report?.failure).toContain(failure);
+      expect(lensDraftingStarts).toBe(0);
+      expect(lensTurns).toBe(0);
       expect(applied.map(({ boardId }) => boardId)).not.toContain("board:report");
     },
   );
@@ -3846,6 +4051,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const started: LensKind[] = [];
     const applied: Applied[] = [];
     const arrivals: LensKind[] = [];
+    const providerCalls: string[] = [];
     let reportArrived = false;
     let pipelineSettled = false;
     let announceFirstLensStart = (): void => undefined;
@@ -3874,12 +4080,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     const codexExecutor = async (req: { prompt: string }) => {
       const lens = lensFromPrompt(req.prompt);
-      if (lens === "post-process") {
-        const context = /rennet:layer context>>>\n(\{.*)/s.exec(req.prompt);
-        return {
-          output: context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] },
-        };
-      }
+      providerCalls.push(lens);
       if (lens !== "report" && lenses.includes(lens as LensKind)) {
         const lensKind = lens as LensKind;
         if (!started.includes(lensKind)) {
@@ -3972,6 +4173,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       applied.map(({ boardId }) => boardId).filter((boardId) => boardId !== "board:report"),
     ).toEqual([...lenses].reverse().map((lens) => `board:${lens}`));
     expect(arrivals).toEqual(lenses);
+    expect(providerCalls).toEqual(["report", ...lenses]);
     expect(pipelineSettled).toBe(true);
   });
 
@@ -4057,12 +4259,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(pipelineSettled).toBe(true);
   });
 
-  it("retries an empty round report once instead of announcing a silent arrival", async () => {
+  it("fails an empty round report after its first draft without starting lens work", async () => {
     let reportTurns = 0;
+    let lensTurns = 0;
+    let lensDraftingStarts = 0;
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
 
-    const result = await runLensPipeline({
+    const run = runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => {
         const lens = lensFromPrompt(prompt);
         if (lens === "report") {
@@ -4072,6 +4276,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         if (lens === "post-process" && prompt.includes('"elements":[]')) {
           return { elements: [], skippedHunks: [] };
         }
+        lensTurns += 1;
         return cleanBody(lens);
       }),
       codexExecutor: null,
@@ -4085,11 +4290,18 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
-      onBoardArrival: (event) => arrivals.push(event),
+      onBoardArrival: (event) => {
+        arrivals.push(event);
+      },
+      onLensDraftingStart: () => {
+        lensDraftingStarts += 1;
+      },
     });
 
-    expect(reportTurns).toBe(2);
-    expect(result.report?.failure).toContain("produced zero elements after one explicit retry");
+    await expect(run).rejects.toThrow("produced zero elements in the emitted board");
+    expect(reportTurns).toBe(1);
+    expect(lensDraftingStarts).toBe(0);
+    expect(lensTurns).toBe(0);
     expect(applied.map(({ boardId }) => boardId)).not.toContain("board:report");
     expect(arrivals.map(({ lens }) => lens)).not.toContain("report");
   });
@@ -4306,6 +4518,73 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       },
     ]);
     expect(persistedResolutionBatches[0]?.findingDispositions).toBe(liveFindingDispositions);
+  });
+
+  it("migrates a prior Flagged disposition when the new drafter returns honest empty", async () => {
+    const finding = {
+      generation: "gen:ps-0",
+      boardId: "board:flagged:ps-0",
+      findingId: "old-finding",
+    };
+    const dispositions = {
+      [findingRefKey(finding)]: { finding, disposition: "dismissed" as const },
+    };
+    const previous = mkBoard([
+      mkSection("old-section", "Findings", ["old-finding"]),
+      mkFinding("old-finding", "The retry can lose its terminal record.", ["old-code"]),
+      mkCodeRef("old-code", "src/auth.ts", 11, 12),
+    ]);
+    const persisted: Array<readonly unknown[]> = [];
+    let flaggedTurns = 0;
+
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        if (lens === "flagged") {
+          flaggedTurns += 1;
+          return { elements: [], skippedHunks: [] };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: {
+        ...PACKET,
+        successorAccount: { asks: [], beyondAsks: [] },
+      },
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-0",
+        previousFlaggedBoardId: finding.boardId,
+        dispatchedAsks: [],
+        findingDispositions: {},
+      },
+      hunks: [],
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        files: new Map([["src/auth.ts", 200]]),
+      }),
+      previous: new Map<LintTarget, DraftBoard>([["flagged", previous]]),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      readFindingDispositions: () => dispositions,
+      persistFindingResolutions: (_generation, _boardId, resolutions) => {
+        persisted.push([...resolutions]);
+      },
+    });
+
+    const expectedResolution = {
+      kind: "detached" as const,
+      finding,
+      reason: "current-finding-not-uniquely-matched" as const,
+    };
+    expect(flaggedTurns).toBe(1);
+    expect(result.boards.find(({ lens }) => lens === "flagged")).toMatchObject({
+      absence: "no-findings",
+      findingResolutions: [expectedResolution],
+    });
+    expect(persisted).toEqual([[expectedResolution]]);
   });
 
   it("fails only Flagged before its write when the live disposition read throws", async () => {
@@ -4589,7 +4868,9 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
         readPrompt,
         whiteboard: client,
         boardIdFor: (l) => boardIds.get(l) ?? "",
-        onBoardArrival: (e) => arrivals.push(e),
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
         persistBoardMeta: (m) => {
           meta.push(m);
         },
@@ -4648,7 +4929,9 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       readPrompt,
       whiteboard: rejecting,
       boardIdFor: (l) => `board:${l}`,
-      onBoardArrival: (e) => arrivals.push(e),
+      onBoardArrival: (event) => {
+        arrivals.push(event);
+      },
     });
     for (const o of result.boards) expect(o.failure).toBeDefined();
     // A rejected write is never announced as arrived.

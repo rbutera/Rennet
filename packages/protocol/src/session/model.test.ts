@@ -545,6 +545,64 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(RoundEventSchema.parse({ type: "unchanged" })).toEqual({ type: "unchanged" });
   });
 
+  it("admits only content-free classified-report milestones with nonnegative integer timing", () => {
+    const milestones = [
+      {
+        stage: "turn-started",
+        harness: "claude-code",
+        model: "sonnet-5",
+        effort: "medium",
+        elapsedMs: 0,
+      },
+      { stage: "provider-settled", outcome: "completed", elapsedMs: 7 },
+      { stage: "turn-settled", status: "emitted", elapsedMs: 9 },
+      { stage: "schema-parsed", elapsedMs: 10 },
+      { stage: "evidence-verified", elapsedMs: 12 },
+      { stage: "persisted", elapsedMs: 14 },
+    ] as const;
+
+    expect(
+      milestones.map((milestone) =>
+        RoundEventSchema.parse({
+          type: "report-diagnostic",
+          operationId: "operation-1",
+          operationRevision: 4,
+          milestone,
+        }),
+      ),
+    ).toHaveLength(6);
+    expect(
+      RoundEventSchema.safeParse({
+        type: "report-diagnostic",
+        operationId: "operation-1",
+        operationRevision: 4,
+        milestone: {
+          stage: "turn-started",
+          harness: "claude-code",
+          model: "gpt-5.6-sol",
+          effort: "medium",
+          elapsedMs: 0,
+        },
+      }).success,
+    ).toBe(false);
+    for (const elapsedMs of [-1, 1.5]) {
+      expect(
+        RoundEventSchema.safeParse({
+          type: "report-diagnostic",
+          milestone: { stage: "persisted", elapsedMs },
+        }).success,
+      ).toBe(false);
+    }
+    for (const forbidden of ["prompt", "output", "diff", "path", "evidence", "note"]) {
+      expect(
+        RoundEventSchema.safeParse({
+          type: "report-diagnostic",
+          milestone: { stage: "schema-parsed", elapsedMs: 1, [forbidden]: "SECRET_CANARY" },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
   it("makes a durable round operation's active and terminal phases explicit", () => {
     const claimed = RoundOperationSchema.parse({
       ...operationBase,
@@ -683,6 +741,84 @@ describe("session/ durable shapes (#466/#457)", () => {
     ],
   ])("requires reportBoardId to equal boardIds.report in a %s", (_kind, schema, value) => {
     expect(schema.safeParse(value).success).toBe(false);
+  });
+
+  it("keeps an early verified report bound to its exact durable operation attempt", () => {
+    const report = {
+      executionId: "report-draft-1",
+      reportBoardId: "report-1",
+      generation: "gen-2",
+      boardIds: operationBoardIds,
+      handoff: {
+        operationId: operationBase.operationId,
+        operationRevision: 8,
+        reportBoardId: "report-1",
+        generation: "gen-2",
+        report: operationReportBoard,
+      },
+      startedAt: 165,
+    } as const;
+    const failed = RoundOperationSchema.parse({
+      ...operationBase,
+      revision: 9,
+      updatedAt: 181,
+      state: {
+        phase: "failed",
+        failure: {
+          at: "report-drafting",
+          reason: "core lens regeneration failed",
+          failedAt: 181,
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: operationCommits,
+          landing: operationLanding,
+          recording: operationRecording,
+          report,
+        },
+      },
+    });
+
+    if (failed.state.phase !== "failed" || failed.state.failure.at !== "report-drafting") {
+      throw new Error("expected a report-drafting failure");
+    }
+    expect(failed.state.failure.report.handoff).toEqual(report.handoff);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...failed,
+        state: {
+          ...failed.state,
+          failure: {
+            ...failed.state.failure,
+            report: {
+              ...failed.state.failure.report,
+              handoff: { ...report.handoff, operationId: "other-operation" },
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...failed,
+        state: {
+          ...failed.state,
+          failure: {
+            ...failed.state.failure,
+            report: {
+              ...failed.state.failure.report,
+              handoff: { ...report.handoff, operationRevision: 10 },
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundReportDraftAttemptSchema.safeParse({
+        ...report,
+        handoff: { ...report.handoff, reportBoardId: "other-report" },
+      }).success,
+    ).toBe(false);
   });
 
   it("persists the reviewed tree before preparing a detached dirty snapshot", () => {

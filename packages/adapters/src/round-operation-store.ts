@@ -180,7 +180,7 @@ function sameRoundRecordingAttempt(
   );
 }
 
-function sameReportDraftAttempt(
+function sameReportDraftReservation(
   left: RoundReportDraftAttempt,
   right: RoundReportDraftAttempt,
 ): boolean {
@@ -191,6 +191,43 @@ function sameReportDraftAttempt(
     sameReceipt(left.boardIds, right.boardIds) &&
     left.startedAt === right.startedAt
   );
+}
+
+function sameReportHandoffContent(
+  left: NonNullable<RoundReportDraftAttempt["handoff"]>,
+  right: NonNullable<RoundReportDraftAttempt["handoff"]>,
+): boolean {
+  return (
+    left.operationId === right.operationId &&
+    left.reportBoardId === right.reportBoardId &&
+    left.generation === right.generation &&
+    sameReceipt(left.report, right.report)
+  );
+}
+
+function sameReportDraftAttempt(
+  left: RoundReportDraftAttempt,
+  right: RoundReportDraftAttempt,
+): boolean {
+  return sameReportDraftReservation(left, right) && sameReceipt(left.handoff, right.handoff);
+}
+
+function extendsReportHandoffEpoch(
+  operation: RoundOperation,
+  next: RoundReportDraftAttempt,
+): boolean {
+  if (operation.state.phase !== "report-drafting") return false;
+  const current = operation.state.report;
+  const nextHandoff = next.handoff;
+  if (
+    !sameReportDraftReservation(current, next) ||
+    nextHandoff === undefined ||
+    nextHandoff.operationId !== operation.operationId ||
+    nextHandoff.operationRevision !== operation.revision + 1
+  ) {
+    return false;
+  }
+  return current.handoff === undefined || sameReportHandoffContent(current.handoff, nextHandoff);
 }
 
 function sameReportDraft(left: RoundReportDraftReceipt, right: RoundReportDraftReceipt): boolean {
@@ -484,6 +521,17 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.recording, next.recording)
       );
     case "report-drafting":
+      if (next.phase === "report-drafting") {
+        return (
+          sameReceipt(current.workspace, next.workspace) &&
+          sameReceipt(current.worker, next.worker) &&
+          sameReceipt(current.gate, next.gate) &&
+          sameReceipt(current.commits, next.commits) &&
+          sameReceipt(current.landing, next.landing) &&
+          sameReceipt(current.recording, next.recording) &&
+          extendsReportHandoffEpoch(currentOperation, next.report)
+        );
+      }
       if (next.phase === "report-verifying") {
         return (
           sameReceipt(current.workspace, next.workspace) &&

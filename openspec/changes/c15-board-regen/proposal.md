@@ -40,7 +40,7 @@ The C09 machine (`rounds/round-machine.ts` `advance(state,event)`) is forward-on
 
 Bounded render polish riding cluster 3's stream. Four affordances the fixture never exercised (grep found NONE in non-test app-ui):
 
-- The synthetic pipeline steps "Cleaning up drafts · post-process pass" and "Composed generation 2" — rendered from real phases.
+- The derived completion steps "Finalizing generation" and "Composed generation 2", rendered from real phases. The first starts only after cross-lens coverage and every lens arrival.
 - **Kicker text (Rai ruled): standardize on the claim's verbatim wording.** Replace the current "Re-drafting the boards" (`round-greeting.tsx:51`) with **"Regenerating the Boards"** while running and **"Regenerated the Boards"** when finished — a label swap on phase. C14 verifies the exact strings; they are verbatim, not paraphrase.
 - The retrospective collapsed ledger line "Regenerated the boards · N reworks · generation M" — rendered from the real settled report (data from cluster 2).
 - The regenerated board's gen-1 drill-down + the generation/round intro line — rendered off real frozen-prior data (cluster 2), replacing the spike's `lib/fixtures/flagged-gen2.ts`.
@@ -51,7 +51,7 @@ Bounded render polish riding cluster 3's stream. Four affordances the fixture ne
 |---|------------------------------|-----------|
 | C1 | Report readable while the drafters regenerate live | c3 + c1 |
 | C2 | Per-lens regeneration block | c3 |
-| C3 | "Cleaning up drafts · post-process pass" + "Composed generation 2" steps | c4 |
+| C3 | "Finalizing generation" + "Composed generation 2" steps | c4 |
 | C4 | Kicker "Regenerating the Boards" → "Regenerated the Boards" | c4 |
 | C5 | **View the New Boards** real gating (appears at composition, never disabled) | c3 |
 | C6 | The surface never locks (non-locking during regeneration) | c3 |
@@ -79,6 +79,6 @@ Cluster 1 lands none of the nine directly, but is the PREREQ for all: real regen
 ## Impact
 
 - **New:** the collation-bridge builders in `server`/`core` (the `LintHunk` mapper, the `lintContextFor` builder, the round trigger); a generation-persistence store (patterned on `BoardMetaStore`); the `RoundEvent` wire schema + server emitter; the live seam-body swap in `packages/app-ui/src/rounds/rounds-data.ts`.
-- **Touched:** `create-server.ts` (the `runRound` trigger after `runWorkers`); `server/src/runtime/rounds.ts` (durable RoundRecord fields + generation persistence); `packages/app-ui/src/rounds/round-greeting.tsx` (kicker text, post-process/"Composed generation 2" steps, lane label) and `rounds/rounds-ledger.tsx` (retrospective line, gen-1 drill-down render); the `rounds-data.ts` seam body.
+- **Touched:** `create-server.ts` (the `runRound` trigger after `runWorkers`); `server/src/runtime/rounds.ts` (durable RoundRecord fields + generation persistence); `packages/app-ui/src/rounds/round-greeting.tsx` (kicker text, finalization/"Composed generation 2" steps, lane label) and `rounds/rounds-ledger.tsx` (retrospective line, gen-1 drill-down render); the `rounds-data.ts` seam body.
 - **Docs:** `docs/developing/concepts/handoff-and-exits.md` — the rounds loop moves from planned-Rennet framing to live where C15 makes it so (items 4–7), with the carry-forward semantics (label-honest, section-grain by construction) recorded. Update every page the change makes wrong in the same change (definition of done).
 - **Rule Zero:** C15 is real capability — the product's rounds loop going live. No consent/ceremony in the design. Never fabricate a generation or a board; a session with no stored prior generation degrades to a first-generation draft, it does not invent one.

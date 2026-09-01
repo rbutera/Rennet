@@ -171,6 +171,24 @@ export interface SwarmTurnOptions {
   readonly label?: string;
   /** Internal harness extensions policy. Omitted for ordinary council work. */
   readonly ambientConfig?: HarnessAmbientConfig;
+  /** Content-free provider settlement, emitted before one-shot session cleanup. */
+  readonly onProviderSettled?: (milestone: ProviderTurnSettlement) => void;
+}
+
+export interface ProviderTurnSettlement {
+  readonly stage: "provider-settled";
+  readonly outcome:
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "stream-ended-without-terminal"
+    | "threw";
+  readonly elapsedMs: number;
+}
+
+function nonnegativeElapsedMs(started: number, now: () => number): number {
+  const elapsed = now() - started;
+  return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
 }
 
 /**
@@ -192,6 +210,20 @@ export function createClaudeSwarmTurn(
     let observedModel: string | null = null;
     let apiKeySource: string | null = null;
     let session: HarnessSession | undefined;
+    let providerSettled = false;
+    const settleProvider = (outcome: ProviderTurnSettlement["outcome"]): void => {
+      if (providerSettled) return;
+      providerSettled = true;
+      try {
+        options.onProviderSettled?.({
+          stage: "provider-settled",
+          outcome,
+          elapsedMs: nonnegativeElapsedMs(started, now),
+        });
+      } catch {
+        // Diagnostics never change the provider result they describe.
+      }
+    };
     const record = (
       status: "emitted" | "failed",
       usage: ReturnType<typeof extractClaudeUsage>,
@@ -228,11 +260,13 @@ export function createClaudeSwarmTurn(
           continue;
         }
         if (event.kind === "error") {
+          settleProvider("failed");
           record("failed", null, event.error.message);
           return { status: "failed", message: event.error.message };
         }
         if (event.kind !== "session.ended") continue;
         const outcome = event.outcome;
+        settleProvider(outcome.status);
         const usage = extractClaudeUsage(event.native);
         if (outcome.status === "completed") {
           if (outcome.structuredOutput === undefined) {
@@ -253,9 +287,11 @@ export function createClaudeSwarmTurn(
         return { status: "failed", message };
       }
       const message = "the harness stream ended without a terminal frame";
+      settleProvider("stream-ended-without-terminal");
       record("failed", null, message);
       return { status: "failed", message };
     } catch (error) {
+      settleProvider("threw");
       const message = error instanceof Error ? error.message : String(error);
       record("failed", null, message);
       return { status: "failed", message };
@@ -285,9 +321,23 @@ export function createCodexSwarmTurn(
   model: string,
   effort: string,
   outputSchema: unknown,
-  options: Pick<SwarmTurnOptions, "signal" | "cwd"> & Pick<CodexExecRequest, "mcpServers">,
+  options: Pick<SwarmTurnOptions, "signal" | "cwd" | "onProviderSettled"> &
+    Pick<CodexExecRequest, "mcpServers">,
+  now: () => number = Date.now,
 ): RunTurn {
   return async function runTurn(prompt: string): Promise<HarnessTurnResult> {
+    const started = now();
+    const settleProvider = (outcome: ProviderTurnSettlement["outcome"]): void => {
+      try {
+        options.onProviderSettled?.({
+          stage: "provider-settled",
+          outcome,
+          elapsedMs: nonnegativeElapsedMs(started, now),
+        });
+      } catch {
+        // Diagnostics never change the provider result they describe.
+      }
+    };
     try {
       const result = await executor({
         model,
@@ -298,12 +348,14 @@ export function createCodexSwarmTurn(
         ...(options.mcpServers === undefined ? {} : { mcpServers: options.mcpServers }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
+      settleProvider("completed");
       return {
         status: "emitted",
         body: result.output,
         observed: { model: result.model ?? model, apiKeySource: null },
       };
     } catch (error) {
+      settleProvider("threw");
       return { status: "failed", message: error instanceof Error ? error.message : String(error) };
     }
   };
@@ -457,6 +509,7 @@ export interface CouncilSeatDeps {
   readonly signal?: AbortSignal;
   /** The metrics label for a Claude seat, e.g. "knowledge.worker". */
   readonly label?: string;
+  readonly onProviderSettled?: SwarmTurnOptions["onProviderSettled"];
 }
 
 const ISOLATED_COUNCIL_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
@@ -511,6 +564,9 @@ export function councilSeatTurn(
           // so suppress them for those jobs while unrelated Council work inherits.
           ...(usesIsolatedHarnessConfig(jobId) ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+          ...(deps.onProviderSettled === undefined
+            ? {}
+            : { onProviderSettled: deps.onProviderSettled }),
         },
       ),
     };
@@ -529,6 +585,9 @@ export function councilSeatTurn(
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+      ...(deps.onProviderSettled === undefined
+        ? {}
+        : { onProviderSettled: deps.onProviderSettled }),
     }),
   };
 }

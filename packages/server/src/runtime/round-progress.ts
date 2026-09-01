@@ -1,4 +1,9 @@
-import type { RoundEvent } from "@rennet/protocol";
+import {
+  type RoundEvent,
+  type RoundOperation,
+  type RoundReportHandoff,
+  roundOperationProgressSnapshot,
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The live round-progress hub (C15 3.1) — the server half of the channel that replaces
@@ -19,6 +24,97 @@ import type { RoundEvent } from "@rennet/protocol";
  *  dozen events; the cap only stops a pathological emitter growing without bound, and
  *  it drops the OLDEST first so the current phase always survives. */
 const MAX_EVENTS_PER_REVIEW = 200;
+
+function reportHandoffForOperation(operation: RoundOperation): RoundReportHandoff | undefined {
+  const state = operation.state;
+  if (state.phase === "report-drafting" || state.phase === "report-verifying") {
+    return state.report.handoff;
+  }
+  if (state.phase === "completed" && state.result.kind === "changed") {
+    return state.result.report.handoff;
+  }
+  if (
+    state.phase === "failed" &&
+    (state.failure.at === "report-drafting" || state.failure.at === "report-verifying")
+  ) {
+    return state.failure.report.handoff;
+  }
+  return undefined;
+}
+
+/** Rebuild the exact report handoff from the durable operation after a daemon restart.
+ * The caller revalidates the board metadata before allowing the stored projection onto
+ * the wire. A failed operation also carries its report-attempt snapshot because the
+ * client needs that exact revision to reject reports from an earlier retry. */
+export function roundEventsForDurableOperation(input: {
+  readonly operation: RoundOperation;
+  readonly liveEvents: readonly RoundEvent[];
+  readonly reportHandoffIsReadable: (handoff: RoundReportHandoff) => boolean;
+}): readonly RoundEvent[] {
+  const { operation } = input;
+  const current: RoundEvent = {
+    type: "operation",
+    snapshot: roundOperationProgressSnapshot(operation),
+  };
+  const live = input.liveEvents.filter(
+    (event) =>
+      (event.type === "report" || event.type === "lens" || event.type === "report-diagnostic") &&
+      event.operationId === operation.operationId,
+  );
+  const diagnostics = live.filter((event) => event.type === "report-diagnostic");
+  const handoff = reportHandoffForOperation(operation);
+  if (
+    handoff === undefined ||
+    handoff.operationId !== operation.operationId ||
+    handoff.operationRevision > operation.revision ||
+    !input.reportHandoffIsReadable(handoff)
+  ) {
+    return [current, ...diagnostics];
+  }
+  const liveHasReport = live.some(
+    (event) =>
+      event.type === "report" &&
+      event.operationRevision === handoff.operationRevision &&
+      event.reportBoardId === handoff.reportBoardId,
+  );
+  const report: RoundEvent = {
+    type: "report",
+    operationId: handoff.operationId,
+    operationRevision: handoff.operationRevision,
+    reportBoardId: handoff.reportBoardId,
+    report: handoff.report,
+  };
+  if (operation.state.phase !== "failed") {
+    return [current, ...(liveHasReport ? [] : [report]), ...live];
+  }
+  const failure = operation.state.failure;
+  if (
+    (failure.at !== "report-drafting" && failure.at !== "report-verifying") ||
+    handoff.operationRevision >= operation.revision
+  ) {
+    return [current, ...live];
+  }
+  const reportAttempt: RoundOperation = {
+    ...operation,
+    revision: handoff.operationRevision,
+    state: {
+      phase: "report-drafting",
+      workspace: failure.workspace,
+      worker: failure.worker,
+      gate: failure.gate,
+      commits: failure.commits,
+      landing: failure.landing,
+      recording: failure.recording,
+      report: failure.report,
+    },
+  };
+  return [
+    { type: "operation", snapshot: roundOperationProgressSnapshot(reportAttempt) },
+    current,
+    ...(liveHasReport ? [] : [report]),
+    ...live,
+  ];
+}
 
 export class RoundProgressHub {
   readonly #logs = new Map<string, RoundEvent[]>();

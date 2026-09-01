@@ -34,6 +34,15 @@ Every entry has a concrete `note` saying what the diff proves. An `addressed`,
 evidence: its point is that the exact
 turn diff does not establish the requested change.
 
+Never add the unified diff's `a/` or `b/` prefix to `evidence.path`. Use
+`side: "head"` for a `+` line and its number in the hunk's `+start,count` range;
+copy the destination path from the diff, which normally appears in
+`worker.changedPaths`. Use `side: "base"` for a `-` line and its number in the
+`-start,count` range; copy the source path from the diff, which on a rename or
+deletion can differ from `worker.changedPaths`. Context lines are not evidence.
+For `addressed` and `partial`, prefer the new `head` line that establishes what
+the worker left behind.
+
 Status meanings:
 
 - `addressed`: the requested result is complete and visible in the exact diff;

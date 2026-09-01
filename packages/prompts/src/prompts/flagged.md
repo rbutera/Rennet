@@ -26,8 +26,9 @@ it. If you cannot write the failure scenario, you do not have a finding yet.
 
 Every non-empty result has at least one top-level `section`. Put each `finding`
 under a served root through `section.data.children`; a top-level or orphaned
-`finding` in the flat element pool is invisible to the reader and the host
-correctly records it as no-findings.
+`finding` in the flat element pool is invisible to the reader. The host
+retries that malformed result once and then reports a retryable lens failure;
+it never turns a hidden finding into no-findings.
 
 Each finding block carries:
 

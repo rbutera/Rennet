@@ -349,6 +349,7 @@ export {
   type KnowledgeSwarmDeps,
   type KnowledgeSwarmOutcome,
   type KnowledgeSwarmProgress,
+  type ProviderTurnSettlement,
   runKnowledgeSwarmForRepo,
   type SwarmTurnOptions,
   snapshotContextFromLoaded,

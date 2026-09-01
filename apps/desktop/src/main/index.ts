@@ -99,9 +99,9 @@ function isTrustedAppUrl(value: string): boolean {
 
 function installApplicationMenu(): void {
   // A STATIC platform menu, not a registry projection (the command-built menu was removed
-  // by `remove-app-menu`). macOS gets the standard app/edit/window roles; Windows/Linux get
-  // no application menu. The palette (mod+k) and settings Keyboard section are the command
-  // surfaces. Set once at startup — it never depends on renderer state.
+  // by `remove-app-menu`). macOS gets the standard app/edit/view/window roles;
+  // Windows/Linux get no application menu. The palette (mod+k) and settings Keyboard
+  // section are the command surfaces. Set once at startup — it never depends on renderer state.
   const template = buildStaticMenu(process.platform === "darwin");
   Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null);
 }

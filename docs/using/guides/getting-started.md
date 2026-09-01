@@ -431,6 +431,17 @@ detached target, the coding harness and version that ran it, and the outcome tal
 from that round's own report, so nothing
 you have already read ever vanishes or gets relabelled by a later round.
 
+To inspect a slow or failed round on macOS, choose **View → Toggle Developer
+Tools**. Electron opens its standard developer console. Entries tagged
+`[rennet:round]` show the review, operation revision, durable phase, report
+handoff, and each lens status with real timestamps. A classified report adds
+fixed milestones for turn start, provider settlement, turn settlement, schema
+parse, evidence verification, and persistence. Those milestones contain only
+fixed status values and elapsed milliseconds, never code, prompts, model output,
+diffs, paths, evidence, notes, or provider prose. A terminal operation failure
+still includes the daemon's exact local reason, matching the failed round shown
+in Rennet. Leave the console closed during ordinary use.
+
 ## Move around quickly
 
 Press `⌘P` (or `⌘K`) to open the command menu from anywhere — the same menu the

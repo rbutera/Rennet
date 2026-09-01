@@ -27,8 +27,9 @@ another lens's material; the call is yours. Each board stands alone.
 
 Every non-empty result has at least one top-level `section`. Put each
 `decision` under a served root through `section.data.children`; a top-level or
-orphaned `decision` in the flat element pool is invisible to the reader and the
-host correctly records it as no-decisions.
+orphaned `decision` in the flat element pool is invisible to the reader. The
+host retries that malformed result once and then reports a retryable lens
+failure; it never turns hidden material into no-decisions.
 
 Each decision block carries:
 

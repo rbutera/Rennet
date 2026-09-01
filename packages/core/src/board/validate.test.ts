@@ -133,10 +133,10 @@ describe("validateDraft — retry channel + freeze", () => {
   });
 });
 
-// ── The 4-rung ladder ends in an honest omission ─────────────────────────────
+// ── One repair turn ends in an honest omission ───────────────────────────────
 
 describe("validateDraft — the escalation ladder", () => {
-  it("escalates rung-by-rung, then omits an unfixable element and sheds its hunks", async () => {
+  it("asks once, then omits an unfixable element and sheds its hunks", async () => {
     // f1's concern cites a line past the file (citation-resolves) and the seat
     // stubbornly returns the same broken board every turn.
     const unfixable = board(
@@ -155,8 +155,8 @@ describe("validateDraft — the escalation ladder", () => {
 
     const result = await validateDraft(unfixable, ctx(), { runTurn: seat });
 
-    // Four rungs of re-ask (1..4), then the element is dropped.
-    expect(rungs).toEqual([1, 2, 3, 4]);
+    // One repair turn, then deterministic validation drops the unresolved element.
+    expect(rungs).toEqual([1]);
     expect(findEl(result.board, "f1")).toBeUndefined();
     expect(result.omissions.map((o) => o.elementId)).toEqual(["f1"]);
     // f1 taught h1 (via c1 @ 11-12 overlapping h1 @ 10-14) → h1 is now skipped.
@@ -164,21 +164,28 @@ describe("validateDraft — the escalation ladder", () => {
     expect(skips(result.board).some((s) => s.hunk === "h1")).toBe(true);
     // Honest omission, not a blemish and not a throw.
     expect(result.blemishes).toEqual([]);
-    expect(result.attempts).toBe(LADDER_RUNGS + 1);
+    expect(LADDER_RUNGS).toBe(1);
+    expect(result.attempts).toBe(RETRY_CAP);
   });
 });
 
-// ── Cap-10 exhaustion → labeled blemishes, never a throw, never a block ───────
+// ── One-repair exhaustion → labeled blemishes, never a throw or block ─────────
 
 describe("validateDraft — retry cap exhaustion", () => {
   it("ships a labeled blemish with attempts once the cap is hit, not a throw or a block", async () => {
-    // A board-level violation (boilerplate skip reason) never escalates to an
-    // element drop, so it survives every round until the global cap bites.
+    // A board-level violation (boilerplate skip reason) cannot become an
+    // element omission, so it ships as a blemish after the one repair turn.
     const nagging = board([], { skippedHunks: [{ hunk: "h2", reason: "n/a" }] });
-    const seat: ValidateSeams["runTurn"] = () => nagging; // never fixed
+    let calls = 0;
+    const seat: ValidateSeams["runTurn"] = () => {
+      calls += 1;
+      return nagging;
+    };
 
     const result = await validateDraft(nagging, ctx(), { runTurn: seat });
 
+    expect(calls).toBe(1);
+    expect(RETRY_CAP).toBe(1);
     expect(result.attempts).toBe(RETRY_CAP);
     expect(result.blemishes.length).toBeGreaterThan(0);
     expect(result.blemishes[0]?.ruleId).toBe("skip-reason-specific");
@@ -357,7 +364,7 @@ describe("validateDraft — finding 5: the incoming-reference closure", () => {
       ],
       { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
     );
-    const seat: ValidateSeams["runTurn"] = () => withBadRef; // never fixed
+    const seat: ValidateSeams["runTurn"] = () => withBadRef; // the one repair stays invalid
 
     const result = await validateDraft(withBadRef, ctx(), { runTurn: seat });
 
@@ -379,12 +386,17 @@ describe("validateDraft — finding 5: the incoming-reference closure", () => {
 describe("validateDraft — finding 6: honest failure state", () => {
   it("labels unresolved parse failures as blemishes and reports everParsed=false", async () => {
     const garbage = { not: "a board" } as unknown; // never parses
-    const seat: ValidateSeams["runTurn"] = () => garbage; // every retry also garbage
+    let calls = 0;
+    const seat: ValidateSeams["runTurn"] = () => {
+      calls += 1;
+      return garbage;
+    };
 
     const result = await validateDraft(garbage, ctx(), { runTurn: seat });
 
     expect(result.everParsed).toBe(false);
-    expect(result.attempts).toBe(RETRY_CAP); // ten invalid returns, not one
+    expect(calls).toBe(1);
+    expect(result.attempts).toBe(RETRY_CAP);
     // The unresolved schema issues ride as labeled blemishes — never an empty blemishes[].
     expect(result.blemishes.length).toBeGreaterThan(0);
     expect(result.blemishes.every((b) => b.ruleId === "schema-invalid")).toBe(true);

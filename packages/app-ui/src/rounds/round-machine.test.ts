@@ -396,7 +396,149 @@ describe("round-machine — the pure run state machine", () => {
     });
   });
 
+  it("uses the persisted handoff revision when a queued rerun precedes failure", () => {
+    const handoffAttempt = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-durable-handoff",
+      report: { ...reportBoardFixture, boardId: "report-durable-handoff" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const queuedRerun = operationEvent(
+      9,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 12, rerunRequested: true },
+    );
+    const failed = operationEvent(
+      10,
+      {
+        phase: "failed",
+        failure: {
+          at: "report-drafting",
+          workspace: WORKSPACE,
+          worker: WORKER,
+          gate: GATE,
+          commits: { status: "done", count: 2 },
+          report: {
+            status: "failed",
+            step: "drafting",
+            reason: "lens regeneration failed",
+          },
+        },
+      },
+      { seq: 13, rerunRequested: true },
+    );
+
+    const queued = mergeRoundEvents([handoffAttempt, report], [queuedRerun]);
+    expect(queued).toEqual([handoffAttempt, queuedRerun, report]);
+    expect(queued.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "reporting",
+      reportProgressRevision: 8,
+      reportBoardId: "report-durable-handoff",
+      report: report.report,
+      operation: { operationId: OPERATION_BASE.operationId, revision: 9 },
+    });
+
+    const merged = mergeRoundEvents(queued, [failed]);
+
+    expect(merged).toEqual([handoffAttempt, failed, report]);
+    expect(merged.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "failed",
+      reason: "lens regeneration failed",
+      reportAttemptRevision: 8,
+      reportHandoff: {
+        reportBoardId: "report-durable-handoff",
+        report: report.report,
+      },
+      operation: { operationId: OPERATION_BASE.operationId, revision: 10 },
+    });
+  });
+
+  it("does not replay older lens progress while a queued operation is genuinely retrying", () => {
+    const handoffAttempt = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
+    const report = {
+      type: "report",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      reportBoardId: "report-durable-handoff",
+      report: { ...reportBoardFixture, boardId: "report-durable-handoff" },
+      seq: 11,
+    } satisfies RoundEvent;
+    const staleLens = {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 8,
+      lanes: [{ id: "sequence", label: "Sequence", status: "done", verdict: "reworked" }],
+      seq: 12,
+    } satisfies RoundEvent;
+    const retryDrafting = operationEvent(
+      11,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 20, rerunRequested: true },
+    );
+
+    const merged = mergeRoundEvents([handoffAttempt, report, staleLens], [retryDrafting]);
+
+    expect(merged).toEqual([handoffAttempt, retryDrafting, report]);
+    expect(merged.reduce(advance, initialRoundState)).toMatchObject({
+      phase: "reporting",
+      reportProgressRevision: 8,
+      reportBoardId: "report-durable-handoff",
+      operation: { operationId: OPERATION_BASE.operationId, revision: 11 },
+    });
+  });
+
   it("does not attach a previous attempt's report when a same-operation retry fails", () => {
+    const priorDrafting = operationEvent(
+      8,
+      {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "drafting" },
+      },
+      { seq: 10 },
+    );
     const priorReport = {
       type: "report",
       operationId: OPERATION_BASE.operationId,
@@ -437,7 +579,7 @@ describe("round-machine — the pure run state machine", () => {
       { seq: 21 },
     );
 
-    const merged = mergeRoundEvents([priorReport, retryDrafting], [failedRetry]);
+    const merged = mergeRoundEvents([priorDrafting, priorReport, retryDrafting], [failedRetry]);
     expect(merged).toEqual([failedRetry]);
     expect(merged.reduce(advance, initialRoundState)).toMatchObject({
       phase: "failed",

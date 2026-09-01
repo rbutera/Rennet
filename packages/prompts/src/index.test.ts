@@ -82,6 +82,7 @@ describe("lens prompt manifest", () => {
 
   it("keeps the round report to a narrow semantic classification", () => {
     const text = readFileSync(join(srcDir, ROUND_REPORT_FILE), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
     expect(text.length).toBeGreaterThan(500);
     expect(text).toMatch(/^# /);
     expect(text).toContain("Ground rules");
@@ -89,6 +90,17 @@ describe("lens prompt manifest", () => {
     expect(text).toMatch(/[Nn]ever launder/);
     expect(text).toContain("`outcomes`");
     expect(text).toContain("`beyond`");
+    expect(text).toContain("Never add the unified diff's `a/` or `b/` prefix");
+    expect(normalized).toContain(
+      "source path from the diff, which on a rename or deletion can differ",
+    );
+    expect(normalized).toContain(
+      'Use `side: "head"` for a `+` line and its number in the hunk\'s `+start,count` range',
+    );
+    expect(normalized).toContain(
+      'Use `side: "base"` for a `-` line and its number in the `-start,count` range',
+    );
+    expect(text).toContain("Context lines are not evidence");
     expect(text).toContain("Do not emit a document");
     expect(text).not.toContain("Set `document.measure`");
   });

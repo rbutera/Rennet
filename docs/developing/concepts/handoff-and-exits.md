@@ -456,14 +456,16 @@ that host's repair.
    rejection leaves the pending placeholder and dispatched asks retryable.
    The report is one artifact with two consumers: the reviewer's greeting and
    additional round context for the lens drafters. It is separate from the
-   deterministic successor account. Report settlement is a sequencing boundary,
-   not an approval or capability gate: lens fan-out starts after the one report
-   attempt either succeeds, fails, or proves unavailable.
+   deterministic successor account. A verified report is a sequencing boundary,
+   not an approval or capability gate: lens fan-out starts after that artifact is
+   readable. A failed or unavailable required report instead ends report drafting
+   immediately with its exact reason; the host does not spend five lens turns on
+   a generation that has no usable greeting.
 5. The reviewer reads the report while the lens drafters regenerate in the
    background, their progress live beneath it — one lane per lens, streamed
    from the round's real progress, with the kicker reading *Regenerating the
    Boards* until the generation composes and *Regenerated the Boards* after.
-   After the report attempt settles, all five lens lanes run concurrently and each
+   After the report verifies, all five lens lanes run concurrently and each
    settles from its own semantically accepted board, typed absence, or explicit
    failure. Sequence requires a reachable `order_step`; Decisions and Flagged
    require a reachable `decision` or `finding`, or their exact typed absence.
@@ -487,8 +489,8 @@ that host's repair.
    worker receipt; the host keeps the prior generation and durable finding
    dispositions for composition. The round number is display and ledger data,
    not classifier input. If
-   no report seat resolves or its draft fails, the lens drafters still proceed;
-   the host has no addressed outcomes to compose in that case. A coding turn
+   no report seat resolves or its draft fails, the round fails at that boundary
+   before any lens starts and keeps the dispatched asks retryable. A coding turn
    that changes no code keeps the existing generation and records no report or
    addressed claim; it terminates as unchanged and consumes only the exact ask
    occurrences that turn handled. Dispatched intent alone is not evidence that

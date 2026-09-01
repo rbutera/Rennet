@@ -15,8 +15,10 @@ import {
   type RoundOperationState,
   type RoundRecordingAttempt,
   type RoundRecordingReceipt,
+  type RoundReportBoard,
   type RoundReportDraftAttempt,
   type RoundReportDraftReceipt,
+  type RoundReportHandoff,
   type RoundReportReceipt,
   type RoundReportVerificationAttempt,
   type RoundSourceLandingAttempt,
@@ -39,6 +41,15 @@ export interface RoundExecutionEffectInput<TAttempt> {
 export interface RoundReportVerificationInput
   extends RoundExecutionEffectInput<RoundReportVerificationAttempt> {
   readonly report: RoundReportDraftReceipt;
+}
+
+export interface RoundReportDraftInput extends RoundExecutionEffectInput<RoundReportDraftAttempt> {
+  /** Persist the already-verified early report before any lens work can fail. */
+  readonly recordReportHandoff: (input: {
+    readonly reportBoardId: string;
+    readonly generation: string;
+    readonly report: RoundReportBoard;
+  }) => RoundReportHandoff;
 }
 
 export interface RoundSourceLandingUnitInput
@@ -100,9 +111,7 @@ export interface RoundExecutionPorts {
     input: RoundExecutionEffectInput<RoundRecordingAttempt>,
   ) => Promise<RoundRecordingReceipt>;
   readonly prepareReport: (operation: RoundOperation) => RoundReportDraftAttempt;
-  readonly draftReport: (
-    input: RoundExecutionEffectInput<RoundReportDraftAttempt>,
-  ) => Promise<RoundReportDraftReceipt>;
+  readonly draftReport: (input: RoundReportDraftInput) => Promise<RoundReportDraftReceipt>;
   readonly planReportVerification: (operation: RoundOperation) => RoundReportVerificationAttempt;
   readonly verifyReport: (input: RoundReportVerificationInput) => Promise<RoundReportReceipt>;
   /** Receives only values returned by a successful durable store mutation. */
@@ -146,6 +155,21 @@ function expectation(operation: RoundOperation): RoundOperationExpectation {
 
 function sameState(left: RoundOperationState, right: RoundOperationState): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameReportHandoffContent(
+  handoff: RoundReportHandoff,
+  input: {
+    readonly reportBoardId: string;
+    readonly generation: string;
+    readonly report: RoundReportBoard;
+  },
+): boolean {
+  return (
+    handoff.reportBoardId === input.reportBoardId &&
+    handoff.generation === input.generation &&
+    JSON.stringify(handoff.report) === JSON.stringify(input.report)
+  );
 }
 
 function errorReason(error: unknown): string {
@@ -346,11 +370,23 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     if (active === undefined) return Promise.resolve(undefined);
     if (active.state.phase !== "failed") return this.start(active);
 
-    const retrying = this.persist(
+    let retrying = this.persist(
       active,
       retryState(active.state.failure),
       Math.max(this.now(), active.updatedAt),
     ).operation;
+    if (retrying.state.phase === "report-drafting" && retrying.state.report.handoff !== undefined) {
+      const handoff = retrying.state.report.handoff;
+      retrying = this.persistReportHandoff(
+        retrying,
+        {
+          reportBoardId: handoff.reportBoardId,
+          generation: handoff.generation,
+          report: handoff.report,
+        },
+        true,
+      ).operation;
+    }
     const running = this.inFlight.get(sessionId);
     if (running === undefined) return this.start(retrying);
 
@@ -396,7 +432,23 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
         "one or more durable round operations are corrupt",
       );
     }
-    return Promise.all(operations.map((operation) => this.start(operation)));
+    return Promise.all(
+      operations.map((operation) => {
+        if (operation.state.phase !== "report-drafting") return this.start(operation);
+        const handoff = operation.state.report.handoff;
+        if (handoff === undefined) return this.start(operation);
+        const replay = this.persistReportHandoff(
+          operation,
+          {
+            reportBoardId: handoff.reportBoardId,
+            generation: handoff.generation,
+            report: handoff.report,
+          },
+          true,
+        );
+        return this.start(replay.operation);
+      }),
+    );
   }
 
   private start(operation: RoundOperation): Promise<RoundOperation> {
@@ -468,6 +520,64 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     failure: Extract<RoundOperationState, { phase: "failed" }>["failure"],
   ): RoundOperation {
     return this.persist(operation, { phase: "failed", failure }, failure.failedAt).operation;
+  }
+
+  private persistReportHandoff(
+    operation: RoundOperation,
+    input: {
+      readonly reportBoardId: string;
+      readonly generation: string;
+      readonly report: RoundReportBoard;
+    },
+    forceNewEpoch = false,
+  ): { readonly operation: RoundOperation; readonly handoff: RoundReportHandoff } {
+    let current = operation;
+    for (;;) {
+      if (current.state.phase !== "report-drafting") {
+        throw new Error("round report handoff arrived outside its durable drafting phase");
+      }
+      const existing = current.state.report.handoff;
+      if (
+        !forceNewEpoch &&
+        existing !== undefined &&
+        existing.operationRevision === current.revision
+      ) {
+        if (!sameReportHandoffContent(existing, input)) {
+          throw new Error("round report handoff changed within one durable drafting attempt");
+        }
+        return { operation: current, handoff: existing };
+      }
+      const handoff: RoundReportHandoff = {
+        operationId: current.operationId,
+        operationRevision: current.revision + 1,
+        ...input,
+      };
+      try {
+        const persisted = this.options.store.compareAndSwap(expectation(current), {
+          state: {
+            ...current.state,
+            report: { ...current.state.report, handoff },
+          },
+          updatedAt: Math.max(current.updatedAt, this.now()),
+        });
+        if (persisted.revision !== handoff.operationRevision) {
+          throw new Error("round report handoff lost its durable attempt revision");
+        }
+        this.options.ports.publish(persisted);
+        return { operation: persisted, handoff };
+      } catch (error) {
+        if (!(error instanceof RoundOperationConflictError)) throw error;
+        const latest = this.options.store.read(current.sessionId);
+        if (
+          latest === undefined ||
+          latest.operationId !== current.operationId ||
+          latest.revision === current.revision
+        ) {
+          throw error;
+        }
+        current = latest;
+      }
+    }
   }
 
   private async runWorker(
@@ -1026,39 +1136,52 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "report-drafting": {
+          let draftingOperation = operation;
           try {
-            const report = await this.options.ports.draftReport({
+            const drafted = await this.options.ports.draftReport({
               operation,
               attempt: state.report,
+              recordReportHandoff: (input) => {
+                const persisted = this.persistReportHandoff(draftingOperation, input);
+                draftingOperation = persisted.operation;
+                return persisted.handoff;
+              },
             });
-            const verification = this.options.ports.planReportVerification(operation);
+            if (draftingOperation.state.phase !== "report-drafting") {
+              throw new Error("round report drafting changed phase before it settled");
+            }
+            const durableHandoff = draftingOperation.state.report.handoff;
+            const report =
+              durableHandoff === undefined ? drafted : { ...drafted, handoff: durableHandoff };
+            const verification = this.options.ports.planReportVerification(draftingOperation);
             operation = this.persist(
-              operation,
+              draftingOperation,
               {
                 phase: "report-verifying",
-                workspace: state.workspace,
-                worker: state.worker,
-                gate: state.gate,
-                commits: state.commits,
-                landing: state.landing,
-                recording: state.recording,
+                workspace: draftingOperation.state.workspace,
+                worker: draftingOperation.state.worker,
+                gate: draftingOperation.state.gate,
+                commits: draftingOperation.state.commits,
+                landing: draftingOperation.state.landing,
+                recording: draftingOperation.state.recording,
                 report,
                 verification,
               },
               Math.max(report.draftedAt, verification.startedAt),
             ).operation;
           } catch (error) {
-            operation = this.fail(operation, {
+            if (draftingOperation.state.phase !== "report-drafting") throw error;
+            operation = this.fail(draftingOperation, {
               at: "report-drafting",
               reason: errorReason(error),
-              failedAt: Math.max(this.now(), operation.updatedAt),
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: state.gate,
-              commits: state.commits,
-              landing: state.landing,
-              recording: state.recording,
-              report: state.report,
+              failedAt: Math.max(this.now(), draftingOperation.updatedAt),
+              workspace: draftingOperation.state.workspace,
+              worker: draftingOperation.state.worker,
+              gate: draftingOperation.state.gate,
+              commits: draftingOperation.state.commits,
+              landing: draftingOperation.state.landing,
+              recording: draftingOperation.state.recording,
+              report: draftingOperation.state.report,
             });
           }
           break;

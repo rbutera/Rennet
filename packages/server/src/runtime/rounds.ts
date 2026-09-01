@@ -105,8 +105,9 @@ type LaneState = LensLane extends infer Arm
  * change, matching the `lens` event's snapshot contract (a duplicate or re-ordered frame
  * just re-states rows the client already folded).
  *
- * Once the report gate settles, all five independent lens turns run concurrently. Each
- * lane therefore starts together and settles only from its own persistence/arrival event.
+ * Once the required report is verified and durably handed off, all five independent lens
+ * turns run concurrently. Each lane starts together and settles only from its own
+ * persistence/arrival event.
  */
 function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
   const lanes = new Map<LensKind, LensLane>(
@@ -388,6 +389,10 @@ export interface RoundInput {
    * mapping from pipeline callbacks to events. Absent ⇒ no live channel, same round.
    */
   readonly onProgress?: (event: RoundEvent) => void;
+  /** Load-bearing report handoff. The runtime awaits it before observers or lens seats start. */
+  readonly onReportProgress?: (
+    event: Extract<RoundEvent, { readonly type: "report" }>,
+  ) => void | Promise<void>;
   /**
    * The composed review draft's citation grounding. REQUIRED (W5): an absent one
    * grounds the composition lint on an empty inventory, so every real `path:line`
@@ -455,7 +460,7 @@ export interface RoundsRuntimeDeps {
   /** Remove one board's durable metadata before retry cleanup mutates its board state. */
   readonly removeBoardMeta?: (repoRoot: string, boardId: string) => void | Promise<void>;
   /** The per-board arrival broadcast that powers the progressive reveal (R58). */
-  readonly onBoardArrival?: (event: BoardArrivalEvent) => void;
+  readonly onBoardArrival?: (event: BoardArrivalEvent) => void | Promise<void>;
   /** The orchestrator's heavy authoring turn for the composition write-through (C2),
    *  resolved per repo. Absent ⇒ composition is skipped (the lens boards are the surface). */
   readonly composeTurn?: (
@@ -829,25 +834,37 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // delta verdict. Both are wrapped here so the round's own sink sees them without the
     // pipeline learning about the wire.
     const onProgress = input.onProgress;
+    const onReportProgress = input.onReportProgress;
     const lanes =
       onProgress === undefined
         ? undefined
-        : createRegenerationLanes((rows) => onProgress({ type: "lens", lanes: [...rows] }));
+        : createRegenerationLanes((rows) => {
+            void onProgress({ type: "lens", lanes: [...rows] });
+          });
     const runtimeArrival = deps.onBoardArrival;
     const onBoardArrival =
-      runtimeArrival === undefined && lanes === undefined
+      runtimeArrival === undefined && lanes === undefined && onReportProgress === undefined
         ? undefined
-        : (event: BoardArrivalEvent): void => {
-            runtimeArrival?.(event);
-            if (lanes === undefined || onProgress === undefined) return;
+        : async (event: BoardArrivalEvent): Promise<void> => {
             if (event.lens === "report") {
-              // The report is the greeting: it announces FIRST, and the reviewer reads it
-              // while the lens drafters below keep running (C1/C6 — the surface never locks).
-              onProgress({ type: "report", reportBoardId: event.boardId });
-              lanes.start();
+              // The load-bearing progress sink verifies and records the report handoff.
+              // Only then may an observer announce it or a lens seat start.
+              const reportEvent = { type: "report" as const, reportBoardId: event.boardId };
+              if (onReportProgress === undefined) onProgress?.(reportEvent);
+              else await onReportProgress(reportEvent);
+              await runtimeArrival?.(event);
+              lanes?.start();
               return;
             }
+            await runtimeArrival?.(event);
+            if (lanes === undefined) return;
             lanes.arrived(event.lens, event.carried);
+          };
+    const onReportDiagnostic =
+      onProgress === undefined
+        ? undefined
+        : (milestone: Extract<RoundEvent, { type: "report-diagnostic" }>["milestone"]): void => {
+            void onProgress({ type: "report-diagnostic", milestone });
           };
     const earlyAbsentLenses: Partial<Record<LensKind, LensAbsenceReason>> = {
       ...attemptGeneration.absentLenses,
@@ -907,6 +924,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             removeBoardMeta: (boardId: string) => deps.removeBoardMeta?.(input.repoRoot, boardId),
           }),
       ...(onBoardArrival === undefined ? {} : { onBoardArrival }),
+      ...(onReportDiagnostic === undefined ? {} : { onReportDiagnostic }),
       ...(onLensAbsence === undefined ? {} : { onLensAbsence }),
       ...(lanes === undefined ? {} : { onLensDraftingStart: () => lanes.start() }),
       ...(persistBoardMeta === undefined && lanes === undefined
@@ -935,9 +953,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     } satisfies Parameters<typeof runLensPipeline>[0];
 
     // Lens progress used to be promoted only by the round report's ARRIVAL. The initial
-    // path has no report, and a failed report has no arrival, so either shape could read
-    // "queued" while lens work was live. `onLensDraftingStart` now promotes all five lanes
-    // once the report gate settles either way — the honest kickoff read from the real run.
+    // path has no report, so it could read "queued" while lens work was live.
+    // `onLensDraftingStart` promotes all five lanes only when the no-report path is valid or
+    // the required report has been verified and persisted; a failed report exits earlier.
 
     const pipeline = await runLensPipeline(pipelineInput);
     // A drafter that produced no board settles its lane as failed. Without this the lane

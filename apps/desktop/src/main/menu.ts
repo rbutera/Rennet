@@ -6,7 +6,8 @@ import type { MenuItemConstructorOptions } from "electron";
  * command surfaces are the palette (mod+k) and the settings Keyboard section.
  *
  * macOS keeps the standard role scaffolding only: `appMenu` (app name, Hide/Quit/About),
- * `editMenu` (native Cmd+C/V/X in inputs), and `windowMenu` (minimize/zoom/window list).
+ * `editMenu` (native Cmd+C/V/X in inputs), `viewMenu` (including Electron's standard
+ * Toggle Developer Tools console), and `windowMenu` (minimize/zoom/window list).
  * Windows/Linux get no application menu at all — `buildStaticMenu` returns `null`, and
  * the caller passes that to `Menu.setApplicationMenu(null)`.
  *
@@ -14,5 +15,5 @@ import type { MenuItemConstructorOptions } from "electron";
  */
 export function buildStaticMenu(isMac: boolean): MenuItemConstructorOptions[] | null {
   if (!isMac) return null;
-  return [{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }];
+  return [{ role: "appMenu" }, { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" }];
 }

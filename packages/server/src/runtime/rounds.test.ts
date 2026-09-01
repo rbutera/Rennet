@@ -1679,7 +1679,13 @@ describe("createRoundsRuntime", () => {
 
   it("drafts the round-report FIRST, then reveals each board (arrival order)", async () => {
     const arrivals: BoardArrivalEvent[] = [];
-    const runtime = createRoundsRuntime(baseDeps({ onBoardArrival: (e) => arrivals.push(e) }));
+    const runtime = createRoundsRuntime(
+      baseDeps({
+        onBoardArrival: (event) => {
+          arrivals.push(event);
+        },
+      }),
+    );
     await runtime.runRound(roundInput());
     // The report announces its arrival ahead of the lens boards (R58).
     expect(arrivals[0]?.lens).toBe("report");
@@ -1689,6 +1695,107 @@ describe("createRoundsRuntime", () => {
         .map((a) => a.lens)
         .sort(),
     ).toEqual(["decisions", "design", "flagged", "noise", "sequence"].sort());
+  });
+
+  it("does not announce or start lenses until classified report progress settles", async () => {
+    const round: NonNullable<RoundInput["round"]> = {
+      number: 1,
+      previousGeneration: PREV_GEN.id,
+      dispatchedAsks: [
+        {
+          id: "ask-one",
+          path: "src/auth.ts",
+          type: "request-change",
+          instruction: "Replace the line.",
+          context: "",
+        },
+      ],
+      findingDispositions: {},
+      worker: {
+        outcome: "completed",
+        diff: [
+          "diff --git a/src/auth.ts b/src/auth.ts",
+          "--- a/src/auth.ts",
+          "+++ b/src/auth.ts",
+          "@@ -1 +1 @@",
+          "-old line",
+          "+new line",
+        ].join("\n"),
+        changedPaths: ["src/auth.ts"],
+        commitRange: { from: "c0", to: "c1" },
+      },
+    };
+    const classification = {
+      outcomes: [{ askId: "ask-one", status: "untouched", note: "No evidence in this turn." }],
+      beyond: [],
+    };
+    const start = (onReportProgress: NonNullable<RoundInput["onReportProgress"]>) => {
+      const captures: { prompt?: string }[] = [];
+      const arrivals: BoardArrivalEvent[] = [];
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort(captures, (prompt) =>
+              lensFromPrompt(prompt) === "report"
+                ? classification
+                : cleanBody(lensFromPrompt(prompt)),
+            ),
+          onBoardArrival: (event) => {
+            arrivals.push(event);
+          },
+        }),
+      );
+      return {
+        captures,
+        arrivals,
+        run: runtime.runRound(
+          roundInput({
+            asksDispatched: ["ask-one"],
+            round,
+            onReportProgress,
+            runWorkers: async () => ({
+              commitRange: { from: "c0", to: "c1" },
+              patchsetId: "ps-1",
+            }),
+          }),
+        ),
+      };
+    };
+
+    let releaseReport: () => void = () => undefined;
+    const reportGate = new Promise<void>((resolve) => {
+      releaseReport = resolve;
+    });
+    let announceReport: () => void = () => undefined;
+    const reportProgressStarted = new Promise<void>((resolve) => {
+      announceReport = resolve;
+    });
+    const deferred = start((event) => {
+      if (event.type !== "report") return;
+      announceReport();
+      return reportGate;
+    });
+    await reportProgressStarted;
+    expect(deferred.arrivals).toEqual([]);
+    expect(
+      deferred.captures.some(({ prompt }) =>
+        prompt === undefined ? false : LENS_KINDS.some((lens) => prompt.includes(`${lens}.md`)),
+      ),
+    ).toBe(false);
+    releaseReport();
+    await deferred.run;
+    expect(deferred.arrivals[0]?.lens).toBe("report");
+
+    const rejected = start((event) => {
+      if (event.type === "report") throw new Error("report progress rejected");
+    });
+    await expect(rejected.run).rejects.toThrow("report progress rejected");
+    expect(rejected.arrivals).toEqual([]);
+    expect(
+      rejected.captures.some(({ prompt }) =>
+        prompt === undefined ? false : LENS_KINDS.some((lens) => prompt.includes(`${lens}.md`)),
+      ),
+    ).toBe(false);
   });
 
   it("persists each board's meta durably; a reconstruction reads it back", async () => {
@@ -1805,15 +1912,15 @@ describe("createRoundsRuntime", () => {
     let designOnlyWrites = 0;
     let releaseDelayedSave = (): void => undefined;
     let announceDelayedSave = (): void => undefined;
-    let announceFlaggedEditor = (): void => undefined;
+    let announceFlaggedDraft = (): void => undefined;
     const delayedSaveRelease = new Promise<void>((resolve) => {
       releaseDelayedSave = resolve;
     });
     const delayedSaveStarted = new Promise<void>((resolve) => {
       announceDelayedSave = resolve;
     });
-    const flaggedEditorFinished = new Promise<void>((resolve) => {
-      announceFlaggedEditor = resolve;
+    const flaggedDraftFinished = new Promise<void>((resolve) => {
+      announceFlaggedDraft = resolve;
     });
     const copyGeneration = (generation: Generation): Generation => ({
       ...generation,
@@ -1832,10 +1939,7 @@ describe("createRoundsRuntime", () => {
           fakeClaudePort([], (prompt) => {
             const lens = lensFromPrompt(prompt);
             if (lens === "flagged") {
-              return { elements: [], skippedHunks: [] } as unknown as DraftBoard;
-            }
-            if (lens === "post-process" && prompt.includes('"elements":[]')) {
-              announceFlaggedEditor();
+              announceFlaggedDraft();
               return { elements: [], skippedHunks: [] } as unknown as DraftBoard;
             }
             return cleanBody(lens);
@@ -1875,8 +1979,8 @@ describe("createRoundsRuntime", () => {
     try {
       await beforeNextTurn(delayedSaveStarted, "the first absence save never started");
       await beforeNextTurn(
-        flaggedEditorFinished,
-        "Flagged did not settle while the first absence save was delayed",
+        flaggedDraftFinished,
+        "Flagged provider turn did not settle while the first absence save was delayed",
       );
       await new Promise<void>((resolve) => setImmediate(resolve));
     } catch (error) {

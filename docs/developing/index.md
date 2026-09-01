@@ -12,7 +12,10 @@ are changing.
 ```mermaid
 flowchart LR
   capture[Capture an immutable patchset] --> delta[Build the delta packet]
-  delta --> lenses[Draft one board per lens]
+  delta --> landed{Landed round?}
+  landed -->|No| lenses[Draft five lens boards concurrently]
+  landed -->|Yes| report[Classify and persist the round report]
+  report --> lenses
   lenses --> board[Compose across the lens boards]
   board --> asks[Stage asks]
   asks --> exits{Exit}
@@ -31,7 +34,8 @@ Read these pages in order when you need the whole system:
    rules for patchsets, project context, persistence, and outbound work.
 3. [The lens pipeline](./concepts/lens-pipeline.md) explains how the delta
    packet reaches the Design, Sequence, Decisions, Flagged, and Noise
-   drafters, and what the lint and post-process passes guarantee.
+   drafters concurrently after the round-report boundary, and how bounded
+   repair and deterministic validation freeze their boards.
 4. [Surfacing and routing](./concepts/surfacing-and-routing.md) covers model
    output, validation, instructions, and model assignment.
 5. [Hand off and the exits](./concepts/handoff-and-exits.md) follows asks and

@@ -31,7 +31,12 @@ import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
-import { councilSeatTurn, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import {
+  councilSeatTurn,
+  createClaudeSwarmTurn,
+  createCodexSwarmTurn,
+  runKnowledgeSwarmForRepo,
+} from "./knowledge-swarm";
 import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,6 +336,121 @@ async function measureWorkerConcurrency(
 }
 
 describe("knowledge swarm — council-routed contract (no live model)", () => {
+  it("reports Claude provider settlement before deferred session cleanup releases the turn", async () => {
+    let releaseClose: () => void = () => undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    let observedProvider: () => void = () => undefined;
+    const providerObserved = new Promise<void>((resolve) => {
+      observedProvider = resolve;
+    });
+    const milestones: unknown[] = [];
+    const port = {
+      createSession: async () => ({
+        send: async () => undefined,
+        events: (async function* () {
+          yield {
+            kind: "session.ended",
+            native: { output: "SECRET_OUTPUT_CANARY" },
+            outcome: {
+              status: "completed",
+              structuredOutput: { note: "SECRET_NOTE_CANARY" },
+            },
+          };
+        })(),
+        close: async () => closeGate,
+      }),
+    } as unknown as HarnessPort;
+    const turn = createClaudeSwarmTurn(
+      port,
+      "sonnet-5",
+      "medium",
+      {},
+      {
+        cwd: "/repo",
+        onProviderSettled: (milestone) => {
+          milestones.push(milestone);
+          observedProvider();
+        },
+      },
+    );
+    let turnSettled = false;
+    const result = turn("SECRET_PROMPT_CANARY", 0).finally(() => {
+      turnSettled = true;
+    });
+
+    await providerObserved;
+    expect(turnSettled).toBe(false);
+    expect(milestones).toEqual([
+      { stage: "provider-settled", outcome: "completed", elapsedMs: expect.any(Number) },
+    ]);
+    expect(JSON.stringify(milestones)).not.toContain("SECRET_");
+
+    releaseClose();
+    await expect(result).resolves.toMatchObject({ status: "emitted" });
+  });
+
+  it("distinguishes a missing Claude terminal and waits for Codex executor settlement", async () => {
+    const claudeMilestones: unknown[] = [];
+    const emptyPort = {
+      createSession: async () => ({
+        send: async () => undefined,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: async () => ({ done: true, value: undefined }),
+          }),
+        },
+        close: async () => undefined,
+      }),
+    } as unknown as HarnessPort;
+    const claude = createClaudeSwarmTurn(
+      emptyPort,
+      "sonnet-5",
+      "medium",
+      {},
+      {
+        cwd: "/repo",
+        onProviderSettled: (milestone) => claudeMilestones.push(milestone),
+      },
+    );
+    await expect(claude("prompt", 0)).resolves.toMatchObject({ status: "failed" });
+    expect(claudeMilestones).toEqual([
+      {
+        stage: "provider-settled",
+        outcome: "stream-ended-without-terminal",
+        elapsedMs: expect.any(Number),
+      },
+    ]);
+
+    let releaseExecutor: () => void = () => undefined;
+    const executorGate = new Promise<void>((resolve) => {
+      releaseExecutor = resolve;
+    });
+    const codexMilestones: unknown[] = [];
+    const codex = createCodexSwarmTurn(
+      async () => {
+        await executorGate;
+        return { output: {} };
+      },
+      "gpt-5.6-sol",
+      "medium",
+      {},
+      {
+        cwd: "/repo",
+        onProviderSettled: (milestone) => codexMilestones.push(milestone),
+      },
+    );
+    const codexResult = codex("prompt", 0);
+    await Promise.resolve();
+    expect(codexMilestones).toEqual([]);
+    releaseExecutor();
+    await expect(codexResult).resolves.toMatchObject({ status: "emitted" });
+    expect(codexMilestones).toEqual([
+      { stage: "provider-settled", outcome: "completed", elapsedMs: expect.any(Number) },
+    ]);
+  });
+
   it("selects at most 64 whole slices, runs only those workers, and stores exact coverage", async () => {
     const snapshot = wideSnapshot(MAP_SCOPE_SLICE_CAP + 1);
     const candidates = partitionsFromSnapshot(snapshot);

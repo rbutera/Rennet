@@ -34,8 +34,8 @@ failure, cancellation, and daemon interruption remain explicit, retryable sessio
 states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
-per lens plus the post-process editor pass, the reviewer-voice file, and the
-round-report classifier prompt. The package exports a typed manifest. Lens
+per lens plus the reviewer-voice file and the round-report classifier prompt.
+The package exports a typed manifest. Lens
 drafters receive the board schema separately; the landed-round report seat
 receives a much smaller classification schema instead.
 
@@ -67,8 +67,10 @@ and calls board regeneration through this runtime.
    semantic-classification turn before any lens drafter starts. Its context is
    only the successor patchset id, the durable dispatched asks, and the exact
    coding-turn receipt: diff, changed paths, and observed commit range. It does
-   not receive the full DeltaPacket or the all-kind board schema. The host copies
-   the durable ask text, sorts the outcomes, builds the document, section,
+   not receive the full DeltaPacket or the all-kind board schema. Each ask is
+   reduced to its durable id, path, instruction, and optional source anchor, so
+   stale prior-diff context cannot compete with the coding turn's measured diff.
+   The host sorts the outcomes and builds the document, section,
    outcomes, and code refs deterministically, then verifies every claimed anchor
    against an exact changed line on the durable ask's path (including a measured
    rename alias) before persistence. Readback also requires the exact ask text and
@@ -89,17 +91,25 @@ and calls board regeneration through this runtime.
    The host, never the drafter, writes the board ops through
    `whiteboard-client` (the sole op writer); drafters never call whiteboard
    tools. The Flagged lens runs two independent seats (Claude and Codex) on the
-   same instructions. The report attempt settles before any lens turn starts.
-   After that boundary all five lens lanes run independently rather than waiting
-   for the preceding display-order lens. A failed or unavailable report does not
-   prevent the lanes from starting. They proceed without report context and keep
-   the report failure explicit.
+   same instructions. A verified report arrives before any lens turn starts and
+   opens that boundary, after which all five lens lanes run
+   independently rather than waiting for the preceding display-order lens. A
+   required report that fails or proves unavailable ends the round at report
+   drafting with its exact reason; no lens turn starts behind an unusable
+   greeting. Report arrival is an awaited handoff. The durable consumer must
+   verify, read back, and record the report before the pipeline starts any lens
+   seat; a rejected handoff ends the round with zero lens turns.
    The five board-pipeline Council jobs run with job-scoped harness isolation:
    Claude receives `ambientConfig: "isolated"` and Codex receives an explicit
    empty MCP-server table. These seats use the inlined board context and native
    repository tools, so they do not start ambient MCP, plugin, or hook
    extensions. Unrelated Council work, including `project-scout`, keeps its
    inherited harness configuration.
+   A clean generation makes one drafting turn for Design, Sequence, Decisions,
+   and Noise, plus the two parallel Flagged seats. It does not run a separate
+   board editor after those turns. Design may make one additional grounded
+   coverage call when the board contains requirements, eligible hunks exist,
+   and the caller supplied a coverage mapper.
 2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
    location: a matched pair collapses to the clearer finding carrying both
    models' concurrence, a solo finding carries only the raising model's. The
@@ -113,17 +123,23 @@ and calls board regeneration through this runtime.
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
 3. **Validate.** A deterministic loop guarantees every lens draft before a human
-   sees it, through **three gates in order**: **lint** (before post-process),
-   then an **immutability check** (typed data is untouched across the editor
-   pass), then the cross-lens **every-hunk composition check**. A lint failure
+   sees it. It parses the frozen schema, runs the per-lens lint rules, and then
+   runs the cross-lens **every-hunk composition check**. A lint failure
    returns the draft to its seat as ZodError-shaped JSON pointers on one retry
    channel; the seat returns a patch, and passing elements **freeze** — a
-   frozen element is never re-linted or re-drafted. An element that will not
-   pass escalates through a four-rung ladder to an **honest-omission exit**:
-   it is dropped and its hunks move to `skippedHunks` with a reason. The retry
-   count is capped at 10 (`RETRY_CAP`); on exhaustion the board ships anyway,
-   carrying the unresolved violations as labelled `blemishes` — **visible,
-   never blocking**.
+   frozen element is never re-linted or re-drafted. Validation spends at most
+   one model repair turn after the initial draft. An element that remains
+   invalid takes an **honest-omission exit**: it is dropped and its hunks move
+   to `skippedHunks` with a reason. Unresolved board-level or schema violations
+   ship as labelled `blemishes` — **visible, never blocking**.
+
+   After validation, the host checks the material the served board actually
+   needs. Sequence requires a reachable `order_step`. Decisions and Flagged
+   require a reachable `decision` or `finding`, unless the provider returned a
+   parsed zero-element board that supports typed `no-decisions` or `no-findings`
+   absence. Noise has the equivalent `no-noise` absence. Missing core material
+   becomes that honest absence or a precise failure; it never starts a second
+   full drafting session and never lands as an empty successful board.
 
    The kind palette is enforced *structurally at parse time*: the frozen
    `DraftBoardSchema` has no `thread`, `message`, or `code` kind, so an
@@ -145,27 +161,19 @@ and calls board regeneration through this runtime.
    - **a process-vocabulary screen** flags structural-field prose that names
      lenses, boards, agents, seats, or drafts.
 
-   Cross-lens every-hunk coverage and the typed-data immutability check are the
-   other two gates, run once over the frozen board set rather than per draft.
+   Cross-lens every-hunk coverage runs once over the frozen board set rather than
+   per draft. The core validator retains its typed-data immutability result for
+   callers that provide a deterministic transform; the production lens scheduler
+   supplies no model-backed post-process transform.
    The design target is "19 rules"; against the frozen 13-kind board schema the
    faithful per-draft set is 16 — two of the nineteen (cross-lens coverage and
    immutability) belong to the other two gates, and a handful reference fields
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
-4. **Post-process.** Every lens draft board passes through an editor agent running
-   the post-process pass (`src/prompts/post-process.md`): a break-it-down step
-   that reshapes dense prose into terse, scannable chunks, then the unslop
-   skill verbatim, then the humanizer additions (patterns from the MIT
-   humanizer skill the unslop body does not cover). The editor may revise the
-   document title and introduction with the other prose fields, but it cannot
-   add or remove the document envelope or change its target-owned measure. The
-   pipeline enforces both constraints after the editor returns. Typed data such
-   as paths, line numbers, counts, severities, and concurrence flags is
-   untouched, and the immutability gate proves it. When no editor seat resolves,
-   the pass is identity: prose is left as drafted, never blocked. The host-built
-   landed-round report skips this editor; its only model-authored fields are the
-   classification notes.
+4. **Freeze.** The validated structured draft becomes the lens board without a
+   second model rewrite. Host-owned Design projections, Flagged reconciliation,
+   round composition, delta stamps, and metadata persistence remain deterministic.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
    part lives in `core/board/`: the coverage assertion (every patchset hunk is
@@ -201,6 +209,14 @@ canonical Design, Sequence, Decisions, Flagged, Noise order. The returned
 outcomes use that same deterministic order regardless of which drafter finished
 first. The rounds machinery consumes these events to drive the reveal; the
 pipeline only emits them.
+
+The classified report path also emits content-free diagnostics. Its fixed
+milestones distinguish provider time from session cleanup, schema parsing,
+evidence verification, and board persistence. Each milestone carries only enums
+and a nonnegative integer `elapsedMs`; the first also names the resolved harness,
+model, and effort. Prompts, provider prose, model output, diffs, paths, evidence,
+and classification notes never enter these events. Legacy report drafting and
+the five lens seats emit none.
 
 A retry after process loss reserves the same board identities. The runtime
 reconstructs an exact landed-round report only when its metadata and element log
@@ -317,9 +333,9 @@ A board says what it does not know as plainly as what it does.
   repository reads and never records `no-material` for evidence it could not inspect.
 - An element the validation loop could not make pass leaves a trace, never a
   silent hole. If it was dropped, its hunks are in `skippedHunks` with a reason
-  (the honest-omission exit); if the retry cap was hit, its unresolved
-  violations ride along as labelled **blemishes** — shown to the reviewer, never
-  blocking the board.
+  (the honest-omission exit); unresolved board-level or schema violations ride
+  along as labelled **blemishes** — shown to the reviewer, never blocking the
+  board.
 - Capture limits stay visible. Truncated files, binary files, and submodule
   blocking states keep their state on the board, so a review never implies it
   inspected bytes no runner ever saw.
