@@ -352,7 +352,10 @@ describe("generation lifecycle (append-then-freeze)", () => {
     });
     expect(gen.absentLenses).toBeUndefined();
     expect(gen.failedLenses?.sequence).toContain("does not admit");
-    expect(gen.failedLensAccounts?.sequence).toEqual({ attempt: 0, classification: "terminal" });
+    // RETRYABLE, not terminal: `terminal` in this model means the retries are spent, and
+    // this lane has spent none — the attempt count beside it says so. A drafting attempt is
+    // exactly what answers a seat that settled an absence its row does not admit.
+    expect(gen.failedLensAccounts?.sequence).toEqual({ attempt: 0, classification: "retryable" });
     expect(lensAdmitsAbsence("sequence", "no-material")).toBe(false);
   });
 
@@ -1211,6 +1214,147 @@ describe("createRoundsRuntime", () => {
     // The classification survives the restart. Before it was persisted, a reconstruction
     // had only the message and every restored failure read as terminal by default.
     expect(restored?.failureAccount).toEqual(drafted?.failureAccount);
+  });
+
+  it.each([
+    { classification: "terminal" as const, redrafts: false },
+    { classification: "retryable" as const, redrafts: true },
+  ])(
+    "re-drafts a $classification lens failure across a restart: $redrafts (#549)",
+    async ({ classification, redrafts }) => {
+      // The wedge this closes: every durable failure counted as complete lens evidence, so
+      // a fresh runtime reconstructed a RETRYABLE failure off disk and never re-asked the
+      // lens — a lane whose own account said it had attempts left could never spend one.
+      // The two legs share every byte of durable state except the classification.
+      const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-restart-meta-")));
+      const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-restart-gen-")));
+      const input = roundInput();
+      const first = await createRoundsRuntime(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt) => {
+              const lens = lensFromPrompt(prompt);
+              // The production no-board shape: the seat completes without emitting.
+              return lens === "noise" ? undefined : cleanBody(lens);
+            }),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ).runRound(input);
+
+      const settled = first.boardGeneration;
+      expect(settled.failedLenses?.noise).toBeDefined();
+      // Restamp the durable account, leaving the failure sentence and every BoardMeta
+      // record exactly as the run left them: the classification is the only variable.
+      generations.save({
+        ...settled,
+        failedLensAccounts: {
+          ...settled.failedLensAccounts,
+          noise: { attempt: 1, classification },
+        },
+      });
+
+      // A FRESH runtime over that on-disk evidence. Its Noise seat now draws a real board,
+      // so "did the lens re-draft?" is answered by whether a board arrives.
+      let noiseTurns = 0;
+      const recovered = await createRoundsRuntime(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt) => {
+              const lens = lensFromPrompt(prompt);
+              if (lens === "noise") noiseTurns += 1;
+              return cleanBody(lens);
+            }),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ).runRound(input);
+
+      const noise = recovered.pipeline.boards.find((outcome) => outcome.lens === "noise");
+      expect(noiseTurns > 0).toBe(redrafts);
+      if (redrafts) {
+        // It spent the attempt its account promised, and the lens now holds a board.
+        expect(noise?.failure).toBeUndefined();
+        expect(noise?.boardId).toBeDefined();
+        expect(recovered.boardGeneration.failedLenses?.noise).toBeUndefined();
+      } else {
+        // Retries spent: the reconstruction stands, and no model was asked.
+        expect(noise?.failure).toBe(settled.failedLenses?.noise);
+        expect(noise?.boardId).toBeUndefined();
+      }
+    },
+  );
+
+  it("clears a stale failure ACCOUNT with its failure when a partial attempt is persisted", async () => {
+    // The retry path deletes the previous attempt's absences and failure sentences before
+    // it writes the replacement attempt's identity — but it kept the ACCOUNTS. A crash
+    // between that write and the settle then left a durable generation carrying a
+    // classification for a failure that had already been cleared: an account about nothing,
+    // and one a restart would have read as this attempt's verdict.
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-stale-account-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-stale-account-gen-")),
+    );
+    const input = roundInput();
+    const first = await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) =>
+            lensFromPrompt(prompt) === "noise" ? undefined : cleanBody(lensFromPrompt(prompt)),
+          ),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        persistGeneration: (generation) => generations.save(generation),
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+    const settled = first.boardGeneration;
+    expect(settled.failedLensAccounts?.noise).toBeDefined();
+    // Retryable ⇒ the restart below takes the partial-evidence redraft path.
+    generations.save({
+      ...settled,
+      failedLensAccounts: {
+        ...settled.failedLensAccounts,
+        noise: { attempt: 1, classification: "retryable" },
+      },
+    });
+
+    // Every durable snapshot the redraft writes, in order — each one is a point a crash
+    // could freeze, and the state a later reader would find.
+    const snapshots: Generation[] = [];
+    await createRoundsRuntime(
+      baseDeps({
+        resolveClaudePort: async () =>
+          fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+        persistBoardMeta: (_repo, record) => meta.save(record),
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          meta.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => {
+          snapshots.push(generation);
+          generations.save(generation);
+        },
+        loadGeneration: (id) => generations.load(id),
+      }),
+    ).runRound(input);
+
+    expect(snapshots.length).toBeGreaterThan(0);
+    for (const snapshot of snapshots) {
+      for (const lens of LENS_KINDS) {
+        // An account may only exist where its failure does — at every durable point, not
+        // merely at the end.
+        if (snapshot.failedLensAccounts?.[lens] !== undefined) {
+          expect(snapshot.failedLenses?.[lens]).toBeDefined();
+        }
+      }
+    }
+    // …and the attempt record written BEFORE any lens settled — the crash window this is
+    // about — carries neither half for the lane that had failed.
+    const attempt = snapshots[0];
+    expect(attempt?.failedLenses?.noise).toBeUndefined();
+    expect(attempt?.failedLensAccounts?.noise).toBeUndefined();
   });
 
   it.each(["sequence", "decisions", "flagged"] as const)(

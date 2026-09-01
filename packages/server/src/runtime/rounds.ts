@@ -258,7 +258,10 @@ export function withLensBoards(
         absentLenses[o.lens] = o.absence;
         delete lensBoards[o.lens];
       } else {
-        fail(o.lens, inadmissible, { attempt: 0, classification: "terminal" });
+        // RETRYABLE, and the attempt count says why: no retry has been spent on this lens,
+        // and `terminal` in this model means the retries ARE spent. A seat that settled an
+        // absence its row does not admit is exactly what another drafting attempt answers.
+        fail(o.lens, inadmissible, { attempt: 0, classification: "retryable" });
       }
     } else {
       fail(o.lens, o.failure ?? "The drafter produced no board.", o.failureAccount);
@@ -669,7 +672,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
    * terminal only when its exact durable metadata exists. Sequence must be a board, while
    * Decisions and Flagged may be boards or their typed clean absences; failures in those
    * three core lanes remain partial. A report-required run additionally owns one exact
-   * reserved report record; five settled lenses cannot substitute for it. */
+   * reserved report record; five settled lenses cannot substitute for it.
+   *
+   * A RETRYABLE failure is not terminal evidence (#549). Its own durable account says the
+   * lens still has attempts left, so counting it as settled wedged the lens: a fresh
+   * runtime reconstructed the same retryable failure from disk forever and never re-drafted
+   * it. Treating it as an unsettled slot sends the generation down the partial-evidence
+   * path, which redrafts. This is the RESTART path only — an in-flight retryable settle is
+   * the drafting ladder's to answer inside its own lane, and re-entering the whole
+   * generation for one would spend a full regeneration on it. */
   function hasCompleteLensEvidence(
     generation: Generation,
     records: readonly BoardMeta[],
@@ -681,7 +692,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         boardId !== undefined &&
         records.some((record) => record.lens === lens && record.boardId === boardId);
       const hasAbsence = generation.absentLenses?.[lens] !== undefined;
-      const hasFailure = generation.failedLenses?.[lens] !== undefined;
+      // An older generation carries no account; its silence stays silence, not a
+      // classification this reconstruction would be inventing.
+      const hasFailure =
+        generation.failedLenses?.[lens] !== undefined &&
+        generation.failedLensAccounts?.[lens]?.classification !== "retryable";
       if (Number(hasBoard) + Number(hasAbsence) + Number(hasFailure) !== 1) return undefined;
       if (hasBoard) return "board";
       return hasAbsence ? "absence" : "failure";
@@ -798,6 +813,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const generationWithoutAbsences = { ...boardGeneration };
     delete generationWithoutAbsences.absentLenses;
     delete generationWithoutAbsences.failedLenses;
+    // The account goes with the sentence it accounts for. Leaving it behind survived a
+    // crash between this attempt's persistence and its settle, and the next reader found
+    // an account whose failure had already been cleared — a classification about nothing.
+    delete generationWithoutAbsences.failedLensAccounts;
     const attemptGeneration: Generation = {
       ...generationWithoutAbsences,
       lensBoards: {},
@@ -932,7 +951,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             if (inadmissible !== undefined) {
               lanes?.failed(lens, inadmissible);
               earlyFailedLenses[lens] = inadmissible;
-              earlyFailedLensAccounts[lens] = { attempt: 0, classification: "terminal" };
+              // Retryable for the same reason the settle path stamps it: nothing has been
+              // retried yet, so this lens has every attempt still in front of it.
+              earlyFailedLensAccounts[lens] = { attempt: 0, classification: "retryable" };
             } else {
               lanes?.absent(lens, lensAbsenceMessage(reason));
               earlyAbsentLenses[lens] = reason;
