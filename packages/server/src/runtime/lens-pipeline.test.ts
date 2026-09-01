@@ -4197,7 +4197,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // The first entry is the pipeline's own report-PHASE start (#725 7.4): it reads the
     // clock once before the report seat takes its baseline (100), so the six milestone
     // reads that follow are unchanged and the assertion below still pins them exactly.
-    const diagnosticTimes = [90, 100, 110, 105, 120, 115, 130, 125];
+    // The scripted clock the report gate reads. Two entries are consumed by the
+    // `report-classification` phase record (#731 9.4), which brackets the turn on the SAME
+    // injected clock — one read before `runTurn`, one after it settles. They sit where the
+    // gate reads them so the DIAGNOSTIC elapsed sequence below is unchanged by the
+    // measurement: a phase record that shifted the diagnostics would be observing the run
+    // by altering it.
+    const diagnosticTimes = [90, 100, 110, 110, 105, 120, 120, 115, 130, 125];
+    const reportTimings: GenerationPhaseTiming[] = [];
     let reportTurns = 0;
     // Three hunks, so the round has three manifest entries and the classification can
     // partition them across an addressed ask, a partial ask, and one beyond entry.
@@ -4299,6 +4306,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         arrivals.push(event);
       },
       onReportDiagnostic: (milestone) => diagnostics.push(milestone),
+      onPhaseTiming: (timing) => {
+        reportTimings.push(timing);
+      },
       now: () => diagnosticTimes.shift() ?? 125,
     });
 
@@ -4385,6 +4395,23 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       diagnostics.every(({ elapsedMs }) => Number.isInteger(elapsedMs) && elapsedMs >= 0),
     ).toBe(true);
     expect(diagnostics.map(({ elapsedMs }) => elapsedMs)).toEqual([10, 10, 20, 20, 30, 30]);
+
+    // The report gate records TWO spans (#731 9.4): the whole gate, and the classification
+    // turn inside it. Only the turn names an executor, because only the turn had one — the
+    // gate also builds the evidence manifest, resolves the seat and verifies the result,
+    // none of which a harness ran.
+    const gate = reportTimings.find(({ phase }) => phase === "report");
+    const classification = reportTimings.find(({ phase }) => phase === "report-classification");
+    expect(gate?.harness).toBeUndefined();
+    expect(classification?.harness).toBe("claude-code");
+    expect(classification?.model).toBeDefined();
+    // The turn is measured on the same wall clock as the rest, and sits INSIDE the gate.
+    expect(classification?.startedAtMs).toBe(110);
+    expect(classification?.durationMs).toBe(10);
+    expect(gate?.startedAtMs).toBe(90);
+    expect((gate?.startedAtMs ?? 0) + (gate?.durationMs ?? 0)).toBeGreaterThanOrEqual(
+      (classification?.startedAtMs ?? 0) + (classification?.durationMs ?? 0),
+    );
     expect(JSON.stringify(diagnostics)).not.toContain("SECRET_");
     expect(
       captures.filter(

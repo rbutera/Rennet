@@ -9,18 +9,30 @@
 //   devices list or revoke paired devices on the running daemon.
 //   map     build & store the Repo Map for a repository — daemonless, the same
 //           generator `project.process` runs, persisting to ~/.rennet/projects/.
+//   benchmarks  aggregate the local benchmark archive into the committed docs data
+//           (#731) — deterministic: same records + same provenance ⇒ same bytes.
 // It reuses the exact supervision helpers the desktop shell uses — no reimplemented
 // protocol-compat or claim logic to drift.
 
-import { existsSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { arch, cpus, platform } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { type GenerateResult, ProjectSnapshotGenerator, snapshotStoreFor } from "@rennet/adapters";
-import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
-import type { ProjectSnapshotManifest } from "@rennet/protocol";
+import {
+  benchmarkExportText,
+  buildBenchmarkExport,
+  materializeSnapshot,
+  queryFileOverview,
+  queryProjectMap,
+} from "@rennet/core";
+import type { BenchmarkRun, ProjectSnapshotManifest } from "@rennet/protocol";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
 import { WebSocket } from "ws";
+import { createStageTimer, isMapBenchmarkStage } from "./benchmark-recorder";
+import { createBenchmarkRecording } from "./benchmark-store";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon } from "./supervise";
@@ -56,7 +68,8 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
-  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]   build & store the repo map",
+  "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--data-dir <dir>]   build & store the repo map",
+  "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>]   write the docs benchmark data",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
@@ -128,6 +141,7 @@ export async function runCli(
           base?: string;
           json?: string;
           "projects-dir"?: string;
+          "data-dir"?: string;
         };
         positionals: string[];
       };
@@ -140,6 +154,7 @@ export async function runCli(
             base: { type: "string" },
             json: { type: "string" },
             "projects-dir": { type: "string" },
+            "data-dir": { type: "string" },
           },
         });
         if (parsed.positionals.length > 1) throw new Error("expected at most one repository path");
@@ -154,6 +169,44 @@ export async function runCli(
           base: parsed.values.base,
           json: parsed.values.json,
           projectsDir: parsed.values["projects-dir"],
+          dataDir: parsed.values["data-dir"] ?? env.RENNET_USER_DATA,
+        },
+        io,
+      );
+    }
+    case "benchmarks": {
+      let parsed: {
+        values: { out?: string; "data-dir"?: string; revision?: string; machine?: string };
+        positionals: string[];
+      };
+      try {
+        parsed = parseArgs({
+          args: [...rest],
+          allowPositionals: true,
+          strict: true,
+          options: {
+            out: { type: "string" },
+            "data-dir": { type: "string" },
+            revision: { type: "string" },
+            machine: { type: "string" },
+          },
+        });
+      } catch (error) {
+        io.err(`rennet benchmarks: ${error instanceof Error ? error.message : String(error)}`);
+        io.err("Usage: rennet benchmarks export [--out <file>] [--data-dir <dir>]");
+        return 2;
+      }
+      const action = parsed.positionals[0] ?? "export";
+      if (action !== "export") {
+        io.err(`rennet benchmarks: unknown action '${action}' (expected 'export')`);
+        return 2;
+      }
+      return exportBenchmarks(
+        {
+          dataDir: parsed.values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(),
+          out: parsed.values.out ?? join(process.cwd(), "docs", "data", "benchmarks.json"),
+          revision: parsed.values.revision,
+          machine: parsed.values.machine,
         },
         io,
       );
@@ -430,12 +483,19 @@ async function buildMap(
     base?: string;
     json?: string;
     projectsDir?: string;
+    dataDir?: string;
   },
   io: CliIo,
 ): Promise<number> {
   const root = resolve(repoPath);
   const store = opts.projectsDir ? snapshotStoreFor(opts.projectsDir) : snapshotStoreFor();
   const generator = new ProjectSnapshotGenerator({ store });
+  // The daemonless map build records the same benchmark run the daemon's does (#731 9.2):
+  // it runs the SAME generator over the same stage boundaries, so excluding it would mean
+  // the one Repo Map path a developer can run reproducibly is the one that never measures
+  // itself. Gated by the same default-on setting as every other producer.
+  const benchmarks = createBenchmarkRecording(opts.dataDir ?? defaultDataDir());
+  const timer = createStageTimer(Date.now);
   let generated: {
     readonly manifest: ProjectSnapshotManifest;
     readonly fileCount: number;
@@ -447,8 +507,10 @@ async function buildMap(
   try {
     const result: GenerateResult = await generator.generate(root, {
       explicitBaseRef: opts.base,
-      onProgress: (progress) =>
-        io.out(`${progress.note}${progress.detail ? ` (${progress.detail})` : ""}`),
+      onProgress: (progress) => {
+        if (isMapBenchmarkStage(progress.stage)) timer.enter(progress.stage);
+        io.out(`${progress.note}${progress.detail ? ` (${progress.detail})` : ""}`);
+      },
     });
     generated = {
       manifest: result.manifest,
@@ -459,10 +521,21 @@ async function buildMap(
       reusedSymbolShards: result.reusedSymbolShards,
     };
   } catch (error) {
-    io.err(`rennet map: ${error instanceof Error ? error.message : String(error)}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    recordMapBenchmark(benchmarks.record, timer, basename(root) || root, root, "failed", reason);
+    io.err(`rennet map: ${reason}`);
     return 1;
   }
   const { manifest } = generated;
+  recordMapBenchmark(
+    benchmarks.record,
+    timer,
+    basename(root) || root,
+    manifest.repoKey,
+    "complete",
+    undefined,
+    manifest.baseOid,
+  );
   io.out(
     `map built: ${manifest.baseRef} @ ${manifest.baseOid.slice(0, 12)} — ${generated.fileCount} files, ${generated.symbolCount} symbols, ${generated.referenceCount} references`,
   );
@@ -505,4 +578,94 @@ async function buildMap(
     io.out(`  exported: ${jsonPath}`);
   }
   return 0;
+}
+
+/**
+ * The developer-run benchmark export (#731 9.7, design D8 consumer 3). Reads the local
+ * archive, aggregates it into the committed docs artifact, and writes it. Rai runs this
+ * against his own dogfood data and reviews the diff before committing — the export writes
+ * a file, it does not publish anything.
+ *
+ * DETERMINISTIC by construction: the aggregation is pure (`buildBenchmarkExport`), every
+ * list is sorted on declared order, and the only clock read anywhere on this path is the
+ * provenance stamp taken here and passed IN. Re-running with the same archive and the same
+ * `--revision`/`--machine` produces byte-identical output, so an unchanged measurement is
+ * an empty diff rather than a timestamp churn.
+ */
+async function exportBenchmarks(
+  opts: {
+    readonly dataDir: string;
+    readonly out: string;
+    readonly revision?: string;
+    readonly machine?: string;
+  },
+  io: CliIo,
+): Promise<number> {
+  const { store } = createBenchmarkRecording(opts.dataDir);
+  // The archive cap is deliberately generous: the export is a considered, occasional act
+  // over the whole local history, not a live panel read.
+  const runs = store.list(100_000);
+  if (runs.length === 0) {
+    io.err(`rennet benchmarks: no recorded runs in ${join(opts.dataDir, "benchmarks.jsonl")}`);
+    io.err("Run a review or process a project with benchmark recording on, then export.");
+    return 1;
+  }
+  let revision = opts.revision;
+  if (revision === undefined) {
+    try {
+      revision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    } catch {
+      io.err("rennet benchmarks: could not read the revision; pass --revision <rev>");
+      return 1;
+    }
+  }
+  const exported = buildBenchmarkExport({
+    runs,
+    provenance: {
+      exportedAt: new Date().toISOString(),
+      machine: opts.machine ?? `${platform()} ${arch()}, ${cpus().length} cores`,
+      revision,
+    },
+  });
+  mkdirSync(dirname(opts.out), { recursive: true });
+  writeFileSync(opts.out, benchmarkExportText(exported), "utf8");
+  io.out(
+    `benchmarks exported: ${runs.length} runs → ${exported.stages.length} stage rows across ${exported.runs.length} (kind, mode) groups`,
+  );
+  io.out(`  provenance: ${exported.provenance.machine} @ ${exported.provenance.revision}`);
+  io.out(`  written: ${opts.out}`);
+  return 0;
+}
+
+/**
+ * Archive one daemonless map build. Shared by the success and failure legs so a build that
+ * DIED is recorded as a failed run carrying the stages it reached — a map path that only
+ * archived its successes would hide the builds that take longest, which are the ones that
+ * fall over.
+ */
+function recordMapBenchmark(
+  record: (run: BenchmarkRun) => void,
+  timer: ReturnType<typeof createStageTimer>,
+  label: string,
+  repoKey: string,
+  outcome: "complete" | "failed",
+  failure?: string,
+  revision?: string,
+): void {
+  const stages = timer.finish();
+  const total = stages.find((stage) => stage.stage === "total");
+  // No total means no stage was ever entered — the build died before its first measured
+  // boundary, and a zero-length run would read as an instantaneous map.
+  if (total === undefined) return;
+  record({
+    version: 1,
+    id: `${repoKey}:${total.startedAtMs}`,
+    kind: "repo-map",
+    subject: { label, repoKey, ...(revision === undefined ? {} : { revision }) },
+    startedAtMs: total.startedAtMs,
+    durationMs: total.durationMs,
+    outcome,
+    ...(failure === undefined ? {} : { failure }),
+    stages,
+  });
 }

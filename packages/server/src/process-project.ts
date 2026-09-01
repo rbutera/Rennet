@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import type { GenerateOptions, GenerateResult } from "@rennet/adapters";
 import {
+  type BenchmarkRun,
   commandIdFor,
   type ProcessedRepoSummary,
   type Project,
@@ -8,6 +9,7 @@ import {
   type ProjectProcessRun,
   type ProjectScoutQuestionnaire,
 } from "@rennet/protocol";
+import { createStageTimer, isMapBenchmarkStage } from "./benchmark-recorder";
 import {
   type ProjectProcessFailure,
   type ProjectProcessJournal,
@@ -30,6 +32,16 @@ export interface ProcessProjectDeps {
   repoKeyForRoot?(repoRoot: string): string;
   journal?: ProjectProcessJournal;
   runScout?(input: ProjectScoutRunInput): Promise<ProjectScoutQuestionnaire | null>;
+  /**
+   * Archive one repo's Repo Map benchmark record (#731 9.2). The stages come from the
+   * generator's OWN progress stream — the boundaries it already narrates to the
+   * processing screen — so instrumentation adds no new measurement points and the whole
+   * build is deterministic end to end (there are no model-backed layers left to time).
+   * Absent ⇒ no archive, identical processing.
+   */
+  recordBenchmark?(run: BenchmarkRun): void;
+  /** The wall clock, injectable so a test can script the stage timings. */
+  now?(): number;
 }
 
 interface LiveProjectProcess {
@@ -230,6 +242,19 @@ export function createProcessProject(deps: ProcessProjectDeps) {
     };
 
     record = { ...record, failures: [] };
+    // One timer per repo, opened at that repo's scout and closed when its map build ends,
+    // so the `total` stage spans scout → store — the wait the reviewer actually sits
+    // through — rather than the map alone. Keyed by repo path because the scout loop and
+    // the map loop are separate passes over the same repos.
+    const clock = deps.now ?? Date.now;
+    const timers = new Map<string, ReturnType<typeof createStageTimer>>();
+    const timerFor = (path: string) => {
+      const existing = timers.get(path);
+      if (existing !== undefined) return existing;
+      const created = createStageTimer(clock);
+      timers.set(path, created);
+      return created;
+    };
     const scoutPending = deps.runScout
       ? record.repos.some((checkpoint) => !checkpoint.scout)
       : false;
@@ -244,6 +269,8 @@ export function createProcessProject(deps: ProcessProjectDeps) {
           total: record.repos.length,
         });
         const repoKey = deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path;
+        const scoutTimer = timerFor(checkpoint.path);
+        scoutTimer.enter("scout");
         let questionnaire: ProjectScoutQuestionnaire | null;
         try {
           questionnaire = await deps.runScout({
@@ -262,6 +289,10 @@ export function createProcessProject(deps: ProcessProjectDeps) {
             reason: error instanceof Error ? error.message : String(error),
           });
           continue;
+        } finally {
+          // Closed here, not after the loop body: a scout left open would keep running
+          // across the NEXT repo's scout and hand the first repo the second one's time.
+          scoutTimer.leave();
         }
         if (!questionnaire) {
           fail({
@@ -299,10 +330,18 @@ export function createProcessProject(deps: ProcessProjectDeps) {
         });
         active = undefined;
       };
+      const timer = timerFor(checkpoint.path);
+      // The archive is taken from a `finally`, so a build that DIED is recorded as a
+      // failed run carrying the stages it reached. A record that only survived success
+      // would make the slowest builds — the ones that fall over — invisible.
+      let mapOutcome: "complete" | "failed" = "complete";
+      let mapFailure: string | undefined;
+      let mapRevision: string | undefined;
       try {
         const result = await deps.generate(checkpoint.path, {
           explicitBaseRef: project.primaryBranch,
           onProgress: (progress) => {
+            if (isMapBenchmarkStage(progress.stage)) timer.enter(progress.stage);
             if (active?.stage === progress.stage) {
               active = { stage: progress.stage, note: progress.note, detail: progress.detail };
               if (progress.detail) finishActive();
@@ -323,6 +362,7 @@ export function createProcessProject(deps: ProcessProjectDeps) {
           },
         });
         finishActive();
+        mapRevision = result.manifest.baseOid;
         const summary: ProcessedRepoSummary = {
           repo: checkpoint.repo,
           path: checkpoint.path,
@@ -344,6 +384,8 @@ export function createProcessProject(deps: ProcessProjectDeps) {
       } catch (error) {
         finishActive();
         const reason = error instanceof Error ? error.message : String(error);
+        mapOutcome = "failed";
+        mapFailure = reason;
         const summary: ProcessedRepoSummary = {
           repo: checkpoint.repo,
           path: checkpoint.path,
@@ -352,6 +394,29 @@ export function createProcessProject(deps: ProcessProjectDeps) {
         };
         fail({ repo: checkpoint.repo, path: checkpoint.path, phase: "map", reason, summary });
         narrate({ kind: "repo-error", repo: checkpoint.repo, message: reason });
+      } finally {
+        const stages = timer.finish();
+        const total = stages.find((stage) => stage.stage === "total");
+        // No `total` means the build emitted no stage at all (it died before the first
+        // progress line) — there is nothing measured to record, and a zero-length run
+        // would read as an instantaneous map.
+        if (total !== undefined) {
+          deps.recordBenchmark?.({
+            version: 1,
+            id: `${checkpoint.path}:${total.startedAtMs}`,
+            kind: "repo-map",
+            subject: {
+              label: checkpoint.repo,
+              repoKey: deps.repoKeyForRoot?.(checkpoint.path) ?? checkpoint.path,
+              ...(mapRevision === undefined ? {} : { revision: mapRevision }),
+            },
+            startedAtMs: total.startedAtMs,
+            durationMs: total.durationMs,
+            outcome: mapOutcome,
+            ...(mapFailure === undefined ? {} : { failure: mapFailure }),
+            stages,
+          });
+        }
       }
     }
 

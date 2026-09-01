@@ -47,6 +47,7 @@ import type {
 } from "@rennet/core";
 import {
   type AskOccurrence,
+  type BenchmarkRun,
   type ComposedHandoffBundle,
   type DraftBoard,
   DraftBoardSchema,
@@ -68,6 +69,7 @@ import {
   type RoundRunReceipt,
   type SessionModel,
 } from "@rennet/protocol";
+import { generationBenchmarkRun } from "../benchmark-recorder";
 import type { BoardsRuntime } from "../boards/boards-runtime";
 import { PipelineStartGuard } from "../session/pipeline-guard";
 import {
@@ -607,6 +609,13 @@ export interface RoundsRuntimeDeps {
   /** The wall clock, injectable so a test can script the phase timings this runtime
    *  records. Shared with the pipeline, so one run measures on ONE clock. */
   readonly now?: () => number;
+  /**
+   * Archive one generation's benchmark record (#731 D8). Handed the phases this runtime
+   * ALREADY wrote durably — nothing is re-measured for it — so a disabled recorder is
+   * simply an absent dep and the drafting path is byte-for-byte the same either way.
+   * Absent ⇒ no archive; the durable `Generation.timings` are untouched regardless.
+   */
+  readonly recordBenchmark?: (run: BenchmarkRun) => void;
 }
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
@@ -1232,7 +1241,45 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // `onLensDraftingStart` promotes all five lanes only when the no-report path is valid or
     // the required report has been verified and persisted; a failed report exits earlier.
 
-    const pipeline = await runLensPipeline(pipelineInput);
+    // The benchmark archive's producer (#731 D8). It rides the SAME records the reveal
+    // block already wrote, so nothing here measures anything twice, and the `finally`
+    // means a generation that threw is archived as `failed` rather than vanishing — a
+    // pipeline that only archived its successes would report the fast half of its own
+    // latency. `aborted` is the caller's cancellation, told apart from a real failure by
+    // the signal, because a reviewer who walked away is not a defect.
+    const benchmarkFrom = Math.floor(clock());
+    let benchmarkOutcome: "complete" | "failed" | "aborted" = "complete";
+    let benchmarkFailure: string | undefined;
+    const archiveBenchmark = (): void => {
+      const record = deps.recordBenchmark;
+      if (record === undefined) return;
+      record(
+        generationBenchmarkRun({
+          id: `${attemptGeneration.id}:${benchmarkFrom}`,
+          subject: {
+            label: input.session.id,
+            sessionId: input.session.id,
+            generationId: attemptGeneration.id,
+            ...(input.dispatchId === undefined ? {} : { roundId: input.dispatchId }),
+          },
+          phases: reveal.timings,
+          startedAtMs: benchmarkFrom,
+          endedAtMs: Math.floor(clock()),
+          outcome: benchmarkOutcome,
+          ...(benchmarkFailure === undefined ? {} : { failure: benchmarkFailure }),
+        }),
+      );
+    };
+
+    let pipeline: LensPipelineResult;
+    try {
+      pipeline = await runLensPipeline(pipelineInput);
+    } catch (error) {
+      benchmarkOutcome = input.signal?.aborted === true ? "aborted" : "failed";
+      benchmarkFailure = error instanceof Error ? error.message : String(error);
+      archiveBenchmark();
+      throw error;
+    }
     // A drafter that produced no board settles its lane as failed. Without this the lane
     // sits at `queued`/`running` after the round is over — the surface reads "still
     // working" forever, which is the same stall a silent crash leaves behind.
@@ -1244,6 +1291,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // One last write so the timings recorded after the final settlement (coverage, reveal,
     // the lens post-process tails) reach durable state too.
     await persistReveal();
+    // …and only now is the archive taken, so it carries the same phases the durable
+    // generation does rather than a snapshot from before the tail records landed.
+    archiveBenchmark();
     // …and the generation handed back carries them, because that record is what the final
     // settle and BOTH failure paths persist. `withLensBoards` spreads the generation it is
     // given and deletes only the attempt-scoped drafting fields, so coverage and timings

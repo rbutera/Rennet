@@ -2335,6 +2335,13 @@ async function runClassifiedRoundReport(
   const turnStarted = roundReportTurnStartedMilestone(seat, elapsedMs());
   if (turnStarted !== undefined) emitDiagnostic(turnStarted);
   let turn: HarnessTurnResult;
+  // The classification turn measured on its own (#731 9.4), on the WALL clock the phase
+  // records share — `now` above may be `performance.now`, which is an origin-relative
+  // reading and not comparable with any other phase's start. Emitted from a `finally`,
+  // so a turn that threw or refused to emit still reports how long it took to fail and
+  // still names the harness that failed it.
+  const wall = deps.now ?? Date.now;
+  const turnFrom = Math.floor(wall());
   try {
     turn = await seat.runTurn(prompt, 0);
   } catch (error) {
@@ -2348,6 +2355,14 @@ async function runClassifiedRoundReport(
         error instanceof Error ? error.message : String(error)
       }.`,
     };
+  } finally {
+    await deps.onPhaseTiming?.({
+      phase: "report-classification",
+      startedAtMs: turnFrom,
+      durationMs: Math.max(0, Math.floor(wall()) - turnFrom),
+      harness: seat.harness,
+      model: seat.model,
+    });
   }
   emitDiagnostic({ stage: "turn-settled", status: turn.status, elapsedMs: elapsedMs() });
   if (turn.status !== "emitted") {

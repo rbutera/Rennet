@@ -25,6 +25,7 @@ import type {
   AnchorSpan,
   AskOccurrence,
   AskProjection,
+  BenchmarkRun,
   ComposedHandoffBundle,
   DeltaDigestResult,
   DispositionType,
@@ -542,6 +543,12 @@ export interface DispatchDeps {
    * write). Optional: absent ⇒ the settings commands are simply unavailable.
    */
   readonly settings?: SettingsComposition;
+  /**
+   * The durable benchmark archive's read side (#731, D8) — the newest `limit` recorded
+   * runs, each with its own stage records. Optional: absent ⇒ the panel reads an empty
+   * history, which is exactly what a fresh install has.
+   */
+  readonly listBenchmarks?: (limit: number) => BenchmarkRun[];
   /**
    * The durable ask-log store (B11 cluster 2, Q15) — the file-backed per-session
    * event log the `ask.*` handlers are the SOLE writers of. `readProjection` folds

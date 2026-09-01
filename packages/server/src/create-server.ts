@@ -212,6 +212,7 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { buildAppTools } from "./agent-tools";
+import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
@@ -1112,6 +1113,10 @@ export interface RennetServer {
 export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
   const env = options.env ?? process.env;
   const dataDir = options.dataDir;
+  // The benchmark archive (#731, D8): one recorder, one durable file, sibling to the
+  // settings stores. The recording toggle is enforced inside `record`, at the single
+  // write seam — every producer keeps its identical code path either way.
+  const { store: benchmarkStore, record: recordBenchmark } = createBenchmarkRecording(dataDir);
   const serverVersion = options.serverVersion ?? "0.0.0-dev";
 
   let editorExecutables: Promise<string[]> | null = null;
@@ -2494,6 +2499,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     listProjects: () => projectStore.list(),
     repoKeyForRoot,
     journal: projectProcessJournal,
+    // The Repo Map build's per-stage archive (#731 9.2). The stages come from the
+    // generator's own progress stream, so nothing new is measured here.
+    recordBenchmark,
     runScout: async (input) => {
       const result = await projectScoutRuntime.runForRepo({
         projectId: input.projectId,
@@ -2769,6 +2777,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const sessionIdForReview = (review: Review): string =>
     resolveRoundSessionId(review, sessionStore.list(), projectIdOf(review.repositoryRoot));
   const roundsRuntime = createRoundsRuntime({
+    // One generation's archive (#731 9.3/9.4), taken from the phase records the reveal
+    // block already persisted — the spine stays authoritative and unconditional.
+    recordBenchmark,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
     boardsRuntimeFor,
@@ -4685,6 +4696,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // resolution (the same identity the snapshot generator keys on), legacy-
     // workspace rediscovery, the two stores, the guidance reader, and the real
     // visibility switch. The malformed refusals live in the stores themselves.
+    // The benchmarks panel's read side (#731 9.6) — newest runs, capped by the caller.
+    listBenchmarks: (limit) => benchmarkStore.list(limit),
     settings: createSettingsComposition({
       listProjects: () => projectStore.list(),
       loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
