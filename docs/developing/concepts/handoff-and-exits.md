@@ -573,6 +573,31 @@ that host's repair.
    the change request exists, rounds continue identically; there is no
    self-review lane on one's own change request.
 
+### The loop is unbounded; the submit is what ends it
+
+The count of rounds is display and ledger data. It is never a terminator and
+never a precondition. The loop's only preconditions are the ones step 2
+already states — the reviewer's own current-branch review, with at least one
+staged coding ask — and its only refusal is an exhausted ask queue, which
+reads identically before the first round and after the fiftieth. A teammate PR
+and a retrospective review correctly have no round lane at all.
+
+Two consequences are easy to get backwards.
+
+- **A composed pull-request draft does not end the loop.** The draft is
+  composed once nothing is left to ask, and it is held, not spent: staging one
+  more ask takes the surface back to *Changes* with a live **Dispatch Round**,
+  and draining that ask returns the same submission. Only the reviewer's
+  submit click ends the loop.
+- **The exit is available at zero rounds.** A review whose changes need
+  nothing has a submit exit immediately; no round has to run first to unlock
+  it.
+
+Nothing — server dispatch, the prompts, client state, or UI copy — imposes or
+implies a maximum. The guarantee is held by an arbitrary-N machine test on
+both halves of the loop rather than by a fixed-depth journey, because a
+three-round journey only ever disproves a cap of two.
+
 ### Carry-forward is a verdict, not a skip
 
 A round re-drafts **every** lens. "Carrying forward" is what the regeneration

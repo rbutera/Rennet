@@ -48,10 +48,25 @@
 
 ## 8. Unbounded round loop
 
-- [ ] 8.1 Sweep prompts, UI copy, and fixtures for ordinal round ASSUMPTIONS (caps, round-two special cases); leave legitimate descriptive fixture names and comments alone
-- [ ] 8.2 Parameterized arbitrary-N state-machine test over the round loop: every dispatch/land cycle's transitions identical, no ordinal-dependent branch; positive control introduces a cap and fails it
-- [ ] 8.3 Verify the submit exit at zero rounds and after N rounds; a composed PR draft does NOT terminate the loop (rounds stay dispatchable with a draft in hand); ledger stays legible and complete at five-plus rounds
+- [x] 8.1 Sweep prompts, UI copy, and fixtures for ordinal round ASSUMPTIONS (caps, round-two special cases); leave legitimate descriptive fixture names and comments alone
+- [x] 8.2 Parameterized arbitrary-N state-machine test over the round loop: every dispatch/land cycle's transitions identical, no ordinal-dependent branch; positive control introduces a cap and fails it
+- [x] 8.3 Verify the submit exit at zero rounds and after N rounds; a composed PR draft does NOT terminate the loop (rounds stay dispatchable with a draft in hand); ledger stays legible and complete at five-plus rounds
 - [ ] 8.4 Launched-app three-round session proof: dispatch, land, regenerate, re-dispatch, exit via PR submit on the final successor
+  - BLOCKED (2026-09-01, not environmental). The launched-app e2e (`apps/desktop/e2e/owner-loop-685.spec.ts`)
+    builds, launches, adds the project, drafts boards, dispatches round one, runs the worker
+    and PASSES the gate (`npm run check · passed · 219 ms`) — then the round REPORT seat fails:
+    `deterministic verification failed — Round report outcome for qt-… cites src/owner.ts, not
+    the asked path Read \`src/owner.ts\` first.` `verifyAskPath`
+    (`packages/server/src/runtime/round-report-verification.ts:364`) resolves `ComposableAsk.path`
+    as a repo path, but a QUOTE-THREAD ask carries the quoted prose there, so every prose-anchored
+    ask fails verification and kills the round at depth 1. Rounds two/three and the PR-submit exit
+    never execute. Separately, `owner-loop-proof.integration.test.ts` fails earlier and
+    environmentally: with `HOME` stubbed to a temp dir, `sh -lc` re-derives PATH from the login
+    profile and `npm` resolves to the asdf shim, whose `cd $HOME/.asdf` fails —
+    `gate exited with code 1`, stderr `.../asdf/plugins/nodejs/shims/npm: line 14: cd: <tmp>/home/.asdf:
+    No such file or directory`. Prepending the test Node's bin dir to PATH does not help (the login
+    shell discards it). Unbounded depth is meanwhile proven by executing arbitrary-N machine tests
+    on both halves of the loop (8.2), each control-proven against a cap introduced in production code.
 
 ## 9. Benchmark telemetry
 
