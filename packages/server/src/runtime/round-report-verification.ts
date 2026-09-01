@@ -8,6 +8,7 @@ import {
 } from "@rennet/protocol";
 import {
   buildRoundEvidenceManifest,
+  compareByCodeUnit,
   verifyRoundEvidencePartition,
 } from "./round-evidence-manifest";
 
@@ -73,7 +74,7 @@ function canonicalOutcomeOrder(
       CLASSIFIED_ROUND_REPORT_STATUS_ORDER.indexOf(right.data.status);
     if (statusOrder !== 0) return statusOrder;
     if (left.data.status === "beyond" && right.data.status === "beyond") {
-      return left.data.ask.ref.localeCompare(right.data.ask.ref);
+      return compareByCodeUnit(left.data.ask.ref, right.data.ask.ref);
     }
     return (
       (askOrder.get(left.data.ask.ref) ?? Number.MAX_SAFE_INTEGER) -
@@ -304,10 +305,35 @@ function citedElement(
 }
 
 /**
+ * Does this ask's `path` actually NAME a file, or is it prose?
+ *
+ * A prose / quote-of-board ask carries the QUOTED TEXT in `path`: `publish-review.ts`'s
+ * `handoffDispositionsFromProjection` ends `{ ...common, path: ask.anchor }` when the
+ * anchor does not parse as `path:line`, and a prose anchor is not a path (`dispatch/
+ * ask.ts` draws the same line with the same whitespace-free heuristic when deciding what
+ * to validate as repo-relative). No evidence unit can ever sit "on" such a path, so
+ * requiring one made every prose-anchored outcome permanently unverifiable.
+ *
+ * The discriminator is the PATH SHAPE, not the absence of a span. Spanless asks come in
+ * two flavours on that same code path — the prose one above, and a frozen-`codeRef` ask
+ * that yields `{ ...common, path: ref.path }`: a real repo path with no span to
+ * reinterpret. Skipping every spanless ask would drop the containment check for the
+ * second flavour too, which is a real guard against an outcome citing the wrong file.
+ */
+function namesAContainablePath(ask: ComposableAsk): boolean {
+  return /^\S+$/.test(ask.path);
+}
+
+/**
  * Verify one outcome's evidence: every cited id is real manifest evidence on a path the
  * round actually changed, and the displayed anchor is EXACTLY the one the host derives
  * from that evidence — or absent, when every cited unit is a rename, a mode change, or a
  * binary file. Nothing here accepts a line number the diff does not carry.
+ *
+ * `ask` is absent for a `beyond` outcome (there is no dispatched ask to relate to). Its
+ * path still steers anchor derivation exactly as the builder steers it — prose included,
+ * where it simply matches nothing — but only a containable path is REQUIRED to appear
+ * among the cited evidence.
  */
 function verifyOutcomeEvidence(
   elementsById: ReadonlyMap<string, HostElement>,
@@ -315,8 +341,9 @@ function verifyOutcomeEvidence(
   manifest: ReturnType<typeof manifestFor>,
   changedPaths: ReadonlySet<string>,
   expectedPatchsetId: string,
-  askPath?: string,
+  ask?: ComposableAsk,
 ): void {
+  const askPath = ask?.path;
   const ids = outcome.data.evidence_ids ?? [];
   if (ids.length === 0) {
     throw new Error(
@@ -338,7 +365,9 @@ function verifyOutcomeEvidence(
     return unit;
   });
   if (
+    ask !== undefined &&
     askPath !== undefined &&
+    namesAContainablePath(ask) &&
     !cited.some(
       (unit) =>
         unit.path === askPath ||
@@ -444,7 +473,7 @@ export function verifyRoundReportEvidence(input: RoundReportVerificationEvidence
         manifest,
         changedPaths,
         input.expectedPatchsetId,
-        ask.path,
+        ask,
       );
     } else if (element.data.code_ref !== undefined || element.data.evidence_ids !== undefined) {
       throw new Error(`Round report marks untouched ask ${askRef} with change evidence.`);

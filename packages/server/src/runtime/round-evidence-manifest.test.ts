@@ -119,7 +119,7 @@ describe("buildRoundEvidenceManifest", () => {
     ]);
   });
 
-  it("derives ids from content, so a rebuild is identical and an unrelated edit does not renumber", () => {
+  it("derives ids from content, so a rebuild is identical and an unrelated FILE does not renumber", () => {
     const first = buildRoundEvidenceManifest(TEXT_DIFF);
     const rebuilt = buildRoundEvidenceManifest(TEXT_DIFF);
     expect(rebuilt.map((unit) => unit.id)).toEqual(first.map((unit) => unit.id));
@@ -137,6 +137,29 @@ describe("buildRoundEvidenceManifest", () => {
     );
     // An ordinal id would have shifted every surviving unit by one.
     expect(withNeighbour.map((unit) => unit.id)).toContain(first[0]?.id);
+  });
+
+  it("re-keys a hunk when an unrelated edit ABOVE it in the same file shifts its @@ header", () => {
+    // The honest edge of the stability claim, asserted rather than left to the reader:
+    // a text hunk's identity includes its `@@` header, so a same-file edit above it
+    // changes the id even though the hunk's own body is byte-identical. Dropping the
+    // header would fix this and collide two identical hunks in one file instead —
+    // strictly worse, since ids must be unique within a manifest first.
+    const body = ["-old second line", "+new second line"];
+    const at = (start: number): string =>
+      [
+        "diff --git a/src/auth.ts b/src/auth.ts",
+        "--- a/src/auth.ts",
+        "+++ b/src/auth.ts",
+        `@@ -${start},1 +${start},1 @@`,
+        ...body,
+      ].join("\n");
+
+    const before = buildRoundEvidenceManifest(at(10));
+    const after = buildRoundEvidenceManifest(at(14));
+    expect(before[0]?.kind).toBe("text-hunk");
+    expect(before[0]?.kind === "text-hunk" && before[0].text.endsWith(body.join("\n"))).toBe(true);
+    expect(after[0]?.id).not.toBe(before[0]?.id);
   });
 });
 
@@ -183,6 +206,28 @@ describe("measureRoundEvidenceManifest", () => {
     expect(measured.ok ? "" : measured.reason).toContain(
       `over the ${ROUND_EVIDENCE_MANIFEST_MAX_BYTES}-byte limit`,
     );
+  });
+
+  it("fails typed on a duplicate id rather than letting the partition merge two units", () => {
+    // A forced collision: two DIFFERENT units carrying one id, which is what a 16-hex
+    // sha256 collision would produce. Left alone, the partition addresses units by id
+    // through Sets — one placement would satisfy both and the report would call itself
+    // exhaustive while a unit went unclassified.
+    const collided: RoundEvidenceUnit[] = [
+      { kind: "rename", id: "ev-cccccccccccccccc", path: "a.ts", previousPath: "old-a.ts" },
+      { kind: "rename", id: "ev-cccccccccccccccc", path: "b.ts", previousPath: "old-b.ts" },
+    ];
+    const measured = measureRoundEvidenceManifest(collided);
+    expect(measured.ok).toBe(false);
+    expect(measured.ok ? "" : measured.reason).toContain("repeats evidence id ev-cccccccccccccccc");
+
+    // And on the recovery path, which never measures: the partition itself refuses.
+    expect(() =>
+      verifyRoundEvidencePartition(
+        [{ bucket: "ask-one", evidenceIds: ["ev-cccccccccccccccc"] }],
+        collided,
+      ),
+    ).toThrow(/repeats evidence id ev-cccccccccccccccc/);
   });
 
   it("fails typed over the entry limit", () => {

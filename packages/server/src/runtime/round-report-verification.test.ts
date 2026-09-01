@@ -469,6 +469,59 @@ describe("verifyRoundReportEvidence", () => {
     ).toThrow("cites no evidence on the asked path src/auth.ts");
   });
 
+  it("verifies a prose-anchored ask, whose `path` is quoted text and names no file", () => {
+    // A quote-of-board / body-stratum ask carries the QUOTED TEXT in `path`. Requiring
+    // evidence "on the asked path" made every such outcome permanently unverifiable —
+    // no manifest unit can sit on a sentence — which stalled the whole round.
+    const proseAsk: ComposableAsk = {
+      id: "ask-prose",
+      path: "the retry loop should not swallow the abort",
+      type: "request-change",
+      instruction: "ask-prose",
+      context: "",
+    };
+    expect(() =>
+      verify(
+        [
+          codeRef("auth-ref", "src/auth.ts", 9),
+          outcome("prose-outcome", "addressed", "ask-prose", {
+            ref: "auth-ref",
+            evidenceIds: [authEvidence],
+          }),
+          codeRef("cache-ref", "src/cache.ts", 21),
+          outcome("cache-outcome", "beyond", "beyond:cache", {
+            ref: "cache-ref",
+            evidenceIds: [cacheEvidence],
+          }),
+        ],
+        [proseAsk],
+      ),
+    ).not.toThrow();
+  });
+
+  it("still rejects a real-path ask whose outcome cites a different file", () => {
+    // The positive control for the gate above, kept beside it: relaxing the check for
+    // prose must not relax it for an ask that DOES name a file — including a spanless
+    // path-only ask, which is the shape a frozen code ref composes to.
+    expect(() =>
+      verify(
+        [
+          codeRef("cache-ref", "src/cache.ts", 21),
+          outcome("wrong-file", "addressed", "ask-auth", {
+            ref: "cache-ref",
+            evidenceIds: [cacheEvidence],
+          }),
+          codeRef("auth-ref", "src/auth.ts", 9),
+          outcome("beyond-auth", "beyond", "beyond:auth", {
+            ref: "auth-ref",
+            evidenceIds: [authEvidence],
+          }),
+        ],
+        [ask("ask-auth", "src/auth.ts")],
+      ),
+    ).toThrow("cites no evidence on the asked path src/auth.ts");
+  });
+
   it("rejects change evidence on an untouched ask", () => {
     expect(() =>
       verify([

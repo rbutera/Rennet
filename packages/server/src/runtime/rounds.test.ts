@@ -687,7 +687,12 @@ describe("createRoundsRuntime", () => {
     expect(recovered.record.reportBoard).toBe(attempt.draftingReportBoardId);
   });
 
-  it("repeats the classifier call after a crash before projection and lands exactly one report", async () => {
+  it("repeats the classifier call after a crash BETWEEN board apply and meta persistence", async () => {
+    // Retitled honestly (#727 fix round): this crashes in `persistBoardMeta`, which the
+    // pipeline calls AFTER `whiteboard.apply` — so the projection has already landed and
+    // what this covers is the apply-to-meta window, not "before projection". The crash
+    // BEFORE apply is the test immediately below.
+    //
     // The classifier is side-effect-free before durable projection, so recovery MAY
     // re-run the provider call. What must hold is the DURABLE side: exactly one report
     // projection per round, never the first attempt's elements plus the second's.
@@ -792,6 +797,136 @@ describe("createRoundsRuntime", () => {
     expect(meta.load(boardIds.report)?.lens).toBe("report");
     // Exactly one durable projection: one section and one outcome per dispatched ask,
     // not the crashed attempt's elements plus the replacement's.
+    const persisted = [...(await boards.service.getState(boardIds.report)).values()] as {
+      readonly kind: string;
+    }[];
+    expect(persisted.filter(({ kind }) => kind === "section")).toHaveLength(1);
+    expect(persisted.filter(({ kind }) => kind === "round_outcome")).toHaveLength(1);
+  });
+
+  it("repeats the classifier call after a crash BEFORE the board apply and lands exactly one report", async () => {
+    // The window the spec's recovery scenario actually names: the provider answered and
+    // the process died before ANY durable projection. Crashing at `persistBoardMeta` (the
+    // test above) is a later window — the board ops are already committed by then, so it
+    // cannot see a report that half-projected. Here the seam sits in `service.apply`
+    // itself, which `WhiteboardClient.apply` delegates to, and refuses the report board's
+    // first write outright: zero report elements durable, then recovery.
+    const repoRoot = mkdtempSync(join(tmpdir(), "rounds-report-preapply-repo-"));
+    const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-report-preapply-meta-")));
+    const generations = new GenerationStore(
+      mkdtempSync(join(tmpdir(), "rounds-report-preapply-generation-")),
+    );
+    const boards = createBoardsRuntime(repoRoot);
+    const crashDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
+    const classification = {
+      outcomes: [
+        {
+          askId: "ask-one",
+          status: "addressed",
+          note: "The exact changed line now carries the requested value.",
+          evidenceIds: buildRoundEvidenceManifest(crashDiff).map((unit) => unit.id),
+        },
+      ],
+      beyond: [],
+    };
+    const boardIds = reservedBoardIds("report-preapply");
+    const input = roundInput({
+      repoRoot,
+      asksDispatched: ["ask-one"],
+      draftPlan: { generation: "gen:ps-1", boardIds },
+      round: {
+        number: 1,
+        previousGeneration: PREV_GEN.id,
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Replace the line.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: crashDiff,
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "c0", to: "c1" },
+        },
+      },
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
+    });
+
+    let crashBeforeReportApply = true;
+    // The seam: the board service the pipeline's `WhiteboardClient` writes through. It
+    // throws for the report board's first apply, so nothing is appended at all.
+    const crashingBoards: BoardsRuntime = {
+      createRennetBoard: (boardId?: string) => boards.createRennetBoard(boardId),
+      service: new Proxy(boards.service, {
+        get(target, property, receiver) {
+          if (property === "apply") {
+            return (boardId: string, ...rest: unknown[]) => {
+              if (boardId === boardIds.report && crashBeforeReportApply) {
+                crashBeforeReportApply = false;
+                throw new Error("crash before report apply");
+              }
+              return (target.apply as (...args: unknown[]) => unknown)(boardId, ...rest);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+    };
+    const durableDeps = {
+      boardsRuntimeFor: () => crashingBoards,
+      persistBoardMeta: (_repo: string, record: Parameters<BoardMetaStore["save"]>[0]) =>
+        meta.save(record),
+      loadDraftedBoards: (_repo: string, sessionId: string, generation: string) =>
+        meta.listForGeneration(sessionId, generation),
+      removeBoardMeta: (_repo: string, boardId: string) => meta.remove(boardId),
+      persistGeneration: (generation: Generation) => generations.save(generation),
+      loadGeneration: (id: string) => generations.load(id),
+    } satisfies Partial<RoundsRuntimeDeps>;
+    const withClassifier = (captures: { prompt?: string }[]) =>
+      baseDeps({
+        ...durableDeps,
+        resolveClaudePort: async () =>
+          fakeClaudePort(captures, (prompt) =>
+            lensFromPrompt(prompt) === "report"
+              ? classification
+              : cleanBody(lensFromPrompt(prompt)),
+          ),
+      });
+
+    const firstCaptures: { prompt?: string }[] = [];
+    await expect(
+      createRoundsRuntime(withClassifier(firstCaptures)).runRound(input),
+    ).rejects.toThrow("crash before report apply");
+    expect(
+      firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    // ZERO report elements durable — the crash landed before a single op was appended.
+    expect([...(await boards.service.getState(boardIds.report)).values()]).toHaveLength(0);
+    expect(meta.load(boardIds.report)).toBeUndefined();
+
+    const secondCaptures: { prompt?: string }[] = [];
+    const recovered = await createRoundsRuntime(withClassifier(secondCaptures)).runRound(input);
+
+    // Two provider calls across the two runs — explicitly allowed, and NOT what is
+    // exactly-once. Exactly one projection is.
+    expect(
+      secondCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
+    ).toHaveLength(1);
+    expect(recovered.pipeline.report?.boardId).toBe(boardIds.report);
+    expect(meta.load(boardIds.report)?.lens).toBe("report");
     const persisted = [...(await boards.service.getState(boardIds.report)).values()] as {
       readonly kind: string;
     }[];

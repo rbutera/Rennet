@@ -23,11 +23,48 @@ import {
  * crosses it and never leaks back into an ordinary lens prompt.
  */
 
-/** `ev-` + 16 hex of sha256 over the unit's identity. Content-derived, so the same
- *  change yields the same id on every build; unrelated units coming and going never
- *  renumber a surviving one, the way an ordinal would. */
+/**
+ * `ev-` + 16 hex of sha256 over the unit's identity. Content-derived, so REBUILDING
+ * the same measured diff yields the same ids — that is the recovery path, and it is
+ * the stability the system actually relies on — and a change in an UNRELATED FILE
+ * never renumbers a surviving unit the way an ordinal would.
+ *
+ * The claim stops exactly there. A text hunk's identity includes its `@@` header, so
+ * an unrelated edit ABOVE it in the SAME FILE shifts that header and re-keys the
+ * hunk. Dropping the header from the identity would remove the shift and collide two
+ * byte-identical hunks in one file onto one id, which is strictly worse: ids must be
+ * UNIQUE within a manifest before being stable across manifests is worth anything.
+ * Uniqueness is enforced, not assumed — see {@link duplicateEvidenceId}.
+ */
 function roundEvidenceId(kind: RoundEvidenceUnit["kind"], path: string, identity: string): string {
   return `ev-${sha256Hex(`${kind}\n${path}\n${identity}`).slice(0, 16)}`;
+}
+
+/**
+ * The first id appearing twice, or `undefined`. A repeat means two units share an
+ * identity string, or (astronomically) their sha256 prefixes collided in 16 hex.
+ * Either way the partition's Sets would MERGE them silently — one placement would
+ * satisfy both units and the report's attribution would stop being exhaustive — so
+ * the manifest is rejected instead of quietly losing a unit.
+ */
+function duplicateEvidenceId(units: readonly RoundEvidenceUnit[]): string | undefined {
+  const seen = new Set<string>();
+  for (const unit of units) {
+    if (seen.has(unit.id)) return unit.id;
+    seen.add(unit.id);
+  }
+  return undefined;
+}
+
+/**
+ * Code-unit string order, never `localeCompare`: the order is part of the contract,
+ * and an ICU comparator makes it machine-dependent (under `sv_SE` `ä` sorts after
+ * `z`). ONE comparator, shared by the manifest, the report builder, and the report
+ * verifier — two "equivalent" comparators are exactly how those sides diverge on a
+ * user's locale while every test on a `C`-locale machine stays green.
+ */
+export function compareByCodeUnit(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 const KIND_ORDER: Record<RoundEvidenceUnit["kind"], number> = {
@@ -41,15 +78,14 @@ function unitPosition(unit: RoundEvidenceUnit): number {
   return unit.kind === "text-hunk" ? unit.anchor.line : 0;
 }
 
-/** Code-unit path comparison, never `localeCompare`: the order is part of the
- *  contract, and an ICU-dependent comparator makes it machine-dependent. */
 function compareUnits(left: RoundEvidenceUnit, right: RoundEvidenceUnit): number {
-  if (left.path !== right.path) return left.path < right.path ? -1 : 1;
+  const paths = compareByCodeUnit(left.path, right.path);
+  if (paths !== 0) return paths;
   const kinds = KIND_ORDER[left.kind] - KIND_ORDER[right.kind];
   if (kinds !== 0) return kinds;
   const position = unitPosition(left) - unitPosition(right);
   if (position !== 0) return position;
-  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  return compareByCodeUnit(left.id, right.id);
 }
 
 /** The mode pair of a mode-only-or-mixed change, read from the patch preamble. A
@@ -158,6 +194,13 @@ export type RoundEvidenceManifestMeasurement =
 export function measureRoundEvidenceManifest(
   units: readonly RoundEvidenceUnit[],
 ): RoundEvidenceManifestMeasurement {
+  const duplicate = duplicateEvidenceId(units);
+  if (duplicate !== undefined) {
+    return {
+      ok: false,
+      reason: `the round evidence manifest repeats evidence id ${duplicate}, so two units cannot be addressed separately`,
+    };
+  }
   if (units.length > ROUND_EVIDENCE_MANIFEST_MAX_ENTRIES) {
     return {
       ok: false,
@@ -191,6 +234,13 @@ export function verifyRoundEvidencePartition(
   citations: readonly RoundEvidenceCitation[],
   manifest: readonly RoundEvidenceUnit[],
 ): void {
+  // The Sets below address units BY ID. A repeated id would let one placement satisfy
+  // two units, so the partition would report itself exhaustive while a unit went
+  // unclassified — reject before that can happen, on the recovery path too.
+  const duplicate = duplicateEvidenceId(manifest);
+  if (duplicate !== undefined) {
+    throw new Error(`repeats evidence id ${duplicate}, which cannot be placed separately`);
+  }
   const known = new Set(manifest.map((unit) => unit.id));
   const placed = new Set<string>();
   for (const citation of citations) {

@@ -64,6 +64,7 @@ import {
   parseDraft,
   ROUND_REPORT_MAX_BEYOND_ENTRIES,
   ROUND_REPORT_OUTPUT_MAX_BYTES,
+  ROUND_REPORT_OUTPUT_MAX_TOKENS,
   type RoundEvidenceAnchor,
   type RoundEvidenceUnit,
   type RoundReportDiagnosticMilestone,
@@ -75,6 +76,7 @@ import { z } from "zod";
 import { projectRoundReportBoard } from "./lens-board-read";
 import {
   buildRoundEvidenceManifest,
+  compareByCodeUnit,
   measureRoundEvidenceManifest,
   verifyRoundEvidencePartition,
 } from "./round-evidence-manifest";
@@ -1039,17 +1041,22 @@ type LandedRoundDraftContext = RoundDraftContext & {
  * coding turn. The full DeltaPacket and all-kind board schema belong to lens drafting,
  * not to the per-ask classification boundary.
  *
- * `evidence` is the measured manifest, which REPLACES the verbatim `worker.diff` that
- * used to ride here uncapped (#727). The worker's own account (paths, commit range)
- * still travels as identity; it was never authority.
+ * `evidenceJson` is the manifest's MEASURED serialization, spliced in verbatim rather
+ * than re-serialized here (#727): the bytes the budget was measured on are then the
+ * exact bytes on the wire by construction, not because two call sites happen to agree.
+ * It REPLACES the verbatim `worker.diff` that used to ride here uncapped. The worker's
+ * own account (paths, commit range) still travels as identity; it was never authority.
  */
 export function renderRoundReportClassifierPrompt(
   promptText: string,
   patchsetId: string,
   round: LandedRoundDraftContext,
-  evidence: readonly RoundEvidenceUnit[],
+  evidenceJson: string,
 ): string {
-  const context = JSON.stringify({
+  // The wrapper is serialized without `evidence`, then its closing brace is replaced by
+  // the measured bytes. The wrapper always has keys, so `slice(0, -1)` leaves a valid
+  // object prefix and no key can collide with the appended one.
+  const wrapper = JSON.stringify({
     patchsetId,
     dispatchedAsks: round.dispatchedAsks.map(({ id, path, instruction, span, side }) => ({
       id,
@@ -1063,8 +1070,8 @@ export function renderRoundReportClassifierPrompt(
       changedPaths: round.worker.changedPaths,
       commitRange: round.worker.commitRange,
     },
-    evidence,
   });
+  const context = `${wrapper.slice(0, -1)},"evidence":${evidenceJson}}`;
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
 }
 
@@ -1182,7 +1189,7 @@ function classifiedRoundOutcomes(
         ...(anchor === undefined ? {} : { anchor }),
       };
     })
-    .sort((left, right) => left.ref.localeCompare(right.ref));
+    .sort((left, right) => compareByCodeUnit(left.ref, right.ref));
   return [...outcomes, ...beyond];
 }
 
@@ -1329,8 +1336,15 @@ function resolveBoardSeatDetails(
       label: `board.${jobId}`,
       // The classifier's raw response cap rides the session spec, so the adapter
       // rejects an oversized response at the transport boundary — core only ever
-      // sees decoded values, so a core-side check would already be too late.
-      ...(jobId === "round-report" ? { outputByteCap: ROUND_REPORT_OUTPUT_MAX_BYTES } : {}),
+      // sees decoded values, so a core-side check would already be too late. The
+      // token cap rides beside it and reaches only the Claude leg, which is the only
+      // transport with a knob for it; the byte cap is the backstop on both.
+      ...(jobId === "round-report"
+        ? {
+            outputByteCap: ROUND_REPORT_OUTPUT_MAX_BYTES,
+            outputTokenCap: ROUND_REPORT_OUTPUT_MAX_TOKENS,
+          }
+        : {}),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
       ...(onProviderSettled === undefined ? {} : { onProviderSettled }),
     },
@@ -1810,7 +1824,7 @@ async function runClassifiedRoundReport(
     promptText,
     deps.deltaPacket.patchset.id,
     round,
-    manifest,
+    measured.json,
   );
   const turnStarted = roundReportTurnStartedMilestone(seat, elapsedMs());
   if (turnStarted !== undefined) emitDiagnostic(turnStarted);

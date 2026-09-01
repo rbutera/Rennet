@@ -240,13 +240,26 @@ below are those constants; if they disagree with the code, the code is right and
 this page is a bug.
 
 **What goes in.** The host parses the coding turn's measured diff into a
-canonically ordered **evidence manifest**. Each unit carries a stable
-content-derived id (`ev-` plus 16 hex characters of a SHA-256 over the unit's kind,
-path, and identity — hunk text, mode pair, previous path, or change status), so the
-same change yields the same id on every build and unrelated units appearing or
-disappearing never renumber a surviving one. The order is path (compared by code
-unit, never a locale-dependent comparator), then kind (`rename`, `mode-change`,
-`binary`, `text-hunk`), then position within the file.
+canonically ordered **evidence manifest**. Each unit carries a content-derived id
+(`ev-` plus 16 hex characters of a SHA-256 over the unit's kind, path, and identity
+— hunk text, mode pair, previous path, or change status). The order is path
+(compared by code unit, never a locale-dependent comparator — one shared comparator
+serves the manifest, the report builder, and the report verifier), then kind
+(`rename`, `mode-change`, `binary`, `text-hunk`), then position within the file.
+
+Read the id's stability precisely, because the contract is narrower than "stable":
+
+- **Rebuilding the same measured diff yields the same ids.** That is the recovery
+  path — a report recovered after a crash is re-verified against ids rebuilt from
+  the same diff — and it is the property the system relies on.
+- **A change in an unrelated file never renumbers a surviving unit,** the way an
+  ordinal position would.
+- **An unrelated change in the same file, above a hunk, re-keys that hunk.** A text
+  hunk's identity includes its `@@` header, which carries line numbers. Dropping the
+  header would remove that shift and collide two byte-identical hunks in one file
+  onto a single id — ids must be unique within a manifest before stability across
+  manifests means anything. Uniqueness is enforced: a repeated id (a shared identity
+  or a 16-hex collision) is a typed local failure, not a silently merged bucket.
 
 Evidence is a discriminated union, and **no variant invents a line anchor**:
 
@@ -272,9 +285,18 @@ manifest ids in `evidenceIds`; it never writes a path, a side, or a line number.
 The provider's raw response is capped at **131,072 UTF-8 bytes**, enforced at the
 harness transport boundary in both the Claude and the Codex adapter *before*
 structured-output decoding — core only ever sees decoded values, so a core-side
-check would already be too late. Decoded cardinality limits then apply before
-persistence: at most **100** `beyond` entries, and exactly one outcome per
+check would already be too late. On the Claude leg the SDK hands the structured
+output back already decoded, so both carriers (the result text and the decoded
+object) are measured and the larger governs. Decoded cardinality limits then apply
+before persistence: at most **100** `beyond` entries, and exactly one outcome per
 dispatched ask.
+
+The turn also asks the provider for at most **32,768 output tokens**, so an
+over-long classification stops at the source rather than being paid for and then
+rejected. That cap is **asymmetric by transport, and honestly so**: the Claude
+harness takes it through its child environment, while `codex` exposes no
+model-output-token parameter or config override at all, so a Codex classification is
+bounded by the byte cap alone. The byte cap is the enforced backstop on both legs.
 
 **The partition.** Every manifest id appears in exactly one ask outcome or the
 `beyond asks` bucket. Unknown, duplicated, and omitted ids are all rejected before

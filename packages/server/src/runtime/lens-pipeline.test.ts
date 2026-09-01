@@ -15,6 +15,7 @@ import {
   type LensKind,
   lensAdmitsAbsence,
   ROUND_EVIDENCE_MANIFEST_MAX_BYTES,
+  ROUND_REPORT_MAX_BEYOND_ENTRIES,
   ROUND_REPORT_OUTPUT_MAX_BYTES,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
@@ -55,6 +56,26 @@ const ONE_LINE_DIFF = [
   "+new line",
 ].join("\n");
 const [ONE_LINE_EVIDENCE] = manifestIds(ONE_LINE_DIFF);
+
+/** One beyond-ask entry past the declared cardinality limit. Every entry cites the one
+ *  manifest id (the schema requires at least one), which would ALSO trip the partition —
+ *  the cap is checked first, on purpose, so a cap failure is never reported as something
+ *  else and never becomes a second classifier turn. */
+const OVER_CAP_BEYOND_CLASSIFICATION = {
+  outcomes: [
+    {
+      askId: "ask-one",
+      status: "untouched",
+      note: "The turn changed something, but not this ask.",
+    },
+  ],
+  beyond: Array.from({ length: ROUND_REPORT_MAX_BEYOND_ENTRIES + 1 }, (_unused, index) => ({
+    ref: `beyond:${index}`,
+    text: "An unrequested change.",
+    note: "The turn changed something no ask asked for.",
+    evidenceIds: [ONE_LINE_EVIDENCE as string],
+  })),
+} as const;
 
 // ── Flagged-board fixtures (5.2) ────────────────────────────────────────────────
 
@@ -4023,6 +4044,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         beyond: [],
       },
       "classification output was invalid",
+    ],
+    [
+      "over-cap beyond bucket",
+      OVER_CAP_BEYOND_CLASSIFICATION,
+      `reports ${ROUND_REPORT_MAX_BEYOND_ENTRIES + 1} beyond-ask entries, over the ${ROUND_REPORT_MAX_BEYOND_ENTRIES}-entry limit`,
     ],
   ] as const)(
     "fails one %s classification before report persistence or lens fanout",
