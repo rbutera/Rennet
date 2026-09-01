@@ -130,13 +130,14 @@ and a server registry entry. Reattachment combines the stored thread with the
 registry so a connected client can resume the body currently being generated.
 
 Board event logs persist under `.rennet/boards/` in the review project — local,
-and never staged or committed by Rennet. They are kept out of reviews by
-exclusion, not by an ignore rule: `.rennet/boards/` is declared app-owned in one
-shared authority, and capture, the repository watcher, and freshness evaluation
-all consult it. The reviewed tree is sanitized of that prefix *before* the
-patchset's object ID, diff, file list, byte counts, intent, and identity are
-derived from it, so a board Rennet writes cannot invalidate the review it belongs
-to — in any repository, whatever the user's `.gitignore` says. The rest of
+and never staged or committed by Rennet. An exclusion keeps them out of reviews,
+not an ignore rule: `.rennet/boards/` is declared app-owned in one shared
+authority, and capture, the repository watcher, and freshness evaluation all
+consult it. Capture strips that prefix from the reviewed tree *before* deriving
+the patchset's object ID, diff, file list, byte counts, intent, and identity from
+it, so a board Rennet writes cannot invalidate the review it belongs to — in any
+repository, whatever the user's `.gitignore` says, and whether the board is
+untracked, staged, or committed. The rest of
 `.rennet/` is the user's project content and captures like any other file:
 tracked means intentional. Each board is a
 `schema.json` written once at creation plus an append-only `log.jsonl` with
