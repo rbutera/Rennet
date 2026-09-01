@@ -40,6 +40,15 @@ export interface DeltaPacket {
     readonly id: Patchset["id"];
     readonly createdAt: Patchset["createdAt"];
     readonly truncated: Patchset["truncated"];
+    /**
+     * The reviewed range's identity, for a drafter that reads the checkout
+     * itself: the commits since `baseOid`, at `headOid`. Never host paths.
+     */
+    readonly repository: {
+      readonly baseRef: Patchset["repository"]["baseRef"];
+      readonly baseOid: Patchset["repository"]["baseOid"];
+      readonly headOid: Patchset["repository"]["headOid"];
+    };
     readonly files: readonly DeltaPacketFile[];
   };
   readonly hunks: HunkIndex;
@@ -111,6 +120,11 @@ export function buildDeltaPacket(
       id: patchset.id,
       createdAt: patchset.createdAt,
       truncated: patchset.truncated,
+      repository: {
+        baseRef: patchset.repository.baseRef,
+        baseOid: patchset.repository.baseOid,
+        headOid: patchset.repository.headOid,
+      },
       files: patchset.files.map((file) => {
         const modeChange =
           file.binary || file.patch === "" ? undefined : parseFilePatch(file.patch).modeChange;

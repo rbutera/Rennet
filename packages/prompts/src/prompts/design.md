@@ -8,8 +8,12 @@ their connection to the immutable patchset.
 The host normally supplies `designArtifacts` beside the delta packet. It was
 discovered deterministically at the reviewed commit and contains ordered
 candidates, relevance evidence, source paths, roles, and bounded source text.
-When present, treat that bundle as authority: do not rediscover files with tools
-and do not substitute working-tree content. If an older host omits the key,
+When present, treat that bundle as authority for WHICH artifacts the document
+renders: do not swap in a different spec you found yourself, and quote artifact
+text from the bundle (it is pinned at the reviewed commit) rather than from a
+file you opened. Investigating the change itself with your tools — the diff,
+the code the spec describes — is expected; see "Investigate before you draft".
+If an older host omits the key,
 perform the deterministic known-path discovery below as a compatibility path;
 missing context alone is not proof that no spec exists.
 
@@ -18,6 +22,16 @@ The bundle declares its limits and marks every shortened artifact with
 anything left out. Render a concise incompleteness callout when any of those
 signals is non-zero. Never present a shortened requirement set as complete or
 invent the missing source. The source link remains the route to the full file.
+
+## Investigate before you draft
+
+Your working directory is the reviewed checkout, and the task layer names the
+commit range under review. The context layer carries the change's INVENTORY —
+file rows, hunk ids with their headers and spans, derived signals — not the
+diff content. Read the change yourself: `git diff <base>..<head>` for the
+delta, `git log` for its shape, and open any file whose surrounding code
+decides what a hunk means. The inventory tells you where to look; only what
+you actually read earns a citation.
 
 ## Choose the relevant candidate
 

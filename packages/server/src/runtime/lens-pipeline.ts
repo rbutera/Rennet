@@ -622,10 +622,15 @@ export async function composeReviewDraft(input: ComposeInput): Promise<ComposeRe
 // ── Prompt assembly (each turn is a fresh stateless session — carry everything) ──
 
 /**
- * The drafter's base prompt: the lens instructions (payload) + the inlined
- * DeltaPacket and host schema (context). Every turn re-sends this — the harness
- * turn builders open a fresh session per call, so nothing may rely on prior
- * turn state.
+ * The drafter's base prompt: the lens instructions (payload), the reviewed-range
+ * task line, and the packet's INVENTORY (context). The session's cwd IS the
+ * reviewed checkout, so the prompt carries identity and derived signals — the
+ * hunk index WITHOUT its verbatim bodies — and the drafter reads the change
+ * itself with its own tools. Inlining the whole diff here is what used to blow
+ * the model's context on any large branch: the capture cap (2 MB) sits far
+ * above what a prompt can carry, and no budget stood between them. Every turn
+ * re-sends this — the harness turn builders open a fresh session per call, so
+ * nothing may rely on prior turn state.
  */
 export function renderDrafterPrompt(
   promptText: string,
@@ -635,8 +640,19 @@ export function renderDrafterPrompt(
   hostSchema: unknown = boardOutputSchema(),
   round?: RoundDraftContext,
 ): string {
+  // The hunk INDEX travels (coverage is taught-or-skipped over these exact
+  // ids); the verbatim bodies do not — the drafter reads content from the
+  // checkout it is standing in. Optional-chained: legacy callers and fixtures
+  // hand partial packets, and a missing index is an honest empty inventory.
+  const hunkIndex = (packet.hunks?.hunks ?? []).map(({ id, path, header, spans, lossy }) => ({
+    id,
+    path,
+    header,
+    spans,
+    lossy,
+  }));
   const context = JSON.stringify({
-    deltaPacket: packet,
+    deltaPacket: { ...packet, hunks: { hunks: hunkIndex } },
     hostSchema,
     // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
     ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
@@ -651,7 +667,17 @@ export function renderDrafterPrompt(
           },
         }),
   });
-  return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
+  const repo = packet.patchset?.repository;
+  const task = [
+    repo === undefined
+      ? "Your working directory IS the reviewed checkout."
+      : `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}); your working directory IS the reviewed checkout at ${repo.headOid}.`,
+    "The context layer carries the change INVENTORY (file rows, hunk ids/headers/spans, derived signals) — not the diff content.",
+    `Read the change yourself with your own tools (${
+      repo === undefined ? "`git diff`" : `\`git diff ${repo.baseOid}..${repo.headOid}\``
+    }, \`git log\`, file reads, grep) and cite only what you actually read.`,
+  ].join("\n");
+  return `${renderLayer("payload", promptText)}\n\n${renderLayer("task", task)}\n\n${renderLayer("context", context)}`;
 }
 
 /**
