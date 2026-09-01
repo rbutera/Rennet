@@ -11,15 +11,17 @@
 
 ## 3. Lens ref admission (#548)
 
-- [ ] 3.1 Add the ref-admission pass at the producer/composition boundary: repair only when the unique intended target is provable (recorded account); otherwise retry or settle typed failure — never drop an element and accept the board (D1)
-- [ ] 3.2 Regression fixture containing the production `bad-ref` shape; positive control bypasses repair and asserts board-service rejection
-- [ ] 3.3 Launched-app real-harness run populates Sequence and Decisions on a representative branch with anchors navigating to the captured patchset
+- [x] 3.1 Add the ref-admission pass at the producer/composition boundary: repair only when the unique intended target is provable (recorded account); otherwise retry or settle typed failure — never drop an element and accept the board (D1)
+- [x] 3.2 Regression fixture containing the production `bad-ref` shape; positive control bypasses repair and asserts board-service rejection
+- [ ] 3.3 Launched-app real-harness run populates Sequence and Decisions on a representative branch with anchors navigating to the captured patchset — **PARTIAL: the launched-app leg is PROVEN HERMETICALLY; the REAL-HARNESS leg is pending Rai's consent and is not ticked.**
+  - PROVEN (hermetic, no provider call): `apps/desktop/e2e/lens-settlement.spec.ts` launches the real app against the production daemon with a scripted harness plan. Sequence and Decisions settle populated boards on a captured branch, and every anchor is hydrated through `patchset.readSpan` — which serves from the captured patchset's own patch text and refuses a span it does not hold (positive control: the same span against an absent patchset id rejects). A second test drives the Flagged DUAL seat, whose merge produces the post-lint `bad-ref` shape #548 is about; control-proven by disabling the repointing, which reddens it with the admission pass's own typed failure (`flag-section.children → flag-finding`).
+  - NOT RUN: a real `claude`/`codex` seat drawing these boards. `board-drafting-live.spec.ts` carries that leg behind `RENNET_LIVE_E2E=1`; it is written and left unrun pending Rai's consent to spend a real-harness run.
 
 ## 4. Noise seat settles honestly (#549)
 
-- [ ] 4.1 Make the "drafting turn emitted no board" path (`lens-pipeline.ts:1251`) settle as a typed retryable failure driving the existing retry path, and promote the `no-noise` absence to first-class success presentation
-- [ ] 4.2 Regression fixture with the production no-board shape; positive control withholds the board and fails the proof
-- [ ] 4.3 Launched-app run settles Noise for both a mechanically noisy change (populated board) and a signal-only change (`no-noise` absence)
+- [x] 4.1 Make the "drafting turn emitted no board" path (`lens-pipeline.ts:1251`) settle as a typed retryable failure driving the existing retry path, and promote the `no-noise` absence to first-class success presentation
+- [x] 4.2 Regression fixture with the production no-board shape; positive control withholds the board and fails the proof
+- [x] 4.3 Launched-app run settles Noise for both a mechanically noisy change (populated board) and a signal-only change (`no-noise` absence) — hermetic launched run, `apps/desktop/e2e/lens-settlement.spec.ts`: one scripted Noise seat draws a skip-safe group (populated board), the other emits its empty board and the lens settles `no-noise`, rendered in the window as a settled success (`data-absent="no-noise"`, "No safely skippable noise was found.", no `board-failed`, no `board-empty`). A REAL-harness draw of the same two settlements is not run — see 3.3.
 
 ## 5. Harness dispatch residue (#681 — resolution landed via #692)
 

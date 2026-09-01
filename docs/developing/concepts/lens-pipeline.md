@@ -142,7 +142,9 @@ and calls board regeneration through this runtime.
    needs. Sequence requires a reachable `order_step`. Decisions and Flagged
    require a reachable `decision` or `finding`, unless the provider returned a
    parsed zero-element board that supports typed `no-decisions` or `no-findings`
-   absence. Noise has the equivalent `no-noise` absence. Missing core material
+   absence. Noise has the equivalent `no-noise` absence, and its prompt asks for exactly
+   that empty board when nothing in the change is skip-safe, rather than a board of
+   "this must be read" verdicts. Missing core material
    becomes that honest absence or a precise failure; it never starts a second
    full drafting session and never lands as an empty successful board.
 

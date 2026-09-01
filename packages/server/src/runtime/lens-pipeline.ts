@@ -31,7 +31,7 @@ import {
   type Omission,
   parseDesignSourceObligations,
   type RegisterLintContext,
-  reconcileFindings,
+  reconcileFindingsWithProvenance,
   runCoverageMapping,
   stampDeltas,
   validateDraft,
@@ -618,13 +618,13 @@ export function reconcileFlaggedBoards(
   const boardB = namespaceBoard(boardBArg, "b:");
   const aFindings = boardFindings(boardA);
   const bFindings = boardFindings(boardB);
-  const reconciled = reconcileFindings(
+  const reconciled = reconcileFindingsWithProvenance(
     aFindings.map((el) => toFindingElement(el, boardA)),
     bFindings.map((el) => toFindingElement(el, boardB)),
     labels,
   );
   const byId = new Map<string, { agreement: FindingAgreement }>(
-    reconciled.map((r) => [r.findingId, { agreement: r.agreement }]),
+    reconciled.map(({ finding }) => [finding.findingId, { agreement: finding.agreement }]),
   );
 
   const merged = (el: DraftElement): DraftElement => {
@@ -642,23 +642,14 @@ export function reconcileFlaggedBoards(
 
   // A collapsed finding leaves its citers (its seat's own section `children`) pointing at
   // an id the merged board no longer contains — a `bad-ref` the board service rejects the
-  // whole write for (#548). The merge is the one place that KNOWS the intended target, so
-  // it repoints them here: a collapsed finding's successor is the reconciled row that kept
-  // its exact location. Two rows at that location would not be proof, so the reference is
-  // left as authored and the write-boundary admission pass settles a typed failure.
-  const keptIds = new Set(byId.keys());
+  // whole write for (#548). The reconciler is the one place that KNOWS the intended
+  // target, because it did the collapsing, so it hands back which ids each surviving row
+  // consumed and they are repointed here. Re-deriving the pairing from anchors would be a
+  // second matcher: the real one is greedy, order-sensitive and matches within a line
+  // window, so two seats agreeing at slightly different spans would not be recognised.
   const successorOf = new Map<string, string>();
-  for (const [findings, board] of [
-    [aFindings, boardA],
-    [bFindings, boardB],
-  ] as const) {
-    for (const finding of findings) {
-      if (keptIds.has(finding.id)) continue;
-      const anchor = synthAnchor(finding, board);
-      const atAnchor = reconciled.filter((row) => row.anchor === anchor);
-      const only = atAnchor.length === 1 ? atAnchor[0] : undefined;
-      if (only !== undefined) successorOf.set(finding.id, only.findingId);
-    }
+  for (const { finding, superseded } of reconciled) {
+    for (const consumed of superseded) successorOf.set(consumed, finding.findingId);
   }
 
   const placed = new Set<string>();

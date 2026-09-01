@@ -1513,6 +1513,29 @@ describe("aggregateFailureAccount — one lens account from many seats (#549)", 
 describe("reconcileFlaggedBoards — the Flagged dual seat merge (J1/J2)", () => {
   const labels = { a: "Claude", b: "Codex" };
 
+  it("repoints a collapse the seats reached at DIFFERENT spans in the same window", async () => {
+    // The live shape (#548): two seats agree about one concern but cite spans a couple of
+    // lines apart. The reconciler matches within a line window, so they still collapse —
+    // and an anchor-equality repointing would miss exactly this, leaving the merged board
+    // unwritable. The fixture carries the difference on purpose.
+    const seatA = mkBoard([
+      mkFinding("f-1", "Short.", ["c1"]),
+      mkCodeRef("c1", "src/client.ts", 11, 12),
+      mkSection("sec-1", "Findings", ["f-1"]),
+    ]);
+    const seatB = mkBoard([
+      mkFinding("f-1", "A materially longer statement of the very same concern.", ["c1"]),
+      mkCodeRef("c1", "src/client.ts", 13, 14),
+      mkSection("sec-1", "Findings", ["f-1"]),
+    ]);
+
+    const merged = reconcileFlaggedBoards(seatA, seatB, labels);
+    expect(merged.elements.filter(({ kind }) => kind === "finding")).toHaveLength(1);
+    const section = merged.elements.find(({ id }) => id === "sec-1");
+    expect((section?.data as { children?: string[] } | undefined)?.children).toEqual(["b:f-1"]);
+    expect(admitBoardReferences(merged, "ps-1").unrepairable).toEqual([]);
+  });
+
   it("repoints a COLLAPSED finding's citers at its kept partner, so the merge is writable", async () => {
     // Both seats raise the same finding at the same location; seat B's wording is longer,
     // so the reconciler keeps B's finding and drops A's. Seat A's section still cites the

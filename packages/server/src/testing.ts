@@ -1,5 +1,17 @@
 // Explicit test-only subpath. The production @rennet/server entry deliberately
 // does not re-export these fixtures.
+
+export {
+  LENS_SETTLEMENT_FLAGGED_FINDING,
+  LENS_SETTLEMENT_FLAGGED_SECTION,
+  LENS_SETTLEMENT_GENERATED,
+  LENS_SETTLEMENT_LANE,
+  LENS_SETTLEMENT_SEQUENCE_STEP,
+  LENS_SETTLEMENT_SOURCE,
+  lensSettlementScriptedHarnessPlan,
+  type ScriptedNoiseSettlement,
+  writeLensSettlementScriptedHarnessPlan,
+} from "./lens-settlement-proof-fixture";
 export {
   OWNER_LOOP_LANE,
   OWNER_LOOP_ROUND_ONE_ASK,

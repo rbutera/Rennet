@@ -1,6 +1,6 @@
-import { type ChildProcess, execFileSync, fork } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import { generationIdForPatchset, LENS_KINDS } from "@rennet/protocol";
@@ -20,6 +20,7 @@ import {
   modelFreeEnv,
   writeRepoFile,
 } from "./harness";
+import { startTestDaemon } from "./scripted-daemon";
 
 function seedRepo(root: string, name: "target" | "decoy"): void {
   mkdirSync(root, { recursive: true });
@@ -81,77 +82,6 @@ function seedWorkspace(): { workspace: string; target: string; decoy: string } {
   seedRepo(target, "target");
   seedRepo(decoy, "decoy");
   return { workspace, target, decoy };
-}
-
-function gateCapableEnv(home: string): NodeJS.ProcessEnv {
-  const environment = modelFreeEnv(home);
-  const nodeBin = dirname(process.execPath);
-  const npm = join(nodeBin, process.platform === "win32" ? "npm.cmd" : "npm");
-  if (!existsSync(npm)) throw new Error(`npm is missing beside the test Node binary: ${npm}`);
-  return {
-    ...environment,
-    PATH: [nodeBin, environment.PATH].filter(Boolean).join(delimiter),
-  };
-}
-
-async function startTestDaemon(options: {
-  userData: string;
-  home: string;
-  planPath: string;
-}): Promise<ChildProcess> {
-  const desktopPackage: unknown = JSON.parse(
-    readFileSync(resolve("apps/desktop/package.json"), "utf8"),
-  );
-  if (
-    typeof desktopPackage !== "object" ||
-    desktopPackage === null ||
-    !("version" in desktopPackage) ||
-    typeof desktopPackage.version !== "string"
-  ) {
-    throw new Error("apps/desktop/package.json has no version");
-  }
-  const bundleRoot = makeTempDir("rennet-e2e-685-daemon-");
-  const bundlePath = join(bundleRoot, "owner-loop-685-daemon.cjs");
-  execFileSync(resolve("node_modules/esbuild/bin/esbuild"), [
-    resolve("apps/desktop/e2e/owner-loop-685-daemon.ts"),
-    "--bundle",
-    "--platform=node",
-    "--format=cjs",
-    "--target=node24",
-    "--external:electron",
-    "--external:@anthropic-ai/claude-agent-sdk",
-    "--define:import.meta.url=__rennetBundledImportMetaUrl",
-    '--banner:js=const __rennetBundledImportMetaUrl = require("node:url").pathToFileURL(__filename).href;',
-    `--outfile=${bundlePath}`,
-    "--log-level=warning",
-  ]);
-  cpSync(resolve("packages/prompts/src/prompts"), join(bundleRoot, "prompts"), {
-    recursive: true,
-  });
-  cpSync(resolve("packages/server/dist/native"), join(bundleRoot, "native"), {
-    recursive: true,
-  });
-  const child = fork(bundlePath, [], {
-    cwd: resolve("."),
-    env: {
-      ...gateCapableEnv(options.home),
-      RENNET_USER_DATA: options.userData,
-      RENNET_OWNER_LOOP_PLAN: options.planPath,
-      RENNET_SERVER_VERSION: desktopPackage.version,
-    },
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-  });
-  let stderr = "";
-  child.stderr?.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  await new Promise<void>((resolveReady, rejectReady) => {
-    child.once("message", resolveReady);
-    child.once("error", rejectReady);
-    child.once("exit", (code) => rejectReady(new Error(`test daemon exited ${code}: ${stderr}`)));
-  });
-  child.once("exit", () => rmSync(bundleRoot, { recursive: true, force: true }));
-  return child;
 }
 
 async function bridgeFor(page: Page): Promise<WsRennetBridge> {
