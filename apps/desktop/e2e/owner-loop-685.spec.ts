@@ -510,11 +510,20 @@ async function runLaunchedOwnerLoop(
     // (`HarnessSession.harness`, written into the scripted ledger by the run callback) and
     // is therefore independent of the stamp.
     //
-    // POSITIVE CONTROL (run 2026-09-01, restored after): construct the scripted session as
-    // `new ScriptedHarnessSession("claude-code", ...)` in `loadScriptedHarnessPlan` while
-    // leaving the port descriptor at `harness`. Resolution and the displayed receipt stay
-    // green on the Codex leg — the exact hole Codex flagged — and this assertion reddens
-    // with `["claude-code"]` where `["codex"]` was expected.
+    // ⚠️ NOT CONTROL-PROVEN HERE, and saying so is the point. On 2026-09-01 this spec could
+    // not be run to this line at all: BOTH legs fail at round one, in `report-drafting`,
+    // with "Round report outcome … cites src/owner.ts, not the asked path Read
+    // `src/owner.ts` first." — a pre-existing `verifyAskPath` defect
+    // (`packages/server/src/runtime/round-report-verification.ts`), reproduced identically
+    // with every file this branch touches reverted to its base commit. So no mutation of
+    // the seat could be watched reddening THIS assertion; it is written to be right, not
+    // yet observed being right.
+    // The mechanism it stands on IS control-proven, one level down, in
+    // `packages/server/src/scripted-harness-plan.test.ts` ("records the executing session's
+    // own provider in the ledger, not the plan's"): constructing the session as
+    // `claude-code` while the descriptor stays `codex` leaves the resolver — and therefore
+    // the receipt above — green, and reddens the ledger reading. What remains unproven is
+    // only that this spec reaches here, which the `verifyAskPath` fix settles.
     expect(ledger.length).toBeGreaterThan(0);
     expect([...new Set(ledger.map((record) => record.harness))]).toEqual([harness]);
   } finally {

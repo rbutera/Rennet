@@ -127,6 +127,60 @@ describe("scripted harness JSON plan", () => {
     );
   });
 
+  // #681 / C14 D3. The launched-app spec asserts the executing provider by reading this
+  // ledger, but that spec cannot currently reach the assertion: BOTH legs fail at round
+  // one on a pre-existing `verifyAskPath` defect, proven identical at this branch's base.
+  // So the mechanism it depends on is control-proven HERE instead, at the level where it
+  // actually lives: the ledger's `harness` must come from the SESSION that ran the turn,
+  // not from the plan or the port descriptor — the two things the app's own receipt
+  // already reads, which is why they cannot corroborate it.
+  //
+  // TWO POSITIVE CONTROLS (both run 2026-09-01, restored after), because one was not
+  // enough: the first reddens too early to prove the last assertion.
+  //  1. `new ScriptedHarnessSession("claude-code", ...)` in `loadScriptedHarnessPlan`,
+  //     descriptor left at `harness`. `port.descriptor.id` stays green — the resolver, and
+  //     therefore the app's receipt, still reads Codex — and `session.harness` reddens.
+  //     But it reddens THERE, so it says nothing about the ledger line.
+  //  2. `harness: "claude-code"` in place of `harness: executingHarness` in the
+  //     `recordInvocation` call. Descriptor, session, and event all stay green, and ONLY
+  //     the ledger assertion reddens — which is the one the launched-app spec reads.
+  it("records the executing session's own provider in the ledger, not the plan's", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-scripted-provider-"));
+    const log = join(root, "provider-invocations.jsonl");
+    const planPath = writePlan(root, {
+      schemaVersion: 1,
+      lane: "provider-proof",
+      harness: "codex",
+      invocationLog: log,
+      steps: [
+        {
+          id: "structured-turn",
+          kind: "structured",
+          promptIncludes: "Report the provider",
+          output: { ok: true },
+        },
+      ],
+    });
+
+    const port = loadScriptedHarnessPlan(planPath);
+    expect(port.descriptor.id).toBe("codex");
+    const session = await port.createSession({ cwd: root, outputSchema: {} });
+    // The session's own declaration, and the event it emits, before any ledger read.
+    expect(session.harness).toBe("codex");
+    await session.send({ prompt: "Report the provider" });
+    for await (const event of session.events) {
+      if (event.kind === "session.ended") expect(event.harness).toBe("codex");
+    }
+
+    const records = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => [record.stepId, record.harness])).toEqual([
+      ["structured-turn", "codex"],
+    ]);
+  });
+
   it("renders the current patchset into a structured result and echoes post-process input", async () => {
     const root = mkdtempSync(join(tmpdir(), "rennet-owner-loop-685-structured-"));
     const planPath = writePlan(root, {
