@@ -136,8 +136,11 @@ function disagree(answers: FindingModelAnswer[]): FindingAgreement {
  * @param labels        the provider labels for the two seats (A rendered first).
  * @param proximity     the line window for the anchor match (default 3).
  *
- * Never produces a merged summary: a `concur` row reuses ONE seat's verbatim
- * summary; a `disagree` row carries both seats' verbatim answers side by side.
+ * Never produces a merged summary. Every row's `summary` is ONE seat's verbatim words: the
+ * clearer seat's on a concur, seat A's on a conflict, the raising seat's on a solo. The
+ * other seat's answer is not lost — a `disagree` agreement carries both verbatim, side by
+ * side, and the board stamps the row `conflict` so a reader is not shown a disagreement
+ * wearing the arithmetic of agreement.
  */
 export function reconcileFindings(
   seatAFindings: readonly FindingElement[],
@@ -154,11 +157,16 @@ export function reconcileFindings(
 export interface ReconciledFinding {
   readonly finding: FindingElement;
   /**
-   * Seat finding ids this row COLLAPSED — present when the pair concurred and one seat's
-   * id survived. A caller holding the two seats' boards needs this: an element citing the
-   * consumed id would otherwise dangle, and only the matcher knows which surviving row it
-   * meant. Derived here rather than re-matched by a caller, because the pairing is greedy
-   * and order-sensitive — a second implementation of it would silently disagree.
+   * Seat finding ids this row CONSUMED — every id that was matched into this one and is
+   * gone from the reconciled set. Both matched arms populate it: a CONCUR keeps the clearer
+   * seat's id and consumes the other's, and a CONFLICT keeps seat A's id (carrying both
+   * seats' verbatim answers in its `agreement`, stamped `conflict`) and consumes seat B's.
+   * Only a solo — one seat raised it, the other did not — consumes nothing.
+   *
+   * A caller holding the two seats' boards needs this: an element citing the consumed id
+   * would otherwise dangle, and only the matcher knows which surviving row it meant.
+   * Derived here rather than re-matched by a caller, because the pairing is greedy and
+   * order-sensitive — a second implementation of it would silently disagree.
    */
   readonly superseded: readonly string[];
 }

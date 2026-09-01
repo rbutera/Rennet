@@ -114,6 +114,27 @@ describe("lens prompt manifest", () => {
     expect(text).toContain("`section.data.children`");
   });
 
+  it("tells the Noise seat that an empty board IS the settlement for an all-signal change", () => {
+    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
+    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
+    // producer half of that contract. Delete it, or reverse it into "always emit a board",
+    // and the seat manufactures signal verdicts instead — which is every other lens's
+    // premise, not this one's output, and the reviewer never sees the honest absence.
+    const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(normalized).toContain("## When nothing in the change is noise");
+    expect(normalized).toContain("Say so by emitting a board with NO elements");
+    expect(normalized).toContain('honest "nothing here is safely skippable"');
+    expect(normalized).toContain("Do not manufacture a board of signal verdicts");
+    // …and the other edge of the same rule: an empty board is not a way out of a change
+    // that does have skippable churn.
+    expect(normalized).toContain(
+      "Emit an empty board only when NO hunk is skip-safe; one skip-safe hunk means a real board naming it",
+    );
+  });
+
   it("carries the review-draft voice rules", () => {
     const text = readFileSync(join(srcDir, REVIEW_DRAFT_VOICE_FILE), "utf8");
     expect(text.length).toBeGreaterThan(500);
