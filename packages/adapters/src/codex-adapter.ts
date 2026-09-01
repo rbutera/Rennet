@@ -18,6 +18,7 @@ import {
   type TurnInput,
 } from "@rennet/core";
 import type { RspTokenUsage } from "@rennet/protocol";
+import { utf8ByteLength } from "@rennet/protocol";
 import {
   type CodexTurnError,
   type CodexTurnResultFrame,
@@ -57,6 +58,9 @@ export interface CodexTurnSpec {
   /** Codex's own default when absent; the council passes e.g. "gpt-5.6-sol". */
   readonly model?: string;
   readonly outputSchema?: unknown;
+  /** The turn's raw response budget in UTF-8 bytes ({@link SessionSpec.outputByteCap}),
+   *  enforced before the final message is parsed. */
+  readonly outputByteCap?: number;
   /** Loopback canvasOps@2 (and future) MCP servers; ride spawn-time `-c` overrides. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   /** #585: start the thread ephemeral — no rollout file in `~/.codex/sessions/`. */
@@ -314,6 +318,24 @@ function createCodexNormalizer(
       ];
     }
     const usage = frame.usage ?? lastUsage;
+    // The raw-size cap (#727): measured on the final message BEFORE `JSON.parse`, so
+    // an oversized response is never decoded and never reaches core, which only ever
+    // sees decoded values. The cap failure is the turn's outcome, not a retry.
+    const rawBytes = finalRaw === null ? 0 : utf8ByteLength(finalRaw);
+    if (spec.outputByteCap !== undefined && rawBytes > spec.outputByteCap) {
+      const error = mapCodexError({
+        source: "exit",
+        message: `codex returned ${rawBytes} raw UTF-8 bytes, over this turn's ${spec.outputByteCap}-byte output cap`,
+      });
+      return [
+        { ...envelope(context, frame), kind: "error", error },
+        {
+          ...envelope(context, frame),
+          kind: "session.ended",
+          outcome: { status: "failed", error },
+        },
+      ];
+    }
     const structuredOutput = parseStructured(finalRaw);
     const finalText = finalRaw ?? "";
     const outcome =
@@ -604,6 +626,9 @@ class CodexSession implements HarnessSession {
       prompt: "",
       ...(this.#spec.model === undefined ? {} : { model: this.#spec.model }),
       ...(this.#spec.outputSchema === undefined ? {} : { outputSchema: this.#spec.outputSchema }),
+      ...(this.#spec.outputByteCap === undefined
+        ? {}
+        : { outputByteCap: this.#spec.outputByteCap }),
       ...(this.#config.mcpServers === undefined ? {} : { mcpServers: this.#config.mcpServers }),
       ...(this.#spec.ephemeral === undefined ? {} : { ephemeral: this.#spec.ephemeral }),
       signal: this.#abort.signal,

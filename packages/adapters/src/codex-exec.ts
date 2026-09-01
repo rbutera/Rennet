@@ -25,6 +25,7 @@ import {
   type Locus,
   locusCommand,
 } from "@rennet/core";
+import { utf8ByteLength } from "@rennet/protocol";
 import { execa } from "execa";
 import {
   buildAppServerArgs,
@@ -357,6 +358,14 @@ export function createCodexExecutor(
     }
     if (terminal.finalMessage === null) {
       const reason = "codex app-server completed the turn but emitted no final message";
+      reportFailure(reason);
+      throw new Error(reason);
+    }
+    // The raw-size cap (#727): measured before `JSON.parse`, so an oversized response
+    // is rejected at the transport boundary rather than decoded into core.
+    const rawBytes = utf8ByteLength(terminal.finalMessage);
+    if (req.outputByteCap !== undefined && rawBytes > req.outputByteCap) {
+      const reason = `codex returned ${rawBytes} raw UTF-8 bytes, over this turn's ${req.outputByteCap}-byte output cap`;
       reportFailure(reason);
       throw new Error(reason);
     }

@@ -331,6 +331,14 @@ export interface SessionSpec {
   readonly systemPrompt?: { readonly mode: "replace" | "append"; readonly text: string };
   readonly allowedTools?: readonly string[];
   readonly outputSchema?: unknown;
+  /**
+   * The turn's raw response budget in UTF-8 bytes. The ADAPTER enforces it at the
+   * transport boundary, before structured-output decoding: an oversized response is
+   * rejected as a failed turn rather than parsed, because everything downstream of
+   * the adapter sees only decoded values and cannot tell how many bytes arrived.
+   * Absent ⇒ no cap (the ordinary agentic session).
+   */
+  readonly outputByteCap?: number;
   readonly signal?: AbortSignal;
   /**
    * Resume a prior harness conversation (B09 cursor-resume, #466 res. 3). When

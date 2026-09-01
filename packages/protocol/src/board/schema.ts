@@ -216,6 +216,14 @@ const roundOutcomeData = withAuthor({
   ask: askRefSchema,
   note: z.string(),
   code_ref: z.string().optional(),
+  /**
+   * The round evidence-manifest ids this outcome owns (#726). Every id in the round's
+   * manifest sits in exactly one outcome or the beyond bucket, so the durable report
+   * carries its own partition and a recovered board can be re-verified against the
+   * measured diff. Absent on `untouched`, which owns no evidence by definition, and on
+   * reports written before the manifest contract.
+   */
+  evidence_ids: z.array(z.string()).optional(),
 });
 
 /**
@@ -477,6 +485,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     ask: a("json", true, "The ask reference + its display text { ref, text }."),
     note: a("string", true, "Outcome note, as markdown."),
     code_ref: a("element", false, "An optional code_ref element."),
+    evidence_ids: a("string", false, "Round evidence-manifest ids this outcome owns.", true),
   }),
   section: authored("A section of the document: a title and child elements.", {
     title: a("string", true, "The section title."),

@@ -45,6 +45,12 @@ export interface CodexExecRequest {
    *  docType has no body schema in this slice. */
   readonly outputSchema?: unknown;
   /**
+   * The raw response budget in UTF-8 bytes, enforced by the executor BEFORE it parses
+   * the final message. Mirrors `SessionSpec.outputByteCap` on the session path; the
+   * port never sees the raw bytes, so the check cannot live here. Absent ⇒ no cap.
+   */
+  readonly outputByteCap?: number;
+  /**
    * The turn's working directory (locus-native). Absent ⇒ the executor's own repo
    * root — Rennet reviews git repositories, so every utility seat starts inside the
    * checkout it is reasoning about, and there is no no-repo utility call (W5).

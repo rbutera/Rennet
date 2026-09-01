@@ -21,6 +21,7 @@ import {
   type TurnInput,
 } from "@rennet/core";
 import type { CouncilEffort, RspTokenUsage } from "@rennet/protocol";
+import { utf8ByteLength } from "@rennet/protocol";
 import { compareVersions } from "./harness-discovery";
 import { readTestedRange } from "./harness-tested-range";
 
@@ -101,6 +102,9 @@ export interface ClaudeQueryOptions {
    * read back by `normalizeClaudeFrame`.
    */
   readonly outputSchema?: unknown;
+  /** The turn's raw response budget in UTF-8 bytes ({@link SessionSpec.outputByteCap}),
+   *  enforced in `normalizeClaudeFrame` before any structured output is surfaced. */
+  readonly outputByteCap?: number;
   /**
    * Loopback MCP servers (canvasOps@2) the seat may call, as `name → { url }` —
    * the same contract the Codex and OMP adapters carry. The composition root
@@ -327,7 +331,11 @@ export function extractResultUsage(record: Record<string, unknown>): RspTokenUsa
  * becomes a visible `passthrough` rather than being dropped. The frame shape is
  * identical whether it comes from the SDK or the underlying CLI stream-json.
  */
-export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): HarnessEvent[] {
+export function normalizeClaudeFrame(
+  frame: unknown,
+  context: EnvelopeContext,
+  outputByteCap?: number,
+): HarnessEvent[] {
   const record = asRecord(frame);
   if (!record) {
     return [{ ...envelope(context, frame), kind: "passthrough", nativeKind: "non-object" }];
@@ -522,6 +530,31 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
     // the completed outcome carries real counts through to the runner's provenance.
     const usage = extractResultUsage(record);
     const finalText = stringField(record, "result") ?? "";
+    // The raw-size cap (#727). The SDK hands this adapter the model's emission —
+    // the assistant text under an output schema IS the JSON — so this is the last
+    // point that can see how much arrived. Over the cap the turn FAILS here; it is
+    // never decoded, never surfaced, and never retried by the cap itself.
+    if (outputByteCap !== undefined) {
+      const rawBytes = utf8ByteLength(
+        finalText.length > 0 || structuredOutput === undefined
+          ? finalText
+          : JSON.stringify(structuredOutput),
+      );
+      if (rawBytes > outputByteCap) {
+        const error = mapClaudeError(
+          "error_output_too_large",
+          `the harness returned ${rawBytes} raw UTF-8 bytes, over this turn's ${outputByteCap}-byte output cap`,
+        );
+        return [
+          { ...envelope(context, frame), kind: "error", error },
+          {
+            ...envelope(context, frame),
+            kind: "session.ended",
+            outcome: { status: "failed", error },
+          },
+        ];
+      }
+    }
     // Cursor-resume (B09): the SDK stamps every frame — the terminal result
     // included — with its own resumable `session_id`, and this frame's `uuid` is
     // the tail chain-entry (a valid resume anchor). Surface both so the durable
@@ -620,11 +653,12 @@ class ClaudeSession implements HarnessSession {
   get events(): AsyncIterable<HarnessEvent> {
     const started = this.#started;
     const context = this.#context;
+    const outputByteCap = this.#options.outputByteCap;
     return {
       async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
         const iterable = await started;
         for await (const frame of iterable) {
-          for (const event of normalizeClaudeFrame(frame, context)) yield event;
+          for (const event of normalizeClaudeFrame(frame, context, outputByteCap)) yield event;
         }
       },
     };
@@ -731,6 +765,7 @@ export class ClaudeAdapter implements HarnessPort {
       ...(spec.effort === undefined ? {} : { effort: spec.effort }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
+      ...(spec.outputByteCap === undefined ? {} : { outputByteCap: spec.outputByteCap }),
       // The MCP surface (W5), configured on the adapter exactly as the Codex adapter
       // carries it, so every session this harness creates would reach it. Nothing
       // configures it today — no loopback canvasOps server is stood up.

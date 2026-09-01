@@ -12,6 +12,7 @@ export * from "./delta";
 export * from "./domain";
 export * from "./forge";
 export * from "./manifests";
+export * from "./round-evidence";
 export * from "./session";
 export * from "./sha256";
 export * from "./wire";

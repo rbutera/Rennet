@@ -39,6 +39,57 @@ function initFrame(apiKeySource: string): Record<string, unknown> {
   };
 }
 
+/**
+ * The transport-boundary output cap (#727). The classifier's raw response is measured
+ * HERE, before any structured output is surfaced — core sees only decoded values, so a
+ * core-side check could never see how many bytes arrived.
+ */
+describe("normalizeClaudeFrame: raw output cap", () => {
+  const resultFrame = (payload: unknown): Record<string, unknown> => ({
+    type: "result",
+    subtype: "success",
+    result: JSON.stringify(payload),
+    structured_output: payload,
+    session_id: "abc",
+  });
+
+  it("passes a response at the cap through with its structured output intact", () => {
+    const payload = { note: "é".repeat(10) };
+    const bytes = new TextEncoder().encode(JSON.stringify(payload)).length;
+    const events = normalizeClaudeFrame(resultFrame(payload), context(), bytes);
+    const ended = events.find((event) => event.kind === "session.ended");
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("completed");
+    expect(
+      ended?.kind === "session.ended" && ended.outcome.status === "completed"
+        ? ended.outcome.structuredOutput
+        : undefined,
+    ).toEqual(payload);
+  });
+
+  it("fails a response one byte over the cap without decoding it", () => {
+    const payload = { note: "é".repeat(10) };
+    const bytes = new TextEncoder().encode(JSON.stringify(payload)).length;
+    const events = normalizeClaudeFrame(resultFrame(payload), context(), bytes - 1);
+    const ended = events.find((event) => event.kind === "session.ended");
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("failed");
+    expect(events.some((event) => event.kind === "error")).toBe(true);
+    expect(
+      ended?.kind === "session.ended" && ended.outcome.status === "failed"
+        ? ended.outcome.error.message
+        : "",
+    ).toContain("output cap");
+    // Nothing decoded is surfaced: an over-cap turn has no structured output at all.
+    expect(JSON.stringify(events)).not.toContain('"structuredOutput"');
+  });
+
+  it("leaves an uncapped turn measured by nothing", () => {
+    const payload = { note: "x".repeat(10_000) };
+    const events = normalizeClaudeFrame(resultFrame(payload), context());
+    const ended = events.find((event) => event.kind === "session.ended");
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("completed");
+  });
+});
+
 describe("normalizeClaudeFrame: oauth assertion", () => {
   it("produces a metered-key warning when a metered key takes over", () => {
     const events = normalizeClaudeFrame(initFrame("user"), context());

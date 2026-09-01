@@ -35,6 +35,9 @@ export interface SwarmTurnOptions {
   readonly collector?: MetricsCollector;
   /** The metrics label, e.g. "board.lens-draft". */
   readonly label?: string;
+  /** The turn's raw response budget in UTF-8 bytes, enforced by the adapter at the
+   *  transport boundary before structured-output decoding. Absent ⇒ no cap. */
+  readonly outputByteCap?: number;
   /** Content-free provider settlement, emitted before one-shot session cleanup. */
   readonly onProviderSettled?: (milestone: ProviderTurnSettlement) => void;
 }
@@ -111,6 +114,7 @@ export function createClaudeSwarmTurn(
         outputSchema,
         model,
         effort,
+        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
         // #585: Rennet's internal one-shot turn — never the user's session history.
         ephemeral: true,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -182,7 +186,7 @@ export function createCodexSwarmTurn(
   model: string,
   effort: string,
   outputSchema: unknown,
-  options: Pick<SwarmTurnOptions, "signal" | "cwd" | "onProviderSettled"> &
+  options: Pick<SwarmTurnOptions, "signal" | "cwd" | "onProviderSettled" | "outputByteCap"> &
     Pick<CodexExecRequest, "mcpServers">,
   now: () => number = Date.now,
 ): RunTurn {
@@ -206,6 +210,7 @@ export function createCodexSwarmTurn(
         prompt,
         outputSchema,
         cwd: options.cwd,
+        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
         ...(options.mcpServers === undefined ? {} : { mcpServers: options.mcpServers }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
@@ -231,6 +236,8 @@ export interface CouncilSeatDeps {
   readonly signal?: AbortSignal;
   /** The metrics label for a Claude seat, e.g. "board.lens-draft". */
   readonly label?: string;
+  /** The seat's raw response budget in UTF-8 bytes; both harness legs enforce it. */
+  readonly outputByteCap?: number;
   readonly onProviderSettled?: SwarmTurnOptions["onProviderSettled"];
 }
 
@@ -283,6 +290,7 @@ export function councilSeatTurn(
         schema,
         {
           cwd: deps.repoRoot,
+          ...(deps.outputByteCap === undefined ? {} : { outputByteCap: deps.outputByteCap }),
           // Board-pipeline jobs use only their inlined prompt and
           // native repository tools. Codex starts configured MCP servers eagerly,
           // so suppress them for those jobs while unrelated Council work inherits.
@@ -304,6 +312,7 @@ export function councilSeatTurn(
     effort: resolution.effort,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
+      ...(deps.outputByteCap === undefined ? {} : { outputByteCap: deps.outputByteCap }),
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
