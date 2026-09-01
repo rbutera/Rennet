@@ -19,7 +19,11 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
-import { SessionPreparationSchema, SessionTranscriptRowSchema } from "./session/model";
+import {
+  CodingHarnessSelectionSchema,
+  SessionPreparationSchema,
+  SessionTranscriptRowSchema,
+} from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -1611,8 +1615,18 @@ const openSpecCoverageEdgeSchema = z.object({
 });
 
 export const openSpecCoverageSchema = z.object({
-  status: z.enum(["ok", "failed"]),
+  status: z.enum(["ok", "failed", "unavailable"]),
   edges: z.array(openSpecCoverageEdgeSchema),
+  /**
+   * Provenance (#681 / C14 D3). On `ok`/`failed`, the harness that actually ran the
+   * mapping turn. On `unavailable`, the harness that DID resolve for this repository
+   * while the coverage seat wanted another — so a Codex-only install reads as "Codex
+   * resolved, coverage did not run", not as an assumed Claude default. Absent when no
+   * harness resolved at all.
+   */
+  harness: CodingHarnessSelectionSchema.optional(),
+  /** The typed account for `unavailable`: what the seat sought and what was found. */
+  reason: z.string().min(1).optional(),
 });
 
 // ── Settings: the config ladder (wireframe #15, Settings and Setup Plan) ──────
@@ -2856,10 +2870,12 @@ export type OpenSpecCoverageEdge = z.infer<typeof openSpecCoverageEdgeSchema>;
 /**
  * The coverage producer's result over a whole change. `status: "ok"` means the
  * mapping RAN — every requirement has an edge (covered or an honest zero), so the
- * Spec view can render every chip. `status: "failed"` means the runner did not
- * complete (no model available, budget refused, every turn failed): `edges` is empty
- * and the Spec view renders NO chips, keeping "not computed" distinct from a real
- * zero. Never a fabricated edge on failure.
+ * Spec view can render every chip. `status: "failed"` means the runner RAN and did
+ * not complete (budget refused, every turn failed). `status: "unavailable"` means it
+ * was never attempted because the seat's harness did not resolve — `reason` names
+ * what was sought and what was found, and `harness` names the provider that resolved
+ * instead. All three carry `edges: []` on anything but `ok`, and the Spec view renders
+ * NO chips, keeping "not computed" distinct from a real zero. Never a fabricated edge.
  */
 export type OpenSpecCoverage = z.infer<typeof openSpecCoverageSchema>;
 // ─────────────────────────────────────────────────────────────────────────────

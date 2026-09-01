@@ -41,6 +41,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
   captureLandedBranchPatchset,
+  coverageSeatFor,
   createBoardDraftCoordinator,
   createCompositionBoardsForReview,
   createGitLabPrSubmissionResolver,
@@ -210,6 +211,79 @@ describe("coding-harness resolution", () => {
       status: "ready",
       selection: { id: "codex", version: "0.146.0" },
       port: codex,
+    });
+  });
+
+  // The MISRESOLUTION control (#681): a resolver that hands back the wrong provider is
+  // the silent-substitution shape the issue forbids. Deleting the descriptor check in
+  // `resolveExact` turns this green-to-red — it is the only assertion that reaches it.
+  it("refuses a resolver that answers a pinned provider with a different one", async () => {
+    const resolution = await resolveCodingHarness({
+      pinned: { id: "claude-code", version: "2.1.220" },
+      resolveClaude: async () => codingPort("codex", "0.146.0"),
+      resolveCodex: async () => null,
+    });
+
+    expect(resolution).toEqual({
+      status: "unavailable",
+      reason:
+        "The claude-code resolver returned codex; refusing to run a different harness than the selected one.",
+    });
+  });
+});
+
+describe("requirement-coverage seat provenance (#681 residue, C14 D3)", () => {
+  it("runs on a resolved Claude seat and stamps the harness that ran it", () => {
+    const claude = codingPort("claude-code", "2.1.220");
+    expect(
+      coverageSeatFor({
+        status: "ready",
+        selection: { id: "claude-code", version: "2.1.220" },
+        port: claude,
+      }),
+    ).toEqual({
+      kind: "claude",
+      port: claude,
+      harness: { id: "claude-code", version: "2.1.220" },
+    });
+  });
+
+  it("reports a typed absence naming Codex when Codex is what resolved", () => {
+    const seat = coverageSeatFor({
+      status: "ready",
+      selection: { id: "codex", version: "0.146.0" },
+      port: codingPort("codex", "0.146.0"),
+    });
+
+    expect(seat).toEqual({
+      kind: "absent",
+      coverage: {
+        status: "unavailable",
+        edges: [],
+        harness: { id: "codex", version: "0.146.0" },
+        reason:
+          "Requirement coverage needs a Claude Code seat; this repository resolved Codex 0.146.0. No mapping was attempted.",
+      },
+    });
+    // NOT "failed": nothing ran, so nothing broke. The distinction is the whole point.
+    expect(seat.kind === "absent" && seat.coverage.status).not.toBe("failed");
+  });
+
+  it("carries the resolution's own account when no harness resolved at all", () => {
+    expect(
+      coverageSeatFor({
+        status: "unavailable",
+        reason:
+          "No enabled coding harness (Claude Code or Codex) is available on the execution host.",
+      }),
+    ).toEqual({
+      kind: "absent",
+      coverage: {
+        status: "unavailable",
+        edges: [],
+        reason:
+          "Requirement coverage needs a Claude Code seat. No enabled coding harness (Claude Code or Codex) is available on the execution host.",
+      },
     });
   });
 });

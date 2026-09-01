@@ -559,6 +559,44 @@ export async function runResolvedCodingHarnessTurn(input: {
   return { ...outcome, harness: resolution.selection };
 }
 
+/**
+ * Route one resolved coding harness to the requirement-coverage seat (#681, C14 D3).
+ * The mapping turn needs the Claude Code structured-output seat, so a host that
+ * resolved Codex — or nothing — yields a TYPED ABSENCE naming what resolved instead
+ * of a `failed` that would read as "we tried and it broke". Exported so the branch is
+ * unit-testable without standing up the composition root.
+ */
+export function coverageSeatFor(resolution: CodingHarnessResolution):
+  | {
+      readonly kind: "claude";
+      readonly port: HarnessPort;
+      readonly harness: CodingHarnessSelection;
+    }
+  | { readonly kind: "absent"; readonly coverage: OpenSpecCoverage } {
+  if (resolution.status === "unavailable") {
+    return {
+      kind: "absent",
+      coverage: {
+        status: "unavailable",
+        edges: [],
+        reason: `Requirement coverage needs a Claude Code seat. ${resolution.reason}`,
+      },
+    };
+  }
+  if (resolution.selection.id !== "claude-code") {
+    return {
+      kind: "absent",
+      coverage: {
+        status: "unavailable",
+        edges: [],
+        harness: resolution.selection,
+        reason: `Requirement coverage needs a Claude Code seat; this repository resolved Codex ${resolution.selection.version}. No mapping was attempted.`,
+      },
+    };
+  }
+  return { kind: "claude", port: resolution.port, harness: resolution.selection };
+}
+
 export async function captureBranchPatchset(input: {
   readonly git: GitExec;
   readonly locus: Locus;
@@ -999,8 +1037,15 @@ export interface RennetServerOptions {
    * way), so a WSL update reports that plainly instead of shipping the wrong file.
    */
   readonly hostBundlePath?: string;
-  /** Test-composition seam for a hermetic harness. The production daemon never supplies it. */
+  /**
+   * Test-composition seam for a hermetic harness. The production daemon never supplies it.
+   * The port is routed BY ITS DESCRIPTOR: a `claude-code` port is the Claude seat and
+   * leaves Codex absent; a `codex` port is the Codex adapter and leaves Claude absent.
+   * That is what lets a hermetic run present a genuinely single-harness host (#681).
+   */
   readonly testHarnessPort?: HarnessPort;
+  /** Test-composition seam for the Codex utility executor (the council's Codex seats). */
+  readonly testCodexExecutor?: CodexExecutor;
   /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
    * composition root carries checkpoint evidence even when HEAD does not move. */
   readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
@@ -1275,21 +1320,43 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
   // light-tier turn runs the distro's claude/codex — not the host's.
   async function claudeAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
-    if (options.testHarnessPort !== undefined) return options.testHarnessPort;
+    if (options.testHarnessPort !== undefined) {
+      return options.testHarnessPort.descriptor.id === "claude-code"
+        ? options.testHarnessPort
+        : null;
+    }
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
   }
   /** The utility executor for a repo, ROOTED AT THAT CHECKOUT (W5) — locus-native, so a
    *  WSL project's seat gets the distro path the distro's codex can actually open. */
   async function codexExecutorForRepo(repoRoot: string): Promise<CodexExecutor | null> {
+    if (options.testCodexExecutor !== undefined) return options.testCodexExecutor;
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     const { makeExecutor } = await getCodexResolution(locus);
     return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
   }
 
   async function codexAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+    // The scripted-harness seam routes BY DESCRIPTOR (#681 proof): a test port that
+    // declares itself Codex is the Codex adapter, and one that declares Claude leaves
+    // Codex genuinely absent. Without this a hermetic run could never present a
+    // Codex-resolved host, so the Codex leg of round dispatch had no launched proof.
+    if (options.testHarnessPort !== undefined) {
+      return options.testHarnessPort.descriptor.id === "codex" ? options.testHarnessPort : null;
+    }
     const { locus } = locusContextForRepo(repoRoot);
     return (await getCodexResolution(locus)).adapter;
+  }
+
+  /** The viewer's per-host ruled-out agents (Settings → Environments) for one execution host. */
+  function disabledHarnessesFor(execution: HandoffTurnExecution): readonly string[] {
+    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
+    return daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [];
+  }
+  /** The same ruling for a repository whose execution host is the detected default. */
+  function disabledHarnessesForRepo(repoRoot: string): readonly string[] {
+    return disabledHarnessesFor(handoffTurnExecution(locusForRepo(repoRoot), repoRoot));
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -2047,8 +2114,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<FlaggedReviewRun> {
     const patchset = activePatchset(review);
     const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
-    const adapter = options.testHarnessPort ?? discoveredAdapter;
+    const adapter = await claudeAdapterForRepo(review.repositoryRoot);
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
@@ -2190,8 +2256,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * user's `claude` seat, budget-gated — grounding each requirement to the offered hunks
    * that implement it (any hallucinated hunk dropped) and completing every requirement,
    * so `ok` yields covered-or-honest-zero per requirement. NO change ⇒ `null` (no chips).
-   * NO adapter, a budget refusal, or a failed turn ⇒ `status: "failed"` with no edges
-   * (the Spec view renders no chips) — an uncomputed mapping never becomes a fake zero.
+   * A budget refusal or a failed turn ⇒ `status: "failed"` with no edges (the Spec view
+   * renders no chips) — an uncomputed mapping never becomes a fake zero.
+   *
+   * The seat resolves through the SAME authority round dispatch uses (#681, C14 D3), so a
+   * host where Claude Code did not resolve reports a typed ABSENCE naming what resolved
+   * instead, rather than a "failed" that implies a mapping was attempted and broke. Every
+   * outcome that ran carries the harness that ran it.
    */
   async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null> {
     const patchset = activePatchset(review);
@@ -2213,11 +2284,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // No requirements ⇒ an honest empty OK (nothing to map, no chips).
     if (requirements.length === 0) return { status: "ok", edges: [] };
 
-    const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
-    const adapter = options.testHarnessPort ?? discoveredAdapter;
-    // No model seat ⇒ cannot compute; honest failed (no chips), never a fabricated zero.
-    if (!adapter) return { status: "failed", edges: [] };
+    const seat = coverageSeatFor(
+      await resolveCodingHarness({
+        disabledHarnesses: disabledHarnessesForRepo(review.repositoryRoot),
+        resolveClaude: () => claudeAdapterForRepo(review.repositoryRoot),
+        resolveCodex: () => codexAdapterForRepo(review.repositoryRoot),
+      }),
+    );
+    if (seat.kind === "absent") return seat.coverage;
 
     // The offered hunks (the model may cite ONLY these; the runner grounds against them).
     // KNOWN §7 DEVIATION (as in runFlaggedReview): the read-only harness runs with `cwd`
@@ -2237,7 +2311,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         deletedLines: hunk.deletedLines,
       }));
 
-    const runTurn = createCoverageTurn(adapter, { cwd: review.repositoryRoot });
+    const runTurn = createCoverageTurn(seat.port, { cwd: review.repositoryRoot });
     const result = await runCoverageMapping({
       patchsetId: patchset.id,
       requirements,
@@ -2247,7 +2321,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       runTurn: guardSeatTurn(runTurn),
       budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
     });
-    return { status: result.status, edges: result.edges };
+    return { status: result.status, edges: result.edges, harness: seat.harness };
   }
 
   // The provenance seed for a live noise run (issue #34), mirroring the finding seed.
@@ -2297,9 +2371,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     contextFeed: ReviewContextFeed,
   ): Promise<NoiseReview> {
     const patchset = activePatchset(review);
-    const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const { adapter: discoveredAdapter } = await getClaudeHarness(locus, distroCwd);
-    const adapter = options.testHarnessPort ?? discoveredAdapter;
+    const adapter = await claudeAdapterForRepo(review.repositoryRoot);
     if (!adapter) {
       return { status: "failed", reason: "no model harness is available to classify noise" };
     }
@@ -2584,11 +2656,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         filesTouched: [],
       };
     }
-    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
     return runResolvedCodingHarnessTurn({
       ...(sessionId === undefined ? {} : { sessionId }),
       sessionStore,
-      disabledHarnesses: daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [],
+      disabledHarnesses: disabledHarnessesFor(execution),
       resolveClaude: () => claudeAdapterForRepo(repoRoot),
       resolveCodex: () => codexAdapterForRepo(repoRoot),
       run: (port, persistedSessionId) =>
