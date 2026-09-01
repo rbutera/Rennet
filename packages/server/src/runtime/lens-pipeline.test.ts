@@ -4965,10 +4965,15 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
     expect(prompt).toContain("@@ -1,1 +1,1 @@");
   });
 
-  it("names the commit range on a range capture", () => {
+  it("names the three-dot merge-base range on a range capture, never two-dot", () => {
     const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET);
-    expect(prompt).toContain(`git diff ${"b".repeat(40)}..${"h".repeat(40)}`);
+    // Three-dot: an advanced base with two dots invents base-only deletions.
+    expect(prompt).toContain(`git diff ${"b".repeat(40)}...${"h".repeat(40)}`);
+    expect(prompt).not.toContain(`git diff ${"b".repeat(40)}..${"h".repeat(40)} `);
     expect(prompt).toContain("reviewing the commits since");
+    // The prompt never claims the checkout IS the reviewed state; pinned reads instead.
+    expect(prompt).not.toContain("IS the reviewed checkout");
+    expect(prompt).toContain(`git show ${"h".repeat(40)}:<path>`);
   });
 
   it("names the pinned reviewed tree on a working-tree capture — never base..head", () => {
@@ -4985,7 +4990,8 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
     // committed subset and silently omit uncommitted work.
     expect(prompt).toContain(`git diff ${"b".repeat(40)} ${tree}`);
     expect(prompt).not.toContain(`git diff ${"b".repeat(40)}..${"h".repeat(40)}`);
-    expect(prompt).toContain("including uncommitted work");
+    expect(prompt).toContain("uncommitted work included");
+    expect(prompt).toContain(`git show ${tree}:<path>`);
   });
 
   it("still inlines design artifacts and round context beside the inventory", () => {
@@ -5002,6 +5008,43 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
     );
     expect(prompt).toContain("token-refresh");
     expect(prompt).toContain('"number":2');
+  });
+
+  it("keeps the worker's verbatim turn diff out of ordinary lens prompts", () => {
+    const WORKER_DIFF = "+const WORKER_DIFF_SENTINEL = 7;";
+    const round = {
+      number: 2,
+      dispatchedAsks: [],
+      worker: {
+        outcome: "completed",
+        diff: WORKER_DIFF,
+        changedPaths: ["src/a.ts"],
+        commitRange: { from: "c0", to: "c1" },
+      },
+    } as never;
+    const lens = renderDrafterPrompt(
+      "lens instructions",
+      RANGE_PACKET,
+      undefined,
+      undefined,
+      undefined,
+      round,
+    );
+    expect(lens).not.toContain(SECRET(WORKER_DIFF));
+    expect(lens).toContain('"changedPaths":["src/a.ts"]');
+    const report = renderDrafterPrompt(
+      "report instructions",
+      RANGE_PACKET,
+      undefined,
+      undefined,
+      undefined,
+      round,
+      {
+        omitTaskLayer: true,
+        includeWorkerDiff: true,
+      },
+    );
+    expect(report).toContain(SECRET(WORKER_DIFF));
   });
 
   it("omits the task layer for the legacy report seat", () => {

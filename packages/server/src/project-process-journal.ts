@@ -25,7 +25,7 @@ const repoCheckpointSchema = z.object({
 const processFailureSchema = z.object({
   repo: z.string().min(1),
   path: z.string().min(1),
-  phase: z.enum(["scout", "map"]),
+  phase: z.enum(["scout", "map", "knowledge"]),
   reason: z.string().min(1),
   summary: processedRepoSummarySchema.optional(),
 });
@@ -35,7 +35,7 @@ export const projectProcessJournalSchema = z.object({
   runId: z.uuid(),
   projectId: z.string().min(1),
   status: z.enum(["queued", "running", "done", "failed"]),
-  phase: z.enum(["scout", "map", "complete"]),
+  phase: z.enum(["scout", "map", "knowledge", "complete"]),
   repos: z.array(repoCheckpointSchema),
   failures: z.array(processFailureSchema),
   events: z.array(projectProcessEventSchema),

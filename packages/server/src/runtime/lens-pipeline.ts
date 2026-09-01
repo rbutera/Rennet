@@ -646,6 +646,11 @@ export function renderDrafterPrompt(
      * whole branch range would name a second, contradicting range.
      */
     readonly omitTaskLayer?: boolean;
+    /**
+     * Carry the worker's verbatim turn diff. Report classification only — it is
+     * uncapped, and every other seat reads content from the checkout.
+     */
+    readonly includeWorkerDiff?: boolean;
   },
 ): string {
   // The hunk INDEX travels (coverage is taught-or-skipped over these exact
@@ -671,29 +676,53 @@ export function renderDrafterPrompt(
           round: {
             number: round.number,
             dispatchedAsks: round.dispatchedAsks,
-            ...(round.worker === undefined ? {} : { worker: round.worker }),
+            // The worker's verbatim turn diff is UNCAPPED (a big coding turn can
+            // dwarf the reviewed range) and belongs to the report-classification
+            // boundary alone. Ordinary lenses get the worker's identity and
+            // shape and read the content from the checkout like everything else.
+            ...(round.worker === undefined
+              ? {}
+              : options?.includeWorkerDiff === true
+                ? { worker: round.worker }
+                : {
+                    worker: {
+                      outcome: round.worker.outcome,
+                      changedPaths: round.worker.changedPaths,
+                      commitRange: round.worker.commitRange,
+                    },
+                  }),
           },
         }),
   });
   const repo = packet.patchset?.repository;
-  // A local working-tree capture pins the reviewed bytes as `reviewedTreeOid` —
-  // `baseOid..headOid` there would show only the COMMITTED subset and silently
-  // omit uncommitted work (the flagship "review my agent's branch" flow). The
-  // diff command must name the pinned tree when one exists.
+  // Two capture shapes, two diff commands — and neither lets the prompt claim
+  // the working directory IS the reviewed state, because it may not be:
+  //  - a working-tree capture pins the reviewed bytes as `reviewedTreeOid`
+  //    (`base..head` would omit uncommitted work), and the live tree can move
+  //    after capture;
+  //  - a range capture (PR / branch) diffs `base...head` (THREE-dot: from the
+  //    merge base — an advanced base with two dots invents base-only
+  //    deletions), and the checkout may sit on a different ref entirely.
+  // Pinned objects are always readable: `git show <oid>:<path>`.
   const diffCommand =
     repo === undefined
       ? "`git diff`"
       : repo.reviewedTreeOid === undefined
-        ? `\`git diff ${repo.baseOid}..${repo.headOid}\``
+        ? `\`git diff ${repo.baseOid}...${repo.headOid}\``
         : `\`git diff ${repo.baseOid} ${repo.reviewedTreeOid}\``;
+  const reviewedOid = repo?.reviewedTreeOid ?? repo?.headOid;
   const task = [
     repo === undefined
-      ? "Your working directory IS the reviewed checkout."
+      ? "Your working directory is a checkout of the reviewed repository."
       : repo.reviewedTreeOid === undefined
-        ? `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}); your working directory IS the reviewed checkout at ${repo.headOid}.`
-        : `You are reviewing the working-tree change since ${repo.baseOid} (${repo.baseRef}), pinned as tree ${repo.reviewedTreeOid}; your working directory IS the reviewed checkout, including uncommitted work.`,
+        ? `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}), at reviewed head ${repo.headOid}. Your working directory is a checkout of this repository, but it may be on a different ref — the pinned objects are authoritative.`
+        : `You are reviewing the working-tree change since ${repo.baseOid} (${repo.baseRef}), pinned as tree ${repo.reviewedTreeOid} (uncommitted work included). Your working directory is the checkout it was captured from; the pinned tree is authoritative if it has moved.`,
     "The context layer carries the change INVENTORY (file rows, hunk ids/headers/spans, derived signals) — not the diff content.",
-    `Read the change yourself with your own tools (${diffCommand}, \`git log\`, file reads, grep) and cite only what you actually read.`,
+    `Read the change yourself with your own tools: ${diffCommand} for the delta${
+      reviewedOid === undefined
+        ? ""
+        : `, \`git show ${reviewedOid}:<path>\` for reviewed file content`
+    }, \`git log\`, file reads, grep — and cite only what you actually read.`,
   ].join("\n");
   if (options?.omitTaskLayer === true) {
     return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
@@ -1805,9 +1834,10 @@ async function runLegacyRoundReport(
     undefined,
     boardOutputSchema(),
     deps.round,
-    // The report verifies the exact turn diff (`round.worker.diff`); the
-    // reviewed-range task line would name a second, contradicting range.
-    { omitTaskLayer: true },
+    // The report verifies the exact turn diff (`round.worker.diff`) — it keeps
+    // the diff, and the reviewed-range task line would name a second,
+    // contradicting range.
+    { omitTaskLayer: true, includeWorkerDiff: true },
   );
   const ctx = deps.lintContextFor("report");
   const validated = await draftOneLens(basePrompt, seat, ctx);

@@ -18,10 +18,17 @@ import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema }
 import { AskProjectionSchema as askProjectionSchema } from "./ask-log";
 import { RoundEventSchema as roundEventSchema } from "./model";
 
-/** The protocol version this build speaks. Version 2 owns the aggregate publish-review contract. */
-export const PROTOCOL_VERSION = 2;
+/**
+ * The protocol version this build speaks. Version 3 is the context-map kill:
+ * the `project.contextMap`/`contextAsk`/`knowledgeDisposition` commands and the
+ * knowledge schemas left the wire, and process-run totals dropped the knowledge
+ * counts — breaking for a v2 peer, so both ends of the version window move
+ * together and a mixed pair fails at the handshake instead of silently dropping
+ * frames. (Version 2 owned the aggregate publish-review contract.)
+ */
+export const PROTOCOL_VERSION = 3;
 /** The oldest protocol version this build can still talk to. */
-export const MIN_COMPATIBLE_PROTOCOL_VERSION = 2;
+export const MIN_COMPATIBLE_PROTOCOL_VERSION = 3;
 
 /**
  * The `serverInfo.features` key a daemon sets when it consumes client presence and plans

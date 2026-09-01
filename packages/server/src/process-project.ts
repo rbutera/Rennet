@@ -117,7 +117,7 @@ export function projectProcessRunFromRecord(
       return {
         ...base,
         status: "running",
-        phase: record.phase === "complete" ? "map" : record.phase,
+        phase: record.phase === "complete" || record.phase === "knowledge" ? "map" : record.phase,
       };
     case "done":
       return { ...base, status: "done", phase: "complete", totals: totalsOf(record) };
@@ -126,7 +126,9 @@ export function projectProcessRunFromRecord(
       return {
         ...base,
         status: "failed",
-        phase: failure?.phase ?? (record.phase === "complete" ? "map" : record.phase),
+        phase:
+          (failure?.phase === "knowledge" ? "map" : failure?.phase) ??
+          (record.phase === "complete" || record.phase === "knowledge" ? "map" : record.phase),
         reason:
           record.failures.map((entry) => `${entry.repo}: ${entry.reason}`).join("; ") ||
           "Project processing failed",
