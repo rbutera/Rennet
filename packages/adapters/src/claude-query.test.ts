@@ -60,7 +60,7 @@ describe("toSdkOptions", () => {
     expect(sdk.mcpServers).toEqual({
       canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
     });
-    // Ordinary sessions stay non-strict: the user's servers remain alongside ours.
+    // Sessions stay non-strict: the user's servers remain alongside ours.
     expect("strictMcpConfig" in sdk).toBe(false);
   });
 
@@ -68,17 +68,15 @@ describe("toSdkOptions", () => {
     expect("mcpServers" in (toSdkOptions(baseOptions()) as Record<string, unknown>)).toBe(false);
   });
 
-  it("isolates ambient settings and MCP only when the session asks for it", () => {
-    const inherited = toSdkOptions(baseOptions()) as Record<string, unknown>;
-    expect("settingSources" in inherited).toBe(false);
-    expect("strictMcpConfig" in inherited).toBe(false);
-
-    const isolated = toSdkOptions(baseOptions({ ambientConfig: "isolated" })) as Record<
-      string,
-      unknown
-    >;
-    expect(isolated.settingSources).toEqual([]);
-    expect(isolated.strictMcpConfig).toBe(true);
+  it("never suppresses the user's filesystem settings or ambient MCP config", () => {
+    // Every session must load the user's own settings: auth routing (e.g. a
+    // settings-env ANTHROPIC_BASE_URL credential proxy) lives there, and a
+    // session that skips them reaches the API on the wrong credential.
+    // RED-proof: set `sdkOptions.settingSources = []` in toSdkOptions and the
+    // first assertion reddens.
+    const sdk = toSdkOptions(baseOptions()) as Record<string, unknown>;
+    expect("settingSources" in sdk).toBe(false);
+    expect("strictMcpConfig" in sdk).toBe(false);
   });
 
   it("translates outputSchema into the SDK json_schema outputFormat", () => {

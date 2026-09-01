@@ -1,7 +1,6 @@
 import {
   type CodexExecRequest,
   type CodexExecutor,
-  type HarnessAmbientConfig,
   type HarnessPort,
   type HarnessSession,
   type HarnessTurnResult,
@@ -36,8 +35,6 @@ export interface SwarmTurnOptions {
   readonly collector?: MetricsCollector;
   /** The metrics label, e.g. "board.lens-draft". */
   readonly label?: string;
-  /** Internal harness extensions policy. Omitted for ordinary council work. */
-  readonly ambientConfig?: HarnessAmbientConfig;
   /** Content-free provider settlement, emitted before one-shot session cleanup. */
   readonly onProviderSettled?: (milestone: ProviderTurnSettlement) => void;
 }
@@ -114,7 +111,6 @@ export function createClaudeSwarmTurn(
         outputSchema,
         model,
         effort,
-        ...(options.ambientConfig === undefined ? {} : { ambientConfig: options.ambientConfig }),
         // #585: Rennet's internal one-shot turn — never the user's session history.
         ephemeral: true,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -238,7 +234,13 @@ export interface CouncilSeatDeps {
   readonly onProviderSettled?: SwarmTurnOptions["onProviderSettled"];
 }
 
-const ISOLATED_COUNCIL_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
+// Board-pipeline jobs run one-shot on their inlined prompt and native
+// repository tools. Codex starts configured MCP servers eagerly, so these jobs
+// hand it an explicit empty MCP table. This is the ONLY narrowing a council
+// seat applies: Claude seats always inherit the user's own filesystem settings,
+// because auth routing (e.g. a settings-env ANTHROPIC_BASE_URL credential
+// proxy) lives there and skipping them breaks authentication (2026-09-01).
+const CODEX_MCP_SUPPRESSED_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
   "lens-draft",
   "lens-draft-flagged",
   "lens-draft-noise",
@@ -246,8 +248,8 @@ const ISOLATED_COUNCIL_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
   "round-report",
 ] satisfies readonly BoardCouncilJobId[]);
 
-function usesIsolatedHarnessConfig(jobId: CouncilJobId): boolean {
-  return ISOLATED_COUNCIL_JOB_IDS.has(jobId);
+function suppressesCodexMcpServers(jobId: CouncilJobId): boolean {
+  return CODEX_MCP_SUPPRESSED_JOB_IDS.has(jobId);
 }
 
 /**
@@ -284,7 +286,7 @@ export function councilSeatTurn(
           // Board-pipeline jobs use only their inlined prompt and
           // native repository tools. Codex starts configured MCP servers eagerly,
           // so suppress them for those jobs while unrelated Council work inherits.
-          ...(usesIsolatedHarnessConfig(jobId) ? { mcpServers: {} } : {}),
+          ...(suppressesCodexMcpServers(jobId) ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
           ...(deps.onProviderSettled === undefined
             ? {}
@@ -302,8 +304,6 @@ export function councilSeatTurn(
     effort: resolution.effort,
     runTurn: createClaudeSwarmTurn(deps.claudePort, resolution.model, resolution.effort, schema, {
       cwd: deps.repoRoot,
-      // These same jobs do not consume project MCP, plugin, or hook extensions.
-      ...(usesIsolatedHarnessConfig(jobId) ? { ambientConfig: "isolated" } : {}),
       ...(deps.label === undefined ? {} : { label: deps.label }),
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),

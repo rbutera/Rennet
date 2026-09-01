@@ -415,7 +415,6 @@ describe("ClaudeAdapter session", () => {
       model: "haiku",
       effort: "low",
       outputSchema: { type: "object" },
-      ambientConfig: "isolated",
     } satisfies SessionSpec;
     const session = await adapter.createSession(sessionSpec);
     await session.send({ prompt: "act" });
@@ -433,7 +432,6 @@ describe("ClaudeAdapter session", () => {
     expect(options.model).toBe("haiku");
     expect(options.effort).toBe("low");
     expect(options.outputSchema).toEqual({ type: "object" });
-    expect(options.ambientConfig).toBe("isolated");
     // Full env spread (the SDK replaces the child env), plus the scoped marker.
     expect(options.env.PATH).toBe("/usr/bin");
     expect(options.env.RENNET_HARNESS_SESSION).toBeDefined();
