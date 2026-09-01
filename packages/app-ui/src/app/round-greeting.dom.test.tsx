@@ -328,6 +328,20 @@ describe("regeneration lanes render every status honestly — no false green che
     const laneText = (root: ParentNode): string =>
       [...root.querySelectorAll("[data-row]")].map((row) => row.textContent).join("|");
     expect(laneText(dirty.container)).toBe(laneText(clean.container));
+
+    // The GLYPH differs even though both states are `complete`. A green check over
+    // "3 hunks uncovered" reads as a clean result and says the opposite of the text beside
+    // it; the copper caution register is the honest one — a flag to weigh, not a failure.
+    expect(
+      clean.container
+        .querySelector('[data-testid="cross-lens-coverage"]')
+        ?.getAttribute("data-status"),
+    ).toBe("done");
+    expect(
+      dirty.container
+        .querySelector('[data-testid="cross-lens-coverage"]')
+        ?.getAttribute("data-status"),
+    ).toBe("warn");
   });
 
   it("renders no coverage line at all when the daemon reported no coverage state", () => {

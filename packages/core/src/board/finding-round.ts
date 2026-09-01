@@ -16,8 +16,15 @@ import {
   type LensKind,
 } from "@rennet/protocol";
 
-const ROUND_ADDRESSED_NAMESPACE = "rennet:host:round-addressed:";
-const HOST_AUTHOR = { kind: "orchestrator", id: "rennet:round-composition" } as const;
+/** The id namespace the host mints a carried round-history element into. Exported because
+ *  the ref-admission gate has to recognise the SAME namespace this composer writes: two
+ *  copies of the string is one rename away from a host element the gate no longer admits. */
+export const HOST_ROUND_HISTORY_PREFIX = "rennet:host:round-addressed:";
+/** `composeFindingRound`'s own author id — the ONE host composer whose elements carry a
+ *  prior round's anchors forward. Exported for the same reason as the prefix above. */
+export const HOST_COMPOSER_AUTHOR_ID = "rennet:round-composition";
+const ROUND_ADDRESSED_NAMESPACE = HOST_ROUND_HISTORY_PREFIX;
+const HOST_AUTHOR = { kind: "orchestrator", id: HOST_COMPOSER_AUTHOR_ID } as const;
 
 type FindingElement = Extract<DraftElement, { kind: "finding" }>;
 type CodeRefElement = Extract<DraftElement, { kind: "code_ref" }>;

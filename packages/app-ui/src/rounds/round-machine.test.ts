@@ -447,6 +447,19 @@ describe("round-machine — the pure run state machine", () => {
       lanes: [{ id: "noise", label: "Noise", status: "done", verdict: "reworked" }],
     });
     expect(next).toMatchObject({ coverage: { state: "complete", violations: 2 } });
+
+    // …but a frame that DOES carry a state replaces it, including a step "backwards" to
+    // pending. That is the restart redraft (#725 7.2): the daemon clears the replaced
+    // attempt's coverage and the first running-lane frame says pending, so the keep-last
+    // rule above must not be the thing that pins a stale completion on the screen.
+    const redrafting = advance(next, {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 6,
+      lanes: [{ id: "noise", label: "Noise", status: "queued" }],
+      coverage: { state: "pending" },
+    });
+    expect(redrafting).toMatchObject({ coverage: { state: "pending" } });
   });
 
   it("keeps a readable report attached when the same durable operation later fails", () => {

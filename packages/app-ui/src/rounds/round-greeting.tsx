@@ -8,6 +8,8 @@ import { ArrowRight } from "lucide-react";
 import { Icon } from "../components/icon";
 import {
   canRevealNewBoards,
+  coverageNote,
+  coverageStatus,
   type GenerationCoverage,
   type LaneRow,
   type LensLane,
@@ -130,25 +132,6 @@ function laneNote(lane: LensLane): string {
 }
 
 /**
- * The reviewer-facing sentence for one cross-lens coverage state (#725 D4). Coverage
- * ANNOTATES the boards already on screen — it never gates their reveal and never rewrites
- * one — so `pending` has to be sayable beside settled lanes rather than represented by
- * hiding them.
- */
-function coverageNote(coverage: GenerationCoverage): string {
-  switch (coverage.state) {
-    case "pending":
-      return "Cross-lens coverage · still running";
-    case "complete":
-      return coverage.violations === 0
-        ? "Cross-lens coverage · every hunk covered"
-        : `Cross-lens coverage · ${coverage.violations} hunk${coverage.violations === 1 ? "" : "s"} uncovered`;
-    case "failed":
-      return `Cross-lens coverage · could not be computed — ${coverage.reason}`;
-  }
-}
-
-/**
  * The synthetic tail steps (C15 4.2) — the two lines the regeneration shows after the
  * drafters settle, DERIVED from the real phase, never pre-rendered:
  *
@@ -232,18 +215,13 @@ function RegenerationProgress({
         <span
           data-testid="cross-lens-coverage"
           data-coverage={coverage.state}
+          // The RENDERED register, exposed so a test can see the glyph choice: a coverage
+          // run that completed with uncovered hunks is `warn`, never the green `done` check
+          // that would read as a clean result over text saying the opposite.
+          data-status={coverageStatus(coverage)}
           className="flex items-center gap-1.5 pt-1 text-12-5 text-muted-foreground"
         >
-          <StatusIcon
-            status={
-              coverage.state === "pending"
-                ? "running"
-                : coverage.state === "failed"
-                  ? "failed"
-                  : "done"
-            }
-            compact
-          />
+          <StatusIcon status={coverageStatus(coverage)} compact />
           {coverageNote(coverage)}
         </span>
       )}

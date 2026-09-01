@@ -499,6 +499,19 @@ export interface RoundInput {
    */
   readonly reviewDraftLintCtx: RegisterLintContext;
   readonly curationFeedback?: string;
+  /**
+   * When the reviewer's wait for a board actually STARTED (#725 D4), as a wall-clock
+   * epoch. This is the origin `first-core-board` measures from, and only the caller knows
+   * it: on an initial generation it is the moment the captured input was ready to draft
+   * over; on a returned round it is the moment the round's code landed and its report was
+   * verified. Measuring from this runtime's own entry instead would silently exclude board
+   * minting, partial-state cleanup, attempt persistence and provider resolution — real
+   * seconds the reviewer spends staring at a spinner.
+   *
+   * Absent ⇒ the runtime falls back to its own start, which is honest about being a lower
+   * bound rather than inventing an earlier origin.
+   */
+  readonly firstBoardWaitOriginMs?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -591,6 +604,9 @@ export interface RoundsRuntimeDeps {
     readonly sourceGeneration: string;
     readonly successorGeneration: string;
   }) => void | Promise<void>;
+  /** The wall clock, injectable so a test can script the phase timings this runtime
+   *  records. Shared with the pipeline, so one run measures on ONE clock. */
+  readonly now?: () => number;
 }
 
 /** One round DISPATCH — the reviewer's dispatched asks folded into ONE work-order and
@@ -657,6 +673,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   // Initial drafting has no round row. Returned rounds use the dispatch-derived visit id;
   // the durable ledger then tells clients which generation is current after restart.
   const newGenerationId = deps.newGenerationId ?? generationIdForPatchset;
+  const clock = deps.now ?? Date.now;
   const guard = new PipelineStartGuard();
   const ledger = new Map<string, RoundRecord[]>();
   // Per-session promise tails — one round in flight per session (the SessionTurnLoop
@@ -873,11 +890,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // crash between this attempt's persistence and its settle, and the next reader found
     // an account whose failure had already been cleared — a classification about nothing.
     delete generationWithoutAbsences.failedLensAccounts;
+    // Coverage is ATTEMPT-scoped, and leaving it behind was the same defect one level up:
+    // this attempt is about to clear five boards and re-draft them, so a `complete` state
+    // from the attempt being replaced would sit beside queued lanes on the reconnecting
+    // surface, saying every hunk is covered by boards that no longer exist.
+    delete generationWithoutAbsences.coverage;
     const attemptGeneration: Generation = {
       ...generationWithoutAbsences,
       lensBoards: {},
       draftingBoardIds,
       draftingReportBoardId: boardIdFor("report"),
+      // A repeat attempt is PENDING from the moment it is minted — durably, before any
+      // board is cleared, so even a crash inside the cleanup leaves an honest state.
+      ...(start === "partial" ? { coverage: { state: "pending" as const } } : {}),
       ...(input.designArtifacts === null
         ? { absentLenses: { design: "no-material" as const } }
         : {}),
@@ -924,7 +949,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       input.onProgress?.({
         type: "lens",
         lanes: [...resumed.lanes],
-        ...(resumed.coverage === undefined ? {} : { coverage: resumed.coverage }),
+        // NOT `resumed.coverage`. What durably settled about coverage described the boards
+        // this attempt is about to delete; re-publishing it would show "every hunk covered"
+        // beside lanes that are queued for a redraft. The honest state is pending, and it
+        // rides the FIRST frame — the client's fold keeps the last known coverage when a
+        // frame carries none, so an omission here would leave the stale one standing.
+        coverage: { state: "pending" },
       });
       for (const target of LINT_TARGETS) {
         const boardId = boardIdFor(target);
@@ -980,7 +1010,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       } as Partial<Record<LensKind, LensAbsenceReason>>,
       failedLenses: {} as Partial<Record<LensKind, string>>,
       failedLensAccounts: {} as Partial<Record<LensKind, LensFailureAccount>>,
-      coverage: undefined as GenerationCoverage | undefined,
+      // Pending from the first frame on a repeat attempt, matching what was just persisted.
+      coverage: attemptGeneration.coverage,
       timings: [] as GenerationPhaseTiming[],
     };
     /**
@@ -989,12 +1020,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
      * store means one check covers every reveal write — settlements, coverage and timings
      * all route through it, so none of them can be the one that folds a superseded
      * attempt's result into the current generation.
+     *
+     * Returns whether the write was ACCEPTED, and every caller gates its broadcast on it.
+     * A rejection that returned nothing still let the arrival sink and the lane snapshot
+     * run, so a superseded attempt was refused the disk and granted the screen — connected
+     * clients saw a dead attempt's boards announced over the live generation's, which is
+     * the same wrong-content publish the durable check exists to prevent.
      */
-    const persistReveal = async (): Promise<void> => {
+    const persistReveal = async (): Promise<boolean> => {
       const persist = deps.persistGeneration;
-      if (persist === undefined) return;
+      if (persist === undefined) return true;
       const durable = deps.loadGeneration?.(attemptGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) return;
+      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) return false;
       await persist({
         ...attemptGeneration,
         lensBoards: { ...reveal.lensBoards },
@@ -1014,6 +1051,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] },
             }),
       });
+      return true;
     };
     const lanes =
       onProgress === undefined
@@ -1027,10 +1065,13 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               ...(reveal.coverage === undefined ? {} : { coverage: reveal.coverage }),
             });
           });
-    // Time-to-first-core-board is measured from the start of THIS regeneration — the
-    // moment the round's code had landed and drafting began, which is the wait the
-    // reviewer actually experiences.
-    const generationStartedAt = Date.now();
+    // Time-to-first-core-board is measured from the moment the REVIEWER's wait began, which
+    // the caller holds and this runtime does not: the captured input becoming ready on an
+    // initial generation, the round landing and its report verifying on a returned one.
+    // Measuring from here would start the clock after board minting, partial-state cleanup,
+    // attempt persistence and provider resolution — all of it wait the reviewer sits
+    // through, all of it excluded from the number that claims to be the wait.
+    const generationStartedAt = input.firstBoardWaitOriginMs ?? clock();
     const runtimeArrival = deps.onBoardArrival;
     const onBoardArrival = async (event: BoardArrivalEvent): Promise<void> => {
       if (event.lens === "report") {
@@ -1053,18 +1094,20 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           phase: "first-core-board",
           lens: event.lens,
           startedAtMs: generationStartedAt,
-          durationMs: Math.max(0, Date.now() - generationStartedAt),
+          durationMs: Math.max(0, clock() - generationStartedAt),
         });
       }
       reveal.lensBoards[event.lens] = event.boardId;
-      await persistReveal();
+      // A rejected write means a LATER attempt owns this generation. Announcing anyway put
+      // this dead attempt's board on every connected client's screen under the live
+      // generation's label; the durable refusal and the broadcast are one decision.
+      if (!(await persistReveal())) return;
       await runtimeArrival?.(event);
       lanes?.arrived(event.lens, event.carried);
     };
     const onCoverageState = async (coverage: GenerationCoverage): Promise<void> => {
       reveal.coverage = coverage;
-      await persistReveal();
-      lanes?.refresh();
+      if (await persistReveal()) lanes?.refresh();
     };
     const onPhaseTiming = (timing: GenerationPhaseTiming): void => {
       reveal.timings.push(timing);
@@ -1081,16 +1124,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       // check on only one of them would let a wrong pairing through the early write.
       const inadmissible = inadmissibleAbsenceFailure(lens, reason);
       if (inadmissible !== undefined) {
-        lanes?.failed(lens, inadmissible);
         reveal.failedLenses[lens] = inadmissible;
         // Retryable for the same reason the settle path stamps it: nothing has been
         // retried yet, so this lens has every attempt still in front of it.
         reveal.failedLensAccounts[lens] = { attempt: 0, classification: "retryable" };
       } else {
-        lanes?.absent(lens, lensAbsenceMessage(reason));
         reveal.absentLenses[lens] = reason;
       }
-      await persistReveal();
+      // Same gate as the arrival: a superseded attempt is refused the screen as well as
+      // the disk, so the lane snapshot only moves for the attempt that still owns this
+      // generation.
+      if (!(await persistReveal())) return;
+      if (inadmissible !== undefined) lanes?.failed(lens, inadmissible);
+      else lanes?.absent(lens, lensAbsenceMessage(reason));
     };
 
     const pipelineInput = {
@@ -1174,6 +1220,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       reviewDraftLintCtx: input.reviewDraftLintCtx,
       ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+      // One clock for the round: the pipeline's phase spans and this runtime's
+      // first-core-board origin have to be comparable, and two clocks are not.
+      ...(deps.now === undefined ? {} : { now: deps.now }),
     } satisfies Parameters<typeof runLensPipeline>[0];
 
     // Lens progress used to be promoted only by the round report's ARRIVAL. The initial
@@ -1193,7 +1242,21 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // One last write so the timings recorded after the final settlement (coverage, reveal,
     // the lens post-process tails) reach durable state too.
     await persistReveal();
-    return { generation: attemptGeneration, pipeline };
+    // …and the generation handed back carries them, because that record is what the final
+    // settle and BOTH failure paths persist. `withLensBoards` spreads the generation it is
+    // given and deletes only the attempt-scoped drafting fields, so coverage and timings
+    // ride through it — returning the bare `attemptGeneration` instead meant the last write
+    // of every round erased every durable coverage state and every timing the run measured.
+    return {
+      generation: {
+        ...attemptGeneration,
+        ...(reveal.coverage === undefined ? {} : { coverage: reveal.coverage }),
+        ...(reveal.timings.length === 0
+          ? {}
+          : { timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] } }),
+      },
+      pipeline,
+    };
   }
 
   async function runOnce(input: RoundInput): Promise<RoundOutcome> {

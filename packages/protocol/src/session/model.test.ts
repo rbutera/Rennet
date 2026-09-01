@@ -3,16 +3,19 @@ import { sha256Hex } from "../sha256";
 import {
   AskSchema,
   ClaimSchema,
+  GenerationPhaseTimingSchema,
   GenerationSchema,
   HarnessCursorSchema,
   isRoundOperationTerminal,
   LaneRowSchema,
   LENS_ADMISSIBLE_ABSENCES,
+  LENS_SCOPED_PHASES,
   LensAbsenceReasonSchema,
   LensFailureAccountSchema,
   LensLaneSchema,
   lensAdmitsAbsence,
   RoundEventSchema,
+  RoundOperationProgressSnapshotSchema,
   RoundOperationSchema,
   RoundRecordSchema,
   RoundReportDraftAttemptSchema,
@@ -232,6 +235,113 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(
       GenerationSchema.safeParse({ ...generation, failedLenses: { design: "" } }).success,
     ).toBe(false);
+  });
+
+  it("round-trips the report's `handed-off` progress state, and the old `drafting` one", () => {
+    // #725 7.4 added a second projected report state to the `report-drafting` phase. The
+    // two clients that matter are lockstep window peers, so the union is the whole
+    // compatibility story — but BOTH arms have to keep parsing, and the persisted value a
+    // pre-#725 daemon writes is the `drafting` one.
+    const snapshot = (report: unknown): unknown => ({
+      operationId: "op-1",
+      revision: 3,
+      createdAt: 100,
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "feat/round" },
+      askCount: 1,
+      gatePlan: { kind: "absent" },
+      state: {
+        phase: "report-drafting",
+        workspace: { status: "done" },
+        worker: { status: "done", fileCount: 1 },
+        gate: { status: "skipped", reason: "not-configured" },
+        commits: { status: "done", count: 2 },
+        report,
+      },
+    });
+
+    // The NEW frame parses under the current schema, carrying the report identity that
+    // lands a reconnecting client on the lens phase rather than on a finished report row.
+    const handedOff = RoundOperationProgressSnapshotSchema.safeParse(
+      snapshot({ status: "handed-off", reportBoardId: "report-1", generation: "gen-2" }),
+    );
+    expect(handedOff.success).toBe(true);
+    expect(handedOff.success && handedOff.data.state).toMatchObject({
+      report: { status: "handed-off", reportBoardId: "report-1", generation: "gen-2" },
+    });
+
+    // A persisted OLD value — `drafting` alone, no identity — still parses, unchanged.
+    const drafting = RoundOperationProgressSnapshotSchema.safeParse(
+      snapshot({ status: "drafting" }),
+    );
+    expect(drafting.success).toBe(true);
+    expect(drafting.success && drafting.data.state).toMatchObject({
+      report: { status: "drafting" },
+    });
+
+    // …and the identity is not optional on the new arm: a `handed-off` that names no board
+    // would land the client on a lens phase it cannot attach a report to.
+    expect(
+      RoundOperationProgressSnapshotSchema.safeParse(snapshot({ status: "handed-off" })).success,
+    ).toBe(false);
+  });
+
+  it("discriminates a phase timing's lens: lane phases require one, generation-wide ones forbid it", () => {
+    const base = { startedAtMs: 1_700_000_000_000, durationMs: 42 };
+    const timings = (phases: unknown[]): unknown => ({ version: 1, phases });
+
+    // The four lane-scoped phases MUST name their lane. A `lens-draft` with no lens is the
+    // record #726's benchmark reader cannot attribute — it is a measurement of nothing in
+    // particular, and it used to be representable.
+    for (const phase of LENS_SCOPED_PHASES) {
+      expect(GenerationPhaseTimingSchema.safeParse({ ...base, phase }).success).toBe(false);
+      expect(GenerationPhaseTimingSchema.safeParse({ ...base, phase, lens: "noise" }).success).toBe(
+        true,
+      );
+    }
+
+    // The three generation-wide phases must NOT. A `coverage` record naming Design would
+    // read as "the cross-lens assert for Design", which is not a thing that exists.
+    for (const phase of ["report", "coverage", "reveal"] as const) {
+      expect(GenerationPhaseTimingSchema.safeParse({ ...base, phase }).success).toBe(true);
+      expect(
+        GenerationPhaseTimingSchema.safeParse({ ...base, phase, lens: "design" }).success,
+      ).toBe(false);
+    }
+
+    // Provenance is optional on either side and survives the round trip.
+    const seat = GenerationPhaseTimingSchema.parse({
+      ...base,
+      phase: "lens-draft",
+      lens: "flagged",
+      harness: "codex",
+      model: "gpt-5-codex",
+    });
+    expect(seat).toMatchObject({ harness: "codex", model: "gpt-5-codex" });
+
+    // Two Flagged seat records in one generation — the dual-lane shape #726 D8 derives
+    // "dual-model" from — parse as a whole timings block.
+    const gen = {
+      id: "gen-1",
+      patchsetId: "ps-1",
+      lensBoards: {},
+      status: "live" as const,
+    };
+    expect(
+      GenerationSchema.safeParse({
+        ...gen,
+        timings: timings([
+          { ...base, phase: "lens-draft", lens: "flagged", harness: "claude-code", model: "opus" },
+          { ...base, phase: "lens-draft", lens: "flagged", harness: "codex", model: "gpt-5-codex" },
+          { ...base, phase: "reveal" },
+        ]),
+      }).success,
+    ).toBe(true);
+
+    // APPEND-ONLY: a generation written before timings existed carries none and keeps
+    // parsing. The constraint above is on the RECORD, never on the field's presence.
+    expect(GenerationSchema.safeParse(gen).success).toBe(true);
+    expect(GenerationSchema.parse(gen).timings).toBeUndefined();
   });
 
   it("declares which absence each lens may settle with (#549)", () => {

@@ -3397,6 +3397,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             roundProgress.emit(operation.reviewId, { ...event, ...progressOperation });
           },
         });
+        // The round's code has LANDED and been re-captured by the time this step runs, so
+        // this is the moment the reviewer starts waiting for a board (#725 D4). The
+        // rounds runtime cannot know it — from in there, the wait looks like it starts
+        // after board minting and provider resolution.
+        const firstBoardWaitOriginMs = Date.now();
         const regenerated = await runBoardRegeneration(
           boardDraftingDeps(
             review,
@@ -3409,6 +3414,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           {
             session,
             repoRoot: operation.repoRoot,
+            firstBoardWaitOriginMs,
             priorPatchsetId: operation.sourcePatchsetId,
             asksDispatched: operation.askOccurrences.map((occurrence) => occurrence.id),
             dispatchId: operation.dispatchId,
@@ -3602,6 +3608,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     emit: (event: RoundEvent) => void = () => undefined,
     signal?: AbortSignal,
   ): Promise<boolean> {
+    // The captured input is READY — this is where the reviewer's wait for a first board
+    // starts (#725 D4), ahead of the session entry, the collation and every mint.
+    const firstBoardWaitOriginMs = Date.now();
     const patchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
     if (patchset === undefined) return false;
     // The SAME mint the round dispatch takes (#580/#587): it prefers the session already
@@ -3637,6 +3646,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       {
         session,
         repoRoot: review.repositoryRoot,
+        firstBoardWaitOriginMs,
         // The review's OWN patchset is the prior: nothing moved, so this drafts the first
         // generation over it rather than minting a successor to something that never ran.
         priorPatchsetId: review.activePatchsetId,

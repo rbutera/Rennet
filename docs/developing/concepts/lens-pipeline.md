@@ -264,17 +264,42 @@ revealed board and never rewrites one.
 
 **Per-phase timings are durable and versioned.** One record per phase —
 `report`, each lane's `lens-draft` / `lens-repair` / `lens-post-process`,
-`coverage`, `reveal`, and `first-core-board` — carries the wall-clock start, the
-measured duration, and, for a lane that ran a single resolved seat, the harness
-and model that executed it. They live on the generation under a versioned
-`timings` record, so no label can absorb another phase's time and later
-benchmark work reads one spine rather than inventing a second.
+`coverage`, `reveal`, and `first-core-board` — carries the wall-clock start and
+the measured duration. They live on the generation under a versioned `timings`
+record, so no label can absorb another phase's time and later benchmark work
+reads one spine rather than inventing a second. `lens` is discriminated on the
+record: the four lane-scoped phases require it, the three generation-wide ones
+forbid it.
+
+Two of those records are measured from a boundary the pipeline does not own.
+`first-core-board` starts from the moment the **reviewer's** wait began — the
+captured input becoming ready on an initial generation, the round landing and
+its report verifying on a returned one — which the caller supplies, because
+measuring from the drafting runtime's own entry would silently exclude board
+minting, partial-state cleanup and provider resolution. `reveal` ends at the
+last lane that actually revealed something; a lane that failed revealed nothing
+and does not extend the window.
+
+**Every stage record names what ran it, one record per seat.** A single-seat
+lane emits one `lens-draft` record carrying that seat's harness and model. The
+Flagged lane runs two seats, so it emits **two** — each with its own provenance
+and its own wall-clock span, and the lane's aggregate span is min-start to
+max-end across them. That is what makes "this run was dual-model" derivable from
+the stages rather than assumed from settings; one merged record could name no
+harness at all, which answered the question with silence.
 
 **Repair budgets are per lane and per whole-board attempt.** The first drafting
-run over a generation spends the lane's full ladder; a repeat whole-board
-attempt — the redraft a restart's partial-state recovery starts — draws an
-explicitly reduced one, so restart recovery cannot refresh a full ladder every
-time.
+run over a generation spends the lane's full ladder; every repeat whole-board
+attempt — the redraft a restart's partial-state recovery starts — draws the same
+repeat entry, so one restart costs one draft plus that budget rather than a
+silently refreshed ladder. The repeat entry is reduced but never zero: a zero
+budget ends a lane on one malformed output, and the restart recovery that exists
+to re-draft a retryable lens could then never produce a board for it.
+
+**Cross-lens coverage is attempt-scoped.** A redraft clears the replaced
+attempt's coverage state durably and republishes `pending` on its first frame,
+so a reconnecting client never reads "every hunk covered" beside lanes that are
+queued for a redraft over boards that no longer exist.
 
 The classified report path also emits content-free diagnostics. Its fixed
 milestones distinguish provider time from session cleanup, schema parsing,

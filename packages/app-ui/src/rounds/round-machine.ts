@@ -194,6 +194,46 @@ export function roundTargetLabel(target: RoundRunIdentity["sourceTarget"]): stri
   return target.kind === "branch" ? target.branch : `detached at ${target.head.slice(0, 12)}`;
 }
 
+/** The status register a coverage row renders in. `warn` is not a `RowStatus`: it is the
+ *  copper caution register, and it exists here because a coverage run that COMPLETED with
+ *  uncovered hunks is neither a failure to fix nor a clean result — a green check over
+ *  "3 hunks uncovered" reads as done and says the opposite of what the text beside it does. */
+export type CoverageStatus = "running" | "done" | "failed" | "warn";
+
+export function coverageStatus(coverage: GenerationCoverage): CoverageStatus {
+  switch (coverage.state) {
+    case "pending":
+      return "running";
+    case "failed":
+      return "failed";
+    case "complete":
+      return coverage.violations === 0 ? "done" : "warn";
+  }
+}
+
+/**
+ * The reviewer-facing sentence for one cross-lens coverage state (#725 D4). ONE helper for
+ * both surfaces that render it — the round greeting and the initial generation's
+ * preparation screen — because two copies of a user-visible sentence drift, and coverage
+ * is the same fact whichever screen is asking.
+ *
+ * Coverage ANNOTATES the boards already on screen: it never gates their reveal and never
+ * rewrites one, so `pending` has to be sayable beside settled lanes rather than
+ * represented by hiding them.
+ */
+export function coverageNote(coverage: GenerationCoverage): string {
+  switch (coverage.state) {
+    case "pending":
+      return "Cross-lens coverage · still running";
+    case "complete":
+      return coverage.violations === 0
+        ? "Cross-lens coverage · every hunk covered"
+        : `Cross-lens coverage · ${coverage.violations} hunk${coverage.violations === 1 ? "" : "s"} uncovered`;
+    case "failed":
+      return `Cross-lens coverage · could not be computed — ${coverage.reason}`;
+  }
+}
+
 function countLabel(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }

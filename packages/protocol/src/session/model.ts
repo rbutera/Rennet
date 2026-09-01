@@ -216,20 +216,56 @@ export type GenerationPhase = z.infer<typeof GenerationPhaseSchema>;
 const councilHarnessIds = ["claude-code", "codex"] as const satisfies readonly CouncilHarnessId[];
 
 /**
+ * The phases that measure ONE lane and therefore must name it. Everything else is
+ * generation-wide and must not: a `coverage` record carrying a lens would read as "the
+ * cross-lens assert for Design", which is not a thing that exists.
+ */
+export const LENS_SCOPED_PHASES = [
+  "lens-draft",
+  "lens-repair",
+  "lens-post-process",
+  "first-core-board",
+] as const satisfies readonly GenerationPhase[];
+
+/**
  * One phase's durable timing record. `startedAtMs` is a wall-clock epoch so records from
  * different phases can be ordered and overlapped without a shared cursor; `durationMs` is
  * the measured span. `harness`/`model` name what ACTUALLY executed the stage (the Council
  * routes per job, so a run-level label would be an assumption) and are absent for phases
- * no provider ran, or for a stage whose seats were not one seat.
+ * no provider ran.
+ *
+ * `lens` is DISCRIMINATED, not merely optional (#725 7.4): the four lane-scoped phases
+ * require it and the three generation-wide ones forbid it, so neither "a lane record that
+ * forgot which lane" nor "a cross-lens record attributed to one lens" is representable.
+ * This is a constraint on the RECORD, not a new field — a generation written before
+ * timings existed carries no `timings` at all and keeps parsing untouched.
  */
-export const GenerationPhaseTimingSchema = z.object({
-  phase: GenerationPhaseSchema,
-  lens: z.enum(LENS_KINDS).optional(),
-  startedAtMs: z.number().int().nonnegative(),
-  durationMs: z.number().int().nonnegative(),
-  harness: z.enum(councilHarnessIds).optional(),
-  model: z.string().min(1).optional(),
-});
+export const GenerationPhaseTimingSchema = z
+  .object({
+    phase: GenerationPhaseSchema,
+    lens: z.enum(LENS_KINDS).optional(),
+    startedAtMs: z.number().int().nonnegative(),
+    durationMs: z.number().int().nonnegative(),
+    harness: z.enum(councilHarnessIds).optional(),
+    model: z.string().min(1).optional(),
+  })
+  .superRefine((timing, ctx) => {
+    const laneScoped = (LENS_SCOPED_PHASES as readonly GenerationPhase[]).includes(timing.phase);
+    if (laneScoped && timing.lens === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lens"],
+        message: `the ${timing.phase} phase measures one lane and must name its lens`,
+      });
+    }
+    if (!laneScoped && timing.lens !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lens"],
+        message: `the ${timing.phase} phase is generation-wide and must not name a lens`,
+      });
+    }
+  });
 export type GenerationPhaseTiming = z.infer<typeof GenerationPhaseTimingSchema>;
 
 /** The timing-record schema version. Bump when a record's MEANING changes; adding an

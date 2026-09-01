@@ -34,7 +34,7 @@ When cross-lens coverage is still pending while core boards are visible, the sur
 
 ### Requirement: Reveal state is durable and reconstructable
 
-Per-lane settlements and a generation-keyed coverage state (`pending` / `complete` / `failed`) SHALL be durable. After a client reconnect or daemon restart mid-generation, the surface SHALL reconstruct exactly which lanes settled with what and what coverage state holds. A write from a superseded generation attempt SHALL be rejected, never folded into the current generation's state.
+Per-lane settlements and a generation-keyed coverage state (`pending` / `complete` / `failed`) SHALL be durable, and SHALL survive the generation's final settle rather than being overwritten by it. Coverage is attempt-scoped: a replacement attempt SHALL clear the replaced attempt's coverage durably and publish `pending` on its first frame, so no surface shows a completed coverage beside lanes queued for a redraft. After a client reconnect or daemon restart mid-generation, the surface SHALL reconstruct exactly which lanes settled with what and what coverage state holds. A write from a superseded generation attempt SHALL be rejected AND SHALL NOT be broadcast — a refusal on disk that still reaches connected clients publishes a dead attempt's work under the live generation's label.
 
 #### Scenario: Daemon restarts mid-generation
 
@@ -48,12 +48,17 @@ Per-lane settlements and a generation-keyed coverage state (`pending` / `complet
 
 ### Requirement: Generation phases carry distinct durable timings
 
-The system SHALL record distinct durable timings for the round report, each lens lane's draft, repair, and post-process steps, coverage, and reveal — including time-to-first-core-board per generation. The visible phase label SHALL name the phase actually running; lens work SHALL NOT be labeled as report drafting.
+The system SHALL record distinct durable timings for the round report, each lens lane's draft, repair, and post-process steps, coverage, and reveal — including time-to-first-core-board per generation. A lane that runs more than one seat SHALL record one draft timing PER SEAT, each naming the harness and model that executed it, so the lane's aggregate span stays derivable while no stage record is left unattributable. Time-to-first-core-board SHALL be measured from the moment the reviewer's wait began — the captured input on an initial generation, the landed round and verified report on a returned one — not from the drafting runtime's own entry. The `reveal` timing SHALL end at the last lane that actually revealed a result. The visible phase label SHALL name the phase actually running; lens work SHALL NOT be labeled as report drafting.
 
 #### Scenario: Reviewer inspects a finished regeneration
 
 - **WHEN** a post-round regeneration completes
 - **THEN** durable per-phase timings exist for report, each lens lane, coverage, reveal, and time-to-first-core-board, and no single label absorbed another phase's time
+
+#### Scenario: The dual Flagged lane records both seats
+
+- **WHEN** the Flagged lane runs two harnesses
+- **THEN** two draft timings are recorded for that lane, each naming its own harness and model, and the run's dual-model mode is derivable from those records alone
 
 #### Scenario: Positive control mislabels lens work
 
@@ -62,12 +67,17 @@ The system SHALL record distinct durable timings for the round report, each lens
 
 ### Requirement: Retry budgets are proportional per lane and attempt
 
-Each lens lane's retry/editor budget SHALL be bounded per lane and per attempt. A repeated whole-board attempt SHALL receive an explicitly reduced bounded budget, never a silently refreshed full validation-retry ladder.
+Each lens lane's retry/editor budget SHALL be bounded per lane and per attempt by an explicit table. A repeated whole-board attempt SHALL draw the table's repeat entry rather than a silently refreshed full validation-retry ladder. The repeat entry SHALL never exceed the first attempt's, so N restarts cost N bounded attempts; and it SHALL never be zero, because a zero budget ends a lane on one malformed output and the restart recovery exists precisely to re-draft such a lane.
 
 #### Scenario: Second whole-board attempt on one lane
 
 - **WHEN** a lane's first board attempt fails and a second whole-board attempt starts
-- **THEN** the second attempt runs under an explicitly reduced bounded budget
+- **THEN** the second attempt runs under the table's bounded repeat budget, no richer than the first attempt's
+
+#### Scenario: A repeat attempt hits one malformed output
+
+- **WHEN** a restart's redraft receives an unparseable board on its first turn
+- **THEN** the lane still has a repair turn and can produce a board, rather than terminating permanently
 
 ### Requirement: The owner journey is proven on a tiny real round
 

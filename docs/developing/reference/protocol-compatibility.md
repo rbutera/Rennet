@@ -224,7 +224,11 @@ The generation's cross-lens **coverage state** and its per-phase **timings** fol
 the same rule. `coverage` is `pending`, `complete` (with a violation count), or
 `failed` (with a reason); it also rides the lens progress frame and the initial
 generation's session-preparation record. `timings` carries a `version` and one
-record per phase. A generation or a daemon without either field says nothing about
+record per phase — per SEAT for a lane that ran more than one, so the Flagged
+dual seat contributes two `lens-draft` records rather than one anonymous span.
+A record's `lens` is discriminated by its phase: the lane-scoped phases require
+it and the generation-wide ones refuse it, which is a constraint on the record
+and never on the field's presence. A generation or a daemon without either field says nothing about
 coverage or duration: an absent coverage state means **unknown**, never "coverage
 passed", and the surfaces render no coverage line at all rather than a default one.
 

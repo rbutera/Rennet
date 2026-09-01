@@ -35,6 +35,7 @@ import {
   type DesignCoverageMapper,
   designDraftOutputSchema,
   draftToOps,
+  LENS_RETRY_BUDGET,
   lensRetryBudget,
   projectDesignTaskProgress,
   REPAIR_TARGET_KINDS,
@@ -786,7 +787,15 @@ function assertProgressiveReveal(
  * exact defect the durable per-phase timings exist to make impossible — one label
  * absorbing another phase's time.
  *
- * A function, not inline expectations, so the control below can feed it a mislabeled
+ * The property asserted is exactly "no lens time sits under the report label": the report
+ * span and every lens span must not OVERLAP, which for phases that run in this order is
+ * `reportEnd <= lensStart`. Two earlier readings of this both got it wrong and in opposite
+ * directions — comparing the lens's END to the report's end missed a report that ends
+ * PARTWAY through a lane (the lane finishes later, so the check passed while real lens
+ * time sat under the report label), and a strict `<` on the boundary would fail an honest
+ * zero-duration lens starting the instant the report ended. Touching is not overlapping.
+ *
+ * A function, not inline expectations, so the controls below can feed it a mislabeled
  * stream and prove it rejects one.
  */
 function assertReportLabelExcludesLensTime(timings: readonly GenerationPhaseTiming[]): void {
@@ -794,11 +803,13 @@ function assertReportLabelExcludesLensTime(timings: readonly GenerationPhaseTimi
   // span beside an honest one is the same lie, and a `find` would read past it.
   for (const report of timings.filter(({ phase }) => phase === "report")) {
     const reportEnds = report.startedAtMs + report.durationMs;
+    // …and EVERY lens phase, not the first: one absorbed lane is the defect regardless of
+    // how many honest ones sit beside it.
     for (const timing of timings) {
       if (!timing.phase.startsWith("lens-")) continue;
-      if (timing.startedAtMs + timing.durationMs <= reportEnds) {
+      if (reportEnds > timing.startedAtMs) {
         throw new Error(
-          `the report label absorbed ${timing.phase}${timing.lens === undefined ? "" : ` (${timing.lens})`}: a report record spans ${report.durationMs}ms to ${reportEnds}, past that lens phase's end`,
+          `the report label absorbed ${timing.phase}${timing.lens === undefined ? "" : ` (${timing.lens})`}: the report record runs to ${reportEnds}, past that lens phase's start at ${timing.startedAtMs}`,
         );
       }
     }
@@ -5123,14 +5134,194 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       expect(Number.isInteger(timing.startedAtMs) && timing.startedAtMs > 0).toBe(true);
       expect(Number.isInteger(timing.durationMs) && timing.durationMs >= 0).toBe(true);
     }
-    // The single-seat lanes name the harness and model that actually ran them; the Flagged
-    // dual seat names none, because its span belongs to two of them.
+    // Every lane names the harness and model that actually ran it. Only one harness is
+    // installed here, so Flagged degrades to a single seat and names THAT one — the
+    // genuinely dual case is the test below, which needs two harnesses to exist at all.
     const noiseDraft = timings.find((t) => t.phase === "lens-draft" && t.lens === "noise");
     expect(noiseDraft?.harness).toBe("claude-code");
     expect(noiseDraft?.model).toBeDefined();
-    expect(timings.find((t) => t.phase === "lens-draft" && t.lens === "flagged")?.harness).toBe(
-      undefined,
+    const flaggedDrafts = timings.filter((t) => t.phase === "lens-draft" && t.lens === "flagged");
+    expect(flaggedDrafts).toHaveLength(1);
+    expect(flaggedDrafts[0]?.harness).toBe("claude-code");
+  });
+
+  it("emits ONE lens-draft record per Flagged seat, each naming what ran it (#726 D8)", async () => {
+    // A genuinely dual lane: BOTH fake harnesses are installed, so `runFlaggedDual` runs
+    // two seats rather than degrading. That is load-bearing — the previous version of this
+    // assertion ran with `codexExecutor: null`, so exactly one seat ever ran, and "the dual
+    // seat names no harness" passed because there was no dual seat.
+    const timings: GenerationPhaseTiming[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      codexExecutor: (async (req: { prompt: string }) => ({
+        output: cleanBody(lensFromPrompt(req.prompt)),
+      })) as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+    });
+    expect(result.boards.find(({ lens }) => lens === "flagged")?.boardId).toBe("board:flagged");
+
+    // TWO Flagged draft records, one per seat, and between them BOTH harnesses — which is
+    // what makes "this run was dual-model" derivable from the stages instead of assumed
+    // from settings. Every record names its model too.
+    const flaggedDrafts = timings.filter((t) => t.phase === "lens-draft" && t.lens === "flagged");
+    expect(flaggedDrafts).toHaveLength(2);
+    expect(new Set(flaggedDrafts.map(({ harness }) => harness))).toEqual(
+      new Set(["claude-code", "codex"]),
     );
+    for (const record of flaggedDrafts) expect(record.model).toBeDefined();
+
+    // A single-seat lane still emits exactly one, so the count itself distinguishes the two
+    // — a dual lane and a degraded one are not the same shape.
+    expect(timings.filter((t) => t.phase === "lens-draft" && t.lens === "noise")).toHaveLength(1);
+
+    // The LANE's aggregate span stays derivable: min start to max end across its seats.
+    const laneFrom = Math.min(...flaggedDrafts.map(({ startedAtMs }) => startedAtMs));
+    const laneTo = Math.max(...flaggedDrafts.map((t) => t.startedAtMs + t.durationMs));
+    expect(laneTo).toBeGreaterThanOrEqual(laneFrom);
+  });
+
+  it("ends the `reveal` window at the last lane that REVEALED, not the last that settled", async () => {
+    // Ordering is CONTROLLED, not hoped for: each lens seat waits on its own gate, so the
+    // lane that reveals nothing settles strictly last. Without that, a run where the
+    // failing lane happened to finish early would pass under both the honest code and the
+    // defect, and this test would prove nothing.
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+    const timings: GenerationPhaseTiming[] = [];
+    let ticks = 1_000;
+    const releases = new Map<LensKind, () => void>();
+    const gates = new Map<LensKind, Promise<void>>(
+      lenses.map((lens) => [
+        lens,
+        new Promise<void>((resolve) => {
+          releases.set(lens, resolve);
+        }),
+      ]),
+    );
+    const announceArrival = new Map<LensKind, () => void>();
+    const arrived = new Map<LensKind, Promise<void>>(
+      lenses.map((lens) => [
+        lens,
+        new Promise<void>((resolve) => {
+          announceArrival.set(lens, resolve);
+        }),
+      ]),
+    );
+    const revealing = lenses.filter((lens) => lens !== "design");
+
+    const pipeline = runLensPipeline({
+      claudePort: null,
+      codexExecutor: (async (req: { prompt: string }) => {
+        const lens = lensFromPrompt(req.prompt) as LensKind;
+        await gates.get(lens);
+        ticks += 1;
+        // Design never emits a parseable board, so it settles as a FAILURE — a settlement
+        // that reveals nothing, which is exactly the case the window must exclude.
+        return { output: lens === "design" ? { not: "a board" } : cleanBody(lens) };
+      }) as never,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      onBoardArrival: (event) => {
+        ticks += 5;
+        announceArrival.get(event.lens as LensKind)?.();
+      },
+      onPhaseTiming: (timing) => {
+        timings.push(timing);
+      },
+      now: () => ticks,
+    });
+
+    for (const lens of revealing) releases.get(lens)?.();
+    await Promise.all(revealing.map((lens) => arrived.get(lens)));
+    // The clock at the moment the LAST reveal landed. Design is still parked on its gate,
+    // so nothing else can have moved it.
+    const lastRevealTick = ticks;
+
+    releases.get("design")?.();
+    const result = await pipeline;
+    expect(result.boards.find(({ lens }) => lens === "design")?.failure).toBeDefined();
+
+    // The failing lane's settlement moved the clock well past the last reveal, so the two
+    // candidate window ends are distinguishable — this is the control built into the test.
+    expect(ticks).toBeGreaterThan(lastRevealTick);
+    const reveal = timings.find(({ phase }) => phase === "reveal");
+    expect(reveal).toBeDefined();
+    expect((reveal?.startedAtMs ?? 0) + (reveal?.durationMs ?? 0)).toBe(lastRevealTick);
+  });
+
+  it("records the `reveal` timing even when a lane throws, and says coverage never ran", async () => {
+    // A scripted clock and a persistence sink that throws for one lane. The throwing lane
+    // settles LAST and reveals nothing, so two claims are under test at once:
+    //   • its settlement must not extend the `reveal` window — otherwise the record
+    //     measures the fan-out and wears the reveal's name;
+    //   • the record must exist at all, because it used to be written after an
+    //     `outcomes.map` that rethrows a rejected lane, and so was lost exactly when a run
+    //     failed.
+    const timings: GenerationPhaseTiming[] = [];
+    const coverageStates: GenerationCoverage[] = [];
+    let ticks = 1_000;
+    let revealed = 0;
+
+    await expect(
+      runLensPipeline({
+        claudePort: fakeClaudePort([], (prompt) => {
+          ticks += 10;
+          return cleanBody(lensFromPrompt(prompt));
+        }),
+        codexExecutor: null,
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        hunks: [] as LintHunk[],
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        persistBoardMeta: (meta) => {
+          // Noise dies on its durable write — an infrastructure failure, which is what
+          // `allSettled` collects as a REJECTED lane.
+          if (meta.lens === "noise") throw new Error("the noise lane's metadata store died");
+        },
+        onBoardArrival: () => {
+          revealed += 1;
+          // Every real reveal costs 100 ticks; the failing lane's settlement costs 1000, so
+          // a window that closed on it instead would be unmistakable.
+          ticks += 100;
+        },
+        onCoverageState: (coverage) => {
+          coverageStates.push(coverage);
+          ticks += 1_000;
+        },
+        onPhaseTiming: (timing) => {
+          timings.push(timing);
+        },
+        now: () => ticks,
+      }),
+    ).rejects.toThrow("the noise lane's metadata store died");
+
+    // Four lanes revealed; Noise died before its arrival.
+    expect(revealed).toBe(4);
+    // The record EXISTS. It used to be written after an `outcomes.map` that rethrows a
+    // rejected lane, so a run that died lost the timing for the window it most needed
+    // explaining. (Where the window ENDS is the test above, which controls the ordering.)
+    expect(timings.some(({ phase }) => phase === "reveal")).toBe(true);
+
+    // And coverage says what actually happened rather than sitting at `pending` forever.
+    expect(coverageStates.map(({ state }) => state)).toEqual(["pending", "failed"]);
+    // No `coverage` timing: that phase never ran, and a duration for it would be invented.
+    expect(timings.some(({ phase }) => phase === "coverage")).toBe(false);
   });
 
   it("keeps the report phase's timing to the report, never absorbing the lens lanes", async () => {
@@ -5186,13 +5377,40 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       { phase: "lens-draft", lens: "noise", startedAtMs: 1_101, durationMs: 100 },
     ];
     expect(() => assertReportLabelExcludesLensTime(mislabeled)).toThrow(/absorbed/);
+
+    // PARTIAL overlap — the case the earlier reading of this assertion could not see. The
+    // report ends partway through a lane that finishes later, so comparing the lane's END
+    // to the report's end passed it while real lens time sat under the report label.
+    const partial: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 50 },
+      { phase: "lens-draft", lens: "sequence", startedAtMs: 1_001, durationMs: 100 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(partial)).toThrow(/absorbed/);
+
+    // …and the boundary the same fix must NOT reject: a zero-duration lens phase starting
+    // the instant the report ended. Touching is not overlapping, and no lens time sits
+    // under the report label here.
+    const touching: GenerationPhaseTiming[] = [
+      { phase: "report", startedAtMs: 1_000, durationMs: 1 },
+      { phase: "lens-repair", lens: "noise", startedAtMs: 1_001, durationMs: 0 },
+    ];
+    expect(() => assertReportLabelExcludesLensTime(touching)).not.toThrow();
   });
 
-  it("spends the per-lane repair budget on the first whole-board attempt and a reduced one on a repeat", async () => {
-    expect(lensRetryBudget("sequence", 0)).toBe(1);
-    expect(lensRetryBudget("sequence", 1)).toBe(0);
-    // Every repeat draws the same reduced entry — attempt 5 is no richer than attempt 1.
-    expect(lensRetryBudget("sequence", 5)).toBe(0);
+  it("budgets every whole-board attempt from the table, and never starves a repeat", async () => {
+    // The table's contract, over EVERY lane rather than the one the behavioural half below
+    // happens to drive: a repeat attempt is never RICHER than the first (that bound is what
+    // stops restart recovery refreshing a full ladder each time) and never ZERO (a zero
+    // repeat terminates a lane on one malformed output, so wave 3's restart recovery —
+    // which exists to re-draft a retryable lens — could never produce a board for it).
+    for (const [lens, [first, repeat]] of Object.entries(LENS_RETRY_BUDGET)) {
+      expect(`${lens}:${repeat <= first}`).toBe(`${lens}:true`);
+      expect(`${lens}:${repeat > 0}`).toBe(`${lens}:true`);
+    }
+    expect(lensRetryBudget("sequence", 0)).toBe(LENS_RETRY_BUDGET.sequence[0]);
+    // Every repeat draws the same repeat entry — attempt 5 is no richer than attempt 1.
+    expect(lensRetryBudget("sequence", 1)).toBe(LENS_RETRY_BUDGET.sequence[1]);
+    expect(lensRetryBudget("sequence", 5)).toBe(LENS_RETRY_BUDGET.sequence[1]);
 
     const runWithAttempt = async (boardAttempt: number) => {
       const sequenceTurns: string[] = [];
@@ -5225,11 +5443,37 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(first.sequence?.failure).toBeUndefined();
     expect(first.sequence?.boardId).toBe("board:sequence");
 
+    // The repeat attempt still gets its repair turn, so ONE malformed output does not end
+    // the lane. This is the whole point of a reduced-but-non-zero repeat: the restart
+    // redraft recovers exactly the lens it was started for.
     const repeat = await runWithAttempt(1);
-    expect(repeat.turns).toBe(1);
-    expect(repeat.sequence?.boardId).toBeUndefined();
-    expect(repeat.sequence?.failure).toContain("no parseable board across 0 attempts");
-    expect(repeat.sequence?.failureAccount).toEqual({ attempt: 0, classification: "terminal" });
+    expect(repeat.turns).toBe(2);
+    expect(repeat.sequence?.failure).toBeUndefined();
+    expect(repeat.sequence?.boardId).toBe("board:sequence");
+  });
+
+  it("names the BUDGET, not a bare count, when a lane's repair ladder produced no board", async () => {
+    // "across 0 attempts" read as a contradiction — it claimed a ladder was spent and that
+    // none was. The sentence now says what was allotted and what was used.
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        return lens === "sequence" ? { not: "a board" } : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      hunks: [] as LintHunk[],
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    expect(sequence?.failure).toContain(
+      `no parseable board (${LENS_RETRY_BUDGET.sequence[0]} of ${LENS_RETRY_BUDGET.sequence[0]} budgeted repair turn`,
+    );
+    expect(sequence?.failureAccount?.classification).toBe("terminal");
   });
 
   it("positive control: a global all-lanes barrier before reveal fails the reveal assertion", () => {

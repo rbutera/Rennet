@@ -1,5 +1,4 @@
 import {
-  type GenerationCoverage,
   newCommandId,
   type RennetBridge,
   type SessionPreparation,
@@ -17,6 +16,7 @@ import { ArchivedView } from "../project/archived-view";
 import { BackgroundNarration } from "../project/indexing/background-narration";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
+import { coverageNote, coverageStatus } from "../rounds/round-machine";
 import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
 import { RunRoute, StatusIcon } from "../rounds/run-route";
 import {
@@ -228,25 +228,6 @@ function preparationLaneNote(
   return lane.status;
 }
 
-/**
- * The reviewer-facing sentence for one cross-lens coverage state (#725 D4). The initial
- * generation reveals boards as their lanes settle, so the surface has to say where
- * coverage stands beside them — coverage annotates the revealed boards, it never gates
- * them and never rewrites one.
- */
-function preparationCoverageNote(coverage: GenerationCoverage): string {
-  switch (coverage.state) {
-    case "pending":
-      return "Cross-lens coverage · still running";
-    case "complete":
-      return coverage.violations === 0
-        ? "Cross-lens coverage · every hunk covered"
-        : `Cross-lens coverage · ${coverage.violations} hunk${coverage.violations === 1 ? "" : "s"} uncovered`;
-    case "failed":
-      return `Cross-lens coverage · could not be computed — ${coverage.reason}`;
-  }
-}
-
 function PreparationLanes({ preparation }: { readonly preparation: SessionPreparation }) {
   const lanes = "lanes" in preparation ? preparation.lanes : undefined;
   const coverage = "coverage" in preparation ? preparation.coverage : undefined;
@@ -278,18 +259,11 @@ function PreparationLanes({ preparation }: { readonly preparation: SessionPrepar
           data-row="coverage"
           data-testid="cross-lens-coverage"
           data-coverage={coverage.state}
+          data-status={coverageStatus(coverage)}
           className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
         >
-          <StatusIcon
-            status={
-              coverage.state === "pending"
-                ? "running"
-                : coverage.state === "failed"
-                  ? "failed"
-                  : "done"
-            }
-          />
-          <span className="text-muted-foreground">{preparationCoverageNote(coverage)}</span>
+          <StatusIcon status={coverageStatus(coverage)} />
+          <span className="text-muted-foreground">{coverageNote(coverage)}</span>
         </div>
       )}
     </div>
