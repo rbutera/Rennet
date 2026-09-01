@@ -534,8 +534,10 @@ start. Quitting a client connected to a remote daemon does not stop that remote
 process.
 
 Public macOS releases are signed with Developer ID and notarized by Apple. The
-packaged app checks the public GitHub-backed update feed every five minutes;
-development and ad hoc packages do not contact it.
+packaged app checks the public GitHub-backed update feed every five minutes
+until an update is downloaded, then stops checking so the staged install stays
+installable until you choose it; development and ad hoc packages do not contact
+the feed at all.
 
 ## Next steps
 
