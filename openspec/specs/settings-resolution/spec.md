@@ -3,9 +3,7 @@
 ## Purpose
 
 Every setting resolves through one declared schema and one layered resolver. The resolved value includes its provenance, so the settings screen can explain, reset, and pin it without per-row resolution code.
-
 ## Requirements
-
 ### Requirement: Settings keys are declared in one schema registry
 Every consumed setting SHALL be declared in a single schema registry entry stating its value schema, builtin default, permitted layers, merge strategy, and provenance formatter. The resolver and settings screen SHALL derive from the registry. No consumed setting SHALL resolve outside it. If a config value fails its declared schema, the resolver SHALL exclude the file's layer and edits SHALL leave the malformed file untouched. It SHALL NOT coerce or drop the invalid value silently.
 
@@ -64,3 +62,20 @@ Global and per-repo config files MAY omit registered keys. Absent keys SHALL res
 #### Scenario: A settings row without locus provenance normalizes at the boundary
 - **WHEN** a settings-view row without `locusProvenance` is parsed
 - **THEN** it is accepted and the parsed row carries derived `detected` or `repo` locus provenance matching `locusOverridden`
+
+### Requirement: Viewer navigation and welcome preferences persist outside the ladder
+
+Client settings SHALL persist the first-run completion state, selected theme pack, and last-used project as viewer-owned preferences outside the `builtin < detected < global < repo` settings ladder. Reads SHALL accept an untouched settings file with those fields absent. Writes SHALL leave a malformed client-settings file byte-for-byte untouched.
+
+#### Scenario: Untouched client settings
+- **WHEN** `client-settings.json` contains only its supported version
+- **THEN** the welcome is incomplete, the default Affineur theme pack applies, and no last-used project is assumed
+
+#### Scenario: Client preferences round-trip
+- **WHEN** the welcome completion, theme pack, and last-used project are written and the client restarts
+- **THEN** the same values are read back without entering repository settings or the daemon settings ladder
+
+#### Scenario: Malformed client settings refuse the write
+- **WHEN** `client-settings.json` is malformed and one of the new client preferences is changed
+- **THEN** the write is refused and the malformed file remains byte-for-byte unchanged
+
