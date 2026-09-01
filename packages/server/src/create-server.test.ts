@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -33,6 +34,7 @@ import type {
 } from "@rennet/protocol";
 import {
   generationIdForPatchset,
+  parseCommandOutput,
   ROUND_NO_REGEN,
   roundSourceLandingTransactionPath,
   sha256Hex,
@@ -257,6 +259,45 @@ describe("coding-harness resolution", () => {
         "The claude-code resolver returned codex; refusing to run a different harness than the selected one.",
     });
   });
+
+  // The SAME misresolution, on the path a first round actually takes: unpinned. The
+  // pinned test above passed while this shape reported "No enabled coding harness" —
+  // the unpinned branch skipped a wrong-provider port and fell through to the generic
+  // line, throwing away what the resolver had returned. That is a wrong diagnosis, not
+  // a vague one: it tells a user with both harnesses installed to go install one.
+  // Deleting either `misresolution(...)` entry from the joined reason reddens this.
+  it("keeps the sought/found mismatch in the reason when an unpinned resolver misresolves", async () => {
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => codingPort("codex", "0.146.0"),
+      resolveCodex: async () => codingPort("claude-code", "2.1.220"),
+    });
+
+    expect(resolution).toEqual({
+      status: "unavailable",
+      reason:
+        "The claude-code resolver returned codex; refusing to run a different harness than the selected one.; " +
+        "The codex resolver returned claude-code; refusing to run a different harness than the selected one.",
+    });
+    // The generic fallback must NOT be what a misresolution reports.
+    expect(resolution.status === "unavailable" ? resolution.reason : "").not.toContain(
+      "No enabled coding harness",
+    );
+  });
+
+  // One resolver misresolving while the other is simply absent — the realistic single-
+  // sided shape, and the one where the generic line was most convincing.
+  it("names the misresolved provider even when the other resolver found nothing", async () => {
+    const resolution = await resolveCodingHarness({
+      resolveClaude: async () => null,
+      resolveCodex: async () => codingPort("claude-code", "2.1.220"),
+    });
+
+    expect(resolution).toEqual({
+      status: "unavailable",
+      reason:
+        "The codex resolver returned claude-code; refusing to run a different harness than the selected one.",
+    });
+  });
 });
 
 describe("requirement-coverage seat provenance (#681 residue, C14 D3)", () => {
@@ -313,6 +354,111 @@ describe("requirement-coverage seat provenance (#681 residue, C14 D3)", () => {
       },
     });
   });
+});
+
+// The unit tests above exercise `coverageSeatFor` directly, which proves the branch but
+// not that PRODUCTION reaches it: `runLiveCoverage` could go back to calling
+// `claudeAdapterForRepo` and every one of them would stay green. This drives the real
+// `openspec.coverage` command through a composed server whose only harness is Codex.
+//
+// POSITIVE CONTROL (run 2026-09-01, restored after): replace `runLiveCoverage`'s
+// `coverageSeatFor(await resolveCodingHarness(...))` with a direct
+// `await claudeAdapterForRepo(review.repositoryRoot)` + no-adapter guard. This reddens —
+// the command answers `failed` with no harness and no reason, and the wire refinement
+// on `unavailable` is never reached.
+describe("openspec.coverage through a composed Codex-only server (#681 residue, C14 D3)", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("answers a typed unavailable naming Codex and spends no coverage turn", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-coverage-codex-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-coverage-codex-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+    git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    git("config", "core.excludesFile", "/dev/null");
+    const specPath = "openspec/changes/coverage-seat/specs/coverage/spec.md";
+    mkdirSync(join(repo, "openspec", "changes", "coverage-seat", "specs", "coverage"), {
+      recursive: true,
+    });
+    writeFileSync(join(repo, "src.ts"), "export const value = 'base';\n");
+    writeFileSync(
+      join(repo, "openspec", "changes", "coverage-seat", "proposal.md"),
+      "## Why\n\nThe coverage seat needs a Claude Code harness.\n",
+    );
+    writeFileSync(
+      join(repo, specPath),
+      "## ADDED Requirements\n\n### Requirement: The coverage seat is honest\n\nIt SHALL name what resolved.\n\n#### Scenario: codex only\n\n- **WHEN** only Codex resolves\n- **THEN** no mapping is attempted\n",
+    );
+    git("add", "-A");
+    git("commit", "-m", "base");
+    git("checkout", "-b", "feat/coverage");
+    writeFileSync(join(repo, "src.ts"), "export const value = 'reviewed';\n");
+    writeFileSync(
+      join(repo, specPath),
+      "## ADDED Requirements\n\n### Requirement: The coverage seat is honest\n\nIt SHALL name what resolved instead.\n\n#### Scenario: codex only\n\n- **WHEN** only Codex resolves\n- **THEN** no mapping is attempted\n",
+    );
+    git("add", "-A");
+    git("commit", "-m", "reviewed");
+
+    // The coverage turn's only observable spend: constructing a session on the port. A
+    // Codex-only host must never reach it, so this throwing spy is both the assertion
+    // and a trap — a seat that ran anyway fails loudly instead of silently mapping.
+    const createSession = vi.fn(async () => {
+      throw new Error("the coverage seat must not run a turn on a Codex-only host");
+    });
+    const codexOnly = {
+      descriptor: { id: "codex", version: "0.146.0", displayName: "Codex", binaryPath: "/codex" },
+      health: async () => ({ state: "ready", version: "0.146.0" }),
+      createSession,
+    } as unknown as HarnessPort;
+
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      testHarnessPort: codexOnly,
+    });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 2 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: { id: string } | null };
+    const reviewId = (await waitForReviewSession(server, minted.session?.id ?? "")).reviewId ?? "";
+    expect(reviewId).not.toBe("");
+
+    // `parseCommandOutput` is the wire boundary, so this also proves the refined
+    // `unavailable` shape survives the trip rather than only the in-process object.
+    const coverage = parseCommandOutput(
+      "openspec.coverage",
+      await server.dispatch("openspec.coverage", { reviewId }),
+    );
+    expect(coverage).toEqual({
+      status: "unavailable",
+      edges: [],
+      harness: { id: "codex", version: "0.146.0" },
+      reason:
+        "Requirement coverage needs a Claude Code seat; this repository resolved Codex 0.146.0. No mapping was attempted.",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+  }, 30_000);
 });
 
 async function waitForReviewSession(
