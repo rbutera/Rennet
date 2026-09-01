@@ -900,8 +900,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       lensBoards: {},
       draftingBoardIds,
       draftingReportBoardId: boardIdFor("report"),
-      // A repeat attempt is PENDING from the moment it is minted — durably, before any
-      // board is cleared, so even a crash inside the cleanup leaves an honest state.
+      // A repeat attempt is stamped PENDING at mint. It becomes durable with the
+      // attempt write below, which lands AFTER the cleanup loop (see the
+      // attempt-identity note before that write) — so a crash inside cleanup leaves
+      // the replaced attempt's record, not a half-pending one.
       ...(start === "partial" ? { coverage: { state: "pending" as const } } : {}),
       ...(input.designArtifacts === null
         ? { absentLenses: { design: "no-material" as const } }

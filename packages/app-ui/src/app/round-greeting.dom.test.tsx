@@ -342,6 +342,15 @@ describe("regeneration lanes render every status honestly — no false green che
         .querySelector('[data-testid="cross-lens-coverage"]')
         ?.getAttribute("data-status"),
     ).toBe("warn");
+    // And the RENDERED icon, not just the mapping: data-status above feeds the same
+    // coverageStatus() expression as StatusIcon, so it alone cannot catch StatusIcon
+    // dropping its warn branch (which falls through to the green Check). The svg class
+    // is the render's own evidence. Control: deleting the warn branch in run-route.tsx
+    // reddens exactly this pair.
+    const glyphClasses = (root: ParentNode): string =>
+      root.querySelector('[data-testid="cross-lens-coverage"] svg')?.getAttribute("class") ?? "";
+    expect(glyphClasses(dirty.container)).toContain("text-warn");
+    expect(glyphClasses(clean.container)).not.toContain("text-warn");
   });
 
   it("renders no coverage line at all when the daemon reported no coverage state", () => {

@@ -2739,8 +2739,8 @@ describe("createRoundsRuntime", () => {
     }
 
     // Durably: the attempt write that reserves the new slots carries pending, not the
-    // replaced attempt's completion. That write happens before the redraft clears anything,
-    // so even a crash inside the cleanup leaves an honest record behind.
+    // replaced attempt's completion. (That write lands after the cleanup loop — this
+    // asserts the CONTENT of the write; ordering is documented at the write site.)
     const attemptWrite = writes.find(({ draftingBoardIds }) => draftingBoardIds !== undefined);
     expect(attemptWrite?.coverage).toEqual({ state: "pending" });
     expect(attemptWrite?.lensBoards).toEqual({});
