@@ -1614,20 +1614,33 @@ const openSpecCoverageEdgeSchema = z.object({
   tests: z.number(),
 });
 
-export const openSpecCoverageSchema = z.object({
-  status: z.enum(["ok", "failed", "unavailable"]),
-  edges: z.array(openSpecCoverageEdgeSchema),
-  /**
-   * Provenance (#681 / C14 D3). On `ok`/`failed`, the harness that actually ran the
-   * mapping turn. On `unavailable`, the harness that DID resolve for this repository
-   * while the coverage seat wanted another — so a Codex-only install reads as "Codex
-   * resolved, coverage did not run", not as an assumed Claude default. Absent when no
-   * harness resolved at all.
-   */
-  harness: CodingHarnessSelectionSchema.optional(),
-  /** The typed account for `unavailable`: what the seat sought and what was found. */
-  reason: z.string().min(1).optional(),
-});
+export const openSpecCoverageSchema = z
+  .object({
+    status: z.enum(["ok", "failed", "unavailable"]),
+    edges: z.array(openSpecCoverageEdgeSchema),
+    /**
+     * Provenance (#681 / C14 D3): the harness the mapping turn was SELECTED to run on,
+     * stamped whether or not the turn reached the model. `failed` is stamped at the seat,
+     * before the session is constructed, so this is attempted-on provenance rather than
+     * ran-on — "attempted: Claude Code 2.x" is honest for a turn that died at session
+     * construction, "ran" would not be. On `unavailable` it is the harness that DID
+     * resolve for this repository while the coverage seat wanted another — so a
+     * Codex-only install reads as "Codex resolved, coverage did not run", not as an
+     * assumed Claude default. Absent when no harness resolved at all.
+     */
+    harness: CodingHarnessSelectionSchema.optional(),
+    /** The typed account for `unavailable`: what the seat sought and what was found. */
+    reason: z.string().min(1).optional(),
+  })
+  // An `unavailable` MUST say why. The whole point of the state is that it explains
+  // itself where `failed` cannot — `{status:"unavailable",edges:[]}` is a bare absence
+  // the Spec view could only render as an unexplained blank, so the wire refuses it.
+  // `ok`/`failed` are unconstrained, so values persisted before `unavailable` existed
+  // still parse.
+  .refine((coverage) => coverage.status !== "unavailable" || coverage.reason !== undefined, {
+    path: ["reason"],
+    message: "an unavailable coverage result must carry its reason",
+  });
 
 // ── Settings: the config ladder (wireframe #15, Settings and Setup Plan) ──────
 // The settings surface edits a small, HONEST slice of the ladder the plan

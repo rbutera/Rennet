@@ -982,9 +982,12 @@ const definitions = {
   // ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ──────────
   // The produced hunk↔requirement mapping over the review's OpenSpec change: a model
   // turn grounds each requirement to the offered hunks that implement it plus a test
-  // count, budget-gated. `status: "failed"` (no model / budget refused / turn failed)
-  // OR `null` (no change in the review) ⇒ the Spec view renders NO coverage chips —
-  // an uncomputed mapping never masquerades as a real zero.
+  // count, budget-gated. Three no-chip outcomes, and the Spec view renders NO coverage
+  // chips for any of them — an uncomputed mapping never masquerades as a real zero:
+  // `status: "failed"` (budget refused, or the turn was attempted and broke),
+  // `status: "unavailable"` (#681 / C14 D3 — the Claude Code seat the mapping needs did
+  // not resolve, so NOTHING was attempted; carries its `reason` and, when some other
+  // harness did resolve, that `harness`), OR `null` (no change in the review).
   "openspec.coverage": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: openSpecCoverageSchema.nullable(),
