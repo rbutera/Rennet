@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type BenchmarkRun,
   type BenchmarkStage,
   benchmarkDualReview,
   benchmarkLensTotals,
@@ -7,7 +8,39 @@ import {
   benchmarkSpan,
   benchmarkStageSchema,
   deriveBenchmarkMode,
+  GENERATION_STAGES,
 } from "./benchmarks";
+import { GenerationPhaseSchema } from "./session/model";
+
+/** A well-formed run of each kind, so a test can change ONE thing and see it refused. */
+function mapRun(over: Partial<BenchmarkRun> = {}): unknown {
+  return {
+    version: 1,
+    id: "m1",
+    kind: "repo-map",
+    subject: { label: "rennet", repoKey: "rennet", revision: "deadbeef" },
+    startedAtMs: 0,
+    durationMs: 10,
+    outcome: "complete",
+    stages: [{ stage: "tree", startedAtMs: 0, durationMs: 5 }],
+    ...over,
+  };
+}
+
+function generationRun(over: Partial<BenchmarkRun> = {}): unknown {
+  return {
+    version: 1,
+    id: "g1:0",
+    kind: "generation",
+    subject: { label: "s1", sessionId: "s1", generationId: "g1" },
+    attempt: 0,
+    startedAtMs: 0,
+    durationMs: 10,
+    outcome: "complete",
+    stages: [{ stage: "report", startedAtMs: 0, durationMs: 5, harness: "codex", model: "gpt-5" }],
+    ...over,
+  };
+}
 
 function stage(over: Partial<BenchmarkStage> & Pick<BenchmarkStage, "stage">): BenchmarkStage {
   return { startedAtMs: 1000, durationMs: 10, ...over } as BenchmarkStage;
@@ -38,16 +71,13 @@ describe("benchmark stage records — the lens discrimination is on the RECORD",
   it("refuses a stage that belongs to the other kind of run", () => {
     // A repo-map run carrying `lens-draft` would be a deterministic build claiming a
     // provider drafted for it. The kind decides the vocabulary.
-    const parsed = benchmarkRunSchema.safeParse({
-      version: 1,
-      id: "r1",
-      kind: "repo-map",
-      subject: { label: "rennet" },
-      startedAtMs: 0,
-      durationMs: 10,
-      outcome: "complete",
-      stages: [{ stage: "lens-draft", lens: "flagged", startedAtMs: 0, durationMs: 5 }],
-    });
+    const parsed = benchmarkRunSchema.safeParse(
+      mapRun({
+        stages: [
+          { stage: "lens-draft", lens: "flagged", startedAtMs: 0, durationMs: 5 },
+        ] as BenchmarkRun["stages"],
+      }),
+    );
     expect(parsed.success).toBe(false);
     expect(parsed.error?.issues[0]?.message).toContain("cannot carry the lens-draft stage");
   });
@@ -129,5 +159,126 @@ describe("spans over the per-seat records", () => {
 
   it("has no span over nothing", () => {
     expect(benchmarkSpan([])).toBeUndefined();
+  });
+});
+
+describe("attribution is one fact, not two fields (#731 N5)", () => {
+  it("refuses a stage that names a harness with no model, and one that names a model with no harness", () => {
+    // A half-attribution reads on every surface exactly like a whole one, which is what
+    // makes it worse than none: "Claude ran this" with nothing to hold the claim to.
+    const noModel = benchmarkStageSchema.safeParse({
+      stage: "report",
+      startedAtMs: 0,
+      durationMs: 1,
+      harness: "claude-code",
+    });
+    expect(noModel.success).toBe(false);
+    expect(noModel.error?.issues[0]?.message).toContain("harness AND its model");
+    expect(noModel.error?.issues[0]?.path).toEqual(["model"]);
+
+    const noHarness = benchmarkStageSchema.safeParse({
+      stage: "report",
+      startedAtMs: 0,
+      durationMs: 1,
+      model: "gpt-5",
+    });
+    expect(noHarness.success).toBe(false);
+    expect(noHarness.error?.issues[0]?.path).toEqual(["harness"]);
+  });
+
+  it("accepts both together and neither at all", () => {
+    expect(
+      benchmarkStageSchema.safeParse({
+        stage: "report",
+        startedAtMs: 0,
+        durationMs: 1,
+        harness: "codex",
+        model: "gpt-5",
+      }).success,
+    ).toBe(true);
+    // A deterministic stage names neither, and that is not an omission.
+    expect(
+      benchmarkStageSchema.safeParse({ stage: "tree", startedAtMs: 0, durationMs: 1 }).success,
+    ).toBe(true);
+  });
+});
+
+describe("a repo-map run cannot claim a provider (#731 N5)", () => {
+  it("refuses a harness on ANY stage of a deterministic build", () => {
+    const parsed = benchmarkRunSchema.safeParse(
+      mapRun({
+        stages: [
+          { stage: "tree", startedAtMs: 0, durationMs: 5, harness: "codex", model: "gpt-5" },
+        ] as BenchmarkRun["stages"],
+      }),
+    );
+    expect(parsed.success).toBe(false);
+    expect(
+      parsed.error?.issues.some((issue) => issue.message.includes("cannot name a provider")),
+    ).toBe(true);
+    // The control: the SAME run without the attribution parses, so the refusal is about
+    // the harness rather than about anything else in the fixture.
+    expect(benchmarkRunSchema.safeParse(mapRun()).success).toBe(true);
+  });
+
+  it("still lets a generation stage name one — the rule is per kind, not global", () => {
+    expect(benchmarkRunSchema.safeParse(generationRun()).success).toBe(true);
+  });
+});
+
+describe("the subject a run of each kind must carry (#731 N5)", () => {
+  it("refuses a repo-map run with no repoKey, and a completed one with no revision", () => {
+    const noRepo = benchmarkRunSchema.safeParse(mapRun({ subject: { label: "rennet" } }));
+    expect(noRepo.success).toBe(false);
+    expect(
+      noRepo.error?.issues.some((issue) => issue.message.includes("must name its repoKey")),
+    ).toBe(true);
+
+    const noRevision = benchmarkRunSchema.safeParse(
+      mapRun({ subject: { label: "rennet", repoKey: "rennet" } }),
+    );
+    expect(noRevision.success).toBe(false);
+    expect(noRevision.error?.issues[0]?.message).toContain("must name the revision it built");
+  });
+
+  it("lets a FAILED map run omit the revision — a build that died has none to name", () => {
+    // The requirement is on `complete` alone on purpose. Demanding a revision of every map
+    // run would make the failed builds unrecordable, and those are the slow ones.
+    const parsed = benchmarkRunSchema.safeParse(
+      mapRun({
+        subject: { label: "rennet", repoKey: "rennet" },
+        outcome: "failed",
+        failure: "the tree walk fell over",
+      }),
+    );
+    expect(parsed.success).toBe(true);
+  });
+
+  it("refuses a generation with no sessionId or no generationId, and allows no roundId", () => {
+    const noSession = benchmarkRunSchema.safeParse(
+      generationRun({ subject: { label: "s1", generationId: "g1" } }),
+    );
+    expect(noSession.success).toBe(false);
+    expect(noSession.error?.issues[0]?.message).toContain("must name its sessionId");
+
+    const noGeneration = benchmarkRunSchema.safeParse(
+      generationRun({ subject: { label: "s1", sessionId: "s1" } }),
+    );
+    expect(noGeneration.success).toBe(false);
+    expect(noGeneration.error?.issues[0]?.message).toContain("must name its generationId");
+
+    // An askless first generation has no round, and demanding one would force an invention.
+    expect(benchmarkRunSchema.safeParse(generationRun()).success).toBe(true);
+  });
+});
+
+describe("GENERATION_STAGES is the spine's phase list (#731 O1)", () => {
+  it("contains every generation phase, and no stage the spine does not name", () => {
+    // Both directions, at runtime. The `satisfies` on the declaration catches only one of
+    // them: a phase added to the spine and forgotten here type-checks fine and silently
+    // stops being recorded.
+    const phases = [...GenerationPhaseSchema.options].sort();
+    const stages = [...GENERATION_STAGES].sort();
+    expect(stages).toEqual(phases);
   });
 });

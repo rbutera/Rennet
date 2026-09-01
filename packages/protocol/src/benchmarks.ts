@@ -14,6 +14,7 @@
 import { z } from "zod";
 import type { CouncilHarnessId } from "./domain";
 import { LENS_KINDS, type LensKind } from "./manifests";
+import type { GenerationPhase } from "./session/model";
 
 /** The record-schema version. Bump when a record's MEANING changes; adding an optional
  *  field does not, since every reader already tolerates its absence. */
@@ -30,9 +31,21 @@ export type BenchmarkRunKind = z.infer<typeof benchmarkRunKindSchema>;
 
 /**
  * The Repo Map build's real stage boundaries — `SnapshotBuildStage` verbatim, plus the
- * `scout` that runs before it and the `total` that spans both. These are the stages the
- * generator genuinely emits progress for; there are no model-backed layers to time since
- * the context-map kill, so the whole run is deterministic.
+ * `scout` that runs before it and the `total` this repo's own stages sum to. These are the
+ * stages the generator genuinely emits progress for; there are no model-backed layers to
+ * time since the context-map kill, so the whole run is deterministic.
+ *
+ * `total` IS THE SUM OF THIS REPO'S OWN STAGE DURATIONS, not the wall clock from its first
+ * stage to its last. The distinction is load-bearing and was a real defect: a project
+ * processes every repo's `scout` in one pass and every repo's map in a LATER pass, so a
+ * wall-clock span from `scout` to `store` charges each repo for every sibling scouted or
+ * mapped in between. Within a pass the timer never closes a stage until the next one
+ * opens, so any wait between two stages is already inside a stage's duration and the sum
+ * hides nothing — the only thing it excludes is other repositories' work.
+ *
+ * A stage set is therefore honest rather than complete: a resumed run whose scout already
+ * persisted records no `scout` (it did not run), and `rennet map` never has one by design
+ * — see {@link benchmarkProducerSchema}, which says which stages a run COULD have carried.
  */
 export const REPO_MAP_STAGES = [
   "scout",
@@ -66,7 +79,7 @@ export const GENERATION_STAGES = [
   "coverage",
   "reveal",
   "first-core-board",
-] as const;
+] as const satisfies readonly GenerationPhase[];
 
 export const benchmarkStageNameSchema = z.enum([...REPO_MAP_STAGES, ...GENERATION_STAGES]);
 export type BenchmarkStageName = z.infer<typeof benchmarkStageNameSchema>;
@@ -116,12 +129,30 @@ export const benchmarkStageSchema = z
         message: `the ${stage.stage} stage is run-wide and must not name a lens`,
       });
     }
+    // Attribution is one fact, not two fields. A harness with no model says "Claude ran
+    // this, and we will not say which model", and a model with no harness names a string
+    // nothing can be held to — both are half-attributions, and a half-attribution reads
+    // on the surfaces exactly like a whole one.
+    if ((stage.harness === undefined) !== (stage.model === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [stage.harness === undefined ? "harness" : "model"],
+        message: `the ${stage.stage} stage must name its harness AND its model, or neither`,
+      });
+    }
   });
 export type BenchmarkStage = z.infer<typeof benchmarkStageSchema>;
 
-/** What the run was measured AGAINST, so a number is always attributable. A repo-map run
- *  carries its repo and the snapshot revision it built; a generation carries the session,
- *  generation and — when a coding round produced it — that round. */
+/**
+ * What the run was measured AGAINST, so a number is always attributable. A repo-map run
+ * carries its repo and the snapshot revision it built; a generation carries the session,
+ * generation and — when a coding round produced it — that round.
+ *
+ * The fields are optional HERE and required per kind by {@link benchmarkRunSchema}, which
+ * is the only place that knows which kind it is looking at. `roundId` stays genuinely
+ * optional: an askless first generation has no round, and demanding one would force a
+ * producer to invent an id.
+ */
 export const benchmarkSubjectSchema = z.object({
   /** Human-readable label for the surfaces (a repo name, a session's review). */
   label: z.string().min(1),
@@ -134,17 +165,59 @@ export const benchmarkSubjectSchema = z.object({
 });
 export type BenchmarkSubject = z.infer<typeof benchmarkSubjectSchema>;
 
+/**
+ * Which pipeline recorded the run, and therefore WHICH STAGES IT COULD HAVE CARRIED. The
+ * daemon's project process scouts a repo before it maps it; `rennet map` has no scout pass
+ * at all, by design. Without this field a `resolve` row and no `scout` row read as "the
+ * scout was lost", when for the CLI it means "there was never one" — and the docs page,
+ * which aggregates, cannot tell those apart from the stage list alone.
+ *
+ * Optional because it is a later addition and an archive written before it exists is not
+ * wrong, only unlabelled; every reader states "unrecorded" rather than guessing "daemon".
+ */
+export const benchmarkProducerSchema = z.enum(["daemon", "cli-map"]);
+export type BenchmarkProducer = z.infer<typeof benchmarkProducerSchema>;
+
+/** Reader-facing names, in ONE place so the panel and the docs page agree. */
+export const BENCHMARK_PRODUCER_LABEL: Record<BenchmarkProducer | "unrecorded", string> = {
+  daemon: "Rennet daemon (scout, then map)",
+  "cli-map": "`rennet map` (no scout pass)",
+  unrecorded: "Unrecorded producer",
+};
+
 /** A run that died is a measurement, not an absence (D8): a pipeline whose slow half only
  *  ever fails would look fast if failures vanished. `aborted` is a cancelled run. */
 export const benchmarkOutcomeSchema = z.enum(["complete", "failed", "aborted"]);
 export type BenchmarkOutcome = z.infer<typeof benchmarkOutcomeSchema>;
+
+/** The subject fields a run of each kind must carry. Requiredness lives per KIND rather
+ *  than on the subject object, because "a repo-map run with no repo" and "a generation
+ *  with no generation id" are records nothing downstream can attribute, while the same
+ *  field is meaningless on the other kind. */
+const requiredSubjectFields: Record<BenchmarkRunKind, readonly (keyof BenchmarkSubject)[]> = {
+  // `revision` is NOT here: a build that died before its manifest has no revision to name,
+  // and demanding one would make the failed builds — the slowest ones — unrecordable. It
+  // is required of a COMPLETE map run below.
+  "repo-map": ["repoKey"],
+  generation: ["sessionId", "generationId"],
+};
 
 export const benchmarkRunSchema = z
   .object({
     version: z.literal(BENCHMARK_RECORD_VERSION),
     id: z.string().min(1),
     kind: benchmarkRunKindSchema,
+    /** Which pipeline produced this run — see {@link benchmarkProducerSchema}. */
+    producer: benchmarkProducerSchema.optional(),
     subject: benchmarkSubjectSchema,
+    /**
+     * Which attempt at `subject.generationId` this is, counted from 0. A restart redrafts
+     * the SAME generation, so `(generationId, attempt)` — not a clock reading — is what
+     * tells the second archive of one generation apart from the first. Two attempts are
+     * therefore two honest records; a re-archive of ONE attempt replaces its predecessor,
+     * because the identity is the same.
+     */
+    attempt: z.number().int().nonnegative().optional(),
     startedAtMs: z.number().int().nonnegative(),
     durationMs: z.number().int().nonnegative(),
     outcome: benchmarkOutcomeSchema,
@@ -162,6 +235,38 @@ export const benchmarkRunSchema = z
         message: `a ${run.kind} run cannot carry the ${stage.stage} stage`,
       });
     });
+    // A repo-map build is deterministic end to end. No stage of one can name a provider,
+    // so a harness on any of them is not a routing surprise to be rendered — it is a
+    // corrupt record, and `deriveBenchmarkMode` would read it as a configuration label.
+    if (run.kind === "repo-map") {
+      run.stages.forEach((stage, index) => {
+        if (stage.harness === undefined && stage.model === undefined) return;
+        ctx.addIssue({
+          code: "custom",
+          path: ["stages", index, "harness"],
+          message: `a repo-map run is deterministic and its ${stage.stage} stage cannot name a provider`,
+        });
+      });
+    }
+    for (const field of requiredSubjectFields[run.kind]) {
+      if (run.subject[field] !== undefined) continue;
+      ctx.addIssue({
+        code: "custom",
+        path: ["subject", field],
+        message: `a ${run.kind} run must name its ${field}`,
+      });
+    }
+    if (
+      run.kind === "repo-map" &&
+      run.outcome === "complete" &&
+      run.subject.revision === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["subject", "revision"],
+        message: "a completed repo-map run must name the revision it built",
+      });
+    }
   });
 export type BenchmarkRun = z.infer<typeof benchmarkRunSchema>;
 
@@ -277,11 +382,17 @@ export type BenchmarkProvenance = z.infer<typeof benchmarkProvenanceSchema>;
 export const benchmarkExportSchema = z.object({
   version: z.literal(BENCHMARK_RECORD_VERSION),
   provenance: benchmarkProvenanceSchema,
-  /** One entry per (kind, derived mode, stage) — the aggregate the docs page renders. */
+  /**
+   * One entry per (kind, derived mode, stage, lens, OUTCOME) — the aggregate the docs page
+   * renders. Outcome is part of the identity, not a filter: the stage records of a run
+   * that died are real measurements (a lane that always fails after 90 s is a fact about
+   * the pipeline), but a median mixing them with the completed ones describes neither.
+   */
   stages: z.array(
     z.object({
       kind: benchmarkRunKindSchema,
       mode: benchmarkModeSchema,
+      outcome: benchmarkOutcomeSchema,
       stage: benchmarkStageNameSchema,
       lens: z.enum(LENS_KINDS).optional(),
       /** How many stage records this row aggregates. */
@@ -290,7 +401,8 @@ export const benchmarkExportSchema = z.object({
       slowestMs: z.number().int().nonnegative(),
     }),
   ),
-  /** One entry per (kind, derived mode) — how many runs, and how they ended. */
+  /** One entry per (kind, derived mode) — how many runs, how they ended, and which
+   *  pipelines recorded them. */
   runs: z.array(
     z.object({
       kind: benchmarkRunKindSchema,
@@ -299,7 +411,15 @@ export const benchmarkExportSchema = z.object({
       complete: z.number().int().nonnegative(),
       failed: z.number().int().nonnegative(),
       aborted: z.number().int().nonnegative(),
-      medianMs: z.number().int().nonnegative(),
+      /**
+       * The median wall time of the COMPLETE runs in this group. Absent when none
+       * completed — a group of three failures has no latency, and printing `0` there
+       * would read as an instantaneous pipeline rather than as one that never finished.
+       */
+      medianMs: z.number().int().nonnegative().optional(),
+      /** The distinct producers behind this group, sorted; `"unrecorded"` for runs
+       *  archived before the field existed. Says which stages the group COULD carry. */
+      producers: z.array(z.string().min(1)).min(1),
     }),
   ),
 });
