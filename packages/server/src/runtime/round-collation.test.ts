@@ -12,23 +12,12 @@ import type {
   BaseRefResolution,
   DraftBoard,
   DraftElement,
-  KnowledgeSet,
-  KnowledgeStatement,
   PatchFile,
   Patchset,
   SuccessorAccount,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { assembleRoundCollation, buildLintContextFor, toLintHunks } from "./round-collation";
-
-const KNOWLEDGE: KnowledgeSet = {
-  schemaVersion: 1,
-  repoKey: "repo",
-  baseOid: "0".repeat(40),
-  snapshotFingerprint: "fp",
-  generator: "test",
-  statements: [],
-};
 
 // A modified file with ONE hunk: old 1..3 (3 lines), new 1..4 (4 lines).
 const MODIFIED_PATCH = [
@@ -235,7 +224,6 @@ describe("assembleRoundCollation", () => {
     const successorAccount: SuccessorAccount = { asks: [], beyondAsks: [] };
     const c = assembleRoundCollation({
       patchset: PS,
-      knowledge: KNOWLEDGE,
       dossier: [],
       successorAccount,
     });
@@ -245,7 +233,7 @@ describe("assembleRoundCollation", () => {
   });
 
   it("degrades to a first-generation (non-round) packet when no successor account", () => {
-    const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [] });
+    const c = assembleRoundCollation({ patchset: PS, dossier: [] });
     expect(c.deltaPacket.successorAccount).toBeUndefined(); // first-generation, not a crash
     expect(c.hunks).toHaveLength(2);
   });
@@ -255,7 +243,7 @@ describe("assembleRoundCollation", () => {
   // every real `path:line` in it reported "no such file at the review commit".
   it("grounds the review draft on the same head inventory as the boards", () => {
     const tree = { head: new Map([["src/untouched.ts", 400]]), base: new Map() };
-    const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [], tree });
+    const c = assembleRoundCollation({ patchset: PS, dossier: [], tree });
     // The off-diff file the tree read found...
     expect(c.reviewDraftLintCtx.files.get("src/untouched.ts")).toBe(400);
     // ...and the diff-derived ceiling, unlowered — byte-identical to the boards' own.
@@ -274,7 +262,7 @@ describe("assembleRoundCollation", () => {
 //
 // `src/importer.ts` imports the changed `src/a.ts`. That one edge is what makes
 // both assertions below able to fail: it is a REAL dependent for fan-in to count,
-// and it is the 1-hop ring the knowledge scope is drawn around.
+// and it is the 1-hop import ring around the change.
 
 function fixtureSnapshot(
   options: { omitImports?: boolean; withOldPath?: boolean } = {},
@@ -331,7 +319,6 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
   it("with the import shard present, blast radius carries an EDGE-BACKED count", () => {
     const c = assembleRoundCollation({
       patchset: PS,
-      knowledge: KNOWLEDGE,
       snapshot: fixtureSnapshot(),
       dossier: [],
     });
@@ -346,7 +333,7 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
   });
 
   it("CONTROL: without a snapshot the mark stays NOT ASSESSED, as it was before", () => {
-    const c = assembleRoundCollation({ patchset: PS, knowledge: KNOWLEDGE, dossier: [] });
+    const c = assembleRoundCollation({ patchset: PS, dossier: [] });
     expect(fanInMark(c)?.assessed).toBe(false);
     expect(fanInMark(c)?.reason).toContain("not assessed");
   });
@@ -357,7 +344,6 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
     // on this". Withholding the index keeps the mark honestly not-assessed.
     const c = assembleRoundCollation({
       patchset: PS,
-      knowledge: KNOWLEDGE,
       snapshot: fixtureSnapshot({ omitImports: true }),
       dossier: [],
     });
@@ -406,7 +392,6 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
 
     const c = assembleRoundCollation({
       patchset: PS,
-      knowledge: KNOWLEDGE,
       snapshot: materialized.snapshot,
       dossier: [],
     });
@@ -416,7 +401,6 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
   it("a RENAME is counted at its previous path; a path the base lacks is NOT ASSESSED", () => {
     const withOld = assembleRoundCollation({
       patchset: PS,
-      knowledge: KNOWLEDGE,
       snapshot: fixtureSnapshot({ withOldPath: true }),
       dossier: [],
     });
@@ -432,7 +416,6 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
     // answer is not-assessed. A zero here would read as "checked, nothing depends on it".
     const withoutOld = assembleRoundCollation({
       patchset: PS,
-      knowledge: KNOWLEDGE,
       snapshot: fixtureSnapshot(),
       dossier: [],
     });
@@ -444,70 +427,5 @@ describe("assembleRoundCollation — fan-in is wired to the snapshot", () => {
     // The repo-wide index is still assessed — this is per-file availability, not a
     // whole signal going dark.
     expect(fanInMark(withoutOld)?.assessed).toBe(true);
-  });
-});
-
-describe("assembleRoundCollation — the packet's knowledge is a selection, not the set", () => {
-  function statement(id: string, subject: string, anchorPath: string): KnowledgeStatement {
-    return {
-      id,
-      subject,
-      aspect: "purpose",
-      claim: `claim ${id}`,
-      evidence: [{ path: anchorPath, blobOid: `blob:${anchorPath}` }],
-      confidence: "high",
-      status: "hypothesis",
-      provenance: { generator: "g@1", model: null, apiKeySource: null },
-      learnedAgainst: { baseOid: "0".repeat(40), snapshotFingerprint: "fp" },
-    };
-  }
-  const REJECTED: KnowledgeStatement = {
-    ...statement("k2-rejected", "src/a.ts", "src/a.ts"),
-    status: "rejected",
-  };
-  const SET: KnowledgeSet = {
-    ...KNOWLEDGE,
-    statements: [statement("k1-changed", "src/a.ts", "src/a.ts"), REJECTED],
-  };
-
-  it("projects and scopes the stored set at the packet seam", () => {
-    const c = assembleRoundCollation({
-      patchset: PS,
-      knowledge: SET,
-      snapshot: fixtureSnapshot(),
-      dossier: [],
-    });
-    expect(c.deltaPacket.knowledge.mode).toBe("import-graph");
-    expect(c.deltaPacket.knowledge.statements.map((s) => s.id)).toEqual(["k1-changed"]);
-    expect(c.deltaPacket.knowledge.counts.rejected).toBe(1);
-    // The store total is disclosed, so the drafter can see there is more to ask for.
-    expect(c.deltaPacket.knowledge.counts.inStore).toBe(2);
-  });
-
-  it("carries BOTH sides of a rename into the scope, so base-anchored knowledge survives", () => {
-    // `src/old.ts` is only ever reachable as the rename's PREVIOUS path: nothing in
-    // the fixture imports or is imported by it from a changed file, so the one-hop
-    // ring cannot pull it in. Drop `previousPath` from the changed-path set and this
-    // statement falls out of scope — the control this assertion rests on.
-    const OLD = statement("k3-old", "src/old.ts", "src/old.ts");
-    const c = assembleRoundCollation({
-      patchset: PS,
-      knowledge: { ...SET, statements: [...SET.statements, OLD] },
-      snapshot: fixtureSnapshot({ withOldPath: true }),
-      dossier: [],
-    });
-    expect(c.deltaPacket.knowledge.mode).toBe("import-graph");
-    expect(c.deltaPacket.knowledge.statements.map((s) => s.id)).toContain("k3-old");
-  });
-
-  it("a repo that was never enriched is an honest empty selection, not a crash", () => {
-    const c = assembleRoundCollation({
-      patchset: PS,
-      knowledge: null,
-      snapshot: fixtureSnapshot(),
-      dossier: [],
-    });
-    expect(c.deltaPacket.knowledge.statements).toEqual([]);
-    expect(c.deltaPacket.knowledge.generator).toBeNull();
   });
 });

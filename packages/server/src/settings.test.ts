@@ -601,7 +601,7 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
     const composition = createSettingsComposition(statefulDeps().deps);
     const roles = composition.reviewRoles();
     // The tables are static, so a fresh install still sees all eight roles.
-    expect(roles).toHaveLength(8);
+    expect(roles).toHaveLength(6);
     expect(roles).toEqual(reviewRoleMappings());
     // The Flagged Second Seat is a DUAL-only construct: honest-null single-provider.
     expect(cell(roles, "second-seat", "dual")?.value).not.toBeNull();

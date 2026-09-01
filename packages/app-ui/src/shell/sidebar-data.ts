@@ -237,7 +237,7 @@ export interface ActiveRoute {
   readonly activeSlug: string | null;
   /** The project that owns the active session, else null. */
   readonly activeProjectId: string | null;
-  /** True when the location is "inside" a project (its session, map, or indexing). */
+  /** True when the location is "inside" a project (its session or indexing). */
   standingIn(projectId: string): boolean;
 }
 
@@ -246,7 +246,6 @@ export interface ActiveRoute {
 export function useActiveRoute(): ActiveRoute {
   const [, sessionParams] = useRoute(ROUTES.session);
   const [, runParams] = useRoute(ROUTES.sessionRun);
-  const [onMap, mapParams] = useRoute(ROUTES.projectMap);
   const [onIndexing, indexingParams] = useRoute(ROUTES.projectIndexing);
   const { hosts } = useSidebarTree();
   const activeSlug = sessionParams?.slug
@@ -259,7 +258,6 @@ export function useActiveRoute(): ActiveRoute {
     ? (projects.find((p) => p.sessions.some((s) => s.slug === activeSlug))?.id ?? null)
     : null;
   const standingIn = (projectId: string): boolean => {
-    if (onMap && mapParams?.id === projectId) return true;
     if (onIndexing && indexingParams?.id === projectId) return true;
     return activeProjectId === projectId;
   };

@@ -8,18 +8,10 @@ import {
   sanitizeSchemaForCodex,
   WhiteboardClient,
 } from "@rennet/adapters";
-import {
-  type DeltaPacket,
-  type HarnessPort,
-  type LintContext,
-  type LintHunk,
-  type LintTarget,
-  selectPacketKnowledge,
-} from "@rennet/core";
+import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
 import {
   type DraftBoard,
   findingRefKey,
-  type KnowledgeStatement,
   type LensKind,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
@@ -36,7 +28,6 @@ import {
   draftToOps,
   projectDesignTaskProgress,
   reconcileFlaggedBoards,
-  renderDrafterPrompt,
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
@@ -703,111 +694,6 @@ function fakeWhiteboard(applied: Applied[]) {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
-
-describe("renderDrafterPrompt — what the packet's knowledge field actually shows a drafter", () => {
-  const statement = (id: string, claim: string): KnowledgeStatement => ({
-    id,
-    subject: "src/a.ts",
-    aspect: "purpose",
-    claim,
-    evidence: [{ path: "src/a.ts", blobOid: "blob-a" }],
-    confidence: "high",
-    status: "hypothesis",
-    provenance: { generator: "g@1", model: null, apiKeySource: null },
-    learnedAgainst: { baseOid: "oid", snapshotFingerprint: "fp" },
-  });
-
-  it("inlines the OFFERED subset, leaves the capped-out statement out, and shows the truncation", () => {
-    // Two statements, a cap of one: the drafter must see one claim, must NOT see the
-    // other, and must be able to tell that a second one exists. Asserting only the
-    // first would pass over an implementation that silently dropped the disclosure.
-    const knowledge = selectPacketKnowledge({
-      set: {
-        schemaVersion: 1,
-        repoKey: "repo",
-        baseOid: "oid",
-        snapshotFingerprint: "fp",
-        generator: "g@1",
-        statements: [statement("k1", "OFFERED-CLAIM"), statement("k2", "DROPPED-CLAIM")],
-      },
-      snapshot: null,
-      changedPaths: ["src/a.ts"],
-      cap: 1,
-    });
-    const packet = { ...PACKET, knowledge } as unknown as DeltaPacket;
-    const prompt = renderDrafterPrompt("PROMPT_FILE:prompts/design.md", packet);
-
-    expect(prompt).toContain("OFFERED-CLAIM");
-    expect(prompt).not.toContain("DROPPED-CLAIM");
-    // The honesty flags travel with it: the mode it got, and how much it did not get.
-    expect(prompt).toContain('"truncated":1');
-    expect(prompt).toContain('"inStore":2');
-    expect(prompt).toContain('"mode":"unprojected"');
-    expect(prompt).toContain("context.ask");
-  });
-
-  it("inlines the exact discovered Design artifact set instead of making the drafter rediscover it", () => {
-    const prompt = renderDrafterPrompt(
-      "PROMPT_FILE:prompts/design.md",
-      PACKET,
-      undefined,
-      DESIGN_ARTIFACTS,
-    );
-
-    expect(prompt).toContain('"id":"candidate-1"');
-    expect(prompt).toContain('"name":"token-refresh"');
-    expect(prompt).toContain('"path":"openspec/changes/token-refresh/specs/auth/spec.md"');
-    expect(prompt).toContain("The system SHALL refresh the token before classifying an error.");
-  });
-
-  it("inlines the exact durable ask identity and finding reference for a returned round", () => {
-    const prompt = renderDrafterPrompt(
-      "PROMPT_FILE:prompts/report.md",
-      PACKET,
-      undefined,
-      undefined,
-      boardOutputSchema(),
-      {
-        number: 3,
-        previousGeneration: "gen:ps-0",
-        previousFlaggedBoardId: "board:flagged:ps-0",
-        dispatchedAsks: [
-          {
-            id: 'finding:["gen:ps-0","board:flagged:ps-0","finding-auth"]',
-            path: "src/auth.ts",
-            type: "request-change",
-            instruction: "Keep the refresh inside the retry boundary.",
-            context: "",
-            finding: {
-              generation: "gen:ps-0",
-              boardId: "board:flagged:ps-0",
-              findingId: "finding-auth",
-            },
-          },
-        ],
-        findingDispositions: {},
-        worker: {
-          outcome: "completed",
-          diff: "WORKER_ONLY_DIFF",
-          changedPaths: ["src/auth.ts"],
-          commitRange: { from: "same-head", to: "same-head" },
-        },
-      },
-    );
-
-    expect(prompt).toContain('"number":3');
-    expect(prompt).toContain(
-      '"id":"finding:[\\"gen:ps-0\\",\\"board:flagged:ps-0\\",\\"finding-auth\\"]"',
-    );
-    expect(prompt).toContain(
-      '"finding":{"generation":"gen:ps-0","boardId":"board:flagged:ps-0","findingId":"finding-auth"}',
-    );
-    expect(prompt).toContain('"diff":"WORKER_ONLY_DIFF"');
-    expect(prompt).toContain('"changedPaths":["src/auth.ts"]');
-    expect(prompt).toContain('"commitRange":{"from":"same-head","to":"same-head"}');
-    expect(prompt).not.toContain('"id":"d0"');
-  });
-});
 
 describe("projectDesignTaskProgress", () => {
   it("projects task progress only onto the top-level source topology root", () => {
@@ -3446,7 +3332,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
-        knowledge: { privatePacketSentinel: "MUST_NOT_REACH_REPORT" },
+        packetOnly: { privatePacketSentinel: "MUST_NOT_REACH_REPORT" },
       } as unknown as DeltaPacket,
       currentGeneration: "gen:ps-1:dispatch:round-2",
       round,

@@ -19,18 +19,16 @@ function role(roles: ResolvedReviewRole[], id: string): ResolvedReviewRole {
 }
 
 describe("REVIEW_ROLE_CATALOGUE", () => {
-  it("names all eight review roles", () => {
-    expect(REVIEW_ROLE_CATALOGUE).toHaveLength(8);
+  it("names all six review roles", () => {
+    expect(REVIEW_ROLE_CATALOGUE).toHaveLength(6);
     expect(REVIEW_ROLE_CATALOGUE.map((r) => r.id).sort()).toEqual(
       [
         "adjudication",
         "confirmation",
         "lens-workers",
-        "map-workers",
         "orchestrator",
         "post-process",
         "second-seat",
-        "utility",
       ].sort(),
     );
   });
@@ -48,7 +46,7 @@ describe("REVIEW_ROLE_CATALOGUE", () => {
 describe("resolveReviewRoles", () => {
   it("resolves every role in every scenario to an assignment or honest-null (never undefined, never a throw)", () => {
     const roles = resolveReviewRoles(CTX);
-    expect(roles).toHaveLength(8);
+    expect(roles).toHaveLength(6);
     for (const r of roles) {
       for (const cell of [r.dual, r.claudeOnly, r.codexOnly]) {
         // a cell is EITHER a real pick with a source, OR honest-null with null source.
@@ -70,8 +68,6 @@ describe("resolveReviewRoles", () => {
     expect(lens.dual.value).toEqual({ model: "opus-4.8", effort: "high" });
     expect(lens.dual.source).toBe("council-table");
     expect(lens.codexOnly.value).toEqual({ model: "gpt-5.6-sol", effort: "high" });
-    // map-workers → partition-worker: light, cheap Codex under both.
-    expect(role(roles, "map-workers").dual.value).toEqual({ model: "gpt-5.6-luna", effort: "low" });
   });
 
   it("resolves the Flagged second-seat in dual and honest-null in the single-provider columns", () => {

@@ -9,20 +9,13 @@ import {
   type ProjectScoutQuestionnaire,
 } from "@rennet/protocol";
 import { Spinner, Toggle, ToggleGroup } from "@rennet/ui";
-import {
-  ArrowLeft,
-  Check,
-  ChevronRight,
-  MapIcon,
-  MessageSquarePlus,
-  TriangleAlert,
-} from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, MessageSquarePlus, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useBridge, useCommand, useMutation } from "../../data";
-import { newChatPath, projectMapPath } from "../../routes/url";
+import { newChatPath } from "../../routes/url";
 import { selectBackgroundEvents, useRennetStore } from "../../store";
 
 function processCommandId(projectId: string): string {
@@ -178,8 +171,6 @@ function legacyRun(
       repos: repos.length,
       files: repos.reduce((total, repo) => total + (repo.files ?? 0), 0),
       scopes: 0,
-      confirmed: 0,
-      rejected: 0,
     },
   };
 }
@@ -369,9 +360,8 @@ function CompletionBlock({
   const [, navigate] = useLocation();
   const startReviewRef = useMergedRefs<HTMLButtonElement>(ctaRef, useCoachAnchor("start-review"));
   const ready = run.status === "done";
-  const hasMap = ready || (run.status === "failed" && run.phase === "knowledge");
   const counts = ready
-    ? `${run.totals.scopes} scopes · ${run.totals.files} files · ${run.totals.confirmed} confirmed · ${run.totals.rejected} rejected`
+    ? `${run.totals.scopes} scopes · ${run.totals.files} files`
     : run.repos.length > 0
       ? `${run.repos.reduce((total, repo) => total + (repo.files ?? 0), 0)} files indexed`
       : "";
@@ -385,27 +375,12 @@ function CompletionBlock({
             className={`size-4 shrink-0 ${ready ? "text-green" : "text-danger"}`}
           />
           <span className="text-13 font-medium text-ink">
-            {ready ? "Context Map Ready" : `Project ${run.phase} failed`}
+            {ready ? "Project Ready" : `Project ${run.phase} failed`}
           </span>
           {counts ? <span className="truncate text-xs text-ink-soft">{counts}</span> : null}
         </div>
         {run.status === "failed" ? (
           <span className="text-xs text-ink-soft">{run.reason}</span>
-        ) : null}
-        {/* The map control sits on its OWN line, not `ml-auto` on the heading row: pushed
-            to the far right it read as chrome belonging to the card, and the counts
-            beside it truncated to make room for it. */}
-        {hasMap ? (
-          <div>
-            <button
-              type="button"
-              onClick={() => navigate(projectMapPath(run.projectId))}
-              className="flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-12-5 font-medium text-foreground/90 transition-colors hover:bg-raised"
-            >
-              <Icon icon={MapIcon} className="size-3.5" />
-              View Context Map
-            </button>
-          </div>
         ) : null}
       </div>
 

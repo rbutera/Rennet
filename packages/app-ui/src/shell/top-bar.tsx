@@ -1,13 +1,6 @@
 import { currentGenerationId, type LensKind } from "@rennet/protocol";
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
-import {
-  ArrowLeft,
-  FileDiff,
-  History,
-  type LucideIcon,
-  Map as MapIcon,
-  PanelLeft,
-} from "lucide-react";
+import { ArrowLeft, FileDiff, History, type LucideIcon, PanelLeft } from "lucide-react";
 import { Fragment, useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
@@ -65,16 +58,15 @@ import { Trail, type TrailProps } from "./trail";
 
 /** The pill's three explicit views, in order, with their labels and glyphs. */
 const PILL: ReadonlyArray<{
-  readonly view: Extract<ViewKind, "rounds" | "map" | "diff">;
+  readonly view: Extract<ViewKind, "rounds" | "diff">;
   readonly label: string;
   readonly icon: LucideIcon;
   /** The container width below which the label folds away, leaving the glyph. */
   readonly foldBelow: string;
 }> = [
-  // History folds EARLIER than Map · Diff: it sits nearest the centred lens pill,
+  // History folds EARLIER than Diff: it sits nearest the centred lens pill,
   // and the two look cramped the moment they touch.
   { view: "rounds", label: "History", icon: History, foldBelow: "hidden @[66rem]:inline" },
-  { view: "map", label: "Map", icon: MapIcon, foldBelow: "hidden @[54rem]:inline" },
   { view: "diff", label: "Diff", icon: FileDiff, foldBelow: "hidden @[54rem]:inline" },
 ];
 

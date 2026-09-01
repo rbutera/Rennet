@@ -162,7 +162,6 @@ import {
   mechanicalComposition,
   mintSession,
   planQuoteThreadReanchors,
-  queryProjectMap,
   ReviewService,
   recordSeatSend,
   resolveAssignment,
@@ -176,7 +175,6 @@ import {
 } from "@rennet/core";
 import type {
   CodingHarnessSelection,
-  CommandInput,
   ConventionCatalogue,
   CouncilHarnessId,
   DetectedForge,
@@ -251,13 +249,12 @@ import {
   type ProactiveRehydration,
   proactiveRehydrationCommandId,
 } from "./proactive-rehydration";
-import { createProcessProject, projectProcessRunFromRecord } from "./process-project";
+import { createProcessProject } from "./process-project";
 import {
   createForgeRegistry,
   fetchForgeCiStatus,
   openProjectPullRequest,
   type ProjectPullRequestOpener,
-  resolveProjectContextRepository,
   resolveProjectRepositoryRoot,
 } from "./project-forge-registry";
 import {
@@ -2345,9 +2342,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
   };
-  // Bound after board drafting is composed below. Context production starts earlier in
-  // the composition root, so its completion callbacks need a late-bound, synchronous kick.
-  let refreshBoardsForProjectContext: (repoRoot: string) => void = () => undefined;
   // The project-scout scheduler (#461 §4, B7 cluster 4): shares the processing
   // progress push; the deterministic pass runs even with no harness installed.
   const projectScoutRuntime = createProjectScoutRuntime({
@@ -3550,16 +3544,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     void ensureBoardDrafting(review).catch(() => undefined);
   };
 
-  refreshBoardsForProjectContext = (repoRoot) => {
-    for (const session of sessionStore.list()) {
-      if (session.reviewId === undefined) continue;
-      const review = service.reviewById(session.reviewId);
-      if (review?.repositoryRoot === repoRoot) kickBoardDrafting(review);
-    }
-  };
-
-  // Start background maintenance only after the board refresh callback is live. A queued or
-  // running initial journal resumes under its durable command id; completed/legacy projects
+  // Start background maintenance once composition is live. A queued or running
+  // initial journal resumes under its durable command id; completed/legacy projects
   // enter the normal baseline watcher. Failed runs stay visible for the in-place Retry action.
   startProjectContextMaintenance({
     projects: projectStore.list(),

@@ -50,7 +50,6 @@ import type {
   SymbolInspection,
 } from "@rennet/protocol";
 import {
-  type CommandInput,
   type CommandOutput,
   type ConversationAnchorWire,
   type DetectedForge,

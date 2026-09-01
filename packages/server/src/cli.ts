@@ -16,17 +16,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import {
-  createClaudeHarness,
-  createCodexExecutor,
-  defaultCodexDiscoveryDeps,
-  defaultCodexExecEffects,
-  discoverCodex,
-  type GenerateResult,
-  ProjectSnapshotGenerator,
-  type ProjectSnapshotStore,
-  snapshotStoreFor,
-} from "@rennet/adapters";
+import { type GenerateResult, ProjectSnapshotGenerator, snapshotStoreFor } from "@rennet/adapters";
 import { materializeSnapshot, queryFileOverview, queryProjectMap } from "@rennet/core";
 import type { ProjectSnapshotManifest } from "@rennet/protocol";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
@@ -166,7 +156,6 @@ export async function runCli(
           projectsDir: parsed.values["projects-dir"],
         },
         io,
-        env,
       );
     }
     case "-h":
@@ -443,7 +432,6 @@ async function buildMap(
     projectsDir?: string;
   },
   io: CliIo,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
   const root = resolve(repoPath);
   const store = opts.projectsDir ? snapshotStoreFor(opts.projectsDir) : snapshotStoreFor();

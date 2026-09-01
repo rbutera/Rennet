@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../../data";
 import { memoryHistory } from "../../routes/history";
-import { newChatPath, projectIndexingPath, projectMapPath } from "../../routes/url";
+import { newChatPath, projectIndexingPath } from "../../routes/url";
 import { Sidebar } from "../../shell/sidebar/sidebar";
 import { selectProcessingProjectIds, useRennetStore } from "../../store";
 import { act, cleanup, fireEvent, mount, screen, waitFor } from "../../test/dom";
@@ -113,7 +113,7 @@ function doneRun(id: string, commandId: string): ProjectProcessRun {
     phase: "complete",
     repos: [SUMMARY],
     scout: QUESTIONNAIRE,
-    totals: { repos: 1, files: 456, scopes: 12, confirmed: 3, rejected: 1 },
+    totals: { repos: 1, files: 456, scopes: 12 },
   };
 }
 
@@ -125,10 +125,10 @@ function failedRun(
     id: commandId,
     projectId: id,
     status: "failed",
-    phase: "knowledge",
+    phase: "map",
     repos: [SUMMARY],
     scout: QUESTIONNAIRE,
-    reason: "rennet: knowledge verification failed",
+    reason: "rennet: the structural map failed to build",
   };
 }
 
@@ -306,46 +306,36 @@ describe("IndexingView — one durable project run", () => {
     );
   });
 
-  it("keeps header and sidebar processing until knowledge settles, then uses the run totals", async () => {
+  it("keeps header and sidebar processing until the run settles, then uses the run totals", async () => {
     const run = renderView("p3", true);
     await waitFor(() => expect(run.commandId()).not.toBe(""));
     run.emit({
       kind: "run-state",
       runId: run.commandId(),
       projectId: "p3",
-      phase: "knowledge",
+      phase: "map",
       status: "running",
-    });
-    run.emit({
-      kind: "step",
-      runId: run.commandId(),
-      repo: "rennet",
-      phase: "knowledge",
-      step: "verify",
-      status: "running",
-      note: "Verifying hypotheses against cited evidence",
     });
 
     expect(selectProcessingProjectIds(useRennetStore.getState())).toContain("p3");
-    expect(screen.queryByText("Context Map Ready")).toBeNull();
-    expect(screen.getByText("Verifying hypotheses against cited evidence")).toBeTruthy();
+    expect(screen.queryByText("Project Ready")).toBeNull();
 
     const terminal = doneRun("p3", run.commandId());
     act(() => run.process.resolve({ repos: [SUMMARY], run: terminal }));
-    await waitFor(() => expect(screen.getByText("Context Map Ready")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Project Ready")).toBeTruthy());
     expect(screen.getByText("indexed")).toBeTruthy();
-    expect(screen.getByText(/12 scopes · 456 files · 3 confirmed · 1 rejected/)).toBeTruthy();
+    expect(screen.getByText(/12 scopes · 456 files/)).toBeTruthy();
     expect(selectProcessingProjectIds(useRennetStore.getState())).not.toContain("p3");
   });
 
-  it("never reports ready when knowledge fails and still keeps Start a Review available", async () => {
+  it("never reports ready when the map fails and still keeps Start a Review available", async () => {
     const run = renderView("p4");
     await waitFor(() => expect(run.commandId()).not.toBe(""));
     const terminal = failedRun("p4", run.commandId());
     act(() => run.process.resolve({ repos: [SUMMARY], run: terminal }));
 
-    await waitFor(() => expect(screen.getByText("Project knowledge failed")).toBeTruthy());
-    expect(screen.queryByText("Context Map Ready")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Project map failed")).toBeTruthy());
+    expect(screen.queryByText("Project Ready")).toBeNull();
     expect(screen.getByText(terminal.reason)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Start a Review/ })).toBeTruthy();
   });
@@ -362,11 +352,9 @@ describe("IndexingView — one durable project run", () => {
     expect(await screen.findByRole("button", { name: "Looks right" })).toBeTruthy();
 
     act(() => run.process.resolve({ repos: [SUMMARY], run: doneRun("p5", run.commandId()) }));
-    await waitFor(() => expect(screen.getByText("Context Map Ready")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Project Ready")).toBeTruthy());
     expect(screen.getByRole("button", { name: "Looks right" })).toBeTruthy();
 
-    await run.user.click(screen.getByRole("button", { name: "View Context Map" }));
-    expect(run.history.history.at(-1)).toBe(projectMapPath("p5"));
     await run.user.click(screen.getByRole("button", { name: "Start a Review" }));
     expect(run.history.history.at(-1)).toBe(newChatPath("p5"));
   });

@@ -50,7 +50,6 @@ import {
   createRoundWorkerPort,
   createRoundWorkspacePlanner,
   type HandoffTurnExecution,
-  projectContextUnavailableForProcess,
   type RoundSourceLandingInjection,
   resolveCodingHarness,
   runResolvedCodingHarnessTurn,
@@ -253,7 +252,7 @@ describe("project context maintenance", () => {
     repos: [],
     failures:
       status === "failed"
-        ? [{ repo: "rennet", path: "/repo", phase: "knowledge", reason: "worker exited" }]
+        ? [{ repo: "rennet", path: "/repo", phase: "map", reason: "worker exited" }]
         : [],
     events: [],
   });
@@ -277,8 +276,8 @@ describe("project context maintenance", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("keeps failed work retryable and reports its failed phase instead of serving a current map", () => {
-    const failed = journal("failed", "knowledge");
+  it("keeps failed work retryable instead of resuming it", () => {
+    const failed = journal("failed", "map");
     const resume = vi.fn(async () => ({ run: { status: "done" } }));
     const rehydrate = vi.fn(async () => undefined);
 
@@ -292,21 +291,6 @@ describe("project context maintenance", () => {
 
     expect(resume).not.toHaveBeenCalled();
     expect(rehydrate).not.toHaveBeenCalled();
-    expect(projectContextUnavailableForProcess(failed)).toMatchObject({
-      status: "absent",
-      reason: "Context Map knowledge failed: rennet: worker exited",
-      run: { id: failed.runId, status: "failed", phase: "knowledge" },
-    });
-  });
-
-  it("reports active processing and allows only a completed journal through to map reads", () => {
-    const running = journal("running", "map");
-    expect(projectContextUnavailableForProcess(running)).toMatchObject({
-      status: "absent",
-      reason: "Context Map map is still running",
-      run: { id: running.runId, status: "running", phase: "map" },
-    });
-    expect(projectContextUnavailableForProcess(journal("done", "complete"))).toBeNull();
   });
 });
 

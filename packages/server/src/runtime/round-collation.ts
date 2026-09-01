@@ -212,17 +212,6 @@ export interface RoundCollation {
   readonly reviewDraftLintCtx: RegisterLintContext;
 }
 
-/** Every path the patchset touches — BOTH sides of a rename, since a statement anchored
- *  on the old path is exactly as relevant as one anchored on the new. */
-function changedPathsOf(patchset: Patchset): string[] {
-  const paths = new Set<string>();
-  for (const file of patchset.files) {
-    paths.add(file.path);
-    if (file.previousPath !== undefined) paths.add(file.previousPath);
-  }
-  return [...paths];
-}
-
 /**
  * The blast-radius fan-in index for a snapshot, or `undefined` when the snapshot
  * cannot genuinely answer "what depends on this file?".

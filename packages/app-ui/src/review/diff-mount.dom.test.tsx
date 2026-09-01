@@ -67,15 +67,12 @@ describe("ReviewWorkspace ?view mount (C6 task 4.3)", () => {
     expect(queryByText("1 files changed")).toBeNull();
   });
 
-  // This test used to be titled "a non-diff explicit view (map) falls back to the board
-  // document" and asserted exactly that — it PINNED the dead `?view=map` destination as
-  // intended behaviour. `?view=map` has a branch now, and the thing worth asserting here is
-  // that an explicit view never silently renders the default: this bridge answers no
-  // `session.list`, so no project is named and the map says so instead of showing the board.
-  it("an explicit ?view=map never renders the board document instead", async () => {
-    const { findByTestId, queryByText } = mountWorkspace("/s/x?view=map", [FILE_A]);
-    expect(await findByTestId("map-unavailable")).toBeTruthy();
-    expect(queryByText(/no board for this generation yet/i)).toBeNull();
+  // The context map died with the knowledge layer, so `?view=map` is an unknown
+  // view again and parses back to the board default — a stale deep link lands on
+  // the board rather than a dead screen.
+  it("a stale ?view=map deep link falls back to the board document", async () => {
+    const { queryByTestId } = mountWorkspace("/s/x?view=map", [FILE_A]);
+    expect(queryByTestId("map-unavailable")).toBeNull();
   });
 
   it("an empty active patchset shows the honest one-line state, never a blank frame", () => {

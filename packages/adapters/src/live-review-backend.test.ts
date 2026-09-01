@@ -2,18 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildReviewCanvases, createInvocationBudget, type ProjectMap } from "@rennet/core";
 import {
-  buildReviewCanvases,
-  createInvocationBudget,
-  type HarnessDescriptor,
-  type HarnessEvent,
-  type HarnessHealth,
-  type HarnessPort,
-  type HarnessSession,
-  type ProjectMap,
-} from "@rennet/core";
-import {
-  KNOWLEDGE_SCHEMA_VERSION,
   type NoveltyLedger,
   type PatchFile,
   type Patchset,

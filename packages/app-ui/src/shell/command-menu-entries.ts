@@ -1,5 +1,5 @@
 import type { CommandName } from "@rennet/protocol";
-import { newChatPath, projectMapPath, settingsPath } from "../routes/url";
+import { newChatPath, settingsPath } from "../routes/url";
 import type { SidebarHost } from "./sidebar-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,18 +67,11 @@ export function sessionEntries(hosts: readonly SidebarHost[]): MenuEntry[] {
   return entries;
 }
 
-/** Projects (§9): a Context Map entry and a New Chat entry per project. */
+/** Projects (§9): a New Chat entry per project. */
 export function projectEntries(hosts: readonly SidebarHost[]): MenuEntry[] {
   const entries: MenuEntry[] = [];
   for (const host of hosts) {
     for (const project of host.projects) {
-      entries.push({
-        id: `project-map:${project.id}`,
-        group: "Project",
-        title: `${project.name} — Context Map`,
-        keywords: [project.name, "context map"],
-        action: { kind: "navigate", path: projectMapPath(project.id) },
-      });
       entries.push({
         id: `project-newchat:${project.id}`,
         group: "Project",
