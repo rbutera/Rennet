@@ -17,11 +17,12 @@ import type {
 import { type ContextAskBackendPart, contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
+import { councilSeatTurn } from "./council-seat-turn";
 import { DossierStore } from "./dossier-store";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { type KnowledgeBackendPart, knowledgeBackend } from "./knowledge-backend";
 import { KnowledgeStore } from "./knowledge-store";
-import { councilSeatTurn, runKnowledgeSwarmForRepo } from "./knowledge-swarm";
+import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import { resolveMapSource } from "./map-travel";
 import { NestedProjectContext } from "./nested-project-context";
 import {

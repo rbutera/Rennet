@@ -10,7 +10,7 @@ import { knowledgeStatementId, providerHarness, validateKnowledgeStatement } fro
 import type { CouncilResolution, KnowledgeStatement } from "@rennet/protocol";
 import { canonicalize, councilEffortSchema, councilModelSchema, sha256Hex } from "@rennet/protocol";
 import { z } from "zod";
-import { writeAtomic } from "./knowledge-store";
+import { writeAtomic } from "./write-atomic";
 
 /**
  * The per-batch results JOURNAL (#581).

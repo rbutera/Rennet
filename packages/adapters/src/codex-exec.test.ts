@@ -9,7 +9,7 @@ import {
   sanitizeSchemaForCodex,
   stripNullDeep,
 } from "./codex-exec";
-import { councilSeatTurn } from "./knowledge-swarm";
+import { councilSeatTurn } from "./council-seat-turn";
 
 // ── A fake SpawnAppServer scripting one utility turn (no process) ──────────────
 

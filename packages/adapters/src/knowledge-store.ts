@@ -1,10 +1,11 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateKnowledgeSet } from "@rennet/core";
 import type { KnowledgeSet } from "@rennet/protocol";
 import { canonicalize } from "@rennet/protocol";
 import { KNOWLEDGE_JOURNAL_DIR } from "./knowledge-journal";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+import { writeAtomic } from "./write-atomic";
 
 /**
  * The LLM knowledge layer store (layer c, #14 knowledge half — design §1/§6).
@@ -45,14 +46,6 @@ function readSetFrom(path: string): KnowledgeSet | null {
     return null;
   }
   return validateKnowledgeSet(parsed) ?? null;
-}
-
-/** Atomic write to `path`, creating parent dirs (temp + rename on one filesystem). */
-export function writeAtomic(path: string, bytes: string): void {
-  mkdirSync(join(path, ".."), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-  writeFileSync(tmp, bytes);
-  renameSync(tmp, path);
 }
 
 /** The outcome of a knowledge promotion attempt. */

@@ -124,6 +124,15 @@ export {
   loadConventionCatalogue,
   saveConventionCatalogue,
 } from "./convention-catalogue-reader";
+export {
+  type CouncilSeatDeps,
+  councilSeatTurn,
+  createClaudeSwarmTurn,
+  createCodexSwarmTurn,
+  type ProviderTurnSettlement,
+  type RunTurn,
+  type SwarmTurnOptions,
+} from "./council-seat-turn";
 export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
 export {
   DESIGN_ARTIFACT_LIMITS,
@@ -336,22 +345,15 @@ export {
   KNOWLEDGE_FILE,
   KnowledgeStore,
   type PromoteKnowledgeResult,
-  writeAtomic,
 } from "./knowledge-store";
 export {
-  type CouncilSeatDeps,
   changedPathsBetween,
-  councilSeatTurn,
-  createClaudeSwarmTurn,
-  createCodexSwarmTurn,
   DEFAULT_SWARM_CONCURRENCY_BY_HARNESS,
   FAILED_BATCH_RETRIES,
   type KnowledgeSwarmDeps,
   type KnowledgeSwarmOutcome,
   type KnowledgeSwarmProgress,
-  type ProviderTurnSettlement,
   runKnowledgeSwarmForRepo,
-  type SwarmTurnOptions,
   snapshotContextFromLoaded,
 } from "./knowledge-swarm";
 export {
@@ -702,6 +704,7 @@ export {
   type RemoteIdentity,
   resolveForgeRemote,
 } from "./worktree-discovery";
+export { writeAtomic } from "./write-atomic";
 export {
   type WslClaudeExecutable,
   type WslClaudeLauncherInput,

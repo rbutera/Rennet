@@ -569,6 +569,7 @@ export const snapshotStageSchema = z.enum([
   "verify",
   "store",
   "knowledge",
+  "scout",
 ]);
 export type SnapshotStage = z.infer<typeof snapshotStageSchema>;
 

@@ -29,14 +29,10 @@ import type {
 } from "@rennet/protocol";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
+import { councilSeatTurn, createClaudeSwarmTurn, createCodexSwarmTurn } from "./council-seat-turn";
 import type { GitExec } from "./git-range-diff";
 import { type JournalTarget, KnowledgeJournal } from "./knowledge-journal";
-import {
-  councilSeatTurn,
-  createClaudeSwarmTurn,
-  createCodexSwarmTurn,
-  runKnowledgeSwarmForRepo,
-} from "./knowledge-swarm";
+import { runKnowledgeSwarmForRepo } from "./knowledge-swarm";
 import type { LoadFreshResult } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
