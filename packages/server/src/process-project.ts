@@ -242,10 +242,11 @@ export function createProcessProject(deps: ProcessProjectDeps) {
     };
 
     record = { ...record, failures: [] };
-    // One timer per repo, opened at that repo's scout and closed when its map build ends,
-    // so the `total` stage spans scout → store — the wait the reviewer actually sits
-    // through — rather than the map alone. Keyed by repo path because the scout loop and
-    // the map loop are separate passes over the same repos.
+    // One timer per repo, opened at that repo's scout and closed when its map build ends.
+    // The `total` stage is the SUM of that repo's own stage durations (see
+    // createStageTimer) — never a wall-clock span, which would absorb sibling repos'
+    // work between the interleaved scout and map passes. Keyed by repo path because the
+    // scout loop and the map loop are separate passes over the same repos.
     const clock = deps.now ?? Date.now;
     const timers = new Map<string, ReturnType<typeof createStageTimer>>();
     const timerFor = (path: string) => {

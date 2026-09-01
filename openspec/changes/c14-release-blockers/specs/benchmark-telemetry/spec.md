@@ -20,7 +20,7 @@ Debug benchmark recording SHALL be a persisted setting, enabled by default, with
 
 ### Requirement: Repo Map generation records per-stage timings
 
-While recording is enabled, the deterministic Repo Map build SHALL durably record a timing for every build stage individually plus the end-to-end total, labeled by stage name and bound to the generated snapshot's revision. There are no model-backed layers: the build is deterministic end to end.
+While recording is enabled, the deterministic Repo Map build SHALL durably record a timing for every build stage individually plus a `total` equal to the sum of that repository's own stage durations, labeled by stage name and bound to the generated snapshot's revision. There are no model-backed layers: the build is deterministic end to end.
 
 #### Scenario: Map generation completes
 

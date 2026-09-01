@@ -629,7 +629,10 @@ async function exportBenchmarks(
   const { store } = createBenchmarkRecording(opts.dataDir);
   // The archive cap is deliberately generous: the export is a considered, occasional act
   // over the whole local history, not a live panel read.
-  const runs = store.list(100_000);
+  const { runs, skipped } = store.read(100_000);
+  for (const line of skipped) {
+    io.err(`rennet benchmarks: skipped a damaged archive line — ${line}`);
+  }
   if (runs.length === 0) {
     io.err(`rennet benchmarks: no recorded runs in ${join(opts.dataDir, "benchmarks.jsonl")}`);
     io.err("Run a review or process a project with benchmark recording on, then export.");

@@ -34,8 +34,10 @@ export interface BenchmarkRecorder {
  * generation, so a timestamped id appended two records that no reader could tell apart —
  * two rows for one generation, both claiming to be it. Attempt 0 is the fresh draft and
  * attempt 1 the redraft, so both are honest and reconcilable; a re-archive of ONE attempt
- * carries the same id and replaces its predecessor in the store, because it is the same
- * attempt measured again rather than a second one.
+ * carries the same id and replaces its predecessor in the store. The attempt ordinal is
+ * binary (fresh draft / restart redraft, mirroring boardAttempt), so a third redraft
+ * reuses id `g:1` and overwrites the second's record — the newest measurement of the
+ * redraft slot wins.
  */
 export function generationBenchmarkRun(input: {
   readonly subject: BenchmarkSubject & { readonly generationId: string };

@@ -146,6 +146,12 @@ export function readBenchmarkData(path = DATA_PATH) {
     if (!STAGES_FOR_KIND[row.kind].includes(row.stage)) {
       bad(`stages[${index}].stage '${row.stage}' does not belong to a ${row.kind} run`);
     }
+    // Mirrors the protocol refine: no repo-map stage may claim a provider, so the only
+    // derivable mode for the deterministic pipeline is "unattributed". A hand-edited
+    // "dual-model" map row would render a council label onto a build that ran no model.
+    if (row.kind === "repo-map" && row.mode !== "unattributed") {
+      bad(`stages[${index}] is a repo-map row and its mode can only be 'unattributed'`);
+    }
     const laneScoped = LENS_SCOPED_STAGES.includes(row.stage);
     if (row.lens !== undefined && !LENSES.includes(row.lens)) {
       bad(`stages[${index}].lens is not a lens`);
@@ -164,6 +170,9 @@ export function readBenchmarkData(path = DATA_PATH) {
     if (row === null || typeof row !== "object") bad(`runs[${index}] must be an object`);
     if (!KINDS.includes(row.kind)) bad(`runs[${index}].kind is not a known run kind`);
     if (!MODES.includes(row.mode)) bad(`runs[${index}].mode is not a derived mode`);
+    if (row.kind === "repo-map" && row.mode !== "unattributed") {
+      bad(`runs[${index}] is a repo-map row and its mode can only be 'unattributed'`);
+    }
     requireCount(row.count, `runs[${index}].count`, path);
     requireCount(row.complete, `runs[${index}].complete`, path);
     requireCount(row.failed, `runs[${index}].failed`, path);
@@ -310,12 +319,13 @@ function renderedBenchmarkPages(dir) {
  * number and the transform reads the file at render time — so a page whose Markdown had
  * not changed could in principle be served with numbers that are no longer true.
  *
- * What was observed, and what was not: a stale render of this page was reported twice
- * during review. On this checkout it does not reproduce — `astro build` writes no
- * persisted content store, and an executed control (a changed `provenance.machine`, a warm
- * build, no cache cleared) reached `dist` every time. So this check is not repairing a
- * reproduced defect; it makes the property the docs page CLAIMS — "no number on it was
- * typed by hand", provenance included — something the build proves rather than assumes.
+ * What was observed: the stale render is REAL and was reproduced on a real build during
+ * review — a valid edit to `docs/data/benchmarks.json`, `astro build` exited 0, and the
+ * emitted page still carried the previous export's provenance, served from Astro's
+ * persisted content store (see `invalidateBenchmarkRenders` below, which repairs it).
+ * This check is the proof that the repair keeps working: it makes the property the docs
+ * page CLAIMS — "no number on it was typed by hand", provenance included — something the
+ * build verifies on every run rather than assumes.
  *
  * Two failures, both loud, because both are the same lie in different clothes: a page that
  * renders the wrong provenance, and NO page rendering the data at all — the second being

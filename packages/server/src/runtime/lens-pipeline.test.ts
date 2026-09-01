@@ -6556,7 +6556,7 @@ describe("the report gate times a turn that DIED (#731 O4)", () => {
     },
   };
 
-  it("still emits report-classification, with its harness, when runTurn rejects", async () => {
+  it("still emits report-classification, with its harness, when the turn dies without emitting", async () => {
     const timings: GenerationPhaseTiming[] = [];
     let failure: unknown;
     // The classification seat is the only one that caps its raw response, so this throws

@@ -280,6 +280,25 @@ describe("the docs validator pins the same vocabulary the protocol does (#731 N5
     expect(() => readBenchmarkData(write(VALID))).not.toThrow();
   });
 
+  it("refuses a repo-map row claiming a derived provider mode", () => {
+    // The protocol forbids any repo-map stage from naming a provider, so the only
+    // derivable mode for the deterministic pipeline is `unattributed`. A hand-edited
+    // "dual-model" map row would render a council label onto a build that ran no model.
+    expect(() =>
+      readBenchmarkData(write({ ...VALID, stages: [{ ...VALID.stages[0], mode: "dual-model" }] })),
+    ).toThrow(/can only be 'unattributed'/);
+    expect(() =>
+      readBenchmarkData(
+        write({
+          ...VALID,
+          runs: [{ ...VALID.runs[0], kind: "repo-map", mode: "claude-only" }],
+        }),
+      ),
+    ).toThrow(/can only be 'unattributed'/);
+    // The control: the committed shape itself is accepted.
+    expect(() => readBenchmarkData(write(VALID))).not.toThrow();
+  });
+
   it("refuses an unknown stage, a lane-scoped row with no lens, and a run-wide row with one", () => {
     expect(() =>
       readBenchmarkData(write({ ...VALID, stages: [{ ...VALID.stages[0], stage: "invented" }] })),
