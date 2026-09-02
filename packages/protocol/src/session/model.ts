@@ -300,7 +300,11 @@ export type GenerationTimings = z.infer<typeof GenerationTimingsSchema>;
  * runs (it rides the `lens` frame beside `coverage`), final on the durable record.
  */
 export const GenerationUsageSchema = z.object({
+  /** Every recorded seat turn, measured or not. */
   turns: z.number().int().nonnegative(),
+  /** Turns that produced no usage record (no result frame, or a harness that reports
+   *  none); their tokens are NOT in the sums below, so the reader is told. */
+  unmeasuredTurns: z.number().int().nonnegative(),
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   cacheReadTokens: z.number().int().nonnegative(),

@@ -1231,6 +1231,7 @@ describe("round-machine — arbitrary depth holds by construction (C14 §8, D7)"
 describe("generation usage rides the lens frame (#737)", () => {
   const USAGE = {
     turns: 3,
+    unmeasuredTurns: 0,
     inputTokens: 1000,
     outputTokens: 200,
     cacheReadTokens: 300,

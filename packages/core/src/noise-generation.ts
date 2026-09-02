@@ -436,7 +436,10 @@ const PAYLOAD_READ_WITH =
  * WHOLE returned text is bounded by `maxBytes`: whole hunks are kept in offered order
  * until the next would cross the budget left after reserving the truncation marker,
  * which carries a COUNT of omitted hunks (never a list — a list is itself unbounded,
- * review of #739). Compact JSON: an indent is a ~30% surcharge no reader sees.
+ * review of #739). One floor: a bound below the envelope-plus-marker size (~290 bytes)
+ * still ships the marker, because a payload that cannot say what it dropped is worse
+ * than a ~290-byte overrun; the production bound is nine hundred times that. Compact
+ * JSON: an indent is a ~30% surcharge no reader sees.
  */
 export function renderPayload(
   manifest: OfferedManifest,
@@ -451,6 +454,10 @@ export function renderPayload(
       deletions: occurrence.sides?.deletions ?? [],
       context: occurrence.sides?.context ?? [],
     }));
+  // The complete payload, when it fits, ships as is: no marker is reserved for an
+  // omission that will not happen (#740 review).
+  const complete = JSON.stringify({ patchsetId, hunks: offered });
+  if (PAYLOAD_ENCODER.encode(complete).length <= maxBytes) return complete;
   const marker = (omittedHunks: number) => ({ omittedHunks, readWith: PAYLOAD_READ_WITH });
   // Reserve the marker at its largest (every hunk omitted) so the kept set never has to
   // shrink again once the marker turns out to be needed.

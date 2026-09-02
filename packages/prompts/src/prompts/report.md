@@ -68,11 +68,3 @@ verifies the whole partition before anything is persisted.
 - Do not re-review the change. Defects belong to the later Flagged reading.
 - Plain words, concrete notes, no cheerleading, filler, pipeline narration, or
   pasted code bytes.
-
-
-## Legacy compatibility
-
-An older caller without an evidence manifest binds you to the full board schema
-instead of the narrow envelope. Only on that shape, express the same verified
-classifications as `round_outcome` items, reading the turn diff from your
-checkout. Never use this arm when the narrow classification schema is supplied.

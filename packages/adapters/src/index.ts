@@ -658,6 +658,7 @@ export {
   extractClaudeUsage,
   type InstrumentedRunTurnOptions,
   type MetricsCollector,
+  mergeGenerationUsage,
   summarizeUsage,
   type TurnMetric,
 } from "./turn-metrics";

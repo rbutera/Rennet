@@ -175,7 +175,8 @@ export function usageNote(usage: GenerationUsage): string {
     usage.reportedUsd === null
       ? ""
       : ` \u00b7 $${usage.reportedUsd.toFixed(usage.reportedUsd < 1 ? 3 : 2)}`;
-  return `Spent ${tokens} tokens across ${usage.turns} seat turn${usage.turns === 1 ? "" : "s"}${price}`;
+  const unmeasured = usage.unmeasuredTurns === 0 ? "" : ` (${usage.unmeasuredTurns} unmeasured)`;
+  return `Spent ${tokens} tokens across ${usage.turns} seat turn${usage.turns === 1 ? "" : "s"}${unmeasured}${price}`;
 }
 
 /** The lens drafters reworking beneath the report — rows from the machine's `composing`

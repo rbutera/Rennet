@@ -14,9 +14,8 @@ export type LensKind = (typeof LENS_KINDS)[number];
 
 /**
  * Prompt ids as data: one per lens draft, plus the round-report seat and the
- * review-draft voice rules. The prompt FILES
- * (paths and bytes) stay in `@rennet/prompts` — these ids are what manifests
- * and job tables cite.
+ * review-draft voice rules. The prompt FILES (paths and bytes) stay in
+ * `@rennet/prompts` — these ids are what manifests and job tables cite.
  */
 export const PROMPT_IDS = [...LENS_KINDS, "report", "review-draft-voice"] as const;
 

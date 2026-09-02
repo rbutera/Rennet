@@ -38,6 +38,7 @@
 import {
   createMetricsCollector,
   type DesignArtifactSet,
+  mergeGenerationUsage,
   summarizeUsage,
   WhiteboardClient,
 } from "@rennet/adapters";
@@ -50,6 +51,7 @@ import type {
   LintTarget,
   RegisterLintContext,
 } from "@rennet/core";
+import type { GenerationUsage } from "@rennet/protocol";
 import {
   type AskOccurrence,
   type BenchmarkRun,
@@ -1032,8 +1034,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // The generation's spend tap (#737): every seat turn the pipeline runs records here,
     // and the sum rides the lens frame while drafting and lands on the durable generation.
     const collector = createMetricsCollector();
-    const usageSoFar = () =>
-      collector.metrics.length === 0 ? {} : { usage: summarizeUsage(collector.metrics) };
+    // A repeat attempt ADDS to what the generation already spent (its durable `usage`
+    // from the prior attempt); it never replaces it with the new attempt alone.
+    const usageSoFar = (): { usage?: GenerationUsage } => {
+      const merged = mergeGenerationUsage(
+        attemptGeneration.usage,
+        collector.metrics.length === 0 ? undefined : summarizeUsage(collector.metrics),
+      );
+      return merged === undefined ? {} : { usage: merged };
+    };
     const reveal = {
       lensBoards: {} as Partial<Record<LensKind, string>>,
       absentLenses: {
@@ -1205,6 +1214,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
                   mapDesignCoverage: createDesignCoverageMapper(
                     claudePort,
                     input.draftingRoot ?? input.repoRoot,
+                    collector,
                   ),
                 }),
           }),
@@ -1346,6 +1356,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ...(reveal.timings.length === 0
           ? {}
           : { timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] } }),
+        // Usage rides the same record for the same reason (#741 review): the final settle
+        // and both failure writes persist THIS object, and a write without it would erase
+        // what persistReveal just landed.
+        ...usageSoFar(),
       },
       pipeline,
       archiveBenchmark,

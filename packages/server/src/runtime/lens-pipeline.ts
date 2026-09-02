@@ -1236,8 +1236,12 @@ export type DesignCoverageMapper = (request: DesignCoverageRequest) => Promise<{
 export function createDesignCoverageMapper(
   port: HarnessPort,
   repoRoot: string,
+  collector?: MetricsCollector,
 ): DesignCoverageMapper {
-  const turn = createCoverageTurn(port, { cwd: repoRoot });
+  const turn = createCoverageTurn(port, {
+    cwd: repoRoot,
+    ...(collector === undefined ? {} : { collector }),
+  });
   return async (request) => {
     const result = await runCoverageMapping({
       ...request,
@@ -2467,6 +2471,23 @@ async function runClassifiedRoundReport(
 }
 
 /** Legacy callers without an exact worker receipt keep the old generic board path. */
+/**
+ * What the legacy (no-receipt) report seat needs beyond `report.md`: it is bound to the
+ * full board schema, not the narrow envelope, so the prompt's "emit no board structure"
+ * rule does not apply to it. Appended on THIS path only — on the live classified path
+ * every byte of it would ride every session and every retry for nothing (#740 review).
+ */
+const LEGACY_ROUND_REPORT_NOTE = [
+  "## Legacy compatibility",
+  "",
+  "This caller supplies no evidence manifest and binds you to the full board schema.",
+  "On that shape, express the same verified classifications as `round_outcome` elements",
+  "(each with an element `id`, an `author`, and the `ask` it answers; a `code_ref`",
+  "element where the context layer's inventory grounds one), under one small document",
+  "and one section. The context layer carries the change inventory; there is no diff",
+  "command on this path.",
+].join("\n");
+
 async function runLegacyRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
@@ -2484,7 +2505,7 @@ async function runLegacyRoundReport(
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
   const basePrompt = renderDrafterPrompt(
-    promptText,
+    `${promptText}\n\n${LEGACY_ROUND_REPORT_NOTE}`,
     deps.deltaPacket,
     undefined,
     undefined,
