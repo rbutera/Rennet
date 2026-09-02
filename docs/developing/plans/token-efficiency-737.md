@@ -1,7 +1,7 @@
 ---
 title: Token efficiency plan (#737)
 description: Implementation plan for the 2026-09-01 harness/prompt audit findings — spend observability, schema double-send, prompt hygiene, byte caps, the prompt-size tripwire, and pointer-only repair turns.
-status: in-progress
+status: planned
 tracking: https://github.com/rbutera/Rennet/issues/737
 ---
 
