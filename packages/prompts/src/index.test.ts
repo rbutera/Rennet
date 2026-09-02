@@ -36,7 +36,7 @@ describe("lens prompt manifest", () => {
     }
   });
 
-  it("expandPromptPartials splices the shared partial and refuses a prompt without the marker", () => {
+  it("expandPromptPartials splices the shared partial and passes a marker-free text through", () => {
     const partial = readFileSync(join(srcDir, INVESTIGATE_PARTIAL_FILE), "utf8");
     expect(partial).toMatch(/^## Investigate before you draft\n/);
     expect(partial.replace(/\s+/g, " ")).toContain("only what you actually read earns a citation");
@@ -44,8 +44,9 @@ describe("lens prompt manifest", () => {
     expect(out).toContain("## Investigate before you draft");
     expect(out).toContain("earns a\ncitation.\n\n## Next");
     expect(out).not.toContain(PROMPT_PARTIAL_MARKER);
-    // Positive control: a prompt that lost its marker is a bug, not a silent omission.
-    expect(() => expandPromptPartials("# T\n\n## Next", partial)).toThrow(/marker/);
+    // A stub prompt (test doubles) passes through untouched; the shipped files are
+    // guarded by the marker test above, which is the control for this seam.
+    expect(expandPromptPartials("# T\n\n## Next", partial)).toBe("# T\n\n## Next");
   });
 
   it("keeps the Design prompt on one candidate and one canonical scenario owner", () => {

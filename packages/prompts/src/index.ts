@@ -49,13 +49,12 @@ export const INVESTIGATE_PARTIAL_FILE = "prompts/investigate-before-you-draft.md
 export const PROMPT_PARTIAL_MARKER = "{{investigate-before-you-draft}}";
 
 /**
- * Splice the shared partial into a lens prompt at its marker line. A prompt
- * without the marker is a bug (the section would silently vanish), so it throws.
+ * Splice the shared partial into a lens prompt at its marker line. A text without
+ * the marker passes through unchanged: test doubles hand the pipeline stub prompts,
+ * and the shipped files are guarded by the manifest test (every lens file carries
+ * the marker exactly once) and the prompt-size tripwire, not by this seam.
  */
 export function expandPromptPartials(text: string, partial: string): string {
-  if (!text.includes(PROMPT_PARTIAL_MARKER)) {
-    throw new Error(`lens prompt is missing the ${PROMPT_PARTIAL_MARKER} marker`);
-  }
   return text.replace(PROMPT_PARTIAL_MARKER, partial.trimEnd());
 }
 

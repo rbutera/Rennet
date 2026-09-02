@@ -32,8 +32,8 @@ describe("refineCiFailures", () => {
       total: 13,
     };
     const runTurn = vi.fn(async (prompt: string) => {
-      expect(prompt).not.toContain('"checkName": "core:test"');
-      expect(prompt).toContain('"checkName": "acceptance"');
+      expect(prompt).not.toContain('"checkName":"core:test"');
+      expect(prompt).toContain('"checkName":"acceptance"');
       return {
         status: "emitted" as const,
         body: { classifications: [{ ref: "failure-1", verdict: "change-caused" }] },
