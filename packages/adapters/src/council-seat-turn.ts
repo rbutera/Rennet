@@ -243,7 +243,9 @@ export function createCodexSwarmTurn(
                 outputTokens: tokens.output,
                 cacheReadTokens: tokens.cacheRead,
                 cacheCreationTokens: tokens.cacheWrite,
-                totalTokens: tokens.total,
+                // The shape's invariant (input + output + both caches), not the provider's
+                // `total`, which may fold reasoning tokens in.
+                totalTokens: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite,
                 reportedUsd: null,
               },
         ...(error === undefined ? {} : { error }),

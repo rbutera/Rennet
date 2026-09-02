@@ -658,6 +658,7 @@ export {
   extractClaudeUsage,
   type InstrumentedRunTurnOptions,
   type MetricsCollector,
+  mergeGenerationUsage,
   summarizeUsage,
   type TurnMetric,
 } from "./turn-metrics";
@@ -678,3 +679,5 @@ export {
   type WslClaudeLauncherInput,
   wslClaudeExecutable,
 } from "./wsl-launcher";
+
+import { mergeGenerationUsage } from "./turn-metrics";
