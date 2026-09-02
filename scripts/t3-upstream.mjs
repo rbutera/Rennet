@@ -112,14 +112,28 @@ export function readLedger(repoRoot, prefix) {
   return entries;
 }
 
-/** Bring the upstream default branch into this repository's object store. */
+/**
+ * Bring the upstream default branch into this repository's object store. With
+ * `--clone`, prefer the clone's remote-tracking ref so a stale local branch in
+ * the clone cannot hide new upstream commits; fall back to its local branch
+ * for clones (and test fixtures) that have no remote.
+ */
 export function fetchUpstream(repoRoot, config, clone) {
   const source = clone ?? config.repository;
   const ref = `refs/t3-upstream/${config.defaultBranch}`;
-  git(["fetch", "--quiet", source, `+refs/heads/${config.defaultBranch}:${ref}`], {
-    cwd: repoRoot,
-  });
-  return out(["rev-parse", ref], { cwd: repoRoot });
+  const candidates = clone
+    ? [`refs/remotes/origin/${config.defaultBranch}`, `refs/heads/${config.defaultBranch}`]
+    : [`refs/heads/${config.defaultBranch}`];
+  let lastError;
+  for (const candidate of candidates) {
+    const result = git(["fetch", "--quiet", source, `+${candidate}:${ref}`], {
+      cwd: repoRoot,
+      allowFailure: true,
+    });
+    if (result.status === 0) return out(["rev-parse", ref], { cwd: repoRoot });
+    lastError = result.stderr;
+  }
+  throw new Error(`could not fetch ${config.defaultBranch} from ${source}:\n${lastError}`);
 }
 
 function ensureCommit(repoRoot, sha, config, clone) {
