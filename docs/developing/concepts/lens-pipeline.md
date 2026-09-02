@@ -519,6 +519,15 @@ ceiling before any seat runs, and the RSP noise seat's hunk payload keeps whole
 hunks under the same 256 KiB and names the ids it left out. Unbounded
 interpolation is a bug.
 
+A tripwire keeps the drafter prompt itself honest. The `lens-pipeline`
+prompt-budget test assembles every lens's drafter prompt against the real
+capture fixture and asserts its UTF-8 size under a per-lens budget: a fixed
+cost measured when the test was pinned plus ten percent, plus a packet share of
+about 550 bytes per file row and 275 per hunk row. A prompt that grows on
+purpose raises its budget in the same change and says so in the pull request;
+one that grows by accident reddens the test instead of waiting for the next
+audit.
+
 ## Three layers carry every rule
 
 The schema makes good structure the only expressible structure (a finding's
