@@ -57,6 +57,17 @@ Contracts and rulings wins on general product and architecture conflicts, and Pr
 
 `packages/protocol` and `packages/theme` import no Rennet package. `prompts` (the prompt-text + RSP prompt-contract package, formerly `lens-instructions`, which absorbed the deleted `instructions` package in B02) may import `protocol`; `core` may import `protocol` and `prompts`; `adapters` may import those packages plus Node dependencies; `server` may import `protocol`, `prompts`, `core`, and `adapters`; `client` may import `protocol`; `ui` (the vendored shadcn/Base UI component kit) may import only `protocol` and `theme`; `app-ui` (Rennet's composites and screens) may import only `protocol`, `theme`, `ui`, and browser-safe dependencies. `apps/desktop` is the only Electron package. Spikes are excluded from the pnpm workspace.
 
+## Vendored T3 Code (`vendor/t3code/`)
+
+A snapshot of T3 Code (MIT) lives under `vendor/t3code/`, recorded in `UPSTREAM.json` and advanced from the pristine `t3-vendor` branch with `pnpm t3:fold`. Full doc: `docs/developing/concepts/t3code-vendoring.md`. Rules:
+
+- **Never reformat or lint `vendor/`.** Biome and ESLint ignore it on purpose; a reformat turns every fold into wall-to-wall conflicts. Do not "fix" upstream style.
+- **Every edit to a vendored file gets a row in `vendor/t3code/PATCHES.md`** (path, reason, upstreamable, upstream PR). `pnpm t3:check-ledger` runs in `pnpm check` and fails on an unlogged diff. Rennet-owned files inside the tree (`UPSTREAM.json`, `PATCHES.md`, `digests/`, `project.json`, `tsconfig.rennet.json`) are exempt.
+- **Extend over edit.** Rennet code lives outside `vendor/` and imports their modules. Edit in place only when there is no seam, and send general changes upstream so the row leaves the ledger.
+- **Folds are weekly PRs whose body is the digest** from `pnpm t3:inspect`. A fold also applies the catalog and patch changes the digest's manifest diff shows, in `pnpm-workspace.yaml`.
+- **Do not touch `t3-vendor` by hand**: no rebase, no cherry-pick. Only `assemble`/`fold` write it.
+- **`effect` and `@t3tools/*` are imported by vendored code and by exactly one Rennet module**, the daemon-side T3 client. Nowhere else.
+
 ## Harness prompts & token discipline
 
 From the 2026-09-01 prompt/harness audit. The user's subscription pays for every token Rennet sends, and per-session cost is **invisible in a diff** — the audit's most expensive regression was a five-line deletion. So cost discipline is part of what "done" means for any change that touches a harness path, exactly like the documentation obligation: not a gate, a definition.

@@ -1,13 +1,13 @@
 ## 1. Vendor the snapshot
 
-- [ ] 1.1 Write `scripts/t3-upstream.mjs` with `assemble` (build the `t3-vendor` branch tree from selected subpaths of an upstream commit via `git read-tree --prefix`), `inspect`, `fold`, and `check-ledger` subcommands; add `t3:inspect`, `t3:fold`, `t3:check-ledger` root scripts
-- [ ] 1.2 Create the `t3-vendor` branch at upstream aab404964 with `packages/{contracts,shared,client-runtime,effect-codex-app-server,effect-acp}`, `apps/server/src`, `apps/web/src`, their `package.json` files and upstream `LICENSE`; merge it into the working branch
-- [ ] 1.3 Write `vendor/t3code/UPSTREAM.json` (repo, commit, date, paths) and an empty `vendor/t3code/PATCHES.md` with the ledger columns
-- [ ] 1.4 Merge T3's catalog entries and the Effect pnpm patch into `pnpm-workspace.yaml`; add the vendored packages to the workspace; add `vp` and `tsgo` as dev dependencies; `pnpm install` clean
-- [ ] 1.5 Exclude `vendor/` from Biome and ESLint; add an Nx project per vendored package with `test` (via `vp`) and, for the server, `build` (via `vp pack`) targets with declared inputs and outputs
-- [ ] 1.6 Run the vendored server bundle by hand with `serve --no-browser`; confirm it starts and answers the handshake
-- [ ] 1.7 Wire `t3:check-ledger` into `pnpm check`; positive control: edit a vendored file without a ledger entry and watch the gate fail
-- [ ] 1.8 Run `t3:inspect` against upstream and commit the first digest; run `t3:fold` to a newer upstream commit on a throwaway branch to prove the merge path
+- [x] 1.1 Write `scripts/t3-upstream.mjs` with `assemble` (build the `t3-vendor` branch tree from selected subpaths of an upstream commit via `git read-tree --prefix`), `inspect`, `fold`, and `check-ledger` subcommands; add `t3:inspect`, `t3:fold`, `t3:check-ledger` root scripts
+- [x] 1.2 Create the `t3-vendor` branch at upstream aab404964 with `packages/{contracts,shared,client-runtime,effect-codex-app-server,effect-acp,tailscale}`, `apps/server`, `apps/web`, `scripts/lib`, `patches`, the root `package.json`, `tsconfig.base.json`, `vite.config.ts` and upstream `LICENSE`; merge it into the working branch (path list widened: the server imports `@t3tools/tailscale`, and both apps import the root config and `scripts/lib` by relative path)
+- [x] 1.3 Write `vendor/t3code/UPSTREAM.json` (repo, commit, date, paths) and an empty `vendor/t3code/PATCHES.md` with the ledger columns
+- [x] 1.4 Merge T3's catalog entries and the Effect pnpm patch into `pnpm-workspace.yaml`; add the vendored packages to the workspace; add `vp` and `tsgo` as dev dependencies; `pnpm install` clean
+- [x] 1.5 Exclude `vendor/` from Biome and ESLint; add an Nx project per vendored package with `test` (via `vp`) and, for the server, `build` (via `vp pack`) targets with declared inputs and outputs
+- [x] 1.6 Run the vendored server bundle by hand with `serve --no-browser`; confirm it starts and answers the handshake (starts on a private `--base-dir`, runs migrations, serves the web build at `/`, gates `/ws` with 401 until the bootstrap credential is exchanged; the authenticated RPC handshake is 2.5). T3 rejects `--port 0`: the supervisor picks a free loopback port itself
+- [x] 1.7 Wire `t3:check-ledger` into `pnpm check`; positive control: edit a vendored file without a ledger entry and watch the gate fail
+- [x] 1.8 Run `t3:inspect` against upstream and commit the first digest; run `t3:fold` to a newer upstream commit on a throwaway branch to prove the merge path
 
 ## 2. Sidecar supervisor
 
