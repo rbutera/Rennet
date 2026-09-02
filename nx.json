@@ -23,6 +23,14 @@
       "!{projectRoot}/**/*.test.*",
       "!{projectRoot}/test/**",
       "!{projectRoot}/tests/**"
+    ],
+    "t3codeShared": [
+      "{workspaceRoot}/vendor/t3code/package.json",
+      "{workspaceRoot}/vendor/t3code/tsconfig.base.json",
+      "{workspaceRoot}/vendor/t3code/vite.config.ts",
+      "{workspaceRoot}/vendor/t3code/scripts/lib/**/*",
+      "{workspaceRoot}/vendor/t3code/patches/**/*",
+      "{workspaceRoot}/vendor/t3code/UPSTREAM.json"
     ]
   },
   "targetDefaults": {

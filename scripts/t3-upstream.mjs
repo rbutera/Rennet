@@ -27,8 +27,19 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-/** Rennet-owned files inside the vendor prefix that the ledger never has to list. */
-const LEDGER_EXEMPT = [/^UPSTREAM\.json$/, /^PATCHES\.md$/, /^digests\//, /(^|\/)project\.json$/];
+/**
+ * Rennet-owned files inside the vendor prefix that the ledger never has to list:
+ * the base record, the ledger, digests, Nx project files, and the
+ * `tsconfig.rennet.json` variants that narrow a vendored typecheck to what
+ * Rennet's workspace can resolve.
+ */
+const LEDGER_EXEMPT = [
+  /^UPSTREAM\.json$/,
+  /^PATCHES\.md$/,
+  /^digests\//,
+  /(^|\/)project\.json$/,
+  /(^|\/)tsconfig\.rennet\.json$/,
+];
 
 export function git(args, { cwd, env, input, allowFailure = false } = {}) {
   const result = spawnSync("git", args, {

@@ -121,6 +121,7 @@ describe("check-ledger", () => {
     assert.match(result.problems[0], /vendor\/t3code\/apps\/server\/src\/bin\.ts/);
     // Positive control for the exemptions: Rennet-owned files never need a row.
     put(repo, "vendor/t3code/apps/server/project.json", "{}\n");
+    put(repo, "vendor/t3code/apps/server/tsconfig.rennet.json", "{}\n");
     put(repo, "vendor/t3code/digests/2026-01-02.md", "# digest\n");
     assert.equal(checkLedger(repo, config).problems.length, 1);
   });

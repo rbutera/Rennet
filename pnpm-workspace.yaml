@@ -154,6 +154,22 @@ overrides:
   "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
   "@clerk/clerk-js>@solana/wallet-standard": "-"
   "@clerk/clerk-js>@wallet-standard/core": "-"
+  # Pins that reproduce upstream's lockfile where the resolved version changes
+  # what the vendored code compiles or generates against. The vendored
+  # package.json files carry caret ranges; a fresh resolve would drift.
+  #   - the Claude Agent SDK: 0.3.171+ widens SDK message unions and requires
+  #     requestId on canUseTool, which the vendored adapter and its tests do not
+  #     yet handle (Rennet's own adapter stays on its own newer pin).
+  #   - the TanStack router plugin regenerates routeTree.gen.ts on every build;
+  #     a newer generator reorders imports and dirties a vendored file.
+  "t3>@anthropic-ai/claude-agent-sdk": "0.3.170"
+  "@t3tools/web>@tanstack/router-plugin": "1.168.13"
+  "@t3tools/web>@tanstack/react-router": "1.170.10"
+  #   - React: upstream pins 19.2.6 exact, Rennet is on 19.2.8. Two copies in
+  #     the hoisted store give the web tests (and a native ChatView mount) a
+  #     null hooks dispatcher; one copy is a precondition of this change.
+  "@t3tools/web>react": "19.2.8"
+  "@t3tools/web>react-dom": "19.2.8"
   "@emnapi/core": "2.0.0-alpha.3"
   "@emnapi/runtime": "2.0.0-alpha.3"
   axios: "1.18.0"

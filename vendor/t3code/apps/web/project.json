@@ -1,0 +1,53 @@
+{
+  "name": "t3code-web",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "tags": [
+    "scope:t3code",
+    "layer:vendor"
+  ],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsgo --noEmit -p tsconfig.rennet.json",
+        "cwd": "vendor/t3code/apps/web"
+      },
+      "inputs": [
+        "default",
+        "^production",
+        "t3codeShared"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec vp test run --passWithNoTests --project unit --exclude src/terminal/ghostty/runtimeAbi.test.ts",
+        "cwd": "vendor/t3code/apps/web"
+      },
+      "inputs": [
+        "default",
+        "^production",
+        "t3codeShared"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec vp build",
+        "cwd": "vendor/t3code/apps/web"
+      },
+      "inputs": [
+        "production",
+        "^production",
+        "t3codeShared"
+      ],
+      "outputs": [
+        "{projectRoot}/dist"
+      ],
+      "dependsOn": [
+        "^build"
+      ]
+    }
+  }
+}
