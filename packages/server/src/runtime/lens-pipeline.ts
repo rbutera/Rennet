@@ -967,13 +967,26 @@ export function renderRetryPrompt(
   basePrompt: string,
   draft: DraftBoard,
   pointers: readonly { path: readonly (string | number)[]; message: string; ruleId?: string }[],
+  frozenIds: readonly string[] = [],
 ): string {
   const issues = pointers
     .map((p) => `- ${p.ruleId ?? "schema"} at ${JSON.stringify(p.path)}: ${p.message}`)
     .join("\n");
+  // The repair is a PATCH (#737): the host keeps every frozen element verbatim
+  // (`mergePatch`), so only the elements still open ride here, with the frozen ids
+  // listed so references to them stay valid. A repair turn is a fresh cold session
+  // (ephemeral sessions cannot be resumed), so the base prompt still travels; the
+  // draft it carries no longer re-sends what is already accepted.
+  const frozen = new Set(frozenIds);
+  const { elements, ...boardRest } = draft;
+  const patchInput = {
+    ...boardRest,
+    elementsToFix: elements.filter((el) => !frozen.has(el.id)),
+    frozenElementIds: [...frozen],
+  };
   const prior = renderLayer(
     "task",
-    `Your previous draft did not pass. Fix ONLY these issues and return the whole board:\n${issues}\n\nPrevious draft:\n${JSON.stringify(draft)}`,
+    `Your previous draft did not pass. Fix ONLY these issues:\n${issues}\n\nReturn a PATCH board: the elements under \`elementsToFix\` below, corrected, plus any new element you need. Elements in \`frozenElementIds\` are already accepted and are kept verbatim by the host — do not resend them; references to their ids remain valid. Pointer paths index the previous whole draft's \`elements\`.\n\nPrevious draft (open elements only):\n${JSON.stringify(patchInput)}`,
   );
   return `${basePrompt}\n\n${prior}`;
 }
@@ -1839,7 +1852,7 @@ async function draftOneLens(
         runTurn: async (req) => {
           try {
             const retry = await seatTurn(
-              renderRetryPrompt(basePrompt, req.draft, req.pointers),
+              renderRetryPrompt(basePrompt, req.draft, req.pointers, req.frozenIds),
               req.attempt,
             );
             if (retry.status === "emitted") {
