@@ -969,8 +969,19 @@ export function renderRetryPrompt(
   pointers: readonly { path: readonly (string | number)[]; message: string; ruleId?: string }[],
   frozenIds: readonly string[] = [],
 ): string {
+  // A lint pointer's path indexes the WHOLE previous draft, which the seat no longer
+  // sees in full, so the pointed-at element's id rides beside it (#743 review). A parse
+  // pointer (no ruleId) indexes the seat's rejected return, not this draft: no id.
+  const elementIdAt = (p: (typeof pointers)[number]): string | undefined =>
+    p.ruleId !== undefined && p.path[0] === "elements" && typeof p.path[1] === "number"
+      ? draft.elements[p.path[1]]?.id
+      : undefined;
   const issues = pointers
-    .map((p) => `- ${p.ruleId ?? "schema"} at ${JSON.stringify(p.path)}: ${p.message}`)
+    .map((p) => {
+      const id = elementIdAt(p);
+      const where = id === undefined ? "" : ` (element \`${id}\`)`;
+      return `- ${p.ruleId ?? "schema"} at ${JSON.stringify(p.path)}${where}: ${p.message}`;
+    })
     .join("\n");
   // The repair is a PATCH (#737): the host keeps every frozen element verbatim
   // (`mergePatch`), so only the elements still open ride here, with the frozen ids
@@ -979,14 +990,26 @@ export function renderRetryPrompt(
   // draft it carries no longer re-sends what is already accepted.
   const frozen = new Set(frozenIds);
   const { elements, ...boardRest } = draft;
+  const elementsToFix = elements.filter((el) => !frozen.has(el.id));
+  // Nothing open and nothing frozen is the re-ask after a non-emission or an
+  // unparseable return: there is no patch to make, the seat drafts the whole board.
+  // Asking for a patch of nothing invites `{ elements: [] }`, which reads as a clean
+  // absence (#743 review).
+  if (elementsToFix.length === 0 && frozen.size === 0) {
+    const whole = renderLayer(
+      "task",
+      `Your previous draft did not pass. Fix ONLY these issues and return the whole board:\n${issues}\n\nPrevious draft:\n${JSON.stringify(draft)}`,
+    );
+    return `${basePrompt}\n\n${whole}`;
+  }
   const patchInput = {
     ...boardRest,
-    elementsToFix: elements.filter((el) => !frozen.has(el.id)),
+    elementsToFix,
     frozenElementIds: [...frozen],
   };
   const prior = renderLayer(
     "task",
-    `Your previous draft did not pass. Fix ONLY these issues:\n${issues}\n\nReturn a PATCH board: the elements under \`elementsToFix\` below, corrected, plus any new element you need. Elements in \`frozenElementIds\` are already accepted and are kept verbatim by the host — do not resend them; references to their ids remain valid. Pointer paths index the previous whole draft's \`elements\`.\n\nPrevious draft (open elements only):\n${JSON.stringify(patchInput)}`,
+    `Your previous draft did not pass. Fix ONLY these issues:\n${issues}\n\nReturn a PATCH board: the elements under \`elementsToFix\` below, corrected, plus any new element you need. Elements in \`frozenElementIds\` are already accepted and are kept verbatim by the host — do not resend them; references to their ids remain valid. Each issue names the element it is about; pointer paths index the previous whole draft's \`elements\`.\n\nPrevious draft (open elements only):\n${JSON.stringify(patchInput)}`,
   );
   return `${basePrompt}\n\n${prior}`;
 }
