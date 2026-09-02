@@ -119,6 +119,9 @@ describe("validateDraft — retry channel + freeze", () => {
     expect(seen?.pointers?.[0]?.ruleId).toBe("no-code-bytes");
     expect(seen?.pointers?.[0]?.path).toEqual(["elements", 2, "data", "markdown"]);
     expect(seen?.pointers?.[0]?.rung).toBe(1);
+    // …and the ids the host will keep verbatim whatever comes back (#737): the passing
+    // finding and its code ref froze; the offending prose did not.
+    expect(seen?.frozenIds).toEqual(["f1", "c1"]);
 
     // The frozen finding is byte-identical to the original — not the seat's mutation.
     expect((findEl(result.board, "f1")?.data as { concern: string } | undefined)?.concern).toBe(

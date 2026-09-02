@@ -208,6 +208,15 @@ unimplemented (capability flag `false`): a resume spec against Codex simply
 never surfaces a cursor, the loop never builds one for it, and each Codex turn
 starts fresh — the honest degrade, no fabricated cursor.
 
+The lens pipeline's seats do not resume either, by construction rather than by
+omission: every internal seat turn is `ephemeral`, which the Claude adapter maps
+to the SDK's `persistSession: false`, and a session that was never persisted has
+no transcript to resume. A lens repair turn is therefore a fresh cold session
+that re-sends its base prompt; what it no longer re-sends is the accepted part
+of the draft (the validator merges frozen elements back itself). Holding one
+multi-turn session open for draft and repair is the follow-up, justified only
+once the generation's recorded usage shows the base re-send dominating.
+
 When a persisted cursor points at a harness session the CLI no longer has (the
 transcript is gone), the loop does not fail and does not pretend. It surfaces a
 **`context_rebuilt`** turn-stream row, starts a fresh harness session, and keeps

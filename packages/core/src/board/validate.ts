@@ -53,6 +53,12 @@ export interface RetryPointer {
 export interface RetryRequest {
   /** The current draft: frozen elements verbatim, only the rest is the seat's to fix. */
   readonly draft: DraftBoard;
+  /**
+   * The ids of `draft` elements already accepted (#737). The host keeps them verbatim
+   * whatever the seat returns (`mergePatch`), so a repair prompt need not re-send their
+   * bodies: it sends the pointers and the elements NOT in this list.
+   */
+  readonly frozenIds: readonly string[];
   readonly pointers: readonly RetryPointer[];
   /** The global 1-based retry number (bounded by {@link RETRY_CAP}). */
   readonly attempt: number;
@@ -583,7 +589,12 @@ export async function validateDraft(
           }));
 
     attempts += 1;
-    const raw = await seams.runTurn({ draft: current, pointers, attempt: attempts });
+    const raw = await seams.runTurn({
+      draft: current,
+      frozenIds: [...frozen.keys()],
+      pointers,
+      attempt: attempts,
+    });
     const coerced = coerceBoard(raw);
     if (coerced.ok) {
       everParsed = true;

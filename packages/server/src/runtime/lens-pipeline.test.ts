@@ -46,6 +46,7 @@ import {
   REPAIR_TARGET_KINDS,
   reconcileFlaggedBoards,
   renderDrafterPrompt,
+  renderRetryPrompt,
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
@@ -2673,6 +2674,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // The base prompt is carried verbatim and the prior-failure layer is appended AFTER it,
     // so the seat re-reads its instructions and then what went wrong — in that order.
     expect(reask.startsWith(noiseTurns[0] ?? "")).toBe(true);
+    // Nothing was emitted, so nothing is frozen or open: the re-ask is for the WHOLE
+    // board, never a patch of nothing (#743 review).
     expect(reask.slice((noiseTurns[0] ?? "").length)).toContain(
       "Your previous draft did not pass. Fix ONLY these issues and return the whole board:",
     );
@@ -2681,6 +2684,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // schema itself rather than a lens rule about a board that does not exist.
     expect(reask).toMatch(/- schema at \[[^\]]*\]: /);
     expect(reask).toContain("Previous draft:");
+    expect(reask).not.toContain("elementsToFix");
   });
 
   it("settles TERMINAL only after the re-asks are spent, naming the non-emission (#549)", async () => {
@@ -6637,5 +6641,65 @@ describe("the report gate times a turn that DIED (#731 O4)", () => {
     expect((classification?.harness === undefined) === (classification?.model === undefined)).toBe(
       true,
     );
+  });
+});
+
+// ── The repair prompt is a PATCH (#737) ──────────────────────────────────────
+
+describe("renderRetryPrompt sends pointers and only the open elements", () => {
+  const FROZEN_BODY = "FROZEN_SENTINEL: the accepted finding's concern";
+  const OPEN_BODY = "OPEN_SENTINEL: the prose that failed lint";
+  const draft = {
+    elements: [
+      { id: "f1", kind: "finding", data: { concern: FROZEN_BODY } },
+      { id: "p1", kind: "prose", data: { markdown: OPEN_BODY } },
+    ],
+    skippedHunks: [{ hunk: "h9", reason: "mechanical" }],
+  } as never;
+  const pointers = [
+    {
+      path: ["elements", 1, "data", "markdown"],
+      message: "no code bytes",
+      ruleId: "no-code-bytes",
+    },
+  ];
+
+  it("carries the failing element and the frozen id, not the frozen element's body", () => {
+    const prompt = renderRetryPrompt("BASE", draft, pointers, ["f1"]);
+    expect(prompt).toContain(OPEN_BODY);
+    expect(prompt).not.toContain(FROZEN_BODY);
+    expect(prompt).toContain('"frozenElementIds":["f1"]');
+    // The pointer indexes the WHOLE previous draft, which the seat no longer sees, so
+    // the element it is about is named beside it (#743 review).
+    expect(prompt).toContain(
+      'no-code-bytes at ["elements",1,"data","markdown"] (element `p1`): no code bytes',
+    );
+    // Board-level passthrough still rides (the seat owns skippedHunks fixes).
+    expect(prompt).toContain('"skippedHunks":[{"hunk":"h9"');
+    expect(prompt.startsWith("BASE\n\n")).toBe(true);
+  });
+
+  it("with nothing frozen every element body rides (positive control)", () => {
+    const prompt = renderRetryPrompt("BASE", draft, pointers, []);
+    expect(prompt).toContain(FROZEN_BODY);
+    expect(prompt).toContain(OPEN_BODY);
+    expect(prompt).toContain('"frozenElementIds":[]');
+  });
+
+  it("a parse pointer names no element (its path indexes the rejected return, not this draft)", () => {
+    const prompt = renderRetryPrompt(
+      "BASE",
+      draft,
+      [{ path: ["elements", 0, "kind"], message: "invalid kind" }],
+      ["f1"],
+    );
+    expect(prompt).toContain('schema at ["elements",0,"kind"]: invalid kind');
+    expect(prompt).not.toContain("(element `f1`)");
+  });
+
+  it("asks for the whole board when nothing is open and nothing is frozen", () => {
+    const prompt = renderRetryPrompt("BASE", { elements: [] } as never, pointers, []);
+    expect(prompt).toContain("and return the whole board:");
+    expect(prompt).not.toContain("elementsToFix");
   });
 });

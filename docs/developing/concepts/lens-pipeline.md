@@ -148,7 +148,14 @@ and calls board regeneration through this runtime.
    runs the cross-lens **every-hunk composition check**. A lint failure
    returns the draft to its seat as ZodError-shaped JSON pointers on one retry
    channel; the seat returns a patch, and passing elements **freeze** — a
-   frozen element is never re-linted or re-drafted. Validation spends at most
+   frozen element is never re-linted or re-drafted. The repair turn is a fresh
+   ephemeral session (an ephemeral session is never persisted, so it cannot be
+   resumed), and it carries the lens prompt, the change inventory, the
+   pointers (each naming the element it is about), the board-level document
+   and skipped hunks, and only the elements still open; the frozen ids travel
+   as a list so references stay valid, and the host merges the frozen bodies
+   back itself. After a turn that emitted nothing, the re-ask is for the whole
+   board. Validation spends at most
    one model repair turn after the initial draft. An element that remains
    invalid takes an **honest-omission exit**: it is dropped and its hunks move
    to `skippedHunks` with a reason. Unresolved board-level or schema violations
