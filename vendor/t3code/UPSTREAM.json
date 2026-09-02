@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/pingdotgg/t3code",
+  "commit": "aab4049646ffa8b9bcff92562992e6c3a8554bf0",
+  "date": "2026-09-02T18:44:31+00:00",
+  "defaultBranch": "main",
+  "vendorBranch": "t3-vendor",
+  "paths": [
+    "LICENSE",
+    "tsconfig.base.json",
+    "vite.config.ts",
+    "scripts/lib",
+    "patches",
+    "packages/contracts",
+    "packages/shared",
+    "packages/client-runtime",
+    "packages/effect-codex-app-server",
+    "packages/effect-acp",
+    "packages/tailscale",
+    "apps/server",
+    "apps/web"
+  ]
+}
