@@ -3,7 +3,12 @@ import { sha256Hex } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { decompose } from "./decomposition";
 import { createInvocationBudget } from "./invocation-budget";
-import { type NoiseProvenanceSeed, type NoiseTurnResult, runNoiseAngle } from "./noise-generation";
+import {
+  type NoiseProvenanceSeed,
+  type NoiseTurnResult,
+  renderPayload,
+  runNoiseAngle,
+} from "./noise-generation";
 import { buildOfferedManifest } from "./offered-manifest";
 
 // ── A tiny real changeset: a lockfile hunk + two source hunks ────────────────
@@ -133,7 +138,8 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     const present = await capture(context);
 
     expect(sha256Hex(absent)).toBe(
-      "b42660d429e9d960e4fc49b208b02aa6d1ff811c179bb5117ac81b6ae8f4dcab",
+      // Re-pinned 2026-09-02 when the payload became compact and bounded (#737).
+      "6a8e57544636c483e064f8003ad3de548c7e03fd2ae272b5cc7ca458cffc35a4",
     );
     expect(absent).not.toContain("<<<rennet:layer context>>>");
     expect(present).toContain(
@@ -413,5 +419,61 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     expect(result.groups).toHaveLength(1);
     expect(result.attempts[0]?.outcome).toBe("turn-failed");
     expect(result.attempts[1]?.outcome).toBe("admitted");
+  });
+});
+
+// ── The payload byte bound (#737) ────────────────────────────────────────────
+
+describe("renderPayload byte bound", () => {
+  const bodyBytes = (text: string): number => {
+    const parsed = JSON.parse(text) as { patchsetId: string; hunks: unknown[] };
+    return Buffer.byteLength(
+      JSON.stringify({ patchsetId: parsed.patchsetId, hunks: parsed.hunks }),
+      "utf8",
+    );
+  };
+
+  it("is compact JSON and carries no truncation marker below the bound", () => {
+    const text = renderPayload(MANIFEST, "ps_1");
+    expect(text).not.toContain("\n");
+    expect(JSON.parse(text)).not.toHaveProperty("truncated");
+    expect(JSON.parse(text).hunks).toHaveLength(
+      MANIFEST.occurrences.filter((o) => o.kind === "hunk").length,
+    );
+  });
+
+  it("keeps whole hunks in offered order up to the bound and names every omitted id", () => {
+    const big: Patchset = {
+      ...PATCHSET,
+      files: Array.from({ length: 40 }, (_, i) =>
+        file(
+          `src/big-${i}.ts`,
+          patch(
+            `src/big-${i}.ts`,
+            Array.from(
+              { length: 12 },
+              (_, line) => `+export const v${i}_${line} = "${"x".repeat(24)}";`,
+            ),
+          ),
+        ),
+      ),
+    };
+    const manifest = buildOfferedManifest(decompose(big));
+    const all = manifest.occurrences.filter((o) => o.kind === "hunk").map((o) => o.id);
+    const bound = 2_000;
+    const text = renderPayload(manifest, "ps_big", bound);
+    expect(bodyBytes(text)).toBeLessThanOrEqual(bound);
+    const parsed = JSON.parse(text) as {
+      hunks: { id: string }[];
+      truncated: { omittedHunkIds: string[]; readWith: string };
+    };
+    const kept = parsed.hunks.map((h) => h.id);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(all.slice(0, kept.length)).toEqual(kept);
+    expect(parsed.truncated.omittedHunkIds).toEqual(all.slice(kept.length));
+    expect(parsed.truncated.readWith).toContain("git diff");
+    // Positive control: the bound actually bit — the unbounded payload is larger.
+    expect(parsed.truncated.omittedHunkIds.length).toBeGreaterThan(0);
+    expect(bodyBytes(renderPayload(manifest, "ps_big"))).toBeGreaterThan(bound);
   });
 });

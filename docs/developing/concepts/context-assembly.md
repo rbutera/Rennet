@@ -73,6 +73,13 @@ serialized diff: the capture cap is 2 MB, far above what a prompt can carry, and
 re-sending the whole diff every turn is what used to kill a lens on a large
 branch. What the drafter cites is what it actually read.
 
+The RSP noise seat is the one runner that still receives hunk lines, because its
+validator culls its groups against the offered hunk ids. That payload is compact
+JSON under a 256 KiB bound: whole hunks in offered order until the next would
+cross it, and every omitted hunk id listed so the seat reads it from the checkout
+it is standing in. The payload is re-sent on each of its retries, so the bound is
+per attempt.
+
 Ownership marks do not appear until dispatch supplies the rules, and openspec
 artifacts enter at path grain with the full parse running where the artifact
 text lives. The element differ lives in the same folder but feeds lineage carry

@@ -507,6 +507,12 @@ When the file or span cannot be found, the model works from the note and its
 metadata and says so — it never substitutes a different code location that
 looks close enough.
 
+Every other interpolation into a seat prompt declares its bound at the call
+site too: the round-report evidence manifest is measured against its 256 KiB
+ceiling before any seat runs, and the RSP noise seat's hunk payload keeps whole
+hunks under the same 256 KiB and names the ids it left out. Unbounded
+interpolation is a bug.
+
 ## Three layers carry every rule
 
 The schema makes good structure the only expressible structure (a finding's

@@ -338,7 +338,8 @@ export function renderCiClassificationPrompt(
     contract.failureValve,
     "",
     "## Unclassified failures and changed paths",
-    JSON.stringify(input, null, 2),
+    // Compact: an indent is a ~30% surcharge no reader sees (#737).
+    JSON.stringify(input),
     "",
   ].join("\n");
 }
