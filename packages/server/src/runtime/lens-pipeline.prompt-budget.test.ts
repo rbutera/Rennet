@@ -30,6 +30,11 @@ const lensPrompt = (lens: (typeof LENS_KINDS)[number]): string =>
 // cost is its measurement minus that share, plus 10% headroom; one shared number
 // would let the small lenses grow by half before anything reddened. The packet
 // scales at roughly 550 bytes per file row and 275 per hunk row.
+//
+// What this cannot catch, stated so no reader inherits a wider claim: the prompt is
+// rendered with no report board, no design artifacts and no round context, so those
+// three interpolations are not measured here; and on a 2-file / 3-hunk fixture the
+// per-file and per-hunk constants are a stated scaling rule, not an exercised one.
 const FIXED_BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
   design: 14_650,
   sequence: 7_450,

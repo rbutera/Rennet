@@ -10,6 +10,11 @@ import {
 } from "@rennet/adapters";
 import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
 import {
+  INVESTIGATE_PARTIAL_FILE,
+  LENS_PROMPT_FILES,
+  PROMPT_PARTIAL_MARKER,
+} from "@rennet/prompts";
+import {
   AUTHORED_BOARD_SCHEMA,
   type DraftBoard,
   findingRefKey,
@@ -728,8 +733,20 @@ function fakeClaudePort(
   } as unknown as HarnessPort;
 }
 
-/** readPrompt returns a per-file marker so the fake body can recover which lens/seat it is. */
-const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
+/** The shared partial's stand-in body: what the production splice must put in the prompt. */
+const PARTIAL_BODY = "PARTIAL_BODY:investigate-before-you-draft";
+
+/**
+ * readPrompt returns a per-file marker so the fake body can recover which lens/seat it is.
+ * Lens files carry the real partial marker line, so the production expansion path
+ * (`expandPromptPartials` in `runLensPipeline`) is exercised, not bypassed (#739 review).
+ */
+const readPrompt = (file: string): string =>
+  file === INVESTIGATE_PARTIAL_FILE
+    ? PARTIAL_BODY
+    : Object.values(LENS_PROMPT_FILES).includes(file)
+      ? `PROMPT_FILE:${file}\n${PROMPT_PARTIAL_MARKER}`
+      : `PROMPT_FILE:${file}`;
 
 /** Recover the lens from the marker the fake prompt carries (design.md → design, report.md → report). */
 function lensFromPrompt(prompt: string): string {
@@ -4020,7 +4037,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(design?.immutability).toEqual([]);
   });
 
-  it("seeds each drafter turn with the DeltaPacket + lens prompt + host schema (D1)", async () => {
+  it("seeds each drafter turn with the DeltaPacket + lens prompt, and NOT the host schema (#737)", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
     await runLensPipeline({
       claudePort: fakeClaudePort(captures, (p) => cleanBody(lensFromPrompt(p))),
@@ -4038,6 +4055,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(designTurn).toContain("ps-1"); // the inlined DeltaPacket (patchset id)
     // The board schema travels ONCE, as the SDK `outputFormat` (#737); never as prompt text.
     expect(designTurn).not.toContain("hostSchema");
+    // The shared partial is spliced by the PRODUCTION read path: its body is in the turn and
+    // the marker is not. Delete the `expandPromptPartials` call in `runLensPipeline` and this
+    // reddens (the marker would ride raw and the body would be absent).
+    expect(designTurn).toContain(PARTIAL_BODY);
+    expect(designTurn).not.toContain(PROMPT_PARTIAL_MARKER);
   });
 
   it("council-routes each seat to the right model (claude-only scenario)", async () => {
