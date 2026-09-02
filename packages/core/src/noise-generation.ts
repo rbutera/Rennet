@@ -414,64 +414,62 @@ function buildEnvelope(
 }
 
 /**
- * UTF-8 ceiling on the noise seat's hunk payload (#737). Whole hunks are kept in
- * offered order until the next one would cross it; every omitted hunk is NAMED so
- * the seat reads it from the checkout it is standing in. Same magnitude as the
- * round-evidence manifest bound. The payload is re-sent on every retry, so the
- * bound is per attempt.
+ * UTF-8 ceiling on the noise seat's WHOLE hunk payload text (#737). Whole hunks are
+ * kept in offered order until the next one would cross it; the rest are COUNTED in
+ * a marker (a hunk the seat was not shown cannot be grouped and falls through to
+ * normal review). Same magnitude as the round-evidence manifest bound. The payload
+ * is re-sent on every retry, so the bound is per attempt.
  */
 export const NOISE_PAYLOAD_MAX_BYTES = 262_144;
 
 const PAYLOAD_ENCODER = new TextEncoder();
 
+function payloadBytes(value: unknown): number {
+  return PAYLOAD_ENCODER.encode(JSON.stringify(value)).length;
+}
+
+const PAYLOAD_READ_WITH =
+  "This many offered hunks, in offered order after the last one shown, did not fit the payload bound. You cannot classify what you were not shown; they fall through to normal review. Group only the hunks above.";
+
 /**
- * A compact, model-facing serialisation of the offered hunks and their lines,
- * bounded by `maxBytes` over the `{ patchsetId, hunks }` body. Compact JSON: an
- * indent is a ~30% surcharge no reader sees.
+ * A compact, model-facing serialisation of the offered hunks and their lines. The
+ * WHOLE returned text is bounded by `maxBytes`: whole hunks are kept in offered order
+ * until the next would cross the budget left after reserving the truncation marker,
+ * which carries a COUNT of omitted hunks (never a list — a list is itself unbounded,
+ * review of #739). Compact JSON: an indent is a ~30% surcharge no reader sees.
  */
 export function renderPayload(
   manifest: OfferedManifest,
   patchsetId: string,
   maxBytes: number = NOISE_PAYLOAD_MAX_BYTES,
 ): string {
-  const kept: Array<{
-    id: string;
-    additions: readonly string[];
-    deletions: readonly string[];
-    context: readonly string[];
-  }> = [];
-  const omittedHunkIds: string[] = [];
-  // The envelope with an empty hunk list; each kept hunk adds its bytes plus a comma.
-  let bytes = PAYLOAD_ENCODER.encode(JSON.stringify({ patchsetId, hunks: [] })).length;
-  for (const occurrence of manifest.occurrences) {
-    if (occurrence.kind !== "hunk") continue;
-    const hunk = {
+  const offered = manifest.occurrences
+    .filter((occurrence) => occurrence.kind === "hunk")
+    .map((occurrence) => ({
       id: occurrence.id,
       additions: occurrence.sides?.additions ?? [],
       deletions: occurrence.sides?.deletions ?? [],
       context: occurrence.sides?.context ?? [],
-    };
-    const hunkBytes =
-      PAYLOAD_ENCODER.encode(JSON.stringify(hunk)).length + (kept.length > 0 ? 1 : 0);
-    if (omittedHunkIds.length > 0 || bytes + hunkBytes > maxBytes) {
-      omittedHunkIds.push(hunk.id);
-      continue;
-    }
+    }));
+  const marker = (omittedHunks: number) => ({ omittedHunks, readWith: PAYLOAD_READ_WITH });
+  // Reserve the marker at its largest (every hunk omitted) so the kept set never has to
+  // shrink again once the marker turns out to be needed.
+  const envelopeBytes = payloadBytes({ patchsetId, hunks: [] });
+  const markerOverhead =
+    payloadBytes({ patchsetId, hunks: [], truncated: marker(offered.length) }) - envelopeBytes;
+  const kept: typeof offered = [];
+  let bytes = envelopeBytes;
+  for (const hunk of offered) {
+    const hunkBytes = payloadBytes(hunk) + (kept.length > 0 ? 1 : 0);
+    if (bytes + hunkBytes + markerOverhead > maxBytes) break;
     kept.push(hunk);
     bytes += hunkBytes;
   }
+  const omitted = offered.length - kept.length;
   return JSON.stringify(
-    omittedHunkIds.length === 0
+    omitted === 0
       ? { patchsetId, hunks: kept }
-      : {
-          patchsetId,
-          hunks: kept,
-          truncated: {
-            omittedHunkIds,
-            readWith:
-              "These offered hunks did not fit the payload bound. Read them with `git diff` in your working directory; they are still valid ids to classify.",
-          },
-        },
+      : { patchsetId, hunks: kept, truncated: marker(omitted) },
   );
 }
 

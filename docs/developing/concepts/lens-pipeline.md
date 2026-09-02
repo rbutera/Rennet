@@ -516,8 +516,8 @@ looks close enough.
 Every other interpolation into a seat prompt declares its bound at the call
 site too: the round-report evidence manifest is measured against its 256 KiB
 ceiling before any seat runs, and the RSP noise seat's hunk payload keeps whole
-hunks under the same 256 KiB and names the ids it left out. Unbounded
-interpolation is a bug.
+hunks under the same 256 KiB on its whole text and counts the hunks it left out.
+Unbounded interpolation is a bug.
 
 A tripwire keeps the drafter prompt itself honest. The `lens-pipeline`
 prompt-budget test assembles every lens's drafter prompt against the real

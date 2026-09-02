@@ -75,10 +75,11 @@ branch. What the drafter cites is what it actually read.
 
 The RSP noise seat is the one runner that still receives hunk lines, because its
 validator culls its groups against the offered hunk ids. That payload is compact
-JSON under a 256 KiB bound: whole hunks in offered order until the next would
-cross it, and every omitted hunk id listed so the seat reads it from the checkout
-it is standing in. The payload is re-sent on each of its retries, so the bound is
-per attempt.
+JSON under a 256 KiB bound on the whole text: whole hunks in offered order until
+the next would cross it, then a marker carrying the count of hunks left out. A
+hunk the seat was not shown cannot be grouped and falls through to normal review;
+the marker says so rather than pretending the seat can find it. The payload is
+re-sent on each of its retries, so the bound is per attempt.
 
 Ownership marks do not appear until dispatch supplies the rules, and openspec
 artifacts enter at path grain with the full parse running where the artifact
