@@ -1,6 +1,11 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # Vendored T3 Code snapshot (vendor/t3code/UPSTREAM.json records the base).
+  # These keep upstream's toolchain (vite-plus, tsgo) and formatting; see
+  # docs/developing/concepts/t3code-vendoring.md.
+  - "vendor/t3code/apps/*"
+  - "vendor/t3code/packages/*"
 
 nodeLinker: hoisted
 
@@ -39,9 +44,29 @@ minimumReleaseAgeExclude:
   # Same first-party rationale: the embeddable board service Rennet's B4 runtime
   # hosts in-process, published alongside @wboard/core from the same repo/tag.
   - "@wboard/server"
+  # T3 Code's Effect 4 beta line and its pinned client libraries: upstream pins
+  # these exact versions in its catalog, the vendored snapshot is built against
+  # them, and a fold moves them together. Same shape as the SDK entries above.
+  - "effect@4.0.0-beta.103"
+  - "@effect/atom-react@4.0.0-beta.103"
+  - "@effect/openapi-generator@4.0.0-beta.103"
+  - "@effect/platform-bun@4.0.0-beta.103"
+  - "@effect/platform-node@4.0.0-beta.103"
+  - "@effect/platform-node-shared@4.0.0-beta.103"
+  - "@effect/sql-sqlite-bun@4.0.0-beta.103"
+  - "@effect/vitest@4.0.0-beta.103"
+  - "@clerk/electron@0.0.37"
+  - "@clerk/react@6.14.7"
+  - "@clerk/shared@4.30.1"
+  - "@clerk/clerk-js@6.30.1"
+  - "@legendapp/list@3.3.5"
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - "semver@5.7.2 || 6.3.1"
+  # @pierre/diffs (vendored T3 Code) depends on @pierre/theme 1.1.0, published
+  # without the provenance its earlier versions carried. Same publisher, exact
+  # version pinned by upstream's lockfile; excluded by exact version only.
+  - "@pierre/theme@1.1.0"
 trustPolicyIgnoreAfter: 525600
 trustLockfile: false
 # Electron Forge's native rebuild chain pins Electron's node-gyp fork by commit SHA.
@@ -68,6 +93,10 @@ onlyBuiltDependencies:
   - macos-alias
   - fs-xattr
   - electron-winstaller
+  # Vendored T3 Code server: node-pty compiles its pty addon at install time
+  # (terminal tabs), msgpackr-extract only selects a prebuilt binding.
+  - node-pty
+  - msgpackr-extract
 
 # @anthropic-ai/claude-agent-sdk declares three NON-optional peers
 # (zod, @anthropic-ai/sdk, @modelcontextprotocol/sdk). Its main entry (sdk.mjs,
@@ -85,12 +114,62 @@ peerDependencyRules:
     - "zod"
     - "@anthropic-ai/sdk"
     - "@modelcontextprotocol/sdk"
+  # The vendored T3 Code web app builds with vite-plus, whose `vite` is
+  # @voidzero-dev/vite-plus-core (a 0.x version string). Its Vite plugins peer
+  # on vite ^6|^7|^8 and would refuse it; upstream relaxes the peer the same way.
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"
+    # vite-plus 0.2.2 carries vitest 4.1.9, which peers on the exact coverage
+    # package version; Rennet's own vitest/coverage pair is 4.1.10 and is the
+    # one that runs Rennet's tests. Exact-version peers on a sibling patch line.
+    "vitest>@vitest/coverage-v8": "4"
+    # vite-plus-core peers on typescript ^5||^6; Rennet's root also carries
+    # typescript 7 under the @typescript/native alias, and pnpm matches peers by
+    # package name. Rennet's real compiler is the aliased 6.0.2 package.
+    "@voidzero-dev/vite-plus-core>typescript": "7"
+    # apps/mobile: metro's ws 7 peers on utf-8-validate 5; the vendored T3 Code
+    # tree brings utf-8-validate 6 into the hoisted store. ws only uses it as an
+    # optional accelerator and falls back to its JS path.
+    "ws>utf-8-validate": "6"
   # (The workspace-wide `allowedVersions: typescript` rule the Expo M1 work first needed is
   #  gone: its only demander was `@expo/require-utils`, pulled in transitively by `@nx/expo`,
   #  which was unused scaffold and has been removed (#383 batch, finding 17). No remaining
   #  package objects to TS 6, so the override is unnecessary — install is clean without it.)
 
 overrides:
+  # Vendored T3 Code: @effect/vitest must not drag vitest 3 in beside Rennet's
+  # vitest 4 (it runs under vite-plus), and @pierre/diffs' shiki transformer
+  # floor matches upstream.
+  "@effect/vitest>vitest": "-"
+  "@pierre/diffs>@shikijs/transformers": "^4.2.0"
+  # @clerk/clerk-js (via @clerk/electron in the vendored web app) declares crypto
+  # wallet adapters Rennet never loads; upstream strips the same set. Dropping
+  # them also removes their LGPL/Unknown-licence tails (rpc-websockets, eyes,
+  # text-encoding-utf-8) from the shipped tree.
+  "@clerk/clerk-js>@base-org/account": "-"
+  "@clerk/clerk-js>@coinbase/wallet-sdk": "-"
+  "@clerk/clerk-js>@solana/wallet-adapter-base": "-"
+  "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
+  "@clerk/clerk-js>@solana/wallet-standard": "-"
+  "@clerk/clerk-js>@wallet-standard/core": "-"
+  # Pins that reproduce upstream's lockfile where the resolved version changes
+  # what the vendored code compiles or generates against. The vendored
+  # package.json files carry caret ranges; a fresh resolve would drift.
+  #   - the Claude Agent SDK: 0.3.171+ widens SDK message unions and requires
+  #     requestId on canUseTool, which the vendored adapter and its tests do not
+  #     yet handle (Rennet's own adapter stays on its own newer pin).
+  #   - the TanStack router plugin regenerates routeTree.gen.ts on every build;
+  #     a newer generator reorders imports and dirties a vendored file.
+  "t3>@anthropic-ai/claude-agent-sdk": "0.3.170"
+  "@t3tools/web>@tanstack/router-plugin": "1.168.13"
+  "@t3tools/web>@tanstack/react-router": "1.170.10"
+  #   - React: upstream pins 19.2.6 exact, Rennet is on 19.2.8. Two copies in
+  #     the hoisted store give the web tests (and a native ChatView mount) a
+  #     null hooks dispatcher; one copy is a precondition of this change.
+  "@t3tools/web>react": "19.2.8"
+  "@t3tools/web>react-dom": "19.2.8"
   "@emnapi/core": "2.0.0-alpha.3"
   "@emnapi/runtime": "2.0.0-alpha.3"
   axios: "1.18.0"
@@ -99,3 +178,49 @@ overrides:
   tar: "7.5.22"
   tmp: "0.2.7"
   unicorn-magic: "0.4.0"
+
+# --- Vendored T3 Code (vendor/t3code) -------------------------------------
+# Upstream pins these in its own catalog; the vendored package.json files
+# reference them as `catalog:`. A fold that bumps them updates this block (the
+# inspect digest prints upstream's manifest diff for exactly this purpose).
+catalog:
+  "@clerk/electron": 0.0.37
+  "@clerk/react": 6.14.7
+  "@effect/atom-react": 4.0.0-beta.103
+  "@effect/openapi-generator": 4.0.0-beta.103
+  "@effect/platform-bun": 4.0.0-beta.103
+  "@effect/platform-node": 4.0.0-beta.103
+  "@effect/sql-sqlite-bun": 4.0.0-beta.103
+  "@effect/vitest": 4.0.0-beta.103
+  "@legendapp/list": 3.3.5
+  "@noble/curves": 1.9.1
+  "@noble/hashes": 1.8.0
+  "@pierre/diffs": 1.3.0-beta.10
+  "@types/node": 24.12.4
+  effect: 4.0.0-beta.103
+  jose: 6.2.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
+  vite-plus: 0.2.2
+  yaml: 2.9.0
+
+# (pnpm 10 does not resolve `catalog:` inside packageExtensions, so these repeat
+#  the catalog's vite-plus and vite entries verbatim.)
+packageExtensions:
+  "@effect/vitest@*":
+    dependencies:
+      vite-plus: 0.2.2
+    peerDependenciesMeta:
+      vitest:
+        optional: true
+  vite-plus@*:
+    dependencies:
+      vite: npm:@voidzero-dev/vite-plus-core@0.2.2
+
+# Upstream's patches travel with the snapshot; only the ones for installed
+# versions are declared (pnpm refuses an unused patch).
+patchedDependencies:
+  "@effect/vitest@4.0.0-beta.103": vendor/t3code/patches/@effect__vitest@4.0.0-beta.103.patch
+  "@ff-labs/fff-node@0.9.4": vendor/t3code/patches/@ff-labs__fff-node@0.9.4.patch
+  "@legendapp/list@3.3.5": vendor/t3code/patches/@legendapp__list@3.3.5.patch
+  "@pierre/diffs@1.3.0-beta.10": vendor/t3code/patches/@pierre%2Fdiffs@1.3.0-beta.10.patch
+  effect@4.0.0-beta.103: vendor/t3code/patches/effect@4.0.0-beta.103.patch

@@ -115,6 +115,7 @@ export default defineConfig({
                     link: "/developing/concepts/surfacing-and-routing/",
                   },
                   { label: "Harness adapters", link: "/developing/concepts/harness-adapters/" },
+                  { label: "T3 Code vendoring", link: "/developing/concepts/t3code-vendoring/" },
                   { label: "The WSL daemon", link: "/developing/concepts/wsl-daemon/" },
                   {
                     label: "Delta and generations",

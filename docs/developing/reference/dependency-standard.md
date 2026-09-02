@@ -59,6 +59,32 @@ pnpm reports their commercial licence as `Unknown`. The gate does not allow the
 that proves the gate can still fail. Packaging strips the SDK's bundled harness
 executables because Rennet runs the user's installed `claude`.
 
+A package may also be allowed under a licence that is not on the general
+allowlist, by exact name and exact licence, through `allowedPackageLicences` in
+the same script. The only such entry is `heic-to` (LGPL-3.0), which the vendored
+T3 Code web app uses to convert HEIC attachments; LGPL binds the library, not
+Rennet's source, and the build emits it as its own lazy chunk. Licence
+identifiers compare case-insensitively, so a package that spells `apache-2.0`
+in lower case is Apache-2.0.
+
+## The vendored T3 Code snapshot
+
+`vendor/t3code/` is a snapshot of selected T3 Code paths (MIT), recorded in
+`vendor/t3code/UPSTREAM.json` and advanced by `pnpm t3:fold`. Its packages join
+the workspace under the `vendor/t3code/apps/*` and `vendor/t3code/packages/*`
+globs and keep upstream's toolchain: Vite Plus (`vp`) for bundling and tests,
+`tsgo` from `@typescript/native-preview` for typechecking, and a `catalog:`
+block in `pnpm-workspace.yaml` that repeats upstream's pinned versions,
+including the Effect 4 beta line. The Effect beta and the Clerk client packages
+are name-and-version entries in `minimumReleaseAgeExclude`, the same shape as
+the Claude Agent SDK, because upstream pins them exactly and a fold moves them
+together. A small set of overrides reproduces upstream's lockfile where a fresh
+resolve would change what the vendored code compiles or generates against (the
+Claude Agent SDK for the vendored server, the TanStack router plugin, React at
+Rennet's version). Vendored code is never reformatted, and every edited vendored
+file is listed in `vendor/t3code/PATCHES.md`; see
+[T3 Code vendoring](../concepts/t3code-vendoring.md).
+
 ## Tool ownership
 
 | Job | Owner |
@@ -70,6 +96,7 @@ executables because Rennet runs the user's installed `claude`.
 | Type checking | TypeScript |
 | Renderer builds | Vite |
 | Unit and integration tests | Vitest |
+| Vendored T3 Code bundling, tests, and typecheck | Vite Plus (`vp`) and `tsgo`, behind Nx `t3code-*` projects |
 | Electron journeys | Playwright |
 | Desktop packaging and release | Electron Forge |
 | Desktop runtime | Electron |

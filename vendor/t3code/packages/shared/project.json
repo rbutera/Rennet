@@ -1,0 +1,25 @@
+{
+  "name": "t3code-shared",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "tags": [
+    "scope:t3code",
+    "layer:vendor"
+  ],
+  "targets": {
+    "typecheck": {
+      "inputs": [
+        "default",
+        "^production",
+        "t3codeShared"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "default",
+        "^production",
+        "t3codeShared"
+      ]
+    }
+  }
+}

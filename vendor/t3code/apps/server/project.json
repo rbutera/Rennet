@@ -1,0 +1,57 @@
+{
+  "name": "t3code-server",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "tags": [
+    "scope:t3code",
+    "layer:vendor"
+  ],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsgo --noEmit -p tsconfig.rennet.json",
+        "cwd": "vendor/t3code/apps/server"
+      },
+      "inputs": [
+        "default",
+        "^production",
+        "t3codeShared"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec vp test run --exclude src/cli/triagePrompt.test.ts --exclude src/entrypoint.test.ts --exclude test/ActivityPayloadProjection.test.ts",
+        "cwd": "vendor/t3code/apps/server"
+      },
+      "inputs": [
+        "default",
+        "^production",
+        "t3codeShared"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "pnpm exec vp pack",
+          "pnpm exec vp pack src/service-launcher.ts --out-dir dist --no-clean"
+        ],
+        "parallel": false,
+        "cwd": "vendor/t3code/apps/server"
+      },
+      "inputs": [
+        "production",
+        "^production",
+        "t3codeShared"
+      ],
+      "outputs": [
+        "{projectRoot}/dist"
+      ],
+      "dependsOn": [
+        "^build"
+      ]
+    }
+  }
+}

@@ -76,6 +76,24 @@
           "{workspaceRoot}/scripts/pnpm-launcher.mjs",
           "sharedGlobals"
         ]
+      },
+      "vendor-ledger": {
+        "cache": true,
+        "command": "node scripts/t3-upstream.mjs check-ledger",
+        "inputs": [
+          "{workspaceRoot}/vendor/t3code/**/*",
+          "{workspaceRoot}/scripts/t3-upstream.mjs",
+          "sharedGlobals"
+        ]
+      },
+      "test": {
+        "cache": true,
+        "command": "node --test scripts/t3-upstream.test.mjs",
+        "inputs": [
+          "{workspaceRoot}/scripts/t3-upstream.mjs",
+          "{workspaceRoot}/scripts/t3-upstream.test.mjs",
+          "sharedGlobals"
+        ]
       }
     }
   },
@@ -84,7 +102,7 @@
     "architecture": "nx run rennet:architecture",
     "audit": "nx run rennet:audit",
     "build": "nx run-many -t build",
-    "check": "nx run-many -t format,architecture,licenses,lint,typecheck,test,build",
+    "check": "nx run-many -t format,architecture,licenses,vendor-ledger,lint,typecheck,test,build",
     "check:affected": "nx affected -t lint,typecheck,test,build",
     "check:event-store": "nx run event-store-publish-failure:check",
     "dev": "nx run rennet-desktop:dev",
@@ -95,6 +113,9 @@
     "real-turn": "nx run rennet-adapters:real-turn",
     "release:check": "node scripts/check-release.mjs",
     "release:env": "scripts/with-release-env.sh",
+    "t3:check-ledger": "node scripts/t3-upstream.mjs check-ledger",
+    "t3:fold": "node scripts/t3-upstream.mjs fold",
+    "t3:inspect": "node scripts/t3-upstream.mjs inspect",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -120,6 +141,7 @@
     "@types/react-dom": "19.2.3",
     "@typescript-eslint/parser": "8.65.0",
     "@typescript/native": "npm:typescript@7.0.2",
+    "@typescript/native-preview": "7.0.0-dev.20260604.1",
     "@vitejs/plugin-react": "6.0.4",
     "@vitest/coverage-v8": "4.1.10",
     "eslint": "10.8.0",
@@ -130,6 +152,7 @@
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.65.0",
     "vite": "8.1.5",
+    "vite-plus": "catalog:",
     "vitest": "4.1.10"
   },
   "lint-staged": {

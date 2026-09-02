@@ -36,6 +36,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [Model Council](./developing/concepts/model-council.md),
   [surfacing and routing](./developing/concepts/surfacing-and-routing.md),
   [harness adapters](./developing/concepts/harness-adapters.md),
+  [T3 Code vendoring](./developing/concepts/t3code-vendoring.md),
   [the WSL daemon](./developing/concepts/wsl-daemon.md),
   and [design doctrine](./developing/concepts/design-doctrine.md)
 - Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md)

@@ -11,6 +11,7 @@ node_modules/
 .pnpm-store/
 
 # Build and package outputs
+.vite-plus/
 dist/
 build/
 out/
