@@ -112,7 +112,9 @@ const rennet = {
 
 export default [
   {
-    ignores: ["**/dist/**", "**/out/**", "**/coverage/**", "node_modules/**"],
+    // vendor/: the T3 Code snapshot keeps upstream's formatting and lint; see
+    // vendor/t3code/PATCHES.md for the rule.
+    ignores: ["**/dist/**", "**/out/**", "**/coverage/**", "node_modules/**", "vendor/**"],
   },
   ...nx.configs["flat/base"],
   ...nx.configs["flat/typescript"],

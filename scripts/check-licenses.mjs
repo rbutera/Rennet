@@ -43,7 +43,20 @@ const allowed = new Set([
   // the expo-google-fonts wrappers: MIT loader code + OFL font payload.
   "OFL-1.1",
   "MIT AND OFL-1.1",
+  // Vendored T3 Code web app (vendor/t3code, 2026-09-03): jszip is dual-licensed
+  // and we take the MIT arm; pako is MIT plus the zlib licence, both permissive.
+  "(MIT OR GPL-3.0-or-later)",
+  "(MIT AND Zlib)",
 ]);
+
+// Packages allowed under a licence that is NOT on the general allowlist, by
+// exact name and exact licence, so the exception cannot widen silently.
+//   • heic-to (LGPL-3.0): T3 Code's composer converts HEIC attachments with it.
+//     LGPL is library-level weak copyleft: no obligation on Rennet's own source,
+//     and the web build emits it as its own lazy chunk (heic-to-*.js), which
+//     keeps the library separable. Flagged for Rai's ruling in the vendoring
+//     change; drop the row if the composer's HEIC path is stubbed out instead.
+const allowedPackageLicences = new Map([["heic-to", "LGPL-3.0"]]);
 
 // Deliberate exception, Rai's decision 2026-08-06 (Master Plan R2). The Claude
 // Agent SDK is proprietary (Anthropic Commercial Terms, "SEE LICENSE IN
@@ -84,8 +97,11 @@ const allowedUnknownPackages = new Set([
  */
 export function computeBlocked(report, policy) {
   const blocked = [];
+  // pnpm reports SPDX ids as the package wrote them; @pierre/* spell Apache-2.0
+  // in lower case. Compare case-insensitively so spelling is not a verdict.
+  const allowedLower = new Set([...policy.allowed].map((id) => id.toLowerCase()));
   for (const [license, packages] of Object.entries(report)) {
-    if (policy.allowed.has(license)) continue;
+    if (allowedLower.has(license.toLowerCase())) continue;
     if (license === "Unknown") {
       for (const pkg of packages) {
         if (!policy.allowedUnknownPackages.has(pkg.name)) {
@@ -94,12 +110,15 @@ export function computeBlocked(report, policy) {
       }
       continue;
     }
-    for (const pkg of packages) blocked.push({ license, name: pkg.name });
+    for (const pkg of packages) {
+      if (policy.allowedPackageLicences?.get(pkg.name) === license) continue;
+      blocked.push({ license, name: pkg.name });
+    }
   }
   return blocked;
 }
 
-export const POLICY = { allowed, allowedUnknownPackages };
+export const POLICY = { allowed, allowedUnknownPackages, allowedPackageLicences };
 
 /**
  * Positive control: prove the gate can still fail. A fabricated package placed

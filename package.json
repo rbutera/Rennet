@@ -95,6 +95,9 @@
     "real-turn": "nx run rennet-adapters:real-turn",
     "release:check": "node scripts/check-release.mjs",
     "release:env": "scripts/with-release-env.sh",
+    "t3:check-ledger": "node scripts/t3-upstream.mjs check-ledger",
+    "t3:fold": "node scripts/t3-upstream.mjs fold",
+    "t3:inspect": "node scripts/t3-upstream.mjs inspect",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -120,6 +123,7 @@
     "@types/react-dom": "19.2.3",
     "@typescript-eslint/parser": "8.65.0",
     "@typescript/native": "npm:typescript@7.0.2",
+    "@typescript/native-preview": "7.0.0-dev.20260604.1",
     "@vitejs/plugin-react": "6.0.4",
     "@vitest/coverage-v8": "4.1.10",
     "eslint": "10.8.0",
@@ -130,6 +134,7 @@
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.65.0",
     "vite": "8.1.5",
+    "vite-plus": "catalog:",
     "vitest": "4.1.10"
   },
   "lint-staged": {
