@@ -6,6 +6,7 @@
   "vendorBranch": "t3-vendor",
   "paths": [
     "LICENSE",
+    "package.json",
     "tsconfig.base.json",
     "vite.config.ts",
     "scripts/lib",
